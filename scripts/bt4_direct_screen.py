@@ -303,7 +303,7 @@ def acquire_gpu_lease(lease):
     fcntl.flock(lease, fcntl.LOCK_EX)
 
 
-def run_owned_stage(cmd, out, seconds, lease_fd, stage, metadata, *, manifest, stop_paths=(), cwd=None, env=None) -> dict[str, Any]:
+def run_owned_stage(cmd, out, seconds, lease_fd, stage, metadata, *, manifest, stop_paths=(), cwd=None, env=None, guard=None) -> dict[str, Any]:
     """One bounded process group; caller owns the inherited GPU lease and pin checks."""
     require((cwd is None) == (env is None), 'explicit stage cwd and env must be supplied together')
     stage_cwd = RUNTIME if cwd is None else Path(cwd)
@@ -325,18 +325,39 @@ def run_owned_stage(cmd, out, seconds, lease_fd, stage, metadata, *, manifest, s
             receipt['supervisor_pid'] = child.pid
             write(out / 'process.json', receipt)
             while child.poll() is None:
-                if f'{stage}_pid' not in receipt:
+                if guard is not None:
+                    guard()
+                if f'{stage}_pid' not in receipt and time.monotonic() - started < 10:
                     children = Path(f'/proc/{child.pid}/task/{child.pid}/children')
                     ids = children.read_text().split() if children.exists() else []
                     if ids:
+                        provisional_pid = receipt.get(f'{stage}_empty_cmdline_pid',
+                                                      receipt.get(f'{stage}_preexec_pid'))
+                        require(provisional_pid is None or int(ids[0]) == provisional_pid,
+                                'workload child changed during command capture')
                         try:
                             cmdline = Path(f'/proc/{ids[0]}/cmdline').read_bytes().decode().strip('\0').split('\0')
                         except FileNotFoundError:
                             pass
                         else:
-                            receipt[f'{stage}_pid'] = int(ids[0])
-                            receipt[f'{stage}_cmdline'] = cmdline
-                            write(out / 'process.json', receipt)
+                            if cmdline == ['']:
+                                # Empty procfs reads are unavailable observations, not argv.
+                                # Preserve the first sample and retry the same child.
+                                if f'{stage}_empty_cmdline' not in receipt:
+                                    receipt[f'{stage}_empty_cmdline'] = cmdline
+                                    receipt[f'{stage}_empty_cmdline_pid'] = int(ids[0])
+                                    write(out / 'process.json', receipt)
+                            elif cmdline != wrapped:
+                                receipt[f'{stage}_pid'] = int(ids[0])
+                                receipt[f'{stage}_cmdline'] = cmdline
+                                write(out / 'process.json', receipt)
+                            elif cmdline == wrapped and f'{stage}_preexec_cmdline' not in receipt:
+                                # A forked timeout child can still expose its parent's
+                                # argv before exec. Preserve it without calling it the
+                                # observed workload; sample again within the window.
+                                receipt[f'{stage}_preexec_cmdline'] = cmdline
+                                receipt[f'{stage}_preexec_pid'] = int(ids[0])
+                                write(out / 'process.json', receipt)
                 disk_guard(out)
                 require(not any(p.exists() for p in (out / 'STOP', *stop_paths)), 'stop requested')
                 time.sleep(1)

@@ -1,0 +1,166 @@
+{
+  "status": "COMPLETED_REVIEWED_FIXED_MATCH_UNRESOLVED",
+  "readout": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Downside300_B100_fixed400_run01/readout.json",
+    "sha256": "d03e0751d455a93f7122e9ca2fb6fe56155b0d4d1d64de923afb6f8ddaff2883"
+  },
+  "operator_completion": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/match_B100_v1/arena_operator/completed.json",
+    "sha256": "c5569ada6c3757e87467477b34eefee4e2c2c4e1b7842ae8632dfc4b19907583"
+  },
+  "result": {
+    "games": 256,
+    "pairs": 128,
+    "score": 0.525390625,
+    "score_se": 0.026136778309698197,
+    "elo": 17.658402561638333,
+    "elo_ci95": [
+      -17.969712656992808,
+      53.66282768313471
+    ],
+    "pentanomial": {
+      "WW": 17,
+      "WD_DW": 29,
+      "DD_WL": 48,
+      "LD_DL": 18,
+      "LL": 16
+    }
+  },
+  "candidate": {
+    "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_epoch_v1/checkpoint.pt",
+    "role": "B100Downside300",
+    "sha256": "a0e18457317ebd35b4560525c64c9ffebcf56ff73f26867c75e24a8a93adde9f"
+  },
+  "reference": {
+    "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+    "role": "B100",
+    "sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62"
+  },
+  "contract_sha256": "7e503393816abdbb63a7630428b3c76efd4d69faab9548b39178aa6730b0ef48",
+  "bank": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Downside300_B100_fixed400_run01/arena.games.jsonl",
+    "sha256": "93844f18924c3386f0ac382f9e145466320cb70aed357c7c2ea7c0dd4cb1b6ac"
+  },
+  "opening_panel": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/search_calibration_readiness_v1/B100_prior07_v2/opening_panel.json",
+    "sha256": "3c955d68a6c010e373b44418f3bbbf1500cf9192d04ca17ffdd3dcd191d7cbb1"
+  },
+  "process": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Downside300_B100_fixed400_run01/process.json",
+    "sha256": "2840ab28d8f940bc7fb1b051da5c60f967461402f322b4450755dcd39572535e"
+  },
+  "prior_temperatures": [
+    1.0,
+    1.0
+  ],
+  "simulations": 400,
+  "reader_limitations": [
+    "Fixed-N nominal paired interval for these packages; not optimal temperature or training-seed uncertainty.",
+    "Pinned process record and command checked; runtime provenance, checkpoint/book bytes and full history consumed at launch require external evidence.",
+    "Legal panel history and endpoint order verified now; recipe labels and training lineage are declarations requiring separate qualification."
+  ],
+  "reader_launch_qualification_verified": false,
+  "decision": "Retain B100; no automatic extension, promotion or dose sweep. Preserve Downside as unresolved alternative. Prioritize matched larger-corpus value comparison.",
+  "independent_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Downside300_B100_fixed400_run01/independent_completed_review.json",
+    "sha256": "8819ebeb328b30aeaf044fecd9da344615da169098bedffb6d368f87f4da2c1e"
+  },
+  "independent_review_content": {
+    "schema": 1,
+    "status": "PASS_REGISTERED_BOUNDED_MATCH_RESULT_UNRESOLVED",
+    "reviewer": "sf_worker_concurrency",
+    "reviewed_utc": "2026-09-13T03:55:03.170498+00:00",
+    "artifact_refs": [
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Downside300_B100_fixed400_run01/readout.json",
+        "sha256": "d03e0751d455a93f7122e9ca2fb6fe56155b0d4d1d64de923afb6f8ddaff2883"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Downside300_B100_fixed400_run01/package.contract.json",
+        "sha256": "7e503393816abdbb63a7630428b3c76efd4d69faab9548b39178aa6730b0ef48"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Downside300_B100_fixed400_run01/process.json",
+        "sha256": "2840ab28d8f940bc7fb1b051da5c60f967461402f322b4450755dcd39572535e"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/match_B100_v1/prepared.json",
+        "sha256": "c52c5b74dc2363a915da78edd3d982570173f773d160459510c0e0933c52c327"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/match_B100_v1/independent_actual_package_review.json",
+        "sha256": "9bce0bb02436f5671f5d588042dae6254ad48a38b3c8c1fc7b931605c50b588b"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/match_B100_v1/arena_operator/started.json",
+        "sha256": "c0e7a43664153530795c1e3e32cb5099c72acc138b09446f437bf9ef4ddc2e4a"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/match_B100_v1/arena_operator/completed.json",
+        "sha256": "c5569ada6c3757e87467477b34eefee4e2c2c4e1b7842ae8632dfc4b19907583"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/match_B100_v1/registration.json",
+        "sha256": "458fc2814c03eecdd4b09c33639377bdb523c22ae31110edf0c9f1953d436df6"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/match_B100_v1/launch_pair.py",
+        "sha256": "ab61adb6e7e8a11653a8442c59c1ca05219cc713f1d494f6ba9626615ed3edc1"
+      }
+    ],
+    "result": {
+      "games": 256,
+      "pairs": 128,
+      "score": 0.525390625,
+      "score_se": 0.026136778309698197,
+      "elo": 17.658402561638333,
+      "elo_ci95": [
+        -17.969712656992808,
+        53.66282768313471
+      ],
+      "pentanomial": {
+        "WW": 17,
+        "WD_DW": 29,
+        "DD_WL": 48,
+        "LD_DL": 18,
+        "LL": 16
+      }
+    },
+    "score_ci95": [
+      0.47416253951299153,
+      0.5766187104870084
+    ],
+    "independent_numeric_checks": "All128 saved pair scores independently reproduce candidate mean, sample-based paired standard error, nominal95percent interval, Elo transform and five pentanomial bins.",
+    "launch_provenance": {
+      "generic_reader_launch_qualification_verified": false,
+      "external_provenance_verified_for_registered_screen": true,
+      "checks": [
+        "Actual completed receipt binds exact contract/readout/prepared hashes. Process command/runtime/native identity/cwd and training admission equal reviewed actual CPU package.",
+        "Final contract equals preregistered package template except completed bank/process hashes. Checkpoint pair/prior1.0/400simulations/256games/openingpanel/seed and runtime all agree.",
+        "Actual process_complete true and exit0, stage1046.171seconds below5400; wholeoperator1052.471seconds below10230. Historical generic complete:false is not the completed arena verdict.",
+        "Reviewed launch_pair checks prepared input storage, runtime and source pins after acquiring shared lease and again after arena/readout; actual process and immutable launch/lease/completion receipts provide external provenance missing from generic reader.",
+        "Existing strict reader reports complete bank, checkpoint-content verification and legal opening-history/endpoint verification. No evidence requiring repeated bank or checkpoint scan was found."
+      ],
+      "bank_integrity_scope": "Rely on actual completed strict-reader checks for full bank/legal history/content, rather than rerunning them. Independent numerical review uses128saved pair scores.",
+      "whole_operator_seconds": 1052.4711966514587,
+      "arena_stage_seconds": 1046.170952665001
+    },
+    "preregistered_decision": {
+      "rule": {
+        "metric": "mean candidate score over 128 swapped opening pairs, paired nominal 95 percent interval and descriptive Elo",
+        "above_half": "interval wholly above 0.5 supports this bounded recipe and may motivate fresh-seed/fresh-panel confirmation",
+        "below_half": "interval wholly below 0.5 favors control",
+        "otherwise": "unresolved; choose next science by effect size, uncertainty and distinct hypotheses; no automatic extension"
+      },
+      "verdict": "UNRESOLVED",
+      "action": "Retain B100 incumbent; do not automatically extend match or promote Downside. Choose distinct next research using effect size and uncertainty.",
+      "interpretation": "Positive17.658Elo estimate does not establish benefit. Interval includes modest harm and useful benefit; does not reject Stockfish tactical guidance or prove a family optimum."
+    },
+    "limitations": [
+      "One training seed and reused development opening panel; nominal fixedN paired interval does not cover seed/recipe-selection uncertainty.",
+      "Original three historical valid_control:false caveats persist: no purityreceipt, committed rather than live configuration witness, gameepoch vs historicalreplacementreplay.",
+      "No matches/training rerun, no model/book/source/replay payload rehash. Existing strict bank verification accepted with explicitly checked external launch provenance."
+    ],
+    "findings": []
+  }
+}

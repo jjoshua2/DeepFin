@@ -2,7 +2,8 @@
 """Run one pinned Ceres policy/value materialization, never training or retrying.
 
 Schema1: profile, cwd, commit, python, state, corpus, producer_manifest{path,sha256},
-producer_sha256, pins, supervisor_sha256, stop_paths. Default validates only.
+producer_sha256, pins, supervisor_sha256, stop_paths. Optional cpu_affinity and
+preparation_lock allocate a reviewed independent lane. Default validates only.
 Execution requires --execute and one absolute --deadline shared with an external
 GNU timeout (TERM30seconds before deadline, KILL at deadline), maximum8hours.
 """
@@ -27,9 +28,9 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import ceres_collection_batches as owned
 
-BASE = Path("/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01")
+BASE = Path(__file__).resolve().parents[1] / "scratchpad" / "bt4_joint20" / "hybrid_endpoint_run01"
 LOCK = BASE / "preparation.lock"
-PROFILES = {"CeresB50": "ceres_target_mix", "B100CeresV25": "ceres_value_mix"}
+PROFILES = {"Ceres100": "ceres_target_mix", "CeresB50": "ceres_target_mix", "B100CeresV25": "ceres_value_mix"}
 MAX_SECONDS = 28800
 RESERVE = 150 * 2**30
 OUTPUT_CAP = 32 * 2**30
@@ -49,6 +50,8 @@ PLAN_KEYS = {
     "supervisor_sha256",
     "stop_paths",
 }
+
+OPTIONAL_PLAN_KEYS = {"cpu_affinity", "preparation_lock"}
 
 
 def require(condition: Any, message: str) -> None:
@@ -152,9 +155,29 @@ def partial(p: dict[str, Any]) -> Path:
     return out.with_name(out.name + ".writing")
 
 
+def execution_settings(p: dict[str, Any]) -> tuple[list[int], Path]:
+    affinity = p.get("cpu_affinity", [0, 1])
+    require(
+        isinstance(affinity, list) and bool(affinity)
+        and all(type(cpu) is int and cpu >= 0 for cpu in affinity)
+        and len(set(affinity)) == len(affinity),
+        "cpu_affinity must contain unique nonnegative integer CPUs",
+    )
+    if "cpu_affinity" in p:
+        require(set(affinity) <= os.sched_getaffinity(0), "requested CPUs unavailable")
+    lock = path(p.get("preparation_lock", str(LOCK)))
+    require(
+        lock in (LOCK, BASE / f"{p['profile']}.preparation.lock")
+        and lock.parent.is_dir(),
+        "preparation lock must be the shared or fixed profile lock",
+    )
+    return affinity, lock
+
+
 def validate(p: dict[str, Any]) -> None:
     require(
-        set(p) == PLAN_KEYS and type(p["schema"]) is int and p["schema"] == 1,
+        PLAN_KEYS <= set(p) <= PLAN_KEYS | OPTIONAL_PLAN_KEYS
+        and type(p["schema"]) is int and p["schema"] == 1,
         "materialization schema/keys differ",
     )
     require(p["profile"] in PROFILES, "unsupported Ceres profile")
@@ -229,6 +252,9 @@ def validate(p: dict[str, Any]) -> None:
         str(Path(p["state"]).parent / "STOP"),
     }
     require(required <= set(p["stop_paths"]), "required STOP paths missing")
+    _, lock = execution_settings(p)
+    require(all(not owned.paths_overlap(lock, item) for item in inputs + outputs),
+            "preparation lock overlaps input/output")
     fresh(p)
 
 
@@ -254,7 +280,15 @@ def output_bytes(p: dict[str, Any]) -> int:
     return sum(int(line.split()[0]) for line in result.stdout.splitlines())
 
 
+def output_cap(p: dict[str, Any]) -> int:
+    return 64 * 2**30 if p["profile"] == "Ceres100" else OUTPUT_CAP
+
+
 def guard(p: dict[str, Any], deadline: float) -> None:
+    if p["profile"] == "Ceres100":
+        memory = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
+        require(int(memory["MemAvailable"].split()[0]) * 1024 >= 32 * 2**30,
+                "memory below32GiBheadroom")
     require(time.time() < deadline - 30, "shared deadline cleanup margin reached")
     require(not any(os.path.lexists(x) for x in p["stop_paths"]), "STOP marker")
     require(
@@ -289,10 +323,10 @@ def command(p: dict[str, Any], deadline: float) -> list[str]:
         str(Path(p["state"]) / "STOP"),
         "--execute",
     ]
-    if p["profile"] == "CeresB50":
+    if p["profile"] in {"CeresB50", "Ceres100"}:
         result += [
             "--bt4-weight",
-            "0.5",
+            "0.0" if p["profile"] == "Ceres100" else "0.5",
             "--bt4-temperature",
             "0.5",
             "--ceres-temperature",
@@ -321,7 +355,7 @@ def verify_publication(p: dict[str, Any], budget: Any) -> dict[str, Any]:
         "publication producer differs",
     )
     admission = {"profile": p["profile"], "ceres_producer_pins": p["producer_sha256"]}
-    if p["profile"] == "CeresB50":
+    if p["profile"] in {"CeresB50", "Ceres100"}:
         epoch.verify_ceres_recipe(admission, result, derived)
     else:
         epoch.verify_ceres_value_recipe(admission, result, derived)
@@ -343,7 +377,7 @@ def verify_publication(p: dict[str, Any], budget: Any) -> dict[str, Any]:
             "published output storage changed",
         )
     budget()
-    require(output_bytes(p) <= OUTPUT_CAP, "published output exceeds32GiBsamplecap")
+    require(output_bytes(p) <= output_cap(p), f"published output exceeds{output_cap(p) // 2**30}GiBsamplecap")
     return {
         "profile": p["profile"],
         "corpus": str(out),
@@ -362,8 +396,8 @@ def execute(
     plan_path: Path | None = None,
 ) -> dict[str, Any]:
     require(
-        math.isfinite(deadline) and 60 < deadline - time.time() <= MAX_SECONDS,
-        "deadline must leave60seconds..8hours",
+        math.isfinite(deadline) and 60 < deadline - time.time() <= (25200 if p["profile"] == "Ceres100" else MAX_SECONDS),
+        "deadline must leave60seconds..profile maximum",
     )
 
     def budget() -> None:
@@ -378,7 +412,8 @@ def execute(
         "supervisor Python differs",
     )
     budget()
-    lock_fd = os.open(LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    _, preparation_lock = execution_settings(p)
+    lock_fd = os.open(preparation_lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         fresh(p)
@@ -392,6 +427,8 @@ def execute(
             "plan_sha256": plan_sha256,
             "profile": p["profile"],
             "corpus": p["corpus"],
+            "cpu_affinity": sorted(os.sched_getaffinity(0)),
+            "preparation_lock": str(preparation_lock),
             "started_unix": time.time(),
             "deadline_unix": deadline,
             "returncode": None,
@@ -432,7 +469,7 @@ def execute(
                         if time.monotonic() - sampled_at >= SAMPLE_SECONDS:
                             size = output_bytes(p)
                             record["sampled_output_allocated_bytes"] = size
-                            require(size <= OUTPUT_CAP, "output exceeds32GiBsamplecap")
+                            require(size <= output_cap(p), f"output exceeds{output_cap(p) // 2**30}GiBsamplecap")
                             owned.write_json(state / "status.json", record)
                             sampled_at = time.monotonic()
                         try:
@@ -499,7 +536,9 @@ def main(argv: list[str] | None = None) -> int:
         MKL_NUM_THREADS="2",
         NUMEXPR_NUM_THREADS="2",
     )
-    os.sched_setaffinity(0, {0, 1})
+    validate(p)
+    affinity, _ = execution_settings(p)
+    os.sched_setaffinity(0, set(affinity))
     os.nice(max(0, 19 - os.getpriority(os.PRIO_PROCESS, 0)))
     subprocess.run(
         ["/usr/bin/ionice", "-c", "3", "-p", str(os.getpid())], check=True, timeout=5

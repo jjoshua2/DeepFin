@@ -575,3 +575,117 @@ The shared parent supervisor retains STOP, reserve, sampled output and inclusive
 wall bounds and owns termination of its disposable child. The child holds the
 shared GPU lease through process exit and context teardown. No collector launch,
 full-corpus coverage, mixture selection or active-runtime adoption is implied.
+
+### Reusing historical native BT4 WDL on an original G10 cohort
+
+`bt4_value_rewrite.py` accepts a complete original G10 batch with
+`--g10-common-qualification PATH` and
+`--expected-g10-common-qualification-sha256 SHA`. The original SF directory,
+its actual B100 policy product, and the teacher's source stamps remain unchanged.
+This does not admit an adaptive-value replacement directory or a partial prefix.
+
+For previously collected direct-derived WDL, also supply
+`--native-wdl-manifest PATH --expected-native-wdl-manifest-sha256 SHA`.
+The reviewed manifest is the trust anchor for historical evidence. A successful
+collection receipt describes coverage but does not independently attest producer
+code; pin the historical producer files and accepted shard attributes separately.
+Every pin below is exactly `{"path": "/absolute/canonical/path", "sha256": "..."}`.
+
+```json
+{
+  "schema": 1,
+  "profile": "historical-g10-native-wdl-reuse-v1",
+  "source_dir": "/original/batch/derived",
+  "wdl_dir": "/original/wdl/bank",
+  "source_summary_sha256": "...",
+  "onnx_sha256": "...",
+  "wdl_output": "/output/wdl",
+  "invocations": [{
+    "completed": {"path": "/original/wdl/bank/invocations/ID/completed.json", "sha256": "..."},
+    "started": {"path": "/original/wdl/bank/invocations/ID/started.json", "sha256": "..."},
+    "producer": {
+      "scripts/bt4_derived_wdl_sidecar.py": {"path": "/frozen/collector.py", "sha256": "..."},
+      "scripts/bt4_raw_corpus_sidecar.py": {"path": "/frozen/raw_collector.py", "sha256": "..."},
+      "chess_anti_engine/encoding/lc0.py": {"path": "/frozen/lc0.py", "sha256": "..."}
+    },
+    "g10_admission_script": {"path": "/frozen/g10_wdl_admission.py", "sha256": "..."},
+    "attributes": {
+      "shard_000000.zarr": {"path": "/original/wdl/bank/shard_000000.zarr/.zattrs", "sha256": "..."}
+    }
+  }]
+}
+```
+
+List every selected shard's attribute pin in its actual invocation entry. The
+invocations must cover the entire original derived cohort exactly once, in the
+same WDL bank, and agree on source, model and named probability head. The consumer
+checks their actual launch selection and G10 admission, constructs the complete
+historical binding from the pinned evidence, and retains all cached-array hashes,
+source-column hashes, game/ply and actual stored LC0-feed checks. It does not run
+or modify the historical producer code or relabel its outputs as new inference.
+Proof pins are checked again before publication.
+
+For a complete cohort collected into several original output directories, use
+schema `2`, profile `historical-g10-native-wdl-multi-output-v1`, and replace the
+single `wdl_dir` with an ordered `wdl_dirs` list of absolute canonical directories.
+Pass the first directory as the existing `--wdl` argument. Add `wdl_dir` to each
+invocation entry to identify its actual output directory; its receipts, namespace
+metadata and shard attribute pins must remain inside that directory. No files are
+moved or assigned a synthetic namespace.
+
+Every declared directory must contribute shards, directories must be disjoint,
+and the union of invocation selections must cover the original cohort exactly
+once. Invocation order does not change source row order. The writer inventories
+each directory's exact selected subset, routes each shard to that directory, and
+retains all existing content, stored-feed and final stability checks. Its summary
+records `wdl_dirs` and the distinct multi-output admission profile. Schema 1 and
+the default single-directory route retain their existing contract. This admission
+adds no inference and does not by itself qualify a new training corpus.
+
+Historical-native and `--wdl-adapter-manifest` provenance are mutually exclusive.
+The existing raw-adapter route retains its own typed lineage. Omitting the new
+options preserves the original completed-corpus behavior and recipe identity.
+
+### Matched adaptive SF input for the value blend
+
+`bt4_value_rewrite.py --matched-sf-manifest PATH
+--expected-matched-sf-manifest-sha256 SHA` optionally supplies the SF term from a
+separately matched adaptive derivation. Original `--sf-source`, B100 policy and
+native BT4 sidecars keep their original lineage. Original G10 qualification is
+required. This interface requires the complete same-layout cohort; it does not
+admit the large corpus's partial native-WDL prefix.
+
+The reviewed manifest has this structure (all paths absolute and canonical):
+
+```json
+{
+  "schema": 1,
+  "profile": "matched-g10-adaptive-sf-value-v1",
+  "original_source": "/original/derived",
+  "original_summary_sha256": "SHA",
+  "candidate_source": "/matched/adaptive",
+  "candidate_summary": {"path": "/matched/adaptive/derive_targets_summary.json", "sha256": "SHA"},
+  "launch_plan": {"path": "/matched/first_stage.json", "sha256": "SHA"},
+  "completed_receipt": {"path": "/matched/execution/status.json", "sha256": "SHA"},
+  "shards": {
+    "shard_000000.zarr": {
+      "attrs": {"path": "/matched/adaptive/shard_000000.zarr/.zattrs", "sha256": "SHA"},
+      "search_wdl_sha256": "SHA of decoded float16 C-order array bytes"
+    }
+  }
+}
+```
+
+List every shard. The existing terminal matching receipt attests source-qualified
+provenance and sixteen unchanged decoded arrays; it did not record a WDL hash.
+The manifest's WDL witness is an explicit later reviewed observation, not a claim
+that the old completion attested those bytes. The consumer checks actual arrays
+against both witnesses, complete coverage, fixed selector stamps and unchanged
+storage through publication. It checks the pinned historical producer files from
+the launch plan without substituting current source hashes.
+
+Only `g10-adaptive-final-or-d9-v1` is admitted here. Its selector participates in
+the shared value recipe identity; per-cohort paths and hashes remain provenance,
+so distinct qualified cohorts with the same recipe can join. No manifest means
+unchanged historical metadata and numerical behavior. This feature does not
+qualify a training schedule or launch an experiment.

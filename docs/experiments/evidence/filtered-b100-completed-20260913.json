@@ -1,0 +1,211 @@
+{
+  "completed_status": {
+    "argv": [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      "--kill-after=30s",
+      "517s",
+      "/usr/bin/time",
+      "-o",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/execution/run07_g10_companion4.time.json",
+      "-f",
+      "{\"seconds\":%e,\"max_rss_kib\":%M,\"exit_code\":%x}",
+      "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+      "/tmp/deepfin-g10-matched-sf-value/scripts/bt4_policy_mix.py",
+      "mix",
+      "--shards",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run07_g10_companion4/derived",
+      "--sidecar",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run07_g10_companion4/adapted",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/execution/run07_g10_companion4",
+      "--alpha",
+      "1",
+      "--scope",
+      "global",
+      "--bt4-temperature",
+      ".5",
+      "--expected-rows",
+      "511735",
+      "--expected-shards",
+      "63",
+      "--expected-source-summary-sha256",
+      "15869433ef066e61ee1114329a9a49a9c75177d5a09913decd2d2cd85783f3b2",
+      "--audit-receipt",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/audit_B100T05.json",
+      "--sf-audit-mode",
+      "descriptive",
+      "--experiment-record",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md"
+    ],
+    "completed_unix": 1789338973.464631,
+    "limit": "Complete original policy products only; no value or training admission",
+    "pid": 540568,
+    "plan_sha256": "5027eb3b8fe533a4a27f361a32f5cd64ca7c5377bfb731333e3a00660db68414",
+    "returncode": 0,
+    "rows": 1517925,
+    "shards": 186,
+    "stage": "run07_g10_companion4",
+    "stages": [
+      {
+        "argv": [
+          "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+          "/tmp/deepfin-g10-matched-sf-value/scripts/bt4_policy_mix.py",
+          "mix",
+          "--shards",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run06_g10/derived",
+          "--sidecar",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run06_g10/adapted",
+          "--out",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/execution/run06_g10",
+          "--alpha",
+          "1",
+          "--scope",
+          "global",
+          "--bt4-temperature",
+          ".5",
+          "--expected-rows",
+          "1006190",
+          "--expected-shards",
+          "123",
+          "--expected-source-summary-sha256",
+          "d3c1ef575d14265378d7ca9f9a3e237158000b065c4a530986d6d283e5d7b441",
+          "--audit-receipt",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/audit_B100T05.json",
+          "--sf-audit-mode",
+          "descriptive",
+          "--experiment-record",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md"
+        ],
+        "derive_summary_sha256": "28a493eb33bffae53bb12e6e9e026ec14225779ba4c1d6fea89c874602be1f9c",
+        "input_storage": {
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run06_g10/adapted": "79eb431c56aef7749b51327f9830a0bfe7165094df96ff1103583e59055b6295",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run06_g10/derived": "3587bc86b4bc4eaf901a48d0830cb9b4e313cd45cf9289188841152ef9f435a2"
+        },
+        "name": "run06_g10",
+        "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/execution/run06_g10",
+        "output_storage": "3103dcb31ab2f5a21440d1d608c4670b8ba4acbb50221f9b7dc1c12e08cb76a2",
+        "returncode": 0,
+        "rows": 1006190,
+        "shards": 123,
+        "summary_sha256": "478cae5591578899665323b2b94080b8ed8bf132dc9342e639561bf9e2db7154"
+      },
+      {
+        "argv": [
+          "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+          "/tmp/deepfin-g10-matched-sf-value/scripts/bt4_policy_mix.py",
+          "mix",
+          "--shards",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run07_g10_companion4/derived",
+          "--sidecar",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run07_g10_companion4/adapted",
+          "--out",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/execution/run07_g10_companion4",
+          "--alpha",
+          "1",
+          "--scope",
+          "global",
+          "--bt4-temperature",
+          ".5",
+          "--expected-rows",
+          "511735",
+          "--expected-shards",
+          "63",
+          "--expected-source-summary-sha256",
+          "15869433ef066e61ee1114329a9a49a9c75177d5a09913decd2d2cd85783f3b2",
+          "--audit-receipt",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/audit_B100T05.json",
+          "--sf-audit-mode",
+          "descriptive",
+          "--experiment-record",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md"
+        ],
+        "derive_summary_sha256": "2e18d43d81ccb9bfc19d46463257e4ae8202c4170a428f5696a2f800fca6de63",
+        "input_storage": {
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run07_g10_companion4/adapted": "849f94aebbbf23b78b7b50a3b03625dc72ebc2fc48311dab4ec7692ee8bc2625",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run07_g10_companion4/derived": "62ea2ba9d43b467772f98cc5fe8797d9425511dde6d27cf58951931ccf2f2e7e"
+        },
+        "name": "run07_g10_companion4",
+        "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/execution/run07_g10_companion4",
+        "output_storage": "93e8fa98addfb46d53f5710f583a3ac363a697196a9c2629ddb802f6584ad6a4",
+        "returncode": 0,
+        "rows": 511735,
+        "shards": 63,
+        "summary_sha256": "d295f5650356bfeee17ff507208090355e8d1aa0a2aa28c9f9d6e534768f7c44"
+      }
+    ],
+    "started_unix": 1789338555.0187244,
+    "status": "COMPLETE_ALL2_B100_POLICY_NOT_VALUE_OR_TRAINING_ADMISSION",
+    "whole_seconds": 418.5001063959935
+  },
+  "disjointness": {
+    "column_pass_needed": false,
+    "combined_if_admitted_rows": 36832502,
+    "existing_g10_rows": 16404093,
+    "existing_g10_unique_raw_shards": 1990,
+    "existing_rows": 35314577,
+    "intersection_count": 0,
+    "limits": [
+      "Physical provenance disjointness, not board/FEN/history/content uniqueness or statistical independence. No payload/model read, game census or provenance-column pass.",
+      "Relies on saved qualified immutable generator/source identities and exact admitted roster; historical source-SHA caveat retained from original mapping. No per-shard historical attestation invented.",
+      "New B100 still requires completed-product review and future training admission; no automatic append/train."
+    ],
+    "new_raw_shards": 184,
+    "new_retained_rows": 1517925,
+    "original_lineage": {
+      "config_sha256": "50fdfe58a5bc2275b4957b898811190fe91739d15dfa45ce2190749452c9bfc8",
+      "dir": "run03_s3",
+      "run_id": "nnue_bootstrap_run03"
+    },
+    "proof": "Exact raw source/config/shard tuples are disjoint from all20G10 rosters bound in actual combined manifest. Original18.91M is qualified separate run03_s3/config lineage. Subsets of disjoint physical raw shards cannot share source-qualified physical offsets; sparse exclusions do not invalidate this argument.",
+    "proof_refs": [
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/corpus_manifest.final.json",
+        "sha256": "446fc6041d25d0efa1a51ad9ba994572c65536e70fa0275198d85260cafae1f2"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/game_identity_design_v1/cohort_mapping.json",
+        "sha256": "d53fe3162b9772a7f3a3c4544172711ab6e2b4ef3861526fbbb4201ac45c1977"
+      },
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json",
+        "sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run06_g10/derived/derive_targets_summary.json",
+        "sha256": "d3c1ef575d14265378d7ca9f9a3e237158000b065c4a530986d6d283e5d7b441"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/run06_g10.selection.json",
+        "sha256": "19865ea732012cc921e01b8d963402e34ba981945fa6cfe03cf8023751f8d4b7"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run07_g10_companion4/derived/derive_targets_summary.json",
+        "sha256": "15869433ef066e61ee1114329a9a49a9c75177d5a09913decd2d2cd85783f3b2"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/run07_g10_companion4.selection.json",
+        "sha256": "f8f34bf225e006c158f205ccba961511ad1d242923bb18dfb45111932f10ae4c"
+      }
+    ],
+    "reviewed_unix": 1789339224.2533162,
+    "status": "PASS_SOURCE_QUALIFIED_PHYSICAL_ROW_DISJOINTNESS_METADATA_ONLY"
+  },
+  "limits": [
+    "Non-policy preservation follows unchanged writer construction and saved metadata; no independent payload rehash repeated.",
+    "Additional physical-source rows do not establish unique chess positions or independent games.",
+    "Potential 36,832,502-row union is not training-admitted."
+  ],
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/disjointness_v1/assessment.json": "b524ecf7405931e1903fcd300e983c3379db19f2b63355ea91b4331600682c9e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/execution/status.json": "6807fdb90717a181114cd47c4155485ae6170a2b5bdde704f85602701f726e39",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/independent_completed_review.json": "6b087e72a6fb1bf56d5613f91472df4bcc1bf2b6369e4e2628cc9f6285ab8cfb",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/retry_host_v1/outer_terminal.json": "adec6f0a35a04c705f149fcff0f075da98f81c8c870b22f4e174e5a675c11268"
+  },
+  "retry_outer_terminal": {
+    "elapsed_seconds": 420.8085823059082,
+    "ended_unix": 1789338974.1375005,
+    "returncode": 0
+  },
+  "status": "B100_MATERIALIZATION_COMPLETE_PHYSICAL_SOURCE_DISJOINTNESS_PASS_TRAINING_ADMISSION_PENDING"
+}

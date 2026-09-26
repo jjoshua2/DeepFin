@@ -317,3 +317,101 @@ def test_cli_flags_reach_actual_owned_child(tmp_path, monkeypatch):
     invocation, = (out / 'invocations').iterdir()
     assert json.loads((invocation / 'completed.json').read_text())['retain_value2'] is True
     assert json.loads((invocation / 'child_started.json').read_text())['profile'] == tool.EXTENDED_PROFILE
+
+
+@pytest.mark.parametrize(('rows', 'chunk_rows'), [(83, 48), (97, 16), (70, 512)])
+def test_source_block_cache_matches_batches_and_decodes_each_block_once(tmp_path, rows, chunk_rows):
+    group = zarr.open_group(str(tmp_path / 'source'), mode='w')
+    accesses = {k: [] for k in tool.COLUMNS}
+
+    class Tracked:
+        def __init__(self, name):
+            self.name = name
+            self.chunks = group[name].chunks
+
+        def __getitem__(self, selection):
+            accesses[self.name].append((selection.start, selection.stop))
+            return group[self.name][selection]
+
+    for k in tool.COLUMNS:
+        values = np.arange(rows * 3).reshape(rows, 3) if k == 'x' else np.arange(rows)
+        group.create_dataset(k, data=values, chunks=(chunk_rows, *values.shape[1:]))
+    reader = tool.SourceBatchReader({k: Tracked(k) for k in tool.COLUMNS}, rows)
+    for start in range(0, rows, 32):
+        end = min(start + 32, rows)
+        actual = reader.read(start, end)
+        for k in tool.COLUMNS:
+            np.testing.assert_array_equal(actual[k], group[k][start:end])
+    expected = [(start, min(start + chunk_rows, rows)) for start in range(0, rows, chunk_rows)]
+    assert accesses == dict.fromkeys(tool.COLUMNS, expected)
+
+
+def test_source_block_cache_large_chunks_keep_direct_batch_reads(tmp_path):
+    group = zarr.open_group(str(tmp_path / 'source'), mode='w')
+    calls = []
+
+    class Tracked:
+        chunks = (2048,)
+
+        def __init__(self, name):
+            self.name = name
+
+        def __getitem__(self, selection):
+            calls.append((self.name, selection.start, selection.stop))
+            return group[self.name][selection]
+
+    for k in tool.COLUMNS:
+        group.create_dataset(k, data=np.arange(2050), chunks=(2048,))
+    reader = tool.SourceBatchReader({k: Tracked(k) for k in tool.COLUMNS}, 2050)
+    for start, end in [(0, 32), (32, 64), (2048, 2050)]:
+        batch = reader.read(start, end)
+        for k in tool.COLUMNS:
+            np.testing.assert_array_equal(batch[k], np.arange(start, end))
+    assert calls == [(k, start, end) for start, end in [(0, 32), (32, 64), (2048, 2050)]
+                     for k in tool.COLUMNS]
+    assert not reader.block
+
+
+def test_cached_source_batches_preserve_actual_writer_feeds_and_partial_output(tmp_path, monkeypatch):
+    # Real collectors own the GPU lease until process exit. Both sessions here
+    # are fake and run in one process to compare saved arrays directly.
+    monkeypatch.setattr(tool.fcntl, 'flock', lambda _fd, _mode: None)
+    args = setup(tmp_path, monkeypatch, 83)
+    args.pad_final_batch = args.retain_value2 = True
+    source = zarr.open_group(str(Path(args.source) / 'shard_000000.zarr'), mode='a')
+    x = source['x'][:]
+    del source['x']
+    source.create_dataset('x', data=x, chunks=(48, *x.shape[1:]))
+    cached_session = Session(tmp_path)
+    monkeypatch.setattr(tool, 'open_teacher', lambda _a: cached_session)
+    tool.produce(args)
+    cached = zarr.open_group(str(Path(args.out) / 'shard_000000.zarr'), mode='r')
+    completion = json.loads((Path(args.invocation) / 'child_completed.json').read_text())
+    timings = completion['stage_seconds_new_shards']
+    assert all(np.isfinite(v) and v >= 0 for v in timings.values())
+    assert timings['total'] == pytest.approx(sum(v for k, v in timings.items() if k != 'total'))
+    assert timings['source_read'] > 0
+    assert timings['session_run'] > 0
+
+    class DirectReader:
+        def __init__(self, group, _rows):
+            self.group = group
+
+        def read(self, start, end):
+            return {k: np.asarray(self.group[k][start:end]) for k in tool.COLUMNS}
+
+    monkeypatch.setattr(tool, 'SourceBatchReader', DirectReader)
+    direct_session = Session(tmp_path)
+    monkeypatch.setattr(tool, 'open_teacher', lambda _a: direct_session)
+    args.out = str(tmp_path / 'direct')
+    Path(args.out).mkdir()
+    tool.produce(args)
+    direct = zarr.open_group(str(Path(args.out) / 'shard_000000.zarr'), mode='r')
+    assert len(cached_session.feeds) == len(direct_session.feeds) == 3
+    for a, b in zip(cached_session.feeds, direct_session.feeds, strict=True):
+        np.testing.assert_array_equal(a, b)
+    assert set(cached.array_keys()) == set(direct.array_keys())
+    for key in cached.array_keys():
+        np.testing.assert_array_equal(cached[key][:], direct[key][:])
+    assert cached.attrs['source_array_sha256'] == direct.attrs['source_array_sha256']
+    assert cached.attrs['array_sha256'] == direct.attrs['array_sha256']

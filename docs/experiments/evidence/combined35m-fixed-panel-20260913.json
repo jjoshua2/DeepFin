@@ -1,0 +1,308 @@
+{
+  "schema": 1,
+  "kind": "FIXED_PRETRAINING_COMBINED35M_PANEL_COMPLETE",
+  "completion": {
+    "status": "COMPLETE_FIXED_PANEL_NO_MODELS_OR_GAMES",
+    "started_unix": 1789272609.0428908,
+    "ended_unix": 1789272680.736185,
+    "plan_sha256": "bf4f03e77cb6c440832b788c398d9c1254fcbe03f2e375ebfcb870d6bd90402c",
+    "panel_sha256": "14470ee9bcf5fdfc822bb19988941ecf4bbe2a1ea739d46487d3663b1735340c",
+    "rows": 256,
+    "games": 512,
+    "seed": 20260913,
+    "overlap": {
+      "normalized_endpoint_EPD": 0,
+      "exact_root_and_history": 0,
+      "old_panel_rows": 128,
+      "new_panel_rows": 256,
+      "filtering": "None; report overlap without resampling"
+    },
+    "runtime": {
+      "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+      "numpy": "1.26.2"
+    },
+    "book": {
+      "path": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+      "sha256": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c",
+      "stat": {
+        "st_dev": 2096,
+        "st_ino": 9044020,
+        "st_size": 9663653,
+        "st_mtime_ns": 1780003887951973399,
+        "st_ctime_ns": 1780003887951973399
+      },
+      "hash_scope": "Existing qualified book hash; no payload read in preparation. Actual approved generation checks hash before loading."
+    },
+    "source_pins": {
+      "/tmp/deepfin-ordered-arena-lookahead-runtime/scripts/arena_standard.py": "c7df9061d119f0f53de90b529a38a641b4fabce88f3eab9afb37a80f11cd6a96",
+      "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/selfplay/opening.py": "816f291f55f246ad9d8537a86d196e752c3994c93464f04657e5efc1bf17bac6",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/recipe_lookahead_adoption_v1/runtime_identity.json": "3197e5b8c54db34def8071f275b3a926160b86adae1b716240c17ba75df1ca1e",
+      "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/selfplay/__init__.py": "04044ea025dbea502a8f4bece3ed170b8d8699bbd62c34b4888bb04575317e68"
+    },
+    "extraction": {
+      "arena_function": "Exact AST FunctionDef load_paired_openings only, including annotations and body, from pinned file; no AST transformation",
+      "namespace": [
+        "Path",
+        "np",
+        "chess"
+      ],
+      "opening_module": "Exact pinned selfplay/opening.py loaded by file spec and registered as chess_anti_engine.selfplay.opening before calling function",
+      "reason": "selfplay/__init__.py imports manager and match; do not execute it. Existing opening.py uses stdlib/python-chess/NumPy on this book path; no torch/models required."
+    },
+    "torch_imported": false,
+    "max_rss_KiB": 498344
+  },
+  "actual_outer_seconds": 71.87235379219055,
+  "prior_failure": {
+    "elapsed_seconds": 1.582878828048706,
+    "stage": "arena import -> eval.puzzles -> torch libtorch_cpu mapping exceeded4GiBAS",
+    "panel_built": false,
+    "book_digest_checked_before_failure": true,
+    "reseeded": false
+  },
+  "shared_budget_seconds": 300,
+  "fresh_v2_bound_seconds": 298,
+  "construction": "Exact untouched AST FunctionDef from pinned arena source; exact opening module loaded directly to avoid package initializer Torch imports. Sampling algorithm/RNG/book unchanged.",
+  "overlap_scope": "Zero normalized endpoint EPD and exact root/history overlap with old128panel3c955d68 only; not all training/development positions or independent book distribution.",
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/plan.json": "bf4f03e77cb6c440832b788c398d9c1254fcbe03f2e375ebfcb870d6bd90402c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/command.json": "4abc6e809fd47c53b55d9a23824b681d43910bcbcda739df3e47d03026fd866c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/actual_launch.json": "e98a68549780f5193776b2921aa4a6c769bc4ab0e5c0777e17d43e49e6995ddb",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/actual_terminal.json": "e2da37ffb941b7befcbebfba385b17ca79d5a55a63f17a0e5cdd9d28ffa99461",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/completed.json": "53d2c8b2631baee2c91759291c6b707c1423f8fc015ea0c91e6c69105e258379",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/opening_panel.json": "14470ee9bcf5fdfc822bb19988941ecf4bbe2a1ea739d46487d3663b1735340c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/independent_review.json": "58bf07cee35800efcd491a1b2eec8d5fe071258c260443dec97dc2d3cb68a74c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/completed_review.json": "6b72d5ab51f83b01ac02af06782f7ee31f0a4402329af4b596bc83838676f9b4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v1/actual_terminal.json": "dd3ed5fc74940d53ab96b8223cb4e31a1b85236e56c6e027b903f7d4d6d58c40",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v1/generation.log": "d63ccfeb72fc5d6c94fdbb54e1b669a5858cbe75c07a84a909122e5255a4e249"
+  },
+  "completed_prospective": {
+    "status": "PASS_CORPUS_SET_PROSPECTIVE_NOT_TRAINING",
+    "manifest_sha256": "18830f7e403035cb8b0a2303d5c3877a792e7f3d28e894a2d1bd0680a49fcec6",
+    "rows": 35314577,
+    "seed": 101,
+    "batch_size": 512,
+    "arms": {
+      "source": {
+        "physical_plan": {
+          "mode": "game_epoch",
+          "rows_planned": 35314577,
+          "batches_planned": 68974,
+          "full_batches_planned": 68863,
+          "ragged_batches_planned": 111,
+          "min_batch_rows_planned": 511,
+          "shards": 4321,
+          "sources": 21,
+          "games": 182188,
+          "game_identity": "resolved_shard_parent+game_id",
+          "row_order": "seeded_shuffle_within_shard_game_segments",
+          "batch_size": 512,
+          "seed": 101,
+          "plan_sha256": "ca3922c459b321dd5e890f8b3e21f6fee6a24aa6c7f0d76653165616aeca67bd"
+        },
+        "canonical_plan_sha256": "ca3922c459b321dd5e890f8b3e21f6fee6a24aa6c7f0d76653165616aeca67bd",
+        "metadata_matches_source": true,
+        "training_completed": false
+      },
+      "B100": {
+        "physical_plan": {
+          "mode": "game_epoch",
+          "rows_planned": 35314577,
+          "batches_planned": 68974,
+          "full_batches_planned": 68863,
+          "ragged_batches_planned": 111,
+          "min_batch_rows_planned": 511,
+          "shards": 4321,
+          "sources": 21,
+          "games": 182188,
+          "game_identity": "resolved_shard_parent+game_id",
+          "row_order": "seeded_shuffle_within_shard_game_segments",
+          "batch_size": 512,
+          "seed": 101,
+          "plan_sha256": "2e7c431d6c34e9847e5b60eda16199334a9891f81db9edf6acb90b1d0f7c8c8a"
+        },
+        "canonical_plan_sha256": "ca3922c459b321dd5e890f8b3e21f6fee6a24aa6c7f0d76653165616aeca67bd",
+        "metadata_matches_source": true,
+        "training_completed": false
+      },
+      "V50": {
+        "physical_plan": {
+          "mode": "game_epoch",
+          "rows_planned": 35314577,
+          "batches_planned": 68974,
+          "full_batches_planned": 68863,
+          "ragged_batches_planned": 111,
+          "min_batch_rows_planned": 511,
+          "shards": 4321,
+          "sources": 21,
+          "games": 182188,
+          "game_identity": "resolved_shard_parent+game_id",
+          "row_order": "seeded_shuffle_within_shard_game_segments",
+          "batch_size": 512,
+          "seed": 101,
+          "plan_sha256": "16aef536a523ccd5acafaac6e1df0da24e7761893bac76578fd04e4196972480"
+        },
+        "canonical_plan_sha256": "ca3922c459b321dd5e890f8b3e21f6fee6a24aa6c7f0d76653165616aeca67bd",
+        "metadata_matches_source": true,
+        "training_completed": false
+      }
+    },
+    "runtime": {
+      "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+      "numpy": "1.26.2",
+      "torch": "2.11.0+cu128"
+    },
+    "proof": "Equal canonical planner records and full ordered game columns under the pinned sampler; row-offset equality is code-backed inference, not a realized training observation.",
+    "limits": [
+      "Producer/source qualification is inherited from pinned receipts, not repeated.",
+      "No feature/target read or full training admission; trainer history/value gates remain required.",
+      "Whole-game equivalence inherits the qualified generator contract and exact disjoint rosters; historical per-shard source-code attestation was not added."
+    ],
+    "elapsed_seconds": 382.72233486175537,
+    "refs": {
+      "manifest.draft.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/manifest.draft.json",
+        "sha256": "18830f7e403035cb8b0a2303d5c3877a792e7f3d28e894a2d1bd0680a49fcec6"
+      },
+      "prospective.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/prospective.json",
+        "sha256": "00c28c92a530eb56d5051bb3606ecff6516eb580f94325c8da7fd16ccd692bb9"
+      },
+      "actual_launch.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/actual_launch.json",
+        "sha256": "e4adc391cc4e161023925b78fb19e32ccada1ff8f47901a51f926ca573107e63"
+      },
+      "actual_terminal.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/actual_terminal.json",
+        "sha256": "484b535986ab834161ecc43fc7698cf44b43e10f315b920c4bf9dc1c70d9931e"
+      },
+      "independent_implementation_review.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/independent_implementation_review.json",
+        "sha256": "c9282056bec1e54a45ef3a79f4336798e90321d18918b474119e545289b23f1f"
+      },
+      "independent_completed_review.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/independent_completed_review.json",
+        "sha256": "43a7ea18857a3f3e2ab3302397a00b215fbb58e8b299bf8c063a997fbcc62abe"
+      }
+    }
+  },
+  "selected_subset_amendment": {
+    "status": "PASS_SELECTED_COMPLETE_UNION_FROZEN_PREFLIGHT",
+    "extra_cpu_seconds": 1200,
+    "allow_partial_corpus": true,
+    "allow_leak": false,
+    "allow_mixed_history": false,
+    "requirement": "Every selected G10 derivation finalized True; original corpus not partial; no attributes rewritten. Global raw generators may continue. Both arms passed actual frozen preflight.",
+    "refs": {
+      "run.py": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v1/run.py",
+        "sha256": "759838ad8b2fd73a8ec33f1901924241d29cbc3824b17b3f357838bb1079b85e"
+      },
+      "plan.final.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v1/plan.final.json",
+        "sha256": "d80fe3741dce3b3c8f509416c6b29cc15c1ec5c63cf34f7dd51600d760789bce"
+      },
+      "commands.final.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v1/commands.final.json",
+        "sha256": "2f21692d5aa270c3189c4ba23e849055bca47c2bf6f17d0dee58aff2b524edcd"
+      },
+      "independent_final_review.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v1/independent_final_review.json",
+        "sha256": "31fda5318ca1ba2111339aa74d112b78e1e776bef4371f3e05e51fe7354076bb"
+      }
+    }
+  },
+  "arena_seed_clarification": {
+    "panel_generation_seed": 20260913,
+    "arena_seed": 20260913,
+    "method": "Existing pinned book sampler regenerates panel using fresh default_rng(seed); no panel-supplied alternate method."
+  },
+  "selected_subset_completed": {
+    "status": "PASS_SELECTED_COMPLETE_UNION_FROZEN_PREFLIGHT",
+    "schema": 1,
+    "flags": {
+      "allow_leak": false,
+      "allow_mixed_history": false,
+      "allow_partial_corpus": true
+    },
+    "coverage": {
+      "B100": {
+        "search_wdl": {
+          "labelled_rows": 35314577,
+          "rows": 35314577
+        },
+        "sf_wdl": {
+          "labelled_rows": 0,
+          "rows": 35314577
+        }
+      },
+      "V50": {
+        "search_wdl": {
+          "labelled_rows": 35314577,
+          "rows": 35314577
+        },
+        "sf_wdl": {
+          "labelled_rows": 0,
+          "rows": 35314577
+        }
+      }
+    },
+    "elapsed_seconds": 87.67463326454163,
+    "scope": "Frozen launch metadata and presence-flag checks only; no features/value arrays/models/staging/training. Existing selected-subset opt-in only; actual trainer repeats its own gates.",
+    "outer_elapsed_seconds": 88.66774606704712,
+    "max_rss_kib": 1045604,
+    "swaps": 0,
+    "each_arm": {
+      "selected_shards": 4321,
+      "g10_partial_stamps": 2012,
+      "all_selected_g10_finalized": true,
+      "original_partial": false,
+      "required_search_wdl_rows": 35314577,
+      "optional_sf_wdl_rows": 0
+    },
+    "prior_failed_seconds": 65.82046,
+    "total_actual_seconds": 154.48820606704712,
+    "refs": {
+      "qualification.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v2/qualification.json",
+        "sha256": "fb72304dccd0cb277d3fcc80b57287964723760fcca5ddcd0bbc6b917039d8b7"
+      },
+      "actual_terminal.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v2/actual_terminal.json",
+        "sha256": "41404c665d169c1a7b3fa4e4227819f3aa4181126647b68a71259c5fe94b0384"
+      },
+      "actual_launch.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v2/actual_launch.json",
+        "sha256": "65e4cc14b5f1c271dd8deb8e1f97b2f8c90e49ad81d84b4fd4b0586a90d4aa63"
+      },
+      "resources.txt": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v2/resources.txt",
+        "sha256": "5394d24e1212b4beda3e7fc215d7ea51801f37457ecb0b7cce2ebf571fb0722e"
+      },
+      "run.py": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v2/run.py",
+        "sha256": "cf7f6d48d083c0778504bd52acd4e32cbe82f54b5d30abf3b196afffeace96b4"
+      },
+      "plan.final.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v2/plan.final.json",
+        "sha256": "33589849943493f043058d044d341241d9dcf28fb27c73e043feaeb5afc83dcb"
+      },
+      "commands.final.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v2/commands.final.json",
+        "sha256": "d97718e88c5723d701f148130032149ca60d5c1fcff161780489a6f71d5c556a"
+      },
+      "prior_failure.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v2/prior_failure.json",
+        "sha256": "1f219c94bc1fb3f91827ac404968ac8287572e84104aaf5e09e20c7f6c78ca5e"
+      },
+      "independent_review.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v2/independent_review.json",
+        "sha256": "b9b12c8985963e2c5f06a9af6aecd9f771cbd28e8703fa133cce14e9a3c243be"
+      },
+      "independent_completed_review.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v2/independent_completed_review.json",
+        "sha256": "47d8ee837a709cead0872668115f55c9ed4b703f0b159aa0dd337ddc480bc8b9"
+      }
+    }
+  }
+}

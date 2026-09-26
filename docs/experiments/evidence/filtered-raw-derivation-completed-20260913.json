@@ -1,0 +1,180 @@
+{
+  "status": "COMPLETE_AUDITED_BASELINE_DERIVATION_NOT_TRAINING",
+  "outer_terminal": {
+    "returncode": 0,
+    "ended_unix": 1789329639.9487894,
+    "elapsed_seconds": 2016.5003113746643
+  },
+  "cohorts": [
+    {
+      "source_id": "run06_g10",
+      "summary": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run06_g10/derived/derive_targets_summary.json",
+        "sha256": "d3c1ef575d14265378d7ca9f9a3e237158000b065c4a530986d6d283e5d7b441"
+      },
+      "source_rows": 1013011,
+      "rows_written": 1006190,
+      "output_shards": 123,
+      "baseline_exclusions": {
+        "eligible_rows": 1006190,
+        "excluded_rows": 22,
+        "no_result_rows": 6799,
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/run06_g10.exclusions.json",
+        "physical_rows": 1013011,
+        "schema": 1,
+        "scope": "audited required baseline failures only; no-result unchanged",
+        "sha256": "6ed3424ddc62a5ac822ef01ac945c15e0ed50a8b9cca8faa6fce82af8ec1c665"
+      },
+      "scheme": {
+        "canonical": "uniform-d9",
+        "deep_depth": null,
+        "depth": 9,
+        "kind": "uniform",
+        "nodes": null,
+        "policy_observation": "phase0",
+        "top_k": null,
+        "value_depth": null,
+        "value_observation": "latest-phase",
+        "value_source": "deepest_phase_covering"
+      },
+      "row_provenance": {
+        "identity": "source directory/config, raw shard and physical row; original and stored history input keys",
+        "path_in_shard": "row_provenance.npz",
+        "schema": 1
+      },
+      "input_key_verified": 1006190,
+      "policy_support_lost_to_float16": 14316280,
+      "process": {
+        "source_id": "run06_g10",
+        "exit_code": 0,
+        "process_complete": true,
+        "complete": false,
+        "stage_seconds": 1348.1939564569911,
+        "started_unix": 1789327623.5418484,
+        "ended_unix": 1789328971.735804,
+        "cwd": "/tmp/deepfin-audited-row-exclusions"
+      }
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "summary": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run07_g10_companion4/derived/derive_targets_summary.json",
+        "sha256": "15869433ef066e61ee1114329a9a49a9c75177d5a09913decd2d2cd85783f3b2"
+      },
+      "source_rows": 514142,
+      "rows_written": 511735,
+      "output_shards": 63,
+      "baseline_exclusions": {
+        "eligible_rows": 511735,
+        "excluded_rows": 8,
+        "no_result_rows": 2399,
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/run07_g10_companion4.exclusions.json",
+        "physical_rows": 514142,
+        "schema": 1,
+        "scope": "audited required baseline failures only; no-result unchanged",
+        "sha256": "c9e183a4389106206c46fd166452aadaf80edbe83a10c79be6c33af1f5c3cb4a"
+      },
+      "scheme": {
+        "canonical": "uniform-d9",
+        "deep_depth": null,
+        "depth": 9,
+        "kind": "uniform",
+        "nodes": null,
+        "policy_observation": "phase0",
+        "top_k": null,
+        "value_depth": null,
+        "value_observation": "latest-phase",
+        "value_source": "deepest_phase_covering"
+      },
+      "row_provenance": {
+        "identity": "source directory/config, raw shard and physical row; original and stored history input keys",
+        "path_in_shard": "row_provenance.npz",
+        "schema": 1
+      },
+      "input_key_verified": 511735,
+      "policy_support_lost_to_float16": 7301413,
+      "process": {
+        "source_id": "run07_g10_companion4",
+        "exit_code": 0,
+        "process_complete": true,
+        "complete": false,
+        "stage_seconds": 667.3763181920076,
+        "started_unix": 1789328971.7385294,
+        "ended_unix": 1789329639.114847,
+        "cwd": "/tmp/deepfin-audited-row-exclusions"
+      }
+    }
+  ],
+  "total_rows_written": 1517925,
+  "total_output_shards": 186,
+  "references": {
+    "complete.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/complete.json",
+      "sha256": "01147da55e55b3ed635b9b2fb6a8b574bcbf9b3be6c9df3a99c9eac5af629b08"
+    },
+    "outer_terminal.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/outer_terminal.json",
+      "sha256": "acf5f68142829764096675ad9c90eb02dee70358cd2307632ed426988b0d4d9e"
+    },
+    "plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/plan.json",
+      "sha256": "53a99a8c0a5164d9298663a76fdb8c4071154ad7f073526216d9a9300a9a72c7"
+    },
+    "run06_g10/summary": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run06_g10/derived/derive_targets_summary.json",
+      "sha256": "d3c1ef575d14265378d7ca9f9a3e237158000b065c4a530986d6d283e5d7b441"
+    },
+    "run07_g10_companion4/summary": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run07_g10_companion4/derived/derive_targets_summary.json",
+      "sha256": "15869433ef066e61ee1114329a9a49a9c75177d5a09913decd2d2cd85783f3b2"
+    },
+    "completed_metadata_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/completed_metadata_review.json",
+      "sha256": "85d0249a41ad57a8b115e49d6f4afe347617906453f4f07c3a1ccd3419b5fb10"
+    }
+  },
+  "limits": [
+    "Derived eligibility/provenance only; no BT4 adapter or training admission.",
+    "Process complete:false is saved startup field; actual process_complete:true/exit0 is terminal state.",
+    "No raw/source/array/model rescan performed for publication."
+  ],
+  "completed_metadata_review": {
+    "status": "PASS_COMPACT_COMPLETED_DERIVATION_REVIEW",
+    "complete": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/complete.json",
+      "sha256": "01147da55e55b3ed635b9b2fb6a8b574bcbf9b3be6c9df3a99c9eac5af629b08"
+    },
+    "sources": [
+      {
+        "source_id": "run06_g10",
+        "summary": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run06_g10/derived/derive_targets_summary.json",
+          "sha256": "d3c1ef575d14265378d7ca9f9a3e237158000b065c4a530986d6d283e5d7b441"
+        },
+        "physical_rows": 1013011,
+        "eligible_rows": 1006190,
+        "excluded_rows": 22,
+        "no_result_rows": 6799,
+        "derived_shards": 123,
+        "final_shard_rows": 6766,
+        "provenance_scope": "All saved summary proof records/counts checked; no NPZ or arrays reread. Existing writer and upcoming adapter enforce actual alignment."
+      },
+      {
+        "source_id": "run07_g10_companion4",
+        "summary": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run07_g10_companion4/derived/derive_targets_summary.json",
+          "sha256": "15869433ef066e61ee1114329a9a49a9c75177d5a09913decd2d2cd85783f3b2"
+        },
+        "physical_rows": 514142,
+        "eligible_rows": 511735,
+        "excluded_rows": 8,
+        "no_result_rows": 2399,
+        "derived_shards": 63,
+        "final_shard_rows": 3831,
+        "provenance_scope": "All saved summary proof records/counts checked; no NPZ or arrays reread. Existing writer and upcoming adapter enforce actual alignment."
+      }
+    ],
+    "rows": 1517925,
+    "scope": "No source payload, derived arrays, or provenance payload repeated; no training admission."
+  }
+}

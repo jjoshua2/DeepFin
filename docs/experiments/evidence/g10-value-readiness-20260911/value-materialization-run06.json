@@ -1,0 +1,61 @@
+{
+  "status": "COMPLETE_INTEGRATION_NOT_TRAINING_ADMISSION",
+  "rows": 262079,
+  "shards": 32,
+  "sf_weight": 0.5,
+  "bt4_weight": 0.5,
+  "fixed_policy": "global BT4 alpha1 teacherT0.5",
+  "whole_seconds": 272.10846853256226,
+  "different_paired_WDL_shard_hashes": 32,
+  "changed_rows_counter_scope": "Each product versus original B100; not pairwise row count",
+  "training_admission": false,
+  "stages": [
+    {
+      "name": "B100",
+      "returncode": 0,
+      "summary_sha256": "ee5491701674b821bcb65deecaecd1b780e8cebaa444759c4829a8f9f60bc5e4",
+      "derive_summary_sha256": "57ce6e73fcb78fc81ceef34a5bf37e6449beae787acce2132acfca20d6178e83",
+      "resources": {
+        "seconds": 104.01,
+        "max_rss_kib": 1005600,
+        "exit_code": 0
+      }
+    },
+    {
+      "name": "control",
+      "returncode": 0,
+      "summary_sha256": "4b69ec356662bdd26a5973bd3cea6f640796d7e7ead75d786bf9617731477f17",
+      "derive_summary_sha256": "16ee167a80c63266e9ac90e0706c09399dfff39165a1c808da923219cf741f78",
+      "resources": {
+        "seconds": 65.41,
+        "max_rss_kib": 394652,
+        "exit_code": 0
+      }
+    },
+    {
+      "name": "adaptive",
+      "returncode": 0,
+      "summary_sha256": "d7a9f4a2b5aaadccf3e5577f1dffe3a146f94153194991daa7fefae0f42b9df4",
+      "derive_summary_sha256": "b76ade412193a8a57ffd0c2dd5189b25934f5c9a56266e40ed91a15939d2707a",
+      "resources": {
+        "seconds": 94.08,
+        "max_rss_kib": 470732,
+        "exit_code": 0
+      }
+    }
+  ],
+  "pins": {
+    "plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/plan.json",
+      "sha256": "7adbd7c7f0cbbe7620ca7c84d89f9dea4bb1b3608e0b4d99ff0783ab6bb15c33"
+    },
+    "completed_receipt": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/status.json",
+      "sha256": "8c1a540ef8e8283e9b0e64162bd3522637fa6ce640efc232f008f2b62cdd6e77"
+    },
+    "independent_completed_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/completed_review.json",
+      "sha256": "f406a5ad629cb41659be11ef9b7ee766324fda14470bcfff48c5982a8731d54b"
+    }
+  }
+}

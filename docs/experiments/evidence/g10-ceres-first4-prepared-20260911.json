@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "status": "PREPARED_NOT_LAUNCHED",
+  "rows": 32768,
+  "shards": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "fixed32_calls": 1024,
+  "model_profile": "ceres-c3-fixed32-compact-v2",
+  "sample_scope": "Convenience prefix of one qualified run06 increment, not representative all G10",
+  "inclusive_seconds": 1200,
+  "policy_diagnostic_executed": false,
+  "three_teacher_value_join_available": false,
+  "pins": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/plan.json": "391af44c33683c31ec55eda1e5fa23834c08b8114f309ef067bb19d7fdf72a3b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/driver.plan.json": "01056ebba89e71aabe2a62b50ded096767cd31c0e95d93a7ed282ff531a2ceaf",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/run_chunk.py": "9aadfdb759b31753b4f6c2861d6d26121f60e9943d2c3ddd626348ceeacb4575",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/wsl_mapped_libraries.py": "4c0f901280534212bdf5c16e4c8bb0760328dd78cad68ccc6fd87d88dd312528",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/preparation.json": "4ad8bfd3224319b5db60fb1bc2ecc96f5b43f81d3899b3605a6ac776f8ebe6f7",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/independent_review.json": "3ff35ebcd53ffbafa2872392ede93977bb0f47ece488e26ee8d484f91847fa3e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/command.prepared.txt": "0a70c7cad77c01be4202b65edfa1f232ec9a4fdb2f4d64815d827a1102d5a813"
+  }
+}

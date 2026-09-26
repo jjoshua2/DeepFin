@@ -1,0 +1,211 @@
+# Bounded raw policy and native-WDL scale labels
+
+Status: the bounded collector completed with exit 0 on **2026-09-13 at 18:34:10 UTC**, recording **184 raw shards / 1,527,153 rows** in **2638.682 seconds** (43 minutes 58.682 seconds). The 12-group allocation ended; these labels are not yet derived or training-admitted. The original launch snapshot is retained below.
+
+## Allocation and purpose
+
+Prepare useful labels toward the larger corpus while the [registered V100 target rewrite](2026-09-13-native-bt4-value-endpoint.md) runs. This is an operational use of the existing qualified BT4 collector, not another teacher recipe or strength experiment. A metadata snapshot found **1,477,290 closed raw rows  / 178 shards** without sidecar receipts: 979,788 / 118 in run06 and 497,502 / 60 in run07. Their exact raw-name intersections with the accepted 20 G10 cohort rosters are empty within each source namespace. These are raw counts, not retained derived rows.
+
+The allocation is **7200 seconds total, at most 192 newly recorded shard receipts, at most 16 per group**, one group at a time. Newly closed shards may enter the selection after the snapshot; actual group receipts establish coverage. There is no automatic extension. The first actual group has 1800 seconds including cleanup:1740 seconds for the collector and the existing cleanup margin. Later group entry uses its measured elapsed time per newly recorded shard, multiplied by the next count and 1.5, plus 60 seconds; teacher/batch settings remain fixed. The outer timeout is 7160 seconds TERM plus 40 seconds KILL, covering the inherited 30+5-second cleanup.
+
+## Unchanged collector and resource controls
+
+The runtime remains `/tmp/deepfin-bt4-label-runtime-pr580-overlay` at `8fd3940e60530aebdd7bd7f398cd04eb2679af1d`. One inference collects the original legal BT4 policy and native `/output/wdl` probabilities, batch 128, two threads and an 8 GiB ORT GPU allowance. CPU affinity is 2,3; available host RAM must be 48 GiB at startup and 32 GiB during collection, with 150 GiB free SSD. Sampled headroom and the ORT allowance are not hard total-RSS/device-memory limits.
+
+The saved old bank contains 35,436,868 policy-only rows; this operation does **not** backfill them. Existing receipts must remain identical. Newly recorded coverage can include the unchanged collector's recovery of a published sidecar whose append receipt was missing, so receipt counts do not necessarily mean fresh inference. No `--verify-all` payload sweep is requested.
+
+The fresh operator holds the old driver's coordination lock and checks actual same-user processes before collection; the recorded ownership check found no matching old driver or producer. The collector still enforces its writer and GPU leases. Old pause markers and PID files remain intact. A fresh parent-owned `STOP.request` yields at the next group boundary, with 15 seconds between groups to give waiting training priority. Hard faults clean the entire owned collector process group. A `.writing` remainder is preserved and refused on a later restart, requiring separate review.
+
+## Actual launch evidence
+
+The outer launch recorded 88,090,669,056 bytes available RAM and 214,444,892,160 bytes free disk. The operator started at 1789321811.9766617; the first collector group started at 1789321812.2052217, PID/PGID 411322, with the reviewed exact argument vector and maximum 16 shards. These are launch samples, not peak-memory or completed-throughput measurements. No active log, game bank, model or corpus payload was read for this publication.
+
+Parent source/command review and independent review passed. Independent review `74ce1320987521e09924488519e646eaf6ebccdf54d52bb9a3a32128e9df67a1` includes the corrected outer cleanup grace. The plan is `bdca27264c2ca8d86f56b4b28a18c4a20504b30a16356a7ae024debdf72ef287`; command is `2e9964cc4a00151758a8a055cdf40f9e959f35156df14e8dc67a8ed1c83c3eca`.
+
+[Compact evidence](evidence/2026-09-13-bounded-raw-scale-label-launch.json) preserves actual launch, ownership, first-group argv and original snapshot references. Later derivation and raw-to-derived identity qualification remain necessary before these labels can join a training corpus. Existing accepted G10 native coverage and frozen V100 implementation are unchanged.
+
+## Actual bounded completion
+
+Execution 55179 and parent observer 609 are closed with exit 0. All 12 collector groups completed successfully: the first eleven recorded 16 shards each and the last recorded 8, despite requesting up to 16. Every group remained below its 1740-second cap; the first took 232.444 seconds. The whole outer invocation took 2638.682 seconds of the allocated 7200.
+
+| Source namespace | Newly recorded shards | Raw rows |
+| --- | ---: | ---: |
+| run06_g10 | 122 | 1,013,011 |
+| run07_g10_companion4 | 62 | 514,142 |
+| Total | 184 | 1,527,153 |
+
+The saved completion reason is literally `MAX_NEW_SHARDS`, but **the 192-shard cap was not reached**. The unchanged operator initializes that reason before its fixed 12-iteration loop and retains it when the loop ends naturally. The observed stopping condition was exhaustion of those 12 group slots, with a nonempty final group of 8. The original receipt remains immutable; this correction does not establish that current generation is caught up or show another collection run is needed.
+
+The independent compact review reconciled every group receipt with the final list: all 184 `(source_id, source_shard)` identities are unique, and group/source/whole row sums match. Each receipt binds the qualified BT4 model and remapping revision, source and input identity digests, legal policy output, and native float32 WDL probabilities in win/draw/loss order from the side-to-move perspective. Recorded publication times fall within this allocation. Existing receipt stability checks remained enabled. No sidecar arrays, raw payloads, models or inference were reread for the review.
+
+Successful completion passed the frozen operator's resource guards; the startup samples above remain the available resource evidence, not measured peak RAM or GPU usage. This adds raw label coverage only: `training_admitted` and `backfill` are both false. The earlier snapshot's disjointness observation applies to that snapshot, not automatically to all later source closures. No further collection is queued by this record, and source generation and unrelated work remain unchanged.
+
+[Completion evidence](evidence/2026-09-13-bounded-raw-scale-label-completed.json) retains exact terminal, final/group receipt and independent-review pins, the saved reason string and its corrected interpretation. Parent and independent compact checks agree on the counts; neither repeated payload validation.
+
+## Actual baseline eligibility audit launched
+
+At **18:45:38.569 UTC**, the parent launched the receipt-selected CPU audit of
+the exact **184 shards / 1,527,153 rows** completed above. The tool merged in
+[PR #728](https://github.com/jjoshua2/DeepFin/pull/728) checks source hashes, row
+identity and the existing phase-zero uniform-d9 policy and consumed composite-d9
+value eligibility rules. It does not repair rows, select adaptive labels or
+produce training targets. See the [tool contract](../toolchains.md#receipt-selected-raw-baseline-eligibility).
+
+The frozen runtime is `1cacea59dff150673e41cfe0dd9b6cfb66edf6da`. The command
+uses CPUs 4,5, two numeric threads and a hidden GPU, with an **1800-second whole
+budget** (1740-second internal deadline; 1770-second TERM plus 30-second KILL).
+It requires 48 GiB available RAM at startup, 32 GiB during sampled checks,
+150 GiB free disk and at most 512 MiB of rejection diagnostics; no virtual-memory
+cap is imposed. The start sample recorded 88,646,012,928 bytes available RAM.
+
+Parent review and independent source/execution review passed before launch.
+[Compact launch evidence](evidence/bounded-ceres-and-raw-audit-launched-20260913.json)
+binds the actual start, exact selected manifest, command and reviews. This is a
+launch snapshot: preliminary counters are intentionally not a final eligibility
+result. Failure or a completed progress prefix would not admit a training corpus.
+
+## Completed baseline eligibility audit
+
+The CPU audit completed with **exit 0 in 1300.442 seconds**, within its
+1800-second budget. All 184 selected raw shards and 1,527,153 physical rows were
+accounted for under the frozen collection and source identities.
+
+| Classification | Rows |
+| --- | ---: |
+| Eligible under the existing baseline rules | 1,517,925 |
+| No result, following the existing drop rule | 9,198 |
+| Additional required baseline exclusions | 30 |
+| Physical total | 1,527,153 |
+
+All 30 result-bearing failures have invalid **phase-zero legal-move support**;
+the composite-value validator also rejects those same rows because it requires
+valid phase-zero support. Policy and value counts therefore overlap rather than
+identify 60 failures. These compact diagnostics do not determine whether the
+underlying move-list defect was duplication, an illegal move or missing/replaced
+support. They do not establish a later-phase-only failure.
+
+The 30 rows span 13 shards (22 rows from run06 and 8 from run07). Dropping entire
+affected shards would discard **105,839 otherwise eligible rows**, leaving
+1,412,086 instead of 1,517,925. The next implementation therefore targets exact
+reviewed row exclusions, separately preserving the existing no-result rule. Its
+identities must include source namespace, shard and physical row, with actual
+derivation identity checks; any unlisted defect remains fatal. No repair,
+derivation or training admission has occurred in this result.
+
+Independent compact review reconciled all shard counts and 9,228 unique
+diagnostic identities. Saved diagnostics occupy 5,178,177 bytes, below the
+512-MiB cap. [Completion evidence](evidence/ceres-prefix-and-raw-audit-completed-20260913.json)
+preserves the exact report and review identities, the 30 required exclusions and
+their limits. Publication did not repeat raw payload checks or the audit.
+
+## Exact filtered derivation launched
+
+At **19:27:03.448 UTC**, the parent launched the reviewed row-filtered derivation
+of the same 184 audited raw shards. The implementation merged in
+[PR #731](https://github.com/jjoshua2/DeepFin/pull/731) binds the 30 exact
+additional exclusions to audited source/shard/physical-row identities and retains
+the existing 9,198 no-result drops. Expected output is **1,517,925 rows**:
+1,006,190 from run06 and 511,735 from run07. These are expectations, not completed
+derivation counts. Policy and value selectors remain unchanged; no scores are
+repaired and no unlisted defect is silently skipped.
+
+The frozen runtime `a22893d1434d05365a33a95c846d3b8bf47b1eed` processes run06
+then run07 sequentially, one worker per source, on CPUs 8,9 with two numeric
+threads, nice 19 and a hidden GPU. The **three-hour inclusive allocation** uses
+one shared deadline and owned process-group cleanup. Available RAM must be
+48 GiB at startup and 32 GiB during sampled checks, with 150 GiB disk reserve
+and an 8-GiB aggregate allocated-output threshold sampled every 30 seconds.
+Sampling thresholds are not hard quotas. The start recorded 88,641,429,504 bytes
+available RAM and 189,193,846,784 bytes free disk.
+
+Before launch, review caught and fixed a restart-freshness issue: existing or
+symlinked execution receipts and stage directories are refused before writing
+the start record. Parent and independent final preparation reviews passed.
+Partial evidence is retained on failure; completing only the first source does
+not establish complete two-source derivation. Actual output qualification and
+exact retained-row alignment in downstream teacher joins remain necessary.
+
+[Launch evidence](evidence/filtered-raw-derivation-launched-20260913.json) retains
+the immutable start, command, plan, runtime and review pins. No completed output,
+adapter qualification or training admission is claimed here.
+
+## Completed exact filtered derivation
+
+Both sequential sources completed with **exit 0**. The outer execution took
+**2016.500 seconds** (33 minutes 37 seconds), within its three-hour allocation.
+Actual retained rows equal the audited expectation: **1,517,925 rows**, written
+to **186 derived shards**. Raw and derived shard counts differ because output
+is repacked at 8192 rows per shard.
+
+| Source | Physical raw rows | No-result drops | Exact audited exclusions | Derived rows | Derived shards |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| run06 | 1,013,011 | 6,799 | 22 | 1,006,190 | 123 |
+| run07 | 514,142 | 2,399 | 8 | 511,735 | 63 |
+| Total | 1,527,153 | 9,198 | 30 | 1,517,925 | 186 |
+
+The two source stages took 1348.194 and 667.376 seconds. This is actual elapsed
+execution, not a controlled speedup or peak-memory comparison. The recorded
+selectors remain uniform-d9 phase-zero policy and the existing latest-phase
+composite value rule, with temperature 0.0005 and zero requested policy floor.
+All retained rows have verified input keys; the outputs retain source directory
+and configuration, raw shard and physical row, plus original/stored history
+input keys in per-shard provenance. The 105,839 eligible rows that a whole-shard
+exclusion would have discarded are preserved by the exact row filter.
+
+The inherited sharp-SF target storage reports 21,617,693 positive move entries
+underflowing to zero in float16. This counts move entries, not excluded rows;
+no new clamp or target repair was applied by the row filter.
+
+[Completion evidence](evidence/filtered-raw-derivation-completed-20260913.json)
+records the actual terminal and both summary pins. This completes derived
+baseline eligibility and provenance only. Matching these filtered/permuted rows
+to the existing raw BT4 policy/native-WDL banks still requires an exact adapter
+and consumer qualification; no BT4 adapter or training admission is claimed.
+
+
+## Joint policy and native-WDL adapter launched
+
+After the Ceres100 archive was verified and its exact 2,309 cold shard directories reclaimed, the parent launched the existing joint raw-sidecar adapter at **2026-09-13T21:40:32.013006+00:00** (exec **90211**, sole observer **804**). The adapter supervisor recorded its start at **2026-09-13T21:40:32.091139+00:00**. A saved first-stage receipt records the exact run06 command and child PID **525514**. This is a launch observation; neither source is claimed complete here.
+
+The two sequential targets are **1,006,190 run06 rows / 123 derived shards** and **511,735 run07 rows / 63 derived shards**, totaling **1,517,925 rows / 186 shards**. The adapter matches retained rows through their source-qualified raw identities and physical-row provenance to already saved BT4 policy and native WDL labels. It performs **no new teacher inference or model evaluation**, applies no new target mixture, and does not confer training admission. The exact 30 audited exclusions and 9,198 no-result drops remain those of the completed derivation above.
+
+The frozen plan is `a0ac417b…`, command `3f7825a6…`, using runtime `a22893d…`. Independent source/manifest review `6e6f4309…` and operator review `8e76…` passed before launch. The plan's historical “deferred” status describes preparation; the subsequent immutable launch receipt records that the resource condition was met. Ceres100 reclamation reported **14,647,095,296 bytes** of concurrent filesystem-free increase; this differs from its separately measured allocated shard sum and is not isolated attribution.
+
+The allocation is **three hours inclusive**, CPUs **8–9**, two numerical threads, nice 19, hidden GPU, **48 GiB available RAM at startup / 32 GiB at running checks**, and a **150-GiB running disk floor**. Startup requires **170 GiB free**: 150 GiB plus the **16-GiB aggregate output allowance** and 4 GiB for other writers. The launched supervisor admitted these startup guards. No address-space cap is imposed; the RAM checks are not an aggregate memory guarantee. The raw-index allowance is 1 GiB with only two raw indexes cached, while the whole-output cap remains separate. Deadline, STOP and owned-process cleanup stay in effect; there is no automatic retry.
+
+[Compact launch evidence](evidence/raw-joint-adapter-launched-20260913.json) pins the two manifests, saved source-receipt indexes, reviews and actual launch observation. The historical policy-only adapter timing motivated the bound; it is not a measured joint-adapter throughput result. Exact joint-output checks and any later consumer/training qualification remain pending.
+
+
+## Joint adapter completed
+
+The joint adapter finished with **outer exit 0 in 2061.148 seconds**, ending at **2026-09-13T22:14:53.161476+00:00**. Both sequential stages completed: **1,006,190 run06 rows / 123 shards** and **511,735 run07 rows / 63 shards**, totaling **1,517,925 rows / 186 derived shards**. Saved process commands and observed argv match the frozen plan; the stage times were **1366.126** and **694.587 seconds**.
+
+Both adapted summaries retain the saved BT4 policy and native float32 WDL probability contract, with win/draw/loss order and side-to-move perspective. The actual source-qualified records match all **184 raw-shard receipts**. Native adaptation records **zero new teacher evaluations**. The policy summary’s inherited `teacher_evaluations_per_position=1` describes the original collection, not new adapter inference. No new model evaluation or target mixture was performed.
+
+Independent compact review `3af2e4d8…` passed. This review checked saved counts, commands, summary/profile bindings and raw receipt identities; it did not repeat payload, NPZ, model or output-tree scans. Actual physical-row matching was performed by the completed adapter. The result is a completed reusable policy/native-WDL bank, **not training admission or a strength result**. A subsequent B100 materialization must still apply its existing consumer checks.
+
+[Compact completion evidence](evidence/raw-adapter-completed-b100-handoff-20260913.json) preserves both stage receipts, exact summary pins and independent review.
+
+
+## B100 materialization: pre-writer failure and corrected launch
+
+The first B100 outer invocation failed in **0.032895 seconds with exit 1**: `taskset` rejected the malformed `-c8,9` option before the writer or execution state began. That original failure and log remain preserved. It is a launch-command failure, not evidence of an invalid corpus.
+
+The correction supplies `-c 8,9`. One existing non-executing metadata validation returned **exit 0 / VALIDATED_NOT_EXECUTED**; it did not run the writer or reread labels. Independent retry review `1be1c0fd…` passed. The corrected command `bef4f784…` launched at **2026-09-13T22:29:13.328918+00:00** (parent exec **97105**, sole observer **822**). The saved supervisor start is **2026-09-13T22:29:15.018724+00:00**, with first-stage run06 PID **539088**. The retry retains the **original absolute deadline 2026-09-13T23:26:15.494126+00:00**; it does not receive a fresh one-hour budget. At this publication snapshot, B100 materialization is **launched, not completed**.
+
+The frozen plan `5027eb3b…` uses the existing global B100 policy recipe: BT4 weight **1.0**, temperature **0.5**, for the same **1,517,925 rows / 186 shards**. SF-derived values remain unchanged, and the separately adapted native-WDL banks remain preserved. This stage performs no new inference or value mixture. The operating runtime remains `6b91f587…`.
+
+Bounds retain CPUs **8–9**, two threads, nice 19 and idle I/O, hidden GPU, **4-GiB address space**, **4-GiB aggregate allocated output**, **48/32-GiB startup/running available RAM**, and **158/150-GiB startup/running free disk**. Startup includes 4 GiB for outputs and 4 GiB for other writers. The original one-hour allocation includes a 300-second qualification/cleanup reserve; existing deadline, STOP and owned-process cleanup remain in effect. No B100 completion, downstream consumer admission or training result is claimed.
+
+
+## B100 materialization completed; physical source disjointness established
+
+The corrected B100 invocation completed with **exit 0 in 420.809 seconds**, ending at **2026-09-13T22:36:14.137501+00:00**. Its supervisor recorded **418.500 seconds** and `COMPLETE_ALL2_B100_POLICY_NOT_VALUE_OR_TRAINING_ADMISSION`. Both source products completed: **1,006,190 run06 rows / 123 shards** and **511,735 run07 rows / 63 shards**, totaling **1,517,925 rows / 186 shards**. The earlier 0.032895-second pre-writer taskset failure remains preserved; the successful retry finished within the original deadline.
+
+Independent completion review `6b087e72…` passed against the actual commands, recipe and summary bindings. The global B100 weight **1.0** / temperature **0.5** policy recipe preserves SF-derived values and the 16 non-policy arrays by the unchanged writer’s copy-and-rewrite construction. This compact review did not independently rehash those payloads. The separately adapted native-WDL banks remain preserved, with no new teacher evaluation.
+
+Metadata review `b524ecf7…` establishes **1,517,925 additional source-qualified physical rows** relative to the existing **35,314,577-row** selection. The new **184 raw source/config-qualified shards** intersect **zero** of the **1,990 raw shards** in its 20 G10 cohort rosters; the original 18,910,484 rows have the separately qualified run03 lineage. Retained subsets of these disjoint raw shards cannot share a source-qualified physical row. This uses the saved source identities and qualified roster, retaining the historical source-SHA limitation; it does not invent a new historical per-shard attestation.
+
+The potential combined count is **36,832,502 rows if subsequently admitted**. Physical-source disjointness does not establish unique chess positions, unique histories, independent games or statistical independence. No payload or game-column scan was repeated. The completed materialization and metadata disjointness proof do **not** confer union/training admission, launch a training run or demonstrate strength.
+
+[Compact completion and disjointness evidence](evidence/filtered-b100-completed-20260913.json) records the actual terminal, output summary bindings and both review identities. The next status is potential expansion eligibility with consumer/training admission still pending.

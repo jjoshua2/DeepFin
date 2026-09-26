@@ -1,0 +1,106 @@
+{
+  "status": "FULL_CPU_PREPARATION_LAUNCHED_NOT_COMPLETED",
+  "launch_snapshot": {
+    "status": "RUNNING",
+    "started_unix": 1789216369.5004368,
+    "plan_sha256": "da95a02d5e3f5a0bc53573d3f25622496b1804889b11f06569f6d1c97715001e",
+    "pid": 750141,
+    "argv": [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      "--kill-after=30s",
+      "41370s",
+      "/usr/bin/time",
+      "-o",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v1/execution/producer.resources",
+      "-f",
+      "seconds=%e max_rss_kib=%M exit_code=%x",
+      "/tmp/deepfin-sf-allmove-downside/.venv/bin/python",
+      "/tmp/deepfin-sf-allmove-downside/scripts/sf_policy_rewrite.py",
+      "--raw",
+      "/home/josh/projects/chess/data/nnue_bootstrap/run03_s3",
+      "--source",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+      "--out",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1",
+      "--expected-source-summary-sha256",
+      "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+      "--tactical-bt4-source",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05",
+      "--expected-bt4-summary-sha256",
+      "47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43",
+      "--expected-bt4-mix-sha256",
+      "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38",
+      "--tactical-recipe",
+      "allmove-downside300",
+      "--minimum-free-gib",
+      "150"
+    ]
+  },
+  "started_utc": "2026-09-12T12:32:49.500437+00:00",
+  "parent_owned_process_session": 61092,
+  "references": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v1/plan.json",
+      "sha256": "da95a02d5e3f5a0bc53573d3f25622496b1804889b11f06569f6d1c97715001e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v1/run.py",
+      "sha256": "f4174e571042cbb4cf86378af267858711c02ed26421c9a61a2bf113b9bfc8f7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v1/commands.json",
+      "sha256": "00c73781446786f054ceb29deb70c54512017918925a911ff92e9581fbd5cb3d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v1/preregistration.md",
+      "sha256": "1ea87edf8daf223f864a7c958bc97a85036ec6d3773b1af7c3e8e6bb5ed7d1e3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v1/independent_review.json",
+      "sha256": "bdaf6c78447a854e5d35c0a6b5c7f6acc5e7ce5f23f748b80bbadfa49c098420"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v1/validation.json",
+      "sha256": "efc56fef9a7aa21b4e3c4bd68655123af1b88a373e2195400904aec58f4c5f6f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v1/launch_publication_snapshot.json",
+      "sha256": "10d7604ecda8c45c0c404818c57636d239de426929f4f64d18f6d7e6ef19722e"
+    }
+  ],
+  "runtime_commit": "b39a5d58906f8a02a39020333f793d180c934b54",
+  "producer_sha256": "9c396c63c0348bae0f84e05336fef09a01a448c792dc620e4a7c9c0d28e0bb38",
+  "target_counts": {
+    "expected_rows": 18910484,
+    "expected_shards": 2309,
+    "expected_physical_rows": 20000000,
+    "expected_dropped_rows": 1089516,
+    "expected_layout_sha256": "700cdf31c28b68c99c3de8715e706b348b4371303112ba7f838d58b842228553"
+  },
+  "limits": {
+    "inclusive_seconds": 43200,
+    "producer_term_seconds": 41370,
+    "producer_kill_seconds": 30,
+    "guard_deadline_seconds": 43170,
+    "output_cap_bytes": 68719476736,
+    "minimum_free_gib": 150,
+    "address_space_bytes": 8589934592,
+    "cpus": [
+      4,
+      5
+    ]
+  },
+  "parent_preflight": {
+    "small_pins_matched": 10,
+    "free_gib": 265.503,
+    "source": "Parent launch observation; no duplicate resource probe by publisher."
+  },
+  "qualification_scope": "Complete producer payload/identity/copy proofs, then metadata/layout/proof coverage checks; not a second independent payload scan or training admission.",
+  "limitations": [
+    "Launch-only snapshot; full outcome not polled for publication.",
+    "No engine calls, model inference, training or playing result in this CPU preparation.",
+    "Existing value training and its parent-owned observer preserved; no runtime adoption there.",
+    "Twelve hours is a bounded allocation, not a measured full-corpus throughput guarantee."
+  ]
+}

@@ -1261,3 +1261,33 @@ def test_mirror_augmentation_is_preflighted_in_working_set(tmp_path: Path) -> No
             mirror_augmentation=True,
             max_working_set_bytes=too_small,
         )
+
+
+def test_worker_concurrency_preserves_ordered_rows_and_schedule(tmp_path, monkeypatch):
+    import time
+    shard_dir = _write(tmp_path / 'shards', [
+        [(shard * 4 + game, shard * 100 + game * 2 + turn)
+         for game in range(4) for turn in range(2)] for shard in range(8)
+    ])
+    original = GameAwareEpochBuffer._load_one
+
+    def delayed(self, record):
+        # Later submitted shards finish earlier: completion order must not
+        # determine the serial per-game row RNG or batch order.
+        index = int(record.path.stem.split('_')[1])
+        time.sleep((7 - index) * .001)
+        return original(self, record)
+
+    monkeypatch.setattr(GameAwareEpochBuffer, '_load_one', delayed)
+    results = []
+    for workers in (16, 2):
+        buf = GameAwareEpochBuffer(shard_dir=shard_dir, batch_size=16, seed=0,
+                                  input_planes=146, input_history_encoding="legacy", history_rep_fix=False,
+                                  mirror_augmentation=False, plan_workers=workers, load_workers=workers)
+        rows = _drain(buf)
+        results.append((rows, buf.receipt()))
+    assert results[0][0] == results[1][0]
+    assert len({row for batch in results[0][0] for _, row in batch}) == 64
+    for _, receipt in results:
+        assert receipt['complete'] is True
+        assert receipt['plan_sha256'] == receipt['realized_sha256'] == results[0][1]['plan_sha256']

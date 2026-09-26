@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import signal
 import sys
+import time
 from typing import Any
 from collections.abc import Callable
 
@@ -243,8 +244,47 @@ def verify_cached(path: Path, expected: dict[str, Any]) -> dict[str, Any]:
     return attrs
 
 
+
+class SourceBatchReader:
+    """Keep one x-storage-aligned block of the five source columns decoded.
+
+    Selected-row banks are already in memory and retain their direct slice path.
+    A batch crossing a storage boundary is joined in original row order.
+    """
+
+    def __init__(self, group: Any, rows: int) -> None:
+        self.group = group
+        self.rows = rows
+        self.block_rows = group['x'].chunks[0]
+        require(type(self.block_rows) is int and self.block_rows > 0, 'invalid source x row chunk')
+        self.start = -1
+        self.block: dict[str, np.ndarray] = {}
+
+    def read(self, start: int, end: int) -> dict[str, np.ndarray]:
+        require(0 <= start < end <= self.rows and end - start <= BATCH,
+                'invalid source batch range')
+        if self.block_rows > 1024:
+            return {k: np.asarray(self.group[k][start:end]) for k in COLUMNS}
+        pieces: dict[str, list[np.ndarray]] = {k: [] for k in COLUMNS}
+        while start < end:
+            base = start // self.block_rows * self.block_rows
+            if self.start != base:
+                self.block.clear()
+                self.block = {k: np.asarray(self.group[k][base:min(base + self.block_rows, self.rows)])
+                              for k in COLUMNS}
+                self.start = base
+            stop = min(end, base + self.block_rows)
+            for k in COLUMNS:
+                pieces[k].append(self.block[k][start - base:stop - base])
+            start = stop
+        return {k: values[0] if len(values) == 1 else np.concatenate(values, axis=0)
+                for k, values in pieces.items()}
+
+
 def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[str, Any],
-                session: Any, guard: Callable[[], None], qualify: Callable[[], dict[str, Any]]) -> None:
+                session: Any, guard: Callable[[], None], qualify: Callable[[], dict[str, Any]]) -> dict[str, float]:
+    began = time.perf_counter()
+    timings: dict[str, float] = dict.fromkeys(('source_read', 'cpu_prepare_and_postprocess', 'session_run', 'output_and_verify'), 0.0)
     source = source_path(args, spec)
     state = shared.storage_identity(source)
     n = spec['rows']
@@ -277,10 +317,15 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
         payload['x_sha256'] = shared.row_digests(group['x'])
     hashes = {k: hashlib.sha256() for k in COLUMNS}
     proof = None
+    reader = None if selected.enabled(args) else SourceBatchReader(group, n)
     for start in range(0, n, BATCH):
         guard()
         end = min(start + BATCH, n)
-        batch = {k: np.asarray(group[k][start:end]) for k in COLUMNS}
+        tick = time.perf_counter()
+        batch = (reader.read(start, end) if reader is not None
+                 else {k: np.asarray(group[k][start:end]) for k in COLUMNS})
+        timings['source_read'] += time.perf_counter() - tick
+        tick = time.perf_counter()
         for k, digest in hashes.items():
             digest.update(batch[k].tobytes(order='C'))
         require(bool(np.all(batch['has_game_id'] == 1) and np.all(batch['has_ply_index'] == 1)),
@@ -295,7 +340,11 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
         session_feed = feed if real == BATCH else np.concatenate(
             (feed, np.repeat(feed[-1:], BATCH - real, axis=0)), axis=0)
         names = backend(args)['outputs']
+        timings['cpu_prepare_and_postprocess'] += time.perf_counter() - tick
+        tick = time.perf_counter()
         fetched = session.run(names, {'squares_byte': session_feed})
+        timings['session_run'] += time.perf_counter() - tick
+        tick = time.perf_counter()
         require(len(fetched) == len(names), 'missing teacher outputs')
         for name, output in zip(names, fetched, strict=True):
             width = 1858 if name == 'policy' else 3
@@ -317,6 +366,8 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
         if args.retain_value2:
             payload['value2_logits'][start:end] = fetched[2][:real]
         payload['tpg_feed_sha256'][start:end] = shared.row_digests(feed)
+        timings['cpu_prepare_and_postprocess'] += time.perf_counter() - tick
+    tick = time.perf_counter()
     guard()
     require(shared.storage_identity(source) == state, 'source changed during Ceres collection')
     target = Path(args.out) / spec['path']
@@ -335,6 +386,10 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
     guard()
     require(shared.storage_identity(source) == state, 'source changed before publication')
     os.replace(writing, target)
+    timings['output_and_verify'] += time.perf_counter() - tick
+    timings['total'] = time.perf_counter() - began
+    timings['setup_and_guards'] = timings['total'] - sum(v for k, v in timings.items() if k != 'total')
+    return timings
 
 
 def source_path(args: argparse.Namespace, spec: dict[str, Any]) -> Path:
@@ -361,6 +416,7 @@ def produce(args: argparse.Namespace) -> None:
         require(shared.file_sha256(args.onnx) == MODEL_SHA, 'teacher model differs')
         require(shared.storage_identity(Path(args.onnx)) == model_state, 'model changed during hashing')
         todo = []
+        stage_seconds: dict[str, float] = {}
         for spec in specs:
             target = Path(args.out) / spec['path']
             require(not target.with_name(target.name + '.writing').exists(), 'partial Ceres shard exists')
@@ -400,7 +456,8 @@ def produce(args: argparse.Namespace) -> None:
                 return proof
 
             for spec in todo:
-                label_shard(args, spec, summary, session, guard, qualify)
+                for key, seconds in label_shard(args, spec, summary, session, guard, qualify).items():
+                    stage_seconds[key] = stage_seconds.get(key, 0.0) + seconds
         guard()
         if not selected.enabled(args):
             require(shared.file_sha256(Path(args.source) / shared.SUMMARY)
@@ -422,6 +479,11 @@ def produce(args: argparse.Namespace) -> None:
              'collection_counts': {k: sum(c[k] for c in counts) for k in counts[0]},
              'new_collection_counts': {k: sum(collection_counts(s['rows'], args.pad_final_batch)[k]
                  for s in todo) for k in counts[0]},
+             'stage_seconds_new_shards': stage_seconds,
+             'stage_timing_scope': ('label_shard wall times only; excludes model/session setup and final corpus checks. '
+                                    'CPU includes hashes/gather/first-call qualification; session_run may include copies and synchronization. '
+                                    'Output includes write/readback checks; setup_and_guards is the remaining label_shard time. '
+                                    'Empty when every shard was reused.'),
              'namespace': wanted, 'scope': ('Qualified selected rows only; fragment count is not whole shards'
                 if selected.enabled(args) else 'Compact raw Ceres teacher bank only; no training qualification')})
 

@@ -1,0 +1,1458 @@
+{
+  "status": "PASS_SAVED_G10_CERES_BATCHV3_RUN06_COMPLETE_NOT_TRAINING",
+  "rows": 263916,
+  "shards": 33,
+  "new_payload_shards": 33,
+  "reused_shards": 0,
+  "qualified_total_rows": 6130891,
+  "qualified_total_shards": 751,
+  "consumer_manifest_sha256": "524e425f02cf54267b829dbebc52f30f7ddb3c01626455e155680cc9090e7328",
+  "outer_started": {
+    "started_unix": 1789328496.0550933,
+    "available_ram_bytes": 87762952192,
+    "free_disk_bytes": 185335164928,
+    "plan_sha256": "164e4cb26a206614603d0bdfe21f5796df048dd03c8e8ae44d7508365dfcb9e9"
+  },
+  "outer_terminal": {
+    "returncode": 0,
+    "ended_unix": 1789328509.9155877,
+    "elapsed_seconds": 13.860494375228882
+  },
+  "reviews": [
+    {
+      "chunk": "shard000000",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000000/shard_000000.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "367cea6e48abc199aca63eaa1763f6eed41a7d8bb3a8327147b2214b6abe3a54",
+            "legal_indices": "165b4752caf8b9aa5ee9af71e979ec651824ec993a89e1fb6f5a2fa66fb4bc66",
+            "legal_offsets": "67b184f4be403086b7b7d51a75f1ae75d98cf3b8ce205a1f02f277c535613065",
+            "ply_index": "7f51252766c33880f97c39610252f90affe5013cd8a6a2bde7419c7eed3ad14a",
+            "policy_logits": "3754e1e599ede30b8624e6841e8659f0fb7b6feb643c39eb890461165be76bb7",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "7a1a7c9af092bd9ed6b3219b1276688b4329b7ece28557e8b03c5cfc3f8aa233",
+            "value2_logits": "f8f2bf152509366bc18dd3b8baec03acff607e14511a91da9b29911e7e343d6c",
+            "value_logits": "7681008c9f78aac51f9cc5d07ed056c9e853edc9029e112d068f221d009d5768"
+          },
+          "source_storage_identity": "0cf1b6fa3f500bfedfd7c8165e2e98620b3f824dda79f4e7181c1c48af8e6738",
+          "source_array_sha256": {
+            "game_id": "367cea6e48abc199aca63eaa1763f6eed41a7d8bb3a8327147b2214b6abe3a54",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "95ad4d8d69d6096976982d4afc8875ba694b251f5c9c28f9833a1a1f4d4c13e1",
+            "ply_index": "7f51252766c33880f97c39610252f90affe5013cd8a6a2bde7419c7eed3ad14a",
+            "x": "e856501b842a3b29730bb4968f88cae5a92884323a082e37f0409c4f768470f8"
+          },
+          "attrs_sha256": "448d5bf6e01d98537a1f552e573b7cc2e1f53e001326206f1be5df85e83d5916"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000001",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000001/shard_000001.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "f23d5ca7f2c7248670d82ad5ff72bd5b7c3a2f56c6513c944d9be796b313b312",
+            "legal_indices": "2a261629df668a0daf586e27b6092ea835d6d2ef9d699cd3b1103cdfc2446cef",
+            "legal_offsets": "8b96b2a36a66a41ad76b27fca33d07ecb3f323a97c67eadf9e68ca58cc28878b",
+            "ply_index": "adb1dacd295564e4a82e72180f6fa276f7c897a0576bebf5a89ded5d682e41a8",
+            "policy_logits": "06a6cf7d7e06abb775442ca0eaffa96ed44825c4cbec79b34db7aaa66b6fb57e",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "91fc43f8fb5737bea020367e5cd04a869d5d7d273fa08fdfa68ac0ae56dd8547",
+            "value2_logits": "6e6da35c66b1b8beabc62ab5c3069dd24e3241274781e523695720349cbeaca8",
+            "value_logits": "da48d39389631af6375983257393fd0cbaa694a6cc54cbc6acde5014ec5cb3bb"
+          },
+          "source_storage_identity": "364cc6963e34d67d15659fb17dda05bfdf0b0869cd7e7c770bf1b98409de5293",
+          "source_array_sha256": {
+            "game_id": "f23d5ca7f2c7248670d82ad5ff72bd5b7c3a2f56c6513c944d9be796b313b312",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "f7cc4e12bce628ecd6a6ba135bdc42ade74e43b3f1bc94ff87ba45b2a440bc52",
+            "ply_index": "adb1dacd295564e4a82e72180f6fa276f7c897a0576bebf5a89ded5d682e41a8",
+            "x": "726423ce379b6c63765bf188cb538f7c5c20dfafa923b844322aa26b86e195d9"
+          },
+          "attrs_sha256": "ea47ea270b9db1517ed236aaf939b06d2d4afde0c7943d39c1d38d4198b019b3"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000002",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000002/shard_000002.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "a296e5a3574920d222824a86e3ee8935bf5555390a61c34433b3834e6391c04c",
+            "legal_indices": "ac10f935566ab8a8fbc4d3968e15fa2482d253552ed639113a5da3cad2b80af1",
+            "legal_offsets": "4e37f155d69f1a50d6df202af08327594091f8159964e6664980f421ff502bc5",
+            "ply_index": "6ed68dbc021097ebb9f66957d75ec2669fe09f684a4dedd81c6db6373221440e",
+            "policy_logits": "46b5e53e912073047113dd5ad76b7809d5d184782324d2b0a88018804118cbe0",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "b5c94d96de9c9947bdffb65fbec6104dd2365e1d838d037293b406ef700ed989",
+            "value2_logits": "307362235669c225b56b25865d83dc6cddc9627a43e949d4035e7b127284c71a",
+            "value_logits": "4a80598ce35d2b69c8c53d6e8c4050dcd58a23c4322ce4027604720629404f27"
+          },
+          "source_storage_identity": "bed01aed5745754552e196f633bf57eabbe08b479d77a22099a2839857645c5f",
+          "source_array_sha256": {
+            "game_id": "a296e5a3574920d222824a86e3ee8935bf5555390a61c34433b3834e6391c04c",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "df824937d724c8fc808c07ddd23869d80bf69fd0c387b610a80de9bb59ac4422",
+            "ply_index": "6ed68dbc021097ebb9f66957d75ec2669fe09f684a4dedd81c6db6373221440e",
+            "x": "d96e320eb16c02d447f2a29888a231b7f410d8fefed0da375027f86e18188290"
+          },
+          "attrs_sha256": "4fd49a6aa0f2866cd2f297251cb815bead90ee4c5954149df9832866448c2162"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000003",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000003/shard_000003.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "71fdeb40c570bad6e243a0b83dda3d75349cb7dbba1f13d9fb8cd5cdb18719b1",
+            "legal_indices": "aae7b884a54e0eac1325c0c9d349f2c900a0caae11a8d4749871744ca7aeea8d",
+            "legal_offsets": "3d17357c21a45da282bfd48cbcb667cb0447458ee5a4550998a51471b6e5bc6a",
+            "ply_index": "c8d9726f0782530fda6f3fc677ed49c48f3c70bc66e8d0fcb39c1b0f5c2811fc",
+            "policy_logits": "700f46547c9d9aeff0e1b3b3e7d2fb5933fdbc75fe1b1cbc25161e1c25da070f",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "3635a5a0ea4caad668b1564fd8c61590d6f0f82693bde0a5a6c31dc40283c165",
+            "value2_logits": "d2d28ddcf52221c821bb86dd8a5f376ca3e250873ae88ea55ade7ab0a423686d",
+            "value_logits": "a6a388e10055e0c4973f15d1c0d40c4654b6901c94a8e27cdd344e1132f6b356"
+          },
+          "source_storage_identity": "3e13eb74f628bb5d78d1fa055ada2815dd66aa9378b0484141b06346f5416f2b",
+          "source_array_sha256": {
+            "game_id": "71fdeb40c570bad6e243a0b83dda3d75349cb7dbba1f13d9fb8cd5cdb18719b1",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "07ff7122dc198d1f692b7a7ee043502dd4fce4d4f8682a52140e0cddc1b0221e",
+            "ply_index": "c8d9726f0782530fda6f3fc677ed49c48f3c70bc66e8d0fcb39c1b0f5c2811fc",
+            "x": "7b5e8c6fce5e2e45b80a9a1b2ea4edabeb15e308f2b25362a52f525bd73567f7"
+          },
+          "attrs_sha256": "506e7a9d0bb71dc42258d9c4b7c62b95f6a5f8970bf8286ad0ef2a592f85f8b4"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000004",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000004/shard_000004.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "df37c6356437b7b1150be4934549bf533b396ceabdcda009df802e4267e3f95f",
+            "legal_indices": "bf926c9270dd3869730eec1eca306738f455945ebc00a563b975e49fb7ca0426",
+            "legal_offsets": "f045267ccc0931249ee93cc1f456dcee0d257509870bfaa1dc4700da634ea348",
+            "ply_index": "e70f55ad1ef8016f8e65c0ea70c5a2844def74bb2a7607117df91034356448de",
+            "policy_logits": "4d6c417aa84a5cc7ccbbc7a1d528d04c0c9ef0e1eb403444e98269a6ff50c59d",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "9943ba3f215d09a5a492e0670f6ef6daeb49c078eff5a1dfc9036a3fb598fcd4",
+            "value2_logits": "9511133d253e0760c7dc9859f7ef4475fb7cd8bd3e7b3dcf3871c9fc7146cbe9",
+            "value_logits": "ca189106d23153cd521036a7b6cf41f792e6b91fe963bb7655da9a369c501c68"
+          },
+          "source_storage_identity": "e07ee73c54f7c54f7b206ea6a7f85e895c4f0a41c02c55f57de793b16c6c7989",
+          "source_array_sha256": {
+            "game_id": "df37c6356437b7b1150be4934549bf533b396ceabdcda009df802e4267e3f95f",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "f8589e8a6a454a29cedef8bcc52142d9c0eb6edb8127fc8b1442c9eab5d286cd",
+            "ply_index": "e70f55ad1ef8016f8e65c0ea70c5a2844def74bb2a7607117df91034356448de",
+            "x": "6927b18e935a9cdb4ed0db729ef118ac8272b31f6748ec5b339274372b60e594"
+          },
+          "attrs_sha256": "9e4073883d01b02218a0dc8c66351b21782df370916758f7e35c16ccef0052cf"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000005",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000005/shard_000005.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "655b6c3e91952c0883c42388b76bc518d9b79e7f57aeb774145e784c8620863f",
+            "legal_indices": "4a9ece7b745564ce8a0115bf9d540751498be06ff6b8cc4afa10da68de8a800f",
+            "legal_offsets": "380140ab9f0b0dda41e6b97cc8e559b2876fcc35cf5dcdcacf5e14f23dbaf38b",
+            "ply_index": "d55ab5ffff10f8b2f1cec6083d1e2b0ac2f48c00ec9c5ade0184a30e4df30b10",
+            "policy_logits": "2885391346e1b764f0fce4d812e9dd5c9d5f72893e53fb37b6f6c6ea5a204439",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "e6a6edfbfdd3117b7f65c9f01e57591239f88d61e5c0f44dbfef908dc2d3fe89",
+            "value2_logits": "77be01e060014cfaa7cb1ee8507c3a505c98e8b5ae86474f5adc5a61d4aa95ef",
+            "value_logits": "08669e8d427a2e80f2418b019b46351388fdad3d83d6fbcac364870950cd2b52"
+          },
+          "source_storage_identity": "b38a6aa9c5e41f51182bc846cb58e666bd7203f1ae7445bd2a92ef96d5cf90ab",
+          "source_array_sha256": {
+            "game_id": "655b6c3e91952c0883c42388b76bc518d9b79e7f57aeb774145e784c8620863f",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "627efb616523afdaf9153b53a207f740c95a4e05798d0e43baced5443f64ceb7",
+            "ply_index": "d55ab5ffff10f8b2f1cec6083d1e2b0ac2f48c00ec9c5ade0184a30e4df30b10",
+            "x": "58c1630b65388183a889e3935d69ece5bff6bd023e9a1eb793d0a1517c2e91d0"
+          },
+          "attrs_sha256": "d79c2f536eb7bd7b92cb87d71d624e7ff288c877f8efb54755ad9ab0c62c8dd7"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000006",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000006/shard_000006.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "56b957f82965942baa4eb3cee6e0df74e492b052761bd5a92e1c22c5325a64d3",
+            "legal_indices": "2fa0d0dbd9bbb01fa4859787f60bbc7686386586bbf14e9bb1afbbae40ae12a9",
+            "legal_offsets": "2e109220ce1913d623cdaad800abeb747afaf1410b03a20429b55d12add80c8c",
+            "ply_index": "67c388bfcfa4f1cd618f8d88744497ffcb778d736fcde11e46b97db2430e336c",
+            "policy_logits": "41e2392686e3426d97872022deea925abe78bdfda04c766b63c00893ebf1d4aa",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "a4e3ef456a4aa131597043ba7076ec91698df72c0e1d41f528cc157720630e46",
+            "value2_logits": "82ffbd3c3ef338f0dad313eff6431e01d5242399cb8ccbaa38979785685ab805",
+            "value_logits": "eac1fcb8772f7a407a80ae338bedc1a01bbe3e35cbc5e90993a6658a5915a6c1"
+          },
+          "source_storage_identity": "6d50ceb8e3bbcbd00e5a275654c1866e25bd55ac21cb8a76dc5cc9ddd0f9deed",
+          "source_array_sha256": {
+            "game_id": "56b957f82965942baa4eb3cee6e0df74e492b052761bd5a92e1c22c5325a64d3",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "77783b807abafcfc92b52b3ae6e9ef8be8aff9c3159d5e527c999739da9727af",
+            "ply_index": "67c388bfcfa4f1cd618f8d88744497ffcb778d736fcde11e46b97db2430e336c",
+            "x": "4dd6035e282ccca155adfb16754240f38ed99bbb400e2f216527d91d73a4e92f"
+          },
+          "attrs_sha256": "ff1eb843580032d172554d6362585579b1a582ea16021423f8d3beeb3788b16e"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000007",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000007/shard_000007.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "2f66c11a1e6394738fb09eda4255fa6645a545e754124ab36908bc168a30cfb7",
+            "legal_indices": "93adf739546d42b31c55a57da7c684a46a8142bb12fc6d74b34d54b78617f245",
+            "legal_offsets": "2eaf1863262061fc0373ee261c052b5704f61955b6f1913e9f09b93ea2de135e",
+            "ply_index": "99bc23d65953e375f46f91108b86156b60d8b84834e397fc1f89c4ae0d1b6b1c",
+            "policy_logits": "89515532229ecaa0878b1b58d965ea1407318f12ab23babe5bbbc1b6258c847c",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "bca69218400a7ef78417fa7d66c16fd348297b0284f1549dfffedb72a23e41e8",
+            "value2_logits": "2cb0d2bdd26f95e1c516147491a686a1241095c6e9bd89f7bbfac9c0a7cefe6b",
+            "value_logits": "e2c75ec67cc2e5e2778f883f8b6d975e979fbf0f64a4561341281448922068eb"
+          },
+          "source_storage_identity": "09d0212072649249f8e4773e187cad85c2c7873811dc754cd1a7b8d859d63749",
+          "source_array_sha256": {
+            "game_id": "2f66c11a1e6394738fb09eda4255fa6645a545e754124ab36908bc168a30cfb7",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "2174fdc5e732cbbbba3344256e88ca0051d7fcf82daddf0011f0d33ad556f673",
+            "ply_index": "99bc23d65953e375f46f91108b86156b60d8b84834e397fc1f89c4ae0d1b6b1c",
+            "x": "7e89176df387c625eea05cd938391a225e5d7dd6c2cdba09a54808cfa5a4f64c"
+          },
+          "attrs_sha256": "56d4fd010463f4a85cfeeb434b2ecfd8e3c05f8c2662f8a47e07f94274b12796"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000008",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000008/shard_000008.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "c5cc66063eabb8a4b03a268fccee1aa99b86942e249d6cb874f29117111b438a",
+            "legal_indices": "3722bc958209785ca02cb3a290691d0f6363ae6e3e8006e2358ac3c74313a29b",
+            "legal_offsets": "94346ecf11a235af25301ef393f6e329bffe2a29be374c89fc725f697f40dcd5",
+            "ply_index": "e3e7e74133b8418586176aeb5dd3f616b9d0eb68a51f13dbd9bb5c03046fb913",
+            "policy_logits": "c1c53e6fe8e9d4bc7afb88439df54441055a01c0950da94c1d26fd6a0eb46bb3",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "43e8ca7f5a4591e1c2a01e1e14bff7b0e8b98316c3530848498afbe61f5c9ae1",
+            "value2_logits": "04070ecc439ee16778f9395f00f06d978513ed1eb551c7d9612edd6cbc83eaa0",
+            "value_logits": "261b0777659e58eaf1a616ddaac228abba50568c526b960ddece9579d0eb56b2"
+          },
+          "source_storage_identity": "1c56531a1364253e3ff2f9cb81e65d3084102774a1b1dd66111e726d56b2a48a",
+          "source_array_sha256": {
+            "game_id": "c5cc66063eabb8a4b03a268fccee1aa99b86942e249d6cb874f29117111b438a",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "84d4ea9dda845ba46021a63de15fed31e12b1b9e798f78ebd9caf406ca4f42b9",
+            "ply_index": "e3e7e74133b8418586176aeb5dd3f616b9d0eb68a51f13dbd9bb5c03046fb913",
+            "x": "faf63ab20c6ae72fe5890b457925efa49047b6bd4b5f8827d1bf32bcaa1d7551"
+          },
+          "attrs_sha256": "cdb802354c4cab02bab1b1eab022ed75c92eba492c20137eb9d83f01581b8f51"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000009",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000009/shard_000009.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "a68e74d82728e3ef19b163e4c410e0a6af37204b754fe0754e3d804dc9975280",
+            "legal_indices": "ab272946714d50cfa076ad02aaf2d20daf5b6052c3d785a118ece00b6585b433",
+            "legal_offsets": "38cd3644ac28d73d43b61445045af9756b5d10426996323a6e4f7f311341d48b",
+            "ply_index": "3497f469d032361cdd95ca1e96bebfaa0535beda853d83143d6795b60ee8106a",
+            "policy_logits": "8ad25bcde358922a82decff2eccda38a48c801b4ea0f53765db7a735978a4e7e",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "ade2384c72a8b89196bc68b97e0cb03d778d84317af5c9860d59136833df1893",
+            "value2_logits": "809c55cd2c016f6971991b7222658e5edd21ad1c3564ea677f4a4e10dc0d1b28",
+            "value_logits": "8b13850a4933f4a166a58cefdf6f3d6860126f43ac3ebcbd5250d129bd2154b8"
+          },
+          "source_storage_identity": "acdefb8c59467065df0514fd16bdc719ba385eaa49e0e1913daee0908d805232",
+          "source_array_sha256": {
+            "game_id": "a68e74d82728e3ef19b163e4c410e0a6af37204b754fe0754e3d804dc9975280",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "fcb1f2eaefe0a5728356e5804b3a7a3e7143c9929e33ddc5b0f2fecfa1172906",
+            "ply_index": "3497f469d032361cdd95ca1e96bebfaa0535beda853d83143d6795b60ee8106a",
+            "x": "485b21958e76c32feda9a5a2738078931504bc0fa627d8c16e41e17fdbbd60e4"
+          },
+          "attrs_sha256": "2988d80e790cd3649956b1c4d14bb65cacf0a79e8956545142089f1e7ca69c5e"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000010",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000010/shard_000010.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "5ba92de9f855d9535b58be8cc230c96faed8f731e583e326130f5e85e962f1fc",
+            "legal_indices": "07c8aadb3d96051d296e3e6b3cede218886d97d81a2d2f940d01acbaf0e7dfe0",
+            "legal_offsets": "17f9ad0c7e5e65950dbf93c605ea353c660e62178e1334ddaacb35b6c215ffca",
+            "ply_index": "5446de1d8eb096e7fce90da2e0b66d9cc27e017b6d18a1c25e1d986d9329179d",
+            "policy_logits": "70d2e7cbb13db9851e55df1f069af9780eccf981d4bc5890c326dc6c60c8dfaa",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "fb0e84d61fbecb83597153b30e89dac1268f1e558fd89217af54a7676ccbf035",
+            "value2_logits": "f97e59d3f79c0c51fc51edcfa656c62db55f361a996ce4d4eb5b6019aa25b966",
+            "value_logits": "d2d028656e021b999f7734c6f8717c3d790b7dc6ef5c6a56fd22f1e93eacdde4"
+          },
+          "source_storage_identity": "22094a62d2d9a3764db4c07a5f5bb6eeeeb73af596e483bf1c73c245c2822d62",
+          "source_array_sha256": {
+            "game_id": "5ba92de9f855d9535b58be8cc230c96faed8f731e583e326130f5e85e962f1fc",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "36aafe5b59d011c62894e4f64d2858f00fec026e8cb85c914ff5547e2944465e",
+            "ply_index": "5446de1d8eb096e7fce90da2e0b66d9cc27e017b6d18a1c25e1d986d9329179d",
+            "x": "ffc74d1a2378a59bd514aea8b0598e1bbf449e408f18080e48d8029572f0d21e"
+          },
+          "attrs_sha256": "07db3d5a8133e1e0daf6d26306de6e6087f139f55c9aa779a201861ad47080ae"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000011",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000011/shard_000011.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "6f57fe46b8376e2a5776b36d2458171872ed56e0389f6eb187aa4ae6214b3175",
+            "legal_indices": "0d3fbf71b6b3d89bae21c373e618a3976f7c809faf5cbb8ad5f8dbc6a0fa937a",
+            "legal_offsets": "e478791c39cda020b36cb05771887852da2d0d4b41802d2626847d8a3ca5e8c2",
+            "ply_index": "26e3abcb9026e865d214474342c3aca925d78d76f20f9d5aa936d73d8c53a49d",
+            "policy_logits": "78d8b7105f7e14e2bbf96fe4a997acdfad642d472b0ac680aec63551070f4678",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "0784cbd325fc4a4ef0a7db25aa3198200d9461884a1519c5ded0ea5a3c4699bb",
+            "value2_logits": "0e741148a5768440da7886c458d7d18eacdc344b6a4580ada8010844a88c20e2",
+            "value_logits": "53f79870a662e022b6057ff9d310578611b27c270a5f14e7b518b2194aa809b4"
+          },
+          "source_storage_identity": "3ef4710e0feaac9e38eae9f7e849f356f9d3518c883bac6565267cb87f4cdbdd",
+          "source_array_sha256": {
+            "game_id": "6f57fe46b8376e2a5776b36d2458171872ed56e0389f6eb187aa4ae6214b3175",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "4fc1b191cf4c3b09a62fa1b895768fba246d56a93795f5ddfc7b0a14076b51da",
+            "ply_index": "26e3abcb9026e865d214474342c3aca925d78d76f20f9d5aa936d73d8c53a49d",
+            "x": "dd25f0d1bca1ca4a361ceda9455dffab05fb4cd154593039504f7b1e87369c24"
+          },
+          "attrs_sha256": "96dc895836dd585cdf8dd01cb03d779cdd3922ea3dfffb07304146128841ec10"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000012",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000012/shard_000012.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "7155d97e6037380412aee6fcefb2f37045357c6b649b00202dea4e66144d1510",
+            "legal_indices": "acbb047dfc6a1251a2f91cdaa7a100357c453983fba4813655c1841f2032dc1f",
+            "legal_offsets": "491c8618645b81546b602b0abe9d700306ea6af2d678a7bd84db86c25e67e708",
+            "ply_index": "938766c80e9677f5860bbb6c706087faed99e1eb393bc4064447c2502cfcb35d",
+            "policy_logits": "9ed705ec40f530605a38b946207a84c058c148a2fdaad2f41464548dd1ad49ac",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "eed806bbf870173ce395dc1077a952383d097bce4c1bea63fad14b317137eb90",
+            "value2_logits": "4a1ace5c748d592d192a19b6891be83b24480bf02cd0c09c8fa1ebf614142dfe",
+            "value_logits": "830dc99f07b019e248eafa73e4250ce9619aed730c975f7a1232b6876af08495"
+          },
+          "source_storage_identity": "fa5e17500e3c6c432f6a6a7ba2086a8c519a31a366fd0106899cf30cfb197547",
+          "source_array_sha256": {
+            "game_id": "7155d97e6037380412aee6fcefb2f37045357c6b649b00202dea4e66144d1510",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "8fda66a25840d00c6347fd48db8c111fce36199362e593d40ab553a5d4e5dea4",
+            "ply_index": "938766c80e9677f5860bbb6c706087faed99e1eb393bc4064447c2502cfcb35d",
+            "x": "65c40f9fdb10bbd4b3b77cacc5646d9cc2a7ef36f24cd8c85049080b3e2a9021"
+          },
+          "attrs_sha256": "c8748915e92355341307c49d1bc3092499f16daa1a7b3662c83f303463a89eaf"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000013",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000013/shard_000013.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "2596cc4e550fc76eb02a2d95e695da77f20d0d1bff241e480e522c659c2fbc33",
+            "legal_indices": "5f23eead5f8164923898fa2002230ba05f5c39e22aae1f22619b6d51fb408720",
+            "legal_offsets": "a630f6f3ffd16d46919cc2c2b18cd4bd6c75bd2fb2f69c9b2ac496fc0eee9443",
+            "ply_index": "621844a3bc83bcb3f2e08072fce1d34d119ec37cd82bc162635f83b31f4a16e9",
+            "policy_logits": "f1c9a6fee0b32adca61941560a84b8116de07f3ae0e69ddc8c8c6976f59fa392",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "fd587324bdd78cd9b90a2a231eaa0e5bb4748e7df53898484edcd70afe29bf30",
+            "value2_logits": "001985ecf96ca17da7522c64c813d79100ace08c0050086b14340ea267895b36",
+            "value_logits": "f95b86678e61caa405945f1bf838824504775a2bae165466c73289d8271cba3b"
+          },
+          "source_storage_identity": "fc048a43a564bcf30b50bc9d11e502ef45f66a2a6d7a5e3f6a7e33dfe9e177de",
+          "source_array_sha256": {
+            "game_id": "2596cc4e550fc76eb02a2d95e695da77f20d0d1bff241e480e522c659c2fbc33",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "5521344fe0da709ee38753e02a20b1fe90c51d98eefad3f4b7b806649b3623fd",
+            "ply_index": "621844a3bc83bcb3f2e08072fce1d34d119ec37cd82bc162635f83b31f4a16e9",
+            "x": "0b610b46d288745541e2f384ee5369628d822123c53d005d9b1691fa4853fe4b"
+          },
+          "attrs_sha256": "020783d66f537e73015518a5795917e3279da0caecbad184d7d447c4b0bfc83b"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000014",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000014/shard_000014.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "1d61e12e6a147f0f31110623b077fa664768deff822d8260e7985a6a8b547166",
+            "legal_indices": "dd2106eff1d14f2c4e842c0b15b4f343f399eca3bed329eba9dc6e41c3c847a1",
+            "legal_offsets": "9f7b1fbb9f973726a4f62c865ba235e95cadb65b3b37a97b475fd247b43b0a19",
+            "ply_index": "910ecc091555fba573ebacfcaf970c7c231dc3fa193756631fc224bc3d126dee",
+            "policy_logits": "cb5794a0ae729d64158c02ddd61cd56aeaf9a58afae66179663dd37dd47fb7c3",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "f7e8ddee9a184eb93689b1c40a354f81339c20c7bd904401719831c13bcde605",
+            "value2_logits": "45ea805e37f55025f9444491338db6899b459e40792eae26453396b98064c0af",
+            "value_logits": "4f1b1358c01d11d0e75d94e8a832a838df56dee17d4ef5b0701b414e9e02f29c"
+          },
+          "source_storage_identity": "b5702344ceae8996c9fffb69494fbf0c0112fd0b24693513c2c56509affadd2f",
+          "source_array_sha256": {
+            "game_id": "1d61e12e6a147f0f31110623b077fa664768deff822d8260e7985a6a8b547166",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "57ceb04df6c27c45e8e84dabad4a864d5cd0050ae463ae069ce4204361ab95d3",
+            "ply_index": "910ecc091555fba573ebacfcaf970c7c231dc3fa193756631fc224bc3d126dee",
+            "x": "4b2b69546d37c83f9e026bd99d6b3512862a322dd2c5a70edfd481f98982244f"
+          },
+          "attrs_sha256": "17dd2cf4b115c54000ed4a80b8d9ad100b652dd8d17d3d7b0779c23a8554efaa"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000015",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000015/shard_000015.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "59db21f7272e7ea3a46e3ccbb6b0aa60d31f13dac6ecf71ccf88742eecd8befa",
+            "legal_indices": "4672b8b2340ccd9b185b7f326e429625451e34596448993dc6c61fa880eb7fed",
+            "legal_offsets": "a247d6511a0fbd58d5f9836c547142ceaa05fec6f260bdb7921c7261a64d4167",
+            "ply_index": "6b560599f599d6a8115fe0f5401980c7cfb5e6fab0c5c1ec301b2eac39f3dbb2",
+            "policy_logits": "ffc76c383297b10d0b54ec46cb8b706af913d09e13a5155bd2bf929995ced6e2",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "473d5f8cf6001622b4c13e1073b23acd67ff9482d2b4a1180da341d121ed351f",
+            "value2_logits": "3999525f8ea3c6a8fe74fff25812ab72c0b3ec1a391335a3065eb38ed7ecb465",
+            "value_logits": "2f95cadea1b95877f7c0ee36379173df6e4c21c04b993f42ab7cb1d02b141d34"
+          },
+          "source_storage_identity": "b49868b12d4eed76bf7899211adb27632f8773abbc1138592cdd738841676343",
+          "source_array_sha256": {
+            "game_id": "59db21f7272e7ea3a46e3ccbb6b0aa60d31f13dac6ecf71ccf88742eecd8befa",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "f0ccffdca7ebb3cf40bc9765e08f3a01e2308f6f445715b11bfacc20a26b9553",
+            "ply_index": "6b560599f599d6a8115fe0f5401980c7cfb5e6fab0c5c1ec301b2eac39f3dbb2",
+            "x": "e9424ab169e2bc39be446aa972b124eff2551f30e1f280a49af8068b34c46541"
+          },
+          "attrs_sha256": "d7c2895fd59f918c9c2f8e8ceffbe3de37808820689fa75ec7884c7e1c4d006b"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000016",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000016/shard_000016.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "bde9477cb9ef08f29602b999dc7bbae66c584d37620123cda8f740429b0ddee7",
+            "legal_indices": "af6d68b418487b693c399e1aeeea9c4147da6b5d1c6f961dc5cd5c25d2da5ebb",
+            "legal_offsets": "981cc4ad2ac12761dbab2a1abcbafadf73db628353a3932f2a33a9df4cfee430",
+            "ply_index": "91bbb0cfb23331062262d17f93b8514f704464f47d5791da2dce6be166b010b8",
+            "policy_logits": "17a354556b770857aa34096e424a11c9adbed5a0bf27095ead865da9fc22faf2",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "02bfa1d8a75e28c77f32cd32c5dccd685795bf1cecb1825c101944a4cf6171a6",
+            "value2_logits": "cf279f6b0829eb0ed8f4e939ce3a7644101c8aed2128e9c42af104ee3971e360",
+            "value_logits": "5a26e5bef5a1cbcabae770e4b9dcef95aa7b43b785f766f23abf6b0342ab03d6"
+          },
+          "source_storage_identity": "3ab94cbc18c9f07d6203a87689ff1cd2d18f38559af9412a5f3be1e2926a57e8",
+          "source_array_sha256": {
+            "game_id": "bde9477cb9ef08f29602b999dc7bbae66c584d37620123cda8f740429b0ddee7",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "6ec8bf8b4ab02b68f98bc66a1e4ef22c15a270601614b07941778efe1aba12b2",
+            "ply_index": "91bbb0cfb23331062262d17f93b8514f704464f47d5791da2dce6be166b010b8",
+            "x": "c0f7d8102894c6f04909d6650822bbcbee1f37b32acfff38980a31f2cc0bdb92"
+          },
+          "attrs_sha256": "eb8abb90355356490e8f35d17fed4f04a81597df4ad7b62f885f38a189ff5af2"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000017",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000017/shard_000017.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "ef6e6b8e1a26e404c041412bae90c12c06059f4e0247bb5b5c3af35661cb7f98",
+            "legal_indices": "5ea8e2f72e8fdbfdf169b84565bb37bbe8991e5b635491847b1c60971dd8f979",
+            "legal_offsets": "5b1aa9720d92ae31fb6544411c34b54bdefb71da73635bd759c51862c185585e",
+            "ply_index": "36f242138597e5952703893a3553598962955746d46ce93e1d8d239d966af6df",
+            "policy_logits": "9ea0b18a5aa62cc90579e7e597acda70fe514e09adb4eb2f1f16de9bf4da1502",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "8109d5029055438fec5af6958f8167072ec4b298a14e80344c4fd1976fe8e343",
+            "value2_logits": "ff60c0ba76a6c09f1dbf5e40e707ad1ce9fa303afd6d9c9ea69b5a3c8fcbabc2",
+            "value_logits": "3b33a898a97cd051858404f85364df0280b949fde3941674e2df283be1f2dffa"
+          },
+          "source_storage_identity": "9088afe006c157171257868bcf42f5641830f2d2e8d4015ec2ac472ef8d5e5ee",
+          "source_array_sha256": {
+            "game_id": "ef6e6b8e1a26e404c041412bae90c12c06059f4e0247bb5b5c3af35661cb7f98",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "41df232b0d76b0ddc75f144a883849a1a9b3b765af326b34b4fc450e96c87dd4",
+            "ply_index": "36f242138597e5952703893a3553598962955746d46ce93e1d8d239d966af6df",
+            "x": "cfe7c761c6b49b996b5b19cc8449a1c4fab41a9db684f7b737cdef5ed621f4d9"
+          },
+          "attrs_sha256": "372bab69a1f17b4a01c879251094db0c6a91c132ed3af972c17eeea4a1d0aa1c"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000018",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000018/shard_000018.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "3af5e9889a4e250e659b73b4d686670ddf76023d101c623fc98f947f4c64a828",
+            "legal_indices": "8b66201509443eba5927e2fe58062630dc571023958319583cf7d063d6d5c60c",
+            "legal_offsets": "19730247c58f1b2cb6fd70183e3ba8994cf6c06adc6cb3a7af9422cf553e9055",
+            "ply_index": "3b02dfee183c0a0a6e65c309c7036ac265c2657350dc8b4c2a8b495e22289b52",
+            "policy_logits": "bac072984a7f9636bc606594bd8bfab6d068a00193a8644807e265116591a9a4",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "e317434075b4fecfb428963bcb61798f53e38bae8c02c802ce3ee695509d473d",
+            "value2_logits": "f5d250f5361c4a39bc1fba607a6230ffdc7ba0e09f8f3b9c5f803e98ef357984",
+            "value_logits": "9252fe914ef76dc9b7a312f63abef05e8c04070ca4f0632ae62e195a05a52fce"
+          },
+          "source_storage_identity": "fc9fb4fa4bf4abf12fd353e89bd0c27806d28327ffae1a99b7a824f80ea7c2ac",
+          "source_array_sha256": {
+            "game_id": "3af5e9889a4e250e659b73b4d686670ddf76023d101c623fc98f947f4c64a828",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "e4a9546eeda0a0187a37bbb6f5960e2ff331305c463e3d682e59f698ee3d8636",
+            "ply_index": "3b02dfee183c0a0a6e65c309c7036ac265c2657350dc8b4c2a8b495e22289b52",
+            "x": "b2fc22f6542b64efdce1e90a0aef992c5a22234f7f79bff14269c531363895fa"
+          },
+          "attrs_sha256": "aed65c8f6b1956bff154461b55750dce0e9cee00ac3175ab7eb02376e19de027"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000019",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000019/shard_000019.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "37103e8b3acaae8c8c6b7b4022599208e7c5742a498ccee2304494efb146b0c6",
+            "legal_indices": "95b567ef083eff40cc915ade8649a195f10c6b5b8f3da9290296938556b1758d",
+            "legal_offsets": "38ead833a78574f6f8230365571cf040cfa4af61c99696dd7fea546214cf63b4",
+            "ply_index": "1fa29fea09df74cfddfc7471d0a14b1c8c999aca67109980eeb960865bb2ddfd",
+            "policy_logits": "f8c89c663aa6d276eaf9c72bffa1fa415910e7a99bc3823b5d487d9e66e80ead",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "f67e44dd391377c1b044a879624f05e9d17b919252853f78f28ca6c0511c9ab7",
+            "value2_logits": "d0ee70789e04ae38038c4d7199d162f03b36cf99a3fd3ea65e44e924d589a83d",
+            "value_logits": "7882e5013bd75cea0739185626f01493f6d0afefee97c7b31dc7edf6397009cd"
+          },
+          "source_storage_identity": "6b2e957eb1b2c0fc56a8e2a9299c17de6a51a303617c9e96ca2fe65b8c09988c",
+          "source_array_sha256": {
+            "game_id": "37103e8b3acaae8c8c6b7b4022599208e7c5742a498ccee2304494efb146b0c6",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "cc6e423f44a1c9ca4603f25ee84508ca0f373a92068cab6f945457d3be6c8ebc",
+            "ply_index": "1fa29fea09df74cfddfc7471d0a14b1c8c999aca67109980eeb960865bb2ddfd",
+            "x": "9d0edff8b98e20dc1f64a70a69e8f530796cfea975da58484419d3943e8bf955"
+          },
+          "attrs_sha256": "29d597016b48462e143ce789ded0648827feb6924b5a03ff290acaa9d3c71f33"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000020",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000020/shard_000020.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "8495dc919ca7b5dbcfa5a5e4aaff0a1da9d93cc51e6e97eb2ad39b6a2baff322",
+            "legal_indices": "e36323125ba80aca6f5d2e79da138866e1b3cdae4110196d7c1353fc2741b410",
+            "legal_offsets": "0d3703684e91ad7ccc2884e4d9c0cc2de48b15793ca5cd9f3424d98c3a4a103d",
+            "ply_index": "6452ebf54b1d60a13df81b91871c7d3282b27316dea96aeebc3ad1ab9e8e1d7d",
+            "policy_logits": "4dd096203bf708760dfa9aedbf15c3a2dfa1ebaf9c354adf8e4798256b92620d",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "bb397bf382dedea65b6f4e234d08068646a75ab6b80470ebc45cce050bec96ac",
+            "value2_logits": "ff2b8f53daa5e169093f27f1ce6c2ea0874253f67bead6afb7dbb48edc1364c6",
+            "value_logits": "a7690ea4209ad030cb22acadc99e7d137d57f0c0348388b26696613727d6d88c"
+          },
+          "source_storage_identity": "03a8e4a29f398f9cfd7d13fcb3f52d0efd6820dee39c5b7e49288942a985ec57",
+          "source_array_sha256": {
+            "game_id": "8495dc919ca7b5dbcfa5a5e4aaff0a1da9d93cc51e6e97eb2ad39b6a2baff322",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "a555826ab7610261dfe02443025212baef304e4f246020b51c877570618e781c",
+            "ply_index": "6452ebf54b1d60a13df81b91871c7d3282b27316dea96aeebc3ad1ab9e8e1d7d",
+            "x": "53e75b8018c7e004a23632189326750ca3467e3544c9d0918f5f8fd786254552"
+          },
+          "attrs_sha256": "4fe6e2c402b2922623460275c44c109d8cb2c17956da0fb77b560231acbdf760"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000021",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000021/shard_000021.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "9a82e2308165dfb6d5f4f09595402345a3749a223f5318d89c8788b31413addb",
+            "legal_indices": "b10b734ab522d79f8b65aae42a9f78b467325e3b5dc324ef86ccfdc737ddf2fa",
+            "legal_offsets": "a7410515c18b9479ed85011f8fd53c99b81ebff8708d6add838d08b5b4413d10",
+            "ply_index": "932d74b2145d921344841345a7fc26710e3c782f1807be5e957562e0d10f6dca",
+            "policy_logits": "34c4797ec6e62c1a3c0442688d517e3be4f02c861d4c20a76c56abd56d84ac62",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "289800463d5ca494072333fa77d6c8353482cee37e3e958f0ce796e058429674",
+            "value2_logits": "1ac7c5c719446c9263bb4e2673a59d145709d781d707ee6810ac26b7d5c9a446",
+            "value_logits": "a5789b7225b9b786e85c2c3f75918de891612f0c1968d538768a07f8338fcdb0"
+          },
+          "source_storage_identity": "4ee703ae94b8b6beebd13facc51f1c1445cfccef16617811bf800afb3cd3392c",
+          "source_array_sha256": {
+            "game_id": "9a82e2308165dfb6d5f4f09595402345a3749a223f5318d89c8788b31413addb",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "44b7d30ea3a4b003743f7db4109a40116f781175ed4705df663f11a244908706",
+            "ply_index": "932d74b2145d921344841345a7fc26710e3c782f1807be5e957562e0d10f6dca",
+            "x": "dae9c7fe4af88b63f3828d59688b65e915ffbe122659c070d41a8ce41eb7fc7b"
+          },
+          "attrs_sha256": "4fc71861494660a32ebca1593b3c534c5db58f393a01631e6d180f1d1a62c8f9"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000022",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000022/shard_000022.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "62c32dbd80058beff9321594e8ecd5301e9db0e3fe2de83ae94c28c303eafc9b",
+            "legal_indices": "6e3d005d5a88e672a26320e5ad1872acefa02f2c5a945ff8c64111f0f4356804",
+            "legal_offsets": "bdc336a3e4695b9abaefc310424f8328572b2e8586328f77dae4541d12d6c257",
+            "ply_index": "c92d14fe0b716ef53dc8a44ee901021aa91c140cdee3f93c3b3eb61e341dd6dd",
+            "policy_logits": "e9011868058cca2aa49c16707e0d1d1990ae60aafe2029f9cbf926f1ea5cd6b9",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "6c74d8a7a8388bb1c870125514416a1a4914691e932a7575ef5d0494f7495698",
+            "value2_logits": "1af7ac60bbd24e139f43e1526b21107a80d940fe8670b93a5d52bea4ccb25260",
+            "value_logits": "16424650f41b581bbf76e65c45f0fc505c03eb1f45c9a4f9c518cc48622d9e14"
+          },
+          "source_storage_identity": "7e0aa931833b1e0210a0f44b77b3ae2eb0ef3d63c80a5ef82a8dc65c59083c75",
+          "source_array_sha256": {
+            "game_id": "62c32dbd80058beff9321594e8ecd5301e9db0e3fe2de83ae94c28c303eafc9b",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "3c506627704b8894570977fbbb22b2645fc46348f519d5f950958476513654f5",
+            "ply_index": "c92d14fe0b716ef53dc8a44ee901021aa91c140cdee3f93c3b3eb61e341dd6dd",
+            "x": "2c0300a7be65e7a6c2ceac2a359c6edfaa5a1511c032f1b7227904b002c28811"
+          },
+          "attrs_sha256": "fa787f8d4dcd8bd251c237afa34c0665c671345c7fc7c1be1f300ec85cd2a435"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000023",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000023/shard_000023.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "167534b15e0821771928832f897e86ef51ea54fd4d77f0f3c6414680446f3a49",
+            "legal_indices": "eb36d888364b2fd00fe0c3f725534b3895ddb8f7495e82a04c331bed0acbab7c",
+            "legal_offsets": "701655db8362c17ab5c1fbd3018ada88d254127edcdb263604103020cbe2b10c",
+            "ply_index": "1d35b05be96c2baf5b589b19f7e3febea84fa05e4f416ab60ea850fe2e8d2d91",
+            "policy_logits": "ecfe1c784ef3f9fe71c77add1a0e265841c0644f776dde84c6a0dca3a315649c",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "b2fd0fae880c13008456265253a4e077e01b4fb5f39b0aa058cc725fbec2e9ef",
+            "value2_logits": "08fd0c33e8454c1d49c09f40584bfd97c0957d58c2d5b94310f73783a78e15d6",
+            "value_logits": "00cf811c8c07c793f6cb14f30cc49c51db9b83b6c4e6bf90148f9ac6351adb01"
+          },
+          "source_storage_identity": "cb63978bf33788b757cc02e022f0ed52ba710308b8ca850fc6f5b5efc67c4294",
+          "source_array_sha256": {
+            "game_id": "167534b15e0821771928832f897e86ef51ea54fd4d77f0f3c6414680446f3a49",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "532f1c62b02ca66bf787994b25806a0fe1c4b75b427fa45fbecd517905eec15b",
+            "ply_index": "1d35b05be96c2baf5b589b19f7e3febea84fa05e4f416ab60ea850fe2e8d2d91",
+            "x": "1df7650fe74d6819f01e5ea9bfb626da3e6191ae155f055f1ab34a722611a15c"
+          },
+          "attrs_sha256": "dbba97e1db2ee5ba706f71183356dadcad5f8b62a2abeb15b12a96a40c202873"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000024",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000024/shard_000024.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "8356fcc1abce6bff76fc786e5960f92e2966deeb8fed117b744118e3b74521d0",
+            "legal_indices": "3384724fb21312708b7098f4d7f53cd9ccfb53fe08525a935ab5a8089b9a7573",
+            "legal_offsets": "4d601015edce3fc860f72c5d8a5d440ee18014a1c7a4d2ea2c4c1edd695e0798",
+            "ply_index": "3a0bc02adb995d3f858dd6cb74a75dcd53daa6fa9ece10d6a5e6cd48d7f4e1dc",
+            "policy_logits": "bd2dd4c6bb82939dc428c2b4218d308f9db8f2feb07e2bffc30884b7d75a47c9",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "facfc5f4d71a191176750c9695db3b902ea80c0ff439b3e7b98bd1a1c9eeaa9a",
+            "value2_logits": "eb800060505f1e0b18f672adf953863249011d1007db889e60d48ec970f4d240",
+            "value_logits": "83d1c4b89390c9736a4a58d36a8e6baf35215b1b2e48dfb8a41be42e864bdc4d"
+          },
+          "source_storage_identity": "77deed8c4b42494f7b51608012edf401b3a4576bf7f086351fb6af69ecc192d5",
+          "source_array_sha256": {
+            "game_id": "8356fcc1abce6bff76fc786e5960f92e2966deeb8fed117b744118e3b74521d0",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "999c71994f3ad62cba413a14f23bcdeb5348582ec7b564c2f2782424faf4a922",
+            "ply_index": "3a0bc02adb995d3f858dd6cb74a75dcd53daa6fa9ece10d6a5e6cd48d7f4e1dc",
+            "x": "b7b59d776f42f9be24457dc76dc28b404c45529f41fa8a8a4e25413d979a0b7e"
+          },
+          "attrs_sha256": "95f071711f50178871b5aa0aaa8e0bdc6ec8767f51bf4fd6b81653b192311427"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000025",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000025/shard_000025.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "a8bed6c30edfa5d3dacef142697cf85500f2945cddf8cd0d20131cfa71fda607",
+            "legal_indices": "ff099fdc6fe7016e54fd8053fadb9230e0651996c58a48b644782225b86a6c85",
+            "legal_offsets": "caf1139f6ff24a947d5bbfd34070c3b2ae09b81d2412bd9b29f7963223074a22",
+            "ply_index": "4a93606180fa52b8c70ee29edd5d56837803f73255e8a8cbe7d43e09b7b82edc",
+            "policy_logits": "a25625f42e48d9fa561784bd3ece0b989068a2a3286a2176b635e60db7001814",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "27f9d2e69d99aa16501e81b0d4bb41db14392a1a8b81714070db1c705b92b61f",
+            "value2_logits": "3d93a20da9aa8868e363381d4475443f0088481ed80e0cab4abc7b5effe12c5e",
+            "value_logits": "f4c9b80493a3b49408c85a579208d50ff97396508793c65dbaa536ff200d3ed1"
+          },
+          "source_storage_identity": "a384bf4ac1056de054d250dd721970e4ce6513c6de9b042fce12282ac82b6856",
+          "source_array_sha256": {
+            "game_id": "a8bed6c30edfa5d3dacef142697cf85500f2945cddf8cd0d20131cfa71fda607",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "1f80c6fb70cb5c23b7b446367279ccb1623cb83148b726e4aa046e70e9249a12",
+            "ply_index": "4a93606180fa52b8c70ee29edd5d56837803f73255e8a8cbe7d43e09b7b82edc",
+            "x": "792a894b5c74f928e3a2105285a69e01c2029e350103ac9f0b51bfcbec95ba3d"
+          },
+          "attrs_sha256": "de90e7d7e197f578cf02745aa1e0d369cd25119b38378d1340144d87beeaf85a"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000026",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000026/shard_000026.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "c4980ff4c57d74078481bc80975fe382b169fecdcf873d6cbb5b46736c4f894d",
+            "legal_indices": "adea216075b8732914bf7e88fbbba35ca14a01f5d5edf1aac0e3132260136115",
+            "legal_offsets": "92597a9719ce441c92286f1f26a8529f883a003f173e3e28c5ef52dd7600c2b7",
+            "ply_index": "8f51d783289c1f0cd40f3ec82c0096ff80806deebcad80a3d2cdb4df0d597c4e",
+            "policy_logits": "a63f1fed8b5d709218d7a48d8568243e76c480c139fdb5d0a5b72bfa1412390e",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "3d04f0d142548fddd7dc8b4580d558896ca1cc6d96d9bc095397de51dc52be9a",
+            "value2_logits": "cd1229d6ab3c9b4fee4e05f8227f9c5cc55d10eab66f5c2362a7f6c6bb1ab8e2",
+            "value_logits": "5c497dd29165b5d3cf6a48dd0ed3b40189d30660edf2f7046204fcde145018a2"
+          },
+          "source_storage_identity": "f670820e36b86ed17d1faef3b43176e9022274277ec4bb35487cff6d2e57390a",
+          "source_array_sha256": {
+            "game_id": "c4980ff4c57d74078481bc80975fe382b169fecdcf873d6cbb5b46736c4f894d",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "a6d625ec31073b5fbca512c56246b7ab58a785af7c29355e900e539bd8ed5e22",
+            "ply_index": "8f51d783289c1f0cd40f3ec82c0096ff80806deebcad80a3d2cdb4df0d597c4e",
+            "x": "f5c2cf5e9fa016b6fa4daf2182249910ceaa3657bca09ae69a02639e4d42338f"
+          },
+          "attrs_sha256": "af68f2f8e48dbd549bcbf01744ac57a677beac1719890f26dccab9477643430c"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000027",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000027/shard_000027.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "d9634e7ae6f8a2135b275f31ac9302562f36c97ba781193c0b85dbcd9c6d01f1",
+            "legal_indices": "23a270c2694931c43c3b43e2e0b9bbd6a1569dbe5d7e907c23a67cca4ebbe5cf",
+            "legal_offsets": "55db36dced269be800d1e399534a7fb59a5536a664baebada841ec6dffeafd85",
+            "ply_index": "049e12cc5964123cf69d698a6e006d839f56222a77e72b712668b44c8b919214",
+            "policy_logits": "8bab25ab138cb74a481039eadc3e8c1a6b67001651f6f6e2872382f48b7c3518",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "76b1a78da99b4d4ec187225ac5aa8b1f9b196e5ce4868cbf552416b17c057ac5",
+            "value2_logits": "3f2a5cf9e85b759bb5a1aa8a581681d8fe697ffdbf167b2ef5afb7296b7e9c15",
+            "value_logits": "1a41a6930e1abe882504f56ff0bf0d0a5cb7d2fd4bac1cee57434a9b0626fa65"
+          },
+          "source_storage_identity": "783acd1a71fbda639a2e2e7b430340e659059514307c96f33f3c7ed557c9fedf",
+          "source_array_sha256": {
+            "game_id": "d9634e7ae6f8a2135b275f31ac9302562f36c97ba781193c0b85dbcd9c6d01f1",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "7b2aa75e39839a2d7703f37200e4599e68987cbd320194ff6ffc3477e8f10e30",
+            "ply_index": "049e12cc5964123cf69d698a6e006d839f56222a77e72b712668b44c8b919214",
+            "x": "d4f8932432c033f1f84eb8279c248be52d9771e669661c807ff9097152081cba"
+          },
+          "attrs_sha256": "a6be199e2d5466ec11a7492e468b0af1c25bff438e0b2f429f08bb471660a33c"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000028",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000028/shard_000028.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "55c30f3f18b430161a0b4c2e5193380ddd58c98c05c743ac8cd5b2a0d172ea05",
+            "legal_indices": "112efc4d19094d9d82a093eecdc68bdd6036d205d468d2708b1a7877b2b5e0a5",
+            "legal_offsets": "79295867e2d958480a1ce735bf19add5a33f739b91be3cc75b49defcaba633eb",
+            "ply_index": "9beeeb6f894081533061b96ee7d647c51abcc8de9e9284a4a895a21ba41a25f8",
+            "policy_logits": "2d5aa973102253b549cbe4741952cd55df0f343b56cc3c611be3b56dde37ee0b",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "76c87eae8ee9e90da9d5678e6c014930f91baf869f4d2290b9894ef0f0b70e78",
+            "value2_logits": "61505f1efc57f0f0c144be7fab5fd0a26ad0a79423caeb3dab86eebd90afee07",
+            "value_logits": "6878d44514d1f969eee1e6cfcdfca2e0c21ee3f7e8cfabbe59f154e9164aaa8f"
+          },
+          "source_storage_identity": "5ffc6091360bfb30d9fb0ad7fe5f98b984f82cea5f2357a69116cda571cd705c",
+          "source_array_sha256": {
+            "game_id": "55c30f3f18b430161a0b4c2e5193380ddd58c98c05c743ac8cd5b2a0d172ea05",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "ccd9685fa1baacf29d31ae02e9d9c184e529c6c3e82fb3fcfca64f751925cdfe",
+            "ply_index": "9beeeb6f894081533061b96ee7d647c51abcc8de9e9284a4a895a21ba41a25f8",
+            "x": "affc4d4600551c57c3c158cc290bd3bab4931ce98a1b2ed6279a930c0c75a5ab"
+          },
+          "attrs_sha256": "300459147afae5ee6dcbaa71123bb29395d849dae00141050a3054beeed36ed2"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000029",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000029/shard_000029.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "3c01b35100cf60d000f6fd949914967306e9716e5e230b52476a0388990bd404",
+            "legal_indices": "494f2e11b43543a16adca638900ab47d8d9d714e0cc300c912d4a982d3404e53",
+            "legal_offsets": "595d8c1f5e5ff23fd6866eb8fb9a2379e9149b48efd07460e5f6540656fe8221",
+            "ply_index": "b764b174532c3fbdec87d6c29ba200f199cdd72ff6bb8cf3dc8b7ec6df1166d0",
+            "policy_logits": "0ffa5e6de45bdee79a44c386d342951c470e163ba31a153d624b61052ef71b8c",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "88a3f9679632f06750e3e08a56c473ae39471fa390b65a9f05a40afaf6a196bc",
+            "value2_logits": "68fca423a65317016f02b25f7578af53f10cb54098f7f6e88320eb132e4eaad9",
+            "value_logits": "222865e990ce1b43c433456b33292bac6f0a21af90d358a654f56980a4606b1a"
+          },
+          "source_storage_identity": "25c097dda4474b79bf591d8b2bdd3e18a42c81f9e0210f1e4192f3bf3201d707",
+          "source_array_sha256": {
+            "game_id": "3c01b35100cf60d000f6fd949914967306e9716e5e230b52476a0388990bd404",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "fd98e95e334cf01904001b76acafd7e37c0ac53c6b00b62113c6a6d1f5147d32",
+            "ply_index": "b764b174532c3fbdec87d6c29ba200f199cdd72ff6bb8cf3dc8b7ec6df1166d0",
+            "x": "7823fe63b28aa6da0819e928121796e757a53f95cc4cd608abd8f810479e790f"
+          },
+          "attrs_sha256": "e0b5f380f9c200e6059fffca676327f5617befaece273c9dc1aaa6fb22a10729"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000030",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000030/shard_000030.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "2408b0f1ffb5890696d7c155e4b5cf0d7512efb774f85665f91e58c9ee7726a0",
+            "legal_indices": "74819c804fd6e0d4ece746cb1095bc709cb4c16483509aa0f6518e1165feae36",
+            "legal_offsets": "6ee04950201da9f8db1759ca0e11a5a09992127039aa2a0dfd9fdb9d249ccf78",
+            "ply_index": "2db6dfd7aa95eacf225301071a44e5b65c39e2baef492a4caf0f1ad4c6e46dad",
+            "policy_logits": "837cb27fca148bcf8f4eefd12f66dfe1c49acd301ef91b71570a3ea8487a26f2",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "1635d1329585911f7c6465a2b0d843fefce29cca03c1eb298cf81b8e3acabad8",
+            "value2_logits": "3b44f503e122641d3bf0020546a4971355430f0ec9472374d2dda4c7d95e6145",
+            "value_logits": "74cc3286bc49b890fc27c04be148d2b5b1a9de693fb70066228352c111084caa"
+          },
+          "source_storage_identity": "fbb2961dff6b10718530826b64d2edc3771a7d4e2e29a552742f4970b266f5c6",
+          "source_array_sha256": {
+            "game_id": "2408b0f1ffb5890696d7c155e4b5cf0d7512efb774f85665f91e58c9ee7726a0",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "a4a6cdeb3eef1ed7a2bc770136bb563995aafe1ec03fe341ab1bdf1d3c0a7acc",
+            "ply_index": "2db6dfd7aa95eacf225301071a44e5b65c39e2baef492a4caf0f1ad4c6e46dad",
+            "x": "c49142be9e35df29bcd169bd321aee09c178777fce3c6544157b28a2c200454f"
+          },
+          "attrs_sha256": "c13f4cc4ae34e17c295d0d998468468005cffa525f73571e3e56fa040d69c722"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000031",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000031/shard_000031.zarr",
+          "rows": 8192,
+          "array_sha256": {
+            "game_id": "f4facbb7a384a6efebbaf7dd7a67b0414e1e6e0462fd4733c7e1747d290621f9",
+            "legal_indices": "b81906ace7bf2198d35fed21688b029b07b0dc1a0f6f4480c9b2de245c4759fd",
+            "legal_offsets": "aca3ad591993889ff94a0081c9aa0be86ae2e864b226c8f0e668c44cd4274608",
+            "ply_index": "8843758d6d02a54fadccdbb16c3f332777e8dcbb1a8c8a67316a81eb7f1905a6",
+            "policy_logits": "e07f12f66e4b41d42b165b4f4be0108939855f254e86414bad0579ad781fdc2f",
+            "row_index": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+            "tpg_feed_sha256": "3bdb191a1ab9b00eceb88730002c60ba3b97379935674d38388376b12565441f",
+            "value2_logits": "ae8da26ab5bc2bac9cbdd66e89f17b2f6e7eecb0b1c208dc0ec081094edc4d1c",
+            "value_logits": "758d68e1ec0561412aac4b94ca7ca26e8a3671eed0003d799c9708e93bfdb266"
+          },
+          "source_storage_identity": "97ca042869963935f7c6d7a1e6bbc3538da1cfd485dcc218c48f14056345f685",
+          "source_array_sha256": {
+            "game_id": "f4facbb7a384a6efebbaf7dd7a67b0414e1e6e0462fd4733c7e1747d290621f9",
+            "has_game_id": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_legal_mask": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "has_ply_index": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+            "legal_mask": "d2d78264ba9271da179e073b60cfa5ccb1b6b78487b43bc09efcda7607dd28ec",
+            "ply_index": "8843758d6d02a54fadccdbb16c3f332777e8dcbb1a8c8a67316a81eb7f1905a6",
+            "x": "fbcfe47acca47d5da6f5f4c112ac74c5e4713a05d6a92383dbe0415059204d5b"
+          },
+          "attrs_sha256": "2a4ef25b4bad82ab6fd5f64dc96a4b43feeb9e760409e2b1d748c061ddfa8527"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    },
+    {
+      "chunk": "shard000032",
+      "decision": "REUSABLE_COMPLETED_CHUNK",
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000032/shard_000032.zarr",
+          "rows": 1772,
+          "array_sha256": {
+            "game_id": "c019727fca1be0d1e9969a33eff90c880569356d707f7964f4b3d561cb5ae8c9",
+            "legal_indices": "3408e6f0ddb884a757cd150709bf356520fbbf451a1c5b4575c5ffa8039b654d",
+            "legal_offsets": "1b198656ffba9e191bd9a924b76869dd06f545e271c98efd6536b256a89dfba7",
+            "ply_index": "33d83dfec44ea49a43f4837e111d76a503493a4b288c10ae59a7c73d06955c34",
+            "policy_logits": "1a0039444de81cce3ecdc75bf04c798daeb459dad10aa2c5646126ecfeeea0df",
+            "row_index": "6179345f3358d9803cf1ddca0761f27a26cf5317b01eeb28c3aa2ea28a375559",
+            "tpg_feed_sha256": "383ced2aeb3cea2329374dcc342ec08efb480f7b69e5f3cff8abb381d58e2316",
+            "value2_logits": "a6d0091dc290fa7bcc61811f0393dba0c318fb60186037baac88d05be945b289",
+            "value_logits": "4a7d01bd61dfb431eebbe242133ccf436d2e0fb975b6cc3d12de6242abad18fd"
+          },
+          "source_storage_identity": "26469d5993aa85ed49a2d85b40b2dfc75c955f22a36057122598e8b7dc403675",
+          "source_array_sha256": {
+            "game_id": "c019727fca1be0d1e9969a33eff90c880569356d707f7964f4b3d561cb5ae8c9",
+            "has_game_id": "2e106f710bae05d11e25a77c358e0fae4f53db23fd9888c640d82a90bc4a9cb5",
+            "has_legal_mask": "2e106f710bae05d11e25a77c358e0fae4f53db23fd9888c640d82a90bc4a9cb5",
+            "has_ply_index": "2e106f710bae05d11e25a77c358e0fae4f53db23fd9888c640d82a90bc4a9cb5",
+            "legal_mask": "7cbc71fb4ef46fcb37c6c8ecc21175fefbdb2effbe753fca67a6f7db878b09fd",
+            "ply_index": "33d83dfec44ea49a43f4837e111d76a503493a4b288c10ae59a7c73d06955c34",
+            "x": "2afb6e67196088415b6c512f944052264e24f74be9403bb41b2daf2bd82bef84"
+          },
+          "attrs_sha256": "1a493138f26422f9a43ff598de100c704c4843fd582530531d2ec8ba9744ac8e"
+        }
+      ],
+      "verified_arrays": 9,
+      "provider_neural_events": 403,
+      "CPU_shape_events": 4,
+      "library_observations": [
+        "first",
+        "final"
+      ],
+      "library_count": 13,
+      "missing_final_evidence": [],
+      "partial_directories": []
+    }
+  ],
+  "limitations": [
+    "Complete batch-v3 run06 convenience cohort; no strength inference.",
+    "Inherited source/feed proofs; no raw features/model/library reread.",
+    "Both value heads retained; manifest enables policy consumer, not training admission."
+  ],
+  "independent_completed_review": {
+    "status": "PASS_INDEPENDENT_COMPACT_SAVED_CONSUMER_QUALIFICATION_NOT_TRAINING",
+    "reviewer": "sf_worker_concurrency",
+    "reviewed_unix": 1789328613.1326292,
+    "pins": {
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_qualification_v1/plan.json": "164e4cb26a206614603d0bdfe21f5796df048dd03c8e8ae44d7508365dfcb9e9",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_qualification_v1/command.sh": "80f0b6cd0fefce507ccbdbb3d1dfdd7c454e279f8d54b8e982e664313bd28fec",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_qualification_v1/outer_started.json": "6b86e26d27265ad6e50861d1f1bddd6c7121eef4c2ce1c30b5f0d6c0ee65a6f5",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_qualification_v1/outer_terminal.json": "71d1a19674d40fb04e3568a36bdd198c2fda8379332a1a6d514381ccb5dbc082",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_qualification_v1/completed/qualification.json": "68fa7987c7e3d1e4bad873a3fc653cba6cae804726c8518625ed1ddbdf92a015",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_qualification_v1/completed/ceres_policy_manifest.json": "524e425f02cf54267b829dbebc52f30f7ddb3c01626455e155680cc9090e7328",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_qualification_v1/independent_review.json": "b41ae567534988748e3493edba1868007b2543287b3e99b9461a58013de57366"
+    },
+    "actual": {
+      "rows": 263916,
+      "shards": 33,
+      "new_payload_shards": 33,
+      "reused_shards": 0,
+      "verified_arrays": 297,
+      "elapsed_seconds": 13.860494375228882,
+      "exit_code": 0,
+      "consumer_manifest_sha256": "524e425f02cf54267b829dbebc52f30f7ddb3c01626455e155680cc9090e7328",
+      "qualified_total_rows": 6130891,
+      "qualified_total_shards": 751
+    },
+    "findings": [],
+    "verified": [
+      "Actual terminal0 and start/end elapsed13.860494s match same pinned600-second plan; final status is saved consumer qualification, not training.",
+      "All33reviewed chunks cover exact ordered source shards0..32 with8192rows except final1772, exact263916total; each actual manifest path matches reviewed shard and native source binding.",
+      "Every chunk reports9verified arrays,403CUDA neural events,4CPUshape events,first/final library observations13libraries,no missing final evidence and no partial directories.297arrays reported verified by actual unchanged auditor.",
+      "Consumer manifest hash524e425f matches actual bytes; source/summary/storage identity and output attrs proof references reconcile.33output storage roots and702 proof digests retained.",
+      "Prior5866975/718 plus newlyqualified263916/33 gives6130891/751. ApproximateC3/native parity limitations persist."
+    ],
+    "limits": [
+      "No arrays/models/raw feature reads, content revalidation, imports/defaults/tests or activejob polling by reviewer.",
+      "702 proof digests are preserved actual audit evidence, not individually rehashed by this compact review.",
+      "No playing-strength result or training admission."
+    ]
+  },
+  "references": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_qualification_v1/completed/qualification.json": "68fa7987c7e3d1e4bad873a3fc653cba6cae804726c8518625ed1ddbdf92a015",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_qualification_v1/completed/ceres_policy_manifest.json": "524e425f02cf54267b829dbebc52f30f7ddb3c01626455e155680cc9090e7328",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_qualification_v1/independent_completed_review.json": "2919287368c6e5d9503f2e9d57eeb75fcdca7ea09635c4fa4cbc5a62b5699cf8"
+  }
+}

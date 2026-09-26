@@ -1,0 +1,141 @@
+{
+  "actual_outer_launch": {
+    "argv": [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      "--kill-after=30s",
+      "10770s",
+      "/usr/bin/python3.10",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/run_registered.py",
+      "--plan-sha256",
+      "86e0abda07ef597e20c5f0098ddbf5e5854b8bc96e615d9344673b77ed51055e",
+      "--deadline",
+      "1789342621.4766912"
+    ],
+    "deadline_unix": 1789342621.4766912,
+    "plan_sha256": "86e0abda07ef597e20c5f0098ddbf5e5854b8bc96e615d9344673b77ed51055e",
+    "source_removal": false,
+    "started_unix": 1789331821.4766912
+  },
+  "census": {
+    "coarse_tar_bytes": 12856991365,
+    "counts": {
+      "allocated_bytes": 14652719104,
+      "directories": 41563,
+      "files": 671768,
+      "hardlinked_regular_files": 0,
+      "logical_bytes": 12101374597
+    },
+    "elapsed_seconds": 36.28215186599118,
+    "helper_sha256": "5e3289fd3b4c703244f8ff215e1218c65ce1e15690d8a7500d1d76da90277e77",
+    "inventory_bytes": 75242205,
+    "inventory_sha256": "c8c9d4cb5c538e1a287275475511fdb64b2c9e5ee6b73184447e5417a6e4d40d",
+    "local_free_bytes": 183935823872,
+    "root_stat": {
+      "st_ctime_ns": 1789290485094701220,
+      "st_dev": 2096,
+      "st_gid": 1000,
+      "st_ino": 12096573,
+      "st_mode": 16877,
+      "st_mtime_ns": 1789290462058705103,
+      "st_size": 94208,
+      "st_uid": 1000
+    },
+    "rows": 18910484,
+    "scope": "Exact prior metadata census block reused with only root summary name changed. No payload hashes; tar estimate is not a proved archive size.",
+    "shards": 2309,
+    "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05",
+    "status": "PASS_METADATA_CENSUS_NOT_COPY_OR_REMOVAL"
+  },
+  "consumer_observation": {
+    "complete_process_visibility": false,
+    "helper_sha256": "68a541fc6c4b24386bd7e118f9dbf0a049e52f95eb327d7d6b82038a738b37c7",
+    "mount": {
+      "filesystems": [
+        {
+          "fstype": "9p",
+          "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5",
+          "source": "E:\\",
+          "target": "/mnt/e"
+        }
+      ]
+    },
+    "observed_source_references": [],
+    "observed_unix": 1789331592.915268,
+    "opaque_same_user_cmdlines": {
+      "30": "/usr/bin/ssh-agent "
+    },
+    "other_user_processes_not_inspected": [
+      1,
+      9,
+      12,
+      13,
+      33,
+      34,
+      894,
+      895,
+      1939,
+      1940,
+      407219,
+      407220
+    ],
+    "same_user_processes_not_inspected": [
+      30
+    ],
+    "scope": "Copy-only fresh host fd/cwd observation; no deletion clearance, maps not scanned."
+  },
+  "deadline_utc": "2026-09-13T23:37:01.476691+00:00",
+  "independent_preparation_review_sha256": "faff94ad07f614f3c98f592f90fb4b61e675204be19b425af71af0c012af0018",
+  "limitations": [
+    "Archive copy/verification result pending at this launch snapshot; no source reclaimed.",
+    "No full census roster committed; inventory digest inherited from single census receipt, no metadata walk or payload reread.",
+    "No archive/model/active-job poll. Fresh consumer observation is scoped and not deletion qualification.",
+    "Future exact-shard reclaim requires verified external copy and separate current membership/consumer review."
+  ],
+  "limits": {
+    "GPU_hidden": true,
+    "checksum_pacing_bytes_per_second": 33554432,
+    "child_KILL_grace_seconds": 20,
+    "child_TERM_seconds_before_deadline": 30,
+    "cpu_affinity": [
+      0,
+      1
+    ],
+    "driver_TERM_seconds_before_deadline": 30,
+    "inclusive_wall_seconds": 10800,
+    "initial_local_reservation_extra_bytes": 16535624089,
+    "ionice_class": 3,
+    "minimum_available_RAM_bytes": 51539607552,
+    "minimum_destination_free_bytes": 30064771072,
+    "minimum_local_free_bytes": 165356240896,
+    "nice": 19,
+    "numeric_threads": 2,
+    "outer_KILL_grace_seconds": 30,
+    "per_process_RLIMIT_AS_bytes": 2147483648,
+    "rsync_bwlimit_KiB_per_second": 16384,
+    "staging_file_logical_bytes_ceiling": 15032385536,
+    "staging_guard_interval_seconds": 10,
+    "tar_stream_hard_ceiling_bytes": 15032385536
+  },
+  "parent_execution": {
+    "exec": 52568,
+    "sole_observer": 779,
+    "terminal": "NOT_READ_FOR_PUBLICATION"
+  },
+  "planned_external_archive": "/mnt/e/chess_derived_archive_20260908/Ceres100_v1/qtemp_0.0005_hist_20m_ceres_policy_C100T05.tar",
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_census_v1/completed.json": "30dd29385bdc3d2e3c5fc0068d59f9f537f848007baec2ed8e7eed8a3e5ba552",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_census_v1/independent_proposal_review.json": "de6da1be3c9c516b3a5d8192c54d6544e3a72a532d43ffdf0d7f27eedb5f5fb4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/consumer_observation.json": "17ac90bc080848e2d26f8d4d9a45f02edb13372e947aa08c66a035015a729f5b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/independent_preparation_review.json": "faff94ad07f614f3c98f592f90fb4b61e675204be19b425af71af0c012af0018",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/operator_command.json": "dd6b668825de800a04f75d22a7de6876a5b0bb7aa8c7bca88187369580176a90",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/outer_started.json": "8dda4b42a6eef30590667e70f487d7b2224320b65c5afc1af48d367942811a68",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/plan.json": "86e0abda07ef597e20c5f0098ddbf5e5854b8bc96e615d9344673b77ed51055e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/preparation.json": "ca601de64ad8d66a6821a0e098746c582e39ef265a6ed17a0e9d6a88d86b52c3"
+  },
+  "rows": 18910484,
+  "shards": 2309,
+  "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05",
+  "started_utc": "2026-09-13T20:37:01.476691+00:00",
+  "status": "ACTUAL_OUTER_COPY_LAUNCHED_VERIFICATION_PENDING_SOURCE_RETAINED"
+}

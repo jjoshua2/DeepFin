@@ -1,6 +1,6 @@
 # Weighted Ceres bootstrap preparation
 
-Status: qualified Ceres coverage now includes full shards 0–47 and the final partial shard. Collection stopped on a GPU telemetry query failure; an independently reviewed recovery is running. The policy mixer is merged and its real-teacher pilot passes. No Ceres-mixture training or playing-strength result is claimed.
+Status: both registered B100CeresV25 fixed-400 comparisons completed: +6.79 Elo [-32.26, +46.01] versus B100 and +25.83 [-10.06, +62.29] versus B100V50. Both remain unresolved. Keep B100 with original SF values as incumbent and retain CeresV25 as a competitive alternative. No automatic extra games or dose sweep.
 
 ## Selected question
 
@@ -50,19 +50,72 @@ bounded snapshot audit qualified recovery shards 48–79 (262,144 rows), scannin
 the newly completed chunk and reusing unchanged pinned prior qualification. This
 snapshot excludes in-progress chunks and is not full-corpus completion.
 
-## Qualified collection progress, September 11 at 13:40 UTC
+## Qualified collection progress, September 11 at 23:12 UTC
 
-The completed-chunk audit qualified recovery shards 48–1135: 8,912,896 rows.
-Together with previously accepted shards 0–47 and final partial shard 2308,
-this gives **9,309,460 of 18,910,484 positions** (49.2%). The audit exited zero;
-six new chunks received payload checks and 62 unchanged qualified chunks reused
-their pinned evidence. In-progress output is excluded. This is label qualification,
-not completed mixture training or playing-strength evidence.
+Snapshot 15 qualified recovery shards 48–2063: 16,515,072 rows. Together with
+previously accepted shards 0–47 and final partial shard 2308, this gives
+**16,911,636 of 18,910,484 positions (89.43%)**, across 2,065 shards. Audit session
+19685 exited zero under the existing ten-minute, two-core, 2 GiB limit. Twenty new
+chunks received saved-array checks; 106 unchanged qualified chunks reused their
+pinned prior evidence. In-progress output is excluded. This is label
+qualification, not completed mixture training or playing-strength evidence.
 
-Snapshot SHA256: `6c84c071f86a48ec8113c4a1aa723217a14db712dcf6476385760ba1bf2fbf5d`.
-The registered collection continues. Monitoring now uses a tool-side wait, with
-infrequent fallback checks while completion is distant; audits are batched rather
-than repeated after every small increment.
+[Compact snapshot15 evidence](evidence/ceres-snapshot15-20260911.json) pins the
+completed snapshot (`ca515de4a06cb2c60bb5ee822643eb81bca7409aa40c5a8071b17eaf353ab48c`),
+its snapshot14 predecessor, and the unchanged audit helpers. The publication check
+matched all 126 terminal chunk receipt hashes and checked the reused review chain
+and exact coverage without repeating array verification. The earlier
+[snapshot14 milestone](evidence/ceres-three-quarter-20260911.json) remains preserved.
+
+Collection continues. The last host process observation at 23:00 UTC found driver
+276374 and child 554254 collecting shards 2064–2079; those rows are outside this
+qualified snapshot. This observation is not a continuous liveness claim. No
+collector restart or inference was added by the audit. The next substantive work
+remains full-bank materialization and the registered policy/value comparisons below.
+
+## Full original-corpus saved bank, September 12 at 01:41 UTC
+
+Snapshot 16 completes recovery coverage: **18,513,920 rows in 2,260 shards**
+(48–2307), across 142 completed chunks. Adding the previously accepted 396,564
+rows in shards 0–47 and final partial shard 2308 yields **18,910,484 distinct rows
+in 2,309 shards: 100% of the original corpus**. Sixteen newly completed chunks
+received saved-array verification; 126 retained their unchanged pinned prior
+qualification. Audit session 37900 exited zero. The publication check matched all
+142 terminal receipt hashes, the reused review records and exact recovery coverage
+without repeating the payload audit.
+
+The recovery driver completed in 81,733.77 seconds (22 hours 42 minutes), within
+its remaining allocation. This elapsed time includes inter-chunk pauses and other
+execution overhead; it is neither GPU kernel time nor a fresh throughput benchmark.
+The failed earlier invocation remains excluded. The original collection driver recorded `COMPLETE`; its observer closed and the
+host process was gone. Root session 47292 returned no captured exit code, so the
+completion claim rests on the driver receipt. Collection has ended.
+
+[Compact final coverage evidence](evidence/ceres-full-coverage-20260912.json)
+pins snapshot 16 (`a156bef0bb4d997cffde3d9b06e49c23c0d1c45274c76d7363d2e21fbf9430a0`),
+the terminal driver, unchanged auditors and snapshot 15 ancestry. Bulk per-shard
+records remain at the pinned host paths. Earlier progress snapshots above are
+historical observations, superseded by this completed coverage.
+
+This completes the saved teacher bank, **not training-corpus admission or a strength
+result**. Raw policy and both value heads are available under the existing qualified
+approximate backend. Both complete producer manifests subsequently passed their actual producers’
+manifest readers (assembly session 51620 exited zero). Their hashes and the
+`COMPLETE_MANIFEST_ASSEMBLY_NOT_CORPUS_ADMISSION` receipt are included in the
+compact evidence. This was metadata assembly, not target rewriting. The next work
+is materializing the registered policy and value mixtures, followed by their existing
+training and match allocation. No target weights or scientific promotion criteria
+change because collection finished.
+
+After plan and command review, the CeresB50 full-corpus materializer launched in
+root session 61364 under the existing eight-hour bound, on CPU cores 0,1 with
+the GPU hidden. Its plan SHA256 is
+`1bc2189980f8551c765cbe9d97669d6c362be56a37e17af97395365175090011`.
+This is a launch observation, not a completed corpus. The B100CeresV25 value
+materialization plan was prepared but not yet launched at that snapshot; its subsequent concurrent launch is recorded below. Both original plan identities are
+in the compact evidence; training admission remains a later step. A separate [G10 convenience pilot](2026-09-11-g10-ceres-pilot.md)
+also completed collection and saved-output qualification; its diagnostic remains
+separate from the original-corpus training anchors.
 
 ## Real-teacher policy pilot
 
@@ -190,6 +243,68 @@ The development panel SHA256 is
 Final launch manifests must verify these identities and pin newly produced artifacts;
 this allocation is not itself a runnable or completed launch manifest.
 
+## Concurrent registered materialization, September 12
+
+B100CeresV25 preparation launched at 04:56:27 UTC alongside the active CeresB50
+policy writer. This overlaps preparation of the two already-registered recipes;
+it does not launch training or add a new target variant. Each corpus remains
+18,910,484 original positions. Batch size stays 128, and every transitive value
+producer file retains its previously qualified bytes.
+
+The policy job remains on its original frozen runtime and CPUs 0–1 with the shared
+preparation lock. The value job uses CPUs 2–3 and the fixed value-profile lock,
+with supervisor-only runtime `0719ad87e763250ffee45aab63190a9fd9659fd6` based on
+`f6b8b83aa0a17a4170a4c4e30a62b5ff08eb8a9e`. [PR #662](https://github.com/jjoshua2/DeepFin/pull/662)
+adds these optional allocations while preserving legacy defaults. The two jobs
+read shared immutable SF/Ceres inputs and write disjoint output/state directories;
+no active runtime was edited. Both retain two numeric threads, no GPU, STOP,
+150 GiB disk reserve, sampled 32 GiB output cap and eight-hour enclosing deadline
+with owned-process cleanup. No RSS/address-space cap is implied.
+
+Twenty-six focused subprocess/guard tests passed, scoped host type checking had
+zero errors/warnings, and configured whole Ruff/Vulture checks passed. Independent
+source and frozen-plan reviews passed; metadata-only producer admission exited zero.
+Whole-project type checks were not repeated after related broad timeouts, and no
+whole-type pass is claimed. Parent launch preflight recorded 294.316 GiB free disk,
+56,392,632 KiB available memory and no applicable STOP markers.
+
+The retained policy baseline showed 1,135 of 2,309 policy-stamped shard directories
+after 10,866 seconds, approximately 0.10445 shards/second since launch. Those stamps
+measure preparation progress, not completed corpus qualification. One check about
+20 minutes into concurrent preparation compares the interval rate with this baseline.
+If B50 clearly slows and its projected completion reaches within 30 minutes of its
+original deadline or later, stop only the new value job through its own STOP/cleanup
+path. Do not extend B50's deadline or automatically resume the value attempt.
+
+The scheduled check observed 1,313 policy-stamped shards: 178 additional shards
+in 1,489.49 seconds, or 0.11950 shards/second versus the 0.10445 baseline.
+The projected policy completion retained approximately 135 minutes before its
+original deadline, so neither stop condition held and both jobs continue. The
+value output had 176 directories; this check did not qualify their completion
+stamps. Free SSD space was 291.85 GiB and available RAM 53.59 GiB. The interval
+includes about 230 seconds before value launch and overlaps BT4 labeling, so this
+is a contention check, not evidence that concurrency caused a speedup. Projection
+also excludes unmeasured final publication overhead.
+
+While the GPU was available, one existing native BT4 WDL unit completed on CPUs
+4–5: run06 common-large derived shards 128–191, exactly 524,288 rows in 359.51
+seconds, within a 600-second enclosing bound. The unchanged qualified producer
+used batch 128 and native W/D/L probabilities. A subsequent saved-output check
+verified all five arrays across 64 shards (32 MiB decoded), exact row/teacher/source
+bindings, stored hashes, finite float32 probabilities and unit mass; the largest
+mass error was 1.465e-7. Independent receipt and checker-delta review passed. No
+source feature or model arrays were reread for that check.
+The run06 large bank now has 1,572,864 completed rows; including the earlier two
+common increments, direct native-WDL coverage totals 2,099,240 rows. This is partial
+scale preparation, not full-source or training admission, and it does not repair
+the separate malformed adaptive-SF baseline outside the qualified prefix. No
+additional GPU unit was queued.
+
+The [compact progress evidence](evidence/ceres-concurrent-preparation-20260912.json)
+retains launch, baseline, the complete co-run checkpoint and native-WDL completion
+pins. Successful materialization and existing corpus admission still precede any
+registered training; there is no new playing-strength result.
+
 ## Compact evidence identities
 
 | Evidence | SHA256 |
@@ -208,3 +323,58 @@ this allocation is not itself a runnable or completed launch manifest.
 | Frozen consumer fixture readout | `89b625ac4d30eb89484a6cb1066803b058859a6279d498f8f47b44f36ecaf4e4` |
 
 Bulk labels, executable manifests, logs and receipts remain in the host experiment storage. These identities bind the launch snapshot; future completion and training results belong in this record.
+
+## CeresB50 corpus completed
+
+The original batch-128 producer completed the full registered corpus in 5.57 hours. The separate frozen qualifier passed in 529.91 seconds with 381,260 KiB peak RSS, checking all 2,309 shard layouts, recipe attributes, and stable producer-bound source/teacher/output identities. It inherited the completed producer’s payload checks rather than decoding the corpus again. [Completion evidence](evidence/ceres-b50-training-handoff-20260912.json) binds the published summaries, actual COMPLETE receipt, qualification plan, and terminal.
+
+The prospective schedule passed in 421.83 seconds: 18,910,484 rows and 36,935 batches match the frozen canonical seed-zero epoch. The independently reviewed training manifest retains Python 3.10.12, NumPy 1.26.2, Torch 2.11.0+cu128, batch 512, and 16/16 plan/load workers. The coordinator launched at 07:56:06 UTC and the actual trainer stage started three seconds later; its log reached 176 of 36,935 steps at this launch snapshot. The operator inherited CPUs 0–31, preserving the historical worker layout. Training has a 16,200-second cap and the enclosing operator a 21,630-second cap; the parent owns its completion observer. There is no completed model or playing result yet. The fixed recipe remains equal sharpened BT4/Ceres policy with original SF values; this preparation establishes corpus readiness, not a stronger network.
+
+## Value corpus completed
+
+B100CeresV25 materialization completed at 2026-09-12 09:19:35.364403 UTC, after 4.39 hours. The full 18,910,484-row, 2,309-shard corpus passed the existing qualifier in 722.56 seconds with 384,284 KiB peak RSS. The actual value-lane producer map and original SF/B100/BT4/Ceres lineage are retained in [compact evidence](evidence/ceres-value-training-readiness-20260912.json).
+
+This prepares the registered 50% SF / 25% BT4 / 25% Ceres value mixture with unchanged B100 policy. Its prospective schedule passed in 463.960 seconds, matching all 18,910,484 rows and 36,935 batches of the canonical epoch. The final schema-3 manifest binds the actual 17-entry value-lane producer map, completed qualification, and schedule; the reviewed host operator preserves the 16,200-second training budget and 21,630-second outer bound. At that snapshot, value training had not launched and no playing result was claimed. At that value-readiness snapshot, the earlier CeresB50 training launch remained the latest policy-training observation.
+
+## Policy epoch completed
+
+CeresB50 completed the registered epoch with 11,055.006 seconds of charged training-stage time. Its realized schedule matches canonical `dc687fc3…`; checkpoint `5d7e1e81…` is bound to the completed training receipt and summary. [Compact completion evidence](evidence/ceres-b50-completed-match-20260912.json) retains the actual operator terminal, realized schedule, and independent review.
+
+The historical `valid_control=false` flag remains: there is no held-out purity receipt, architecture/trainer assumptions use committed pins rather than a fresh live-file comparison, and game-epoch sampling differs from the replacement-sampled historical control. This qualifies the registered matched-epoch comparison, not a continuation of that older control protocol.
+
+The next match is the registered 400-simulation comparison with B100 over 128 swapped opening pairs (256 games), at search-prior temperature 1.0 for both. Actual CPU package preparation passed: both models have 61,444,448 parameters and matching architecture, and the registered opening panel and search settings match the final contract. The match operator acquired the GPU lease after 19.168 seconds and launched its owned stage at 11:16:50 UTC. It uses rolling concurrency 128 and evaluation batch cap 4,096, with a 5,400-second stage cap and 10,230-second enclosing allocation. No game outcomes were read for this launch record; a completed paired bank is required before interpreting playing strength.
+
+## Completed fixed-400 policy result and readout recovery
+
+CeresB50 scored 51.758% over the registered 128 swapped pairs (256 games) against B100: estimated +12.22 Elo, nominal 95% paired interval [-22.88, +47.57]. The pentanomial counts are 18 / 23 / 51 / 22 / 14 in WW / WD+DW / DD+WL / LD+DL / LL order. Both packages used 400 simulations and search-prior temperature 1.0. This result establishes neither a gain nor equivalence; it does not select an optimal teacher mix or resolve variation across training seeds. The matched-epoch scope and historical-control limitations above remain. Keep B100 as the incumbent and CeresB50 as a competitive alternative; prioritize the registered value contrast rather than automatically extending this match or tuning a fine Ceres-dose grid.
+
+The arena itself exited successfully and saved all games, but its enclosing operator exited 1 when the strict reader rejected a command observation. The saved child command exactly matched the recorded timeout supervisor argv, including its 5,370-second TERM deadline, 30-second KILL grace and exact workload suffix. This is consistent with sampling between fork and exec; the actual post-exec argv was not retrospectively observed. Original receipts and game banks remain unchanged.
+
+The durable capture fix defers only that exact inherited wrapper for a bounded observation window, retaining unexpected commands for strict rejection. Missing observations remain possible; explicit null observations remain invalid. An explicit reader option admits this exact supervised snapshot only after supervisor/child identities, hard budget and elapsed time checks; all checkpoint, opening-history, settings, pair-completeness and score checks remain. The separately reviewed CPU recovery passed in 4.875 seconds with 235,824 KiB peak RSS, without model inference or game reruns. [Compact evidence](evidence/ceres-b50-match-recovered-value-launch-20260912.json) binds the original failure, unchanged process/bank, revised reader, completed result and independent review.
+
+B100CeresV25's coordinator launched at 11:45:43 UTC and its actual trainer at 11:45:58 UTC after the policy match ended. It uses the already qualified 50% SF / 25% BT4 / 25% Ceres value target and fixed B100 policy, with the registered 16,200-second training and 21,630-second outer limits. This is a launch observation, not a completed value model or playing result. The capture correction does not change this already-running frozen training runtime.
+
+## Value epoch completed
+
+B100CeresV25 completed its registered epoch with 10,028.655 seconds of charged training-stage time. Checkpoint `3e2653d0…` is bound to the actual completed training receipt, run summary and realized canonical schedule `dc687fc3…`: 18,910,484 rows, 36,935 updates and 420 windows. The fixed value recipe remains 50% SF / 25% BT4 / 25% Ceres with unchanged B100 policy.
+
+The same three historical `valid_control=false` limitations remain: no held-out purity receipt, committed architecture/trainer assumptions rather than a fresh live-file comparison, and game-epoch sampling rather than historical replacement sampling. Completion qualifies the registered matched-epoch comparison; it does not establish playing strength or erase those limitations. [Compact evidence](evidence/ceres-value-completed-match-20260912.json) binds the actual terminal, training receipt, summary, realized schedule and independent review.
+
+Both registered controls remain B100 and B100V50, each over 128 swapped opening pairs (256 games), 400 simulations and prior temperature 1.0. Both comparisons remain required regardless of the first result. Bounded CPU preparation uses CPUs 2–3 to avoid the active downside producer on 4–5; no training or arena algorithm changes follow from that scheduling choice. Both actual CPU packages passed: candidate and controls each have 61,444,448 parameters and matching architecture, with CUDA uninitialized during preparation. Their stages took 127.598 and 118.547 seconds. No value result has been read.
+
+The first standalone launch preflight stopped before invoking the launcher because an existing raw BT4 labeling job was using the GPU (8,883 MiB and 96% utilization observed). Both jobs use the same advisory lease. No process was interrupted or resource cap raised: the unchanged reviewed launcher entered its existing bounded lease wait instead. The match operator started at 14:52:30 UTC, acquired the lease after 246.688 seconds, and launched its actual arena stage at 14:56:36 UTC. This time the recorded child argv matches the requested arena command; the narrowly adopted future capture fix does not change arena code or search settings. The parent owns the sole match completion observer. The second B100V50 match is prepared for its slot after the first terminal, independently of the first result; the ongoing downside CPU preparation is preserved.
+
+## Both registered value comparisons completed
+
+The same completed B100CeresV25 checkpoint played both registered controls, regardless of the first outcome. Each match used 400 simulations, search-prior temperature 1.0 for both players, and the same 128 swapped opening pairs (256 games).
+
+| Reference | Candidate score | Elo estimate | Nominal 95% paired interval | Pentanomial WW / WD+DW / DD+WL / LD+DL / LL |
+| --- | --- | --- | --- | --- |
+| B100: original SF values | 50.977% | +6.79 | [-32.26, +46.01] | 23 / 21 / 41 / 24 / 19 |
+| B100V50: 50% SF / 50% BT4 values | 53.711% | +25.83 | [-10.06, +62.29] | 19 / 28 / 50 / 15 / 16 |
+
+Both stages and strict finalizers exited successfully. Arena wall times were 1,467.783 and 1,481.827 seconds. Actual child command observations matched the requested commands; no saved-receipt exception or game rerun was needed. Independent reviews checked completed receipt bindings and all retained pair-score arithmetic without repeating model or game-bank reads. [Combined evidence](evidence/ceres-value-fixed400-results-20260912.json) includes both complete readouts, identities and reviews.
+
+The positive estimates do not establish a gain or equivalence. The B100 comparison tests replacing half of the original SF value supervision with the registered BT4/Ceres mixture. The B100V50 comparison replaces half its BT4 contribution with the fixed Ceres dual-head contribution, holding the 50% SF share and B100 policy fixed. Neither result alone establishes the best teacher weighting. These share a candidate checkpoint and reused development panel; they are not independent seed replications, and results against different opponents are not pooled into one Elo. The historical-control limitations recorded at epoch completion remain.
+
+Keep B100 with original SF values as incumbent; retain CeresV25 as a competitive alternative. Do not automatically extend either match or start a fine value-dose sweep. The next substantive policy candidate is the already preparing moderate SFDownside300w.5 recipe. It is gentler than the previously tested all-move Tactical100 attenuation and leaves mate rows unchanged; it is not the first all-move SF method. Its corpus preparation is not training admission or a strength result. Existing raw BT4 labeling may use available GPU time while preparation continues; no running labeling job is stopped for this decision.
