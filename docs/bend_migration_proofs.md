@@ -1,5 +1,25 @@
 # Bend migration and proof inventory
 
+## Latest P3 generated castling mandatory-check proof
+
+Six source contracts now establish that generated castling cannot use the optimized
+unchecked branch: its owned king source is in `own & (rays | kings)` for every ray mask.
+The actual fast step equals the complete current-side child-check operation. A sixth
+whole-generator theorem proves complete array-and-ordered-list equality to an audit
+variant explicitly forcing flag2 through full checks, without extra input premises.
+
+Final new6/19 and unchanged parent5/18 focused gates pass. Four native modes pass the
+direct-step independent reference and complete actual/audit generator parity. The latter
+retains an independent castling-only move-set oracle for full generation; equal complete
+noncastling output is not independent noncastling legality qualification. Modular177/524,
+not a full aggregate run. Local only; unchanged repository lint fails for missing tools.
+See [the readout](experiments/2026-09-26-bend-castle-safety.md) for exact domains/receipts.
+
+Mandatory execution is now source-proved; independent start/transit/destination attack
+semantics, valid rights history/metadata, reachability and full legal-generation
+soundness/completeness remain distinct. No application responsibility moved into Bend.
+
+
 ## Latest P3 full-generator castling provenance (local)
 
 Five public source laws now extend actual ordinary-scan tag exclusion and full/fast

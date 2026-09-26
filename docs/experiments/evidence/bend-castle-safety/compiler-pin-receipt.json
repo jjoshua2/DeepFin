@@ -1,0 +1,11 @@
+{
+  "command": [
+    "../bun",
+    "test",
+    "native/bend_engine/standalone/verify_compiler.test.js"
+  ],
+  "status": 0,
+  "elapsed_seconds": 0.06467270699999972,
+  "log_sha256": "01d9209d1428cac01910445a64a4ade9f666d05cd25544e34b7fd799fc36a701",
+  "log_bytes": 885
+}

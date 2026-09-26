@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Generated castling mandatory checks](2026-09-26-bend-castle-safety.md) | Six source laws prove required child-check execution and complete generator equivalence to explicit forced castling checks; four-mode native qualification; modular177/524, lint unqualified |
 | [Full-generator castling provenance](2026-09-26-bend-castle-chain.md) | Five actual scan/filter/both-side/full-generator laws; castling member guard and update preservation; local171/505 with lint unqualified |
 | [Actual castling emission](2026-09-26-bend-castle-emission.md) | Six actual-source output/tail, guard, route and derived update-preservation laws; current-table native producer checks; modular166/487; final legal_moves safety remains separate |
 | [Castling producer geometry](2026-09-26-bend-castle-producer-geometry.md) | Six route/mask geometry laws plus exact source-link anchors; modular160/470; list-membership/legal-soundness theorem remains open |
