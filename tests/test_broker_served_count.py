@@ -745,3 +745,69 @@ def test_an_oversized_batch_size_is_not_counted_on_the_failure_paths(
         )
     finally:
         broker.shutdown()
+
+
+@pytest.mark.parametrize(("claimed", "expected"), [(3, 3), (12, 8)])
+def test_neural_work_counts_real_clamped_rows_not_padding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, claimed: int, expected: int,
+) -> None:
+    monkeypatch.setenv("CAE_NEURAL_WORK", "1")
+    broker = _serving(tmp_path, monkeypatch)
+    try:
+        broker.compile_inference = True  # use production bucket padding, no compile in fixture
+        slot = _arm_dense(broker, batch_size=claimed)
+        assert broker._process_batch([slot]) == 0
+        assert broker._neural_work is not None
+        report = broker._neural_work.snapshot(1)
+        assert report["forward_calls"] == 1
+        assert report["executed_real_rows"] == expected
+        assert report["dispatched_real_rows"] == expected
+        physical = sum(k * v for k, v in report["physical_batch_histogram"].items())
+        assert report["padded_rows"] == physical - expected
+        assert report["accepted_neural_rows"] is None
+        assert report["useful_eps"] is None
+    finally:
+        broker.shutdown()
+
+
+def test_neural_work_does_not_count_missing_model_or_rejected_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CAE_NEURAL_WORK", "1")
+    broker = _modelless(tmp_path, monkeypatch)
+    try:
+        assert broker._process_batch([_arm_dense(broker)]) == 2
+        assert broker._neural_work is not None
+        assert broker._neural_work.forward_calls == 0
+        broker._model = _TinyPolicy().eval()
+        assert broker._process_batch([_arm_legal(broker, malformed=True)]) == 2
+        assert broker._neural_work.forward_calls == 0
+    finally:
+        broker.shutdown()
+
+
+@pytest.mark.parametrize("fail_inside_forward", [True, False])
+def test_neural_work_keeps_execution_separate_from_output_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_inside_forward: bool,
+) -> None:
+    monkeypatch.setenv("CAE_NEURAL_WORK", "1")
+    broker = _serving(tmp_path, monkeypatch)
+
+    def faulty_forward(_x: torch.Tensor) -> dict[str, torch.Tensor]:
+        if fail_inside_forward:
+            raise RuntimeError("injected forward failure")
+        return {}  # computation returned; malformed output is not an unexecuted forward
+
+    try:
+        assert broker._model is not None
+        monkeypatch.setattr(broker._model, "forward", faulty_forward)
+        assert broker._process_batch([_arm_dense(broker)]) == 2
+        assert broker._neural_work is not None
+        report = broker._neural_work.snapshot(1)
+        assert report["forward_calls"] == 1
+        assert report["dispatched_real_rows"] == 2
+        assert report["executed_real_rows"] == (0 if fail_inside_forward else 2)
+        assert report["failed_forward_rows"] == (2 if fail_inside_forward else 0)
+        assert report["useful_eps"] is None
+    finally:
+        broker.shutdown()
