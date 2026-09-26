@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Castling update contracts](2026-09-26-bend-castling-update.md) | Two public laws for exact raw flag-two update and conditional representation preservation; 17 controls, four native modes; modular154/470, not legal castling |
 | [Public en-passant updates](2026-09-25-bend-en-passant-update.md) | Two actual flag1 update/partition laws promoted unchanged,17 controls and four native modes; modular152/453,not move legality |
 | [Ordinary moves and promotions](2026-09-25-bend-move-promotion-publication.md) | Publishes both saved suites unchanged; fresh9-law/35-control qualification and complete native Board updates; modular150/436,not move legality |
 | [Accepted parser frontiers](2026-09-25-bend-parser-frontier.md) | Four actual-source laws derive fresh bounded insertion and accepted-placement consistency; modular141/401 with separate exact-source compiler recovery |
