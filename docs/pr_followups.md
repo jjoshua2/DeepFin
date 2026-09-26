@@ -9,9 +9,7 @@ is fixed.
 
 ## Landed with a remaining hole
 
-| PR | What landed | What is still open |
-| --- | --- | --- |
-| #759 | Sequential Ceres blocks stop on a nonzero exit or a qualification mismatch. A missing output root raises. `disk_free_gib` takes the item output path. | A `harvest_ceres` item whose status is `failed` is treated like `logged`, so the next queued arena, match, or command still launches. `scripts/supervise_bootstrap_queue.sh` exits 0 on `DEADLINE` and `QUEUE_IDLE`, including after that skip. |
+None currently recorded. #759's reviewed failure-stop, missing-output-root, and per-item disk-path findings are present on `main`.
 
 ## Open, not merged
 
