@@ -1,0 +1,40 @@
+{
+  "status": "STAGED_BOUND_NOT_QUEUED",
+  "time": 1789879310.0876038,
+  "template": {
+    "path": "/home/<user>/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/epoch1/plan.json",
+    "sha256": "673b34565b835d0cdb7b557d0e0c78d8ef304c8724b3e116c8e509d024412485"
+  },
+  "runner": {
+    "path": "/home/<user>/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/run.py",
+    "sha256": "527bae15f1b572b8201b67e4c0a3fb3170d3b4cc652d5f972cc263010fc3ceaf"
+  },
+  "plan": {
+    "path": "/home/<user>/chess-artifacts/operations/expanded58m-vs50m-20260920/plan.json",
+    "sha256": "c6329c1bffd0c7d9ffe263ed7e05b6af47cf415a008a85b501e91cb119c92035"
+  },
+  "bound": {
+    "candidate": {
+      "path": "/home/<user>/projects/chess/runs/expanded58m_pressure_v1/checkpoint.pt",
+      "sha256": "c3259d8d8237271e83e2f7ae1250cc60c074a1c50e8071dad7475eecadc6a92b"
+    },
+    "reference_sha256": "43786945252e746a6e646a21663f798e1dff224e8c48c6dac757d8398a4ee015",
+    "donor_receipt_sha256": "9901370a47749934390b5a795dae2d014e0ac7641f3da9930bda7080e138eb41"
+  },
+  "effective_settings": {
+    "--games": "256",
+    "--mode": "matched_sims",
+    "--sims": "400",
+    "--seed": "2026092001",
+    "--opening-plies": "16",
+    "--temperature": "0.1",
+    "--search-shape": "training",
+    "--cand-gumbel": "policy_temp=1.0",
+    "--ref-gumbel": "policy_temp=1.0",
+    "--max-concurrent-games": "128",
+    "--eval-max-batch": "4096",
+    "--syzygy-max-pieces": "0"
+  },
+  "hypothesis": "Completed58M continuation improves immediate50M predecessor; extra training and new data are confounded.",
+  "analysis": "Single256game128pairedopenings400simulationarena; reportpaired95%CIandpointestimate; noautomaticextension."
+}
