@@ -1545,6 +1545,11 @@ class StaircaseSearcher:
         with the requested stamp rather than as a matching number.
         """
         return {
+            # UCI has no effective-option readback: record successful protocol
+            # forwarding separately from the requested setting, never claim a
+            # retained-mapping observation from the constructor's bool alone.
+            **({"sf_syzygy_retain_option_sent": True}
+               if getattr(self.engine, "retain_syzygy_option_sent", False) else {}),
             "sf_hash_mb": self.engine.hash_mb,
             "sf_threads": self.engine.threads,
             "sf_syzygy_path": self.engine.syzygy_path,
@@ -2819,6 +2824,7 @@ class WorkerSpec:
     #: spawn; every fact the resume needs is on the DISK the worker owns
     #: (``w<id>.progress.jsonl`` and the shards it lists), not in this object.
     resume: bool = False
+    sf_retain_syzygy_on_new_game: bool = False
 
 
 @dataclass
@@ -3292,6 +3298,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
                 nice=int(spec.nice),
                 threads=1,
                 read_timeout_s=float(spec.sf_read_timeout_s),
+                **({"retain_syzygy_on_new_game": True} if spec.sf_retain_syzygy_on_new_game else {}),
             ),
             staircase=staircase,
             cp_slope=spec.cp_slope,
@@ -3558,6 +3565,8 @@ def split_games(total: int, workers: int) -> list[list[int]]:
 def config_stamp(args: argparse.Namespace, *, sf_binary: str) -> dict[str, Any]:
     """The REQUESTED configuration, exactly as the CLI stated it."""
     return {
+        **({"sf_retain_syzygy_on_new_game": True}
+           if getattr(args, "sf_retain_syzygy_on_new_game", False) else {}),
         "out_dir": str(args.out_dir),
         "games": int(args.games),
         "workers": int(args.workers),
@@ -4358,6 +4367,10 @@ def refuse_resume_config_drift(
                 f"staircase_policy: manifest {STAIRCASE_POLICY_FIXED!r} "
                 f"(the pre-policy default) -> {current_policy!r}",
             )
+    # Old manifests imply retention was off. Do not enable a new engine option
+    # on resume while keeping the historical configuration identity.
+    if "sf_retain_syzygy_on_new_game" not in stamped and requested.get("sf_retain_syzygy_on_new_game", False):
+        drifted.append("sf_retain_syzygy_on_new_game: historical default false -> true")
     for key, banked in sorted(stamped.items()):
         if key not in requested:
             drifted.append(f"{key}: manifest {banked!r}, this run does not stamp it")
@@ -4491,6 +4504,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             out_dir=out_dir,
             sf_binary=sf_binary,
             sf_hash_mb=int(args.sf_hash_mb),
+            sf_retain_syzygy_on_new_game=bool(getattr(args, "sf_retain_syzygy_on_new_game", False)),
             sf_read_timeout_s=float(args.sf_read_timeout),
             sf_search_timeout_s=float(args.sf_search_timeout),
             syzygy_path=syzygy_path,
@@ -4660,6 +4674,10 @@ def build_parser() -> argparse.ArgumentParser:
              "realized bytes per entry; read it before raising this.",
     )
     p.add_argument("--stockfish", type=Path, default=default_stockfish())
+    p.add_argument(
+        "--sf-retain-syzygy-on-new-game", action="store_true",
+        help="Opt in to SyzygyRetainOnNewGame=true; refuse engines lacking the advertised check option.",
+    )
     p.add_argument("--sf-hash-mb", type=int, default=DEFAULT_SF_HASH_MB)
     p.add_argument(
         "--sf-read-timeout", type=float, default=DEFAULT_SF_READ_TIMEOUT_S,
