@@ -5,6 +5,7 @@ import fcntl
 import gzip
 import json
 import os
+import sys
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -495,11 +496,21 @@ def test_projected_reader_stdlib_corner_cases(line: str) -> None:
 ])
 def test_projected_reader_preserves_errors_in_skipped_fields(tail: str) -> None:
     line = '{"game_id": 3, "phases": ' + tail + '}'
-    with pytest.raises((ValueError, RecursionError)) as reference:
-        json.loads(line)
-    assert tool._decode_bt4_row(line) is None
-    with pytest.raises(type(reference.value)) as projected:
-        json.loads(line)
+    # 1,200 nested arrays exceed the usual 1,000-frame limit and must stay an
+    # error. A runner with a higher default limit would otherwise accept them.
+    previous_limit = sys.getrecursionlimit()
+    deep = line.count("[") > 900
+    if deep:
+        sys.setrecursionlimit(1000)
+    try:
+        with pytest.raises((ValueError, RecursionError)) as reference:
+            json.loads(line)
+        assert tool._decode_bt4_row(line) is None
+        with pytest.raises(type(reference.value)) as projected:
+            json.loads(line)
+    finally:
+        if deep:
+            sys.setrecursionlimit(previous_limit)
     # JSONDecodeError retains its exact document offset and diagnostic.
     if isinstance(reference.value, json.JSONDecodeError):
         assert str(projected.value) == str(reference.value)
