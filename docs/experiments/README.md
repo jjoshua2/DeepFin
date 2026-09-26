@@ -9,6 +9,28 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Full-width SF d8/d6 generation](2026-09-22-sf-shallow-generation.md) | Two equal-wall CPU generation arms; eligible rows, closed games, startup costs and limits; no strength or root-only generation claim |
+| [Bend subset successor and full ordinal proof](2026-09-21-bend-subset-successor.md) | Actual U64 borrow, compact successor, full Nat-indexed order/coverage/nonduplication and period; affine tables remain separate |
+| [Bend compact-index bijection](2026-09-21-bend-compact-index-bijection.md) | Nine new universal PEXT/PDEP range/inverse/bijection laws; carry-rippler ordering remains separate |
+| [Bend subset source laws](2026-09-21-bend-subset-source-laws.md) | Eight initial production-step laws with negative controls and independent native table checks; full P1 ordering/refinement still open |
+| [Bend-owned native neural leaves](2026-09-21-bend-native-leaf.md) | Actual search inputs and legal priors in Bend, native model execution without Python runtime; CPU fixture only |
+| [Bend policy/input composition](2026-09-21-bend-policy-composition.md) | Recovered Bend policy vocabulary paired with complete input from one Game; no inference or Python runtime |
+| [Bend complete feature inputs](2026-09-20-bend-classical-encoding.md) | Complete 146/175-plane inputs authored in Bend, exact C parity and current U64 compiler; no model/policy execution |
+| [Bend neural history encoding](2026-09-20-bend-history-encoding.md) | Bend-authored 112-plane history/metadata block with exact Python/C comparisons; partial input, no neural inference |
+| [Bend-owned draw rules](2026-09-20-bend-owned-draws.md) | Standalone native history identity and automatic root/leaf draws, no Python runtime; claims/encoding remain separate |
+| [September 20 standalone compiler adoption](2026-09-20-bend-compiler-adoption.md) | Pin the Bend-owned engine to upstream-synced U64 2.0.20; immutable source/cache contract and runtime requalification |
+| [Bend-owned standalone](2026-09-20-bend-standalone.md) | Bend UCI/FEN/history/table/evaluator ownership; static interpreter-free runtime, diagnostic only |
+| [Bend UCI interface](2026-09-20-bend-uci-interface.md) | Opt-in bounded UCI frontend, actual native search/client checks and stop isolation; no full-UCI, GPU or strength claim |
+| [Bend optional claims](2026-09-20-bend-claim-options.md) | Explicit zero-valued claim choice preserving legal continuations; native and host contracts, opt-in only |
+| [Bend search draws](2026-09-19-bend-search-draws.md) | History-aware automatic leaf draws, terminal-zero cache and native backup; optional claims remain separate |
+| [Bend neural play](2026-09-19-bend-neural-play.md) | Native evaluator across played roots, bounded multi-game queue and host draw policy; CPU lifecycle gate, not trained strength or throughput |
+| [Bend root advancement](2026-09-19-bend-root-advancement.md) | Same-process legal play/search, transactional epoch-bound root changes and retained host history; fresh trees, no subtree reuse or GPU claim |
+| [Bend checkpoint preflight and retention](2026-09-18-bend-checkpoint-preflight.md) | Fail-closed readiness, exact-checkpoint package reuse and retained failure evidence; no trained/CUDA execution claim |
+| [Bend checkpoint qualification](2026-09-18-bend-checkpoint-qualification.md) | Explicit checkpoint architecture/weights, native transformer CPU qualification, guarded CUDA BF16 path; no trained/GPU performance claim |
+| [Bend evaluator batching](2026-09-18-bend-evaluator-batching.md) | Bounded cross-search CPU batches, cancellation and epoch isolation; no trained/CUDA or throughput claim |
+| [Bend neural boundary](2026-09-18-bend-neural-boundary.md) | Real history/policy encoding and persistent native CPU AOTI smoke joined to Bend search; untrained TinyNet, no CUDA or production claim |
+| [Bend search sessions](2026-09-18-bend-search-sessions.md) | Persistent bounded Bend PUCT with external test policy/WDL, cancellation/reply validation and reset; CPU functionality gate, no neural or production claim |
+| [Bend scalar branches](2026-09-18-bend-scalar-branches.md) | Profile-guided scalar U64/list selection; allocation mechanism and paired perft confirmation, no production adoption |
 | [Bend perft native baseline](2026-09-18-bend-perft-baseline.md) | Paired old/new Bend versus CBoard, conservative king-safety filter; CPU-only, no production adoption |
 | [Ceres CPU semantics oracle](2026-09-13-ceres-cpu-semantics.md) | CPU oracle complete after comparator-only recovery: 144 histories match bytes; 131 value cases quantify FP16 getter differences, no neural parity claim |
 | [Saved joint raw-label eligibility](2026-09-13-saved-joint-raw-eligibility.md) | 21.40M saved joint-label raw candidates outside covered rosters; 512-shard audit complete: 4,219,426 eligible / 4,249,935 raw rows; 88 exact exclusions qualified; 4,219,426-row / 516-shard derivation launched, no completion or training admission |
@@ -58,6 +80,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Varying-horizon online controller](varying_horizon_online_controller.md) | Preregistration and staged evaluation of online search continuation |
 | [Value head architecture](value_head_arch.md) | Historical April 2026 experiments |
 | [Historical ledger](../experiment_ledger.md) | Frozen July–September 2026 record, including yardsticks, gotchas and recovery snapshots |
+| [BT4 complete pipeline screen](2026-09-21-bt4-pipeline-benchmark.md) | Fixed ABCCBA batch128 projected-decoder/prefetch comparison; exact inputs and outputs, complete labeling plus verification, reviewed and queued after factorial matches |
 
 These descriptions identify the records, not the state of a running experiment.
 Check subsequent readouts and the actual process/artifacts before resuming work.
@@ -101,3 +124,6 @@ links to supporting experiments. The `experiment-readout` Skill covers the reusa
 analysis workflow.
 
 - [2026-09-20: External storage and BT4 labeling efficiency](2026-09-20-storage-loader.md)
+- [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
+
+- [Bounded owning ring and calibrated collection comparison](2026-09-23-bend-owning-collections.md): Search.Tree payloads, layout failure/workaround, and matched-work timings; no scheduler adoption.
