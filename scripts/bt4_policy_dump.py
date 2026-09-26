@@ -662,25 +662,25 @@ def resolve_policy_output(sess: Any, policy_output: str | None) -> int:
 
 
 # ------------------------------------------------------------------- scoring
-def legal_move_policy(
+def legal_move_probabilities(
     board: chess.Board, policy_row: np.ndarray,
-) -> tuple[list[str], np.ndarray]:
-    """(legal UCIs, probabilities) — softmax over the LEGAL moves only.
+) -> tuple[list[chess.Move], np.ndarray]:
+    """(legal Move objects, probabilities) — softmax over the LEGAL moves only.
 
     The gather is :func:`leela_index_for_move`, which orients the move for a
     black-to-move board and applies LC0's own spelling for castling and
     promotions. Renormalising over legal moves (rather than softmaxing all
     1858 and slicing) is what makes the returned dict a distribution.
     """
-    ucis = [m.uci() for m in board.legal_moves]
-    if not ucis:
+    moves = list(board.legal_moves)
+    if not moves:
         return [], np.zeros((0,), dtype=np.float64)
     idx = np.array(
-        [leela_index_for_move(board, chess.Move.from_uci(u)) for u in ucis],
+        [leela_index_for_move(board, move) for move in moves],
         dtype=np.int64,
     )
     if int((idx < 0).sum()):
-        missing = [u for u, i in zip(ucis, idx.tolist(), strict=True) if i < 0]
+        missing = [move.uci() for move, i in zip(moves, idx.tolist(), strict=True) if i < 0]
         raise RuntimeError(f"{board.fen()}: no LC0 policy slot for {missing}")
     logits = policy_row[idx].astype(np.float64)
     # BT4 emits -inf-ish fills for slots it masks; keep the softmax finite.
@@ -689,7 +689,16 @@ def legal_move_policy(
     total = probs.sum()
     if not np.isfinite(total) or total <= 0.0:
         raise RuntimeError(f"{board.fen()}: degenerate policy row (sum={total})")
-    return ucis, probs / total
+    return moves, probs / total
+
+
+
+def legal_move_policy(
+    board: chess.Board, policy_row: np.ndarray,
+) -> tuple[list[str], np.ndarray]:
+    """Legacy UCI-returning view of the complete legal-move distribution."""
+    moves, probabilities = legal_move_probabilities(board, policy_row)
+    return [move.uci() for move in moves], probabilities
 
 
 def entropy_nats(probs: np.ndarray) -> float:

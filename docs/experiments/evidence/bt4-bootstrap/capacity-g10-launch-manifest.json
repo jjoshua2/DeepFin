@@ -1,0 +1,451 @@
+{
+  "schema": 1,
+  "scope": "Completed six-cell batch-capacity component and completed G10 parallel common-input batch, preserving earlier launch-only receipts.",
+  "files": [
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/plan.initial.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/plan.initial.json",
+      "sha256": "b7c372f10284f951785e0d788c86e5c2bacd6a9489271652922d6025d9673235",
+      "bytes": 4816
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/plan.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/plan.json",
+      "sha256": "23ca10d872abc19507f21000966b80707bed0c00000857da1f7a36f6df77000f",
+      "bytes": 4967
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/completed.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/completed.json",
+      "sha256": "57813f8a066d87a5a8b4a29f4de7948c8b5472516c044f964f71a201c7efceee",
+      "bytes": 3890
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/manifest.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/manifest.json",
+      "sha256": "23c0edbcbe1edd9663536466a0d11a244d04abe4ad79445bd30e24640877b2c8",
+      "bytes": 4967
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/metadata.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/metadata.json",
+      "sha256": "3df8edb9f32844da747cccc33eb453a442d46d3775cfbc7dbd85915e3d6bcf72",
+      "bytes": 1907
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/panel.json.gz",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/panel.json",
+      "sha256": "83b00a32887e8edbcdac6134328ab531728821c49f2c013a51a9257d46ba2e8e",
+      "bytes": 48318,
+      "encoding": "gzip",
+      "source_sha256": "f4f1d76538426f6589d9f3f69464ceefa996a7578fa6d7386c30ce137f9955c2",
+      "source_bytes": 334082
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/cells.jsonl",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/cells.jsonl",
+      "sha256": "f90a6b0c24147ab5640defa2bc5773c38abb397acb674c33a12a18fa5805be58",
+      "bytes": 2996
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/complete.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/complete.json",
+      "sha256": "b130390b664e7ec58cafe49448c4f83c6b886e47fce8afa1f9d6365cde5c39e5",
+      "bytes": 241
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/process.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/process.json",
+      "sha256": "ccf18a7c33a09e079471c754e965270cd4a65aa089a8f04d77983801c0961a6d",
+      "bytes": 3326
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/capacity.log.gz",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/capacity.log",
+      "sha256": "1213915968e6080a5777595f5ec16cddb75b7d3821f2c1f978250cf2efcb9487",
+      "bytes": 2056,
+      "encoding": "gzip",
+      "source_sha256": "5d55af7653314416697d59b7481a2b09b07daf86c725534a9aae8ae61a682b24",
+      "source_bytes": 5297
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/operator_launch.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/operator_launch.json",
+      "sha256": "4cf62d9368d448c5657124fb24221fde60c2f4a0d0c12569de29e69dfd350283",
+      "bytes": 824
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/cpu_preflight_initial_failure.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/cpu_preflight_initial_failure.json",
+      "sha256": "8495ad39f6ac59fb1739d8abd1dadbd5f81d142ab1b63382a55698fa479cd172",
+      "bytes": 634
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/cpu_preflight.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/cpu_preflight.json",
+      "sha256": "dd2308a5ed5d1e4360787355634a1bb6b90f3d394a7442077b2c40d48a4fc874",
+      "bytes": 488
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/runtime_probe.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/runtime_probe.json",
+      "sha256": "995d933fbf553e16e012f02dacc29be21994dfc665548212ef972a5062210e3b",
+      "bytes": 860
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/independent_review.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/independent_review.json",
+      "sha256": "33f47cfefe101edeb6a0ebf9516c998495d66cd86fc25dbf7d0c6c4f5ada0363",
+      "bytes": 4734
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/serializer_correction_independent_supplement.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/serializer_correction_independent_supplement.json",
+      "sha256": "f65383fdd36aab1986e5d1d070238dd043c24cf380f67c9673734fbc22145729",
+      "bytes": 1773
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/independent_completed_review.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/independent_completed_review.json",
+      "sha256": "1f1a158b79c7236a8b1bad1a4b83d58225a2b3ed2249139ce99234f1a60239e9",
+      "bytes": 7423
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/independent_arithmetic.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/independent_arithmetic.json",
+      "sha256": "1f222c06cd6be776eed8cdea494c5ffae46c6b5a7b2ccedeacc6b197502ba2b1",
+      "bytes": 994
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/probe_batch_capacity.py",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/probe_batch_capacity.py",
+      "sha256": "35d1f9ad0da3da5be682d9bceddd8fd1bbb5f0db0e0c55fbe6d0014f2076413b",
+      "bytes": 6975
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/run_batch_capacity.py",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/run_batch_capacity.py",
+      "sha256": "a194179f4805373fecddab999f6e0e80525de112f82b7b25f8cb011aa5b1aac2",
+      "bytes": 3393
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/runner_manifest_v2.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/runner_manifest_v2.json",
+      "sha256": "612b22ba93451d309e121c1aae83680728db0308af49ca2d2e0580dd01bd535a",
+      "bytes": 65884
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/runtime_qualification_v2.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/runtime_qualification_v2.json",
+      "sha256": "cd09fb34e12116c23582ac55d0916fed3e71ba5600212e55126ec2e4595f51f7",
+      "bytes": 44077
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/root_launch_review.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/root_launch_review.json",
+      "sha256": "fd22009fd960624cf173b3a0563057c4af9d4a9ae187d80e40e332338d9f2956",
+      "bytes": 1130
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/operator_launch.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/operator_launch.json",
+      "sha256": "e25d701c746f4d5fcf22425c4cafb3704f2d89a73b51ac4a09255b80c5b60bd5",
+      "bytes": 1876
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/lane.started.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/lane.started.json",
+      "sha256": "2daea1fd2b310df5490a284d5ad12662cb72847cce225920164bc5444d697564",
+      "bytes": 932
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/lane.started.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/lane.started.json",
+      "sha256": "c31d1a631e2c3788dbaa41332b6a10ee94cb049eb04f8b392edd7355d521bb7f",
+      "bytes": 943
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/bootstrap_layout_correction.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/bootstrap_layout_correction.json",
+      "sha256": "63bc86a61d83aee8421a02184d69cee0ce4d8481094bb15c2ff5c6fddb44d578",
+      "bytes": 823
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/manifest_validation_v2.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/manifest_validation_v2.json",
+      "sha256": "6a4fb4841ea5d2b30ccf5f8ea9c87534f504642697506a3ddffbbecd5117059a",
+      "bytes": 1454
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/completed.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/completed.json",
+      "sha256": "cdce8002e7a082796bd0251d07de16df559ffce80d2294a06aaa118f4d4dbbdc",
+      "bytes": 358
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/started.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/started.json",
+      "sha256": "26b3ed30059bed7b1ff74b9cb190e1593a4542057bb81c4a473c2624a8f183b7",
+      "bytes": 184
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/independent_completed_review_v1/review.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/independent_completed_review_v1/review.json",
+      "sha256": "1e4c06f0fd500212b4bac2f852936a20af2de21f7543c6e9eef2de6dc6924ecc",
+      "bytes": 111755
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/independent_completed_review_v1/review_helper_corrections.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/independent_completed_review_v1/review_helper_corrections.json",
+      "sha256": "1c11721a2f3bc595882b45d41522af3d4920f87f778b89fde51366814d1dfe75",
+      "bytes": 540
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/lane_complete.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/lane_complete.json",
+      "sha256": "8d688eb9672026575c8372cb5fc0688ee5efb66a854c8e44ee5804ffe80c90b2",
+      "bytes": 253
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/common_input_qualification.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/common_input_qualification.json",
+      "sha256": "25cde2ebee8fed4fef4dda7ae27d7389f61b43f48beda6c38fe935dbc9c3c937",
+      "bytes": 26350
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derived_identity.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derived_identity.json",
+      "sha256": "4d22b3eaa62f43a347397a4929598bd5590d29ef4247a6a2e6dd9f1c3f922a38",
+      "bytes": 10871
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derived/derive_targets_summary.json.gz",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derived/derive_targets_summary.json",
+      "sha256": "5528280d8be476263a34d9f3fcb001aa77b56a235dadc06e906bc64d55c7b4cd",
+      "bytes": 11663,
+      "encoding": "gzip",
+      "source_sha256": "a604d69372ad2f1d6a66651b92cbe9c22d07edf003f041b12f6b709e05cb4997",
+      "source_bytes": 49201
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derived/policy_support_misses.jsonl",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derived/policy_support_misses.jsonl",
+      "sha256": "d272a41eb2389c8caf31ecb09e583fa6dbbe6869a18cdb6420e9a7f9646aff50",
+      "bytes": 5589
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/bt4/bt4_policy_sidecar_summary.json.gz",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/bt4/bt4_policy_sidecar_summary.json",
+      "sha256": "0a576b1f23980083211532fe5519e65c0aacd320d540d6ea00569af3eda50283",
+      "bytes": 25133,
+      "encoding": "gzip",
+      "source_sha256": "ab0d17b0b16bfd73db849a97e52d965c7e970bd7098f2d00e4b4431723cc4bf3",
+      "source_bytes": 139407
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/rank/sf_d9_rank_sidecar_summary.json.gz",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/rank/sf_d9_rank_sidecar_summary.json",
+      "sha256": "3efd84848d74f80ff0de23ca1373ab7b56ac30070772f4581263cb3ecc8bb203",
+      "bytes": 11554,
+      "encoding": "gzip",
+      "source_sha256": "91adbb3a9d94b4cdd813be9c90b3cafba3376779eb8eae0dccb60ef36129c396",
+      "source_bytes": 43902
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derive.log.gz",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derive.log",
+      "sha256": "d3bdaa0412e00ed1071a86f79ee423fb724c2e152315d90ba2efcaa792a0e723",
+      "bytes": 804,
+      "encoding": "gzip",
+      "source_sha256": "abc94825d2fd9f15f86f6be4c5789ac84194c4afdf4febd471e61281ea4d2b98",
+      "source_bytes": 1367
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derive.completed.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derive.completed.json",
+      "sha256": "88cf765da6b7777478c4ba76afb3633b0652c7998003b7706b67ee3d44a7a7f6",
+      "bytes": 2940
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derive.time.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derive.time.json",
+      "sha256": "7b62df63ff65cbe9a344698f5c21fb4fdb30283e855ba1b027c6415956cec64a",
+      "bytes": 163
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/snapshot.completed.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/snapshot.completed.json",
+      "sha256": "a4cff66118b01f7bdcf58d41bbce13f87a7f385ad94c9e6fc16f2f5a00b34ca6",
+      "bytes": 1656
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/snapshot.time.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/snapshot.time.json",
+      "sha256": "ba875aeb960ecfb896adc992f8d5ec5f4af509af1fbd84f767556bfb7b69a72d",
+      "bytes": 145
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/adapt.completed.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/adapt.completed.json",
+      "sha256": "feb8a1a6d33bc090ec3487805e9ef4f45b85a9983c803da319f7964745b3434c",
+      "bytes": 1924
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/adapt.time.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/adapt.time.json",
+      "sha256": "07a74481f4704e2cffd5c466e3494c236f77f1f06c341520e4ec15eddbc8e2fd",
+      "bytes": 162
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/rank.completed.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/rank.completed.json",
+      "sha256": "578738e6370551d2df5b8fb20a01deb3823eae66f9795bb7c580cc85ca59dfba",
+      "bytes": 2653
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/rank.time.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/rank.time.json",
+      "sha256": "b288ed35f1eaa992d512560e398529b8b6ab3bf4547a544813f55c41c085500e",
+      "bytes": 159
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/qualify.completed.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/qualify.completed.json",
+      "sha256": "86a2506d659833995b0af5f5bd81df6edaf628677b90122c08db08d1f072db17",
+      "bytes": 1660
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/qualify.time.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/qualify.time.json",
+      "sha256": "785e199f6045c6a6135adf54c63b56402107047ec6595fdff4c76959b9582caf",
+      "bytes": 154
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/lane_complete.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/lane_complete.json",
+      "sha256": "7be91df6948ca1587096b090788053f9dc7ed0008412f5f989d9f801c52a22c9",
+      "bytes": 254
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/common_input_qualification.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/common_input_qualification.json",
+      "sha256": "e88ddb374156453d0284c8aa4ac2629f74d36f3aa8a09f27dd089aa8990b8e86",
+      "bytes": 30428
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derived_identity.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derived_identity.json",
+      "sha256": "9ab3ea6f0113ccbc2d812cbfe8f0fb790819acdab302691e5b0e385906aef244",
+      "bytes": 14893
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derived/derive_targets_summary.json.gz",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derived/derive_targets_summary.json",
+      "sha256": "4ff96d79085f35cf350b12ee635cfb429ed21e321f2e318fa17925a1d27bf8cf",
+      "bytes": 11961,
+      "encoding": "gzip",
+      "source_sha256": "f5031a05f019c3caf856af02e86e1467e5caa2d4eed4ac10c51b738df2973aa7",
+      "source_bytes": 52809
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derived/policy_support_misses.jsonl",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derived/policy_support_misses.jsonl",
+      "sha256": "b72178b02cf4f5fa650125a171d8525dfb3ce637529e46cb3181386361552ad0",
+      "bytes": 8543
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/bt4/bt4_policy_sidecar_summary.json.gz",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/bt4/bt4_policy_sidecar_summary.json",
+      "sha256": "89ef64509d9622bc04fea0795b332a1709e1568e6b1c2c46ccd839f7013d0a06",
+      "bytes": 25256,
+      "encoding": "gzip",
+      "source_sha256": "61c17ff261a51c8268b50b89b2948b56bd6cf8eb8c0f5b576c368bb9fea6a368",
+      "source_bytes": 140851
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/rank/sf_d9_rank_sidecar_summary.json.gz",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/rank/sf_d9_rank_sidecar_summary.json",
+      "sha256": "395436f3d317dda32ffa2f9fb7dd6df7cc70365511cf9bcea16db9b076568a53",
+      "bytes": 11608,
+      "encoding": "gzip",
+      "source_sha256": "910846d4515f9653534df75414dbd9899c9d11eb16859fff7455c981905104e6",
+      "source_bytes": 44678
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derive.log.gz",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derive.log",
+      "sha256": "4e49634269a0426868fce85d5f45db64829196ce360ba39836a7802aa83db0e3",
+      "bytes": 806,
+      "encoding": "gzip",
+      "source_sha256": "8e5712ae4d2b6a631e7f74d4b69c10fcd11f527decef98383634d71e45316b8b",
+      "source_bytes": 1367
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derive.completed.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derive.completed.json",
+      "sha256": "53b394b2d23795c3a72ee2cc98e2bf6edd5458246977a36f788618fb84fe1367",
+      "bytes": 3017
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derive.time.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derive.time.json",
+      "sha256": "d27ad05688031833d4c162c5d35f9eadad87254561549dd1f0cd5870c1f2c95a",
+      "bytes": 163
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/snapshot.completed.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/snapshot.completed.json",
+      "sha256": "9859c1e588ea55b069fc15935bcf91a7f19ab39a5f71c9a7acf4a1956b35bb34",
+      "bytes": 1692
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/snapshot.time.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/snapshot.time.json",
+      "sha256": "ae9dcc693a956918c32dde1165048d11cbfc3327a44414d82b54947183db930d",
+      "bytes": 149
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/adapt.completed.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/adapt.completed.json",
+      "sha256": "b7599d9e1100d20c740021d31d78eb5760ff273e5f19d25683de59abadfed536",
+      "bytes": 1979
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/adapt.time.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/adapt.time.json",
+      "sha256": "64c15bb439abe5ce395dda723b66cc0133ca2c9ff6775f5c6d40c9d2fba5a99f",
+      "bytes": 162
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/rank.completed.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/rank.completed.json",
+      "sha256": "f1ceda02484425876d0eb0345e292057606e7f00b90008f30bbf11288d3758c1",
+      "bytes": 2755
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/rank.time.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/rank.time.json",
+      "sha256": "e67a12b721ea85c824648bbce380539b717ff198c79750133e3e12d48565c04d",
+      "bytes": 159
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/qualify.completed.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/qualify.completed.json",
+      "sha256": "d6425da6f4f4d7cb15eeffb38e2c74de5317f5e9ade839ae39fde998451704af",
+      "bytes": 1695
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/qualify.time.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/qualify.time.json",
+      "sha256": "7f39cbe1f75eecdb2d019ddc18949c93f282bee3b4a6c392286386cf6fb19121",
+      "bytes": 154
+    }
+  ],
+  "limits": [
+    "Original artifact bytes preserved, with explicit lossless gzip encoding for panel and completed log.",
+    "Bulk weights/books/native binaries/compile caches and live source/output arrays are external; exact identities remain in original receipts.",
+    "Absolute host paths are historical provenance, not portable launch commands."
+  ],
+  "initial_capture_utc": "2026-09-08T08:55:53.122362+00:00",
+  "finalized_utc": "2026-09-08T09:14:35.462708+00:00"
+}

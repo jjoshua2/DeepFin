@@ -1,0 +1,15 @@
+{
+  "selected_unix": 1788751269.4422607,
+  "provisional_leader": "C20T05",
+  "candidate": "E0T05",
+  "reference": "C20T05",
+  "candidate_development_score": 0.4575,
+  "G20T05_development_score_vs_C": 0.457,
+  "rule": "Prewritten stronger point-score challenger; no E-versus-G superiority claim",
+  "independent_review_sha256": "245a9baf86c36ebeebefa0ccfeb54dc0b72c8f3b08e474eda78cdf264eba0973",
+  "opening_refresh_sha256": "85e88d4803e04a57fa8887c66c4171b91b2bf59753421aaf7a85add31076b0c1",
+  "preregistration_sha256": "f89a5a719aeb6c189f1ecf1d85b73815bd0bfbc1be145c5ebe4e4d25113cf528",
+  "manifest_sha256": "33d4845ddcc131522e572c42b2ff6338850c4f5b4500295bf9f413fe073011a9",
+  "final_launch_review": "PENDING",
+  "launched": false
+}

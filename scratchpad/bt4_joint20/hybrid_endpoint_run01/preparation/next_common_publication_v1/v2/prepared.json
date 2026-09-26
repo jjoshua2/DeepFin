@@ -1,0 +1,33 @@
+{
+  "status": "PREPARED_NOT_LAUNCHED",
+  "manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/runner_manifest.json",
+    "sha256": "802615056d68a8268a0eb340e3efc3273b883dc12415e0fcbb36ab62d5294733"
+  },
+  "registration": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/registration.json",
+    "sha256": "38594d284d3810b7cd8b6b8710ec6c0e494cad8f97670c160badcf06bb18b632"
+  },
+  "preregistration": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/preregistration.md",
+    "sha256": "401e824ebc08d2d3cced3260006e474e051a84cda8286b396b087bd2b4fc2e95"
+  },
+  "metadata": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/metadata_snapshot.json",
+    "sha256": "a2020c7ed40345bcc1748699c1b0756fe160436ab2454684e2f0d2b73481742a"
+  },
+  "admission": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/metadata_admission.json",
+    "sha256": "89ffcea7424303a976269cabe38eb34e6ca9d0d13f811f74cc61876faf0cccd0"
+  },
+  "launch": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/launch_preparation.json",
+    "sha256": "fc668c88bf244cca561b07708b904ceb72466aae10644a5988375461908d5101"
+  },
+  "preparer": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/prepare_corrected_metadata.py",
+    "sha256": "e1419207cdb94651ae5cc8bf47bcf3f36e30ba893e5e966ee2f183cf45232343"
+  },
+  "rows": 1061905,
+  "shards": 128
+}

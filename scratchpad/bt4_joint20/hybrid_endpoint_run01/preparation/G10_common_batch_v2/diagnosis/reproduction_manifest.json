@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "status": "EXISTING_SYNTHETIC_EVIDENCE_PRESERVED_NO_RERUN",
+  "frozen_readout": {
+    "path": "exception_transport_readout.json",
+    "sha256": "77b48f691e32881f4c0ae0ac368300c4cc45098a6a76ad643b2e26da20e99801"
+  },
+  "runtime_commit": "ac4a246ba025ca54329d6e4dc380473f1ea4b728",
+  "helper_source_sha256": {
+    "tests/test_derive_corpus_targets.py": "5f1c2c1ddc09da2ceb38b81ffbab6657017793650f0f89aacce0c95a9eb6c340",
+    "tests/test_derive_parallel.py": "7e60f088c6e027145e7c42bd8ab11b40006c3a093199af7dc1687b6cd7fbcc60",
+    "scripts/derive_corpus_targets.py": "7886094a27484ba86571819b86f3a1735d2078a3293981917dd983df292590bf"
+  },
+  "artifacts": [
+    {
+      "path": "reproduction_fixtures/negative/corpus/manifest.json",
+      "source": "/tmp/g10-spawn-diagnosis-v1/corpus/manifest.json",
+      "sha256": "cb88b2a82871b05edc517078a858277bae547e41e300bc55e2d443c3a1a748a4",
+      "bytes": 490,
+      "method": "exact existing byte copy"
+    },
+    {
+      "path": "reproduction_fixtures/negative/corpus/w00-00000.jsonl.zst",
+      "source": "/tmp/g10-spawn-diagnosis-v1/corpus/w00-00000.jsonl.zst",
+      "sha256": "049328485eb7bcb014eaba521c1ab6adbd525f76b1c1e2b04434cdd1ccd1f356",
+      "bytes": 835,
+      "method": "exact existing byte copy"
+    },
+    {
+      "path": "reproduction_fixtures/negative/corpus/w00-00001.jsonl.zst",
+      "source": "/tmp/g10-spawn-diagnosis-v1/corpus/w00-00001.jsonl.zst",
+      "sha256": "d96e2161c14d11f82d720122af08dd750541328a5e87431e70d5387621c2ea65",
+      "bytes": 835,
+      "method": "exact existing byte copy"
+    },
+    {
+      "path": "reproduction_fixtures/negative/corpus/w00.progress.jsonl",
+      "source": "/tmp/g10-spawn-diagnosis-v1/corpus/w00.progress.jsonl",
+      "sha256": "a063b35485ce605b0c315ceeb5727bc15cfba86b526aea666b67577b7806023a",
+      "bytes": 190,
+      "method": "exact existing byte copy"
+    },
+    {
+      "path": "reproduction_fixtures/positive/corpus/manifest.json",
+      "source": "/tmp/g10-spawn-diagnosis-v1/positive/corpus/manifest.json",
+      "sha256": "cb88b2a82871b05edc517078a858277bae547e41e300bc55e2d443c3a1a748a4",
+      "bytes": 490,
+      "method": "exact existing byte copy"
+    },
+    {
+      "path": "reproduction_fixtures/positive/corpus/w00-00000.jsonl.zst",
+      "source": "/tmp/g10-spawn-diagnosis-v1/positive/corpus/w00-00000.jsonl.zst",
+      "sha256": "f0dab8f5c19f9fe72332f97f2d5b4b192f9c0bf48bc9731ae4d9ad607d324fe8",
+      "bytes": 847,
+      "method": "exact existing byte copy"
+    },
+    {
+      "path": "reproduction_fixtures/positive/corpus/w00-00001.jsonl.zst",
+      "source": "/tmp/g10-spawn-diagnosis-v1/positive/corpus/w00-00001.jsonl.zst",
+      "sha256": "2f4dc35fc4ebf18f091ba66444158249a7e6a663bcf68328195d9e3d7b1e26ff",
+      "bytes": 849,
+      "method": "exact existing byte copy"
+    },
+    {
+      "path": "reproduction_fixtures/positive/corpus/w00.progress.jsonl",
+      "source": "/tmp/g10-spawn-diagnosis-v1/positive/corpus/w00.progress.jsonl",
+      "sha256": "21616f07b21aba4a26910fc394c1b80192a03f833284d688d1aff65fe6021777",
+      "bytes": 208,
+      "method": "exact existing byte copy"
+    },
+    {
+      "path": "reproduction_fixtures/make_negative_fixture.py",
+      "sha256": "607c3d51f22103c2adb5230d082128ac3b589f87fe7bc83235756e32ed165e10",
+      "bytes": 480,
+      "method": "Exact source text recovered from the executed python-stdin tool command; no standalone generator file previously existed; not rerun"
+    },
+    {
+      "path": "reproduction_fixtures/make_positive_fixture.py",
+      "sha256": "87147161f85e260ac9cee359999281f567addd881c3b2e719d5bf3c60ee56873",
+      "bytes": 271,
+      "method": "Exact source text recovered from the executed python-stdin tool command; no standalone generator file previously existed; not rerun"
+    }
+  ],
+  "reproduction": "Use a checkout at the pinned commit with the qualified CPU environment. The saved original corpus directories are authoritative input bytes; commands.json retains original absolute fixture paths and exact settings. In a fresh environment populate those original /tmp paths from the archived directories, or consistently relocate corpus/output arguments. Do not overwrite existing original experiment artifacts. Generator snippets preserve construction independently; they were run with cwd at the pinned checkout and its PYTHONPATH.",
+  "limits": "Generators use repository test helpers. No claim that regenerated timestamps or compressed bytes must match; archived input bytes and SHA are exact. Only2negative and4positive synthetic raw rows. No operational source data copied."
+}

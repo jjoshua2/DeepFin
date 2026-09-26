@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "status": "PASS_COMPLETED_COMMON_INPUT_QUALIFICATION",
+  "reviewed_unix": 1788907285.1169245,
+  "findings": [],
+  "manifest_sha256": "7043f3af185fb4bfc3ac7e4fdd9ecbfa9fb467294f79bd4cdb874bad5e4382eb",
+  "launch_plan_sha256": "a72de5d54481c42124510c4435a01cf9f7adcd0d5c17de791d6c142bed73b810",
+  "registration": "https://github.com/jjoshua2/DeepFin/pull/562#issuecomment-5591139792",
+  "accounting_check": {
+    "path": "independent_completed_accounting_checks.json",
+    "sha256": "c754a24ebb728af910fec8c5b2c8d4c716f4154380bd053cca4fa3caefc4fab8"
+  },
+  "runner_completion_sha256": "c9375838a5894a36b66ebd68aa28bd98f9338e3883cd4de2af40bfa0d36a319a",
+  "operator_terminal_observation_sha256": "d24f721bfae9aab5b0c795c83cd9f5e7ebd4d412475176083e2389c2fa2a2b97",
+  "rows": {
+    "raw_rows": 4047239,
+    "qualified_increment_rows": 4021971,
+    "missing_result_rows": 25198,
+    "support_exclusions": 70,
+    "prior_qualified_rows": 5276543,
+    "cumulative_qualified_rows": 9298514
+  },
+  "lanes": [
+    {
+      "source_id": "run06_g10",
+      "raw_rows": 2025055,
+      "qualified_rows": 2013019,
+      "missing_result_rows": 11999,
+      "missing_result_fraction": 0.005925271165474518,
+      "support_exclusions": 37,
+      "omitted_rows": 12036,
+      "derived_shards": 246,
+      "source_shards": 244,
+      "source_config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+      "qualification_sha256": "ad6409b8ef986c7467e031685dab954df80e98b3d84f4e29b96693f5c78bcdbd",
+      "source_qualified_input_sequence_sha256": "b147f456bdb312143f6a742b494c01a18b90e9cb8bdda3e9cd81295d3c75a2f7",
+      "adapt_rank_overlap_seconds": 3162.6532933712006,
+      "realized_value_depth_histogram": {
+        "9": 2013019
+      },
+      "value_read_moved_rows": 2013019,
+      "cache_budget_bytes": 268435456
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "raw_rows": 2022184,
+      "qualified_rows": 2008952,
+      "missing_result_rows": 13199,
+      "missing_result_fraction": 0.0065271013913669575,
+      "support_exclusions": 33,
+      "omitted_rows": 13232,
+      "derived_shards": 246,
+      "source_shards": 244,
+      "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+      "qualification_sha256": "c6dba2abf68436401a7707888fd15b0983fb447a1a122b8149a7efcb1f776a2a",
+      "source_qualified_input_sequence_sha256": "7279a802ccb703729d805d386d7008d6cea0ffb6cd9dadfbde443629085a443e",
+      "adapt_rank_overlap_seconds": 3140.102297306061,
+      "realized_value_depth_histogram": {
+        "9": 2008952
+      },
+      "value_read_moved_rows": 2008952,
+      "cache_budget_bytes": 268435456
+    }
+  ],
+  "resource_and_cost": {
+    "runner_elapsed_seconds": 8447.8604221344,
+    "outer_start_to_runner_completion_seconds": 8448.620172023773,
+    "registered_inclusive_wall_cap_seconds": 14400,
+    "summed_stage_cpu_seconds": 29132.409999999996,
+    "peak_sampled_aggregate_output_bytes": 4101351445,
+    "registered_output_cap_bytes": 12884901888,
+    "minimum_sampled_free_bytes": 389509169152,
+    "registered_free_reserve_bytes": 161061273600,
+    "numeric_threads_per_lane": 2,
+    "lane_cpu_affinities": [
+      [
+        2,
+        3
+      ],
+      [
+        4,
+        5
+      ]
+    ],
+    "all_ten_stage_exit_codes": 0,
+    "outer_exit_code": null,
+    "outer_closure": "Root host observation: original outer/operator/runner handles absent and shared preparation lock free. No captured outer wait status or exact outer end time."
+  },
+  "checks": [
+    "Both full qualification receipts, lane completion hashes and final runner manifest binding agree. All ten recorded producer/stage exits are zero, and the final runner completed before the original absolute deadline.",
+    "Exact selected source-shard metadata reconciles 244 shards per source with all 4,047,239 raw rows. Counts across derived, adapted BT4 and independent SF-rank summaries agree; each output inventory contains the same 246 derived shards.",
+    "Per-shard row sums, all 70 explicit support-exclusion ledger rows, source identities, policy-support reasons and independent no-result counts match. Per-raw-shard survivor complement sums to 4,021,971; no envelope omissions.",
+    "Qualified consumer proof enforces injective physical-row/full-history joins, immutable derived storage before and after adaptation/ranking, sidecar payload identities, finite/nonnegative legal BT4 mass with illegal entries zero and normalized row mass, and matching rank observation.",
+    "Derive and snapshot precede both overlapping adapt/rank processes; qualification starts only after both succeed. Actual commands bind selected sources, manifest, adapter manifest and derived summary. Script hash matches frozen runtime pin.",
+    "Prior selection review supplies source-qualified game disjointness and empty prior shard intersection; no repeated prior-game census. This is source/game identity disjointness, not proof of unique board positions across corpora.",
+    "12GiB sampled logical all-state cap and 150GiB physical reserve passed. Stage time/resource records are retained in accounting evidence; overlapping wall durations must not be summed as total elapsed."
+  ],
+  "scientific_scope": [
+    "Eligible inventory is now 9,298,514 common-input-qualified rows, including the prior 5,276,543. These are aligned inputs for recipe construction, not a newly qualified training schedule, trained checkpoint or strength result.",
+    "Base SF policy and rank use complete phase0 d9; value uses latest-phase observation at the uniform-d9 requested depth. Actual value-depth histogram is d9 for every surviving row, with changed value-reading provenance on every row. Do not relabel these as uniformly d12 values.",
+    "Search-value WDL is the SF searched-root value in side-to-move POV; outcome is retained separately. This batch neither adds BT4 WDL nor changes to a value-mixture target. The adapted teacher output is existing BT4 raw legal policy, with original model/remap provenance retained.",
+    "Corpus manifests are still live-run manifest/progress records. Selected closed shards are complete; complete source-run summaries and worker-realized cp-map cross-checks are unavailable. Requested cp-map provenance remains explicit.",
+    "Existing near-one-hot SF float16 policy underflow and unavailable floor-recovery aggregates remain descriptive producer facts, not new support-mismatch losses. Deliberate support exclusions are exactly37+33.",
+    "Observed overlap is 3162.65s and3140.10s per lane, not a measured speedup versus a simultaneous serial control. No GPU work occurred in this common-input preparation; historical BT4 provider metadata describes earlier labeling.",
+    "No payload rehash/recensus, model/native binary read, inference, tests, pipeline rerun, lock change or live process intervention by independent reviewer. Resource guards are sampled, not hard instantaneous disk/RAM quotas."
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "limits": {
+    "affinity": [
+      0
+    ],
+    "cuda_visible_devices": "",
+    "hard_seconds_including_kill_grace": 120,
+    "ionice_class": 3,
+    "kill_grace_seconds": 5,
+    "nice": 19,
+    "numeric_threads": 2,
+    "timeout_term_seconds": 115
+  },
+  "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run",
+  "pins": {
+    "/home/josh/.local/lib/python3.10/site-packages/chess/__init__.py": "1fde6a8e932508d14b31f6a584497b49c2969fc3c7cdc675347f819f0d667a5b",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/encode.py": "7970a03dc4ace489b4c7ead2fd1cc8b56b4f065fa8ec1893a1e25cd7c7078fc3",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/features.py": "96541e711bed93bd9641b1cfb1ddc799ffad5db17a610f116aa0498189350489",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/lc0.py": "a20b56a7c0666e134791855c0f124a66504013983f8f97948539a015dac9c3ee",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/rep_fix.py": "20e222d9b059c3c055a89e74e10ca5e73e1d6ec901b420c8bc858210a194a097",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/eval/rvg_surgery.py": "7a0e4469ccf7534e34bfd00e06208c7e142fb0c42ef9c4c4ec1116eec641aa20",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/moves/lc0_1858_movestrs.py": "05e21217bb25690fd49e5eb43d39049ecd137a36fd0e1af2170f73ab771e5fc2",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/moves/leela_index.py": "ac8f6f07dc1ce8e382de1d94ce4053f92b9cf3bc0eefe730d7fd0763ca11e1cd",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/bt4_policy_dump.py": "459de69ddb9923d0dac0c420ff355303c2f3687cf313412d8f2c384a28b639f2",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/bt4_policy_mix.py": "ba7221c7b669c7c228f263320bbf4006cb1847e508c6fce5418a13a5928e38a5",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/bt4_raw_corpus_sidecar.py": "eb85a1d0db620f4e78d68685157fff73d3ac98840b92d732338c7ce07c59e632",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/derive_corpus_targets.py": "92ab1e1d9bcdf206c9e1e563a117d9e5161deddaef3506d3c1e8ac4c28ec3e9a",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/gen_sf_rooted_corpus.py": "4bb5e22e81db93c74cfe88d2362136311b001e40e0254f8ff0adc9f3858ea655",
+    "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run06_g10/w00-00000.bt4.zarr/.zattrs": "1b384ab4f324eef8acbd199cc4e10d3cd56fdb6bd6a367c1adcad59e5b286b34",
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/preregistration.json": "8fa340beb2cedf0e8fcd3a2773dae28b24d7e2203b5fd2f475623daf67af9a34",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.source_check.completed.json": "909a9bbc59da9ea3c6a23a325fbd0ab7643ad66d3d00d838d282ecb8e13ccc83",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/profile_preparation.py": "3a95ef725f91f8b7ec74908f288cb08daf0b719a5bf7da2d9579e9538aaa4007",
+    "/usr/bin/python3.10": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49"
+  },
+  "rows": 1024,
+  "runtime": "/home/josh/projects/chess/.dev/worktree/wise-cloud",
+  "runtime_git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1",
+  "schema": 1,
+  "scope": "One1024-row prefix pass through actual JSON/history/encode/key/fingerprint functions; legal index mapping mirrors actual passes without model logits. No session/inference/writer/inventory scan. cProfile timings include instrumentation overhead.",
+  "source": {
+    "banked_sha256": "3c93d2d127bc6d11db9eb31425e0c795c96b417106d737632ef4b689569ae17d",
+    "closed_sidecar_attrs": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run06_g10/w00-00000.bt4.zarr/.zattrs",
+    "manifest": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json",
+    "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00000.jsonl.zst",
+    "rows_in_closed_shard": 8236,
+    "stat": {
+      "st_ctime_ns": 1788379921244293574,
+      "st_dev": 2096,
+      "st_ino": 9783581,
+      "st_mode": 33188,
+      "st_mtime_ns": 1788379921244293574,
+      "st_nlink": 1,
+      "st_size": 21154455
+    }
+  },
+  "source_hash_scope": "Reuses closed sidecar source SHA and completed v3 source SHA verification. Requires identical pre/post frozen metadata and independently validates each original input key; does not reread whole raw SHA.",
+  "status": "PREPARED_NOT_EXECUTED"
+}

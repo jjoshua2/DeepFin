@@ -1,0 +1,251 @@
+{
+  "status": "COMPLETE_BANKED_TIMING_DIAGNOSTIC",
+  "created_utc": "2026-09-08T07:39:36.684577+00:00",
+  "read_completed_banks_only": true,
+  "results": {
+    "C20T05.s100": {
+      "games_sha256": "98064bf64dce7581182403bc2a3c57c7f35e07675fd2a9c7e66c109179755ad1",
+      "stage_seconds": 2410.6167047259805,
+      "chunks": [
+        {
+          "chunk": 0,
+          "games": 128,
+          "last_game_seconds": 355.75,
+          "time_integral_active_game_seconds": 26339.01,
+          "mean_active_games": 74.03797610681659,
+          "time_below_active_games_seconds": {
+            "64": 156.97,
+            "32": 102.25999999999999,
+            "16": 69.23000000000002,
+            "8": 25.889999999999986
+          }
+        },
+        {
+          "chunk": 1,
+          "games": 128,
+          "last_game_seconds": 285.79,
+          "time_integral_active_game_seconds": 21412.499999999996,
+          "mean_active_games": 74.92389516778051,
+          "time_below_active_games_seconds": {
+            "64": 114.44000000000003,
+            "32": 86.98000000000002,
+            "16": 59.35000000000002,
+            "8": 40.84000000000003
+          }
+        },
+        {
+          "chunk": 2,
+          "games": 128,
+          "last_game_seconds": 286.93,
+          "time_integral_active_game_seconds": 25480.830000000005,
+          "mean_active_games": 88.80503955668631,
+          "time_below_active_games_seconds": {
+            "64": 86.35,
+            "32": 60.03,
+            "16": 42.83000000000001,
+            "8": 19.269999999999982
+          }
+        },
+        {
+          "chunk": 3,
+          "games": 128,
+          "last_game_seconds": 282.35,
+          "time_integral_active_game_seconds": 23440.2,
+          "mean_active_games": 83.01823977333096,
+          "time_below_active_games_seconds": {
+            "64": 100.80000000000001,
+            "32": 70.64000000000001,
+            "16": 56.650000000000034,
+            "8": 23.400000000000034
+          }
+        },
+        {
+          "chunk": 4,
+          "games": 128,
+          "last_game_seconds": 283.67,
+          "time_integral_active_game_seconds": 21281.660000000003,
+          "mean_active_games": 75.02259667923997,
+          "time_below_active_games_seconds": {
+            "64": 116.42000000000002,
+            "32": 87.54000000000002,
+            "16": 68.03000000000003,
+            "8": 31.210000000000008
+          }
+        },
+        {
+          "chunk": 5,
+          "games": 128,
+          "last_game_seconds": 283.52,
+          "time_integral_active_game_seconds": 20916.659999999996,
+          "mean_active_games": 73.77490124153498,
+          "time_below_active_games_seconds": {
+            "64": 119.23999999999998,
+            "32": 89.11999999999998,
+            "16": 70.33999999999997,
+            "8": 51.18999999999997
+          }
+        },
+        {
+          "chunk": 6,
+          "games": 128,
+          "last_game_seconds": 272.62,
+          "time_integral_active_game_seconds": 21859.640000000007,
+          "mean_active_games": 80.18355219719759,
+          "time_below_active_games_seconds": {
+            "64": 99.99000000000001,
+            "32": 64.43,
+            "16": 36.129999999999995,
+            "8": 19.670000000000016
+          }
+        },
+        {
+          "chunk": 7,
+          "games": 104,
+          "last_game_seconds": 240.16,
+          "time_integral_active_game_seconds": 15142.269999999995,
+          "mean_active_games": 63.05075782811457,
+          "time_below_active_games_seconds": {
+            "64": 98.59,
+            "32": 75.99000000000001,
+            "16": 52.359999999999985,
+            "8": 38.00999999999999
+          }
+        }
+      ],
+      "sum_chunk_game_seconds": 2290.79,
+      "mean_active_games_during_chunks": 76.77385094225136,
+      "slot_occupancy_fraction_at_ceiling128": 0.5997957104863387,
+      "fractions_of_chunk_time_below_active_games": {
+        "64": 0.3897345457244008,
+        "32": 0.2780656454760148,
+        "16": 0.1985865138227424,
+        "8": 0.10890566136572974
+      }
+    },
+    "G20T05.s100": {
+      "games_sha256": "2ba32ae8edd7b11b43c67b5e2965aaa9786cb4f0d128fd265e84bece70273d9a",
+      "stage_seconds": 2595.3640068329987,
+      "chunks": [
+        {
+          "chunk": 0,
+          "games": 128,
+          "last_game_seconds": 374.78,
+          "time_integral_active_game_seconds": 28830.10000000001,
+          "mean_active_games": 76.92539623245641,
+          "time_below_active_games_seconds": {
+            "64": 161.40999999999997,
+            "32": 121.91999999999996,
+            "16": 42.309999999999945,
+            "8": 19.909999999999968
+          }
+        },
+        {
+          "chunk": 1,
+          "games": 128,
+          "last_game_seconds": 289.22,
+          "time_integral_active_game_seconds": 22655.88000000001,
+          "mean_active_games": 78.33441670700508,
+          "time_below_active_games_seconds": {
+            "64": 114.00000000000003,
+            "32": 85.07000000000002,
+            "16": 52.430000000000035,
+            "8": 24.130000000000052
+          }
+        },
+        {
+          "chunk": 2,
+          "games": 128,
+          "last_game_seconds": 300.83,
+          "time_integral_active_game_seconds": 24064.949999999986,
+          "mean_active_games": 79.99518000199444,
+          "time_below_active_games_seconds": {
+            "64": 111.91999999999999,
+            "32": 84.24999999999997,
+            "16": 51.41999999999999,
+            "8": 26.829999999999984
+          }
+        },
+        {
+          "chunk": 3,
+          "games": 128,
+          "last_game_seconds": 311.86,
+          "time_integral_active_game_seconds": 27582.910000000018,
+          "mean_active_games": 88.44645033027646,
+          "time_below_active_games_seconds": {
+            "64": 97.06,
+            "32": 63.73000000000002,
+            "16": 22.54000000000002,
+            "8": 8.870000000000005
+          }
+        },
+        {
+          "chunk": 4,
+          "games": 128,
+          "last_game_seconds": 296.9,
+          "time_integral_active_game_seconds": 24394.679999999997,
+          "mean_active_games": 82.16463455708993,
+          "time_below_active_games_seconds": {
+            "64": 106.32999999999998,
+            "32": 72.16999999999999,
+            "16": 46.17999999999998,
+            "8": 18.109999999999957
+          }
+        },
+        {
+          "chunk": 5,
+          "games": 128,
+          "last_game_seconds": 326.42,
+          "time_integral_active_game_seconds": 24774.77,
+          "mean_active_games": 75.8984437228111,
+          "time_below_active_games_seconds": {
+            "64": 127.20000000000002,
+            "32": 89.07000000000002,
+            "16": 54.93000000000001,
+            "8": 35.920000000000016
+          }
+        },
+        {
+          "chunk": 6,
+          "games": 128,
+          "last_game_seconds": 303.85,
+          "time_integral_active_game_seconds": 24044.13000000001,
+          "mean_active_games": 79.13157808129013,
+          "time_below_active_games_seconds": {
+            "64": 114.81000000000003,
+            "32": 85.35000000000002,
+            "16": 53.76000000000002,
+            "8": 33.14000000000004
+          }
+        },
+        {
+          "chunk": 7,
+          "games": 104,
+          "last_game_seconds": 268.68,
+          "time_integral_active_game_seconds": 16593.440000000006,
+          "mean_active_games": 61.75911865416111,
+          "time_below_active_games_seconds": {
+            "64": 120.65,
+            "32": 94.57,
+            "16": 71.99000000000001,
+            "8": 31.330000000000013
+          }
+        }
+      ],
+      "sum_chunk_game_seconds": 2472.54,
+      "mean_active_games_during_chunks": 78.03346356378462,
+      "slot_occupancy_fraction_at_ceiling128": 0.6096364340920674,
+      "fractions_of_chunk_time_below_active_games": {
+        "64": 0.385587290802171,
+        "32": 0.28154448461905573,
+        "16": 0.15998123387285948,
+        "8": 0.08017666043825379
+      }
+    }
+  },
+  "method": "For each chunk, every game starts at common t0 and recorded duration_s is completion time. Sum durations integrates active-game count; largest duration approximates chunk duration. No new games or inference.",
+  "limits": [
+    "Rounded durations and final-chunk size affect exact occupancy. Includes compilation or stall time inside chunk; excludes between-chunk/startup costs.",
+    "Unused slots are not equivalent to removable wall time; CPU cost/batch nonlinearities and different rolling RNG schedule require actual validation.",
+    "No playing result reanalysis or sequential verdict; current C400 outcomes not read."
+  ]
+}

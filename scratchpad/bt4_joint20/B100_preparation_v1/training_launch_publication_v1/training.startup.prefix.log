@@ -1,0 +1,18 @@
+/home/josh/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[preflight] architecture (config) matches the recorded pin (2026-08-16, ops/live-20260725 3f3ff00e6) — no live config was given, so THE LIVE FILE WAS NOT READ
+[preflight] trainer recipe matches the recorded trainer pin (2026-08-19, ops/live-20260725 e94862771) — no live config was given, so THE LIVE FILE WAS NOT READ
+[preflight] replay buffer matches the recorded replay pin (2026-08-17, ops/live-20260725 3eb0448a3) — no live config was given, so THE LIVE FILE WAS NOT READ
+[preflight] PID sf_wdl ramp disabled at source (sf_wdl_frac <= 0)
+[preflight] qtemp_0.0005_hist_20m_bt4_global_B100T05: sf_wdl label coverage 0/18910484
+[preflight] qtemp_0.0005_hist_20m_bt4_global_B100T05: search_wdl label coverage 18910484/18910484
+[preflight] sf_wdl coverage over all shards: 0/18910484 -> treating the corpus as sf_wdl-labelled: False
+[preflight] search_wdl coverage over all shards: 18910484/18910484 -> treating the corpus as search_wdl-labelled: True
+[preflight] converter run-config gate: no problems
+⚑ no --purity-receipt: NOTHING ties this corpus to a held-out purity check, and summary.json will record valid_control: false
+[data] staged 2309 shard(s) from 1 directory(ies)
+[trainer] policy_target_temp=1.0 reshape_active=False eval_pinned_temp=1.0
+[trainer] sf_policy_floor w=0.8 delta_cp=20.0 tau=0.15 tau_top1=0.15 tau_played=0.0625 gumbel_topk=16 deterministic_rank_tau=0.0625 at_or_above_deterministic_rank_tau=True
+[trainer] sf_shape w=0.0 temp_cp=100.0 active=False in_ruler_shape=False
+[model] 61444448 trainable params on cuda
+[preflight] architecture (built model) matches the recorded pin (2026-08-16, ops/live-20260725 3f3ff00e6) — no live config was given, so THE LIVE FILE WAS NOT READ

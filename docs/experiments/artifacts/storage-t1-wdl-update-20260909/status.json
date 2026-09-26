@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "kind": "curated_scientific_status",
+  "date": "2026-09-09",
+  "scope": "Selected fields from original local receipts; not a raw operational receipt archive. Original evidence retained separately under recorded hashes.",
+  "E0T05_archive": {
+    "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE",
+    "members": 713331,
+    "external_archive_bytes": 11021598720,
+    "archive_sha256": "a1ad137e9f65829f1dc386b5cfb2322617ff9789c60f127be6b653ac538d8473",
+    "external_readback_matches": true,
+    "operator_exit_code": 0,
+    "elapsed_seconds": 2484.380223274231,
+    "source_retained": true,
+    "source_reclaimed_bytes": 0,
+    "original_operator_receipt_sha256": "b671fe7411879879395525d19210cfbeef0d02d183a5bef8f6c2d1b3a6b8474a",
+    "original_content_verification_sha256": "59ee952346539a808007e3c6514c3ed09b4a47ab8ed6adb5c94ce85c0f4db7cc",
+    "original_review_sha256": "df864438abf52733710be48b07f03d3298e2c7ce47ce99900d396c43516bce52"
+  },
+  "B100T1_materialization": {
+    "status": "STARTED_NOT_QUALIFIED_OR_TRAINED",
+    "recipe": {
+      "kind": "global",
+      "alpha": 1.0,
+      "bt4_temperature": 1.0,
+      "expected_rows": 18910484,
+      "expected_shards": 2309,
+      "SF_value": "unchanged"
+    },
+    "plan_sha256": "5305a89462da8bfb6567bae8e28dac2c37ddce6edd4ec46ec100e2a279407b56",
+    "original_launch_receipt_sha256": "dfad55e673bc6d3359815e3fd5449834f7cb8806d6bedb89484c35b23aa9bc66",
+    "original_mixer_start_receipt_sha256": "b10311245811c80d101551d15db5b46f26da3dc6713fb181cb296a73a51f021c",
+    "original_preparation_review_sha256": "4b6b3364f2f68c244ac9ec366fa8cfd76a962e365b7030a64de43ddda4cda188",
+    "materialization_complete": false,
+    "training_or_matches_launched": false
+  },
+  "raw_WDL_reuse": {
+    "implementation_pr": 609,
+    "merge_commit": "c5457f793d75cbc8df47204ad6c282f1d9901752",
+    "reviewed_patch_sha256": "219265ce785e45580bc30732d966ccab1fa35d1c1a29898d31811ae5f1d33fd9",
+    "independent_review_sha256": "880397ca6ed39f0803515bb1ea3259ecca961bfd74a26b982a0a21bf6dccfa13",
+    "status": "AVAILABLE_NOT_OPERATIONALLY_ADOPTED",
+    "current_frozen_common_derived_rows": 9298514,
+    "raw_WDL_overlap_with_frozen_common_inputs": 0,
+    "newer_raw_WDL_rows_observed": 3137424,
+    "newer_raw_rows_are_not_qualified_derived_survivors": true,
+    "readiness_review_sha256": "bff717dbefe0c7aaa8e52da165ee853addea4645169bc938326be5b82d6017aa",
+    "coverage_metadata_sha256": "4bdc151f4083d53d9c610a32d293fa60bfe9d91002ad093dfbdd8a91d387e56a",
+    "current_separately_collected_G10_WDL_rows": 1574952,
+    "current_G10_WDL_review_sha256": "26f34eb1fe2356c7f80caf756015276082d2f5aa351364186c74eb6ab78127b1",
+    "rows_added_by_implementation": 0
+  },
+  "limits": [
+    "E0 source reclamation is not authorized by copy completion alone; exact current source/consumer checks remain before any removal.",
+    "T1 launch does not qualify a finished corpus or either two-epoch trajectory.",
+    "Reuse applies only to selected raw rows with native WDL coverage and verified joins. No new G10 value coverage follows from a code merge.",
+    "No full100M working-set fit or measured inference speedup claimed."
+  ]
+}

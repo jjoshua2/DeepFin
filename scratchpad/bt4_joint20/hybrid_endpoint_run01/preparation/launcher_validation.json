@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "status": "PASS_IMPLEMENTATION_VALIDATION",
+  "scope": "Explicit single-candidate H20/B100/G50 profiles; H20 alone selected next. Preparation only; no GPU training, arena, corpus generation, checkpoint reads, or final operational manifest created by author.",
+  "worktree": "/tmp/deepfin-bt4-hybrid-tools",
+  "base_commit": "6756768d49acda07311a10708206a9cc65668146",
+  "files": {
+    "scripts/bt4_direct_screen.py": {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_direct_screen.py",
+      "sha256": "325164d7237680c4460e31b91c9e4e61a5f2951fc5928328fa39da507a12de48"
+    },
+    "scripts/bt4_one_epoch_screen.py": {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_one_epoch_screen.py",
+      "sha256": "0e8015dcbf486be6d23fdf957406703450aa8eb8578ced0f560d8bc9169c7ae1"
+    },
+    "scripts/bt4_joint_readout.py": {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_joint_readout.py",
+      "sha256": "a17c89537903c56ee7bb0ec084d5133e1139cc6c6cc605dc882b06279276ceeb"
+    },
+    "tests/test_bt4_direct_screen.py": {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/tests/test_bt4_direct_screen.py",
+      "sha256": "251179e15124fc68aa0b7d1bd03a224cd82f0da7e79fbe072947b3504d141976"
+    },
+    "tests/test_bt4_one_epoch_screen.py": {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/tests/test_bt4_one_epoch_screen.py",
+      "sha256": "2c29cfb902ed08ec861411ec8092505473aca1f534616a8384b37b8c368bc4e8"
+    },
+    "tests/test_bt4_joint_readout.py": {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/tests/test_bt4_joint_readout.py",
+      "sha256": "9b98c2aceb33158b0f841601075f3c0bc4b4745326fc88e5b4773500a3d2953c"
+    },
+    "scripts/bt4_policy_mix.py": {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_policy_mix.py",
+      "sha256": "c897fae3c6455e896f078c133e9d3a98b8eb9d86038369ccf8bcf5faf5f3759d"
+    },
+    "tests/test_bt4_policy_mix.py": {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/tests/test_bt4_policy_mix.py",
+      "sha256": "370d740ae2f8bd9c7a4cbc5a2a287e9163563673a3e241aab6444a310eda079f"
+    },
+    "docs/toolchains.md": {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/docs/toolchains.md",
+      "sha256": "0c91ac145fd38c7c0a33f479876a80c193e58f06657a882334cfaef4b4014e45"
+    }
+  },
+  "focused_tests": {
+    "command": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 nice -n 19 ionice -c 3 taskset -c 0,1 /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python -m pytest -o addopts='' -q tests/test_bt4_direct_screen.py tests/test_bt4_one_epoch_screen.py tests/test_bt4_joint_readout.py",
+    "result": "85 passed in 27.92s",
+    "exit_code": 0
+  },
+  "whole_lint": {
+    "command": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 nice -n 19 ionice -c 3 taskset -c 0,1 ./scripts/lint.sh",
+    "result": "Ruff passed; basedpyright 0 errors, 0 warnings, 0 notes; Vulture passed; lint: OK",
+    "exit_code": 0,
+    "environment": "Existing CPython 3.13 development venv, host execution for basedpyright interpreter discovery; no dependency installation or extension rebuild."
+  },
+  "additional_checks": {
+    "actual_C_summary_cadence": "PASS: metadata-only call of verify_window_cadence on existing C summary, 420 windows and 18910484 cumulative samples; no training repeated.",
+    "actual_opening_prefix": {
+      "ownership": "Parent executed; independently reviewed. Author did not repeat frozen-runtime opening sampling.",
+      "receipt": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/opening_prefix_qualification.json",
+        "sha256": "ec18c330e4790dc8dc2fd1d40df5f694cf35e86937fa0c67b2686201a4365fab"
+      }
+    },
+    "native_test_environment": "First run had one missing-native fixture error. The 21 relevant native source files matched an existing CPython 3.13 build; local ignored binary links reused that build only in this inactive checkout. Final full suite passed. Frozen wise-cloud runtime untouched.",
+    "mixer_validation": "Bank agent owns separate H20.mixer_author_validation.json and mixer tests; this receipt asserts combined lint and launcher/reader tests only."
+  },
+  "logs": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/launcher_focused_tests.log",
+      "sha256": "f4f93cbd8736de8110054701551ab288502e66f125f20612f1d2b448020e68fb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/tools_whole_lint.log",
+      "sha256": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/launcher_native_test_environment.json",
+      "sha256": "ed4b33e744eed816a746bc93092ea4f394ed7a16d76acd159e7a829d29f55637"
+    }
+  ],
+  "limitations": [
+    "Final data qualification receipt must be produced from actual prepared corpus and match the consumed success/profile/corpus/source/derive/mix contract.",
+    "Runtime/input pins and prospective complete schedule must be independently qualified before launch.",
+    "Available B100/G50 profiles do not imply a queue or automatic use of spare budget."
+  ]
+}

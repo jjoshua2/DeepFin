@@ -1,0 +1,29 @@
+{
+  "book": {
+    "path": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+    "sha256": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c"
+  },
+  "candidate": {
+    "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/checkpoint.pt",
+    "role": "C20T05",
+    "sha256": "8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3"
+  },
+  "hard_seconds": 5400,
+  "launcher_sha256": "b1c7da6f7ccdb49f7149e181d873be6a41d2f7d4b8527768f903dee3b93415ec",
+  "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/arena",
+  "preregistration": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/preregistration.md",
+    "sha256": "2f003bb37fdc99d797bd2d79fd0703f275a198d1f0320d6e1fa3b61950373d31"
+  },
+  "reference": {
+    "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05_epoch_v2/checkpoint.pt",
+    "role": "G20T05",
+    "sha256": "bd8c208a95247373f423be0649329e9c100db64ab1b5a5e68fd7a6aec3769a74"
+  },
+  "runtime_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json",
+    "sha256": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df"
+  },
+  "schema": 1,
+  "sims": 100
+}

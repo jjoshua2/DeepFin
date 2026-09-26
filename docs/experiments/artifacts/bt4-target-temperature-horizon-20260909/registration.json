@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "status": "PREREGISTERED_PREPARATION_ONLY",
+  "source_review_revision": "561fd8a73a6f19cda9421856c1e882aa1d463aa3",
+  "readiness_sha256": "09d08b6e0e836a7f227dfb2dcaa5ff75e169081568b04ae46a9abc1cf647897b",
+  "question_note_sha256": "722b8231e7304adb7714323c58c0b09a4357f7391ca83558bf3c458885078cb2",
+  "training_runtime_revision": "0ff96f006e7cb1a72278c4ccc533abecce37ce86",
+  "qualified_runtime_source_sha256": {
+    "scripts/lc0_control_train.py": "dd9ec4b3146adae343343e5cf69ca7d2e5a283955951de7be4f65f97f7c55891",
+    "chess_anti_engine/replay/game_epoch.py": "382677700752fe7e977c9df70cddda2470fdb1c363191c1434b43623edc85b5e",
+    "configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+    "configs/pbt2_small.yaml": "52a6c0b7200b7fa34259cee982ef3233616acc79796c14549d2eb7a388034570"
+  },
+  "evidence_sha256": {
+    "original_sf_derive_summary": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "b100_t05_mix_summary": "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38",
+    "sf_b100_full_plans_independent_review": "9efa397a0e7b05694b96d44cdb957b24f95a70453cdeab80a50b4c90e7643c49",
+    "compiled_cuda_probe_independent_review": "aed6b51d8043ea8a18317cd19debb2800842f0fca825ebea69876a585e38f128",
+    "runtime_scope_decision": "a3c0d1d41c14412fd6e05daca1332777afb7ce18ec211d72d4a41703c5cd6f4c",
+    "original_bt4_raw_legal_policy_summary": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3"
+  },
+  "selected_protocol": {
+    "teacher_temperatures": [
+      1.0,
+      0.5
+    ],
+    "bt4_policy_fraction": 1.0,
+    "sf_value_unchanged": true,
+    "epochs": 2,
+    "initialization_seed": 0,
+    "sampler_seeds": [
+      0,
+      1
+    ],
+    "rows_per_epoch": 18910484,
+    "games_per_epoch": 97968,
+    "updates_per_epoch": 36935,
+    "windows_per_epoch": 420,
+    "presentations_per_arm": 37820968,
+    "model_parameters": 61444448,
+    "common_prior_temperatures": [
+      1.0,
+      1.0
+    ],
+    "placement_prior_temperatures": [
+      0.5,
+      1.0
+    ],
+    "simulations": 400,
+    "opening_pairs_per_cell": 128,
+    "fixed_cells": 3,
+    "generic_calibration_queued": false
+  },
+  "g10_native_wdl_increment": {
+    "status": "PASS_SELECTED_G10_INCREMENT_WDL_COMPLETION",
+    "new_rows": 509992,
+    "preserved_pilot_rows": 16384,
+    "cumulative_rows": 526376,
+    "independent_review_sha256": "d2476ab944a5f04e4f9a101fe87de1e3de38c413555a73452f924073b9d037ab",
+    "parent_complete_sha256": "4e24c3aeb24187ad28ec7bd43793c573180d6b5b957d47d54af38e78fda96b92",
+    "scope": "Two selected common-increment sources only; no new training qualification."
+  },
+  "limitations": [
+    "Opaque identities bind retained evidence; operational paths and logs are not included.",
+    "Runtime evidence is a bounded compiled probe plus SF/B100 CPU planning, not completed full-corpus two-epoch training.",
+    "Pure T1 admission is implemented and merged in PR604; materialization, plans, exact checkpoint manifests and asymmetric placement reader remain preparation work."
+  ],
+  "allocation": {
+    "materialization_inclusive_seconds": 14400,
+    "materialization_sampled_output_gib": 32,
+    "reserve_gib": 150,
+    "training_inclusive_seconds_per_arm": 32400,
+    "match_inclusive_seconds_per_cell": 5400,
+    "total_training_and_match_ceiling_hours": 22.5,
+    "cpu_planning_separate": true
+  },
+  "search_transform_inspected_revision": "85c5aef700160aee91fd406c0c7e1c7c42182206",
+  "search_transform_source_sha256": {
+    "chess_anti_engine/mcts/gumbel.py": "5bee81110eae74249931fe8bd3713d51f3a8b75c0a276808bc2614fc9a63e5ac",
+    "chess_anti_engine/mcts/gumbel_c.py": "8efae5921c9e8f7af78f7e455d49caf554eace7f712e03150d01deb23418e167"
+  },
+  "t1_admission": {
+    "pr": 604,
+    "head": "4b42a1c212f14f6c39ce7d8822b112f9290c8f05",
+    "status_at_registration": "MERGED",
+    "merge": "7d2289547a85cc1820371bacd1d2b205604e4277"
+  }
+}

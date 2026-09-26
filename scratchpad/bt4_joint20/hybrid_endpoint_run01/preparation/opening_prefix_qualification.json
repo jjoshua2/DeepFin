@@ -1,0 +1,21 @@
+{
+  "status": "PASS",
+  "seed": 42,
+  "small_pairs": 250,
+  "full_pairs": 500,
+  "exact_history_prefix_matches": true,
+  "unique_full_endpoints": 500,
+  "all_full_endpoints_match_completed_C100": true,
+  "history_plies_histogram": {
+    "16": 500
+  },
+  "prefix_history_sha256": "1203d766f818300901ee804e2149be5b5b9d76270f117c5e141ef9bc2677e9ce",
+  "full_history_sha256": "b0a7c00060775035986dd22e0bbe1d103d90ed114b61816ec958a286100fb03b",
+  "arena_script_sha256": "bc91cfc38acd00ad475061d12e6358a4bace2c7ac5cdc77675001de063c378d7",
+  "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+  "numpy": "1.26.2",
+  "book_bytes": 9663653,
+  "book_mtime_ns": 1780003887951973399,
+  "elapsed_seconds": 98.25751366501208,
+  "gpu_used": false
+}

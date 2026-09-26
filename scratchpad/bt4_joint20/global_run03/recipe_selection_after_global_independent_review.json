@@ -1,0 +1,18 @@
+{
+  "checked_unix": 1788713611.741933,
+  "checks": [
+    "Keeps both E0 and G20T05 in contention; correctly labels all E0-relative contrasts post-hoc and inconclusive.",
+    "Prioritizes sharper BT4 only conditionally on current weight, CE objective, seed and search protocol.",
+    "Preserves fixed C evaluation and correctly states widening-plus-sharpening confound.",
+    "Direct leading-recipe match and higher-weight treatment are prospective choices, not unregistered queued jobs.",
+    "Reserves fresh confirmation bank and retains independent retraining requirement.",
+    "Does not treat small gradient-bank evidence or SF agreement as playing strength or rejection of other teachers."
+  ],
+  "clarification": "Project timeline and larger-scale/RL deliverable are planning statements supplied by the parent task context, not results certified by this scientific review.",
+  "completed_posthoc_review_sha256": "6a429b5a31742d0e36b0ae8b7eeab9c50e6da711e83b366be982ee429f9d049b",
+  "document_sha256": "84670d1cc9244ade86b128d9378fadd903e5f8262943188e7d26683d0863524f",
+  "findings": [],
+  "reviewer": "bank_pr517_quality",
+  "scope": "Decision-note interpretation against independently recomputed global and post-hoc score contrasts. No repeated bank, provenance or corpus scan.",
+  "verdict": "PASS; no scientific interpretation issue found"
+}

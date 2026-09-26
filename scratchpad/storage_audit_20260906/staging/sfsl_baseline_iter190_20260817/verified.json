@@ -1,0 +1,68 @@
+{
+  "pool": "sfsl_baseline_iter190_20260817",
+  "source": "/home/josh/projects/chess/data/salvage/sfsl_baseline_iter190_20260817",
+  "source_deleted": false,
+  "plan_sha256": "f389eeff35235a5097f39a3a5b4dd22a7c860ca36bc5038fbaabb4211491a5bb",
+  "started_unix": 1788748993.597189,
+  "mount": {
+    "target": "/mnt/e",
+    "source": "E:\\",
+    "fstype": "9p",
+    "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+  },
+  "resources": {
+    "local_free_bytes": 513020436480,
+    "available_RAM_bytes": 57019908096
+  },
+  "references": {
+    "observed_source_references": [],
+    "other_user_processes_not_inspected": [
+      1,
+      9,
+      12,
+      13,
+      71,
+      72,
+      87,
+      88,
+      103,
+      104
+    ],
+    "same_user_processes_not_inspected": [
+      68,
+      195654
+    ],
+    "complete_process_visibility": false,
+    "scope": "Copy only; source retained and stability independently checked. Not source-removal qualification."
+  },
+  "inventory": {
+    "entries": 10,
+    "logical_file_bytes": 667770427
+  },
+  "tar_bytes": 667791360,
+  "verified_members": 10,
+  "tar_sha256": "da15815313d07e1a471c741eb7fa6c26625db59186222aa5cec5e449c676a6ff",
+  "source_manifest_sha256": "8e23507b08dc984d6221d716d805e4141b4ef7afb2d89df690fb3831779d3d96",
+  "rsync_command": [
+    "rsync",
+    "--no-whole-file",
+    "--partial-dir=.sfsl_baseline_iter190_20260817.partial",
+    "--bwlimit=16384",
+    "--fsync",
+    "--",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/sfsl_baseline_iter190_20260817/sfsl_baseline_iter190_20260817.tar",
+    "/mnt/e/chess_archive_20260906/salvage/sfsl_baseline_iter190_20260817.tar"
+  ],
+  "rsync_exit_code": 0,
+  "external_tar_sha256": "da15815313d07e1a471c741eb7fa6c26625db59186222aa5cec5e449c676a6ff",
+  "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE",
+  "finished_unix": 1788749139.2320712,
+  "external_archive": "/mnt/e/chess_archive_20260906/salvage/sfsl_baseline_iter190_20260817.tar",
+  "external_size": 667791360,
+  "external_mtime_ns": 1788749114420135100,
+  "limitations": [
+    "Source retained; removal requires separate parent verification.",
+    "Observed fd/cwd consumers rejected; inaccessible process IDs disclosed. Not deletion qualification.",
+    "File mode/uid/gid/mtime and all contents verified; GNU tar captures ACL/xattrs but these are not independently compared."
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "status": "OWNED_HANDLES_ABSENT_LOCK_FREE",
+  "observed_unix": 1788907233.1569993,
+  "requested_pids": [
+    451374,
+    451375,
+    451379
+  ],
+  "live_pids": [],
+  "ps_exit_code": 1,
+  "ps_stdout": "    PID    PPID     ELAPSED STAT COMMAND\n",
+  "ps_stderr": "",
+  "shared_lock_available": true,
+  "runner_completion_sha256": "c9375838a5894a36b66ebd68aa28bd98f9338e3883cd4de2af40bfa0d36a319a",
+  "outer_exit_code": null,
+  "limit": "Original detached launch did not preserve a parent wait result. All stage exit statuses and runner completion are recorded separately; no claimed outer exit0 or exact outer end time."
+}

@@ -1,0 +1,49 @@
+Loading configuration file at /tmp/deepfin-phase0-support/pyrightconfig.json
+Setting pythonPath for service "<default>": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python"
+Execution environment: file:///tmp/deepfin-bt4-sf-close-followup/.venv/bin/python
+  Extra paths:
+    (none)
+  Python version: 3.10
+  Python platform: Linux
+  Search paths:
+    /tmp/deepfin-bt4-sf-close-followup/.venv/lib/python3.13/site-packages/basedpyright/dist/typeshed-fallback/stdlib
+    /tmp/deepfin-phase0-support
+    /tmp/deepfin-phase0-support/typings
+    /tmp/deepfin-bt4-sf-close-followup/.venv/lib/python3.13/site-packages/basedpyright/dist/typeshed-fallback/stubs/...
+Found 1 source file
+Could not import 'numpy' in file '/tmp/deepfin-phase0-support/scripts/sf_d9_rank_sidecar.py'
+Could not import 'zarr' in file '/tmp/deepfin-phase0-support/scripts/sf_d9_rank_sidecar.py'
+Could not import 'numcodecs' in file '/tmp/deepfin-phase0-support/scripts/sf_d9_rank_sidecar.py'
+Could not import 'annotationlib' in file '/tmp/deepfin-bt4-sf-close-followup/.venv/lib/python3.13/site-packages/basedpyright/dist/typeshed-fallback/stdlib/typing_extensions.pyi'
+Could not import 'annotationlib' in file '/tmp/deepfin-bt4-sf-close-followup/.venv/lib/python3.13/site-packages/basedpyright/dist/typeshed-fallback/stdlib/typing.pyi'
+Could not import 'annotationlib' in file '/tmp/deepfin-bt4-sf-close-followup/.venv/lib/python3.13/site-packages/basedpyright/dist/typeshed-fallback/stdlib/typing.pyi'
+Could not import 'annotationlib' in file '/tmp/deepfin-bt4-sf-close-followup/.venv/lib/python3.13/site-packages/basedpyright/dist/typeshed-fallback/stdlib/_typeshed/__init__.pyi'
+Could not import 'pathlib.types' in file '/tmp/deepfin-bt4-sf-close-followup/.venv/lib/python3.13/site-packages/basedpyright/dist/typeshed-fallback/stdlib/pathlib/__init__.pyi'
+Could not import 'chess' in file '/tmp/deepfin-phase0-support/chess_anti_engine/encoding/encode.py'
+Could not import 'numpy' in file '/tmp/deepfin-phase0-support/chess_anti_engine/encoding/encode.py'
+Could not import 'chess' in file '/tmp/deepfin-phase0-support/chess_anti_engine/moves/encode.py'
+Could not import 'numpy' in file '/tmp/deepfin-phase0-support/chess_anti_engine/moves/encode.py'
+Could not import 'numpy' in file '/tmp/deepfin-phase0-support/chess_anti_engine/replay/shard.py'
+Could not import 'zarr' in file '/tmp/deepfin-phase0-support/chess_anti_engine/replay/shard.py'
+Could not import 'numcodecs' in file '/tmp/deepfin-phase0-support/chess_anti_engine/replay/shard.py'
+Could not import 'chess' in file '/tmp/deepfin-phase0-support/scripts/derive_corpus_targets.py'
+Could not import 'numpy' in file '/tmp/deepfin-phase0-support/scripts/derive_corpus_targets.py'
+Could not import 'zarr' in file '/tmp/deepfin-phase0-support/scripts/derive_corpus_targets.py'
+Could not import 'numpy' in file '/tmp/deepfin-phase0-support/scripts/corpus_row_provenance.py'
+Could not import 'chess' in file '/tmp/deepfin-phase0-support/scripts/gen_sf_rooted_corpus.py'
+Could not import 'chess' in file '/tmp/deepfin-phase0-support/scripts/gen_sf_rooted_corpus.py'
+Could not import 'chess.polyglot' in file '/tmp/deepfin-phase0-support/scripts/gen_sf_rooted_corpus.py'
+Could not import 'numpy' in file '/tmp/deepfin-phase0-support/scripts/gen_sf_rooted_corpus.py'
+Heap stats: total_memory_size=100586MB, total_free_size=59348MB, total_heap_size=148MB, used_heap_size=100MB, cross_worker_used_heap_size=100MB, total_physical_size=148MB, total_available_size=4188MB, heap_size_limit=4288MB
+Could not import 'chess' in file '/tmp/deepfin-phase0-support/scripts/bt4_policy_dump.py'
+Could not import 'numpy' in file '/tmp/deepfin-phase0-support/scripts/bt4_policy_dump.py'
+Could not import 'zarr' in file '/tmp/deepfin-phase0-support/scripts/bt4_policy_dump.py'
+Could not import 'onnxruntime' in file '/tmp/deepfin-phase0-support/scripts/bt4_policy_dump.py'
+basedpyright 1.39.9
+based on pyright 1.1.411
+/tmp/deepfin-phase0-support/scripts/sf_d9_rank_sidecar.py
+  /tmp/deepfin-phase0-support/scripts/sf_d9_rank_sidecar.py:29:8 - error: Import "numpy" could not be resolved (reportMissingImports)
+  /tmp/deepfin-phase0-support/scripts/sf_d9_rank_sidecar.py:30:8 - error: Import "zarr" could not be resolved (reportMissingImports)
+  /tmp/deepfin-phase0-support/scripts/sf_d9_rank_sidecar.py:31:6 - error: Import "numcodecs" could not be resolved (reportMissingImports)
+3 errors, 0 warnings, 0 notes
+Completed in 1.957sec

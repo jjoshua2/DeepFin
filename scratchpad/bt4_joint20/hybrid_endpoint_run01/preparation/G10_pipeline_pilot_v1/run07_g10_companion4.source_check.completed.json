@@ -1,0 +1,12 @@
+{
+  "pid": 267962,
+  "argv": [
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run_pilot.py",
+    "--source-check",
+    "run07_g10_companion4"
+  ],
+  "start_unix": 1788824570.480447,
+  "end_unix": 1788824573.4936323,
+  "exit_code": 0
+}

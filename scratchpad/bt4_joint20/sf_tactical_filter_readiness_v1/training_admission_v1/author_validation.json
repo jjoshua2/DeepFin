@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "status": "AUTHOR_VALIDATION_PASS",
+  "base": "526eaccbaf859b2011191e6bf16d54e92fbc47e9",
+  "worktree": "/tmp/deepfin-sf-tactical-admission",
+  "files": {
+    "scripts/bt4_one_epoch_screen.py": "94531a1f66107e560484d4a54482045da4a9c8651ec5bbc7987c43992e0d7d98",
+    "tests/test_bt4_tactical_training_admission.py": "a9817fa339502a22392f2e19d33533daadf8a8e62400f4010af27ad5933c2116",
+    "docs/toolchains.md": "1e5d3e11781d1b998eaf1513811f576744cd3233702d2ba54c36e5eb1a64e930"
+  },
+  "patch_sha256": "a312471af0ea8186affac31b6c6dff096147d05f0b14dae61bdb50ba19cc02c8",
+  "producer_dependency": {
+    "pr": 595,
+    "script_sha256": "f2926d10ca695d2cbbcd12f03a26cee23529f6e798e9a3585148392858fda176",
+    "no_automatic_runtime_adoption": true
+  },
+  "validation": {
+    "focused_cases": 131,
+    "new_cases": 30,
+    "historical_cases": 101,
+    "focused_seconds": 9.88,
+    "whole_static_scope": "Entire repository analyzed; only two diagnostics on one new fixture nested-receipt lookup",
+    "final_delta": "Explicit dict[str,Any] annotation for that fixture result; production unchanged; no suite repeat",
+    "final_scoped_static": "Ruff, Basedpyright0errors0warnings0notes, Vulture PASS",
+    "no_suppression_or_scope_weakening": true
+  },
+  "commands": {
+    "focused": "taskset -c 0,1 nice -n 19 ionice -c 3 env CUDA_VISIBLE_DEVICES='' PYTHONPATH=. OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 .venv/bin/python -c 'import numcodecs.blosc as b; b.set_nthreads(2); import pytest; raise SystemExit(pytest.main([\"-q\",\"-o\",\"addopts=\",\"tests/test_bt4_tactical_training_admission.py\",\"tests/test_bt4_value_training_admission.py\",\"tests/test_bt4_one_epoch_screen.py\"]))'",
+    "whole_static": "taskset -c 0,1 nice -n 19 ionice -c 3 env CUDA_VISIBLE_DEVICES='' PATH=/tmp/deepfin-sf-tactical-admission/.venv/bin:/usr/bin:/bin VIRTUAL_ENV=/tmp/deepfin-bt4-sf-close-followup/.venv PYTHONPATH=. OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 ./scripts/lint.sh",
+    "final_static_delta_argv_suffix": [
+      "scripts/bt4_one_epoch_screen.py",
+      "tests/test_bt4_tactical_training_admission.py"
+    ]
+  },
+  "scope": [
+    "Explicit schema3 training_only B100Tactical100, no legacy arena dispatch",
+    "Exact producer/B100/SF/raw metadata and fixed policy recipe; no value/history mutation admitted",
+    "Same original trainer argv except selected corpus path; unchanged workers, seed, one-epoch schedule and 4.5h stage",
+    "Actual saved-summary/checkpoint completion consumer fixtures; synthetic corpus metadata/pin mocks disclosed",
+    "No corpus payload qualification, model inference, training or arena launch"
+  ],
+  "logs": {
+    "tactical-admission-focused-v1.log": "6d963927ed38eeed0681d9f7d7d7a7ff1e48b3fe07ec0436a8f1e503cb659b2e",
+    "tactical-admission-whole-host-lint.log": "a56c441968cf4d293a29b46793abddd35f986a89cf48282879ced8a0ce47d429",
+    "tactical-admission-final-scoped-host-lint.log": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc"
+  },
+  "independent_review": "Pending"
+}

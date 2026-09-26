@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "status": "PASS_MINIMAL_RECOVERY_DESIGN_NOT_IMPLEMENTATION_OR_LAUNCH",
+  "created_utc": "2026-09-08T01:59:31.013854+00:00",
+  "inputs": [
+    {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_policy_mix.py",
+      "sha256": "c897fae3c6455e896f078c133e9d3a98b8eb9d86038369ccf8bcf5faf5f3759d",
+      "bytes": 105620
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/mix.status.json",
+      "sha256": "ae847094c421a26cc62205c4aff7016b6b1e13a46e4e240c633eb249b31599e4",
+      "bytes": 2533
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation_plan.json",
+      "sha256": "a43ca32437855afecb296df9b026d8714904b638be90d4bc0c714785294250a2",
+      "bytes": 20450
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/qualify_H20_dataset.py",
+      "sha256": "5959d6a9680079b4bfaab7f299ffb6fe0871d653c811397ad6125cb056bdf8c6",
+      "bytes": 12186
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_assessment_v1.json",
+      "sha256": "d6a502783bc242fec37fdf6e9359d0d46a5b903e74aa1967968893d012982991",
+      "bytes": 7348
+    }
+  ],
+  "actual_terminal_receipt": "Original mix status FAILED_OR_STOPPED returncode124 at1788832244.5687327; preserve this original failure. Parent independently observed original three PIDs absent and contiguous2292fullystampedshards; no duplicate host process/prefix scan in this review.",
+  "recommendation": [
+    "Reuse2292fullystampedprefixshards as explicitly qualified executed-process proof, requiring the exact original code/argv/plan plus both complete recipe and three C-parent digest/pin attrs. Do not repeat source,C,teacher,rank or nonpolicy payload scans solely to recover lost descriptive aggregates.",
+    "Reprocess all17remaining shards from their first chunk with the original full validators and arithmetic, even if the first unfinished shard has partially overwritten policies. Original copytree completed before any prefix stamp; validate expected metadata/inventory and preserve original failure/provenance.",
+    "Preserve full recipe,audit,source,sidecar,rank,C-parent summary pins and rerun final parent/admission checks. Exact totalrows/shards and separate canonical schedule/training gates remain required.",
+    "Use an explicitly analytical mass-bound qualification for completed prefix and measured original checks for suffix. Full/prefix empirical mass mean/max, entropy,agreement,L1 and changedcounts are unavailable; represent them as null/unavailable rather than estimated or copied from suffix.",
+    "Suffix changedrows>0 and positiveL1 may establish only that the complete corpus is non-inert. If no suffix witness exists, inspect one bounded original validated prefix chunk for a witness; do not assume a full-corpus measured count.",
+    "Preserve original qualifier; new receipt-aware recovered-summary qualification must bind failed original execution plus completed continuation and distinguish analytic bounds from measured statistics. No forged original normal-completion receipt."
+  ],
+  "code_evidence": {
+    "normalization": "_normalized_legal at291checksfinite/nonnegative, masks illegalentries, positive finite rowtotal, then float64division. arithmetic_policy_mix at393normalizes mixture again before float32cast.",
+    "completed_chunk": "mix loop2058onward verifies source/BT4/rank payloads and actual C reconstruction, all16source/Cnonpolicy arrays, writes targetfloat16 and exactreadback, rejects illegalmass and revalidates finite/nonnegative positivelegal mass.",
+    "commit_boundary": "Recipeattrs2185andC-parentattrs2220follow everychunk. Both updates required. No final success summary exists ontimeout.",
+    "lost_gate": "Empirical selected_mass_abs_drift mean/max thresholds only checked after wholecorpus around2337. Stamps alone do not prove that original final empirical gate ran."
+  },
+  "analytic_mass_proof": {
+    "scope": "Only normalized global H20 arithmetic,1858or fewer nonnegative coordinates, IEEE round-to-nearest float64/float32/float16, exact zero illegal coordinates, final stored policy dtypefloat16 and exactreadback proved by original executed code. Not a generic selected-set mass proof.",
+    "float64": "For nonnegative pairwise or sequential summation, conservative sequential gamma_(n-1) bounds relative row-sum error; division adds unitroundoff. Final mixture components have bounded unit-scale total because both teachers were normalized and alpha=.2. gamma\u22482.062e-13 plus division/small underflow is far below the chosen conservative normalization mass error delta=1e-9.",
+    "gamma_n_minus_1": 2.0616841567293408e-13,
+    "normalization_mass_error_allowance": 1e-09,
+    "float32": "Per-coordinate error <=2^-24*x +2^-150, including subnormal nearest rounding; summed over<=1858coordinates.",
+    "float16": "Per-coordinate error <=2^-11*x +2^-25, including subnormal nearest rounding; summed after float32cast.",
+    "formula": "e32=delta+2^-24*(1+delta)+1858*2^-150; e16=e32+2^-11*(1+e32)+1858*2^-25",
+    "computed_uniform_row_bound": 0.0005437145992332847,
+    "recommended_conservative_certified_bound": 0.000545,
+    "existing_required_row_and_mean_bound": 0.0009765625,
+    "conclusion": "Uniform per-row absolute legal-mass error bound<2^-10 implies same bound for corpus mean and max without retrieving lost empirical aggregates. The certified bound is not an observed mean or maximum."
+  },
+  "limits": [
+    "No payload scan,fixture,test,recoveryimplementation,launch,GPU or schedule verifier run in this design review.",
+    "Process proof has the same post-write mutation limitation as normal qualification; no new claim of full-prefix cryptographic payload verification is made.",
+    "This design supersedes only the earlier assessment recommendation to rescan all prefix policies/nonpolicy compressedbytes to recover aggregates; original assessment remains intact."
+  ],
+  "blockers": []
+}

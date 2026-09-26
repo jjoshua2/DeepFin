@@ -1,0 +1,25 @@
+{
+  "pid": 312101,
+  "start_unix": 1788849983.7000434,
+  "argv": [
+    "/usr/bin/timeout",
+    "--signal=TERM",
+    "--kill-after=30s",
+    "7168.575s",
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/usr/bin/taskset",
+    "-c",
+    "2,3",
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run_common.py",
+    "--worker",
+    "--expected-plan-sha256",
+    "87a33a55678ff0c02daa61bfe7aaab0acb82dd019753247a26c8a1323d9aa752"
+  ],
+  "plan_sha256": "87a33a55678ff0c02daa61bfe7aaab0acb82dd019753247a26c8a1323d9aa752"
+}

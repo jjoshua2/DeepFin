@@ -1,0 +1,13 @@
+# Storage is part of bootstrap completion
+
+User direction, September 8: continually transfer completed cold data from SSD to the external drive and reclaim verified local copies so the approximately 100M-position bootstrap has room. This work remains part of completing the research objective.
+
+Current snapshot, September 9, after G50T05 reclamation and at V50 rewrite launch: parent observed 422,991,724,544 bytes free on SSD and 8,145,479,417,856 bytes on external storage. These concurrent filesystem observations are not reserved capacity or a complete 100M working-set proof.
+
+G20T1, G20T05 and G50T05 each completed verified external copies and exact reclamation of 2,309 cold local shard directories. Original corpus summaries, checkpoints and verified external archives remain retained. G50T05 terminal independent review is115f1f225adf38fd7d07b0d39601a6e7bd245349612c1a8b0b54c8f63bd4d307. Its removed shards had14,495,428,608 allocated bytes; concurrent filesystem free-space delta was14,464,651,264 bytes. Do not add these recoveries again to the current free-space baseline. Earlier359/372/383GiB observations and source-retained launch statuses are historical.
+
+The original18,910,484-row BT4 WDL bank is complete. V50 CPU rewrite actually launched; dataset qualification, prospective schedule and training remain pending. Preserve this active rewrite, raw policy/WDL generation, SF/B100 sources, selected controls and required sidecars. Respect the shared CPU preparation lock and budget ongoing label generation plus output growth. V50 precedes the prepared tactical rewrite; it is not a mandatory launched queue.
+
+Maintain150GiB free as an operating floor while separately accounting for raw/common corpora, labels, transfer/rewrite temporaries, training artifacts and continued generation. Full100M scale and multiple simultaneous recipe copies need explicit working-set capacity; passing the reserve alone is insufficient. Continue cold completed policy-corpus copy, content verification, external readback and current source/consumer checks before exact reclamation. Restored data needs the applicable identity admission.
+
+The saved38-receipt archive inventory includes26 still-local pools, mostly restart/rollback/checkpoint roles. Their85.32GB total tar volume is neither reclaimable SSD allocation nor permission to delete those pools. Preserve checkpoint and holdout exclusions; assess only eligible payload components while prioritizing cold reproducible policy corpora. Keep recipe/source/checkpoint proof and restore location on GitHub. No new broad inventory, transfer or deletion was performed for this update.

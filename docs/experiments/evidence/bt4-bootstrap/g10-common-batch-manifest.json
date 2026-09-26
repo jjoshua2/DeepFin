@@ -1,0 +1,466 @@
+{
+  "schema": 1,
+  "captured_unix": 1788828973.8944418,
+  "scope": "Original fixed common-batch runner, registration, launch/runtime bindings, review, stop and terminal evidence. Failed during first source derivation; no common output qualified. Empty derive GNU-time file is preserved and supplies no timing or resource result. Partial spill payloads stay host-local; subsequent bounded diagnosis is separate evidence. Host launch paths are archival, not portable commands. Includes frozen bounded bad-row diagnostic, exact failure row, per-row results, source/parser evidence and losslessly gzip-compressed 1324-row original bank; no new labels or corrected raw observations. Includes unlaunched v2 direct-CLI proposal and existing synthetic spawned-worker error/success observations with their exact tiny fixtures; original v1 runtime remains unchanged. Includes completed fixed64-shard policy-support census, all excluded references and explicit limits of its finite/available value observation metric. Supplemental latest-phase value ambiguity pass is not included or completed here.",
+  "entries": [
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/STOP",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/STOP",
+      "bytes": 221,
+      "sha256": "d5b2e5d012a5d0673471441c1264e61b3ef564f7bad04256507d3a1fd7d5bb68"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/author_validation.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/author_validation.json",
+      "bytes": 1742,
+      "sha256": "6132d7bac67a11e2d844d6780b8fbd8dce482a32eeb4f57ffdd7bcc48261e8f6"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/coordinator.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/coordinator.log",
+      "bytes": 670,
+      "sha256": "7501860e31900688d8aee7e02bc978ad544b00432fde5de3b1129724b646bae9"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/coordinator_launch.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/coordinator_launch.json",
+      "bytes": 640,
+      "sha256": "c9c61700376eede4c5df205861dbfde36730604b2c9377c8872f2e391b0b1394"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/failed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/failed.json",
+      "bytes": 198,
+      "sha256": "4ef684a21c86eee87169a42256836028c24b3c9563352f293d33504f7e377873"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/independent_launch_review.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/independent_launch_review.json",
+      "bytes": 20185,
+      "sha256": "8473e48d0cf70ae12a5adc5a6bd8bcc008117e921e30e346098383efe3c11e6b"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/launch.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/launch.json",
+      "bytes": 16897,
+      "sha256": "8bd65b7bb18f6032e864d9defa8e7f29cbba4e97c2a613e59eb309964ced277b"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/operator_cleanup_verification.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/operator_cleanup_verification.json",
+      "bytes": 612,
+      "sha256": "dbea1b02e98b84124a86528d7a59f08aa58826dbedcba4d75c5080bac5ef3438"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/operator_stop_evidence.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/operator_stop_evidence.json",
+      "bytes": 663,
+      "sha256": "f720c5b314f7cc6f4cecc33c759dd13f2617b9aee2b0e36879fd7277c2f23e90"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/preparation.md",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/preparation.md",
+      "bytes": 5465,
+      "sha256": "062cd68658ae4892505cdb062d74c2a41a7da2d544b7d1a0f4d3b0acd84e52ec"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/preregistration.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/preregistration.json",
+      "bytes": 19456,
+      "sha256": "86de876067f255a36abd5a0f109ece4e9efdc899e2d1fb091750b7d75bc640bf"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/qualifier_author_supplement.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/qualifier_author_supplement.json",
+      "bytes": 2070,
+      "sha256": "18c9c621d3a2bb6a4ef4a3beddf9b9ea494431be9914261467eadc9068adbc6e"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.closed_receipts.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.closed_receipts.jsonl",
+      "bytes": 36663,
+      "sha256": "8684984ed17e457245f2e54c1e731aa46be7f20ecf2b46a51855eac28c88ab5e"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.derive.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.derive.log",
+      "bytes": 993,
+      "sha256": "3108e2b065577462ba5d7e78ee8a0da0ee6890482f01193130442e37c4267cbf"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.derive.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.derive.started.json",
+      "bytes": 1264,
+      "sha256": "1a669b9cdd579b7b7fcba4c5e95a864291174989465defdeea19d94f4b8bd5a2"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.derive.time.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.derive.time.json",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.source_check.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.source_check.completed.json",
+      "bytes": 1185,
+      "sha256": "89a069620d03521175f8f6d50f64220491e153be5cf71ed2c77819d7e9673624"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.source_check.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.source_check.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.source_check.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.source_check.started.json",
+      "bytes": 636,
+      "sha256": "b866911f9e4c60d2230fa76f08239cb4222f83862e4fcc3714f8dc1c74820835"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.source_check.time.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.source_check.time.json",
+      "bytes": 150,
+      "sha256": "959b07bc6cb177b0f93e7014bc9fc5d878fd04d822b195b3484a2d59c7c6e70d"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.closed_receipts.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.closed_receipts.jsonl",
+      "bytes": 37017,
+      "sha256": "f27dc5c265448ccc1ea38b57cd0dbc30a5db84fdb2f5317fdfc25ba7b84012ed"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.source_check.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.source_check.completed.json",
+      "bytes": 1218,
+      "sha256": "a49accf9c3291c338aada9fe64ab76424cd85eba9ef22fa47d56157b12810570"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.source_check.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.source_check.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.source_check.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.source_check.started.json",
+      "bytes": 658,
+      "sha256": "528ed04fb4efce3aea426ce4d5310a7c1fa99c51e04c335f652beb04a7d1ae69"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.source_check.time.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.source_check.time.json",
+      "bytes": 150,
+      "sha256": "bc89bc21bd555b75726f113d9beae5ca133020633351a8bbb5b3a2d655013314"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run_common.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run_common.py",
+      "bytes": 20675,
+      "sha256": "f43b3814d91e23442d28c33d5b8c7f79bf25261b05482fcf9a43acd6e90eba4d"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/started.json",
+      "bytes": 672,
+      "sha256": "533cb5f05623f3804173deb69aa777ddce5514e52ba61918ae1f036a357e9a80"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/worker.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/worker.log",
+      "bytes": 1593,
+      "sha256": "e007532a5d9dd8e4b49e60251fac136ce4a24d2415b4f98f9b72d870188a52d2"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/python_bootstrap/sitecustomize.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/python_bootstrap/sitecustomize.py",
+      "bytes": 382,
+      "sha256": "e5f31f339fc737f98a9b256e7a280b7a681a90d929fc101faa057d661d91b7ad"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/diagnostic_receipt.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/diagnostic_receipt.json",
+      "bytes": 4908,
+      "sha256": "4847011a134d1e819534dbcf12fb5c94fb9f3c0befababc03ecc5f65c5462603"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/failed_raw_row.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/failed_raw_row.json",
+      "bytes": 60377,
+      "sha256": "11c60f881e883f3a436fdb725843de751518e5db69c23609e19b342ce661fc85"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/failed_row_structure.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/failed_row_structure.json",
+      "bytes": 38645,
+      "sha256": "58dd4463333e7751390642ec55639a18dd8ba746ec097e4f5cd678b561440f90"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/per_row_results.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/per_row_results.jsonl",
+      "bytes": 327543,
+      "sha256": "f8be19e31edc38248d4f809a74cb932acbd9f3e9416c7e3fc14063f44b5be814"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/preregistration.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/preregistration.json",
+      "bytes": 3616,
+      "sha256": "091364c8f45dbfb4f4446d8a96360c0efe7dcc5a41b29d81e2a5eea0fb295636"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/probe.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/probe.log",
+      "bytes": 1533,
+      "sha256": "6ac56d2e741e7dd6077a8936e29c19ee672db91f5b7eac5412275fffa1d8e42c"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/probe.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/probe.py",
+      "bytes": 4525,
+      "sha256": "db46dc8ccf36e5c23110bbd7cc5d872c71551dd854a65200deb5e91cc22c172b"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/readout.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/readout.json",
+      "bytes": 3265,
+      "sha256": "dd1e61e447f96688e8977436daac5a3762428cbe57f6e92277483d2ea94dc1da"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/selected_raw_rows.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/selected_raw_rows.jsonl.gz",
+      "bytes": 2611341,
+      "sha256": "a31801a4e1b7086292ecb9229e363284be7488298ea46e10f168d33398a4f0d3",
+      "encoding": "gzip",
+      "source_bytes": 14857953,
+      "source_sha256": "16928f78550dc10618ac7d724a14619e99bd0b29afb3957634468f26432cee03"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/commands.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/commands.json",
+      "bytes": 3582,
+      "sha256": "c9e20e930f804226242b814eac5d62e480051bd303d70c76e0d280d9247a9802"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/direct_original_error.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/direct_original_error.log",
+      "bytes": 2964,
+      "sha256": "e7ec0a5d023210cde67a020c1d15f57329b8a4ed581996dc992e091d3776588c"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/direct_positive.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/direct_positive.log",
+      "bytes": 1250,
+      "sha256": "0d08ffc38a9ec1d7e9c00458cbf147b6419da828799a8b3ed9e0034291536898"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/direct_positive_caps.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/direct_positive_caps.jsonl",
+      "bytes": 1667,
+      "sha256": "c047a25da7d3d642ffb19ac7a37c94171c1e70a975177126906c76aa8069dd70"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/direct_positive_derive_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/direct_positive_derive_summary.json",
+      "bytes": 9118,
+      "sha256": "d9731879e1de09a942a749bd361b8e7f14c9f9d83face9df5ce619677626951a"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/exception_transport_readout.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/exception_transport_readout.json",
+      "bytes": 3653,
+      "sha256": "77b48f691e32881f4c0ae0ac368300c4cc45098a6a76ad643b2e26da20e99801"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/make_negative_fixture.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/make_negative_fixture.py",
+      "bytes": 480,
+      "sha256": "607c3d51f22103c2adb5230d082128ac3b589f87fe7bc83235756e32ed165e10"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/make_positive_fixture.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/make_positive_fixture.py",
+      "bytes": 271,
+      "sha256": "87147161f85e260ac9cee359999281f567addd881c3b2e719d5bf3c60ee56873"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/negative/corpus/manifest.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/negative/corpus/manifest.json",
+      "bytes": 490,
+      "sha256": "cb88b2a82871b05edc517078a858277bae547e41e300bc55e2d443c3a1a748a4"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/negative/corpus/w00-00000.jsonl.zst",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/negative/corpus/w00-00000.jsonl.zst",
+      "bytes": 835,
+      "sha256": "049328485eb7bcb014eaba521c1ab6adbd525f76b1c1e2b04434cdd1ccd1f356"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/negative/corpus/w00-00001.jsonl.zst",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/negative/corpus/w00-00001.jsonl.zst",
+      "bytes": 835,
+      "sha256": "d96e2161c14d11f82d720122af08dd750541328a5e87431e70d5387621c2ea65"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/negative/corpus/w00.progress.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/negative/corpus/w00.progress.jsonl",
+      "bytes": 190,
+      "sha256": "a063b35485ce605b0c315ceeb5727bc15cfba86b526aea666b67577b7806023a"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/positive/corpus/manifest.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/positive/corpus/manifest.json",
+      "bytes": 490,
+      "sha256": "cb88b2a82871b05edc517078a858277bae547e41e300bc55e2d443c3a1a748a4"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/positive/corpus/w00-00000.jsonl.zst",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/positive/corpus/w00-00000.jsonl.zst",
+      "bytes": 847,
+      "sha256": "f0dab8f5c19f9fe72332f97f2d5b4b192f9c0bf48bc9731ae4d9ad607d324fe8"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/positive/corpus/w00-00001.jsonl.zst",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/positive/corpus/w00-00001.jsonl.zst",
+      "bytes": 849,
+      "sha256": "2f4dc35fc4ebf18f091ba66444158249a7e6a663bcf68328195d9e3d7b1e26ff"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/positive/corpus/w00.progress.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/positive/corpus/w00.progress.jsonl",
+      "bytes": 208,
+      "sha256": "21616f07b21aba4a26910fc394c1b80192a03f833284d688d1aff65fe6021777"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_manifest.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_manifest.json",
+      "bytes": 4619,
+      "sha256": "22b81cf782c039bb14da2f6cbb7bf63a49388934f20a988cc9c6d52f9467b3c5"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/runpy_error_timeout.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/runpy_error_timeout.log",
+      "bytes": 993,
+      "sha256": "3108e2b065577462ba5d7e78ee8a0da0ee6890482f01193130442e37c4267cbf"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/test_only_hook_observer.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/test_only_hook_observer.py",
+      "bytes": 926,
+      "sha256": "c9d50263c4bfa65ebaa9321ad6d0198a44c7752c19d30ffe00c162bbe893365a"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/proposal.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/proposal.json",
+      "bytes": 1226,
+      "sha256": "4b72140d4d3f31509fc0f508dfda9bab8567b29ae763e2b49037bcc49be1c9e7"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/python_bootstrap/sitecustomize.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/python_bootstrap/sitecustomize.py",
+      "bytes": 382,
+      "sha256": "e5f31f339fc737f98a9b256e7a280b7a681a90d929fc101faa057d661d91b7ad"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/run_common.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/run_common.py",
+      "bytes": 20512,
+      "sha256": "500f5a85494109f57e8b40d5689ee2105d3f2a72449c7c676d523cc09482062a"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/banked_fixture_checks.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/banked_fixture_checks.json",
+      "bytes": 530,
+      "sha256": "3ab3a2746909887cc783b0c5765554cc04e574d14b1200e2ca6fd3e6f6840ea1"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/census.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/census.log",
+      "bytes": 5681,
+      "sha256": "b25d5446aff73db0046e9c9d55af88eb8588546ab148a49d31bf05e38d80afbf"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/census.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/census.py",
+      "bytes": 7912,
+      "sha256": "ccfb63a100825ebd6aa01b8ddb36c7860278fec1a9eb7ead4eba662bdb6a00b3"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/interpretation_receipt.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/interpretation_receipt.json",
+      "bytes": 4622,
+      "sha256": "09435122d073f280c53547638ff3492ae36a7b7e65435098407d7dcf9b2c7623"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/preregistration.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/preregistration.json",
+      "bytes": 3630,
+      "sha256": "7f2b4a995756712d7ddc8d6257fc7f62075e2fa728b595f7683df54d91f12b6a"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/readout.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/readout.json",
+      "bytes": 99167,
+      "sha256": "423a29c3a545005c3162b131864fe55c70483fab05710e77acdc73d4c8276ff3"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run06_g10.failures.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run06_g10.failures.jsonl",
+      "bytes": 6413,
+      "sha256": "cbb7f56be2986022eafaefc92b422fca5bede6dda554408b359b833ff5da2a85"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run06_g10.no_result.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run06_g10.no_result.jsonl",
+      "bytes": 380640,
+      "sha256": "dfa8cfc21f7eb51989689dbe9477dc56e980325d947c1beb43ae0305338e89a9"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run06_g10.progress.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run06_g10.progress.jsonl",
+      "bytes": 30384,
+      "sha256": "8f6c10e4e28a7dfff997658f619819fb38f3660ec67d3a72a3a1d20b38d6c142"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run07_g10_companion4.failures.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run07_g10_companion4.failures.jsonl",
+      "bytes": 2914,
+      "sha256": "656a4d5fb1e0f35c393f0ca0d77f37710809d3c3e681e88024fc64728e0d0008"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run07_g10_companion4.no_result.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run07_g10_companion4.no_result.jsonl",
+      "bytes": 324160,
+      "sha256": "5c80e82c5bd9d174e59928155d1cf9580353568d57ac5062aeed6f0aaf5c8f01"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run07_g10_companion4.progress.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run07_g10_companion4.progress.jsonl",
+      "bytes": 30662,
+      "sha256": "1aef4cf3593f533fc406574208f95adc5700a797409c72737f13604e8e2e1887"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/time.txt",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/time.txt",
+      "bytes": 925,
+      "sha256": "88b3db39ea2dec1d2b0471a2a276b5558db10d6475717f51b6d9d6df822f52c4"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/independent_direct_cli_review.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/independent_direct_cli_review.json",
+      "bytes": 6977,
+      "sha256": "046e7f9fc979695944faa3c098d838578c0730f6817896205d93aefb496b03c0"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/independent_row_structure_check.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/independent_row_structure_check.json",
+      "bytes": 1313,
+      "sha256": "636f55b7876a3ceeca446f99beab25285acf80f0950e9c5077b6db7857790bbe"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/publication_review.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/publication_review.json",
+      "bytes": 7099,
+      "sha256": "345961392d753c7f3e9a0226384726e2adbf0ba70a0edb706630873cbadd121d"
+    }
+  ]
+}

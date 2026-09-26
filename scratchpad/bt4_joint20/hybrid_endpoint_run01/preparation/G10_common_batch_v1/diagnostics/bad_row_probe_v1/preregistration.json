@@ -1,0 +1,77 @@
+{
+  "scope": "Recover original row-level exception from failed existing batch. No output corpus or tolerance changes.",
+  "runtime": "direct imported frozen scripts.derive_corpus_targets, CPUhidden2threads nice19 taskset0,1",
+  "max_following_raw_rows_per_lane": 2048,
+  "max_wall_seconds": 600,
+  "stop_rule": "Stop each lane on first exception; existing preceding compressed bytes may be decoded to reach physical start, no earlier rows rederived.",
+  "boundaries": [
+    {
+      "lane": "w000",
+      "last_chunk": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10/derived/spill/w000/chunk_000006.zarr",
+      "npz_sha256": "272dd719e7dd932dc592f82369c1954d8ce725a719a47927bb6a0d05d03fc249",
+      "rows_in_chunk": 2048,
+      "first_ref": {
+        "schema": 1,
+        "source_config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+        "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+        "source_shard": "w00-00001.jsonl.zst",
+        "source_row": 4052,
+        "game_id": 744,
+        "ply": 243,
+        "worker_id": 0,
+        "input_key": "9ea30b150127e4393f1439f95318afe7",
+        "stored_input_key": "29728289b255412d56c9ec53e05b1344"
+      },
+      "last_ref": {
+        "schema": 1,
+        "source_config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+        "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+        "source_shard": "w00-00001.jsonl.zst",
+        "source_row": 6099,
+        "game_id": 864,
+        "ply": 186,
+        "worker_id": 0,
+        "input_key": "5d7a0782a4ea6055e0e652f8fef0e0f7",
+        "stored_input_key": "7a51099428e5aa4e3f1285a6bd9cffc8"
+      },
+      "chunk_count": 7,
+      "complete_provenance_chunks": 7
+    },
+    {
+      "lane": "w001",
+      "last_chunk": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10/derived/spill/w001/chunk_000024.zarr",
+      "npz_sha256": "fda3ad50523692ee93195b7578d2100fb2e0de9219daeb2461cf46aa22dd9d06",
+      "rows_in_chunk": 2048,
+      "first_ref": {
+        "schema": 1,
+        "source_config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+        "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+        "source_shard": "w00-00022.jsonl.zst",
+        "source_row": 7676,
+        "game_id": 11628,
+        "ply": 77,
+        "worker_id": 0,
+        "input_key": "9bae83471b2cdbd7a6809954ef05185c",
+        "stored_input_key": "5fe32954e50bb712407cf3340baeacc3"
+      },
+      "last_ref": {
+        "schema": 1,
+        "source_config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+        "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+        "source_shard": "w00-00023.jsonl.zst",
+        "source_row": 1491,
+        "game_id": 11760,
+        "ply": 189,
+        "worker_id": 0,
+        "input_key": "933eee060be4316e9b1214fa45549625",
+        "stored_input_key": "ffa85bb78b7e3b15a18f55094b328042"
+      },
+      "chunk_count": 25,
+      "complete_provenance_chunks": 25
+    }
+  ]
+}

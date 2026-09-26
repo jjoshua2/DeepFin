@@ -1,0 +1,430 @@
+{
+  "schema": 1,
+  "snapshot": "2026-09-08 evening: G20T05 copy and reclamation completed; G50T05 copy started23:24 local. Later outcomes intentionally not read.",
+  "scope": "Continuing verified SSD-to-external transfer and exact reclamation; no new scientific result or operational action for publication.",
+  "source_path_convention": "Original-checkout-relative provenance; exact original bytes retained in inert scratchpad artifacts. Earlier source-retained/prepared statuses are historical stages, superseded only by corresponding completion/start receipts.",
+  "g20t05": {
+    "copy": {
+      "outer_exit_code": 0,
+      "outer_wall_seconds": 2917.964193344116,
+      "inventory_entries": 713331,
+      "verified_members": 713331,
+      "logical_source_file_bytes": 11796945040,
+      "archive_bytes": 13155164160,
+      "archive_local_and_external_sha256": "bec3436aea9b7da55e4f3832a080bd9dca929658f2a3e8c02c1c8e732df07e28",
+      "source_manifest_sha256": "08c3985c05cae02aa7977eb27ecdd13ee7232e291fe9de85855fe30089273967",
+      "source_retained": true
+    },
+    "reclamation": {
+      "status": "PASS_COMPLETED_EXACT_RECLAMATION",
+      "outer_exit_code": 0,
+      "outer_wall_seconds": 86.3524718284607,
+      "unique_removed_shards": 2309,
+      "journal_records": 4618,
+      "retained_summaries": [
+        {
+          "name": "bt4_policy_mix_summary.json",
+          "sha256": "ff50d6b3f4c8ab38233de723c68924980d745335a374a71d6cfc3eac71c248ab"
+        },
+        {
+          "name": "derive_targets_summary.json",
+          "sha256": "8d43a70708fc64c867eee19d9b2ce8a9240c0b422d6af5fda5cade7ceab54b9e"
+        }
+      ],
+      "external_identity_matches_completed_copy_and_removal": true
+    },
+    "space": {
+      "observed_whole_filesystem_free_delta_bytes": 14314201088,
+      "observed_whole_filesystem_free_delta_GiB": 13.331138610839844,
+      "prior_allocated_removed_shard_bytes": 14356144128,
+      "prior_allocated_removed_shard_GiB": 13.370201110839844,
+      "interpretation": "Actual removal completed. Whole-filesystem free-space change is concurrent and differs from prior allocated shard bytes; it is not isolated attribution."
+    },
+    "limitations": [
+      "No bulk payload or external archive rehash repeated; current external stat identity is tied to the previously reviewed complete content verification.",
+      "Current check reads only terminal receipts, exact journal/list, one source-root directory listing, two retained summaries and external stat.",
+      "Checkpoints and other datasets were not rescanned. No deletion, transfer, lock acquisition, process signal or launch performed by this review.",
+      "Future training on this cold dataset requires restoring its shard arrays and any required source re-admission; summary-only retention supports the previously reviewed checkpoint/arena consumers."
+    ]
+  },
+  "g50t05": {
+    "status": "COPY_OPERATOR_STARTED_SOURCE_RETAINED_NO_COMPLETION_CLAIM",
+    "plan_sha256": "d17c36201f3157934f6b2adf9d11b4f5a42df1cb3561db46e2d86addd378592c",
+    "inclusive_seconds": 14400,
+    "cpus": [
+      0,
+      1
+    ],
+    "numeric_threads": 2,
+    "sampled_staging_cap_gib": 24,
+    "minimum_free_gib": 150,
+    "source_retained": true,
+    "independent_preparation_review_sha256": "52665784a814b5a0e122a8550ab2cd15a498443e4e5294cf44d60608767d8787"
+  },
+  "continuing_requirement": "Continue eligible cold policy-corpus transfers and verified local reclamation; preserve raw/SF/B100/live/checkpoint/holdout dependencies, corpus summaries and restore evidence.150GiB reserve is not100M capacity proof.",
+  "sequencing": "Archive holds shared CPU preparation lock. V50 rewrite remains first selected after complete WDL bank and archive release; no concurrent same-lock tactical rewrite. No V50/training/arena outcome inferred.",
+  "artifacts": [
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_g20t05_g50_v1/g20t05-copy-reclamation.tar.gz",
+      "sha256": "5334e916bf884ea3c52720e19da24e9127343e48f56dee31a596369dc2b58d77",
+      "bytes": 128239,
+      "encoding": "tar+gzip",
+      "members": [
+        {
+          "member": "independent_completion_review.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/independent_completion_review.json",
+          "sha256": "e77e1aeff15d1cebf99ac4823505d4f0a6b04f408ab6094315965759cef0cf91",
+          "bytes": 3933
+        },
+        {
+          "member": "independent_reclamation_completion_review.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/independent_reclamation_completion_review.json",
+          "sha256": "2b0391a8715ab9a6868a2645821c759da9b0e8a8eb74e33f8a2da4a5b977ed59",
+          "bytes": 4956
+        },
+        {
+          "member": "operator.actual_complete.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/operator.actual_complete.json",
+          "sha256": "6bc30ba94859fffced286638caa3c522fdd5cb51dfbd769b72da141eb629308a",
+          "bytes": 737
+        },
+        {
+          "member": "reclamation_execution_v1/completed.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_execution_v1/completed.json",
+          "sha256": "a06ce6e7391067f7b7e73f00f2152f2a46d9c5af5e58dcf103f6d7bcbdfcdb93",
+          "bytes": 1972
+        },
+        {
+          "member": "reclamation_execution_v1/shards.jsonl",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_execution_v1/shards.jsonl",
+          "sha256": "aa47536df986e00f1a8b9c310b7cc11189c13c22f3199d45a49059980fc6598c",
+          "bytes": 490734
+        },
+        {
+          "member": "reclamation_execution_v1/started.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_execution_v1/started.json",
+          "sha256": "9b6102d21f705b67b38a8727d1d76b0bc56c041c623e86da6007cad9054d56a6",
+          "bytes": 1790
+        },
+        {
+          "member": "reclamation_preparation_v1/README.md",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/README.md",
+          "sha256": "921bef30dec364765e6586d2b47c7d7ea090f1d74726a9a50359551091359e48",
+          "bytes": 1499
+        },
+        {
+          "member": "reclamation_preparation_v1/author_preparation.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/author_preparation.json",
+          "sha256": "4e5aeabff602cc59b973858795eddd59151dd94d6d547eccd745a54548b79149",
+          "bytes": 5559
+        },
+        {
+          "member": "reclamation_preparation_v1/check_consumers.py.data",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/check_consumers.py",
+          "sha256": "a0ea3366749504ec2f5e19c5f7dec2a087bc5cb2e531fa63dd7c1a59e0022207",
+          "bytes": 3788
+        },
+        {
+          "member": "reclamation_preparation_v1/check_consumers.py.binding.patch",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/check_consumers.py.binding.patch",
+          "sha256": "05470f181d3278fca919d951745a9b3e1a85430d13b16a75bd256f4862c6bfa4",
+          "bytes": 2782
+        },
+        {
+          "member": "reclamation_preparation_v1/check_consumers.py.in",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/check_consumers.py.in",
+          "sha256": "e86743353f6db9f29f73997458e90d0a86986d78d96778225d3cae3eaf8b5de6",
+          "bytes": 4017
+        },
+        {
+          "member": "reclamation_preparation_v1/check_source_metadata.py.data",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/check_source_metadata.py",
+          "sha256": "6e2a3528c98baee9f05db1319615a4f1ffd41751d51d39e76f06126af36c3bfc",
+          "bytes": 6141
+        },
+        {
+          "member": "reclamation_preparation_v1/check_source_metadata.py.binding.patch",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/check_source_metadata.py.binding.patch",
+          "sha256": "05e4e862b1bccc952246f34968c0ab4ead58ecf0b8b920f6fa97c7cfa2d4feaf",
+          "bytes": 2295
+        },
+        {
+          "member": "reclamation_preparation_v1/check_source_metadata.py.in",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/check_source_metadata.py.in",
+          "sha256": "092c7ef84fa1faeb634002f0433eabc44c4f3c7b59ce1b8b3b08ac87cea4b4a9",
+          "bytes": 6331
+        },
+        {
+          "member": "reclamation_preparation_v1/consumer_observation.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/consumer_observation.json",
+          "sha256": "a53e5e5dc6a1939f911222005027f5dd7c05d2690736364d5c113822eaac1f3e",
+          "bytes": 5469
+        },
+        {
+          "member": "reclamation_preparation_v1/final_execution_binding.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/final_execution_binding.json",
+          "sha256": "04ea2125b3897945e92ffee3ca61da3fa80a3cdf7612f662e0b8123c01f718f8",
+          "bytes": 2235
+        },
+        {
+          "member": "reclamation_preparation_v1/launch_and_capture.py.data",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/launch_and_capture.py",
+          "sha256": "6113fff54b172b67d6ff248684af7744267354d429fefc435d0be8b8f0ec5940",
+          "bytes": 2139
+        },
+        {
+          "member": "reclamation_preparation_v1/metadata_check.initial_unbound.log",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/metadata_check.initial_unbound.log",
+          "sha256": "add9e191dee2d20f8f8969566e94843e8721b4a84bf9c844c640661ff401b975",
+          "bytes": 200
+        },
+        {
+          "member": "reclamation_preparation_v1/metadata_check.log",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/metadata_check.log",
+          "sha256": "5e9012c21658fd2bb94bfb8e0b37f153c67766b7b74b55aff46abdb7035d6b0f",
+          "bytes": 127
+        },
+        {
+          "member": "reclamation_preparation_v1/metadata_comparison.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/metadata_comparison.json",
+          "sha256": "c56b0f6987ed2179748bf66b9de0cf4d7608929506a497048823fbc862e2b9d6",
+          "bytes": 1339
+        },
+        {
+          "member": "reclamation_preparation_v1/metadata_execution.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/metadata_execution.json",
+          "sha256": "2d0b040965769f50fdf17e5ed9e89bc2d07d0c43f9fb6996085da236caeb7a7a",
+          "bytes": 1110
+        },
+        {
+          "member": "reclamation_preparation_v1/operator.actual_complete.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/operator.actual_complete.json",
+          "sha256": "e89418d8e8f5c231b8a165f322560220c1a113f30e0e1c27cb856f661bfaef46",
+          "bytes": 962
+        },
+        {
+          "member": "reclamation_preparation_v1/operator.actual_start.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/operator.actual_start.json",
+          "sha256": "a6d56aa2f87b53a679a82a30739867a4c6404d1f18ab2e9ad8d9bfc3d20e5395",
+          "bytes": 858
+        },
+        {
+          "member": "reclamation_preparation_v1/pending_bindings.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/pending_bindings.json",
+          "sha256": "d6a9778b04c8c743f7c5fb1b51f833eb70de67c2b9b64d46e1023778326a37c8",
+          "bytes": 2792
+        },
+        {
+          "member": "reclamation_preparation_v1/postcopy_binding.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/postcopy_binding.json",
+          "sha256": "f69b5fa567201145c211df566f875c7e07bdef7897794cfb61b58815b8bbbca0",
+          "bytes": 1666
+        },
+        {
+          "member": "reclamation_preparation_v1/proposed_shard_removal_list.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/proposed_shard_removal_list.json",
+          "sha256": "29d700034298709d9114fdbfa03fa65113380ba8e7238b383bc8c886252b50c9",
+          "bytes": 1117240
+        },
+        {
+          "member": "reclamation_preparation_v1/readiness_receipt.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/readiness_receipt.json",
+          "sha256": "78ba4203c4e1f3b1d6c57c0e9f29e04f483b165491f826643660cba2f56ebd7d",
+          "bytes": 4466
+        },
+        {
+          "member": "reclamation_preparation_v1/reclaim_shards.final_binding.patch",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/reclaim_shards.final_binding.patch",
+          "sha256": "79950a235778dc64487e40631cea618c232f8e83d72bba896b5a4d2d0e15e334",
+          "bytes": 3488
+        },
+        {
+          "member": "reclamation_preparation_v1/reclaim_shards.py.data",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/reclaim_shards.py",
+          "sha256": "6864bed695c9cc793fe5c92f885935a627143bb89be4af692f636d4270464be5",
+          "bytes": 9792
+        },
+        {
+          "member": "reclamation_preparation_v1/reclaim_shards.py.binding.patch",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/reclaim_shards.py.binding.patch",
+          "sha256": "385f40cd02a849a6437d7cfee81db0af61f075b3f16f6ff8416ab74fe8cbb765",
+          "bytes": 3706
+        },
+        {
+          "member": "reclamation_preparation_v1/reclaim_shards.py.in",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/reclaim_shards.py.in",
+          "sha256": "30259e76be28b7bb71913bded1741cb763086c2b5c95645b3e3a0ce9a5dee819",
+          "bytes": 10001
+        },
+        {
+          "member": "reclamation_preparation_v1/reclamation_command.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/reclamation_command.json",
+          "sha256": "e2063c34df3297e20e9d9896644ead8cef148aba6b3cb3ec7143144ac4dfe28d",
+          "bytes": 2534
+        },
+        {
+          "member": "reclamation_preparation_v1/workflow.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/workflow.json",
+          "sha256": "cb4ea528e88a6ddcf2013cec7b0fcad7f599ecdb82e3c48f6f81325dac063d0a",
+          "bytes": 4868
+        },
+        {
+          "member": "staging/qtemp_0.0005_hist_20m_bt4_global_G20T05/verified.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/staging/qtemp_0.0005_hist_20m_bt4_global_G20T05/verified.json",
+          "sha256": "7e6c5bee0ab1213cc8005e526c9517b573014db4568e08bde5f1b7d96838ccb5",
+          "bytes": 2599
+        }
+      ]
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/independent_reclamation_completion_review.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_g20t05_g50_v1/g20t05/independent_reclamation_completion_review.json",
+      "source_sha256": "2b0391a8715ab9a6868a2645821c759da9b0e8a8eb74e33f8a2da4a5b977ed59",
+      "sha256": "2b0391a8715ab9a6868a2645821c759da9b0e8a8eb74e33f8a2da4a5b977ed59",
+      "bytes": 4956,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/independent_completion_review.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_g20t05_g50_v1/g20t05/independent_copy_review.json",
+      "source_sha256": "e77e1aeff15d1cebf99ac4823505d4f0a6b04f408ab6094315965759cef0cf91",
+      "sha256": "e77e1aeff15d1cebf99ac4823505d4f0a6b04f408ab6094315965759cef0cf91",
+      "bytes": 3933,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_execution_v1/completed.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_g20t05_g50_v1/g20t05/reclamation.completed.json",
+      "source_sha256": "a06ce6e7391067f7b7e73f00f2152f2a46d9c5af5e58dcf103f6d7bcbdfcdb93",
+      "sha256": "a06ce6e7391067f7b7e73f00f2152f2a46d9c5af5e58dcf103f6d7bcbdfcdb93",
+      "bytes": 1972,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_g20t05_g50_v1/g50t05-copy-launch.tar.gz",
+      "sha256": "d45b4e851ab22564d3977569521fb71b9ccc706e49fd7af01de2defe6cf0d2d3",
+      "bytes": 20777,
+      "encoding": "tar+gzip",
+      "members": [
+        {
+          "member": "README.md",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/README.md",
+          "sha256": "d1e4ab09596be79e3ae255c95a3ab4acc732e4b51274433b70793bc1b315625b",
+          "bytes": 3850
+        },
+        {
+          "member": "archive_G50T05.py.data",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/archive_G50T05.py",
+          "sha256": "bd57c14dfb9aeac233d13b794634e30f6fe21b494bfe9f5719bf8f985d50b663",
+          "bytes": 20623
+        },
+        {
+          "member": "archive_G50T05.py.binding.patch",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/archive_G50T05.py.binding.patch",
+          "sha256": "6676c3d6388f1983e118593f0c6079816b7467c85fd73af4d07ab6bc446aecbf",
+          "bytes": 1615
+        },
+        {
+          "member": "author_preparation.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/author_preparation.json",
+          "sha256": "0aae9fbd68b89417984dfccdbad6f3dbebfc08aee12342c6c32cef0c44722da8",
+          "bytes": 4678
+        },
+        {
+          "member": "independent_preparation_review.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/independent_preparation_review.json",
+          "sha256": "52665784a814b5a0e122a8550ab2cd15a498443e4e5294cf44d60608767d8787",
+          "bytes": 4448
+        },
+        {
+          "member": "operator.actual_start.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/operator.actual_start.json",
+          "sha256": "0bf3f221f263477bf14d96736bb7c6637828d0bb7da37756a63f6d960ca4c644",
+          "bytes": 632
+        },
+        {
+          "member": "operator_command.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/operator_command.json",
+          "sha256": "c580f6ca1af87d53c68bcf1d2c276c00ff49146ccc6c9f6b2d2e0c913a0a40da",
+          "bytes": 1113
+        },
+        {
+          "member": "plan.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/plan.json",
+          "sha256": "d17c36201f3157934f6b2adf9d11b4f5a42df1cb3561db46e2d86addd378592c",
+          "bytes": 11827
+        },
+        {
+          "member": "preparation.log",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/preparation.log",
+          "sha256": "b9ac55c7f2184a32778c33357af0d9f73775c6fbd3d6063841ebabda64b6ad7f",
+          "bytes": 479
+        },
+        {
+          "member": "preparation_attempt_v1/preparation.log",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/preparation_attempt_v1/preparation.log",
+          "sha256": "b9ac55c7f2184a32778c33357af0d9f73775c6fbd3d6063841ebabda64b6ad7f",
+          "bytes": 479
+        },
+        {
+          "member": "preparation_attempt_v1/prepare.py.data",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/preparation_attempt_v1/prepare.py",
+          "sha256": "2461dad31613e13faa8fe4957e0c4ece44c20643847c09447c7986ec5b1efb2b",
+          "bytes": 9135
+        },
+        {
+          "member": "preparation_checks.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/preparation_checks.json",
+          "sha256": "71f9573b22f6d6726fddb0a0d102593afbe42d7a427dc0de7c19a9b7b64cced2",
+          "bytes": 4875
+        },
+        {
+          "member": "preparation_host.log",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/preparation_host.log",
+          "sha256": "b1051d866bfb692afc7dce2d18bce9c21fd59688a906a7a8cc3545f3af40e408",
+          "bytes": 340
+        },
+        {
+          "member": "prepare.py.data",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/prepare.py",
+          "sha256": "996d839275cf1a47a0265f4d22c6080bcbb6f8e1f75f074895ce80fd0269d8c2",
+          "bytes": 9381
+        },
+        {
+          "member": "run/started.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/run/started.json",
+          "sha256": "e8a95e57f262a07d6f4df6587ef4063769d97aa7413cf5f1b3bd130d8a63226a",
+          "bytes": 1117
+        },
+        {
+          "member": "run_registered.py.data",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/run_registered.py",
+          "sha256": "415cbc6ad349da1fa42d8db7a5366e9ca23210fe7e9c0fae20614fff56318d59",
+          "bytes": 2571
+        },
+        {
+          "member": "run_registered.py.binding.patch",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/run_registered.py.binding.patch",
+          "sha256": "bcb458148a70a1caee87867b9de896168189c213e2abf6ca729aea54349f7561",
+          "bytes": 790
+        }
+      ]
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/independent_preparation_review.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_g20t05_g50_v1/g50t05/independent_preparation_review.json",
+      "source_sha256": "52665784a814b5a0e122a8550ab2cd15a498443e4e5294cf44d60608767d8787",
+      "sha256": "52665784a814b5a0e122a8550ab2cd15a498443e4e5294cf44d60608767d8787",
+      "bytes": 4448,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/operator.actual_start.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_g20t05_g50_v1/g50t05/operator.actual_start.json",
+      "source_sha256": "0bf3f221f263477bf14d96736bb7c6637828d0bb7da37756a63f6d960ca4c644",
+      "sha256": "0bf3f221f263477bf14d96736bb7c6637828d0bb7da37756a63f6d960ca4c644",
+      "bytes": 632,
+      "encoding": "identity"
+    }
+  ]
+}

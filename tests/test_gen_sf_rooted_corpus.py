@@ -797,6 +797,81 @@ def test_g10_never_calls_an_earlier_complete_block_d10() -> None:
     assert len(engine.go_lines) == 2
 
 
+@pytest.mark.parametrize("fault", ["duplicate", "illegal", "rank_gap", "partial", "unique", "benign_flush"])
+@pytest.mark.parametrize("adaptive", [False, True])
+def test_invalid_candidate_roster_stops_actual_search_handoff(fault: str, adaptive: bool) -> None:
+    class RosterEngine(ScriptedEngine):
+        def score_of(self, uci: str, *, depth: int) -> int:
+            del depth
+            return {"c3g7": 100, "d2d3": 95, "d2e3": 90, "c3d4": 85}.get(uci, -500)
+
+        def _reply_to(self, go_cmd: str) -> list[str]:
+            if not go_cmd.startswith("go depth 10 "):
+                return super()._reply_to(go_cmd)
+            roots = go_cmd.split("searchmoves ")[1].split()
+            ranked = sorted(roots, key=lambda move: self.score_of(move, depth=10), reverse=True)
+            if fault == "duplicate":
+                # Preserved failure: the first four ranks name only two moves.
+                ranked[:4] = ["c3g7", "d2d3", "d2d3", "d2d3"]
+            elif fault == "illegal":
+                ranked[-1] = "a1a2"
+            elif fault == "partial":
+                ranked = ranked[:-1]
+            lines = [
+                info(10, rank + int(fault == "rank_gap" and rank >= 3),
+                     self.score_of(move, depth=10), move, 100)
+                for rank, move in enumerate(ranked, 1)
+            ]
+            if fault == "benign_flush":
+                lines = lines + lines
+            return [*lines, f"bestmove {ranked[0]}"]
+
+    board = chess.Board("8/1b6/8/3p4/7p/k1B2b2/3K4/8 w - - 24 168")
+    engine = RosterEngine()
+    searcher = searcher_for(
+        engine, staircase=corpus.G10_STAIRCASE,
+        staircase_policy=corpus.STAIRCASE_POLICY_G10 if adaptive else corpus.STAIRCASE_POLICY_FIXED,
+    )
+    search = searcher.search_position(board)
+    assert {pv.move for pv in search.values} == {move.uci() for move in board.legal_moves}
+    assert search.value_full_width
+    phase = search.phases[1].as_row()
+    if fault in {"unique", "benign_flush"}:
+        assert len(engine.go_lines) == len(search.phases) == 3
+        expected = [line[1] for line in phase["per_depth"][0]["lines"]][:4]
+        assert engine.go_lines[2].split("searchmoves ")[1].split() == expected
+        assert phase["anomalies"]["duplicate_iteration_flushes"] == int(fault == "benign_flush")
+        assert phase["anomalies"]["re_emissions_disagreeing"] == 0
+        assert "extension_stop_reason" not in phase
+    else:
+        assert len(engine.go_lines) == len(search.phases) == 2
+        assert phase["extension_stop_reason"] == "invalid_candidate_roster"
+        assert phase["per_depth"][0]["complete"] == (fault in {"duplicate", "illegal"})
+        if fault == "duplicate":
+            assert [line[1] for line in phase["per_depth"][0]["lines"]][:4] == ["c3g7", "d2d3", "d2d3", "d2d3"]
+        if adaptive:
+            assert search.staircase_gate is not None
+            assert not search.staircase_gate.extended
+            assert search.staircase_gate.reason == "invalid_candidate_roster"
+            assert search.staircase_gate.margin_cp is None
+        else:
+            assert search.staircase_gate is None
+
+
+def test_numeric_first_rung_keeps_its_unique_legal_top_k_handoff() -> None:
+    board = chess.Board()
+    engine = ScriptedEngine(preferred=("e2e4",))
+    search = searcher_for(engine, staircase="4:9,2:10").search_position(board)
+    assert len(search.phases) == len(engine.go_lines) == 2
+    assert search.phases[0].searchmoves is None
+    assert search.phases[0].width_realized == 4
+    moves = [pv.move for pv in search.phases[0].parse.blocks[-1].lines]
+    assert len(moves) == len(set(moves)) == 4
+    assert set(moves) < {move.uci() for move in board.legal_moves}
+    assert engine.go_lines[1].split("searchmoves ")[1].split() == moves[:2]
+    assert "extension_stop_reason" not in search.phases[0].as_row()
+
+
 def test_the_g10_shape_remains_fixed_without_the_named_policy() -> None:
     engine = ScriptedEngine(preferred=("e2e4",))
     searcher = searcher_for(engine, staircase=corpus.G10_STAIRCASE)
@@ -4766,8 +4841,14 @@ def test_a_crashed_run_resumes_and_its_crash_record_survives(
     assert crashed["games"] == 1, "worker 0's game is banked, worker 1's is not"
     assert "RUN DID NOT FINISH" in corpus.format_summary(crashed)
 
-    oom_kills.clear()  # the OOM is over; the same corpus, resumed
-    assert corpus.main([*argv, "--resume"]) == 0
+    manifest_before = (out_dir / corpus.MANIFEST_NAME).read_bytes()
+    oom_kills.clear()  # the OOM is over; resume with fewer resident workers
+    assert corpus.main([*argv, "--resume", "--worker-concurrency", "1"]) == 0
+    assert (out_dir / corpus.MANIFEST_NAME).read_bytes() == manifest_before
+    invocations = [json.loads(line) for line in
+                   (out_dir / "execution_invocations.jsonl").read_text().splitlines()]
+    assert [item["worker_concurrency_effective"] for item in invocations] == [2, 1]
+    assert invocations[0]["config_sha256"] == invocations[1]["config_sha256"]
 
     resumed = json.loads((out_dir / corpus.SUMMARY_NAME).read_text("utf-8"))
     assert resumed["run_finished"] is True
@@ -5106,3 +5187,61 @@ def test_real_stockfish_emits_exactly_one_line_per_rank_per_depth() -> None:
         )
     assert search.value_full_width is True
     assert len(search.values) == 20
+
+
+@pytest.mark.parametrize(("limit", "effective"), [(None, 3), (1, 1), (2, 2), (9, 3)])
+def test_worker_concurrency_preserves_all_logical_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    limit: int | None, effective: int,
+) -> None:
+    limits: list[int] = []
+    specs: list[corpus.WorkerSpec] = []
+
+    class RecordingExecutor(InlineExecutor):
+        def __init__(self, *, max_workers: int, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            limits.append(max_workers)
+
+    def record_worker(spec: corpus.WorkerSpec) -> dict[str, Any]:
+        specs.append(spec)
+        return corpus.failed_worker_slot(spec, corpus.worker_failure(
+            RuntimeError("no engine needed"), progress=corpus.WorkerProgress(),
+            games_completed=0,
+        ))
+
+    monkeypatch.setattr(corpus, "ProcessPoolExecutor", RecordingExecutor)
+    monkeypatch.setattr(corpus, "run_worker", record_worker)
+    monkeypatch.setattr(corpus, "refuse_unopenable_syzygy", lambda _path: ())
+    monkeypatch.setattr(corpus.audit_targets, "engine_identity", lambda _path: "test")
+    args = corpus.build_parser().parse_args([
+        "--out-dir", str(tmp_path / "run"), "--games", "8", "--workers", "3",
+        "--seed", "42", "--stockfish", "/bin/true",
+    ])
+    original_stamp = corpus.config_stamp(args, sf_binary=str(args.stockfish))
+    args.worker_concurrency = limit
+    summary = corpus.run(args)
+    assert limits == [effective]
+    assert [(s.worker_id, s.game_ids, s.seed) for s in specs] == [
+        (0, (0, 3, 6), 42), (1, (1, 4, 7), 42), (2, (2, 5), 42),
+    ]
+    assert summary["config_requested"] == original_stamp
+    assert {s.config_sha256 for s in specs} == {corpus.stamp_sha256(original_stamp)}
+    assert summary["execution"]["worker_concurrency_effective"] == effective
+    invocation = json.loads((tmp_path / "run" / "execution_invocations.jsonl").read_text())
+    assert invocation == summary["execution"]
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_invalid_worker_concurrency_leaves_output_untouched(tmp_path: Path, limit: int) -> None:
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    sentinel = out_dir / "summary.json"
+    sentinel.write_text('{"run_finished": false}')
+    args = corpus.build_parser().parse_args([
+        "--out-dir", str(out_dir), "--games", "2", "--resume",
+        "--worker-concurrency", str(limit),
+    ])
+    with pytest.raises(ValueError, match="worker-concurrency must be positive"):
+        corpus.run(args)
+    assert list(out_dir.iterdir()) == [sentinel]
+    assert sentinel.read_text() == '{"run_finished": false}'

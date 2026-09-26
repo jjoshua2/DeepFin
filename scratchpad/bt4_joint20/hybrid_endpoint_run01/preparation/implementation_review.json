@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "reviewed_unix": 1788817391.4857209,
+  "reviewer": "/root/review_pr517_bootstrap",
+  "verdict": "PASS_IMPLEMENTATION_AND_PUBLICATION",
+  "findings": [],
+  "base_head": "6756768d49acda07311a10708206a9cc65668146",
+  "reviewed_head": "054042f990c0e1b86787ad1366ccb8abcacc6aab",
+  "reviewed_diff_sha256": "245f02b99170bc66c49843c0ebc0fc1b0d4e6cbf577355f104a440d820a8c10e",
+  "reviewed_files_sha256": {
+    "docs/toolchains.md": "0c91ac145fd38c7c0a33f479876a80c193e58f06657a882334cfaef4b4014e45",
+    "scripts/bt4_direct_screen.py": "325164d7237680c4460e31b91c9e4e61a5f2951fc5928328fa39da507a12de48",
+    "scripts/bt4_joint_readout.py": "a17c89537903c56ee7bb0ec084d5133e1139cc6c6cc605dc882b06279276ceeb",
+    "scripts/bt4_one_epoch_screen.py": "0e8015dcbf486be6d23fdf957406703450aa8eb8578ced0f560d8bc9169c7ae1",
+    "scripts/bt4_policy_mix.py": "c897fae3c6455e896f078c133e9d3a98b8eb9d86038369ccf8bcf5faf5f3759d",
+    "tests/test_bt4_direct_screen.py": "251179e15124fc68aa0b7d1bd03a224cd82f0da7e79fbe072947b3504d141976",
+    "tests/test_bt4_joint_readout.py": "9b98c2aceb33158b0f841601075f3c0bc4b4745326fc88e5b4773500a3d2953c",
+    "tests/test_bt4_one_epoch_screen.py": "2c29cfb902ed08ec861411ec8092505473aca1f534616a8384b37b8c368bc4e8",
+    "tests/test_bt4_policy_mix.py": "370d740ae2f8bd9c7a4cbc5a2a287e9163563673a3e241aab6444a310eda079f"
+  },
+  "evidence_sha256": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/launcher_validation.json": "a64c80154c44e9f1010a57f7be708fb4ba878d4d42eb1a8e516d61c63d3a92ba",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.mixer_author_validation.json": "23606f7e665e709745c023d50d19691691035015a4c48cfa34ca0ad27aeb389f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/opening_prefix_qualification.json": "ec18c330e4790dc8dc2fd1d40df5f694cf35e86937fa0c67b2686201a4365fab",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/plan_adaptive_review.json": "d62c0e3aaf79d2c747a74940e7787fae275a06391d24a3ea96abc9ec783e72b7"
+  },
+  "resolved_findings": [
+    {
+      "finding": "data_qualification was pinned but not consumed.",
+      "resolution": "check_pins now requires successful qualification with exact profile/corpus/rows/shards/source/final derive/mix identities."
+    },
+    {
+      "finding": "Window length/finite diagnostics alone did not verify cadence and sample totals.",
+      "resolution": "Registered profiles now require each window index/requested/done/cumulative count, sample bounds and exact total rows."
+    }
+  ],
+  "mixer_review": [
+    "Explicit fixed H20 composition retains originalSF source identity and refuses arbitrary postprocessed source input.",
+    "C parent derive/mix,exact recipe and transitive source/BT4/rank lineage checked before copy.",
+    "Per-chunk actual C array inventory/layout/original metadata and every nonpolicy field match originalSF; float16 parent policy equals exact reconstructedC20T05.",
+    "Actual target is0.8 normalized storedC plus0.2 normalized rawBT4 squared, with existing float32/float16 storage semantics.",
+    "Descriptive audit reconstructs the storedC intermediate; T1 diagnostic keeps C fixed and varies finalglobalteacher only.",
+    "Parent recipe and originalSF/BT4/rank identities survive in output; per-shard parent-policy hashes and final parent metadata stability checks retained.",
+    "Payload mismatch leaves partial evidence and original inputs intact; legal mass,finite storage and write/read fidelity checks remain.",
+    "Actual original/C transitive metadata equality independently checked including recorded NaNs; no corpus scan."
+  ],
+  "launcher_reader_review": [
+    "One manifest selects one H20/B100/G50 profile; fixed comparisons/caps/order enforce one package, not an automaticgrid.",
+    "New qualification evidence is consumed; prospective and completed canonical/physical schedules, full epoch/window/count diagnostics and exact final checkpoint required.",
+    "500game400 probe requires complete same-candidate C100 anchor; full effective search/candidate/book/compile/evaluator identity and first250pair endpoints checked;250pair reader restricted to400bookprobe.",
+    "New profiles require exact raw counts and no orphans; default legacy reader/count behavior is preserved.",
+    "Shared GPU lease,explicit frozen live config,owned group timeout survival,STOP/resource checks and failure retention helpers unchanged; selected package stops on failure.",
+    "Actual parent CPU book-loader proof establishes250/500 historyprefix and existingC100 endpoints; not rerun by reviewer.",
+    "Toolchains guide correctly documents legacy versus adjacentreader,explicit profile selection and originalSF+C-parent arguments/provenance."
+  ],
+  "validation": {
+    "reviewer_targeted_tests_passed": 20,
+    "reviewer_test_groups": [
+      {
+        "cases": 3,
+        "scope": "Real H20 CLI formula/provenance roundtrip plus changed-parent-policy/nonpolicy refusal."
+      },
+      {
+        "cases": 17,
+        "scope": "Qualification status/identity,window cadence/samples,sequence/STOP,anchor/prefix/orphan/completeness and250pair reader."
+      }
+    ],
+    "reviewer_test_exit_codes": [
+      0,
+      0
+    ],
+    "reviewer_environment": "GPUhidden; qualifiedCPython3.13venv;2numeric/torchthreads,nice19,CPU0,1.",
+    "author_mixer_tests": 69,
+    "author_final_launcher_reader_tests": 85,
+    "author_final_launcher_reader_seconds": 27.92,
+    "whole_repository_lint": "Author Ruff/Basedpyright0errors0warnings0notes/Vulture PASS, exact pinned log verified.",
+    "whitespace": "PASS",
+    "committed_bytes_match_independently_reviewed_working_diff": true,
+    "base_update": "75b955a to6756768d adds already-reviewed plan documents only."
+  },
+  "limitations": [
+    "Code/publication qualification only; final prepared corpus,identity-bound data qualification,prospective schedule and actual selected operationalmanifest still need validation before execution.",
+    "No real corpus materialization,training,arena,GPUinference,source scans or checkpoint/native payload rehash by reviewer.",
+    "H20 is selected; available B100/G50 support is not an automaticqueue or permission to consume spare budget.",
+    "Inactive test checkout reused existing native binaries after author sourceidentity checks; frozen wise-cloud runtime untouched."
+  ]
+}

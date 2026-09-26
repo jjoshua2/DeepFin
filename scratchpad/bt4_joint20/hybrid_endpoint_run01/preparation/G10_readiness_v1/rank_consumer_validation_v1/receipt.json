@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "status": "PASS_FOCUSED_TESTS_COMBINED_STATIC_AND_INDEPENDENT_REVIEW_PENDING",
+  "utc": "2026-09-07T23:27:51.133690+00:00",
+  "files": {
+    "scripts/sf_d9_rank_sidecar.py": {
+      "sha256": "d60e9cc202de0ca7bc15672848c2f1a04ca8d10bcef3a0f15f19da9aeaeb2bfa",
+      "bytes": 29735
+    },
+    "tests/test_sf_d9_rank_sidecar.py": {
+      "sha256": "c564334752f93ef536796f62e2c15a9ca128fe3815d84b5667a7d47e66ca5e23",
+      "bytes": 12173
+    },
+    "docs/corpus_derivation.md": {
+      "sha256": "83265f3be163b028ec1a2291e68a54f0bd9130ce155536eaa4b695af4983a086",
+      "bytes": 7207
+    }
+  },
+  "tests": {
+    "passed": 13,
+    "path": "tests/test_sf_d9_rank_sidecar.py",
+    "cases": "legacy rank tests, real phase0-policy/latest-value derivation with both drops and cross-output nonmonotone physical joins, wrong history/source/global duplicate refs, mutation of payload/source summary/raw manifest after flush"
+  },
+  "static": "Ruff final PASS; initial focused types0/0/0; initial Ruff regex literal finding fixed; final combined static is parent-owned",
+  "runtime": "qualified CPython3.13 CPUhidden,2 numeric threads,nice19,ionice3,taskset0,1",
+  "cache": {
+    "rank_record_bytes_at_top3": 68,
+    "global_duplicate_bitmap_bytes_per_raw_row": 1,
+    "default_total_cap_bytes": 8589934592,
+    "max_raw_shard_record_bytes": 67108864,
+    "read_behavior": "one raw-prefix pass; disk cache supports cross-output revisits; metadata stability checks plus source-summary/raw-manifest final hashes"
+  },
+  "scope_limits": [
+    "No actual corpus scan, derivation, labels, training or GPU",
+    "Raw label payload identity is pinned by operational pilot wrapper, not inferred from history hashes",
+    "Existing selector/provenance and adapter implementation files unchanged",
+    "Legacy rank path retained; new reference-aware path only for provenance-bearing derived sources",
+    "No commit or publication performed"
+  ],
+  "logs": {
+    "g10-rank-focused-tests-final.log": {
+      "sha256": "192590313658fde90c82ca350ad7fb706912c092e702284b9a368a4730ddf400"
+    },
+    "g10-rank-focused-lint.log": {
+      "sha256": "14e38312cd13fdbc1781a1866f5e9752c8c1cd91d14d726fbaf6c7b857e5b5bb"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "status": "PASS_METADATA_IMPORT_AND_ACTUAL_ARGUMENT_ADMISSION_ONLY",
+  "executable": "/tmp/deepfin-b100v50-rewrite-tools/.venv/bin/python",
+  "python": "3.13.15 (main, Sep  1 2026, 14:18:08) [Clang 22.1.3 ]",
+  "numpy": "2.2.6",
+  "torch": "2.14.0+cpu",
+  "cuda_initialized": false,
+  "affinity": [
+    2,
+    3
+  ],
+  "torch_threads": 2,
+  "blosc_threads": 2,
+  "producer": "/tmp/deepfin-b100v50-rewrite-tools/scripts/bt4_value_rewrite.py",
+  "alpha": 0.5,
+  "out": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50",
+  "plan_sha256": "8016040bb8585b3818078c444ac77970afd16102e1c65c0c0da3917c8db2e670"
+}

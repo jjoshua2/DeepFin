@@ -1,0 +1,199 @@
+{
+  "schema": 1,
+  "status": "PASS_REGISTERED_CORPUS_QUALIFICATION",
+  "profile": "H20",
+  "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05",
+  "rows": 18910484,
+  "shards": 2309,
+  "source": {
+    "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+    "derive_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef"
+  },
+  "derive_summary": {
+    "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05/derive_targets_summary.json",
+    "sha256": "bf783af1d998dc80f36b9add6cacc2a829ea34ba6346c8e632b0feb1455c9f90"
+  },
+  "mix_summary": {
+    "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05/bt4_policy_mix_summary.json",
+    "sha256": "68cac181db86e6d33bbc77f2cedcd6229e10634e2d1f5111d64d1bf5b7185ecb"
+  },
+  "completed_unix": 1788835007.0124705,
+  "qualifier_sha256": "6accd83208e55d02b7b8c94cbfa3a65dd9ffcb7aaf738d30c2c2abc3d453bac6",
+  "preparation_plan_sha256": "a43ca32437855afecb296df9b026d8714904b638be90d4bc0c714785294250a2",
+  "cpu_preparation_independent_review_sha256": "2927d829dccb0128494720759e64c71707d2f9078d676add87afc6c21306603a",
+  "completion_proofs": {
+    "audit": "c35aaca48b963a2be30ce1f3d183cfe689a692b0f83403cffd8e2f60039a4232",
+    "original_failed_mix": "ae847094c421a26cc62205c4aff7016b6b1e13a46e4e240c633eb249b31599e4",
+    "completed_recovery": "7ad26e328ea67a3bf4123ba7f054d9947ae322ca1b78f9328023c7c9f1198d63"
+  },
+  "recovery_plan_sha256": "77c2c3c60ec0f5e482030f417043dc0ba89cc88fa33d12d193959a68a7ed8b2e",
+  "recovery": {
+    "completed_prefix_metadata": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/completed_prefix_metadata.jsonl",
+      "sha256": "678633f00cb06bc746f629dce490ac891a38ab1c5d5ae3cdca3bb0f35b2773f4"
+    },
+    "completed_prefix_rows": 18776064,
+    "completed_prefix_shards": 2292,
+    "mass_bound_certificate": {
+      "certified_mean_abs_bound": 0.000545,
+      "certified_row_abs_bound": 0.000545,
+      "derived_absolute_bound": 0.0005437145992332847,
+      "float64_normalization_error_allowance": 1e-09,
+      "max_policy_width": 1858,
+      "method": "normalized-f64-f32-f16-rounding-v1",
+      "observed_max": null,
+      "observed_mean": null
+    },
+    "method": "completed-prefix-process-proof-v1",
+    "original_mixer": {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_policy_mix.py",
+      "sha256": "c897fae3c6455e896f078c133e9d3a98b8eb9d86038369ccf8bcf5faf5f3759d"
+    },
+    "original_status": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/mix.status.json",
+      "sha256": "ae847094c421a26cc62205c4aff7016b6b1e13a46e4e240c633eb249b31599e4"
+    },
+    "receipt": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/recovery_receipt.json",
+      "sha256": "a0e681914f23fe5ef3fd327cc45da4b061b9bc1423f1a1f207567a54e3b97e6c"
+    },
+    "schema": 1,
+    "suffix_statistics": {
+      "candidate_set_wider_fraction": 0.9354634726975153,
+      "candidate_set_wider_rows": 125745,
+      "changed_fraction": 0.9940708227942271,
+      "changed_rows": 133623,
+      "changed_unique_max_rows": 109903,
+      "mean_entropy_nats": {
+        "bt4": 2.053310763591504,
+        "mixed": 0.8101095144995675,
+        "source": 0.559338658573893
+      },
+      "mean_l1_from_source": 0.48820363637217573,
+      "mixed_bt4_top1_agreement": 0.7054828150572832,
+      "mixed_source_top1_agreement": 0.7309552149977682,
+      "rows": 134420,
+      "selected_mass_abs_drift": {
+        "max": 0.0003853440284729004,
+        "mean": 0.00011383499254553894,
+        "mean_bound": 0.0009765625,
+        "reference": "normalized_total_legal_mass",
+        "row_bound": 0.0009765625
+      },
+      "shards": 17,
+      "source_bt4_top1_agreement": 0.49290284183901206,
+      "source_candidate_multi_fraction": 0.9940782621633686,
+      "source_candidate_multi_rows": 133624,
+      "source_top_tied_fraction": 0.17646927540544563,
+      "source_top_tied_rows": 23721,
+      "top1_ge_0_99_fraction": {
+        "mixed": 0.16519119178693648,
+        "source": 0.5953950305014135
+      }
+    }
+  },
+  "qualified_native_aliases": {
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so": "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so",
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so": "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so",
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so": "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so",
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so": "/tmp/deepfin-bt4-sf-close-followup/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so"
+  },
+  "audit_sha256": "b4afec2b811634d25768ce41ff5caded2f47ee9e4232922c7b0085e9bf142694",
+  "c20_parent": {
+    "derive_summary": {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/derive_targets_summary.json",
+      "sha256": "fc6a33b4f75b154ae2945240d4169b40685618ff0082cc759914a0c4f5b6e8a5"
+    },
+    "mix_summary": {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/bt4_policy_mix_summary.json",
+      "sha256": "5bf8502a12af0b9ce938a39ddfd9d95df4bfb2b1a0f80292d80d04109cce7100"
+    },
+    "policy_target_postprocess": {
+      "admission": {
+        "experiment_record": null,
+        "mode": "gate"
+      },
+      "algorithm": "stored-top-ties-union-sf-d9-cp-window-v1",
+      "alpha": 1.0,
+      "audit_receipt": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/audit_C_k3_g20_a100_t050_v2.json",
+        "sha256": "7e54c847c02cf3e2e2ad37d34ab5913317f8f93d66ffc7dac7c91acd1604ce7e"
+      },
+      "bt4_temperature": 0.5,
+      "candidate_set_wider_fraction": 0.2618137642590216,
+      "candidate_set_wider_rows": 4951025,
+      "changed_fraction": 0.43227444628069805,
+      "changed_rows": 8174519,
+      "changed_unique_max_rows": 4740654,
+      "completed_utc": "2026-09-06T05:50:07Z",
+      "expected_rows": 18910484,
+      "expected_shards": 2309,
+      "formula": "redistribute alpha of stored top-tie union d9 cp-window mass by temperature-scaled BT4 prior",
+      "kind": "sf-cp-window",
+      "mean_entropy_nats": {
+        "bt4": 2.0525573055367654,
+        "mixed": 0.5154697398029385,
+        "source": 0.5689733823705948
+      },
+      "mean_l1_from_source": 0.3703393676127623,
+      "mixed_bt4_top1_agreement": 0.70426193216419,
+      "mixed_source_top1_agreement": 0.7344873880541608,
+      "mutated_arrays": [
+        "policy_target"
+      ],
+      "near_max_ratio": null,
+      "rows": 18910484,
+      "schema": 1,
+      "selected_mass_abs_drift": {
+        "max": 0.0004163980484008789,
+        "mean": 4.6526547843736774e-05,
+        "mean_bound": 0.0002,
+        "reference": "stored_selected_mass",
+        "row_bound": 0.005
+      },
+      "sf_cp_window": 20.0,
+      "sf_rank_cap": 3,
+      "sf_rank_sidecar_dir": "/home/josh/projects/chess/data/lc0/sf_d9_rank_sidecars/armB_qtemp0005_hist20m_top8",
+      "sf_rank_sidecar_summary": {
+        "path": "/home/josh/projects/chess/data/lc0/sf_d9_rank_sidecars/armB_qtemp0005_hist20m_top8/sf_d9_rank_sidecar_summary.json",
+        "sha256": "165c43e5180146a37e308b9d2dc204190f9cbc5e8a971e0daf5ec8acfa7542fa"
+      },
+      "shards": 2309,
+      "sidecar_dir": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m",
+      "sidecar_summary": {
+        "path": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json",
+        "sha256": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3"
+      },
+      "source_bt4_top1_agreement": 0.4936922820166845,
+      "source_candidate_multi_fraction": 0.43229253148676683,
+      "source_candidate_multi_rows": 8174861,
+      "source_derive_summary_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+      "source_dir": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+      "source_top_tied_fraction": 0.18159239076059608,
+      "source_top_tied_rows": 3434000,
+      "top1_ge_0_99_fraction": {
+        "mixed": 0.5005711646513119,
+        "source": 0.5938493166013096
+      },
+      "value_columns_unchanged": [
+        "wdl_target",
+        "search_wdl"
+      ]
+    },
+    "source_dir": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05",
+    "validation": "all parent non-policy arrays equal original SF; actual float16 policy equals C20T05 reconstruction per chunk"
+  },
+  "metadata_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.publication_metadata.jsonl",
+    "sha256": "10cc790b9a72c5a81450fddb8eb1855d5e5c0c035a6012e699610eb07d478ab1",
+    "bytes": 2295146
+  },
+  "observed_checks": "Completed audit; pinned original timeout and completed recovery; analytic mass bound, suffix non-inert witness, final recipe, transitive summaries, all shard validation stamps, source attrs, layouts, counts and stable metadata.",
+  "materializer_proof_reused": "Original pinned mixer completed all chunk checks before stamping 2292 shards; the separately reviewed recovery completes 17 remaining shards with the original validations. These executed checks and per-shard digests are reused. The recovered summary certifies normalization analytically; full empirical aggregates were lost and are not claimed.",
+  "limits": [
+    "No second prefix payload scan. Completed-prefix process proof and conservative IEEE rounding bound replace missing original finalization; this is not an independent full payload checksum or measured full-corpus descriptive statistics.",
+    "Metadata stability during this check does not establish immutable payload bytes forever; preserve this finalized corpus.",
+    "Prospective canonical H20/C schedule proof remains a separate mandatory launcher input.",
+    "No training, inference, GPU probe, strength judgment or automatic launch."
+  ]
+}

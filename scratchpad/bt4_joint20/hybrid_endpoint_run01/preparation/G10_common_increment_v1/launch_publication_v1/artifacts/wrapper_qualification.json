@@ -1,0 +1,13 @@
+{
+  "status": "PASS_ISOLATED_WRAPPER_FIXTURES",
+  "checks": [
+    "actual missing-result ceiling accepted; excess missing/support/envelope counters refused",
+    "independent rank count and injective-survivor cardinality detect omitted eligible row",
+    "selected raw stat drift refused while unrelated appended file is allowed",
+    "actual worker builds only five allowed stages; derive/rank share exact selection and limits; training command refused",
+    "output-size walk sampled60s, not every5s guard",
+    "owned group including TERM-ignoring grandchild reaped; unrelated fixture process preserved"
+  ],
+  "runner_sha256": "491b5c54d3b80b1cb13907875dceb4d3f1564dd2a084881b514503393a173f00",
+  "scope": "Temporary data and owned CPU fixture subprocesses only; no operational corpus, freeze, launch or GPU."
+}

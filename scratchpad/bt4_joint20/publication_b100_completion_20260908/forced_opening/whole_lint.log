@@ -1,0 +1,18 @@
+suite=lint root=/tmp/deepfin-arena-forced-openings
+python=/tmp/deepfin-arena-forced-openings/.venv/bin/python 3.13.15 platform=Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.35
+threads=2 expected_backend=magic CUDA_VISIBLE_DEVICES=''
+torch=2.14.0+cpu cuda_build=None
+executing: bash scripts/lint.sh
+
+::: running lint tools in parallel
+
+::: ruff check
+All checks passed!
+
+::: basedpyright
+0 errors, 0 warnings, 0 notes
+
+::: vulture (dead code, min confidence 80)
+
+lint: OK
+lint: PASS in 158.17s (exit 0)

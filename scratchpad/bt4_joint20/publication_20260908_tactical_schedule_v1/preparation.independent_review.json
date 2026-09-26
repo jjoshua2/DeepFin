@@ -1,0 +1,99 @@
+{
+  "status": "PASS_PREPARATION_ONLY_AFTER_ENTRY_TIMEOUT_CORRECTION",
+  "reviewed_unix": 1788923117.6124527,
+  "manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/preparation_manifest.json",
+    "sha256": "2c0969019dc2019eed0c40bcf0f964af2f4a26ff6ac2ac85a055d2a1b7967dbe",
+    "bytes": 5109
+  },
+  "materialization_plan": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/plan.prepared.json",
+    "sha256": "b3e3b485b26c7a01aef282c208a8262b42bd41f372f741f494831a86a0689b34",
+    "bytes": 28715
+  },
+  "reviewed_manifest_members": 29,
+  "evidence": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/run_materialization.py",
+      "sha256": "1d9f7a7ba64d4b3eade36d7f28fbb504359dd53a540235da8afa52eed93080d4",
+      "bytes": 11306
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/operator.py",
+      "sha256": "1d9e4b9c3e1fe3dfd7c3d1700ddf3ff8ea49d47f36c473b9bdf56547d93ea14b",
+      "bytes": 1320
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/qualify_completed.py",
+      "sha256": "b71caf6c3336ff93335d7fa1618a20a16a3eb2c0e6d78aea2c7a2bc2148c567b",
+      "bytes": 6599
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/runtime_qualification.json",
+      "sha256": "bab2a9a9464c2f1ed586fb7b636b1ed71d4f4e65abe4bd7cc4442a9340471540",
+      "bytes": 21084
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/source_metadata.json",
+      "sha256": "f4e922aa580a1288351023f14cdf040445e4c98ca8bd7eaf3bbc8bf022057dab",
+      "bytes": 711316
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/author_preparation.json",
+      "sha256": "727d2c28d41fc5c5b07a6129b75a37c4bb45736ba435e36db8e8c7a51de51b2d",
+      "bytes": 2605
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/entry_deadline_correction.json",
+      "sha256": "66dea7483321d99ee8a4ac5b04c2fe0e55ca7519a573ff3f42c31dc4cf2880e6",
+      "bytes": 1493
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/outer_entry_validation.json",
+      "sha256": "6b45c87fcf3ed19958ca81391c688528baef1bd47f9fe34cead55811954e5845",
+      "bytes": 760
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/command.txt",
+      "sha256": "eafc129331702771a49500e794a7336d5afc9b04922c8a49694811fd3dc22197",
+      "bytes": 500
+    }
+  ],
+  "resolved_findings": [
+    {
+      "issue": "Original entry launched Python operator without an external timer, leaving startup/receipt I/O before its exec timeout uncovered by the whole-invocation promise.",
+      "prior_manifest_sha256": "e5fc8cd83ea777df556e868b91bd1a3ec916c6a6d4e734088c4bc38c6ffa3977",
+      "fix": "Documented mandatory external GNU timeout28770TERM+30KILL wraps the unchanged operator. Exact parsed wrapper suffix independently verified; inner shared deadlines remain unchanged.",
+      "resolution": "CLOSED",
+      "correction_sha256": "66dea7483321d99ee8a4ac5b04c2fe0e55ca7519a573ff3f42c31dc4cf2880e6"
+    }
+  ],
+  "findings": [],
+  "source_recipe_review": [
+    "The actual qualified parser suffix equals planned producer argv. Original20M raw prefix/SF derived/B100 storedT.5 parent pinned; no alternate tactical dose, fresh teacher inference, rank-sidecar substitution or value mutation.",
+    "Prior independently reviewed PR595/596 source hashes f2926d10/94531a1f used by actual runtime; native/runtime/source proof reuse internally bound to148pins without repeated payload hashes.",
+    "Retained source metadata shows2410 unique raw prefix files totaling20M, finalw11-00139 consuming7269; producer later enforces original omissions/legal joins/shuffle and all16 nonpolicy compressed copies, expected18,910,484 survivors/2309shards.",
+    "Mate treatment is categorical and zero stored winning-mate support cannot be recovered. Qualifier requires these diagnostics and exact registered recipe; no SF-agreement or strength claim."
+  ],
+  "execution_review": [
+    "Mandatory outer entry timer now bounds startup, supervisor checks, nonblocking lease and final work. Supervisor gives detached producer its own surviving remaining timeout and inherited preparation lock; actual command pins GPUhidden/CPU0,1/numeric2/Blosc2/nice19/ionice3.",
+    "Fresh output/partial/prior operation receipts refuse; STOP/free-space sampled, producer-owned group TERM/KILL cleanup and no retry/automatic resume.32GiB allocated output guard includes final/partial, sampled via boundeddu;150GiB reserve is sampled, no hard RSS quota.",
+    "Exit0 alone is insufficient: supervisor invokes actual merged tactical admission, exact raw file order/rows/preparedstat/code proofs and final output cap; deadline or STOP at publication boundary prevents COMPLETE."
+  ],
+  "completion_transition_review": [
+    "qualify_completed requires pinned successful materialization status, same plan/supervisor/summary hashes and resource bounds. It refreshes actual raw stats/recipe admission and2309 output/SF/B100 attrs plus17 layouts, comparing available copied-file hashes and final metadata stability.",
+    "The resulting genuine rewrite_summary qualification is compatible with existing verify_data_qualification. Metadata inspection relies on completed producer byte proofs and does not independently reread policy/x/value payloads.",
+    "Original-runtime prospective schedule remains a pending one-shot template with actual qualification/summary pins absent; training continuation is not a runnable manifest. Full exact epoch/runtime/checkpoint and arena admission remain later distinct work."
+  ],
+  "validation_scope": [
+    "Read actual frozen README/operator/supervisor/qualifier/runtime scripts, recipe/admission source contracts and author7 synthetic wrapper cases. No repeated suite, runtime import, original metadata census, raw payload scan or operation.",
+    "Independently verified all29 final manifest members and internal148pin mappings, retained prefix arithmetic and actual parser suffix; external source/native files are not rehashed by this review. Parent owns launch-time freshness/resource checks.",
+    "Temporary README mismatch during authorized author edit was not treated as a source finding; final freeze alone supplies binding."
+  ],
+  "limits": [
+    "Prepared operational method only; no full tactical corpus, actual materialization duration/RSS/size, data qualification or training success yet.",
+    "Eight hours is a conservative failure ceiling informed by SoftSF cost plus extra B100 verification, not a measured tactical runtime.",
+    "Resource samples can overshoot between checks;du can occupy up to20seconds, so reserve observations are not a strict continuous2second guarantee.",
+    "No launch, lease acquisition, job changes or GPU work by reviewer."
+  ]
+}

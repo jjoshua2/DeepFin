@@ -1,0 +1,152 @@
+{
+  "status": "READ_ONLY_RELATIVE_SCHEDULE_FOR_NEXT_ROOT_DECISION_NOT_A_QUEUE",
+  "created_unix": 1788922498.433325,
+  "source_pins": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/research_status.json": "03b0c8afb82d8ed2fcd38e6eec5ba20d5cc82f0fe2b83ed3f7972752e022422a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/STORAGE_OBJECTIVE.md": "8fc45bd9fd5cd7a39134b38d465abaa7ecfefb34e7638e5e24aea7603b153839",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/bt4_derived_wdl_v1/remainder_preparation_v1/actual_start.json": "2a9ea2192378d3e4451fbbcee8ac953df26b0f191e1f560de80ddf0eb6085524",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/bt4_derived_wdl_v1/remainder_preparation_v1/plan.json": "2b7cfb8a10f4e2231b23c62f4c378a1b91b8858807d165ce46929fce72b87a53",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/bt4_derived_wdl_v1/remainder_preparation_v1/README.md": "137d0ee60f1f6bffcbd76c2cf7813fd7d9bc734647bdb1c9c1d6ba8e4e9eab82",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/operator.actual_start.json": "a6bb4cf9dc7e7bd03128d5d5f5fd9ef8d1c045d3cb9399652271698593e665df",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/run/started.json": "028453afb3558aaa8856527ab48f6e73580a50049c659c54905ae2e1de5b379d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/plan.json": "b0d5fc88267e0b8502767ce06602b2fbec857e09d8667f598fa08af5d92ec131",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_execution_v1/completed.json": "d936cff9dde584ebd87946e1433238e680da7bf8a656ebf046e50c93ef0a2ace",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/plan.prepared.json": "8016040bb8585b3818078c444ac77970afd16102e1c65c0c0da3917c8db2e670",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/README.md": "8542418b28bc03f3af88c57f07a35af143d516563f1e7237d1ea3fcc250a25c7",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/run_materialization.py": "3e71d42826d2e369cbfecbd53bcf031f3c6c8123c787d976ea7bb086719ba500",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100V50_preparation_v1/TRAINING_COMPARISON.md": "2fc1395c2af350abfcd2334315c4ff829c63d6f8a9c79eefac8f75cbe64e5332",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/completed_transition_fix_v1/parent_review.json": "0514da769ba9d689b7e9adb8270d03e635e69cd54b3c9c7aada8d5675aad1fc0",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/runtime_qualification.json": "bab2a9a9464c2f1ed586fb7b636b1ed71d4f4e65abe4bd7cc4442a9340471540",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/run_materialization.py": "1d9f7a7ba64d4b3eade36d7f28fbb504359dd53a540235da8afa52eed93080d4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/plan.json": "b43878b598ffe6fea94370d1a7e98ff98f668adf71905d5ba87d1bd6822e9809",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run_probe.py": "4c5d081896738b125489e75e64630e24b72c55b5de80a5e261f7dba534160031",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/launch_and_capture.py": "82f81a98f16540827cb0871753b30b08c92b3f15445aacb4007beff10d6eab4b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/materialization/resources.json": "c351d160eea070695214de00a52e845dc78a1919263496604ff1761e5a7c3dfa",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/materialization/status.json": "90e374964fc95b94417afa2ae628175276a83506f5ae128ab686f3dee4e6d098",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/SoftSF10_training/training.complete.json": "63137f6b48defdd1a181a168cb0b532ca64acf88c90516f0898ea99d73ada3cf",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_v1/independent_completed_review.json": "ccee7161092deda6dc69d4d71f174a06406785a3ecb45eddc3e25b02791e2764",
+    "/home/josh/projects/chess/scratchpad/bt4_g10_raw_wdl_v1/driver.sh": "62bd1673fa14ce40234879b4a52eff81b349afe5fef8adb5ea7510a24a50c414",
+    "/tmp/deepfin-bt4-label-runtime-pr580-overlay/scripts/bt4_raw_corpus_sidecar.py": "1c63aa4147ef8717855d226f30094cbc03431e556cd7106d0619adee7945363a"
+  },
+  "current_owners": {
+    "gpu": "Derived original-SF WDL remainder active per start-only receipts; raw policy+WDL child already polling same lease.",
+    "cpu_preparation_lock": "G20T05 copy started with nonblocking exclusive lock; V50 and tactical use same lock, so CPU affinity separation does not permit simultaneous passes.",
+    "observed_capacity_gib_rounded": 358,
+    "capacity_basis": "Latest parent host process/df observation approximately2026-09-09 02:55UTC:358GiB SSD/7.5TiB external, after G20T05 staging growth. Supersedes historical372GiB excerpt; no new df or inventory by schedule author.",
+    "external_free_tib_rounded": 7.5
+  },
+  "preferred_sequence": [
+    "Finish current archive and derived-WDL invocation without interruption; retain raw label waiter.",
+    "Once both are complete and full WDL bank is admitted, run selected-first V50 CPU rewrite on2,3 under preparation lock. Do not fill a short gap with the potentially8h tactical pass.",
+    "Catch one idle GPU boundary during V50 CPU rewrite for already-reviewed Ceres900s probe on0,1. Queued raw group may go first; no pause/forced preemption. Busy Ceres admission refuses, so do not spend its one-shot state while busy.",
+    "After V50 publication qualification and prospective original schedule, launch V50 original GPU training. Only after its prospective CPU planning ends consider tactical CPU rewrite on0,1 under released preparation lock with current I/O/memory headroom.",
+    "Preserve V50 low100 and protected400 package priority; then tactical qualification/schedule and a separately registered matched comparison against unchanged B100. Do not make tactical training contingent on V50 winning or combine targets prematurely."
+  ],
+  "budgets": {
+    "v50_rewrite": {
+      "producer_seconds_including_kill": 21600,
+      "supervisor_metadata_unbounded_by_producer_timeout": true,
+      "cpus": [
+        2,
+        3
+      ],
+      "address_space_gib": 12,
+      "allocated_output_cap_gib": 32
+    },
+    "tactical_rewrite_proposed": {
+      "source": "implementation author direct coordination message; author still preparing files, not frozen launch registration",
+      "cpu_affinity": [
+        0,
+        1
+      ],
+      "numeric_torch_blosc_threads": 2,
+      "priority": {
+        "nice": 19,
+        "ionice_class": 3
+      },
+      "shared_preparation_lock": "hybrid_endpoint_run01/preparation.lock",
+      "inclusive_wall_seconds": 28800,
+      "cleanup_seconds": 30,
+      "sampled_allocated_output_gib": 32,
+      "minimum_free_gib": 150,
+      "hard_rss_quota": null,
+      "timing_basis": {
+        "related_softsf_wall_seconds": 17351.98,
+        "related_softsf_peak_rss_kib": 666064,
+        "reference_b100_allocated_bytes": 14593728512
+      },
+      "limits": "Proposed, not reserved/launched; SoftSF is a related original-raw pass, not tactical throughput prediction; retain raw/SF/B100."
+    },
+    "ceres": {
+      "inclusive_seconds": 900,
+      "cpus": [
+        0,
+        1
+      ],
+      "sampled_gpu_mib": 12288,
+      "ort_arena_gib": 8,
+      "sampled_rss_gib": 12,
+      "host_available_min_gib": 16,
+      "logical_output_mib": 128
+    },
+    "v50_training": {
+      "gpu_stage_ceiling_seconds": 16200,
+      "original_plan_load_workers": [
+        16,
+        16
+      ],
+      "prospective_schedule_seconds": 1800,
+      "realized_schedule_seconds": 1800,
+      "each_arena_seconds": 5400,
+      "combined_gpu_stage_ceiling_seconds": 27000
+    },
+    "reference_measurements": {
+      "softsf_train_gpu_seconds": 9519.006634206977,
+      "softsf_materialize_wall_seconds": 17351.98,
+      "softsf_materialize_allocated_bytes": 12548145152,
+      "g20t1_archive_wall_seconds": 2977.5667877197266,
+      "g50_b100_arenas_gpu_seconds": 2463.8482682780013,
+      "g50_b100_high128_gpu_seconds": 1422.483715570008,
+      "remainder_prefix_linear_proxy_seconds": 10332.827498425444,
+      "limits": "Related observed jobs/proxy only, not ETAs; current contention, raw data, teacher session and compile paths can differ."
+    }
+  },
+  "space_scenarios": {
+    "baseline_free_gib_rounded": 358,
+    "reserve_gib": 150,
+    "above_reserve_gib": 208,
+    "additive_allowances_gib": {
+      "v50_new_output_and_partial": 32,
+      "tactical_new_output_and_partial": 32,
+      "archive_staging": 24,
+      "entire_wdl_bank_physical_planning_allowance": 4,
+      "ceres_logical_output": 0.125
+    },
+    "sum_additive_allowances_gib": 92.125,
+    "remaining_free_gib_before_unbudgeted_growth": 265.875,
+    "remaining_above_reserve_gib_before_unbudgeted_growth": 115.875,
+    "reference_two_recipe_copy_proxy_gib": 27.182937622070312,
+    "wdl_projected_full_allocated_gb_decimal": 3.698,
+    "limits": [
+      "Each32GiB recipe output figure is a sampled allocated-size cap, not expected actual output or a reservation already allocated. Charging full caps again is conservative planning arithmetic only.",
+      "Conservative additive planning ledger, not proof or reservation: some bank/archive bytes are already in baseline, deliberately not credited.",
+      "4GiB WDL is a rounded physical estimate from prefix, not enforced quota; producer2GiB guard measures logical st_size.",
+      "Sampled limits can overshoot; arena/train checkpoints,caches, CPU staging, raw growth, future labels and other jobs remain unbudgeted.",
+      "Credit no future G20T05 reclamation; G20T1 recovery already included in baseline.",
+      "No exact100M fit or per-recipe size claim: ordinary-copy B100 proxy differs from actual future target compression."
+    ]
+  },
+  "retention": [
+    "Original18.91M SF plus B100 corpora, original run03_s3 raw required for tactical, complete original-source WDL bank, G10 raw/sidecars/common data needed for next scale plan.",
+    "B100 checkpoint/control and all finalist run/summary/schedule/arena/runtime/registration evidence; keep V50/tactical payloads through qualification/training/realized verification and next finalist choice.",
+    "Cold losing recipe payloads are archive candidates after current consumer checks; no wholesale removal of26 archived checkpoint/restart/rollback pools; retain both corpus summaries and restore identity."
+  ],
+  "after_two_contrasts": [
+    "Use full low/high outcomes to pick a finalist; V10 only if dose question remains useful, not automatic ladder.",
+    "Prioritize a matched fresh-seed replication before promotion and a matched two-epoch comparison when horizon is the question. Existing compiled4-update fixture and full two-epoch planner are reusable evidence, not full training proof; both families need same newly qualified runtime.",
+    "Use existing same-checkpoint fixed-N calibration reader/arena for one targeted prior contrast on the selected model, preserving full history and checkpoint identities; no new harness or broad tuning grid.",
+    "Advance9,298,514 prepared common rows into a concrete source/phase-qualified transfer recipe/schedule and staged100M budget, rather than treating them as already qualified finalist training data.",
+    "Ceres probe success supports a later retained-SF teacher-diversity experiment; performance/parity alone is not playing strength and does not trigger bulk labels."
+  ],
+  "no_operations": "No corpus/model scan, inference, transfer, deletion, new tests, pause, runtime edit or launch. Only small receipts/source and one specific existing driver host observation."
+}

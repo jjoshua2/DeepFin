@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "status": "scoped_checks_passed_independent_review_pending",
+  "created_utc": "2026-09-07T23:12:52.507712+00:00",
+  "worktree": "/tmp/deepfin-g10-transfer-tools",
+  "files": {
+    "scripts/adapt_raw_bt4_sidecars.py": "15a265b1ae988a8a2c3cf0054cd3dcd5e4f4a31683c8d055adb5e5045f72d33b",
+    "tests/test_adapt_raw_bt4_sidecars.py": "e8412a5adb85eeffbca62ef941fefdfc88ae495aef154fecf9f66bb5e84fec00",
+    "scripts/corpus_row_provenance.py": "af81340e33e6832cd20b0369d230b9b4b3dea90f6ba42b2ef5d846ad336ba4f3",
+    "scripts/bt4_raw_corpus_sidecar.py": "eb85a1d0db620f4e78d68685157fff73d3ac98840b92d732338c7ce07c59e632",
+    "scripts/bt4_policy_mix.py": "c897fae3c6455e896f078c133e9d3a98b8eb9d86038369ccf8bcf5faf5f3759d"
+  },
+  "tests": {
+    "command": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 nice -n19 ionice -c3 taskset -c0,1 .venv/bin/python -m pytest -o addopts='' -q tests/test_adapt_raw_bt4_sidecars.py",
+    "exit_code": 0,
+    "passed": 8,
+    "seconds": 4.21,
+    "realized_torch_threads": 2
+  },
+  "ruff": {
+    "command": ".venv/bin/ruff check scripts/adapt_raw_bt4_sidecars.py tests/test_adapt_raw_bt4_sidecars.py",
+    "exit_code": 0
+  },
+  "typing": {
+    "command": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 nice -n19 taskset -c0,1 .venv/bin/basedpyright --pythonpath /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python scripts/adapt_raw_bt4_sidecars.py tests/test_adapt_raw_bt4_sidecars.py",
+    "execution": "host; sandbox interpreter probe omits installed site-packages",
+    "exit_code": 0,
+    "errors": 0,
+    "warnings": 0
+  },
+  "logs": {
+    "adapter_author_tests.log": "a1197fbce8c7d63a274dd9e79ee39fbecfe654fc92ae7baa11fd7617f4aa6966",
+    "adapter_author_types.log": "56882e01cb80173ef053c4096e4ee43e3123a15f5c0a06715f96988d48fbd91c"
+  },
+  "coverage": [
+    "actual derived shuffled/dropped rows and unmodified mixer admission",
+    "colliding row/game identities in separate source namespaces",
+    "consistently repinned original/stored key mismatch refused",
+    "consistently repinned corrupted closed raw receipt refused",
+    "raw policy and derived SF policy late mutations refused",
+    "three interleaved raw shards across two derived outputs: exactly one full verification per raw shard, exact policy, successful private-cache removal"
+  ],
+  "limits": {
+    "teacher_input": "Original float32 full-history teacher input; exact float16 quantization linked to derived history. No reinference-equivalence claim.",
+    "cost": "One existing full raw verification plus one quantized-key reconstruction per used raw shard; grouped policy reads per derived shard; private compact identity disk cache default 8 GiB cap (56 bytes per row plus NPY headers); two in-memory identities, evictions reopen mmap.",
+    "operations": "Tiny CPU fixtures only; no GPU, labeling, operational corpus pilot or full corpus scans.",
+    "whole_repository_lint": "Parent-owned pending once all shared files freeze."
+  }
+}

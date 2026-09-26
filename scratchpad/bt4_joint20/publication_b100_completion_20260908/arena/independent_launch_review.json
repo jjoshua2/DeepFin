@@ -1,0 +1,186 @@
+{
+  "schema": 1,
+  "status": "PASS_FOR_REGISTERED_LAUNCH",
+  "reviewed_unix": 1788869921.7666523,
+  "manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/B100_H20.launch_manifest.json",
+    "sha256": "ad1a51514206dc7558564356a90e59ce98c8bcab2e5c5c0fc2848bfdfcfa891b"
+  },
+  "evidence": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/qualified_preparation.json",
+      "sha256": "a743d35c365e72349b6e2bbc98180cbf6d52c9df80217ec29eb9ec39b4e635ff"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/training.complete.json",
+      "sha256": "fa2b63bfa7e4d4039a8fe1f788378416eee4568ec301c6b83e1a357724979799"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/training.complete.json",
+      "sha256": "821e0886e599d241573f7482b70e24c25887ed28c9255224ea6e29048388a9df"
+    },
+    {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/summary.json",
+      "sha256": "d43427b3c8ddde5e6d661bd48b43a843938fb0d65bfbf5484ee88fe2f11f71e5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/realized_schedule.json",
+      "sha256": "371fdb551d9cc4286482a0075a07a46317de02661dfa726427dfd8427837609f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/arena_runtime_preparation_v1/runtime_identity.json",
+      "sha256": "29aaa72f60c0eeba55923ce51ed18be0440f5a72ce8078ffbd0396995c3ccbf9"
+    },
+    {
+      "path": "/tmp/deepfin-ordered-arena-runtime/configs/pbt2_small.yaml",
+      "sha256": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624"
+    },
+    {
+      "path": "/tmp/deepfin-b100-training-tools/docs/experiments/2026-09-08-bt4-pure-policy-endpoint.md",
+      "sha256": "6fb262dbfe27380bdce11bd2099305ccf6137beecd6824881857cc5d8c24f96c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/qualified_preparation.panel.json",
+      "sha256": "b4f1d16b488ff9efa0c466706b74595559a807c99a0e4ca75379a4d0745cfb6c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/inactive_qualification.json",
+      "sha256": "a4d2716c5ef5a3980072ba1a66e4eb2d67cb9ad4ebb338698a51799c7b1d0bbe"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/qualification_execution.json",
+      "sha256": "cae2f0634627a047c52a40907b04fbbfae206c6a7e03b995f2f4df2c1efa40ac"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/setup.json",
+      "sha256": "0f77f4dba560f6768c9dd4b2f4fbb633c50779ed18ac58a211c93b540235ac89"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/actual_cpu_preparation.log",
+      "sha256": "7556ddc378c332f6fe8f52672d58d6e73eeb8e1850b65e6f513cca0926125b5c"
+    }
+  ],
+  "coordinator_source_pins": {
+    "/tmp/deepfin-recipe-screen-tools-v3/scripts/bt4_recipe_screen.py": "cbf1c26c6a9c74d3d0037f262f28be9c9fd60b2b4f87ba47e681315f1d1185fd",
+    "/tmp/deepfin-recipe-screen-tools-v3/scripts/bt4_recipe_readout.py": "7f24a5dcb6a99fa11ed1003596c2df09697611ac0eacdeac84515aa889d7faec",
+    "/tmp/deepfin-recipe-screen-tools-v3/scripts/bt4_direct_screen.py": "41d736832d026f32ec90b36cd75d541c7004540df37d686bd78bae268c36c329"
+  },
+  "prepared_commands": {
+    "low": [
+      "/usr/bin/python3",
+      "scripts/arena_standard.py",
+      "--candidate",
+      "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+      "--reference",
+      "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05_epoch_v1/checkpoint.pt",
+      "--games",
+      "1000",
+      "--mode",
+      "matched_sims",
+      "--sims",
+      "100",
+      "--seed",
+      "42",
+      "--openings",
+      "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+      "--opening-plies",
+      "16",
+      "--max-plies",
+      "300",
+      "--temperature",
+      "0.1",
+      "--search-shape",
+      "training",
+      "--cand-gumbel",
+      "policy_temp=1.0",
+      "--ref-gumbel",
+      "policy_temp=1.0",
+      "--compile",
+      "on",
+      "--device",
+      "cuda",
+      "--max-concurrent-games",
+      "256",
+      "--eval-max-batch",
+      "4096",
+      "--max-seconds",
+      "5340.0",
+      "--games-out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low/arena.games.jsonl",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low/arena.results.jsonl",
+      "--sprt",
+      "elo0=0,elo1=15,alpha=.05,beta=.10,first_pairs=128,step_pairs=64"
+    ],
+    "high": [
+      "/usr/bin/python3",
+      "scripts/arena_standard.py",
+      "--candidate",
+      "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+      "--reference",
+      "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05_epoch_v1/checkpoint.pt",
+      "--games",
+      "256",
+      "--mode",
+      "matched_sims",
+      "--sims",
+      "400",
+      "--seed",
+      "42",
+      "--openings",
+      "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+      "--opening-plies",
+      "16",
+      "--max-plies",
+      "300",
+      "--temperature",
+      "0.1",
+      "--search-shape",
+      "training",
+      "--cand-gumbel",
+      "policy_temp=1.0",
+      "--ref-gumbel",
+      "policy_temp=1.0",
+      "--compile",
+      "on",
+      "--device",
+      "cuda",
+      "--max-concurrent-games",
+      "128",
+      "--eval-max-batch",
+      "4096",
+      "--max-seconds",
+      "5340.0",
+      "--games-out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/high/arena.games.jsonl",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/high/arena.results.jsonl"
+    ]
+  },
+  "training": {
+    "role": "B100",
+    "seed": 0,
+    "rows": 18910484,
+    "updates": 36935,
+    "windows": 420,
+    "finite_loss_mean_gradient": true,
+    "zero_nonfinite_skip_and_cuda_retry": true,
+    "canonical_schedule": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+    "training_seconds": 9258.993950499978,
+    "schedule_seconds": 274.6996913260082
+  },
+  "conclusions": [
+    "Final B100 checkpoint and H20 reference match successful pinned training receipts and identical canonical source-normalized schedules. Compact B100 summary independently confirms full row/update/window accounting and finite loss/gradient with zero skip/retry.",
+    "Final CPU preparation proof binds all selected inputs, successful actual model-loading/runtime metadata and exact saved book panel. Panel remains byte-identical to v2, including valid forced index55; retained opening replay qualification reused, not repeated.",
+    "Actual stage command constructed from frozen function agrees with registered B100-minus-H20 ordered-prefix 100-sim GSPRT0/+15, alpha.05/beta.10, first128/step64/final500-pair cap; high400 remains fixed128 pairs from the same prefix, irrespective of valid low boundary direction. Invalid low still blocks.",
+    "Both prior temperatures1.0; move temperature.1, noise enabled, max300plies, seed42/history16, identical qualified search. Rolling pools256/128 and uncapped leaf rows4096/2048 fit evaluator4096. Each stage has5340 internal/5400 hard seconds; original shared GPU lease and surviving owned-stage timeout remain unchanged.",
+    "Pinned runtime distinction preserved: coordinator uses qualified inactive3.13CPU environment; actual arena/model loading is unchanged3.10.12/Torch2.11cu128/NumPy1.26.2 overlay. No environment substitution inferred.",
+    "Fresh package output absent at review. Actual lease, runtime/pin refresh and GPU occupancy checks remain in reviewed launcher before stages."
+  ],
+  "limits": [
+    "No model/checkpoint/native payload hashes, book replay, GPU, training, preparation rerun or match outcomes read. Checkpoint identities rely on qualified completed training and successful actual CPU preparation evidence.",
+    "Historical purity/committed-config/sampler limitations persist; this is seed-zero development comparison, not independent confirmation or production promotion. A high-budget win alone does not establish a positive search-budget interaction.",
+    "Sequential stopped intervals descriptive; high128 nominal interval and aligned PCG64 bootstrap remain registered. No automatic retry/extensions.",
+    "No launch or runtime edits by reviewer."
+  ]
+}

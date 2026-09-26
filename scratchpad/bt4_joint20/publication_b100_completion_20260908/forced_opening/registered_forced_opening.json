@@ -1,0 +1,29 @@
+{
+  "panel": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v2/qualified_preparation.panel.json",
+    "sha256": "b4f1d16b488ff9efa0c466706b74595559a807c99a0e4ca75379a4d0745cfb6c"
+  },
+  "index": 55,
+  "opening": {
+    "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "moves": [
+      "e2e4",
+      "g8f6",
+      "e4e5",
+      "f6d5",
+      "d2d4",
+      "d7d6",
+      "g1f3",
+      "d6e5",
+      "f3e5",
+      "b8d7",
+      "f1d3",
+      "d7e5",
+      "d4e5",
+      "d5b4",
+      "d3e4",
+      "d8d1"
+    ],
+    "fen": "r1b1kb1r/ppp1pppp/8/4P3/1n2B3/8/PPP2PPP/RNBqK2R w KQkq - 0 9"
+  }
+}

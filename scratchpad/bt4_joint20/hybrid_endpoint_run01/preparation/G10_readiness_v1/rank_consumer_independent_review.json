@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "status": "PASS_RANK_PROVENANCE_AND_GUIDE_REVIEW",
+  "reviewer": "review_pr517_bootstrap",
+  "reviewed_unix": 1788823771.4187503,
+  "worktree": "/tmp/deepfin-g10-transfer-tools",
+  "base": "8f5de1556e228f51affdeafe3d902c748c1240f7",
+  "scope": "Rank consumer delta against base plus final corpus derivation guide; accepted selector/provenance/adapter code remains byte-identical.",
+  "files": {
+    "scripts/sf_d9_rank_sidecar.py": "d60e9cc202de0ca7bc15672848c2f1a04ca8d10bcef3a0f15f19da9aeaeb2bfa",
+    "tests/test_sf_d9_rank_sidecar.py": "c564334752f93ef536796f62e2c15a9ca128fe3815d84b5667a7d47e66ca5e23",
+    "docs/corpus_derivation.md": "83265f3be163b028ec1a2291e68a54f0bd9130ce155536eaa4b695af4983a086"
+  },
+  "findings": [],
+  "resolved_findings": [
+    {
+      "finding": "Initial rank draft rechecked raw and provenance metadata but not replay payload chunk changes after reads, nor final source-summary/raw-manifest identities.",
+      "resolution": "Whole-derived-shard metadata digest includes chunk ctime; final raw/derived checks and summary/raw record SHA checks run before private-cache removal and summary publication. Independent post-flush payload/summary/manifest mutations all rejected with partial evidence retained."
+    },
+    {
+      "finding": "Combined guide still described the adapter as future work.",
+      "resolution": "Guide now documents actual adapter mapping/CLI, original float32 versus stored quantized identity, ordinary consumer admission, bounded caches and rank consumer; operational pilot remains pending."
+    }
+  ],
+  "independent_tests": {
+    "command": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 nice -n 19 ionice -c3 taskset -c 0,1 .venv/bin/python -m pytest -o addopts='' -q tests/test_sf_d9_rank_sidecar.py -k provenance",
+    "passed": 7,
+    "deselected": 6,
+    "seconds": 2.03,
+    "exit_code": 0,
+    "realized_torch_threads": 2,
+    "log": {
+      "path": "/tmp/g10-rank-independent-tests.log",
+      "sha256": "fab1880fb2ce44879819be4766285c0c6633dbaaa615e650bda89e0fa90e8fdb"
+    }
+  },
+  "author_evidence": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/rank_consumer_validation_v1/receipt.json",
+    "sha256": "06569d494ce8c81da717657281e25c82df307706054e92e7fce2026d873b3dc2",
+    "scope": "13 final tests PASS; actual final test and scoped lint log hashes checked. Parent owns combined final whole-repository static gate."
+  },
+  "checks": [
+    "Source-qualified physical offsets and both raw/stored history keys determine joins, rather than reproducing writer filters or RNG. Actual tiny source includes later-phase changed winners, a missing-result drop, an envelope drop and nonmonotone cross-output repacking. Independently executed output ranks/gaps match phase0 raw observations.",
+    "Global per-raw-row used bitmap rejects duplicate references across output shards. Wrong source and wrong original history references independently rejected. Worker/game/ply and exact quantized replay x are checked.",
+    "Existing _flush validates derived game/ply order, finite sorted nonnegative cp gaps, compact indices, padding, legal support and phase0 rank1 being a stored-policy maximum. Selected value observation is not read as policy rank data.",
+    "Legacy no-provenance prefix/result-filter/permutation logic retained; new cache path selected only for provenance-bearing source. Source summary expected limits/seed/shard sizing, emitted counts and result/envelope exclusions remain checked.",
+    "Raw prefix decoded once, private per-shard rank/history index plus global duplicate bitmap; top3 uses68+1 bytes/raw row plus headers,8GiB default total admission cap and64MiB per-raw-shard working-array bound. Cache checksums and mmap support revisits without raw re-decoding.",
+    "Raw metadata and all derived shard file metadata are checked after production; summary/raw record digests rechecked before publishing. Success removes only private cache, failure preserves .writing.",
+    "Final guide describes actual commands/semantics/bounds and retains distinct-parent game namespaces, no automatic training or retroactive existing-corpus relabeling. Guide links and git diff whitespace checks pass.",
+    "Previously reviewed selector/provenance/adapter script and test hashes checked unchanged."
+  ],
+  "limits": [
+    "No operational corpus scan, raw payload hash, teacher inference, GPU, live job mutation or pilot launch. Independent tests use tiny real files.",
+    "History keys bind positions, not raw SF label payloads. Operational pilot must keep its registered closed raw-shard payload pins across derive/adapter/rank stages; this tool does not infer that payload identity from history hashes.",
+    "Source policy/rank observation alignment is a declared recipe condition; pilot selects phase0 policy and phase0 ranks, with latest-phase searched value. No strength conclusion or blanket qualification for arbitrary mismatched policy/rank recipes.",
+    "Bounded cache arithmetic is not a 100M throughput measurement. Parent-owned final combined static checks and actual pilot command/resource qualification remain separate."
+  ]
+}

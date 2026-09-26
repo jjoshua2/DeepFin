@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "status": "PASS_BOUNDED_ADAPTER_IMPLEMENTATION_REVIEW",
+  "reviewer": "review_pr517_bootstrap",
+  "reviewed_unix": 1788823200.6369452,
+  "worktree": "/tmp/deepfin-g10-transfer-tools",
+  "base": "8f5de1556e228f51affdeafe3d902c748c1240f7",
+  "scope": "Two new adapter/test files; prior selector/provenance and publication reviews remain separate. Changing phase0 rank follow-up excluded.",
+  "files": {
+    "scripts/adapt_raw_bt4_sidecars.py": "36b816a3f7e27ec08a5b2264af455335a1d7c443a233672078d9189af7234778",
+    "tests/test_adapt_raw_bt4_sidecars.py": "e8412a5adb85eeffbca62ef941fefdfc88ae495aef154fecf9f66bb5e84fec00",
+    "scripts/corpus_row_provenance.py": "af81340e33e6832cd20b0369d230b9b4b3dea90f6ba42b2ef5d846ad336ba4f3",
+    "scripts/bt4_raw_corpus_sidecar.py": "eb85a1d0db620f4e78d68685157fff73d3ac98840b92d732338c7ce07c59e632",
+    "scripts/bt4_policy_mix.py": "c897fae3c6455e896f078c133e9d3a98b8eb9d86038369ccf8bcf5faf5f3759d"
+  },
+  "findings": [],
+  "resolved_findings": [
+    {
+      "location": "scripts/adapt_raw_bt4_sidecars.py:226",
+      "finding": "Per-row derived game/ply Zarr indexing repeatedly read/decompressed identity chunks.",
+      "resolution": "Final code loads the two small identity vectors once per derived shard and indexes NumPy. Exact final delta inspected; final metadata stability guard is retained."
+    }
+  ],
+  "independent_tests": {
+    "command": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 nice -n 19 ionice -c3 taskset -c 0,1 .venv/bin/python -m pytest -o addopts='' -q tests/test_adapt_raw_bt4_sidecars.py -k 'normal_admission or three_interleaved or change_after_verification or source_policy_change'",
+    "passed": 4,
+    "deselected": 4,
+    "seconds": 2.23,
+    "exit_code": 0,
+    "realized_torch_threads": 2,
+    "log": {
+      "path": "/tmp/g10-adapter-independent-tests.log",
+      "sha256": "c6630574ea0e39bc387b83a0a054f4d4c1ab4b50d096e5b87991e203bc879c43"
+    },
+    "executed_script_sha256": "15a265b1ae988a8a2c3cf0054cd3dcd5e4f4a31683c8d055adb5e5045f72d33b",
+    "final_delta": "Only subsequently reviewed vector-read cleanup; no semantic assertion removed and no broad rerun claimed."
+  },
+  "author_evidence": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/adapter_author_validation.json",
+    "sha256": "1b67e783d7ebaf529002d0e05d149b06f76760f24e8512e4167f010ab3dfecf2",
+    "scope": "Eight focused CPU cases plus scoped Ruff/types pass before final vector-read cleanup; exact author test/type log hashes independently checked. Final Ruff after cleanup author-reported."
+  },
+  "checks": [
+    "Source mapping is keyed by canonical source directory plus raw shard, manifest config and namespace. Physical row offset, worker/game/ply and original raw 128-bit history key are checked against reconstructed raw data.",
+    "Exact raw float32-to-float16 history quantization is verified against both stored provenance key and actual replay x. Copied teacher remains the original float32 teacher evaluation, not asserted reinference on quantized replay.",
+    "Existing raw verifier checks compressed source SHA, full original history reconstruction, legal policy support, teacher/remap/runtime identities and array digests; exact verified receipt must match pinned closed snapshot.",
+    "Grouped Zarr oindex reads copy exact float32 policies through shuffled/dropped rows. Ordinary mixer sidecar admission and complete mix_corpus source/teacher admission executed in the independent fixture.",
+    "Three raw shards across two output shards verified exactly once per raw shard despite two-entry memory cache eviction; bounded 56-byte/raw-row private disk identities reopened via mmap. Raw-row and total disk-index caps fail before expensive new verification.",
+    "Final guards repin manifest/summary/closed receipt snapshots, compare raw and derived metadata identities including ctime, and recheck derived x/policy/provenance content. Author wrong-key/receipt cases inspected; independent late raw/derived mutation cases executed.",
+    "New output/private .writing paths required, input overlap refused, only private identity cache removed, successful publication uses final rename. Failure preserves partial output and originals; no adoption or automatic retry.",
+    "Actual git diff whitespace check passed."
+  ],
+  "limits": [
+    "No operational raw-corpus scan, teacher inference, GPU, large archive/checkpoint hashing, source mutation or pilot launch. Tiny fixtures use synthetic CPU logits with actual raw writer/deriver/mixer paths.",
+    "Two complete raw reconstruction passes per used shard (existing verifier plus quantized-key reconstruction); bounded memory/cache does not establish full-G10 throughput. Per-output-shard arrays still scale with configured shard size; pilot external resource caps remain required.",
+    "Identity is occurrence-based, not global chess-position deduplication. The existing planner namespaces separate resolved corpus parents; flattening colliding game IDs still needs a separate explicit mapping.",
+    "Combined whole-repository static gate and phase0 rank-sidecar follow-up are parent/author work not qualified by this two-file receipt."
+  ]
+}

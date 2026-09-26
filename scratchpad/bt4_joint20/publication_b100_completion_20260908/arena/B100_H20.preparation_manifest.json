@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "profile": "B100_H20",
+  "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01",
+  "candidate": {
+    "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+    "role": "B100",
+    "sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62"
+  },
+  "reference": {
+    "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05_epoch_v1/checkpoint.pt",
+    "role": "H20",
+    "sha256": "0a711fcf10ff87fc8360d3fd4b3035b170a7c15172616317c4a9687ae99d7017"
+  },
+  "candidate_training": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/training.complete.json",
+    "sha256": "fa2b63bfa7e4d4039a8fe1f788378416eee4568ec301c6b83e1a357724979799"
+  },
+  "reference_training": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/training.complete.json",
+    "sha256": "821e0886e599d241573f7482b70e24c25887ed28c9255224ea6e29048388a9df"
+  },
+  "runtime": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/arena_runtime_preparation_v1/runtime_identity.json",
+    "sha256": "29aaa72f60c0eeba55923ce51ed18be0440f5a72ce8078ffbd0396995c3ccbf9"
+  },
+  "book": {
+    "path": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+    "sha256": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c"
+  },
+  "live_config": {
+    "path": "/tmp/deepfin-ordered-arena-runtime/configs/pbt2_small.yaml",
+    "sha256": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624"
+  },
+  "preregistration": {
+    "path": "/tmp/deepfin-b100-training-tools/docs/experiments/2026-09-08-bt4-pure-policy-endpoint.md",
+    "sha256": "6fb262dbfe27380bdce11bd2099305ccf6137beecd6824881857cc5d8c24f96c"
+  },
+  "launcher_sha256": "cbf1c26c6a9c74d3d0037f262f28be9c9fd60b2b4f87ba47e681315f1d1185fd",
+  "reader_sha256": "7f24a5dcb6a99fa11ed1003596c2df09697611ac0eacdeac84515aa889d7faec",
+  "supervisor_sha256": "41d736832d026f32ec90b36cd75d541c7004540df37d686bd78bae268c36c329",
+  "preparation": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/qualified_preparation.json",
+    "sha256": "PENDING_ACTUAL_CPU_PREPARATION_SHA256"
+  }
+}

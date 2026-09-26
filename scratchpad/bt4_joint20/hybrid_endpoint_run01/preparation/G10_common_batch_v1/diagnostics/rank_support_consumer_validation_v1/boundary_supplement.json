@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "status": "BOUNDARY_TIGHTENED_FOCUSED_PASS",
+  "created_utc": "2026-09-08T01:22:28.706410+00:00",
+  "supersedes_owned_hashes_in": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/receipt.json",
+    "bytes": 4140,
+    "sha256": "76d0ad9bda06cddd5114c56f2c089788f0c8efdb1f04a7838da516834271263c"
+  },
+  "final_owned_files": [
+    {
+      "path": "/tmp/deepfin-phase0-support/scripts/sf_d9_rank_sidecar.py",
+      "bytes": 37441,
+      "sha256": "1c8c6c1c93f9ec8786f7ac14c9be19ec86d3a8b6092c19c80d935a22148961c6"
+    },
+    {
+      "path": "/tmp/deepfin-phase0-support/tests/test_sf_d9_rank_support_exclusions.py",
+      "bytes": 7228,
+      "sha256": "5aba5ca535452c4835bc3603b48e83899f86f35b9819de3a35a545f57ae3fe45"
+    }
+  ],
+  "boundary": "Require full-width phase0 index0/all/searchmovesNone, width_realized and width_streamed equal board legal count, and exactly W finite well-formed rank slots. Only replacement-slot missing/duplicate support remains excludable; truncated/appended blocks or mismatched protocol remain fatal.",
+  "validation": {
+    "new_final_focused_cases": 15,
+    "log": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-boundary-tests.log",
+      "bytes": 187,
+      "sha256": "0ec04e88e381cd9728c69d6013d9e727036464927fdd01ee9103518b66674b4d"
+    },
+    "ruff": "PASS",
+    "git_diff_check": "PASS",
+    "historical13": "Previously passed; historical no-exclusion path untouched by this boundary delta.",
+    "combined_static_and_independent_review": "Parent-owned pending."
+  }
+}

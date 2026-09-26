@@ -1,0 +1,57 @@
+{
+  "status": "PASS_COMPLETED_STATE_TRANSITION_CORRECTION_ONLY",
+  "original_receipt": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/preparation_receipt.json",
+    "sha256": "1731ff4bbc53b9e39aad19477d73fedd0888e2c417a38dbca3ac580e3c60a819"
+  },
+  "superseded_finalizer_sha256": "712880ba1b79ea76844c9e4bff96e52ca460cd6c3c53ebfe1a42c91b996ea452",
+  "finalizer": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/finalize.py",
+    "sha256": "664d76b4351590b766ab5f5f17cee7eb33079a47628f282752622bfcb8295a8b"
+  },
+  "artifacts": {
+    "README.md": "74accc8e85869e11cd681ab0b833d6f2e58b786e25fccb39891deee7e46613d8",
+    "finalize.before.py.data": "712880ba1b79ea76844c9e4bff96e52ca460cd6c3c53ebfe1a42c91b996ea452",
+    "finalizer_delta.patch": "3ed94f93ad24b0de6b72db13cf1bd4644c86f4833a071b75cf937819a6c06e6e",
+    "test_completed_transition.py": "39d65a057be387b1f32c025cfbb25b372ba0b34e6461a067a4b11590b3f3f90c",
+    "tests.log": "f57e11368217a830c66099d1ca4b6898e15393a532e8494f028b86857c93449e"
+  },
+  "unchanged_original_artifacts": {
+    "training_arena_registration_v1/B100V50.training_manifest.draft.json": "530749c752fb162f3610bf0e0bfe7a0e3fa3bc8c4e16904eaf27f5618b9f5700",
+    "training_arena_registration_v1/B100V50_B100.preparation_manifest.draft.json": "6ffdd18d35f1cc6dbdee8d9d5f97b64bb74234af3500370b238f212cfe5e7eb2",
+    "training_arena_registration_v1/README.md": "096798d8cecd7a21c67e8cdb3d7ffcbb4aafcbfdcbfe2ed2b616477bd9bf54eb",
+    "training_arena_registration_v1/check_preparation.py": "412e4550ec7dbc7e06d6f1c96ceecd71a36e483f359dc9e7cbcd2e3b0145710d",
+    "training_arena_registration_v1/commands.draft.json": "6e7fdbb0a655cd9d8562335082d8433df101a0e021e13624f67ca4c73d77fdaf",
+    "training_arena_registration_v1/draft_binding.json": "aac77c64810a92e823ee49c6bbdc57cf409032a06e3d865e939a4ed593f479fa",
+    "training_arena_registration_v1/metadata_checks.json": "f3a77692c80c8b65df55d6157d64785ca1123ae719b39ea3e1a6ca2c8ad48d34",
+    "training_arena_registration_v1/missing_prerequisite_refusal.log": "b1b676e6e0cfc8bfbfe0e5e21054fba19958ff83962fabe0a8556a7ab717795f",
+    "training_arena_registration_v1/preregistration.md": "2fc1395c2af350abfcd2334315c4ff829c63d6f8a9c79eefac8f75cbe64e5332",
+    "prospective_schedule_v1/operator_command.draft.json": "ec930f2eb5778ecf277a99da531f1613ce45c0f9e85d98f73af75654cd89b61d",
+    "prospective_schedule_v1/plan.draft.json": "0d6e5b2bf4311b072e3078ecf9fce24c83e10d9002665e980301072674c3ee8a",
+    "prospective_schedule_v1/run_once.py": "7f77a9744efcb1beb7e86897ecb6c33e422ac1a8d19321f50765eee9c8bbaeeb"
+  },
+  "tests": {
+    "methods": 2,
+    "distinct_cases": 7,
+    "exit_code": 0,
+    "duration_seconds": 0.843,
+    "command": [
+      "/usr/bin/env",
+      "CUDA_VISIBLE_DEVICES=",
+      "OMP_NUM_THREADS=2",
+      "OPENBLAS_NUM_THREADS=2",
+      "MKL_NUM_THREADS=2",
+      "/usr/bin/nice",
+      "-n",
+      "19",
+      "/usr/bin/taskset",
+      "-c",
+      "2,3",
+      "/tmp/deepfin-b100v50-rewrite-tools/.venv/bin/python",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/completed_transition_fix_v1/test_completed_transition.py"
+    ],
+    "actual_runtime_metadata_pins": true,
+    "synthetic_json_only": true
+  },
+  "limits": "No checkpoint contents, book, corpus, schedule, training, arena or GPU work; later CPU preparation owns checkpoint content qualification."
+}

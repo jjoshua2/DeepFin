@@ -1,0 +1,312 @@
+{
+  "schema": 1,
+  "scope": "CeresB50 fixed-400 saved-bank result recovery and B100CeresV25 training launch",
+  "references": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_b50_match_readout_recovery_v1/qualified_reader_v1/plan.final.json",
+      "sha256": "1ae325d6280a842d610f4c3a57ab4fad00eb9c609ec1ed5eb9ff94256f7bc4d6"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_b50_match_readout_recovery_v1/qualified_reader_v1/independent_final_review.json",
+      "sha256": "618361f81b4a3f47b599adfd75d64a60bef2c74a076157467d1f992934db6ea7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_b50_match_readout_recovery_v1/qualified_reader_v1/scientific_review.json",
+      "sha256": "de70d53225ef00c25926aa9bf8924d21067d3f8e7929451d24352587ef6c8d60"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_b50_match_readout_recovery_v1/qualified_reader_v1/execution/readout.json",
+      "sha256": "2f2aec1c4f5a11e485e2dc39067bd65127dd6b0f6ce2e0b65aa0906fc5201f8b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_b50_match_readout_recovery_v1/qualified_reader_v1/execution/terminal.json",
+      "sha256": "05e9d77c149fd482cbce47a0596750a1d3e66418e697c044d1fa309481caee09"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_b50_match_readout_recovery_v1/qualified_reader_v1/execution/resource.log",
+      "sha256": "23fb40364c85936c717d90335b0da687e88d72fef7e720a2948394b1abf81781"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_b50_match_readout_recovery_v1/bank_integrity_review.json",
+      "sha256": "8e5b00348326f502ac4f5321514324334fff131c32206cc419c27d417e57b7d4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/match_handoff_v1/arena_operator/failed.json",
+      "sha256": "094ba0453b32a9dc7002238a9487fbd96cc32664414c96dd0d95d94b97028f41"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/host_operator_v1/started.json",
+      "sha256": "604bddc89f119fc85445e40b998040cacdd8de2e33e75e5adad38b0c7a2d79bb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/host_operator_v1/plan.json",
+      "sha256": "7cf5bdf56ddf7b0e2cd41ae20a61c617cf5915da1637c80ebf1503831b8217c1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/training_manifest.json",
+      "sha256": "8d57bd4b207fc358217ba0e5a68af8ea009f88d4aee86f9f79f4ecf2534a0902"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_b50_match_readout_recovery_v1/value_training_process_launch_snapshot.json",
+      "sha256": "8e2d45cdd33c1b47345f09d28a2b0e267ba4e2628d6e3b6d55881e7717bac555"
+    }
+  ],
+  "readout": {
+    "profile": "explicit_checkpoint_prior_packages",
+    "bank_complete": true,
+    "contract_sha256": "33cf476f840330be42383742caaecc8fbc44fc5e0d626cd0cb7e0670806b08d1",
+    "candidate": {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_ceres_policy_B50T05_epoch_v1/checkpoint.pt",
+      "role": "CeresB50",
+      "sha256": "5d7e1e81931073002e0a792441e787d8c8dd275d06b5b0c33be69104ca483cbc"
+    },
+    "reference": {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+      "role": "B100",
+      "sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62"
+    },
+    "candidate_prior_temperature": 1.0,
+    "reference_prior_temperature": 1.0,
+    "sims": 400,
+    "seed": 20260909,
+    "execution": {
+      "loop": "rolling",
+      "compile": "on",
+      "eval_max_batch": 4096,
+      "max_concurrent_games": 128,
+      "max_seconds": 5340.0
+    },
+    "bank": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/CeresB50_B100_fixed400_run01/arena.games.jsonl",
+      "sha256": "cb502367191d984a7175c0ea28519cd137e61d37b3973e513b3741f467077dd3"
+    },
+    "opening_panel": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/search_calibration_readiness_v1/B100_prior07_v2/opening_panel.json",
+      "sha256": "3c955d68a6c010e373b44418f3bbbf1500cf9192d04ca17ffdd3dcd191d7cbb1"
+    },
+    "process": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/CeresB50_B100_fixed400_run01/process.json",
+      "sha256": "29226d2c5147fed10fc2584191a6ba272fe4fdd5e87eaacd2b5b0aca7da28272"
+    },
+    "pair_scores": [
+      0.5,
+      0.25,
+      0.5,
+      0.75,
+      0.25,
+      0.5,
+      0.75,
+      0.0,
+      1.0,
+      0.25,
+      0.5,
+      0.75,
+      0.5,
+      0.5,
+      0.75,
+      0.25,
+      0.5,
+      0.5,
+      0.75,
+      1.0,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.75,
+      0.25,
+      0.0,
+      0.5,
+      1.0,
+      0.25,
+      0.5,
+      0.5,
+      0.5,
+      0.75,
+      0.0,
+      0.25,
+      0.25,
+      0.5,
+      0.25,
+      0.5,
+      1.0,
+      0.5,
+      0.5,
+      0.5,
+      0.75,
+      0.25,
+      0.5,
+      0.25,
+      1.0,
+      0.5,
+      0.75,
+      0.25,
+      0.0,
+      0.5,
+      0.75,
+      0.5,
+      0.5,
+      1.0,
+      0.5,
+      0.5,
+      1.0,
+      0.25,
+      0.5,
+      0.75,
+      0.5,
+      0.75,
+      0.0,
+      0.75,
+      0.75,
+      0.5,
+      0.75,
+      0.0,
+      0.75,
+      1.0,
+      1.0,
+      0.0,
+      0.0,
+      0.25,
+      1.0,
+      0.5,
+      0.75,
+      0.5,
+      0.25,
+      0.0,
+      0.25,
+      0.5,
+      0.5,
+      1.0,
+      0.5,
+      0.25,
+      0.75,
+      0.25,
+      0.0,
+      0.5,
+      0.5,
+      1.0,
+      0.0,
+      0.5,
+      0.25,
+      1.0,
+      0.5,
+      0.25,
+      0.5,
+      0.0,
+      0.5,
+      0.5,
+      0.25,
+      0.5,
+      0.0,
+      0.0,
+      0.25,
+      0.75,
+      1.0,
+      1.0,
+      0.5,
+      0.75,
+      0.75,
+      0.5,
+      1.0,
+      1.0,
+      0.5,
+      0.5,
+      0.75,
+      0.5,
+      0.5,
+      1.0,
+      0.75
+    ],
+    "result": {
+      "games": 256,
+      "pairs": 128,
+      "score": 0.517578125,
+      "score_se": 0.02574307731598395,
+      "elo": 12.219568270856845,
+      "elo_ci95": [
+        -22.8792015147372,
+        47.57030063749153
+      ],
+      "pentanomial": {
+        "WW": 18,
+        "WD_DW": 23,
+        "DD_WL": 51,
+        "LD_DL": 22,
+        "LL": 14
+      }
+    },
+    "command_observation": "exact_supervised_timeout_preexec_snapshot",
+    "checkpoint_content_verified_now": true,
+    "launch_qualification_verified": false,
+    "limitations": [
+      "Fixed-N nominal paired interval for these packages; not optimal temperature or training-seed uncertainty.",
+      "Pinned process record and command checked; runtime provenance, checkpoint/book bytes and full history consumed at launch require external evidence.",
+      "Legal panel history and endpoint order verified now; recipe labels and training lineage are declarations requiring separate qualification."
+    ]
+  },
+  "original_outer_exit_code": 1,
+  "original_arena_exit_code": 0,
+  "recovery": {
+    "returncode": 0,
+    "started_unix": 1789214395.087189,
+    "ended_unix": 1789214399.962399,
+    "elapsed_seconds": 4.875210285186768,
+    "plan_sha256": "1ae325d6280a842d610f4c3a57ab4fad00eb9c609ec1ed5eb9ff94256f7bc4d6",
+    "runtime_commit": "855104b7f5813f7433245f5887cfb4088ae8709b",
+    "readout_sha256": "2f2aec1c4f5a11e485e2dc39067bd65127dd6b0f6ce2e0b65aa0906fc5201f8b",
+    "original_receipts_unchanged": true
+  },
+  "value_training_launch": {
+    "coordinator_started_unix": 1789213543.092807,
+    "trainer_started_unix": 1789213558.3372931,
+    "coordinator_started_utc": "2026-09-12T11:45:43.092807+00:00",
+    "trainer_started_utc": "2026-09-12T11:45:58.337293+00:00",
+    "manifest_sha256": "8d57bd4b207fc358217ba0e5a68af8ea009f88d4aee86f9f79f4ecf2534a0902",
+    "host_plan_sha256": "7cf5bdf56ddf7b0e2cd41ae20a61c617cf5915da1637c80ebf1503831b8217c1",
+    "completed": false,
+    "observation_scope": "launch-only saved receipt; no training progress or completion polling"
+  },
+  "validation": {
+    "focused_initial_tests": {
+      "session": 86512,
+      "passed": 45,
+      "log": "/tmp/owned-exec-tests.log"
+    },
+    "final_capture_regressions": {
+      "passed": 2,
+      "log": "/tmp/owned-exec-capture-corrected-tests.log",
+      "note": "Completed PASS output retained; session identifier unavailable after context compaction."
+    },
+    "final_scoped_types": {
+      "session": 94942,
+      "exit_code": 0,
+      "errors": 0,
+      "warnings": 0,
+      "log": "/tmp/owned-exec-host-types-corrected.log"
+    },
+    "whole_ruff_vulture": {
+      "session": 83873,
+      "exit_code": 0,
+      "logs": [
+        "/tmp/owned-exec-ruff.log",
+        "/tmp/owned-exec-vulture.log"
+      ]
+    },
+    "final_scoped_ruff_and_diffcheck": true
+  },
+  "final_validation_delta": {
+    "explicit_null_test_session": 49750,
+    "exit_code": 0,
+    "scoped_host_types_session": 81611,
+    "errors": 0,
+    "warnings": 0,
+    "ruff_and_diffcheck": true
+  },
+  "limitations": [
+    "Original process/bank receipts preserved; exact wrapper observation is consistent with pre-exec capture, not retrospectively observed actual exec argv.",
+    "Fixed-N package comparison does not establish gain, equivalence, optimal mixing or training-seed uncertainty.",
+    "Historical valid_control=false disclosures in preceding completion record remain.",
+    "Existing value training runtime unchanged; new capture fix applies only to future adoption."
+  ]
+}

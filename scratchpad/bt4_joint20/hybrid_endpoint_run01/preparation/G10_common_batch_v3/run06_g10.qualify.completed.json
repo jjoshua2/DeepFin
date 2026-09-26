@@ -1,0 +1,30 @@
+{
+  "pid": 283651,
+  "argv": [
+    "/usr/bin/time",
+    "-o",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.qualify.time.json",
+    "-f",
+    "{\"wall_seconds\":%e,\"user_seconds\":%U,\"system_seconds\":%S,\"max_rss_kib\":%M,\"filesystem_inputs\":%I,\"filesystem_outputs\":%O,\"exit_code\":%x}",
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run_common.py",
+    "--qualify",
+    "run06_g10"
+  ],
+  "start_unix": 1788833245.8710322,
+  "end_unix": 1788833307.866143,
+  "exit_code": 0,
+  "resources": {
+    "wall_seconds": 61.15,
+    "user_seconds": 38.49,
+    "system_seconds": 24.98,
+    "max_rss_kib": 915260,
+    "filesystem_inputs": 248,
+    "filesystem_outputs": 40,
+    "exit_code": 0
+  },
+  "observed_owned_descendants": {
+    "283652": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run_common.py --qualify run06_g10 "
+  },
+  "observed_spawn_worker_pids": []
+}

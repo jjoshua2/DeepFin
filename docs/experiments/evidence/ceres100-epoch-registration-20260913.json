@@ -1,0 +1,79 @@
+{
+  "status": "REGISTERED_PROSPECTIVE_PENDING_NOT_TRAINING_LAUNCHED",
+  "references": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/preregistration.md": {
+      "sha256": "e6169825d07af0d622cabccc68535928b9c5ac6645a31634029c1974161a3c8f"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/prospective_schedule_v1/plan.json": {
+      "sha256": "aa1f7fc731f42524896b311525c4ee654ec5cb96e7aa11316387167b230281da"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/independent_draft_review.json": {
+      "sha256": "4240399d89e77b9fa122bf2158e104f5580de0dc93d90568d2b29ab9ced5382a"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/host_operator_v1/run.py": {
+      "sha256": "469c5766bd90db5411da4068d6e12b33d01187ce836f50f34d2d4f957e879615"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/host_operator_v1/plan.draft.json": {
+      "sha256": "b8949fe9d6035dfb39df17027041891497802c488b55e366a632ea0c8816b269"
+    }
+  },
+  "coordinator_head": "543691257fd732217e5daa8a9fcb104345d874e6",
+  "frozen_preregistration": "# Pure Ceres100 policy endpoint: original matched epoch\n\nRegistered before any Ceres100 training or evaluation. Parent selected this substantive policy endpoint independently of the combined35M value result; that bank has not been inspected for a score at registration. No new labels or corpus rewrite.\n\nHypothesis: pure Ceres policy T0.5, retaining original SF values, improves on the existing B100 T0.5 policy endpoint. The deciding comparison is Ceres100 versus the completed seed0 B100 checkpoint b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62. No automatic CeresB50 comparison, fine-tuning or dose grid.\n\nUse the qualified original18,910,484-row/2309-shard Ceres100 corpus (qualification172b060b..., derive6844ed43..., rewriteb640508c...). Only policy_target changes; all16 nonpolicy arrays, including original SF search_wdl values, are retained. Both teacher temperatures0.5, BT4weight0/Ceresweight1. Saved Ceres approximate fixed32 ORT/CUDA profile is unchanged; native-Ceres parity is not claimed.1495 positive legal move entries lost through float16 storage are entries, not affected rows.\n\nTrain a fresh model with frozen wise-cloud trainer/config/sampler and seed0 (both torch initialization and game schedule), batch512, one actual epoch:18,910,484 rows,36,935 updates,97,968 games,420 windows (88 updates each, final63), warmup1000. Existing B100 used16/16 workers; the explicit Ceres100 amendment543691257 uses2/2 as an execution difference. Require actual prospective and completed canonical schedule dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f and actual planned=realized schedule; do not merely assume worker equivalence.\n\nExisting coordinator schema3 fixes training allowance16,200seconds; retain enclosing21,630seconds inclusive,48GiB available memory before startup/32GiB while running,150GiB free disk reserve and owned STOP/cleanup. No CUDA virtual-address cap. This is a maximum, not a2h guarantee: Downside2/2 took7832s, CeresB50 took11055s, while different concurrent load can change cost. No automatic deadline extension or restart.\n\nBefore training, one original prospective verifier invocation is proposed under1800seconds inclusive (1770TERM+30KILL),CPU6,7,hiddenGPU and two numeric threads (original verifier internally usesTorch2/Blosc1). It reads identity/presence columns and metadata, not features/policies/models. No repeat corpus qualification. No small RLIMIT_AS that prevents CPU Torch mapping. Existing STOP,150GiB disk and32MiB sampled output guard retained; parent checks host memory before launch. Parent approved this CPU allocation after reviewing the concrete plan and independent static review 4240399d on September 13, before execution.\n\nAfter genuine completion and CPU package admission, one fixed comparison:400simulations,256swapped pairs/512games,priors1,noTB,maxplies300,rolling128/batch4096. Reuse immutable panel14470ee9bcf5fdfc822bb19988941ecf4bbe2a1ea739d46487d3663b1735340c and seed20260913 explicitly as a DEVELOPMENT bank now also used for the35M value comparison, not fresh confirmation. No prior Ceres outcome was selected on this bank. Arena allowance7200seconds stage/12030seconds enclosing, matching existing512-game host; arena adaptation/final bindings remain a later reviewed task.\n\nDeciding statistic: candidate score and nominal95% interval clustered over the256 swapped opening pairs. Entire interval above0.5 supports this endpoint; entire interval below0.5 favors B100; crossing0.5 is unresolved. No automatic extra games, seed replication, calibration or promotion. The reused bank and shared development seed constrain generalization.\n\nRetain all three historical valid_control=false caveats: no held-out purity receipt, committed rather than fresh live config premises, and intentional game_epoch sampling rather than the historical replacement sampler. No training launch is authorized by a draft manifest alone. Actual prospective PASS and final manifest/host review are still required.\n",
+  "scope": "Parent launched bounded prospective CPU verifier; no progress or report read. Host plan remains a draft with actual report unresolved. No model, corpus or game-bank reads.",
+  "draft_host_plan_snapshot": {
+    "status": "DRAFT_PENDING_ACTUAL_PROSPECTIVE",
+    "manifest": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training_manifest.json",
+      "sha256": null
+    },
+    "operator_sha256": "469c5766bd90db5411da4068d6e12b33d01187ce836f50f34d2d4f957e879615",
+    "commit": "543691257fd732217e5daa8a9fcb104345d874e6",
+    "pins": {
+      "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+      "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+      "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05/ceres_target_mix_summary.json": "b640508c736e60868f332c6461a01972af35e5724e2efcbb242d823701fbc866",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05/derive_targets_summary.json": "6844ed432c09cf03f112cffa3452e3315e5f5de832837de4b8fbe022713de095",
+      "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py": "4e8e27e861021dd4c75a1a21404ff9aed0d55775e0212def585bc21b1d8cde18",
+      "/tmp/deepfin-ceres100-materialization-runtime/chess_anti_engine/encoding/ceres_tpg.py": "ea0bc14c31eedd18abe67b9b90287b2d1b20245ec42aed4faa0d69d21df229b0",
+      "/tmp/deepfin-ceres100-materialization-runtime/chess_anti_engine/encoding/lc0.py": "a20b56a7c0666e134791855c0f124a66504013983f8f97948539a015dac9c3ee",
+      "/tmp/deepfin-ceres100-materialization-runtime/chess_anti_engine/eval/rvg_surgery.py": "7a0e4469ccf7534e34bfd00e06208c7e142fb0c42ef9c4c4ec1116eec641aa20",
+      "/tmp/deepfin-ceres100-materialization-runtime/chess_anti_engine/moves/leela_index.py": "ac8f6f07dc1ce8e382de1d94ce4053f92b9cf3bc0eefe730d7fd0763ca11e1cd",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/adapt_raw_bt4_sidecars.py": "86c7b78eb5a767c97873bc9881874cd6c93d88634ba298f3246b8ec2fa0c649f",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_derived_wdl_sidecar.py": "8ba98f8d49d642ff7defff457e4dc9426f4e096ee7a1747a257abce62f9ccd1e",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_policy_dump.py": "d6b62559952aee3b0baeeadfdb584aeb9a6fd88b0d2285ab162ee39776be2cf8",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_policy_mix.py": "931a7b83a85182d76a8aeff3515b41235df7f975f750bcea5c011b81009a0d47",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_raw_corpus_sidecar.py": "65d476618b2cf752b28547322935cf6d4eef37922337ba360d4546989ea850b9",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_value_rewrite.py": "4da01a1695b1950d8006519c37f8db4c7a31e1021e0f49328692f4b4dc9b7c88",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/ceres_derived_sidecar.py": "2631fb48fef7820084879bf9371b22842a949d252525b2c79d2c51ab65645597",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/ceres_selected_bank.py": "1f1468bf0b29b88edcab8e1b0ea8d6945ced1d59f9e37bfb69f1129e99492aed",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/ceres_target_mix.py": "edbcfaa9a1524e3ce02868ad20c0cbe6c85e71ea25ff03bb228364f232babeb7",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/raw_wdl_adaptation.py": "11b8732b5abbedd5f96aeb5dfabc542519cd76fc7f69c28adb61556e85035cb6",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/sf_d9_rank_sidecar.py": "53c2d1d1638c9e0646e68430c56a413c2b0b78a5ca815996eda770eecd8d3def",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/sf_policy_rewrite.py": "f2926d10ca695d2cbbcd12f03a26cee23529f6e798e9a3585148392858fda176",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/preregistration.md": "e6169825d07af0d622cabccc68535928b9c5ac6645a31634029c1974161a3c8f",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/qualification_v1/dataset_qualification.json": "172b060b560b26b42eff483db85c12489ea689e8c003243191805b33625c5bb8",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df",
+      "/tmp/deepfin-ceres100-memory-workers/scripts/bt4_one_epoch_screen.py": "ba7c0fc37bba16dd40882c8cc090eca14048d092e272dcae16227a926a0fbf33",
+      "/tmp/deepfin-ceres100-memory-workers/scripts/bt4_direct_screen.py": "bef13f1f763f7d38632f333dfa7d8ddbd738fa5c84de2e5ea44bbbad139af789",
+      "/tmp/deepfin-ceres100-memory-workers/scripts/training_host_memory.py": "94e074f17104bc1aa3ca9b6be99f715d9a906ff3e5546892ffe94612fd21dfdc"
+    },
+    "environment": {
+      "PYTHONOPTIMIZE": "0",
+      "OMP_NUM_THREADS": "2",
+      "OPENBLAS_NUM_THREADS": "2",
+      "MKL_NUM_THREADS": "2",
+      "NUMEXPR_NUM_THREADS": "2",
+      "BLOSC_NTHREADS": "2"
+    },
+    "stop_paths": [
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/STOP",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/host_operator_v1/STOP",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/STOP"
+    ],
+    "outer_inclusive_seconds": 21630,
+    "training_seconds": 16200
+  }
+}

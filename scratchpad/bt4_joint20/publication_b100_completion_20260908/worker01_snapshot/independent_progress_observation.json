@@ -1,0 +1,166 @@
+{
+  "observed_unix": 1788870461.719972,
+  "processes": [
+    {
+      "pid": 366681,
+      "ppid": 88,
+      "group": 366681,
+      "state": "S",
+      "user_cpu_seconds": 2.27,
+      "system_cpu_seconds": 0.67,
+      "rss_kib": "21192 kB",
+      "affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31
+      ],
+      "command": "/usr/bin/python3 /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/run_recovery.py --plan /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/plan.json --expected-plan-sha256 8dbfca30771b1937f5385b9a5791e7fc57efd9da784cd7907269c38e88a35b92 --action execute "
+    },
+    {
+      "pid": 366682,
+      "ppid": 366681,
+      "group": 366682,
+      "state": "S",
+      "user_cpu_seconds": 0.0,
+      "system_cpu_seconds": 0.0,
+      "rss_kib": "2048 kB",
+      "affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31
+      ],
+      "command": "/usr/bin/timeout --signal=TERM --kill-after=30s 10441.903408527374s /usr/bin/nice -n 19 /usr/bin/ionice -c 3 /usr/bin/taskset -c 2,3,4,5 /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/run_recovery.py --plan /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/plan.json --expected-plan-sha256 8dbfca30771b1937f5385b9a5791e7fc57efd9da784cd7907269c38e88a35b92 --action worker "
+    },
+    {
+      "pid": 366683,
+      "ppid": 366682,
+      "group": 366682,
+      "state": "S",
+      "user_cpu_seconds": 78.19,
+      "system_cpu_seconds": 41.09,
+      "rss_kib": "339812 kB",
+      "affinity": [
+        2,
+        3
+      ],
+      "command": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/run_recovery.py --plan /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/plan.json --expected-plan-sha256 8dbfca30771b1937f5385b9a5791e7fc57efd9da784cd7907269c38e88a35b92 --action worker "
+    },
+    {
+      "pid": 367609,
+      "ppid": 366683,
+      "group": 366682,
+      "state": "S",
+      "user_cpu_seconds": 0.0,
+      "system_cpu_seconds": 0.0,
+      "rss_kib": "1568 kB",
+      "affinity": [
+        2,
+        3
+      ],
+      "command": "/usr/bin/time -o /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/adapt.time.json -f {\"wall_seconds\":%e,\"user_seconds\":%U,\"system_seconds\":%S,\"max_rss_kib\":%M,\"filesystem_inputs\":%I,\"filesystem_outputs\":%O,\"exit_code\":%x} /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python /tmp/deepfin-g10-worker01-tools/scripts/adapt_raw_bt4_sidecars.py --manifest /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/adapter_manifest.json --expected-manifest-sha256 af7deaae838d84725c17deda60973c4cdbf35f0d2e0332479149f8ebe7784cc0 --out /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/bt4 --max-index-bytes 134217728 "
+    },
+    {
+      "pid": 367610,
+      "ppid": 367609,
+      "group": 366682,
+      "state": "R",
+      "user_cpu_seconds": 1037.78,
+      "system_cpu_seconds": 106.27,
+      "rss_kib": "1088308 kB",
+      "affinity": [
+        2,
+        3
+      ],
+      "command": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python /tmp/deepfin-g10-worker01-tools/scripts/adapt_raw_bt4_sidecars.py --manifest /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/adapter_manifest.json --expected-manifest-sha256 af7deaae838d84725c17deda60973c4cdbf35f0d2e0332479149f8ebe7784cc0 --out /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/bt4 --max-index-bytes 134217728 "
+    },
+    {
+      "pid": 367624,
+      "ppid": 366683,
+      "group": 366682,
+      "state": "S",
+      "user_cpu_seconds": 0.0,
+      "system_cpu_seconds": 0.0,
+      "rss_kib": "1568 kB",
+      "affinity": [
+        2,
+        3
+      ],
+      "command": "/usr/bin/time -o /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/rank.time.json -f {\"wall_seconds\":%e,\"user_seconds\":%U,\"system_seconds\":%S,\"max_rss_kib\":%M,\"filesystem_inputs\":%I,\"filesystem_outputs\":%O,\"exit_code\":%x} /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python /tmp/deepfin-g10-worker01-tools/scripts/sf_d9_rank_sidecar.py --raw /home/josh/projects/chess/data/nnue_bootstrap/run06_g10 --shards /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/derived --out /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/rank --limit 1063526 --top-k 3 --seed 0 --rows-per-shard 8192 --max-provenance-cache-bytes 134217728 --source-shards /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/run06_g10/source_shards.json --expected-rows 1054312 --expected-shards 129 --expected-source-summary-sha256 10850609c4b378ba15d6819ce5e7f03cb3947c26e2c81431cd8b828995d2f9e2 "
+    },
+    {
+      "pid": 367625,
+      "ppid": 367624,
+      "group": 366682,
+      "state": "R",
+      "user_cpu_seconds": 1101.66,
+      "system_cpu_seconds": 37.92,
+      "rss_kib": "338868 kB",
+      "affinity": [
+        2,
+        3
+      ],
+      "command": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python /tmp/deepfin-g10-worker01-tools/scripts/sf_d9_rank_sidecar.py --raw /home/josh/projects/chess/data/nnue_bootstrap/run06_g10 --shards /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/derived --out /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/rank --limit 1063526 --top-k 3 --seed 0 --rows-per-shard 8192 --max-provenance-cache-bytes 134217728 --source-shards /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/run06_g10/source_shards.json --expected-rows 1054312 --expected-shards 129 --expected-source-summary-sha256 10850609c4b378ba15d6819ce5e7f03cb3947c26e2c81431cd8b828995d2f9e2 "
+    }
+  ],
+  "remaining_hard_deadline_seconds": 8926.135425806046,
+  "failed_receipt_present": false,
+  "completed_receipt_present": false
+}

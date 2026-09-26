@@ -1,0 +1,87 @@
+{
+  "status": "PASS_TEMP_FIXTURES_NO_ARCHIVE_LAUNCH",
+  "created_unix": 1788749038.0154066,
+  "checks": [
+    {
+      "case": "actual GNU tar stores and restores both hardlink paths as independent regular files",
+      "result": "PASS",
+      "source_entries": 3,
+      "regular_members": 2,
+      "source_nlink": 3
+    },
+    {
+      "case": "default hardlink tar member remains rejected",
+      "result": "PASS_REJECTED",
+      "error": "archive member name/type mismatch: pool/first"
+    },
+    {
+      "case": "external alias content mutation with mtime restored fails source stability",
+      "result": "PASS_REJECTED",
+      "error": "source changed: /home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/hardlink-copy-fixture-lp23epfu/source/pool/second"
+    },
+    {
+      "case": "external alias mutation also fails archive verification source stat guard",
+      "result": "PASS_REJECTED",
+      "error": "source changed: /home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/hardlink-copy-fixture-lp23epfu/source/pool/second"
+    },
+    {
+      "case": "new external hardlink rejected",
+      "result": "PASS_REJECTED",
+      "error": "source changed: /home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/hardlink-copy-fixture-lp23epfu/source/pool/first"
+    },
+    {
+      "case": "removed external hardlink rejected",
+      "result": "PASS_REJECTED",
+      "error": "source changed: /home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/hardlink-copy-fixture-lp23epfu/source/pool/first"
+    },
+    {
+      "case": "symlink stamp rejected",
+      "result": "PASS_REJECTED",
+      "error": "link/special file refused: /home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/hardlink-copy-fixture-lp23epfu/source/pool/symlink"
+    },
+    {
+      "case": "symlink inventory rejected",
+      "result": "PASS_REJECTED",
+      "error": "link/special file refused: /home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/hardlink-copy-fixture-lp23epfu/source/pool/symlink"
+    },
+    {
+      "case": "fixture sources and external alias retained after every rejection",
+      "result": "PASS"
+    },
+    {
+      "case": "actual plan-only schema/command entrypoint",
+      "result": "PASS",
+      "output": {
+        "mode": "PLAN_ONLY",
+        "plan_sha256": "1b224dfe8497060989e2678ed993dfdd5beb87e33e2daf8f32f0c3132f119794",
+        "pools": [
+          {
+            "name": "recover_ckpt751_20260711",
+            "estimated_tar_bytes": 34359738368
+          },
+          {
+            "name": "scaleup_512x16_window_20260707",
+            "estimated_tar_bytes": 34359738368
+          },
+          {
+            "name": "swap_512x16_20260711",
+            "estimated_tar_bytes": 34359738368
+          }
+        ],
+        "source": "/home/josh/projects/chess/data/salvage",
+        "destination": "/mnt/e/chess_archive_20260906/salvage"
+      }
+    }
+  ],
+  "pins": {
+    "archive_pools.py": "2c25416f40bbcbc61c56e9687947449ca33259f2aef5b3ba13b40f86571a40e0",
+    "plan.json": "1b224dfe8497060989e2678ed993dfdd5beb87e33e2daf8f32f0c3132f119794",
+    "candidate.patch": "9113759e7a259f4b2085b32e2de9e93171f39f16d90c8e47a80abce4d1684b72",
+    "qualify.py": "b8a19677ba603cca8bd6e75cb792986a0def06ec4ee525ae6422a7f85d1f45af"
+  },
+  "limits": [
+    "Only temporary fixture payload read; no real pool scan/hash, external mount or source modification.",
+    "run_pool not executed; inherited resource/mount/process/rsync guards unchanged, not repeated in fixtures.",
+    "Content and ordinary metadata verified; hardlink topology deliberately not preserved; no source-removal qualification."
+  ]
+}

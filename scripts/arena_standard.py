@@ -954,33 +954,17 @@ def summarize_pentanomial(
 # GSPRT, the formulation fishtest uses); what lives HERE is only the wiring —
 # WHERE the boundary is checked, and what is printed and banked when it fires.
 #
-# ⚑ The check granularity differs by loop and is recorded rather than smoothed
-# over, because it is a property of the reading:
-#
-#   rolling      after every reap, i.e. as soon as a pair's SECOND coloring
-#                finishes. Never mid-pair: the loop scores only pairs whose two
-#                colorings are both on file (`complete_pair_scores`), so a
-#                half-played pair contributes nothing to the statistic. Looking
-#                at a half-pair would leak the opening's colour bias straight
-#                into the stopping decision, which is the one thing the paired
-#                design exists to remove.
-#   chunked      between chunks. `play_paired_games_matched_sims` plays a whole
-#                chunk lockstep and can only score it once every game in it is
-#                over, so a mid-chunk stop would have to impute the unfinished
-#                games as draws — fabricating pairs to decide a test with. A
-#                chunk boundary is a set of COMPLETE pairs, so it is a legal
-#                (merely coarser) stopping time: Wald's inequality bounds the
-#                error rates for any stopping rule measurable at the look, and
-#                looking less often only costs power. `--no-rolling --sprt` is
-#                therefore allowed and prints its granularity, not refused.
-#   matched_time after every pair. That loop already appends one score per
-#                completed pair, so pair granularity is its natural unit.
+# All loops submit completed observations with canonical pair IDs. The monitor
+# buffers gaps and checks each declared prefix look in order. A chunk/rolling
+# reap can release several looks; the first crossing owns the scored prefix.
+# Already finished or in-flight suffix games remain separately accounted for.
 SPRT_GRANULARITY_PAIR = "pair"
 SPRT_GRANULARITY_CHUNK = "chunk"
 
 
 def sprt_should_stop(
     sprt: SprtMonitor | None, new_pair_scores: Sequence[float], *, where: str,
+    pair_ids: Sequence[int] | None = None,
 ) -> bool:
     """Fold ``new_pair_scores`` into the running GSPRT; True means stop now.
 
@@ -990,7 +974,7 @@ def sprt_should_stop(
     """
     if sprt is None:
         return False
-    if sprt.update(new_pair_scores) is None:
+    if sprt.update(new_pair_scores, pair_ids=pair_ids) is None:
         return False
     print(
         f"[arena] SPRT boundary CROSSED in the {where} loop after "
@@ -1021,26 +1005,10 @@ def announce_sprt_armed(sprt: SprtMonitor | None, *, where: str) -> None:
     )
 
 
-# The header key the spec is recorded under, inside the game log's
-# NON-fingerprinted `info` block. ⚑ It must stay out of `arena_game_log_settings`:
-# everything there is hashed into the resume fingerprint, and putting the
-# hypothesis in it would (a) refuse the legitimate "resume a crashed fixed-N
-# arena as a sequential test" and (b) make every pre-branch log unresumable,
-# since their fingerprint was computed without the key.
+# Keep the stopping specification beside the game settings so fixed-N headers
+# and fingerprints remain unchanged. Resume validates the specification exactly.
 SPRT_LOG_INFO_KEY = "sprt"
 SPRT_SPEC_FIELDS = ("elo0", "elo1", "alpha", "beta")
-
-
-def describe_recorded_sprt_spec(recorded: Mapping[str, Any] | None) -> str:
-    """The four DECLARED numbers of a spec read back out of a log header.
-
-    Only the four: ``s0``/``s1``/``bound_h0``/``bound_h1`` are banked beside them
-    but are functions of them, and a message that repeats a derived value invites
-    the reader to compare the wrong pair of numbers.
-    """
-    if recorded is None:
-        return "<none: that run was fixed-N>"
-    return ", ".join(f"{k}={recorded.get(k, '<absent>')}" for k in SPRT_SPEC_FIELDS)
 
 
 def _is_the_number(recorded: object, want: float) -> bool:
@@ -1056,47 +1024,22 @@ def _is_the_number(recorded: object, want: float) -> bool:
     return float(recorded) == float(want)
 
 
-def sprt_spec_carryover_warning(
+def require_same_sprt_spec(
     recorded: Mapping[str, Any] | None, current: SprtSpec | None,
-) -> str | None:
-    """Warn when a resume decides a log's pairs against a DIFFERENT hypothesis.
-
-    A warning and never a refusal: the spec does not change how a game is
-    played, so the pairs are one population however they are judged, and
-    carrying them across specs is deliberate — a crashed fixed-N arena resumed
-    as a sequential test is a supported thing to do, and so is tightening a
-    boundary that the first segment did not reach. What it is NOT is free:
-    alpha and beta are defined for ONE preregistered boundary, so a sample
-    collected under one and decided against another realizes neither.
-
-    Returns None when the log records no spec at all. That is the fixed-N ->
-    sequential case, where there is no earlier hypothesis to contradict; warning
-    there would put a line on every legitimate first sequential resume and teach
-    the operator to skip reading it.
-    """
-    if recorded is None:
-        return None
-    if current is not None:
+) -> None:
+    """A resume continues the same stopping rule, never a new interpretation."""
+    if recorded is None and current is None:
+        return
+    if recorded is not None and current is not None:
         want = current.as_record()
-        if all(_is_the_number(recorded.get(k), want[k]) for k in SPRT_SPEC_FIELDS):
-            return None
-    now = (
-        "<none: --sprt not given, this run is fixed-N>" if current is None
-        else describe_recorded_sprt_spec(current.as_record())
-    )
-    return (
-        "[arena] WARNING: this resume is judging the log's pairs against a "
-        "DIFFERENT SPRT hypothesis than the one they were collected under.\n"
-        f"  recorded in the log: {describe_recorded_sprt_spec(recorded)}\n"
-        f"  this invocation:     {now}\n"
-        "  The spec is deliberately OUTSIDE the resume fingerprint (it does not "
-        "change how a game is played, so it cannot mix two populations), which "
-        "is what makes this allowed rather than refused. But alpha and beta are "
-        "the crossing probabilities of ONE preregistered boundary: pairs "
-        "collected under the recorded spec and decided against another realize "
-        "neither run's error rates. The log header keeps the ORIGINAL spec — a "
-        "resume does not rewrite it — so the record of what was preregistered "
-        "survives this."
+        numeric = (*SPRT_SPEC_FIELDS, "first_pairs", "step_pairs")
+        if (recorded.get("sampling") == want["sampling"]
+                and all(_is_the_number(recorded.get(k), want[k]) for k in numeric)):
+            return
+    raise SystemExit(
+        "--resume: SPRT specification or canonical-prefix protocol differs; "
+        "fixed-N/sequential conversion and changed hypotheses/look schedules "
+        "are not resumable. Preserve the original bank and start a new test."
     )
 
 
@@ -1272,8 +1215,7 @@ class ArenaResume:
     # Same contract as compile_tags, for the evaluator hoist.
     hoist_tags: list[str] = field(default_factory=list)
     # The SPRT spec the log's header records, or None when it records none —
-    # a fixed-N run, or any log written before the field existed. NOT part of
-    # the fingerprint, so it never refuses a resume; the caller warns.
+    # a fixed-N run. Kept outside the fingerprint but checked strictly on resume.
     sprt_spec: dict[str, Any] | None = None
 
 
@@ -1297,6 +1239,8 @@ def load_arena_resume(
     """
     log = read_game_log(path)
     recorded_sprt = log.info.get(SPRT_LOG_INFO_KEY)
+    if recorded_sprt is not None and not isinstance(recorded_sprt, dict):
+        raise SystemExit("--resume: malformed SPRT specification in game log")
     diffs = fingerprint_differences(log.settings, settings)
     if diffs:
         raise SystemExit(refuse_settings_mismatch_message(
@@ -1374,6 +1318,7 @@ def verify_game_log_on_disk(
     path: Path, *, settings: dict, openings: list[chess.Board],
     expected_pair_scores: Sequence[float],
     expected_pair_ids: Sequence[int] | None = None,
+    expected_all_pairs: Mapping[int, float] | None = None,
 ) -> tuple[bool, str]:
     """Re-READ the finished log and check it holds what was just scored.
 
@@ -1409,6 +1354,17 @@ def verify_game_log_on_disk(
         )
     on_disk_ids = sorted(reloaded.complete_pair_ids)
     on_disk = sorted(reloaded.pair_scores)
+    if expected_all_pairs is not None:
+        observed = dict(zip(reloaded.complete_pair_ids, reloaded.pair_scores))
+        if observed != dict(expected_all_pairs):
+            return False, "SPRT complete on-disk observations differ from observed pairs"
+        ids = list(expected_pair_ids or ())
+        if ids != list(range(len(expected_pair_scores))) or any(i not in observed for i in ids):
+            return False, "SPRT scoring must use the complete canonical pair prefix"
+        if [observed[i] for i in ids] != list(expected_pair_scores):
+            return False, "SPRT canonical prefix scores differ from disk"
+        return True, ""
+
     expected = sorted(expected_pair_scores)
     ids_agree = (
         expected_pair_ids is None or on_disk_ids == sorted(expected_pair_ids)
@@ -2116,6 +2072,7 @@ def play_paired_games_matched_sims_rolling(
     pair_ids: Sequence[int] | None = None,
     prior_pair_scores: Sequence[float] | None = None,
     sprt: SprtMonitor | None = None,
+    sprt_lookahead_pairs: int | None = None,
     evaluator_candidate: Any = None,
     evaluator_reference: Any = None,
     free_cached_vram: bool = True,
@@ -2140,9 +2097,15 @@ def play_paired_games_matched_sims_rolling(
     a draw would let a truncated run report pairs it never finished.
 
     ``sprt`` (default None = today's fixed-N behaviour) adds a GSPRT boundary
-    check after every reap, on the same COMPLETE-pairs-only set the summary
-    scores. It stops the loop exactly the way ``deadline`` does; what it returns
-    is unchanged.
+    check after every reap, on a canonical prefix of complete pairs. The loop
+    returns all finished pairs for execution accounting; run_arena scores only
+    the monitor's prefix and preserves speculative suffix rows separately.
+
+    ``sprt_lookahead_pairs`` optionally bounds newly admitted pair IDs below
+    the next declared look plus this allowance (and the overall cap). Both
+    colors start together; waiting for an early pair can drain the pool. None
+    preserves the existing refill, including odd-pool behavior. This changes
+    batching/shared RNG consumption, not the statistical look schedule.
 
     ``evaluator_candidate`` / ``evaluator_reference`` are the per-side
     long-lived evaluators (``build_arena_evaluator``). ``None`` on both is
@@ -2169,6 +2132,15 @@ def play_paired_games_matched_sims_rolling(
         raise ValueError(
             f"pair_ids has {len(ids)} entries for {len(openings)} openings"
         )
+    if sprt_lookahead_pairs is not None:
+        if type(sprt_lookahead_pairs) is not int or sprt_lookahead_pairs < 0:
+            raise ValueError("SPRT look-ahead must be a nonnegative integer")
+        if sprt is None or pool_size < 2:
+            raise ValueError("SPRT look-ahead requires a monitor and at least two game slots")
+        completed = set(sprt.complete_pairs)
+        if (ids != sorted(set(ids)) or completed.intersection(ids)
+                or completed.union(ids) != set(range(sprt.pairs_cap))):
+            raise ValueError("SPRT look-ahead requires the complete canonical remaining schedule")
     queue: list[tuple[int, chess.Board, bool]] = []
     for k, opening in enumerate(openings):
         queue.append((2 * k, opening, True))
@@ -2187,6 +2159,16 @@ def play_paired_games_matched_sims_rolling(
 
     def _refill() -> None:
         while len(boards) < pool_size and queue:
+            if sprt_lookahead_pairs is not None:
+                assert sprt is not None
+                horizon = min(sprt.pairs_cap, sprt.next_look_pairs + sprt_lookahead_pairs)
+                next_gid = queue[-1][0]
+                if sprt.crossed() or ids[next_gid // 2] >= horizon:
+                    break
+                # Start both colors together. An odd pool may leave one slot
+                # unused; never admit a new pair on just one available slot.
+                if next_gid % 2 == 0 and pool_size - len(boards) < 2:
+                    break
             gid, opening, aw = queue.pop()
             boards.append(opening.copy())
             gids.append(gid)
@@ -2269,22 +2251,16 @@ def play_paired_games_matched_sims_rolling(
                 kt.append(gt0[j])
         boards[:], gids[:], awhite[:], gplies[:] = kb, kg, ka, kp
         gfens[:], goffs[:], gt0[:] = kf, ko, kt
-        # The SPRT look sits HERE — after the reap, so the pairs this ply
-        # completed are in the sample, and BEFORE the deadline check, so a run
-        # that crosses on its last affordable ply reports the VERDICT rather
-        # than an INCONCLUSIVE-at-the-clock. The set it sees is
-        # `complete_pair_scores`, i.e. pairs with both colorings on file, which
-        # is what makes this a pair-granularity look and not a mid-pair one.
-        #
-        # ⚑ `sprt is not None` is checked HERE and not only inside
-        # `sprt_should_stop`: Python evaluates arguments eagerly, so the bare
-        # call rescans all `n_games` scores every ply of every FIXED-N run —
-        # the default path, which must pay nothing for a feature it did not
-        # ask for. The helper keeps its own None guard for its other callers.
-        if sprt is not None and sprt_should_stop(
-            sprt, complete_pair_scores(game_scores), where="rolling",
-        ):
-            break
+        # Submit full pair IDs after reap. The monitor buffers faster suffix
+        # completions until all earlier pairs are complete; no missing-pair
+        # imputation or completion-order selection enters the LLR.
+        if sprt is not None:
+            complete_ids = [ids[k] for k in range(len(ids))
+                            if game_scores[2*k] is not None and game_scores[2*k+1] is not None]
+            if sprt_should_stop(
+                sprt, complete_pair_scores(game_scores), pair_ids=complete_ids, where="rolling",
+            ):
+                break
         # Deadline check goes AFTER the reap, not before it. Checking first
         # discarded every game that had finished on the ply we just played —
         # up to pool_size of them, and measurably: the 2026-07-31 proof run
@@ -2308,6 +2284,8 @@ def play_paired_games_matched_sims_rolling(
             _free_cached_vram(device)
             drain_freed = True
         if not boards:
+            if queue and sprt_lookahead_pairs is not None:
+                raise RuntimeError("SPRT admission stalled before the next canonical look")
             break
         if done - last_report >= report_every:
             print(
@@ -2354,6 +2332,9 @@ def play_paired_games_matched_sims_rolling(
 
     if free_cached_vram:
         _free_cached_vram(device)
+    if sprt is not None:
+        sprt.inflight_games = sorted((ids[gid // 2], gid % 2) for gid in gids)
+        sprt.not_started_games = len(queue)
     return complete_pair_scores(game_scores)
 
 
@@ -2461,7 +2442,7 @@ def play_paired_games_matched_time(
                 f"running_score={sum(pair_scores) / (2 * len(pair_scores)):.3f}",
                 flush=True,
             )
-            if sprt_should_stop(sprt, pair_scores, where="matched_time"):
+            if sprt_should_stop(sprt, pair_scores, pair_ids=ids[:len(pair_scores)], where="matched_time"):
                 break
     finally:
         for eng in (eng_a, eng_b):
@@ -2764,6 +2745,7 @@ def run_arena(
     game_log_path: Path | None = None,
     eval_max_batch: int = DEFAULT_EVAL_MAX_BATCH,
     sprt: SprtSpec | None = None,
+    sprt_lookahead_pairs: int | None = None,
 ) -> dict:
     """Run one standardized arena and return (and optionally log) the record.
 
@@ -2780,6 +2762,11 @@ def run_arena(
     size, and the deliverable is the H1/H0/INCONCLUSIVE verdict. None leaves
     every byte of the fixed-N path, and of its JSONL record, unchanged.
     """
+    if sprt_lookahead_pairs is not None:
+        if type(sprt_lookahead_pairs) is not int or sprt_lookahead_pairs < 0:
+            raise SystemExit("--sprt-lookahead-pairs must be a nonnegative integer")
+        if sprt is None or mode != "matched_sims" or not rolling or max_concurrent_games < 2:
+            raise SystemExit("--sprt-lookahead-pairs requires rolling matched_sims SPRT and >= 2 game slots")
     if games < 2 or games % 2 != 0:
         raise SystemExit("--games must be even and >= 2 (paired openings)")
     if eval_max_batch < 0:
@@ -2910,6 +2897,10 @@ def run_arena(
         syzygy_path=syzygy_path,
         tb_max_pieces=tb_max_pieces,
     )
+    if sprt_lookahead_pairs is not None:
+        # Enabled admission changes batching/RNG consumption. Bind it on resume;
+        # omission preserves historical settings fingerprints byte for byte.
+        log_settings["sprt_lookahead_pairs"] = sprt_lookahead_pairs
     fingerprint = settings_fingerprint(log_settings)
     log_path = (
         Path(game_log_path) if game_log_path is not None
@@ -2954,6 +2945,8 @@ def run_arena(
             f"--games-out at its log.",
             flush=True,
         )
+    if sprt is not None and sprt.first_pairs > len(openings):
+        raise SystemExit("SPRT first_pairs exceeds the opening-pair cap")
     done_pair_ids = set(resumed.complete_pair_ids) if resumed is not None else set()
     orphan_pair_ids = set(resumed.orphan_pair_ids) if resumed is not None else set()
     loaded_pair_scores = list(resumed.pair_scores) if resumed is not None else []
@@ -3034,12 +3027,9 @@ def run_arena(
             file=sys.stderr, flush=True,
         )
     if resumed is not None:
-        # Same shape as the two warnings above: the hypothesis is outside the
-        # fingerprint on purpose, so the mix it permits is surfaced rather than
-        # refused. Silence here means the log recorded no spec at all.
-        spec_warning = sprt_spec_carryover_warning(resumed.sprt_spec, sprt)
-        if spec_warning is not None:
-            print(spec_warning, file=sys.stderr, flush=True)
+        # Check before writers/checkpoint loads; changed stopping rules cannot
+        # acquire a prospective interpretation by resuming an old bank.
+        require_same_sprt_spec(resumed.sprt_spec, sprt)
     if (
         resumed is not None
         and resumed.games_loaded > 0
@@ -3099,8 +3089,8 @@ def run_arena(
         resuming=had_log,
         # Recorded, NOT fingerprinted: a log has to say which hypothesis its
         # games were collected under — a verdict is unreadable a month later
-        # without it — while a resume must never be refused over a spec, which
-        # is what putting it in `log_settings` would do. None on a fixed-N run,
+        # without it. Resume compares this specification separately from game
+        # settings. None on a fixed-N run,
         # and then the header keeps its pre-branch shape exactly.
         info=(
             None if sprt is None
@@ -3220,6 +3210,7 @@ def run_arena(
         sprt_monitor = SprtMonitor(
             sprt,
             prior_pair_scores=loaded_pair_scores,
+            prior_pair_ids=sorted(done_pair_ids),
             pairs_cap=len(openings),
             granularity=(
                 SPRT_GRANULARITY_CHUNK
@@ -3227,6 +3218,7 @@ def run_arena(
                 else SPRT_GRANULARITY_PAIR
             ),
         )
+        sprt_monitor.not_started_games = 2 * len(remaining_ids)
         print(
             f"[arena] SPRT ON — --games {games} is now a HARD CAP "
             f"({len(openings)} pairs), not the sample size. "
@@ -3502,6 +3494,7 @@ def run_arena(
                     pair_ids=remaining_ids,
                     prior_pair_scores=loaded_pair_scores,
                     sprt=sprt_monitor,
+                    sprt_lookahead_pairs=sprt_lookahead_pairs,
                     evaluator_candidate=evaluator_candidate,
                     evaluator_reference=evaluator_reference,
                     free_cached_vram=bool(eval_max_batch),
@@ -3568,7 +3561,8 @@ def run_arena(
                         flush=True,
                     )
                     print_summary(summarize_pentanomial(pentanomial_counts(_so_far)))
-                    if sprt_should_stop(sprt_monitor, pair_scores, where="chunked"):
+                    if sprt_should_stop(sprt_monitor, pair_scores,
+                                        pair_ids=remaining_ids[:len(pair_scores)], where="chunked"):
                         break
         except ActionDecodeError as exc:
             _abort_void(exc, completed_pairs=len(pair_scores))
@@ -3586,11 +3580,13 @@ def run_arena(
     else:
         raise SystemExit(f"unknown mode {mode!r}")
     duration_s = time.time() - t0
-    # Fold the resumed pairs in. Order is irrelevant to the pentanomial (it
-    # bins pair scores), so a resumed run and an uninterrupted one with the
-    # same schedule produce the same counts, the same Elo and the same CI.
+    # Fixed-N folds every completed pair. Sequential scoring uses only the
+    # monitor's canonical prefix, even if more games completed speculatively.
     played_pair_scores = list(pair_scores)
-    pair_scores = loaded_pair_scores + played_pair_scores
+    if sprt_monitor is not None and (mode != "matched_sims" or not rolling):
+        sprt_monitor.not_started_games = 2 * (len(remaining_ids) - len(played_pair_scores))
+    pair_scores = (loaded_pair_scores + played_pair_scores if sprt_monitor is None
+                   else sprt_monitor.pair_scores)
     # What this invocation's compile setting ACTUALLY contributed. Gated on
     # pairs scored, not on pairs scheduled: a --max-seconds deadline that lands
     # before the first pair finishes adds no games, so flagging a mix there
@@ -3604,6 +3600,8 @@ def run_arena(
         sorted(done_pair_ids | set(remaining_ids))
         if len(played_pair_scores) == len(remaining_ids) else None
     )
+    if sprt_monitor is not None:
+        expected_pair_ids = list(range(sprt_monitor.pairs))
     # Did what we PERSISTED match what we SCORED? Answered off the DISK, after
     # the writer is closed: a game log that disagrees with the summary is not a
     # cosmetic bug — every future resume is built on it, and it would look
@@ -3613,6 +3611,7 @@ def run_arena(
         log_path, settings=log_settings, openings=openings,
         expected_pair_scores=pair_scores,
         expected_pair_ids=expected_pair_ids,
+        expected_all_pairs=None if sprt_monitor is None else sprt_monitor.complete_pairs,
     )
     if not game_log_agrees:
         print(
@@ -3728,6 +3727,8 @@ def run_arena(
         arena_pool=int(pool_size),
         sprt=sprt_record,
     )
+    if sprt_lookahead_pairs is not None:
+        record["sprt_lookahead_pairs"] = sprt_lookahead_pairs
     if out_path is not None:
         if resumed is not None and not played_pair_scores:
             # A no-op resume recomputes and prints the same summary the
@@ -4090,7 +4091,11 @@ def main() -> None:
     # the flag on, so sharing it would produce a --sprt that parses, prints and
     # then decides nothing. A knob offered on a path that ignores it is this
     # repo's signature defect; the fix is to not offer it there.
-    p.add_argument("--sprt", default=None, metavar="elo0=E,elo1=E,alpha=A,beta=B",
+    p.add_argument("--sprt-lookahead-pairs", type=int, default=None, metavar="N",
+                   help="rolling SPRT only: admit paired openings through the next "
+                        "declared look plus N pairs (e.g. 64), bounded by --games. "
+                        "Default disabled; may reduce occupancy and changes RNG consumption.")
+    p.add_argument("--sprt", default=None, metavar="elo0=E,elo1=E,alpha=A,beta=B[,first_pairs=N,step_pairs=N]",
                    help="OPT-IN sequential test (pentanomial GSPRT, fishtest's "
                         "stop rule). Default OFF, and off changes nothing: no "
                         "stop check runs and the JSONL record is byte-identical "
@@ -4098,11 +4103,11 @@ def main() -> None:
                         "beta are REQUIRED (no defaults — an unstated hypothesis "
                         "is not a hypothesis), e.g. "
                         "--sprt 'elo0=0,elo1=5,alpha=0.05,beta=0.05'. The LLR is "
-                        "recomputed from every COMPLETE pair (resumed ones "
-                        "included) and checked at pair boundaries — rolling and "
-                        "matched_time after each pair, --no-rolling between "
-                        "chunks; never mid-pair, which would leak opening bias "
-                        "into the stop. --games becomes a HARD CAP: reaching it "
+                        "evaluated only on canonical opening-pair prefixes, with "
+                        "optional first_pairs/step_pairs (both default1). Each "
+                        "declared look is checked in order; completed speculative "
+                        "suffix pairs are banked separately. Resume requires the "
+                        "same hypothesis and look schedule. --games is a HARD CAP: reaching it "
                         "without crossing is INCONCLUSIVE and is reported as "
                         "that, never as a fixed-N verdict. ⚑ The VERDICT is the "
                         "deliverable — a sequentially stopped Elo point estimate "
@@ -4257,6 +4262,7 @@ def main() -> None:
         search_candidate=side_candidate,
         search_reference=side_reference,
         sprt=sprt_spec,
+        sprt_lookahead_pairs=args.sprt_lookahead_pairs,
     )
 
 

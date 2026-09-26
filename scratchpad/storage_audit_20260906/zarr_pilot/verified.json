@@ -1,0 +1,11 @@
+{
+  "status": "FULL_CONTENT_VERIFIED_SOURCE_RETAINED",
+  "source": "/home/josh/projects/chess/data/salvage/pre_audit_deploy_20260726",
+  "external_archive": "/mnt/e/chess_archive_20260906/manual_pilot/pre_audit_deploy_20260726.tar",
+  "tar_sha256": "543579926566cc8e67328bfc32c9c7cded4e68abaf6ab9c2a898947b8d79fa96",
+  "tar_bytes": 2782115840,
+  "completed_unix": 1788727663.694705,
+  "membership_review": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/zarr_pilot/membership_review.json",
+  "native_compare": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/zarr_pilot/native_compare.json",
+  "rsync_exit_code": 0
+}

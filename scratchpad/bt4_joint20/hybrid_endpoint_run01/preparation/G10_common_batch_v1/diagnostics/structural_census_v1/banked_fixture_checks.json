@@ -1,0 +1,12 @@
+{
+  "status": "PASS",
+  "script_sha256": "ccfb63a100825ebd6aa01b8ddb36c7860278fec1a9eb7ead4eba662bdb6a00b3",
+  "raw_example_sha256": "11c60f881e883f3a436fdb725843de751518e5db69c23609e19b342ce661fc85",
+  "cases": [
+    "actual 37-rank/24-unique failure",
+    "synthetic structurally valid support control",
+    "missing result separated from structural failure",
+    "illegal extra plus missing legal move"
+  ],
+  "scope": "Only copies of the already banked row; no source or runtime mutations, no corpus eligibility assertion."
+}

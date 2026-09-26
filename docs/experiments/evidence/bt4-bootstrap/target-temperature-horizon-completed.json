@@ -1,0 +1,244 @@
+{
+  "schema": 1,
+  "status": "COMPLETED_INDEPENDENTLY_REVIEWED_DEVELOPMENT_COMPARISON",
+  "preregistration_sha256": "fba67eebab0eaafc1021ca8cc7ad6bdd1f1218ca3e20a40aaac36b6a99e61735",
+  "training": {
+    "B100T1": {
+      "target_temperature": 1.0,
+      "value_supervision": "unchanged SF",
+      "training_seed": 0,
+      "epochs": 2,
+      "distinct_rows": 18910484,
+      "presentations": 37820968,
+      "updates": 73870,
+      "windows": 840,
+      "sampler_seeds": [
+        0,
+        1
+      ],
+      "training_charge_seconds": 25180.21653227,
+      "historical_valid_control": false,
+      "completion_sha256": "1e5a76fac38cb3fee4fb8a7d754fa1c79493337f5c3579ad39261db0fbd9c27f",
+      "checkpoints": {
+        "epoch1": "538f1ae00f05a8193513f33d327a823ff83c5341d3450d280c049477f00d354a",
+        "last": "8cb109c1f7f81ec4b497db3ddc369c95830df764eebbc34e1855b5a6274a689b"
+      },
+      "parent_review_sha256": "7b2b2430cbb2aa43ce47cce3117b9189761bfe2d70d6ad3f01ecfbd9db3ec435"
+    },
+    "B100": {
+      "target_temperature": 0.5,
+      "value_supervision": "unchanged SF",
+      "training_seed": 0,
+      "epochs": 2,
+      "distinct_rows": 18910484,
+      "presentations": 37820968,
+      "updates": 73870,
+      "windows": 840,
+      "sampler_seeds": [
+        0,
+        1
+      ],
+      "training_charge_seconds": 24863.868173849005,
+      "historical_valid_control": false,
+      "completion_sha256": "efc77cecc4e1448ccb0e7c4e49f12924e3f5741640bc7455b588f06e337af360",
+      "checkpoints": {
+        "epoch1": "31be0c2ac291851fb5d3c0475d990d9768cebbf5c268cbe2e94fcee852b433eb",
+        "last": "3dadf175b27bf2fbfa0fd62bfd8f7188423c28624506056ee8e557c3397c01a0"
+      },
+      "parent_review_sha256": "ecb842d402fa82dcb9e31889dcc25b311800dfdc1b0dfb21a20da697124e1bc6"
+    }
+  },
+  "matches": {
+    "epoch1": {
+      "candidate_role": "B100T1.epoch1",
+      "reference_role": "B100.epoch1",
+      "candidate_prior_temperature": 1.0,
+      "reference_prior_temperature": 1.0,
+      "simulations_per_move": 400,
+      "pairs": 128,
+      "games": 256,
+      "result": {
+        "games": 256,
+        "pairs": 128,
+        "score": 0.45703125,
+        "score_se": 0.028293917367997436,
+        "elo": -29.931575403173404,
+        "elo_ci95": [
+          -69.2970998673618,
+          8.678888997276463
+        ],
+        "pentanomial": {
+          "WW": 17,
+          "WD_DW": 18,
+          "DD_WL": 45,
+          "LD_DL": 22,
+          "LL": 26
+        }
+      },
+      "terminations": {
+        "rules": 256
+      },
+      "cost": {
+        "owned_gpu_stage_seconds": 1394.4915517059999,
+        "outer_elapsed_seconds": 1416.642275094986,
+        "lease_wait_seconds": 18.00777937399107,
+        "arena_reported_loop_duration_seconds": 1287.9,
+        "registered_stage_seconds": 5400,
+        "registered_whole_seconds": 10230
+      },
+      "identities": {
+        "candidate_checkpoint_sha256": "538f1ae00f05a8193513f33d327a823ff83c5341d3450d280c049477f00d354a",
+        "reference_checkpoint_sha256": "31be0c2ac291851fb5d3c0475d990d9768cebbf5c268cbe2e94fcee852b433eb",
+        "bank_sha256": "e0415fd55694e874d60a82022a2627d645cce632c86d91dd960c56438283bd48",
+        "contract_sha256": "78950d727a4d03ec0c740b37aabddce30b1cb4a82ad7e61b2f7a2a04e8ac1343",
+        "readout_sha256": "6e5384edc87da729fffc7952ae1dd97c7728da946d9032e43714f6b712ec3063",
+        "independent_review_sha256": "fdf2657f6ba34b93915730fa94cfa62273f77c814d1e919232df3b2bea4cdca6",
+        "parent_review_sha256": "a88fbf65c5033f688d35d323d673a9e8b88451cf6265019e022c3cceccab9347"
+      }
+    },
+    "epoch2": {
+      "candidate_role": "B100T1.last",
+      "reference_role": "B100.last",
+      "candidate_prior_temperature": 1.0,
+      "reference_prior_temperature": 1.0,
+      "simulations_per_move": 400,
+      "pairs": 128,
+      "games": 256,
+      "result": {
+        "games": 256,
+        "pairs": 128,
+        "score": 0.513671875,
+        "score_se": 0.028591197654845794,
+        "elo": 9.502560557608613,
+        "elo_ci95": [
+          -29.51028001652769,
+          48.75747685101815
+        ],
+        "pentanomial": {
+          "WW": 22,
+          "WD_DW": 25,
+          "DD_WL": 38,
+          "LD_DL": 24,
+          "LL": 19
+        }
+      },
+      "terminations": {
+        "rules": 253,
+        "max_plies": 3
+      },
+      "cost": {
+        "owned_gpu_stage_seconds": 1391.5034064049978,
+        "outer_elapsed_seconds": 1471.0321600437164,
+        "lease_wait_seconds": 76.03289109800244,
+        "arena_reported_loop_duration_seconds": 1289.9,
+        "registered_stage_seconds": 5400,
+        "registered_whole_seconds": 10230
+      },
+      "identities": {
+        "candidate_checkpoint_sha256": "8cb109c1f7f81ec4b497db3ddc369c95830df764eebbc34e1855b5a6274a689b",
+        "reference_checkpoint_sha256": "3dadf175b27bf2fbfa0fd62bfd8f7188423c28624506056ee8e557c3397c01a0",
+        "bank_sha256": "fe18ebef32d85e31ceee3c57315912388f424d747d5508c9e2e7976b7f8d4424",
+        "contract_sha256": "af467aa4e061a0a480f9ab021d3abc48d939ebcc3166ca7d97ac1cad385364ba",
+        "readout_sha256": "c5682df0a27d4d50b401678bfaaa5eb22f98157e2518aa92a157b9c85029cd92",
+        "independent_review_sha256": "849cff66330f54aaa2e9918db02597e089d37cc0878e92c1660f61c664a2e10d",
+        "parent_review_sha256": "d18736f632ffe220801baf1aa94ae2c6220f1e5b535327d057dee3bcb52749a8"
+      }
+    },
+    "placement": {
+      "candidate_role": "B100T1.last",
+      "reference_role": "B100.last",
+      "candidate_prior_temperature": 0.5,
+      "reference_prior_temperature": 1.0,
+      "simulations_per_move": 400,
+      "pairs": 128,
+      "games": 256,
+      "result": {
+        "games": 256,
+        "pairs": 128,
+        "score": 0.45703125,
+        "score_se": 0.0251272253331014,
+        "elo": -29.931575403173404,
+        "elo_ci95": [
+          -64.8215010049715,
+          4.364445530814509
+        ],
+        "pentanomial": {
+          "WW": 10,
+          "WD_DW": 25,
+          "DD_WL": 44,
+          "LD_DL": 31,
+          "LL": 18
+        }
+      },
+      "terminations": {
+        "rules": 254,
+        "max_plies": 2
+      },
+      "cost": {
+        "owned_gpu_stage_seconds": 1557.566075010007,
+        "outer_elapsed_seconds": 1770.5168642997742,
+        "lease_wait_seconds": 209.08774343298865,
+        "arena_reported_loop_duration_seconds": 1456.1,
+        "registered_stage_seconds": 5400,
+        "registered_whole_seconds": 10230
+      },
+      "identities": {
+        "candidate_checkpoint_sha256": "8cb109c1f7f81ec4b497db3ddc369c95830df764eebbc34e1855b5a6274a689b",
+        "reference_checkpoint_sha256": "3dadf175b27bf2fbfa0fd62bfd8f7188423c28624506056ee8e557c3397c01a0",
+        "bank_sha256": "63785c683e36d69648f8fe5ee6545ad49ed5c9b0218ae486c84cd2af4602b379",
+        "contract_sha256": "b822861e973d1b21d1bdb2dd814d7f8edd6787ca5a5ff84db59a3118ce205711",
+        "readout_sha256": "478c9692a0047ff5a27a456d6eb22a4a49c1e89b62ce4691836d49ffab8ed2ac",
+        "independent_review_sha256": "debef73de65a3e3a34f5851041bf3163a871127a1dd1a81a406bae506fee5887",
+        "parent_review_sha256": "6948a7c3122fc4d3d488a49c3ce78b8dc2cf44e903019357937e417c094a07bd"
+      }
+    }
+  },
+  "horizon_interaction": {
+    "mean_score_difference": 0.056640625,
+    "percentile_95": [
+      -0.02734375,
+      0.138671875
+    ],
+    "resamples": 10000,
+    "bootstrap_seed": 20260909,
+    "direction": "unresolved",
+    "independent_review_sha256": "66f753b17bbc92fc8e9184210adaccff94a3f4a88ddc8bd46eca82e47b7f9eec",
+    "parent_review_sha256": "b6b7a19554633f3c7d9e5365c411b972ff5db7398a5327a45adee7298a485edb",
+    "readout_sha256": "66cf39b3da6dd9ecf6c52691112e9e3105fb16ff93aa4842066ace53bd1df255"
+  },
+  "seed_repair": {
+    "original_arena_seed": 42,
+    "realized_arena_seed": 20260909,
+    "registered_panel_preserved": true,
+    "before_any_match_results": true,
+    "amendment_sha256": "56a9f5a257f441a955cff7523c0fedc0c9e25bf84d693c10352545a4cc0105f2",
+    "independent_preparation_review_sha256": "5c3ea3b2010874e58a55adc5d94d8cec8f5d9dc6f91a07766e1a1b5c05b3e48a",
+    "cost": {
+      "outer_elapsed_seconds": 120.39549016952515,
+      "owned_cpu_stage_seconds": 115.0943511309888,
+      "gpu_seconds": 0.0,
+      "whole_cpu_budget_seconds": 600,
+      "prior_failed_owned_cpu_stage_seconds": 107.09393244399689,
+      "prior_failed_outer_elapsed_seconds": null
+    }
+  },
+  "identities": {
+    "opening_panel_sha256": "3c955d68a6c010e373b44418f3bbbf1500cf9192d04ca17ffdd3dcd191d7cbb1",
+    "arena_finalized_sha256": "a96e58e518638b83450f1d2de6d7061750bc67a100db958ec1a158f2d5c8c3f8",
+    "completed_readout_sha256": "0cc9fbba982fbc17256d658f49bc42a6a1d0d3c28d27475d62160d8c95e9f542",
+    "cpu_independent_completed_review_sha256": "684cc146d71f1986cc8278d0b0521ab2c6cced2d80b1172541bb268b1aa546ca"
+  },
+  "limitations": [
+    "One training seed and reused development openings; nominal intervals do not include training-seed uncertainty or multiplicity correction.",
+    "Relative horizon contrast does not estimate either arm absolute improvement.",
+    "Placement is a separate matched-simulation package comparison; no equivalence or optimal-temperature conclusion.",
+    "Both training receipts flag missing held-out purity receipt, committed rather than live configuration comparison, and game_epoch sampling incompatible with historical replacement-sampled controls.",
+    "All three arena logs contain Dynamo recompile-limit warnings at shrinking tail batches; fully compiled coverage and eager fraction were not measured.",
+    "Two epochs repeat 18,910,484 distinct rows; this does not establish 100M-distinct-row transfer."
+  ],
+  "bulk_evidence": {
+    "status": "Retained outside Git; no public download URL registered in this compact snapshot.",
+    "retrieval": "Use checkpoint, bank, readout and review SHA-256 identities below with the experiment owner.",
+    "payloads_reverified_for_this_projection": false
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "created_unix": 1788856581.5843139,
+  "status": "REGISTERED_BEFORE_EXECUTION",
+  "command": [
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/usr/bin/taskset",
+    "-c",
+    "6,7",
+    "/usr/bin/time",
+    "-v",
+    "-o",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/prospective_schedule_v1/resources.txt",
+    "/usr/bin/timeout",
+    "--signal=TERM",
+    "--kill-after=30s",
+    "1770s",
+    "/usr/bin/python3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py",
+    "--run",
+    "C=/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1",
+    "--corpus",
+    "B100=/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05",
+    "--output",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/prospective_schedule_v1/B100.prospective_schedule.json"
+  ],
+  "environment": {
+    "CUDA_VISIBLE_DEVICES": "",
+    "OMP_NUM_THREADS": "2",
+    "OPENBLAS_NUM_THREADS": "2",
+    "MKL_NUM_THREADS": "2",
+    "NUMEXPR_NUM_THREADS": "2",
+    "BLOSC_NTHREADS": "2",
+    "PYTHONPATH": "/home/josh/projects/chess/.dev/worktree/wise-cloud",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "cwd": "/home/josh/projects/chess/.dev/worktree/wise-cloud",
+  "verifier": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py",
+  "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/prospective_schedule_v1/B100.prospective_schedule.json",
+  "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05",
+  "c_summary": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json",
+  "canonical": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+  "input_pins": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/qualification_preparation_v1/B100.dataset_qualification.json": "d1872b2e902a439477c4c4fe4486efcdab1e252837b5f3afd8a95c5506d9cdf4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/qualification_preparation_v1/B100.publication_metadata.jsonl": "9296c205e6ec4d34c3c58e197d884fcbfd50853a0dc58a144a96eea879e9fb63",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py": "4e8e27e861021dd4c75a1a21404ff9aed0d55775e0212def585bc21b1d8cde18",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/derive_targets_summary.json": "47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/bt4_policy_mix_summary.json": "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38"
+  },
+  "hard_seconds": 1800,
+  "kill_grace_seconds": 30,
+  "resources_before": {
+    "MemAvailable_bytes": 55190147072,
+    "disk_free_bytes": 441346998272,
+    "loadavg": [
+      20.828125,
+      21.97705078125,
+      21.64794921875
+    ],
+    "host_cpus": 32
+  },
+  "limits": [
+    "Reads game_id/has_game_id metadata and shapes only; no feature/policy replay",
+    "Frozen verifier explicitly sets Torch2 and Blosc1 to avoid oversubscription with its2 workers",
+    "No changes to existing B100 qualification or metadata manifests; no training or GPU",
+    "Actual prospective result is not realized training evidence"
+  ]
+}

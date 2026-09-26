@@ -1,0 +1,1242 @@
+{
+  "status": "PASS_SAVED_INPUT_AND_CPU_OUTPUT_JOIN_NO_INFERENCE",
+  "created_unix": 1788905674.7724411,
+  "rows": 128,
+  "cpu_reference": {
+    "ort": "1.29.0",
+    "batch": 4,
+    "optimization": "extended",
+    "policy_output": "policy",
+    "value_output": "value",
+    "value_kind": "raw float16 logits WDL current side to move, T1 interpretation"
+  },
+  "consumed": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/complete.json",
+      "sha256": "00a80db8f295dc8e7652deb5c571fb7128ac0abe2a49786f04a6b86f1a492396",
+      "bytes": 9929,
+      "stat": [
+        2096,
+        71464987,
+        9929,
+        1788881430487833296,
+        1788881430487833296
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/complete.json",
+      "sha256": "eb2a4ed18b936832516f48aa82204dee01bb414d2d4b9e82b2a45f2575a538a3",
+      "bytes": 19089,
+      "stat": [
+        2096,
+        71465464,
+        19089,
+        1788888787629776087,
+        1788888787629776087
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/identities.json",
+      "sha256": "5003ca006b8fae9b40e0567206552cb8ad2cd855f2a27683b19d31fc87defffa",
+      "bytes": 98744,
+      "stat": [
+        2096,
+        71465325,
+        98744,
+        1788888602233918558,
+        1788888602233918558
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/source_inputs.npz",
+      "sha256": "57abe2fb02a5b8530c08d89dc72b70b93437238cfedf565646fd033920ad629f",
+      "bytes": 154226,
+      "stat": [
+        2096,
+        71465324,
+        154226,
+        1788888602229918560,
+        1788888602229918560
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_000.json",
+      "sha256": "71133ab19aa7cd2c0bb203639ec3a347b8c25372aa3fb19d72ea2b5a0ce73def",
+      "bytes": 42465,
+      "stat": [
+        2096,
+        71464922,
+        42465,
+        1788881283214385414,
+        1788881283214385414
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_000.npz",
+      "sha256": "56f6ac6ab7c42576e066bd87162fe6f731d4beadbb2d1cfd710193859bcf9d2d",
+      "bytes": 14846,
+      "stat": [
+        2096,
+        71464921,
+        14846,
+        1788881283210770424,
+        1788881283210770424
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.000.npz",
+      "sha256": "c02f825d4dc5b45e9f6e6159c073e3914615f9fd4552d450f25af5ce32d52eb1",
+      "bytes": 443,
+      "stat": [
+        2096,
+        71465392,
+        443,
+        1788888637682426270,
+        1788888637682426270
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_001.json",
+      "sha256": "0c7733a590c254028f132801d02429a31a1c38d987f4d273ba8e8405be47cdf6",
+      "bytes": 42570,
+      "stat": [
+        2096,
+        71464924,
+        42570,
+        1788881288552228183,
+        1788881288552228183
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_001.npz",
+      "sha256": "a7fe1c67702559691554ee601bdf17c249fcb842313352200cdf05cebd6c8a10",
+      "bytes": 14838,
+      "stat": [
+        2096,
+        71464923,
+        14838,
+        1788881288543880719,
+        1788881288543880719
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.001.npz",
+      "sha256": "a623f3947ece41c118210b064782883e872591ef99d13dc93c5ccdfcced6177b",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465394,
+        444,
+        1788888642641922122,
+        1788888642641922122
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_002.json",
+      "sha256": "75703502fe442860063566c30b8e585d9bcbd58fa2452dfc2926bbc91c50885b",
+      "bytes": 52746,
+      "stat": [
+        2096,
+        71464926,
+        52746,
+        1788881293294912947,
+        1788881293294912947
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_002.npz",
+      "sha256": "eb550e5e9b596728f50cf53e992c6a622dddd80069b03017e1726dcd0726f60a",
+      "bytes": 14793,
+      "stat": [
+        2096,
+        71464903,
+        14793,
+        1788881293287879095,
+        1788881293287879095
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.002.npz",
+      "sha256": "0170829e067478eefdf2d24366efbde2b07c02f6ba88a736802951b4f4d962df",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465396,
+        444,
+        1788888647765258514,
+        1788888647765258514
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_003.json",
+      "sha256": "963aec069c84bfac8e5c9d17188dc233d00373486c9341de0848fb58ddd4059c",
+      "bytes": 43809,
+      "stat": [
+        2096,
+        71464928,
+        43809,
+        1788881297990632102,
+        1788881297990632102
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_003.npz",
+      "sha256": "786d1db43082632a324325a377dda31ef48573c4eda902324c66d7eb85e3b012",
+      "bytes": 14704,
+      "stat": [
+        2096,
+        71464927,
+        14704,
+        1788881297986226138,
+        1788881297986226138
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.003.npz",
+      "sha256": "70c65036be3a8e7547b412ccc90942059b1ea8e57ead9e5ade4cd4fab8907cb0",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465398,
+        444,
+        1788888652518481563,
+        1788888652518481563
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_004.json",
+      "sha256": "8e6ddb97844258809a140bd99be285b0c0952896607cdab77106ab8b2586d8c0",
+      "bytes": 46851,
+      "stat": [
+        2096,
+        71464930,
+        46851,
+        1788881302648774662,
+        1788881302648774662
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_004.npz",
+      "sha256": "f64d6d82ef02796d0e5b5ce3d0c4bf50d2dd44678ab7bb2f00df7a172b107ebf",
+      "bytes": 14632,
+      "stat": [
+        2096,
+        71464929,
+        14632,
+        1788881302645960115,
+        1788881302645960115
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.004.npz",
+      "sha256": "ef02ba542fa2a6a1a8d3a7948bd18b51b389a482495e79147fa7891cc0ef687d",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465400,
+        444,
+        1788888657348627500,
+        1788888657348627500
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_005.json",
+      "sha256": "2d43ab10c9675b5c7b8bf3fefb0c01d7a96a74200f12ab7b5cd393f8148450e6",
+      "bytes": 46941,
+      "stat": [
+        2096,
+        71464932,
+        46941,
+        1788881307239875382,
+        1788881307239875382
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_005.npz",
+      "sha256": "94ca6f61a9c6d6aef46a4247726a9299ad063dfd14bf0a9441bc8a5a882da5f9",
+      "bytes": 14967,
+      "stat": [
+        2096,
+        71464931,
+        14967,
+        1788881307238911175,
+        1788881307238911175
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.005.npz",
+      "sha256": "a693f24c2b3f624dc7b17896b24d40949f7d9e5a82571e251101a99c72224677",
+      "bytes": 443,
+      "stat": [
+        2096,
+        71465407,
+        443,
+        1788888662330691265,
+        1788888662330691265
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_006.json",
+      "sha256": "e8ff34b99a59baf6c574a4e3e18951a682d86851cf089fcd121282cbc8924c62",
+      "bytes": 42908,
+      "stat": [
+        2096,
+        71464934,
+        42908,
+        1788881312093455546,
+        1788881312093455546
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_006.npz",
+      "sha256": "ff6a7516f850c5ef269519801050ec303bd56f66fcb95e2a28e6070459e6fde6",
+      "bytes": 14764,
+      "stat": [
+        2096,
+        71464933,
+        14764,
+        1788881312089383469,
+        1788881312089383469
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.006.npz",
+      "sha256": "8cf61f23cecf205029f723bca35e8877bc137491ab93ffa1bc880cb7414e00b7",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465409,
+        444,
+        1788888667141903816,
+        1788888667141903816
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_007.json",
+      "sha256": "42a74a42cc2002a6fcd9de7f127f9fb81099721c3657026e2e09a741b1869e43",
+      "bytes": 36825,
+      "stat": [
+        2096,
+        71464936,
+        36825,
+        1788881316925306609,
+        1788881316925306609
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_007.npz",
+      "sha256": "48a509dc8fc711c0c62b3c58ae0dc63bef16726ae1c8a3521c3a6c35a59a47e8",
+      "bytes": 14671,
+      "stat": [
+        2096,
+        71464935,
+        14671,
+        1788881316921823428,
+        1788881316921823428
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.007.npz",
+      "sha256": "41f0d929998a1c9e303ebf66cb708fe8f8dcb0358828d7089c6136ebaf079d3c",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465411,
+        444,
+        1788888671843341886,
+        1788888671843341886
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_008.json",
+      "sha256": "7a375b08fa4702713c60573076e4eb3bf020c48c1e430190b01e281d6b4ce81e",
+      "bytes": 34759,
+      "stat": [
+        2096,
+        71464938,
+        34759,
+        1788881321699469481,
+        1788881321699469481
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_008.npz",
+      "sha256": "7d77e93fbfa557abba00d05932cfd9f5a791b6378d52bbc665aa7a1d0cbe0201",
+      "bytes": 14770,
+      "stat": [
+        2096,
+        71464937,
+        14770,
+        1788881321691871871,
+        1788881321691871871
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.008.npz",
+      "sha256": "931453adb708b5f81a271c84bfe3872f1f8fd7f9703b48af5daab2eefcbbd630",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465413,
+        444,
+        1788888676612655869,
+        1788888676612655869
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_009.json",
+      "sha256": "0df700ccb3812f68b8549644e92584db9b34286dfd4e33e548a7728d237b2685",
+      "bytes": 45230,
+      "stat": [
+        2096,
+        71464940,
+        45230,
+        1788881326464107730,
+        1788881326464107730
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_009.npz",
+      "sha256": "0ea53215446353fc80f61a90b5bab575019982ec599b39e669b0eae94b1699ab",
+      "bytes": 14602,
+      "stat": [
+        2096,
+        71464939,
+        14602,
+        1788881326460589014,
+        1788881326460589014
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.009.npz",
+      "sha256": "8f08b5aac2a77a719ed00eff4172ef43df5dc9d4761e91e0a7ef7f4859b01ebf",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465359,
+        444,
+        1788888681477727752,
+        1788888681477727752
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_010.json",
+      "sha256": "21363a1f8b6e7264874f763f8873cd5665f0bd6d3be94cac8d41ed72b4c37755",
+      "bytes": 47961,
+      "stat": [
+        2096,
+        71464942,
+        47961,
+        1788881331204571532,
+        1788881331204571532
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_010.npz",
+      "sha256": "0dd546a7d9be6accd957144ce2a77a95c1c16ac07a9db24937af6982047860dc",
+      "bytes": 14983,
+      "stat": [
+        2096,
+        71464941,
+        14983,
+        1788881331201956063,
+        1788881331201956063
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.010.npz",
+      "sha256": "164bf0023795aa44a7d272fbf69d32d1dee645261b297ff1f339033973745c82",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465417,
+        444,
+        1788888686353418688,
+        1788888686353418688
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_011.json",
+      "sha256": "c7455d693ec282ecee3e14cc562f51095afb103579139048796349a2fd5db0ed",
+      "bytes": 43035,
+      "stat": [
+        2096,
+        71464944,
+        43035,
+        1788881336056064831,
+        1788881336056064831
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_011.npz",
+      "sha256": "29378ce74c423526b5aa306d8588d353049af38d844eb622b44f673ddb575175",
+      "bytes": 14811,
+      "stat": [
+        2096,
+        71464943,
+        14811,
+        1788881336050823494,
+        1788881336050823494
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.011.npz",
+      "sha256": "30becee81bbb7f939ce2e5d0898c88669f1f210136cac84463b49fc7b0697614",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465419,
+        444,
+        1788888691100715828,
+        1788888691100715828
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_012.json",
+      "sha256": "5ebad1aff97ad4b7515fc8a788e70ee5caa1e544b44b3616675f74e9c628c5cd",
+      "bytes": 43488,
+      "stat": [
+        2096,
+        71464946,
+        43488,
+        1788881340721763640,
+        1788881340721763640
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_012.npz",
+      "sha256": "89824315c4fef872fb3e3e248b751fed422236b3ea883765886272730a4d9d13",
+      "bytes": 14919,
+      "stat": [
+        2096,
+        71464945,
+        14919,
+        1788881340717108615,
+        1788881340717108615
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.012.npz",
+      "sha256": "7ed1ef570964d4898eaa9daf125a77ee8d4996186edd215d5ed1075862ef91e1",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465421,
+        444,
+        1788888695868689786,
+        1788888695868689786
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_013.json",
+      "sha256": "8b8d754db606cf512216c97cc068e279603d8c86d0c489d57cae0f0f7403d17b",
+      "bytes": 33757,
+      "stat": [
+        2096,
+        71464948,
+        33757,
+        1788881345499865636,
+        1788881345499865636
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_013.npz",
+      "sha256": "eb81664d1c1d657f1eff80d7c53caa7c217d8f9c147e9a5f9b8fc53cb519ec4e",
+      "bytes": 14888,
+      "stat": [
+        2096,
+        71464947,
+        14888,
+        1788881345497698771,
+        1788881345497698771
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.013.npz",
+      "sha256": "21c778dcb58bf70036ca4b7de1e0639053b4b4813513875a23b829f4c793c2fb",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465423,
+        444,
+        1788888700713895997,
+        1788888700713895997
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_014.json",
+      "sha256": "c6362b9f519268d25eaea5493b816de7986111cf83a910f6448c294f638074bc",
+      "bytes": 33387,
+      "stat": [
+        2096,
+        71464950,
+        33387,
+        1788881350179724702,
+        1788881350179724702
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_014.npz",
+      "sha256": "9293207b56040e57602859e82b2ab94fac8f49bef689325ce1a0aad58ef2a273",
+      "bytes": 14717,
+      "stat": [
+        2096,
+        71464925,
+        14717,
+        1788881350171864405,
+        1788881350171864405
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.014.npz",
+      "sha256": "b71c267820de13b71cbbe287b8e2dd12fb16d701bac4efa174ff4d8abaafb7b7",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465425,
+        444,
+        1788888705685052865,
+        1788888705685052865
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_015.json",
+      "sha256": "a0ce4732bf7c316233f7be9c90025f16027358c1851c5e5ae496f4999dffc44b",
+      "bytes": 38987,
+      "stat": [
+        2096,
+        71464952,
+        38987,
+        1788881354721077221,
+        1788881354721077221
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_015.npz",
+      "sha256": "e559b5f6c9c64b1f0ef263cb6a5ae12f434cdf904f9ad118de62003bba635fd7",
+      "bytes": 14975,
+      "stat": [
+        2096,
+        71464951,
+        14975,
+        1788881354717685780,
+        1788881354717685780
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.015.npz",
+      "sha256": "8ce002cf4f38cad0b5ce29f02738b32e38a0701cb261bea2bee28353dc2f8c35",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465427,
+        444,
+        1788888710885392924,
+        1788888710885392924
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_016.json",
+      "sha256": "637ef66d34e59ea01be8e06e955cecaa8856d00f87145447a793cf00c749b6fa",
+      "bytes": 46172,
+      "stat": [
+        2096,
+        71464954,
+        46172,
+        1788881359513521080,
+        1788881359513521080
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_016.npz",
+      "sha256": "f0f23a1b54b4ee210211aca22e085332d9b25911aafb17acc91fcacf8fa2b07c",
+      "bytes": 14902,
+      "stat": [
+        2096,
+        71464953,
+        14902,
+        1788881359510970031,
+        1788881359510970031
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.016.npz",
+      "sha256": "de551c169667d8952f7e3e15c8b5ec63ac6f690861199803af3a1774ed572796",
+      "bytes": 443,
+      "stat": [
+        2096,
+        71465429,
+        443,
+        1788888715664278458,
+        1788888715664278458
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_017.json",
+      "sha256": "0e08580187bacc811d51c5d749df2cea74989627afb510332e62a40f0c19e74a",
+      "bytes": 39582,
+      "stat": [
+        2096,
+        71464956,
+        39582,
+        1788881364073014019,
+        1788881364073014019
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_017.npz",
+      "sha256": "e6d0e5ef33460983f84f581087e5608dce1c1ece2b3167bc3e015f4d61dbad0b",
+      "bytes": 15012,
+      "stat": [
+        2096,
+        71464955,
+        15012,
+        1788881364065770849,
+        1788881364065770849
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.017.npz",
+      "sha256": "6f577ea3bb7d93cc91000c86c33793fae902cb25a9638e4b93c18ed0a40f6231",
+      "bytes": 443,
+      "stat": [
+        2096,
+        71465431,
+        443,
+        1788888720377717096,
+        1788888720377717096
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_018.json",
+      "sha256": "c7c8828e12ff349de51ae975869d642a88277ef6088021cb8aa8ed331ec68bc7",
+      "bytes": 40080,
+      "stat": [
+        2096,
+        71464958,
+        40080,
+        1788881368825547535,
+        1788881368825547535
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_018.npz",
+      "sha256": "09e95d5d071335afe767189dd0bfa703819f5bbd153e2306c600e38e6b8d07b8",
+      "bytes": 14699,
+      "stat": [
+        2096,
+        71464957,
+        14699,
+        1788881368821141871,
+        1788881368821141871
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.018.npz",
+      "sha256": "323187e91cf9e6df42d36005ef0921915b1843928e2b72addeda1df162ba37a1",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465433,
+        444,
+        1788888725076279400,
+        1788888725076279400
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_019.json",
+      "sha256": "6cb8f0ae886c8b0ba9449e46aec591b0694992e58f9510694e974cf77c9df338",
+      "bytes": 45287,
+      "stat": [
+        2096,
+        71464960,
+        45287,
+        1788881373530622978,
+        1788881373530622978
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_019.npz",
+      "sha256": "a7ca9b76a647cfb6bb9bba2f2e9f734f2a6b01015618c9e595423d79ee36de2b",
+      "bytes": 14868,
+      "stat": [
+        2096,
+        71464959,
+        14868,
+        1788881373523858428,
+        1788881373523858428
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.019.npz",
+      "sha256": "115925e349429be3417e4820ce407110ba05fa945ec634df8a1c974e082ee27d",
+      "bytes": 442,
+      "stat": [
+        2096,
+        71465435,
+        442,
+        1788888729628349180,
+        1788888729628349180
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_020.json",
+      "sha256": "0e6b58ca90cab94627838a6a011e101a3d04a9a3701595ed0f1b10f238d9b259",
+      "bytes": 49990,
+      "stat": [
+        2096,
+        71464962,
+        49990,
+        1788881378223905817,
+        1788881378223905817
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_020.npz",
+      "sha256": "4186c877c0812cff79d5715a503367094c4b8f425d7790cd577b582e412df476",
+      "bytes": 14924,
+      "stat": [
+        2096,
+        71464961,
+        14924,
+        1788881378215857230,
+        1788881378215857230
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.020.npz",
+      "sha256": "c7fbcae3623e2aa76703b4080e1676a9d062abab0d2cc18be84d57b3bbe07584",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465437,
+        444,
+        1788888734338480976,
+        1788888734338480976
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_021.json",
+      "sha256": "269b83911aeecdf446e922abd60cbb8e69595064840ce23fc88c8fe31c9f2a6d",
+      "bytes": 47095,
+      "stat": [
+        2096,
+        71464964,
+        47095,
+        1788881383146745759,
+        1788881383146745759
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_021.npz",
+      "sha256": "27f4c2439ea87e5765a709eac6d3cb2b1708b18c28c6ecb83d141297c97e5032",
+      "bytes": 14838,
+      "stat": [
+        2096,
+        71464963,
+        14838,
+        1788881383139855954,
+        1788881383139855954
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.021.npz",
+      "sha256": "aee276e38e3222645e3009d7e7f6d46e148c7a2677f814270a8f34008921140b",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465415,
+        444,
+        1788888739082115665,
+        1788888739082115665
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_022.json",
+      "sha256": "a19c3fe889a2896d0186c92c4e858062177bca4f12d03c429b1287915d183106",
+      "bytes": 41568,
+      "stat": [
+        2096,
+        71464966,
+        41568,
+        1788881388099729825,
+        1788881388099729825
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_022.npz",
+      "sha256": "24d9c00f5798149574520b551bff8e24c0b2abf1512a7867629107717575c5a2",
+      "bytes": 14957,
+      "stat": [
+        2096,
+        71464965,
+        14957,
+        1788881388091854664,
+        1788881388091854664
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.022.npz",
+      "sha256": "71ccd73266e61cf54da9dd24ba7fbde69dcb44902d5ea95d715734cf58129f68",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465441,
+        444,
+        1788888743788685137,
+        1788888743788685137
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_023.json",
+      "sha256": "21ea9468725d29985ce97f84ee3447b22deaf750000d708dcbfe7dc003bfce0b",
+      "bytes": 40507,
+      "stat": [
+        2096,
+        71464968,
+        40507,
+        1788881392933468672,
+        1788881392933468672
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_023.npz",
+      "sha256": "bc58ec9a97440eacfb635edd2256aa93da007dcfb11d3477e1cd313c97b4b61b",
+      "bytes": 14745,
+      "stat": [
+        2096,
+        71464967,
+        14745,
+        1788881392927853365,
+        1788881392927853365
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.023.npz",
+      "sha256": "5af73dab101157431e11a88a576a77186f5e6c5fbf3093dad13817555a4b2c61",
+      "bytes": 442,
+      "stat": [
+        2096,
+        71465443,
+        442,
+        1788888748404987673,
+        1788888748404987673
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_024.json",
+      "sha256": "0d4aeafed510289b2ecdc891438668c0cccc6d5373fe50ef1d3116d23d18a22b",
+      "bytes": 46324,
+      "stat": [
+        2096,
+        71464970,
+        46324,
+        1788881397680353669,
+        1788881397680353669
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_024.npz",
+      "sha256": "b4c8747dc192d0873199bc8892facf9ec537453065f3e529fbc52a7737225a9b",
+      "bytes": 14922,
+      "stat": [
+        2096,
+        71464969,
+        14922,
+        1788881397676099964,
+        1788881397676099964
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.024.npz",
+      "sha256": "3fdf7e55e5de13d5cdbc48ba6c04c3edbb9129d9a43248b00f40504c5fe977b7",
+      "bytes": 442,
+      "stat": [
+        2096,
+        71465445,
+        442,
+        1788888753209879098,
+        1788888753209879098
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_025.json",
+      "sha256": "9029d76dc32e1cb7b667c4b1bdf6fea6dce4b28b1d15f10dd4bef22c0d9878aa",
+      "bytes": 41392,
+      "stat": [
+        2096,
+        71464972,
+        41392,
+        1788881402180457493,
+        1788881402180457493
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_025.npz",
+      "sha256": "aaaa43e1846191c79490436ec29a09f1c912a2d7d1768203aa36112022f60286",
+      "bytes": 14893,
+      "stat": [
+        2096,
+        71464971,
+        14893,
+        1788881402177484008,
+        1788881402177484008
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.025.npz",
+      "sha256": "f86d00c0be507adfb6f36738c92a96b0c07cba2640dccc4b0997f8846875e567",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465447,
+        444,
+        1788888758230015623,
+        1788888758230015623
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_026.json",
+      "sha256": "dd219e352d0b9878bc0ac51767bc138e8aa72746fd301126f3a9309c7c4b1a1f",
+      "bytes": 47849,
+      "stat": [
+        2096,
+        71464974,
+        47849,
+        1788881406890026809,
+        1788881406890026809
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_026.npz",
+      "sha256": "96249fefaa0300ae31367e27ba7635d9859ef3271565c29fe71002466810696d",
+      "bytes": 14936,
+      "stat": [
+        2096,
+        71464973,
+        14936,
+        1788881406885043890,
+        1788881406885043890
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.026.npz",
+      "sha256": "d86cefc21f75c896c9277e727ce21ba9d406bb448b107f7252157e63efdcafee",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465451,
+        444,
+        1788888763077006297,
+        1788888763077006297
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_027.json",
+      "sha256": "8b75aa55b14f53d256c2b47facc2e7a28fc611a453309e08b8af5fbf8f643ee7",
+      "bytes": 42408,
+      "stat": [
+        2096,
+        71464976,
+        42408,
+        1788881411565272315,
+        1788881411565272315
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_027.npz",
+      "sha256": "1fe5a79d65584c7643f6ec1b5eba478c2cf74124a260a3cf254b56778421a494",
+      "bytes": 14760,
+      "stat": [
+        2096,
+        71464949,
+        14760,
+        1788881411562437909,
+        1788881411562437909
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.027.npz",
+      "sha256": "6512da9f0a655654495b38a4636a6d08a25511ac655ac6bf288087fda2368b86",
+      "bytes": 443,
+      "stat": [
+        2096,
+        71465453,
+        443,
+        1788888767926732365,
+        1788888767926732365
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_028.json",
+      "sha256": "5d5a41296a90a2e74ccd9a497ca93cbffb3b63cfb648b75c07d602bf5a1a9626",
+      "bytes": 38331,
+      "stat": [
+        2096,
+        71464978,
+        38331,
+        1788881416463846601,
+        1788881416463846601
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_028.npz",
+      "sha256": "153bb2c2c730b2b1013563b5e14b3197306d46ccb303195cb8d1f6a454bc9be0",
+      "bytes": 14813,
+      "stat": [
+        2096,
+        71464977,
+        14813,
+        1788881416458729511,
+        1788881416458729511
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.028.npz",
+      "sha256": "47ea9dcf318ac1429be6c251ce6767e01f37b4a15ac760cc4cdc27dc261714b7",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465455,
+        444,
+        1788888772826552824,
+        1788888772826552824
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_029.json",
+      "sha256": "5dcfe2bfd473a3b0067a0993fc8a7609174b09178d4ced015256ab22adaf118d",
+      "bytes": 37021,
+      "stat": [
+        2096,
+        71464980,
+        37021,
+        1788881421067845346,
+        1788881421067845346
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_029.npz",
+      "sha256": "1a3746015ce48a31864122f328d1641737f81092d93f2e729bbffc711fc6359a",
+      "bytes": 14898,
+      "stat": [
+        2096,
+        71464979,
+        14898,
+        1788881421066208378,
+        1788881421066208378
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.029.npz",
+      "sha256": "c3fdda3757a9cfca94a8360d6055be4d6a717c92f7fd41d45208ae2f3c1745dc",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465457,
+        444,
+        1788888777500379980,
+        1788888777500379980
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_030.json",
+      "sha256": "f86adb2ae6b42e6aadc7601e77c63112a1e104a5f953fd1d02aef0f78763533e",
+      "bytes": 40794,
+      "stat": [
+        2096,
+        71464982,
+        40794,
+        1788881425657669345,
+        1788881425657669345
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_030.npz",
+      "sha256": "fbc26f01e9e8850d9dfda52a4d5f5341fc5d53c52aa44bd78ae32d07e9966635",
+      "bytes": 14918,
+      "stat": [
+        2096,
+        71464981,
+        14918,
+        1788881425651844115,
+        1788881425651844115
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.030.npz",
+      "sha256": "e8140ce4021596acb80d7d6bacfe346f0b269334523fe514c0de22c33a14dc82",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465459,
+        444,
+        1788888782608963350,
+        1788888782608963350
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_031.json",
+      "sha256": "0c51e10733f7a1f81aeb67be70b2055e1a6bb2e65a30908461d75f0865d809cb",
+      "bytes": 44906,
+      "stat": [
+        2096,
+        71464984,
+        44906,
+        1788881430467823421,
+        1788881430467823421
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/training_sample_v1/run/batch_031.npz",
+      "sha256": "f5d36ae8fa5f209ad2dd0cded85f229fff85cdc6a5a02c7b894f7f62de524e35",
+      "bytes": 14923,
+      "stat": [
+        2096,
+        71464983,
+        14923,
+        1788881430465254062,
+        1788881430465254062
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run/Ceres.031.npz",
+      "sha256": "f648f983244c65adad03b3b6e024444112f18e26b5fbf72b114f21d063807659",
+      "bytes": 444,
+      "stat": [
+        2096,
+        71465461,
+        444,
+        1788888787385868598,
+        1788888787385868598
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/references.npz",
+      "sha256": "c9b726994d74d433558fc98f1decb3673d41dab2a0bc8183b6cdaab99a81713b",
+      "bytes": 460552,
+      "stat": [
+        2096,
+        73617323,
+        460552,
+        1788905674761339246,
+        1788905674761339246
+      ]
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/reference_rows.json",
+      "sha256": "4f09017553806c1868c8566a03ee4e047a4d277f9ecbe64cff51a351954f3cf3",
+      "bytes": 192874,
+      "stat": [
+        2096,
+        73617324,
+        192874,
+        1788905674765339245,
+        1788905674765339245
+      ]
+    }
+  ],
+  "scope": "Only the saved 128 selected rows; no source corpus, history replay or CPU inference."
+}

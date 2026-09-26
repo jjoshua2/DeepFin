@@ -1,0 +1,75 @@
+{
+  "banked_source_sha256": "3c93d2d127bc6d11db9eb31425e0c795c96b417106d737632ef4b689569ae17d",
+  "base_commit": "bb01468b1a0eb0e6a97102e069525911ef04f76a",
+  "candidate": "/tmp/deepfin-bt4-legal-reuse",
+  "limits": {
+    "GPU": "hidden",
+    "affinity": [
+      0
+    ],
+    "hard_seconds": 120,
+    "ionice_class": 3,
+    "nice": 19,
+    "numeric_threads": 2
+  },
+  "measurement": "One invocation each, fixed old then new, no profiling/repetitions. Source-extract actual for-board postprocessing loop from pinned baseline and candidate rawlabeler; fixed shared float32 linspace(-4,3,1858) logits. Include output allocation, mapping, softmax, validation and aggregates. Decode/history reused once outside timed region. No ORT/session/livewrites. Both timed arms execute exact source-extracted helpers/loops under the same frozen wise-cloud Python3.10 runtime. Main candidate is separately tested on its qualified3.13 environment; benchmark does not adopt main MCTS backend.",
+  "pins": {
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/encode.py": "7970a03dc4ace489b4c7ead2fd1cc8b56b4f065fa8ec1893a1e25cd7c7078fc3",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/features.py": "96541e711bed93bd9641b1cfb1ddc799ffad5db17a610f116aa0498189350489",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/lc0.py": "a20b56a7c0666e134791855c0f124a66504013983f8f97948539a015dac9c3ee",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/rep_fix.py": "20e222d9b059c3c055a89e74e10ca5e73e1d6ec901b420c8bc858210a194a097",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/eval/rvg_surgery.py": "7a0e4469ccf7534e34bfd00e06208c7e142fb0c42ef9c4c4ec1116eec641aa20",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/moves/lc0_1858_movestrs.py": "05e21217bb25690fd49e5eb43d39049ecd137a36fd0e1af2170f73ab771e5fc2",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/moves/leela_index.py": "ac8f6f07dc1ce8e382de1d94ce4053f92b9cf3bc0eefe730d7fd0763ca11e1cd",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/bt4_policy_dump.py": "459de69ddb9923d0dac0c420ff355303c2f3687cf313412d8f2c384a28b639f2",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/bt4_policy_mix.py": "ba7221c7b669c7c228f263320bbf4006cb1847e508c6fce5418a13a5928e38a5",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/bt4_raw_corpus_sidecar.py": "eb85a1d0db620f4e78d68685157fff73d3ac98840b92d732338c7ce07c59e632",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/derive_corpus_targets.py": "92ab1e1d9bcdf206c9e1e563a117d9e5161deddaef3506d3c1e8ac4c28ec3e9a",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/gen_sf_rooted_corpus.py": "4bb5e22e81db93c74cfe88d2362136311b001e40e0254f8ff0adc9f3858ea655",
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/analysis.json": "694d58c7012ad0c2fd83eda56fccf67a1b9e9ce4ab85931f8ea127a0b914183a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v3/baseline_dump.py": "459de69ddb9923d0dac0c420ff355303c2f3687cf313412d8f2c384a28b639f2",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v3/baseline_raw.py": "eb85a1d0db620f4e78d68685157fff73d3ac98840b92d732338c7ce07c59e632",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v3/measure_once.py": "d74720f04b4c18b7eeb9c30b404d0971ace2424c87f063259305a0da0e1bfa0c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/completed.json": "cc60884cc3c056b9da69a7c6094bf91840fe96ded18a533b54d842eebab0b3d9",
+    "/tmp/deepfin-bt4-legal-reuse/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c",
+    "/tmp/deepfin-bt4-legal-reuse/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df",
+    "/tmp/deepfin-bt4-legal-reuse/chess_anti_engine/encoding/encode.py": "7970a03dc4ace489b4c7ead2fd1cc8b56b4f065fa8ec1893a1e25cd7c7078fc3",
+    "/tmp/deepfin-bt4-legal-reuse/chess_anti_engine/encoding/features.py": "96541e711bed93bd9641b1cfb1ddc799ffad5db17a610f116aa0498189350489",
+    "/tmp/deepfin-bt4-legal-reuse/chess_anti_engine/encoding/lc0.py": "a20b56a7c0666e134791855c0f124a66504013983f8f97948539a015dac9c3ee",
+    "/tmp/deepfin-bt4-legal-reuse/chess_anti_engine/moves/leela_index.py": "ac8f6f07dc1ce8e382de1d94ce4053f92b9cf3bc0eefe730d7fd0763ca11e1cd",
+    "/tmp/deepfin-bt4-legal-reuse/scripts/bt4_policy_dump.py": "d6b62559952aee3b0baeeadfdb584aeb9a6fd88b0d2285ab162ee39776be2cf8",
+    "/tmp/deepfin-bt4-legal-reuse/scripts/bt4_raw_corpus_sidecar.py": "6a58dab2deddc8cae3d801ec988d25b4e80c16f530fb3fc3df756440f2748c23",
+    "/tmp/deepfin-bt4-legal-reuse/scripts/derive_corpus_targets.py": "c2af7b62644cf5658c1dfc2564b2196c51c8860dd91152f2db05d3d2614311a6",
+    "/tmp/deepfin-bt4-legal-reuse/scripts/gen_sf_rooted_corpus.py": "4bb5e22e81db93c74cfe88d2362136311b001e40e0254f8ff0adc9f3858ea655",
+    "/usr/bin/python3.10": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49"
+  },
+  "precondition": "62 focused tests passed before preparation; whole lint running.",
+  "prior_completed": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/completed.json",
+  "prior_failed_attempt": {
+    "fix": "link existing qualified wise-cloud CPython3.10 encoding extensions after confirming complete encoding tree and setup.py unchanged between021124ee andbb01468; no build or running checkout mutation",
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v1",
+    "reason": "candidate initially linked only CPython3.13 extensions; benchmark runtime is3.10",
+    "stage": "import before any raw row decoding or old/new timed function invocation"
+  },
+  "rows": 1024,
+  "runtime": "/home/josh/projects/chess/.dev/worktree/wise-cloud",
+  "schema": 1,
+  "source": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00000.jsonl.zst",
+  "source_stat": {
+    "st_ctime_ns": 1788379921244293574,
+    "st_dev": 2096,
+    "st_ino": 9783581,
+    "st_mode": 33188,
+    "st_mtime_ns": 1788379921244293574,
+    "st_nlink": 1,
+    "st_size": 21154455
+  },
+  "status": "PREDECLARED_NOT_EXECUTED",
+  "unmeasured_import_preflight": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v2",
+    "reason": "current-main transitive imports require newer MCTS API;3.10 binary unavailable in fresh worktree. No raw rows or timed functions reached. Do not borrow mismatched live MCTS binary or rebuild for a two-function CPU comparison."
+  }
+}

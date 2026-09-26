@@ -1,0 +1,196 @@
+{
+  "C20T05": {
+    "pair_variance": 0.08613702404809619,
+    "fixedN_halfwidth_near_zero_elo": {
+      "128": 35.33054299056775,
+      "192": 28.847267554118606,
+      "250": 25.280478658844224,
+      "500": 17.875997891310547
+    },
+    "retrospective_not_prospective": {
+      "15": {
+        "first_crossing": {
+          "pairs": 320,
+          "verdict": "H1"
+        },
+        "looks": [
+          {
+            "pairs": 128,
+            "llr": -0.04027873157701167,
+            "boundary": null
+          },
+          {
+            "pairs": 192,
+            "llr": 1.1980780804679214,
+            "boundary": null
+          },
+          {
+            "pairs": 256,
+            "llr": 2.2920034492605894,
+            "boundary": null
+          },
+          {
+            "pairs": 320,
+            "llr": 3.4274900722404107,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 384,
+            "llr": 3.468209575763227,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 448,
+            "llr": 4.3627023617660425,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 500,
+            "llr": 6.424330807137623,
+            "boundary": "H1"
+          }
+        ]
+      },
+      "20": {
+        "first_crossing": {
+          "pairs": 320,
+          "verdict": "H1"
+        },
+        "looks": [
+          {
+            "pairs": 128,
+            "llr": -0.24068741731782195,
+            "boundary": null
+          },
+          {
+            "pairs": 192,
+            "llr": 1.3493987341741172,
+            "boundary": null
+          },
+          {
+            "pairs": 256,
+            "llr": 2.756347829001534,
+            "boundary": null
+          },
+          {
+            "pairs": 320,
+            "llr": 4.205079614961944,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 384,
+            "llr": 4.179090812998027,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 448,
+            "llr": 5.30302323227798,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 500,
+            "llr": 8.013684012992073,
+            "boundary": "H1"
+          }
+        ]
+      }
+    }
+  },
+  "G20T05": {
+    "pair_variance": 0.08402705410821644,
+    "fixedN_halfwidth_near_zero_elo": {
+      "128": 34.89514035339134,
+      "192": 28.491762789537148,
+      "250": 24.9689298926653,
+      "500": 17.655699646075124
+    },
+    "retrospective_not_prospective": {
+      "15": {
+        "first_crossing": {
+          "pairs": 128,
+          "verdict": "H1"
+        },
+        "looks": [
+          {
+            "pairs": 128,
+            "llr": 3.1152055217750574,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 192,
+            "llr": 4.384179488307181,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 256,
+            "llr": 6.460720266016649,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 320,
+            "llr": 8.618073527379552,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 384,
+            "llr": 9.884862178569383,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 448,
+            "llr": 11.161246737572869,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 500,
+            "llr": 11.933419278123514,
+            "boundary": "H1"
+          }
+        ]
+      },
+      "20": {
+        "first_crossing": {
+          "pairs": 128,
+          "verdict": "H1"
+        },
+        "looks": [
+          {
+            "pairs": 128,
+            "llr": 4.0522288071878725,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 192,
+            "llr": 5.687168322882553,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 256,
+            "llr": 8.40708870780636,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 320,
+            "llr": 11.22600941555222,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 384,
+            "llr": 12.842924880900771,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 448,
+            "llr": 14.494701955454923,
+            "boundary": "H1"
+          },
+          {
+            "pairs": 500,
+            "llr": 15.46844671792175,
+            "boundary": "H1"
+          }
+        ]
+      }
+    }
+  }
+}

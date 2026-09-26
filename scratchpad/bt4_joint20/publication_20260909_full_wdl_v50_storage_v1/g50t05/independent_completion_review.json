@@ -1,0 +1,74 @@
+{
+  "status": "PASS_COMPLETED_COPY_SOURCE_RETAINED",
+  "reviewed_unix": 1788927303.4294956,
+  "evidence": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/plan.json",
+      "sha256": "d17c36201f3157934f6b2adf9d11b4f5a42df1cb3561db46e2d86addd378592c",
+      "bytes": 11827
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/operator.actual_complete.json",
+      "sha256": "5539b3fa980281427dc1a91c6aa5087063c2962a359925043c1b704c7a30f355",
+      "bytes": 738
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/staging/qtemp_0.0005_hist_20m_bt4_global_G50T05/verified.json",
+      "sha256": "6b8143c442777ad9076723566e2f41456bf8413b527e2be84ed8a48bb8d87463",
+      "bytes": 2599
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/archive_G50T05.py",
+      "sha256": "bd57c14dfb9aeac233d13b794634e30f6fe21b494bfe9f5719bf8f985d50b663",
+      "bytes": 20623
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/run_registered.py",
+      "sha256": "415cbc6ad349da1fa42d8db7a5366e9ca23210fe7e9c0fae20614fff56318d59",
+      "bytes": 2571
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/independent_preparation_review.json",
+      "sha256": "52665784a814b5a0e122a8550ab2cd15a498443e4e5294cf44d60608767d8787",
+      "bytes": 4448
+    }
+  ],
+  "independent_checks": {
+    "outer_exit_code": 0,
+    "outer_wall_seconds": 2944.1122212409973,
+    "within_registered_deadline": true,
+    "verified_members": 713331,
+    "logical_source_bytes": 11936466856,
+    "tar_bytes": 13294694400,
+    "local_external_sha256": "a50bebaac1b58074787ff9d1e9e4ce1db230ef94ca016722bb3a5b4788a9b208",
+    "source_manifest_sha256": "c7221f91e2dc70ff938d39baf0b9ee405fba1c6031ef1c9cea56cbe5d804ec62",
+    "external_current_stat": {
+      "st_dev": 75,
+      "st_ino": 281474978208049,
+      "st_mode": 33279,
+      "st_size": 13294694400,
+      "st_mtime_ns": 1788926806821223800,
+      "st_ctime_ns": 1788926808260192300
+    },
+    "source_root_current_stat_matches_plan": true,
+    "retained_source_summaries": [
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05/bt4_policy_mix_summary.json",
+        "sha256": "e78cc9eaeba0029faf2f036cdb54c35dba02575939c9633915d3606229e1b574",
+        "bytes": 2626
+      },
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05/derive_targets_summary.json",
+        "sha256": "d2e1f2ad328d691bcd38c32342486728eb3e8a0f77e56e52f2eb958494b6edad",
+        "bytes": 165398
+      }
+    ],
+    "temporary_local_tar_absent": true
+  },
+  "findings": [],
+  "limits": [
+    "No source-tree/payload or external archive hash replay; source root/two summary hashes and external stat checked only.",
+    "Unchanged qualified helper streams source inventory/hash and tar member verification, checks source stamps before/after external readback, writes success then removes local temporary tar only. Current metadata-only exact source membership and host-consumer checks remain necessary before separate source reclamation.",
+    "Copy completion is not source reclamation and makes no local source bytes reclaimed claim."
+  ]
+}

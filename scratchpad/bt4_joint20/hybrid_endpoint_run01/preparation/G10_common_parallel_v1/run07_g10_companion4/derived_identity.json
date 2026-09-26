@@ -1,0 +1,478 @@
+{
+  "source_summary_sha256": "f5031a05f019c3caf856af02e86e1467e5caa2d4eed4ac10c51b738df2973aa7",
+  "storage_identity": "4511d3af345889d07a3baa783a6d3e68b32f4896db8788c6b3bda802f523032f",
+  "realized": {
+    "base_tier_moves": 13877693,
+    "deep_tier_moves": 0,
+    "envelope_miss_examples": [],
+    "floor_recovered_from_emitted_policy": {
+      "max": NaN,
+      "mean": NaN,
+      "min": NaN,
+      "n": 0
+    },
+    "floor_recovery_floor_tol": 1e-06,
+    "floor_recovery_min_distinct_values": 3,
+    "floor_recovery_min_rel_gap": 1e-09,
+    "floor_recovery_min_spread_per_tau": 0.0001,
+    "floor_recovery_skipped_few_values": 0,
+    "floor_recovery_skipped_ill_conditioned": 0,
+    "history_root_reason_counts": {
+      "irreversible": 528343
+    },
+    "history_slots_filled_histogram": {
+      "8": 528343
+    },
+    "history_slots_nonzero_max": 8,
+    "history_window_empty_rows": 0,
+    "input_key_verified": 528343,
+    "nodes_floor_hits": 0,
+    "phases_per_row": {
+      "2": 382518,
+      "3": 145837
+    },
+    "policy_min_legal_prob_stored": {
+      "max": 1.0,
+      "mean": 0.02073560917644368,
+      "min": 0.0,
+      "n": 528343
+    },
+    "policy_support_exclusions": [
+      {
+        "duplicate_moves": [
+          "a8a7"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 15760,
+        "input_key": "86a52df9bf1f58e4d713a7a3e4378695",
+        "missing_moves": [
+          "d8b8"
+        ],
+        "ply": 17,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 7314,
+        "source_shard": "w00-00092.jsonl.zst",
+        "stored_input_key": "9de399d0c109eb92861be45d1599368c",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "g2b7"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 16180,
+        "input_key": "2179b00798283393d74ec139d987bd0c",
+        "missing_moves": [
+          "c8b7",
+          "f6f7",
+          "f6h6",
+          "g2e4",
+          "g2f3",
+          "h2g1"
+        ],
+        "ply": 277,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 3095,
+        "source_shard": "w00-00095.jsonl.zst",
+        "stored_input_key": "e531fa4fa3655a9d54a8c7ea273a865f",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "c8b7",
+          "c8c7",
+          "e5e1"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 16180,
+        "input_key": "bdc92b721f8b3dc9e7e4877fb45adeda",
+        "missing_moves": [
+          "e5e3",
+          "e5e7",
+          "g2e4",
+          "g2h1",
+          "h2g1"
+        ],
+        "ply": 281,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 3099,
+        "source_shard": "w00-00095.jsonl.zst",
+        "stored_input_key": "705d0a839121255a194fded165fe9b28",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "b7b6",
+          "b7b8",
+          "g2f3",
+          "h2b8",
+          "h2f4"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 16180,
+        "input_key": "58d20d25871902784a079947882c5aed",
+        "missing_moves": [
+          "b7c7",
+          "e3c3",
+          "e3d3",
+          "e3e1",
+          "e3e2",
+          "e3e5",
+          "e3e6",
+          "e3f3"
+        ],
+        "ply": 285,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 3103,
+        "source_shard": "w00-00095.jsonl.zst",
+        "stored_input_key": "317ca713beb127e660a88d6b7997fd81",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "b7a7",
+          "h2c7"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 16180,
+        "input_key": "66fe8fd179b74aed867a44d2ac86dae5",
+        "missing_moves": [
+          "b7c7",
+          "e3e7",
+          "e3e8",
+          "f3e4",
+          "h2b8"
+        ],
+        "ply": 287,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 3105,
+        "source_shard": "w00-00095.jsonl.zst",
+        "stored_input_key": "2e529f168ba0cd5e7e46288d5797d112",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "b7a8",
+          "b7c8",
+          "e3e6",
+          "e3e8",
+          "f3d1",
+          "f3h1"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 16180,
+        "input_key": "22ce781af9f5aa22c7572c6440ba6d78",
+        "missing_moves": [
+          "b7a7",
+          "c7d6",
+          "c7g3",
+          "c7h2",
+          "e3e2",
+          "e3e7",
+          "f3e2",
+          "f3g4"
+        ],
+        "ply": 289,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 3107,
+        "source_shard": "w00-00095.jsonl.zst",
+        "stored_input_key": "75330a68161e74235f8624c657759a4b",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "b7c7",
+          "b8c7",
+          "b8f4",
+          "f3g2",
+          "f3g4"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 16180,
+        "input_key": "f12e70be5f42a55d3214fd5268bf7e3c",
+        "missing_moves": [
+          "b7a7",
+          "b7a8",
+          "b8e5",
+          "b8h2",
+          "e3e2",
+          "e3e5",
+          "f3e4"
+        ],
+        "ply": 291,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 3109,
+        "source_shard": "w00-00095.jsonl.zst",
+        "stored_input_key": "ab02ce2e5020d1dee8a341f32156216f",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "b8h2"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 16180,
+        "input_key": "e4d87bc66ade143e0380ff509a5c83fd",
+        "missing_moves": [
+          "b7a8",
+          "b7c8",
+          "e3e7",
+          "e3e8",
+          "g4d1",
+          "g4f3"
+        ],
+        "ply": 293,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 3111,
+        "source_shard": "w00-00095.jsonl.zst",
+        "stored_input_key": "e4338e75244f38846375778c8685c6b2",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "e3e5",
+          "e3e6",
+          "e3f3",
+          "f4h6"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 16180,
+        "input_key": "fa529c06250832df0e1615a251fc0840",
+        "missing_moves": [
+          "b7a7",
+          "b7b8",
+          "e3e2",
+          "e3e4",
+          "e3e8",
+          "e3h3"
+        ],
+        "ply": 295,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 3113,
+        "source_shard": "w00-00095.jsonl.zst",
+        "stored_input_key": "f820f2c6852c1b9d0210f633d9158eb7",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "f3f1",
+          "f3f6"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 16180,
+        "input_key": "aa73a898c33b197353fe1898eaeee033",
+        "missing_moves": [
+          "d6a3",
+          "d6h2",
+          "f3f8",
+          "g4h3"
+        ],
+        "ply": 299,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 3117,
+        "source_shard": "w00-00095.jsonl.zst",
+        "stored_input_key": "dc77bce11414f80c989832c082c6da97",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "b4d3",
+          "e3c3",
+          "e3d3"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 17332,
+        "input_key": "584904581983b26001553dc6730a9bc4",
+        "missing_moves": [
+          "c7b6",
+          "e2f1",
+          "e2f2",
+          "e3b3",
+          "e3g3"
+        ],
+        "ply": 200,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 1724,
+        "source_shard": "w00-00102.jsonl.zst",
+        "stored_input_key": "95b01e21bb48df22bfc86661a7cd5ea8",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "c6c3",
+          "c6c4",
+          "c6h6",
+          "e2d2",
+          "e2e6",
+          "e8f7",
+          "g8f6",
+          "h5g6"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 17868,
+        "input_key": "63c4c03d4a384b6784f53ef3a3a3e084",
+        "missing_moves": [
+          "c6b6",
+          "c6c2",
+          "c6c5",
+          "c6e6",
+          "c6f6",
+          "e2a2",
+          "e2b2",
+          "e2e1",
+          "e2e5",
+          "e2e7",
+          "e2f2",
+          "e2g2",
+          "e2h2",
+          "e8d8",
+          "e8f8",
+          "g8h6",
+          "h5f3",
+          "h5f7"
+        ],
+        "ply": 192,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 2355,
+        "source_shard": "w00-00105.jsonl.zst",
+        "stored_input_key": "5905b53fdefc82ba01444567ad5a480a",
+        "worker_id": 0
+      }
+    ],
+    "policy_support_lost_to_float16": 7580636,
+    "policy_support_max": 79,
+    "policy_support_min": 1,
+    "policy_width": 1858,
+    "realized_base_depth_histogram": {
+      "9": 528343
+    },
+    "realized_value_depth_histogram": {
+      "9": 528343
+    },
+    "repetition_planes_nonzero_rows": 7797,
+    "row_schema_counts": {
+      "3": 528343
+    },
+    "rows_dropped_envelope": 0,
+    "rows_dropped_no_result": 2800,
+    "rows_dropped_policy_support": 12,
+    "rows_read": 531155,
+    "rows_written": 528343,
+    "support_checks": 528343,
+    "temp_recovered_from_emitted_policy": {
+      "max": 0.0005007295652713241,
+      "mean": 0.0005000003893066189,
+      "min": 0.00048828125,
+      "n": 471226
+    },
+    "temp_recovery_saturation_q_spread_epsilon": 1e-09,
+    "temp_recovery_skipped_saturated": 62,
+    "value_depth_moved_rows": 528343,
+    "value_scheme_realized": {
+      "blend_weight_w": {
+        "max": NaN,
+        "mean": NaN,
+        "min": NaN,
+        "n": 0
+      },
+      "boundary_suppressed_by_flag": 0,
+      "game_rows_max": 0,
+      "game_rows_min": 0,
+      "games": 0,
+      "games_cut_by_limit": 0,
+      "games_with_dropped_tail": 0,
+      "instability_u": {
+        "max": 2.1474674195051193,
+        "mean": 0.015582151666269181,
+        "min": 0.0,
+        "n": 528343
+      },
+      "l1_delta_vs_search_value": {
+        "max": 0.0,
+        "mean": 0.0,
+        "min": 0.0,
+        "n": 528343
+      },
+      "played_regret": {
+        "max": 2.0,
+        "mean": 0.10255553920988035,
+        "min": 0.0,
+        "n": 528343
+      },
+      "ply_gaps_nonunit": 0,
+      "rows_differing_from_c_full": 0,
+      "rows_differing_from_search_value": 0,
+      "rows_missing_depths": 0,
+      "rows_missing_played_move": 0,
+      "single_row_games": 0,
+      "stop_boundary_ahead": 0,
+      "stop_boundary_self": 0,
+      "stop_terminal": 0,
+      "w_const_differs_from_map": 0
+    },
+    "values_by_phase": {
+      "0": 13877693
+    },
+    "x_planes": 175
+  }
+}

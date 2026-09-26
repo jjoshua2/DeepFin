@@ -1,0 +1,16 @@
+{
+  "pid": 286849,
+  "started_unix": 1788834503.9215548,
+  "argv": [
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/python3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/run_recovery.py",
+    "77c2c3c60ec0f5e482030f417043dc0ba89cc88fa33d12d193959a68a7ed8b2e"
+  ],
+  "launch_sha256": "77c2c3c60ec0f5e482030f417043dc0ba89cc88fa33d12d193959a68a7ed8b2e",
+  "review_sha256": "7deb23df57bf036721a11fa6b54b34e06d37b599d61ca89ce5813c6b6e6c4286",
+  "implementation_pr": "https://github.com/jjoshua2/DeepFin/pull/535",
+  "merge_sha": "bb01468b1a0eb0e6a97102e069525911ef04f76a"
+}

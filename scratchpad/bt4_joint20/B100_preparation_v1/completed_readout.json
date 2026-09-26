@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "status": "COMPLETE_CACHED_DESCRIPTIVE_AUDIT_ONLY",
+  "created_utc": "2026-09-08T03:20:03.963715+00:00",
+  "rows": 4000,
+  "wall_seconds": 8.367557525634766,
+  "resources": {
+    "user_seconds": 7.690574,
+    "system_seconds": 0.709537,
+    "max_child_rss_kib": 567816
+  },
+  "exit_code": 0,
+  "all14_input_runtime_pins_unchanged_after_execution": true,
+  "treatment": {
+    "algorithm": "legal-normalized-global-arithmetic-v1",
+    "alpha": 1.0,
+    "bt4_temperature": 0.5,
+    "near_max_ratio": null,
+    "scope": "global"
+  },
+  "invariants": {
+    "candidate_set_wider_rows": 3914,
+    "changed_unique_max_rows": 3625,
+    "mass_reference": "normalized_total_legal_mass",
+    "near_max_extended": true,
+    "selected_mass_drift_within_bounds": true,
+    "temperature_one_top1_mismatch_rows": 0,
+    "temperature_one_top1_preserved": true,
+    "temperature_prestorage_top1_mismatch_rows": 0,
+    "temperature_rank_preserved_before_storage": true,
+    "top_tie_unique_max_identity": true
+  },
+  "shape": {
+    "candidate_mean_entropy_nats": 0.8554793394712509,
+    "candidate_top1_ge_0_99_fraction": 0.13675,
+    "selected_mass_abs_drift_bounds": {
+      "mean_max": 0.0009765625,
+      "row_max": 0.0009765625
+    },
+    "selected_mass_abs_drift_max": 0.00036263465881347656,
+    "selected_mass_abs_drift_mean": 0.0001115470677614212,
+    "source_mean_entropy_nats": 0.17708954017617723,
+    "source_top1_ge_0_99_fraction": 0.85
+  },
+  "descriptive_comparison": {
+    "reference": "original SF d9 target on the frozen cached audit bank",
+    "expected_regret_delta_cp": -0.3173918580144791,
+    "expected_regret_delta_95ci_cp": [
+      -2.7880897710734076,
+      2.13110613306315
+    ],
+    "top1_regret_delta_cp": -8.0825,
+    "top1_regret_delta_95ci_cp": [
+      -11.297062500000001,
+      -4.92875
+    ],
+    "bootstrap_unit": "position (frozen audit set carries no game id)",
+    "replicates": 10000,
+    "seed": 20260903
+  },
+  "interpretation": "Pure sharpened BT4 cached targets satisfy treatment invariants. Expected deep-SF regret difference is unresolved at this bank precision; top-choice regret is lower. These are descriptive teacher comparisons, not strength, search-scaling or trained-recipe evidence.",
+  "limits": [
+    "FEN-only existing topk256 BT4 cache on4000positions; actual prospective corpus uses raw history-aware sidecars.",
+    "No new teacher inference, GPU work, corpus scan, bulk materialization or training was performed.",
+    "Legacy audit gate.training_permitted/graduate_tie fields mean descriptive tool admission only; no experiment selection or training authorization follows from them.",
+    "Full original source/history/BT4 identity and per-row fidelity checks remain required during any later materialization.",
+    "Status PIDs2/3 are execution sandbox namespace identifiers, not host PIDs; no host-process identity claim.",
+    "One audit invocation, no failure/retry or timing repeats."
+  ],
+  "provenance": {
+    "scratchpad/bt4_joint20/B100_preparation_v1/launch.json": {
+      "sha256": "66fef04553ae637725f2add0a7b73405fb8f24e3eb97da13446269ba69f6b640",
+      "bytes": 4559
+    },
+    "scratchpad/bt4_joint20/B100_preparation_v1/run_audit.py": {
+      "sha256": "0366358f6bfa91dae24eb6a01a79b4fb4276ea427e4f1db80be3090c82f2fe59",
+      "bytes": 4945
+    },
+    "scratchpad/bt4_joint20/B100_preparation_v1/readiness_plan.original.json": {
+      "sha256": "9067e117632af2135e1f937b0e76144f9c7612d51c258a6a8cf691248e998cad",
+      "bytes": 8132
+    },
+    "scratchpad/bt4_joint20/B100_preparation_v1/status.json": {
+      "sha256": "2aa077496616b7c62c7842dfd4219d694655d2052fe5938ea7597846c4827f88",
+      "bytes": 1999
+    },
+    "scratchpad/bt4_joint20/B100_preparation_v1/audit.log": {
+      "sha256": "59f65486ca369ddec6cb51529cb3ee02594ad70376e590f98c7770a149440201",
+      "bytes": 269
+    },
+    "scratchpad/bt4_joint20/B100_preparation_v1/audit_B100T05.json": {
+      "sha256": "4f3f204439b3f6cd900b2754df83c60d5bb3dd18efdce70d5656382757c776fa",
+      "bytes": 3653879
+    }
+  }
+}

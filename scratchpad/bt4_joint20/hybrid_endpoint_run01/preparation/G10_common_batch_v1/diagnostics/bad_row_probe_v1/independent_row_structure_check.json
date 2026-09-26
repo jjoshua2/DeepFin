@@ -1,0 +1,61 @@
+{
+  "raw_copy_sha256": "11c60f881e883f3a436fdb725843de751518e5db69c23609e19b342ce661fc85",
+  "source_ref": {
+    "source": "run06_g10",
+    "shard": "w00-00001.jsonl.zst",
+    "row": 7423,
+    "worker": 0,
+    "game_id": 936,
+    "ply": 214
+  },
+  "history_replays_to_exact_fen": true,
+  "legal_moves": 37,
+  "phase0_blocks": [
+    {
+      "depth": 7,
+      "declared_complete": true,
+      "slots": 37,
+      "unique_moves": 37,
+      "duplicate_moves": {},
+      "missing_legal": [],
+      "illegal_banked": []
+    },
+    {
+      "depth": 8,
+      "declared_complete": true,
+      "slots": 37,
+      "unique_moves": 37,
+      "duplicate_moves": {},
+      "missing_legal": [],
+      "illegal_banked": []
+    },
+    {
+      "depth": 9,
+      "declared_complete": true,
+      "slots": 37,
+      "unique_moves": 24,
+      "duplicate_moves": {
+        "f5h3": 11,
+        "h4h2": 2,
+        "f5g4": 3
+      },
+      "missing_legal": [
+        "f3f4",
+        "f5b1",
+        "f5e4",
+        "f5h7",
+        "g2e3",
+        "g2f4",
+        "h1h2",
+        "h4e1",
+        "h4f2",
+        "h4g3",
+        "h4h3",
+        "h4h5",
+        "h4h7"
+      ],
+      "illegal_banked": []
+    }
+  ],
+  "limitation": "Only existing saved raw row read; no original corpus scan, model, SF rerun or input tensor reconstruction."
+}

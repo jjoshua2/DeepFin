@@ -1,0 +1,12 @@
+{
+  "status": "complete",
+  "start_unix": 1788855228.2632792,
+  "end_unix": 1788857942.544029,
+  "manifest_sha256": "612b22ba93451d309e121c1aae83680728db0308af49ca2d2e0580dd01bd535a",
+  "completed_sources": [
+    "run07_g10_companion4",
+    "run06_g10"
+  ],
+  "peak_sampled_aggregate_output_bytes": 1125140293,
+  "minimum_sampled_free_bytes": 440117489664
+}

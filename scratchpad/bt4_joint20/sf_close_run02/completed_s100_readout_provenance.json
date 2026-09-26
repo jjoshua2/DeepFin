@@ -1,0 +1,24 @@
+{
+  "checked_unix": 1788726303.5289288,
+  "argv": [
+    "/usr/bin/python3",
+    "/tmp/deepfin-bt4-prior-one/scripts/bt4_joint_readout.py",
+    "--profile",
+    "sf-close",
+    "--prior-temperature",
+    "1.0",
+    "--reference",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/checkpoint.pt",
+    "--cell",
+    "C20T05:100=/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.games.jsonl"
+  ],
+  "reader_sha256": "bdb6b2e2a2dc04c087b7ae36628211015aaba50ac96c4110a5f372c56cefd79f",
+  "completion_receipt_sha256": "bbeefc69de0e2db2ea697500c77739bbe46c25ed3957909063873a2cc31f2e6c",
+  "game_bank_sha256": "60b070d2f45bb05d52634bfc56675949d86ce9b982c1d59c454c5210851078ae",
+  "checkpoint_sha256": "8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3",
+  "reference_sha256": "c7d0bb38f952150db004b29699e0509437bcec7928d79cd44f69125ffa5fa817",
+  "readout_sha256": "353d95c0f94cad1c1be1f9b23f6449d8cad50c6a41523c2b9ab5415f5cd6c12e",
+  "elapsed_seconds": 4.4761803150177,
+  "stderr": "/home/josh/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.\n  import pynvml  # type: ignore[import]\n",
+  "scope": "Completed primary s100 only; s400 remains unread."
+}

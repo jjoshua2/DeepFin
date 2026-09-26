@@ -1,0 +1,63 @@
+{
+  "pid": 315929,
+  "argv": [
+    "/usr/bin/time",
+    "-o",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4.derive.time.json",
+    "-f",
+    "{\"wall_seconds\":%e,\"user_seconds\":%U,\"system_seconds\":%S,\"max_rss_kib\":%M,\"filesystem_inputs\":%I,\"filesystem_outputs\":%O,\"exit_code\":%x}",
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/tmp/deepfin-g10-increment-tools/scripts/derive_corpus_targets.py",
+    "--corpus",
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+    "--out",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/derived",
+    "--limit",
+    "265898",
+    "--max-policy-support-misses",
+    "64",
+    "--source-shards",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/source_shards.json",
+    "--scheme",
+    "uniform-d9",
+    "--policy-observation",
+    "phase0",
+    "--value-observation",
+    "latest-phase",
+    "--value-scheme",
+    "search",
+    "--temp",
+    "0.0005",
+    "--floor",
+    "0",
+    "--seed",
+    "0",
+    "--rows-per-shard",
+    "8192",
+    "--workers",
+    "2",
+    "--row-provenance"
+  ],
+  "start_unix": 1788851617.4376414,
+  "end_unix": 1788852085.0008225,
+  "exit_code": 0,
+  "resources": {
+    "wall_seconds": 467.18,
+    "user_seconds": 828.63,
+    "system_seconds": 42.97,
+    "max_rss_kib": 882852,
+    "filesystem_inputs": 1368312,
+    "filesystem_outputs": 721536,
+    "exit_code": 0
+  },
+  "observed_owned_descendants": {
+    "315930": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python /tmp/deepfin-g10-increment-tools/scripts/derive_corpus_targets.py --corpus /home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4 --out /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/derived --limit 265898 --max-policy-support-misses 64 --source-shards /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/source_shards.json --scheme uniform-d9 --policy-observation phase0 --value-observation latest-phase --value-scheme search --temp 0.0005 --floor 0 --seed 0 --rows-per-shard 8192 --workers 2 --row-provenance ",
+    "315953": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python -c from multiprocessing.resource_tracker import main;main(6) ",
+    "315954": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=7, pipe_handle=13) --multiprocessing-fork ",
+    "315955": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=7, pipe_handle=15) --multiprocessing-fork "
+  },
+  "observed_spawn_worker_pids": [
+    315954,
+    315955
+  ]
+}

@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "kind": "curated_source_and_single_shard_metadata_projection",
+  "source_main": "d53c74946e2537f0ae53c6f7ca9f79b74f62f70d",
+  "captured_unix": 1788900454.440399,
+  "hardlink_assessment": {
+    "option": "Per-array hardlinks as a copytree replacement",
+    "decision": "Not compatible with current pinned storage contracts.",
+    "reason": "Link creation and removal change shared inode ctime. Existing source/sidecar/output identities include device, inode, size, mtime and ctime. A new sibling link can invalidate an earlier receipt without changing bytes. Shared chunk or metadata writes also affect every link. Mutable policy_target/search_wdl and recipe .zattrs must never be shared writable files."
+  },
+  "new_cohort_status": "Potential narrow implementation for a fixed recipe cohort; not currently qualified.",
+  "source_evidence": [
+    "bt4_policy_mix.py:2178 copies the whole source tree before changing policy.",
+    "sf_policy_rewrite.py:283-299 copies each file and verifies compressed nonpolicy bytes; source storage stamps are checked before/finally and the summary explicitly claims 16 copied nonpolicy arrays.",
+    "bt4_value_rewrite.py:247-249 copies the source tree before opening it writable and changing search_wdl; source/output storage identities and other file hashes are checked.",
+    "adapt_raw_bt4_sidecars.py:46-65 and sf_d9_rank_sidecar.py:293-309 explicitly include inode and ctime in identity; symlinks/special files are refused.",
+    "replay/shard.py:1869-1940 currently opens a normal Zarr group and resolves arrays from that group; no common-parent view exists.",
+    "replay/game_epoch.py:264-312 commits file bytes and resolved shard paths, checking stat stability during hashing; _load_one checks content again after validated decoding.",
+    "lc0_control_train.py:640-688 already uses a read-only staging symlink farm, so training staging is not the source of full feature duplication."
+  ],
+  "sample_scope": "One named 8192-row shard per eight existing completed corpora; filesystem stat only, no chunk decoding or hashing. Not a full-corpus decomposition or exact 100M savings forecast.",
+  "sampled_B100": {
+    "role": "B100",
+    "allocated_bytes": 6287360,
+    "x_allocated_bytes": 3493888,
+    "policy_allocated_bytes": 1540096,
+    "search_wdl_allocated_bytes": 69632,
+    "common_15_arrays_allocated_bytes": 4665344,
+    "common_15_fraction": 0.7420195439739413
+  },
+  "sample_limit": "74.2% common-array allocation is one sampled B100 shard, not a full-corpus savings estimate. No links or storage changes performed.",
+  "original_local_evidence": [
+    {
+      "path": "scratchpad/bt4_joint20/scale_storage_readiness_v1/immutable_sharing_v1/readiness.json",
+      "sha256": "32d8d8c8bea59e2f27266a20b3348115ad9833b77e5567a1a5fa97a861ee9601",
+      "bytes": 12176,
+      "location": "original local artifact; curated projection published here"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/scale_storage_readiness_v1/immutable_sharing_v1/one_shard_sizes.json",
+      "sha256": "62a50fadd8829aefd7480eeecc8346c04e969b02228e3911c54271b5a78451db",
+      "bytes": 20855,
+      "location": "original local artifact; curated projection published here"
+    }
+  ],
+  "source_pins": [
+    {
+      "path": "scripts/bt4_policy_mix.py",
+      "sha256": "cd8059e408a539e4617e13b576890c353a95bd8b3835142c27a92c7ab5917ce3",
+      "bytes": 118940
+    },
+    {
+      "path": "scripts/sf_policy_rewrite.py",
+      "sha256": "85152a4e70e85f2f9ddf8d799ff726f3b4e6ccbc385c1693079cb97edb606a3b",
+      "bytes": 22421
+    },
+    {
+      "path": "scripts/bt4_value_rewrite.py",
+      "sha256": "eedcee1030211503173bf6936d890ab64cadacf35f1b5b4e557cec85d173c428",
+      "bytes": 16977
+    },
+    {
+      "path": "scripts/adapt_raw_bt4_sidecars.py",
+      "sha256": "8c999f87f36f69cf40933fbe08ed359e7fe8ee96253d52aa582a7b332719475e",
+      "bytes": 20386
+    },
+    {
+      "path": "scripts/sf_d9_rank_sidecar.py",
+      "sha256": "53c2d1d1638c9e0646e68430c56a413c2b0b78a5ca815996eda770eecd8d3def",
+      "bytes": 37947
+    },
+    {
+      "path": "scripts/bt4_derived_wdl_sidecar.py",
+      "sha256": "6fdaf63038f58e71d6ee6ab8fc6bbc04cca422b1469ecd0f65eabf890085a370",
+      "bytes": 24321
+    },
+    {
+      "path": "scripts/bt4_one_epoch_screen.py",
+      "sha256": "021b7069e4768f2b94d31f20498273e5c52e528b3d0a22059849b83f58167332",
+      "bytes": 34173
+    },
+    {
+      "path": "scripts/feed_bootstrap_shards.py",
+      "sha256": "00c1cf1f4508bab89059fb3b8a55ecda802cf868078e6963048b34966b40d819",
+      "bytes": 14700
+    },
+    {
+      "path": "scripts/lc0_control_train.py",
+      "sha256": "dd9ec4b3146adae343343e5cf69ca7d2e5a283955951de7be4f65f97f7c55891",
+      "bytes": 143479
+    },
+    {
+      "path": "chess_anti_engine/replay/shard.py",
+      "sha256": "df71483c42a1fe01544bc352669696bae885c90dee57312a6847033b9543318b",
+      "bytes": 92492
+    },
+    {
+      "path": "chess_anti_engine/replay/game_epoch.py",
+      "sha256": "382677700752fe7e977c9df70cddda2470fdb1c363191c1434b43623edc85b5e",
+      "bytes": 70160
+    }
+  ]
+}

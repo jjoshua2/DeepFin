@@ -1,0 +1,525 @@
+{
+  "schema": 1,
+  "registered_utc": "2026-09-08T01:13:15.131954+00:00",
+  "status": "REGISTERED_NOT_FROZEN_NOT_LAUNCHED",
+  "purpose": "Second operational attempt on the same64closed raw shards after reviewed worker-launch correction and narrowly bounded phase0 policy-support exclusions; no recipe mixing or training.",
+  "assessment": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/post_pilot_preparation_assessment_v1.json",
+    "sha256": "d1d9b4d9f22b4c196d591c5f99afcfb654ff1232f741274034e853ab6546f5ca"
+  },
+  "sources": [
+    {
+      "source_id": "run06_g10",
+      "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+      "source_manifest": {
+        "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json",
+        "sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4"
+      },
+      "sidecar_dir": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run06_g10",
+      "receipt_snapshot": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.closed_receipts.jsonl",
+        "sha256": "8684984ed17e457245f2e54c1e731aa46be7f20ecf2b46a51855eac28c88ab5e"
+      },
+      "selection": [
+        {
+          "source_shard": "w00-00000.jsonl.zst",
+          "raw_rows": 8236,
+          "raw_bytes": 21154455,
+          "source_sha256": "3c93d2d127bc6d11db9eb31425e0c795c96b417106d737632ef4b689569ae17d"
+        },
+        {
+          "source_shard": "w00-00001.jsonl.zst",
+          "raw_rows": 8196,
+          "raw_bytes": 20166593,
+          "source_sha256": "420a0d80c420d4da1a116ac48a2b55e620f9f753859a6374c5fea99c3835412e"
+        },
+        {
+          "source_shard": "w00-00002.jsonl.zst",
+          "raw_rows": 8274,
+          "raw_bytes": 21067305,
+          "source_sha256": "df010183299c15af5a95856702cf43afbcefca7a19621318eef3d66d4a43529c"
+        },
+        {
+          "source_shard": "w00-00003.jsonl.zst",
+          "raw_rows": 8232,
+          "raw_bytes": 20893615,
+          "source_sha256": "23736c5e4de449fc35a3843d082ad557e17bf69be0e8ac46e8069129cda6e6f8"
+        },
+        {
+          "source_shard": "w00-00004.jsonl.zst",
+          "raw_rows": 8207,
+          "raw_bytes": 21116397,
+          "source_sha256": "953bcdebeba67c4e7d67a664f46d22752a6d46a48a087c187fad7e2885083247"
+        },
+        {
+          "source_shard": "w00-00005.jsonl.zst",
+          "raw_rows": 8224,
+          "raw_bytes": 21188923,
+          "source_sha256": "1bfd7accaf804499574c1ab9d4ae95b6ae2bba5feb219d3075f404a7746563f0"
+        },
+        {
+          "source_shard": "w00-00006.jsonl.zst",
+          "raw_rows": 8226,
+          "raw_bytes": 21151183,
+          "source_sha256": "facbb26b99081b4914e21d2c36b96dfc118663cc16b26c13f9e0620d741d529b"
+        },
+        {
+          "source_shard": "w00-00007.jsonl.zst",
+          "raw_rows": 8311,
+          "raw_bytes": 21056116,
+          "source_sha256": "8e5e0b6a6fa1c5c86d46193cfcb3e15e3fa81f9852828e76c69ef34845148a0f"
+        },
+        {
+          "source_shard": "w00-00008.jsonl.zst",
+          "raw_rows": 8213,
+          "raw_bytes": 21070703,
+          "source_sha256": "5bc84fb96ac31b2b88befd27bb49504b713dbf55c980908dd1990ad2e312362a"
+        },
+        {
+          "source_shard": "w00-00009.jsonl.zst",
+          "raw_rows": 8275,
+          "raw_bytes": 21541568,
+          "source_sha256": "603596d09e45ff973152e5a703b60b38e229a0f06e92797f35b70eb3dc24dcf4"
+        },
+        {
+          "source_shard": "w00-00010.jsonl.zst",
+          "raw_rows": 8331,
+          "raw_bytes": 21386458,
+          "source_sha256": "de75744f6b4313abb0c970362073b416ccc512dd897f84d949aaf77211360431"
+        },
+        {
+          "source_shard": "w00-00011.jsonl.zst",
+          "raw_rows": 8250,
+          "raw_bytes": 20975501,
+          "source_sha256": "ec2e94e5915bf194fa3314e8a006f325d132a3ddac21f09412f7892c59f20b3e"
+        },
+        {
+          "source_shard": "w00-00012.jsonl.zst",
+          "raw_rows": 8555,
+          "raw_bytes": 21487173,
+          "source_sha256": "1389d74dc06ed3865ce7cc6b0ee18865938313fb463d0f240432aec149ead032"
+        },
+        {
+          "source_shard": "w00-00013.jsonl.zst",
+          "raw_rows": 8421,
+          "raw_bytes": 22035065,
+          "source_sha256": "ab68671484355083de2a9220b03af8737dbebf9ab579751c9a456a1a85da9ccb"
+        },
+        {
+          "source_shard": "w00-00014.jsonl.zst",
+          "raw_rows": 8406,
+          "raw_bytes": 22101885,
+          "source_sha256": "aee6024aa328e1ed6bac02c615e32c3e220fb26eea873d5cefb675d646be6f2f"
+        },
+        {
+          "source_shard": "w00-00015.jsonl.zst",
+          "raw_rows": 8279,
+          "raw_bytes": 21521701,
+          "source_sha256": "e582be4bd24d1967f44b606314f4ae58fb086801dcde55956298eb43524105c4"
+        },
+        {
+          "source_shard": "w00-00016.jsonl.zst",
+          "raw_rows": 8279,
+          "raw_bytes": 21026965,
+          "source_sha256": "cc4b7825dfd4a8c0564e12b99e69dbdea2b31a31225466b533559248fbf4fe7b"
+        },
+        {
+          "source_shard": "w00-00017.jsonl.zst",
+          "raw_rows": 8280,
+          "raw_bytes": 20539779,
+          "source_sha256": "b270fde17f041c35a8e7ae61d0ad20f082bfaefdc380686c825a26010e478ed3"
+        },
+        {
+          "source_shard": "w00-00018.jsonl.zst",
+          "raw_rows": 8276,
+          "raw_bytes": 21237230,
+          "source_sha256": "76182b1926c81e1cca51a7e217b5a967ea54943b5c28bef6c313177a17dac265"
+        },
+        {
+          "source_shard": "w00-00019.jsonl.zst",
+          "raw_rows": 8345,
+          "raw_bytes": 21333651,
+          "source_sha256": "011248860932a11db432084bd8c5269707f1493a490489d24a32f7e9f1265510"
+        },
+        {
+          "source_shard": "w00-00020.jsonl.zst",
+          "raw_rows": 8319,
+          "raw_bytes": 21323755,
+          "source_sha256": "d080fd83176ebe10be232c52f4ca1d82f7c4639a7e302285590587b5fc4b8287"
+        },
+        {
+          "source_shard": "w00-00021.jsonl.zst",
+          "raw_rows": 8256,
+          "raw_bytes": 20504982,
+          "source_sha256": "1e8efb69a0b5cfdf1573e38c5023609d805c0d4f83807910046a5f22c4978ba7"
+        },
+        {
+          "source_shard": "w00-00022.jsonl.zst",
+          "raw_rows": 8232,
+          "raw_bytes": 20982182,
+          "source_sha256": "60fafb9a310b28a1228d3f91087811956fa1b303017a0c34815212aa9ee1e1a0"
+        },
+        {
+          "source_shard": "w00-00023.jsonl.zst",
+          "raw_rows": 8328,
+          "raw_bytes": 20960284,
+          "source_sha256": "4e5b8f5dd575754f0f6fe0a88085332c6c07cf85da5ea9d42381611edf21d7e1"
+        },
+        {
+          "source_shard": "w00-00024.jsonl.zst",
+          "raw_rows": 8523,
+          "raw_bytes": 22042128,
+          "source_sha256": "481d476982c6f545710a02c2f468b3e50519b500296293591ca315d6ed9d1425"
+        },
+        {
+          "source_shard": "w00-00025.jsonl.zst",
+          "raw_rows": 8274,
+          "raw_bytes": 20970362,
+          "source_sha256": "93b16f5bc05f4a9f197f2ad916ef98d864fb59f83a8a6ba808fcc594353da0b7"
+        },
+        {
+          "source_shard": "w00-00026.jsonl.zst",
+          "raw_rows": 8384,
+          "raw_bytes": 21962137,
+          "source_sha256": "1eea8b6e7d346a1fcf90f0aa1806c11a0cfd4b3c2a41a55072c8f85f5a05bd8d"
+        },
+        {
+          "source_shard": "w00-00027.jsonl.zst",
+          "raw_rows": 8212,
+          "raw_bytes": 21236501,
+          "source_sha256": "d0647e9e39e7f3e2640867b65eac2e66f9cf6223203d5f4787a1e338dd375f4e"
+        },
+        {
+          "source_shard": "w00-00028.jsonl.zst",
+          "raw_rows": 8219,
+          "raw_bytes": 21264838,
+          "source_sha256": "19a29205f6c14d93e4ef5f7e86b9801ca197710dfa9407228b380d496e23747d"
+        },
+        {
+          "source_shard": "w00-00029.jsonl.zst",
+          "raw_rows": 8368,
+          "raw_bytes": 21431562,
+          "source_sha256": "9f733b6201f9507003ec31f993dee268ef2251d82dcef17a5aaf309de2f3e529"
+        },
+        {
+          "source_shard": "w00-00030.jsonl.zst",
+          "raw_rows": 8271,
+          "raw_bytes": 20923772,
+          "source_sha256": "24d763b7ef568c97f794008912ec0982084539077413af913fad230926978d20"
+        },
+        {
+          "source_shard": "w00-00031.jsonl.zst",
+          "raw_rows": 8326,
+          "raw_bytes": 21249754,
+          "source_sha256": "876be61a81b1f580b91ece091e5f5fc879660164198dd90767c212c0a8f7e266"
+        }
+      ],
+      "raw_rows": 265528,
+      "derived_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/derived",
+      "adapted_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/bt4",
+      "rank_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/rank",
+      "expected_policy_support_exclusions": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run06_g10.failures.jsonl",
+        "sha256": "cbb7f56be2986022eafaefc92b422fca5bede6dda554408b359b833ff5da2a85"
+      },
+      "expected_no_result_exclusions": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run06_g10.no_result.jsonl",
+        "sha256": "dfa8cfc21f7eb51989689dbe9477dc56e980325d947c1beb43ae0305338e89a9"
+      },
+      "max_policy_support_misses": 12,
+      "expected_no_result_rows": 1600,
+      "expected_emitted_rows": 263916
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+      "source_manifest": {
+        "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/manifest.json",
+        "sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "sidecar_dir": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run07_g10_companion4",
+      "receipt_snapshot": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.closed_receipts.jsonl",
+        "sha256": "f27dc5c265448ccc1ea38b57cd0dbc30a5db84fdb2f5317fdfc25ba7b84012ed"
+      },
+      "selection": [
+        {
+          "source_shard": "w00-00000.jsonl.zst",
+          "raw_rows": 8243,
+          "raw_bytes": 20692331,
+          "source_sha256": "a499d2921043065b388778435efa2e2e63d3e206ab1310264b75dafa39d9dea0"
+        },
+        {
+          "source_shard": "w00-00001.jsonl.zst",
+          "raw_rows": 8354,
+          "raw_bytes": 21919438,
+          "source_sha256": "34ccb02762295ed292423123f7730a1f8e7ba70b921f19bb33c625a55b7538f3"
+        },
+        {
+          "source_shard": "w00-00002.jsonl.zst",
+          "raw_rows": 8241,
+          "raw_bytes": 21426334,
+          "source_sha256": "2405fbb18ebdc5614cf208773dc9ff225433561c07a78d91b5d53394a483c56c"
+        },
+        {
+          "source_shard": "w00-00003.jsonl.zst",
+          "raw_rows": 8405,
+          "raw_bytes": 21366085,
+          "source_sha256": "2666f2886066bf7ca30f11ff07ef4d5bfcc1bc67c9a4e8fabcf936c4b9c2aba3"
+        },
+        {
+          "source_shard": "w00-00004.jsonl.zst",
+          "raw_rows": 8202,
+          "raw_bytes": 20778596,
+          "source_sha256": "b5423648dbae1c2a49679c2c0a8042a3956cbd4acec33f747c649d5ba967f55d"
+        },
+        {
+          "source_shard": "w00-00005.jsonl.zst",
+          "raw_rows": 8220,
+          "raw_bytes": 20536391,
+          "source_sha256": "a89811567b5e03f1eec7ed345f06240044e5cf18e60a980ca43e5153257dc30f"
+        },
+        {
+          "source_shard": "w00-00006.jsonl.zst",
+          "raw_rows": 8211,
+          "raw_bytes": 21344886,
+          "source_sha256": "ef47930ee996b724c188e7a1b513a4b145621ab0fd900e3db1609150aa1977da"
+        },
+        {
+          "source_shard": "w00-00007.jsonl.zst",
+          "raw_rows": 8336,
+          "raw_bytes": 21267578,
+          "source_sha256": "1cbc9662743a994ddcb0fc2420785cf39db78ad44b2e99f6abb1f2f367c0787b"
+        },
+        {
+          "source_shard": "w00-00008.jsonl.zst",
+          "raw_rows": 8259,
+          "raw_bytes": 21300507,
+          "source_sha256": "ccd55d180a56d6dd7992670d01fd5aaa82225247a30888ed931a10424cfbf1ac"
+        },
+        {
+          "source_shard": "w00-00009.jsonl.zst",
+          "raw_rows": 8276,
+          "raw_bytes": 20963252,
+          "source_sha256": "3f212c77f5de2a6a098495c9eb92eeeb9dd772840c864581de2b0ffb86c9a4e9"
+        },
+        {
+          "source_shard": "w00-00010.jsonl.zst",
+          "raw_rows": 8388,
+          "raw_bytes": 21427246,
+          "source_sha256": "afe729d95c33cd6ea5d6fcfe1f768c685b21ee6d64ef2df5a41c4d583660b2c9"
+        },
+        {
+          "source_shard": "w00-00011.jsonl.zst",
+          "raw_rows": 8252,
+          "raw_bytes": 21359947,
+          "source_sha256": "b8027c3a582ecd9d2132fd74935d5b0b7467cecba7bfd6cab267cf837a7d66f0"
+        },
+        {
+          "source_shard": "w00-00012.jsonl.zst",
+          "raw_rows": 8202,
+          "raw_bytes": 20890347,
+          "source_sha256": "f2d8f839fbfb3edc7ae1a65bfd6bcd01cef2bc6bb857df6f9ee9f4212caffd02"
+        },
+        {
+          "source_shard": "w00-00013.jsonl.zst",
+          "raw_rows": 8328,
+          "raw_bytes": 21478428,
+          "source_sha256": "50b47fb65ee91f360a91eb1b399a532528acb147104a8b8fa393085748ef4b94"
+        },
+        {
+          "source_shard": "w00-00014.jsonl.zst",
+          "raw_rows": 8404,
+          "raw_bytes": 21149399,
+          "source_sha256": "bbd22441a26d2ab2ad4d26009b58274147afccc538c8961d53cfc81bff82210a"
+        },
+        {
+          "source_shard": "w00-00015.jsonl.zst",
+          "raw_rows": 8287,
+          "raw_bytes": 21568893,
+          "source_sha256": "5e9d3ea439037b3423fe72fb60991ff8990aaadc0496477bc364cae0d9cf8191"
+        },
+        {
+          "source_shard": "w00-00016.jsonl.zst",
+          "raw_rows": 8461,
+          "raw_bytes": 21535936,
+          "source_sha256": "e1d13246e65ba363be23cac199bf3f1084a69dd290b88576b3494c01420518f0"
+        },
+        {
+          "source_shard": "w00-00017.jsonl.zst",
+          "raw_rows": 8404,
+          "raw_bytes": 20964647,
+          "source_sha256": "7c9db32af6817bfaee1559410567a5534060139735870e1ce44918fc3b3eca39"
+        },
+        {
+          "source_shard": "w00-00018.jsonl.zst",
+          "raw_rows": 8263,
+          "raw_bytes": 21162878,
+          "source_sha256": "79612e0b9a9a9e07ef0a0f11c2e7e39f4357be564e0f354edc8c344673f4de64"
+        },
+        {
+          "source_shard": "w00-00019.jsonl.zst",
+          "raw_rows": 8405,
+          "raw_bytes": 21482760,
+          "source_sha256": "0e2d4e2007d87d3de2a146f3549d39514f28a45a6d32be171c0184bffdac33a2"
+        },
+        {
+          "source_shard": "w00-00020.jsonl.zst",
+          "raw_rows": 8234,
+          "raw_bytes": 21089108,
+          "source_sha256": "8934ad1187f01259efbfe8a608d625d5c13b55437d280a9ba07fa423d669de2c"
+        },
+        {
+          "source_shard": "w00-00021.jsonl.zst",
+          "raw_rows": 8391,
+          "raw_bytes": 21746737,
+          "source_sha256": "b5bae67e34194ba20e85f063647c1f1a9a4e56e0e5c246ac72c464dbaa99f0ff"
+        },
+        {
+          "source_shard": "w00-00022.jsonl.zst",
+          "raw_rows": 8230,
+          "raw_bytes": 20840469,
+          "source_sha256": "77f5ea855596f3a7ef91070f922bdfb12c87459df5352693d5ad2fa555026fb3"
+        },
+        {
+          "source_shard": "w00-00023.jsonl.zst",
+          "raw_rows": 8325,
+          "raw_bytes": 21170258,
+          "source_sha256": "ae05ec8b4ce9106638b2961bdab6afb6b79c49bb0c463b8ccf39fbfe446df868"
+        },
+        {
+          "source_shard": "w00-00024.jsonl.zst",
+          "raw_rows": 8312,
+          "raw_bytes": 21362470,
+          "source_sha256": "9ea3dcfc33517c2653f5305ff04977880556c677c5beab9fa42d5567674a91e7"
+        },
+        {
+          "source_shard": "w00-00025.jsonl.zst",
+          "raw_rows": 8219,
+          "raw_bytes": 21050433,
+          "source_sha256": "45d4b1449a9cce6bf32dfa4495cd0e2dd0575b178e18c6046fafa42b759e6436"
+        },
+        {
+          "source_shard": "w00-00026.jsonl.zst",
+          "raw_rows": 8302,
+          "raw_bytes": 21064118,
+          "source_sha256": "aa454717f5c3308ee5c99c602574ecd17e389fce125e95c913ac8a19a6ddf247"
+        },
+        {
+          "source_shard": "w00-00027.jsonl.zst",
+          "raw_rows": 8351,
+          "raw_bytes": 21124320,
+          "source_sha256": "b05933bf8190155ad62e180c51109ece19a57168ee85b20e61f55edd3d70c401"
+        },
+        {
+          "source_shard": "w00-00028.jsonl.zst",
+          "raw_rows": 8407,
+          "raw_bytes": 21763945,
+          "source_sha256": "850b33bd59df774204e8029c9c4a88ba2c4336532116792f27f3d9a5b94a41aa"
+        },
+        {
+          "source_shard": "w00-00029.jsonl.zst",
+          "raw_rows": 8423,
+          "raw_bytes": 21860980,
+          "source_sha256": "059c05d5167b88db0c0488c963165dd82c90e19a4aac45a6653d014bee577919"
+        },
+        {
+          "source_shard": "w00-00030.jsonl.zst",
+          "raw_rows": 8264,
+          "raw_bytes": 20647463,
+          "source_sha256": "06b7dc2a8d3bde303f2a3e06ea053f92ad919abb32133d38e128179f72f5c79d"
+        },
+        {
+          "source_shard": "w00-00031.jsonl.zst",
+          "raw_rows": 8285,
+          "raw_bytes": 21088015,
+          "source_sha256": "58c850fa5c15ad904dc2ec1898c0528b356c09b6bd80d39390e117d6ee762c7a"
+        }
+      ],
+      "raw_rows": 265884,
+      "derived_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/derived",
+      "adapted_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/bt4",
+      "rank_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/rank",
+      "expected_policy_support_exclusions": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run07_g10_companion4.failures.jsonl",
+        "sha256": "656a4d5fb1e0f35c393f0ca0d77f37710809d3c3e681e88024fc64728e0d0008"
+      },
+      "expected_no_result_exclusions": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run07_g10_companion4.no_result.jsonl",
+        "sha256": "5c80e82c5bd9d174e59928155d1cf9580353568d57ac5062aeed6f0aaf5c8f01"
+      },
+      "max_policy_support_misses": 5,
+      "expected_no_result_rows": 1250,
+      "expected_emitted_rows": 264629
+    }
+  ],
+  "physical_rows_total": 531412,
+  "selection": "First32 contiguous closed receipt-backed w00 shards per original source, fixed names before execution; no substitution or expansion",
+  "derive_common_args": [
+    "--scheme",
+    "uniform-d9",
+    "--policy-observation",
+    "phase0",
+    "--value-observation",
+    "latest-phase",
+    "--value-scheme",
+    "search",
+    "--temp",
+    "0.0005",
+    "--floor",
+    "0",
+    "--seed",
+    "0",
+    "--rows-per-shard",
+    "8192",
+    "--workers",
+    "2",
+    "--row-provenance"
+  ],
+  "rank_top_k": 3,
+  "resource_limits": {
+    "wall_seconds_including_kill": 7200,
+    "new_output_and_cache_bytes": 8589934592,
+    "minimum_free_bytes": 161061273600,
+    "adapter_index_cache_bytes": 67108864,
+    "rank_index_cache_bytes": 67108864,
+    "numeric_threads": 2,
+    "cpu_affinity": "0,1",
+    "nice": 19,
+    "io_class": 3,
+    "gpu_hidden": true
+  },
+  "stages": [
+    "source_prefix_and_raw_SHA",
+    "derive_workers2",
+    "adapt",
+    "rank_top3",
+    "common_input_qualification"
+  ],
+  "measurement": "One execution per stage under GNU time: wall,user,system,maxRSS,filesystem input/output counters. No timing reruns.",
+  "success": "Every selected physical input accounted for; exactly12/5 policy-support exclusions and1600/1250 no-result exclusions on the already observed source references, zero envelope drops. All528545 emitted rows preserve source-qualified original/quantized history, ordinary legal BT4 and top3 rank admission; derived storage identities unchanged across adapter/rank, input sequence recorded. Not a training schedule proof.",
+  "stop": "First failed stage, unexpected coverage or exhausted resource cap. Preserve logs/partials, no retry or expansion.",
+  "limitations": "Prefix convenience batch, shared inputs only; no audit/C/H, teacher inference, GPU, training, strength or all-G10 coverage claim. Output/free reserve guards are sampled; private caches independently hard bounded.",
+  "runtime": "Require final independently reviewed main implementation of bounded policy-support exclusions and rank consumer in a new frozen checkout; bind exact merged commit, interpreter/native/dependency pins before execution. The old ac4 runtime is preserved and cannot execute the new exclusion option.",
+  "record": "docs/experiments/2026-09-07-g10-transfer-readiness.md",
+  "previous_attempt": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/failed.json",
+    "sha256": "4ef684a21c86eee87169a42256836028c24b3c9563352f293d33504f7e377873"
+  },
+  "diagnostic_evidence": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/interpretation_receipt.json",
+      "sha256": "09435122d073f280c53547638ff3492ae36a7b7e65435098407d7dcf9b2c7623"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/interpretation_receipt.json",
+      "sha256": "eaeb7ffb0861313d619dcd211b76968a2e434d9a9837ffea0b046ddd195c03f0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/independent_value_census_review.json",
+      "sha256": "4eecc91a3592d030428923e7604dafc7769f9c33528acc6b6926433d220a4fd8"
+    }
+  ],
+  "exclusion_contract": "Only the exact17 census-identified phase0 policy-support rows may be excluded under explicit per-source caps12/5; full history/source verification remains mandatory. Existing no-result exclusions must exactly match the2850 censusrefs. All2850+17 excluded references must be absent and every other registered row present. No d8 substitution, changedvalue selector or unexpected envelope drops.",
+  "recovery": "Preserve failed v1 outputs and original proposed v2 runner. Use wholly new v3 output parents. New source/checkpoint/tool/eligibility mismatch stops this attempt and requires diagnosis; no automatic retry or adoption."
+}

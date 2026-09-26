@@ -1,0 +1,461 @@
+{
+  "schema": 1,
+  "snapshot": "2026-09-08 evening local time; G20T1 terminal22:20 and G20T05 launch22:21; no subsequent copy outcome read",
+  "scope": "V50 metadata draft/finalizer and independently reviewed completed-state correction; completed G20T1 reclamation; G20T05 copy launch only. No operational work repeated for publication.",
+  "source_path_convention": "Original-checkout-relative provenance. Archive members preserve exact original bytes including operational paths. Python snapshots are inert .data members. Historical preparation receipts retain their original statuses; later receipts supersede only the identified stages.",
+  "storage_objective_source": {
+    "path": "scratchpad/bt4_joint20/STORAGE_OBJECTIVE.md",
+    "sha256": "0ab025cdca7211653a82890913b67dceb8266c03ce5c2e3e7fcb933a73524873",
+    "scope": "Current substantive priority summarized in prose; UI-only note not copied."
+  },
+  "v50": {
+    "status": "DRAFT_NOT_LAUNCHED_ACTUAL_QUALIFICATION_AND_SCHEDULE_PENDING",
+    "reviewed_coordinator_head": "5afc1e2f0923704b2bb8f1aa7ffe45cc15141757",
+    "bt4_value_weight": 0.5,
+    "sf_value_weight": 0.5,
+    "training_seconds": 16200,
+    "each_arena_seconds": 5400,
+    "combined_gpu_stage_ceiling_seconds": 27000,
+    "prospective_schedule": {
+      "inclusive_seconds": 1800,
+      "cpus": [
+        0,
+        1
+      ],
+      "minimum_free_gib": 150,
+      "sampled_output_mib": 32
+    },
+    "original_training": {
+      "seed": 0,
+      "rows": 18910484,
+      "updates": 36935,
+      "windows": 420,
+      "plan_workers": 16,
+      "load_workers": 16
+    },
+    "correction": {
+      "prior_bug": "Launch freshness validation always refused completed state/run directories.",
+      "status": "PASS_PARENT_INDEPENDENT_REVIEW",
+      "synthetic_cases": 7,
+      "limits": "Only completed metadata identity admitted here; later CPU preparation checks checkpoint content and book/model runtime. No actual training or corpus qualification."
+    }
+  },
+  "g20t1": {
+    "status": "COMPLETE_EXACT_SHARD_RECLAMATION_SUMMARIES_RETAINED",
+    "removed_shards": 2309,
+    "outer_exit_code": 0,
+    "outer_wall_seconds": 86.49367809295654,
+    "prior_allocated_shard_bytes": 14730653696,
+    "filesystem_free_before_bytes": 384425050112,
+    "filesystem_free_after_bytes": 399113687040,
+    "filesystem_free_delta_bytes": 14688636928,
+    "space_limit": "Free-space delta is a concurrent whole-filesystem observation, not isolated attribution to this removal. Prior allocated sum is separate.",
+    "retained_summaries": [
+      {
+        "name": "bt4_policy_mix_summary.json",
+        "sha256": "d0848a2357f8d1f8cd22850c6ba71cfe58ae57bf2a99ac63b1f91de4f1544fcb"
+      },
+      {
+        "name": "derive_targets_summary.json",
+        "sha256": "dce36703e851d30437399f3c6f5b6d271238b4acc9b4334bce82c04d5565d58d"
+      }
+    ],
+    "archive_sha256": "c742245979a3878ba8c8d212703f7a95ebae4e7df740a7a8f7ca2de4f607aa2d",
+    "review_status": "Parent counted2309 unique removals; independent terminal review pending publication freeze"
+  },
+  "g20t05": {
+    "status": "COPY_OPERATOR_STARTED_NO_COMPLETION_CLAIM",
+    "plan_sha256": "b0d5fc88267e0b8502767ce06602b2fbec857e09d8667f598fa08af5d92ec131",
+    "inclusive_seconds": 14400,
+    "cpus": [
+      0,
+      1
+    ],
+    "sampled_staging_cap_gib": 24,
+    "minimum_free_gib": 150,
+    "source_retained": true,
+    "scope": "Copy and verify only; no reclamation by this operator."
+  },
+  "artifacts": [
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/v50-training-arena-draft.tar.gz",
+      "sha256": "5a2db6ada9fc1e8fb932c7743f44c1db0c8210e0fe0ebf7025e7b21d003416b7",
+      "bytes": 19399,
+      "encoding": "tar+gzip",
+      "members": [
+        {
+          "member": "training_arena_registration_v1/B100V50.training_manifest.draft.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/B100V50.training_manifest.draft.json",
+          "sha256": "530749c752fb162f3610bf0e0bfe7a0e3fa3bc8c4e16904eaf27f5618b9f5700",
+          "bytes": 2901
+        },
+        {
+          "member": "training_arena_registration_v1/B100V50_B100.preparation_manifest.draft.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/B100V50_B100.preparation_manifest.draft.json",
+          "sha256": "6ffdd18d35f1cc6dbdee8d9d5f97b64bb74234af3500370b238f212cfe5e7eb2",
+          "bytes": 2492
+        },
+        {
+          "member": "training_arena_registration_v1/README.md",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/README.md",
+          "sha256": "096798d8cecd7a21c67e8cdb3d7ffcbb4aafcbfdcbfe2ed2b616477bd9bf54eb",
+          "bytes": 3768
+        },
+        {
+          "member": "training_arena_registration_v1/check_preparation.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/check_preparation.py",
+          "sha256": "412e4550ec7dbc7e06d6f1c96ceecd71a36e483f359dc9e7cbcd2e3b0145710d",
+          "bytes": 2608
+        },
+        {
+          "member": "training_arena_registration_v1/commands.draft.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/commands.draft.json",
+          "sha256": "6e7fdbb0a655cd9d8562335082d8433df101a0e021e13624f67ca4c73d77fdaf",
+          "bytes": 6262
+        },
+        {
+          "member": "training_arena_registration_v1/draft_binding.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/draft_binding.json",
+          "sha256": "aac77c64810a92e823ee49c6bbdc57cf409032a06e3d865e939a4ed593f479fa",
+          "bytes": 2186
+        },
+        {
+          "member": "training_arena_registration_v1/finalize.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/finalize.py",
+          "sha256": "664d76b4351590b766ab5f5f17cee7eb33079a47628f282752622bfcb8295a8b",
+          "bytes": 8657
+        },
+        {
+          "member": "training_arena_registration_v1/metadata_checks.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/metadata_checks.json",
+          "sha256": "f3a77692c80c8b65df55d6157d64785ca1123ae719b39ea3e1a6ca2c8ad48d34",
+          "bytes": 1101
+        },
+        {
+          "member": "training_arena_registration_v1/missing_prerequisite_refusal.log",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/missing_prerequisite_refusal.log",
+          "sha256": "b1b676e6e0cfc8bfbfe0e5e21054fba19958ff83962fabe0a8556a7ab717795f",
+          "bytes": 856
+        },
+        {
+          "member": "training_arena_registration_v1/preparation_receipt.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/preparation_receipt.json",
+          "sha256": "1731ff4bbc53b9e39aad19477d73fedd0888e2c417a38dbca3ac580e3c60a819",
+          "bytes": 4640
+        },
+        {
+          "member": "training_arena_registration_v1/preregistration.md",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/preregistration.md",
+          "sha256": "2fc1395c2af350abfcd2334315c4ff829c63d6f8a9c79eefac8f75cbe64e5332",
+          "bytes": 4204
+        },
+        {
+          "member": "training_arena_registration_v1/completed_transition_fix_v1/README.md",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/completed_transition_fix_v1/README.md",
+          "sha256": "74accc8e85869e11cd681ab0b833d6f2e58b786e25fccb39891deee7e46613d8",
+          "bytes": 1676
+        },
+        {
+          "member": "training_arena_registration_v1/completed_transition_fix_v1/author_validation.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/completed_transition_fix_v1/author_validation.json",
+          "sha256": "862e3c1544d76a5e8f7b5b49920fdc4636c763afafc5123c06e38818657f80e8",
+          "bytes": 3545
+        },
+        {
+          "member": "training_arena_registration_v1/completed_transition_fix_v1/finalize.before.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/completed_transition_fix_v1/finalize.before.py.data",
+          "sha256": "712880ba1b79ea76844c9e4bff96e52ca460cd6c3c53ebfe1a42c91b996ea452",
+          "bytes": 7353
+        },
+        {
+          "member": "training_arena_registration_v1/completed_transition_fix_v1/finalizer_delta.patch",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/completed_transition_fix_v1/finalizer_delta.patch",
+          "sha256": "3ed94f93ad24b0de6b72db13cf1bd4644c86f4833a071b75cf937819a6c06e6e",
+          "bytes": 3057
+        },
+        {
+          "member": "training_arena_registration_v1/completed_transition_fix_v1/parent_review.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/completed_transition_fix_v1/parent_review.json",
+          "sha256": "0514da769ba9d689b7e9adb8270d03e635e69cd54b3c9c7aada8d5675aad1fc0",
+          "bytes": 1865
+        },
+        {
+          "member": "training_arena_registration_v1/completed_transition_fix_v1/test_completed_transition.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/completed_transition_fix_v1/test_completed_transition.py",
+          "sha256": "39d65a057be387b1f32c025cfbb25b372ba0b34e6461a067a4b11590b3f3f90c",
+          "bytes": 5542
+        },
+        {
+          "member": "training_arena_registration_v1/completed_transition_fix_v1/tests.log",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/completed_transition_fix_v1/tests.log",
+          "sha256": "f57e11368217a830c66099d1ca4b6898e15393a532e8494f028b86857c93449e",
+          "bytes": 514
+        },
+        {
+          "member": "prospective_schedule_v1/operator_command.draft.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/prospective_schedule_v1/operator_command.draft.json",
+          "sha256": "ec930f2eb5778ecf277a99da531f1613ce45c0f9e85d98f73af75654cd89b61d",
+          "bytes": 861
+        },
+        {
+          "member": "prospective_schedule_v1/plan.draft.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/prospective_schedule_v1/plan.draft.json",
+          "sha256": "0d6e5b2bf4311b072e3078ecf9fce24c83e10d9002665e980301072674c3ee8a",
+          "bytes": 4618
+        },
+        {
+          "member": "prospective_schedule_v1/run_once.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/prospective_schedule_v1/run_once.py",
+          "sha256": "7f77a9744efcb1beb7e86897ecb6c33e422ac1a8d19321f50765eee9c8bbaeeb",
+          "bytes": 4276
+        }
+      ]
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/finalize.py",
+      "path": "scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/v50/finalize.py.data",
+      "source_sha256": "664d76b4351590b766ab5f5f17cee7eb33079a47628f282752622bfcb8295a8b",
+      "sha256": "664d76b4351590b766ab5f5f17cee7eb33079a47628f282752622bfcb8295a8b",
+      "bytes": 8657,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/completed_transition_fix_v1/parent_review.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/v50/completed_transition.parent_review.json",
+      "source_sha256": "0514da769ba9d689b7e9adb8270d03e635e69cd54b3c9c7aada8d5675aad1fc0",
+      "sha256": "0514da769ba9d689b7e9adb8270d03e635e69cd54b3c9c7aada8d5675aad1fc0",
+      "bytes": 1865,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/training_arena_registration_v1/completed_transition_fix_v1/author_validation.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/v50/completed_transition.author_validation.json",
+      "source_sha256": "862e3c1544d76a5e8f7b5b49920fdc4636c763afafc5123c06e38818657f80e8",
+      "sha256": "862e3c1544d76a5e8f7b5b49920fdc4636c763afafc5123c06e38818657f80e8",
+      "bytes": 3545,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/g20t1-reclamation.tar.gz",
+      "sha256": "b7c1e9d53264c6f23b0fb0f7ef6e7d681999c2e4a406d2f25631cf3bc96020a3",
+      "bytes": 116158,
+      "encoding": "tar+gzip",
+      "members": [
+        {
+          "member": "reclamation_preparation_v1/check_consumers.py.data",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/check_consumers.py",
+          "sha256": "2554173ed0851b7b266e1ef58c2b220365ed9bf25a6f58de96dfaa1bdb4b66d2",
+          "bytes": 3786
+        },
+        {
+          "member": "reclamation_preparation_v1/check_source_metadata.py.data",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/check_source_metadata.py",
+          "sha256": "bcff03f1e48efc82b1c484f29ffea0e06bd0d29a49b47b51fe1411de093a19f1",
+          "bytes": 6023
+        },
+        {
+          "member": "reclamation_preparation_v1/consumer_observation.json",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/consumer_observation.json",
+          "sha256": "c98d13417e06a843e6b7ca7b60cf2b8bf3056ab6f1676696d2abb677d48805ac",
+          "bytes": 5467
+        },
+        {
+          "member": "reclamation_preparation_v1/consumer_observation.sandbox.json",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/consumer_observation.sandbox.json",
+          "sha256": "3afb10c329785b7c340624e28068fd7914e71f4ea04e354290bf6b852559480a",
+          "bytes": 882
+        },
+        {
+          "member": "reclamation_preparation_v1/metadata_check.log",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/metadata_check.log",
+          "sha256": "6eed42d65a4cab2fde49140a3c94d7b3b478cf6d7256175e7f05afe999f35144",
+          "bytes": 127
+        },
+        {
+          "member": "reclamation_preparation_v1/metadata_comparison.json",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/metadata_comparison.json",
+          "sha256": "a1c6d264624bb75e84c17f47bf0a5b374eb5988c610a784ae14b66cd071dd7b8",
+          "bytes": 1339
+        },
+        {
+          "member": "reclamation_preparation_v1/operator.actual_complete.json",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/operator.actual_complete.json",
+          "sha256": "813220d7fd45133c9ecb7e30e9cb9dc4c73dc2d6b2c563e9c3d1f0d508561fc3",
+          "bytes": 874
+        },
+        {
+          "member": "reclamation_preparation_v1/operator.actual_start.json",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/operator.actual_start.json",
+          "sha256": "6b5fc0dd6400e1dc889b9c073801c12125d35e4b3bf06b31706396ef2983e411",
+          "bytes": 769
+        },
+        {
+          "member": "reclamation_preparation_v1/other_user_process_roles.txt",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/other_user_process_roles.txt",
+          "sha256": "b795b4b892e3c145c4ea47121333aec3ca4bff84855a3033ede4436184ee92fb",
+          "bytes": 425
+        },
+        {
+          "member": "reclamation_preparation_v1/proposed_shard_removal_list.json",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/proposed_shard_removal_list.json",
+          "sha256": "37020a5d48f858b60ac207a6c8c1bcbb45aa883e90444d9ebc0cd96397d539fb",
+          "bytes": 1112617
+        },
+        {
+          "member": "reclamation_preparation_v1/readiness_receipt.json",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/readiness_receipt.json",
+          "sha256": "c17eb7e4d15065a053a105a00df5f30b798a69fcb4f6452b31173778cec76b10",
+          "bytes": 4741
+        },
+        {
+          "member": "reclamation_preparation_v1/reclaim_shards.py.data",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/reclaim_shards.py",
+          "sha256": "f5a960a9a743e94cc73deb72f6c0f044efe575aa1bf4a53d50aa856340549dfb",
+          "bytes": 9788
+        },
+        {
+          "member": "reclamation_preparation_v1/reclamation_command.json",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/reclamation_command.json",
+          "sha256": "dc046d461897d62e0cc6f76a176ac07966668f66c57773460dc07f9eb6005e60",
+          "bytes": 2851
+        },
+        {
+          "member": "reclamation_execution_v1/completed.json",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_execution_v1/completed.json",
+          "sha256": "d936cff9dde584ebd87946e1433238e680da7bf8a656ebf046e50c93ef0a2ace",
+          "bytes": 1973
+        },
+        {
+          "member": "reclamation_execution_v1/shards.jsonl",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_execution_v1/shards.jsonl",
+          "sha256": "2d7a6f090c1acfc69d07a97922bccc79e2f08a0c453ec49801b7ce664e697c32",
+          "bytes": 490656
+        },
+        {
+          "member": "reclamation_execution_v1/started.json",
+          "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_execution_v1/started.json",
+          "sha256": "0ee74e64442de520ab496f6ff502d1af109cffcf2fdcfd083a1b25e26425d896",
+          "bytes": 1789
+        }
+      ]
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_execution_v1/completed.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/g20t1/reclamation.completed.json",
+      "source_sha256": "d936cff9dde584ebd87946e1433238e680da7bf8a656ebf046e50c93ef0a2ace",
+      "sha256": "d936cff9dde584ebd87946e1433238e680da7bf8a656ebf046e50c93ef0a2ace",
+      "bytes": 1973,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/operator.actual_complete.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/g20t1/operator.actual_complete.json",
+      "source_sha256": "813220d7fd45133c9ecb7e30e9cb9dc4c73dc2d6b2c563e9c3d1f0d508561fc3",
+      "sha256": "813220d7fd45133c9ecb7e30e9cb9dc4c73dc2d6b2c563e9c3d1f0d508561fc3",
+      "bytes": 874,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/g20t05-copy-launch.tar.gz",
+      "sha256": "62fce32fba90fc358cf7e05f536e57349a5748b03ca2b3fc3faa384ff7bc390f",
+      "bytes": 14926,
+      "encoding": "tar+gzip",
+      "members": [
+        {
+          "member": "archive_G20T05.py.data",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/archive_G20T05.py",
+          "sha256": "0b34bb4178fe7fa58edb364e3f473f8497039061c35bff5d8f2082035401c208",
+          "bytes": 20623
+        },
+        {
+          "member": "run_registered.py.data",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/run_registered.py",
+          "sha256": "c8ced597f4acbad2e59aabd54f6a7328621673f281557c8df011f0654f7bec2b",
+          "bytes": 2571
+        },
+        {
+          "member": "plan.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/plan.json",
+          "sha256": "b0d5fc88267e0b8502767ce06602b2fbec857e09d8667f598fa08af5d92ec131",
+          "bytes": 10653
+        },
+        {
+          "member": "operator_command.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/operator_command.json",
+          "sha256": "3bb2bbe2a73b9c4b7aeca01f7ea3932645bcd8018ed305066c80d5dcdd35eae1",
+          "bytes": 1113
+        },
+        {
+          "member": "preparation_checks.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/preparation_checks.json",
+          "sha256": "62ab4e8618463f22c42105b7e4995ee4bf39747f598b2bd630ca3e9cf62f12a2",
+          "bytes": 2115
+        },
+        {
+          "member": "README.md",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/README.md",
+          "sha256": "283ac23af6175548d37f0ad6f03fab79f6c18031335b74cbb7f4d4b9f3bbe19d",
+          "bytes": 1550
+        },
+        {
+          "member": "archive_G20T05.py.binding.patch",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/archive_G20T05.py.binding.patch",
+          "sha256": "8d00da134b171893572a63e7563250786d4c87b879bbcd04115c40b5ea8015ed",
+          "bytes": 1466
+        },
+        {
+          "member": "run_registered.py.binding.patch",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/run_registered.py.binding.patch",
+          "sha256": "6d9897cc2150b175851261e589ad54e0b7223220153f28a19913cc9278a95bb1",
+          "bytes": 645
+        },
+        {
+          "member": "author_preparation.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/author_preparation.json",
+          "sha256": "24b014e44088497e9b6ed96dec8e829fb420a6b93da9b180c3e484b08f6e9834",
+          "bytes": 3316
+        },
+        {
+          "member": "parent_preparation_review.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/parent_preparation_review.json",
+          "sha256": "9804acc939fab3ef53f09206bbad06c46e723c10159364b4dca08a69c0e8d452",
+          "bytes": 1068
+        },
+        {
+          "member": "operator.actual_start.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/operator.actual_start.json",
+          "sha256": "a6bb4cf9dc7e7bd03128d5d5f5fd9ef8d1c045d3cb9399652271698593e665df",
+          "bytes": 632
+        },
+        {
+          "member": "run/started.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/run/started.json",
+          "sha256": "028453afb3558aaa8856527ab48f6e73580a50049c659c54905ae2e1de5b379d",
+          "bytes": 1117
+        },
+        {
+          "member": "staging/qtemp_0.0005_hist_20m_bt4_global_G20T05/started.json",
+          "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/staging/qtemp_0.0005_hist_20m_bt4_global_G20T05/started.json",
+          "sha256": "06ee6a09655850454d54639d15ac606d30b839c1b6672cfc5d6fb3f15b7ee205",
+          "bytes": 1089
+        }
+      ]
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/operator.actual_start.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/g20t05/operator.actual_start.json",
+      "source_sha256": "a6bb4cf9dc7e7bd03128d5d5f5fd9ef8d1c045d3cb9399652271698593e665df",
+      "sha256": "a6bb4cf9dc7e7bd03128d5d5f5fd9ef8d1c045d3cb9399652271698593e665df",
+      "bytes": 632,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/G20T05_cold_archive_v1/parent_preparation_review.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/g20t05/parent_preparation_review.json",
+      "source_sha256": "9804acc939fab3ef53f09206bbad06c46e723c10159364b4dca08a69c0e8d452",
+      "sha256": "9804acc939fab3ef53f09206bbad06c46e723c10159364b4dca08a69c0e8d452",
+      "bytes": 1068,
+      "encoding": "identity"
+    }
+  ]
+}

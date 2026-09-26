@@ -1,0 +1,9534 @@
+{
+  "corpus": {
+    "banked_rows_min_piece_count": 7,
+    "config_sha256": "50fdfe58a5bc2275b4957b898811190fe91739d15dfa45ce2190749452c9bfc8",
+    "corpus_complete": true,
+    "corpus_record": "summary",
+    "corpus_record_detail": {
+      "corpus_complete": true,
+      "document": "summary.json",
+      "facts_only_in_summary": {},
+      "mode": "summary",
+      "progress_files_read": [],
+      "progress_torn_tail_files": [],
+      "rows_claimed_by_inventory": 23994163,
+      "run_finished": true,
+      "run_finished_claim": true,
+      "shards_adopted": 2891,
+      "shards_on_disk_not_in_inventory": []
+    },
+    "dir": "run03_s3",
+    "row_schema": 3,
+    "row_schema_realized": 3,
+    "run_id": "nnue_bootstrap_run03",
+    "staircase_gate": {
+      "adaptive": false,
+      "policy": "fixed"
+    },
+    "staircase_parsed": [
+      {
+        "depth": 9,
+        "width": "all"
+      }
+    ],
+    "tt_carried_across_phases": [
+      true
+    ]
+  },
+  "cp_map": {
+    "cp_draw_width": 120.0,
+    "cp_slope": 0.006,
+    "q_function": "scripts.audit_label_candidates.q_from_effective_cp",
+    "realized_cross_check_available": true,
+    "realized_workers_cross_checked": 0,
+    "source": "the corpus's own config_requested",
+    "wdl_function": "chess_anti_engine.stockfish.wdl.cp_to_wdl_array"
+  },
+  "floor_requested": 0.0,
+  "input": {
+    "encoder": "encode_position",
+    "history_frames_total": 8,
+    "history_rep_fix": true,
+    "input_extra_features": "v2_threats",
+    "input_history_encoding": "lc0_root_legacy_meta",
+    "why_zero_history": "row schema 1: a row is a bare FEN, chess.Board(fen) has an empty move stack, and the encoder fills history slot 0 only -- slots 1..7 (planes 13..103) and every repetition plane stay ZERO. Row schema 2 banks history_root_fen + history_uci and board_from_row replays them, so the 8 frames are the frames live play encodes; see row_schema_counts and history_slots_filled_histogram for which this run derived",
+    "zero_history": false
+  },
+  "limit_requested": 20000000,
+  "max_envelope_misses": 0,
+  "policy": {
+    "construction": "softmax(q / temp) over the scheme's values",
+    "encoding": "lc0_1858",
+    "floor": 0.0,
+    "floor_max_legal_moves_bound": 218,
+    "temp_recovery_estimator": "closed_form_two_move",
+    "width": 1858
+  },
+  "policy_target_postprocess": {
+    "admission": {
+      "experiment_record": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_dose50_v1/preparation.md",
+        "sha256": "08706292cf0c23156854772cfe2748aa314909c0ad72cbecc3a6e5deb5fbf1fe"
+      },
+      "mode": "descriptive"
+    },
+    "algorithm": "legal-normalized-global-arithmetic-v1",
+    "alpha": 0.5,
+    "audit_receipt": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_dose50_v1/audit_G50T05.json",
+      "sha256": "a35bcf7db4fea05ed636346bf2bd9d6c63fae9d86cb5bcf3a0ff17a2444a8550"
+    },
+    "bt4_temperature": 0.5,
+    "candidate_set_wider_fraction": 0.9305018845630815,
+    "candidate_set_wider_rows": 17596241,
+    "changed_fraction": 0.9936473334051101,
+    "changed_rows": 18790352,
+    "changed_unique_max_rows": 15356382,
+    "completed_utc": "2026-09-06T19:09:19Z",
+    "expected_rows": 18910484,
+    "expected_shards": 2309,
+    "formula": "mixed=(1-alpha)*stored_stockfish+alpha*bt4_raw_one_eval",
+    "kind": "global",
+    "mean_entropy_nats": {
+      "bt4": 2.0525573055367654,
+      "mixed": 1.1557226187382699,
+      "source": 0.5689733823705948
+    },
+    "mean_l1_from_source": 0.4975545685902041,
+    "mixed_bt4_top1_agreement": 0.6622043624055313,
+    "mixed_source_top1_agreement": 0.8241147608913658,
+    "mutated_arrays": [
+      "policy_target"
+    ],
+    "near_max_ratio": null,
+    "rows": 18910484,
+    "schema": 1,
+    "selected_mass_abs_drift": {
+      "max": 0.0004283785820007324,
+      "mean": 0.0001079969790166429,
+      "mean_bound": 0.0009765625,
+      "reference": "normalized_total_legal_mass",
+      "row_bound": 0.0009765625
+    },
+    "sf_cp_window": null,
+    "sf_rank_cap": null,
+    "sf_rank_sidecar_dir": null,
+    "sf_rank_sidecar_summary": null,
+    "shards": 2309,
+    "sidecar_dir": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m",
+    "sidecar_summary": {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json",
+      "sha256": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3"
+    },
+    "source_bt4_top1_agreement": 0.4936922820166845,
+    "source_candidate_multi_fraction": 0.9936491842302926,
+    "source_candidate_multi_rows": 18790387,
+    "source_derive_summary_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "source_dir": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+    "source_top_tied_fraction": 0.18159239076059608,
+    "source_top_tied_rows": 3434000,
+    "top1_ge_0_99_fraction": {
+      "mixed": 0.12144887460310376,
+      "source": 0.5938493166013096
+    },
+    "value_columns_unchanged": [
+      "wdl_target",
+      "search_wdl"
+    ]
+  },
+  "python": "3.10.12",
+  "realized": {
+    "base_tier_moves": 495791508,
+    "deep_tier_moves": 0,
+    "envelope_miss_examples": [],
+    "floor_recovered_from_emitted_policy": {
+      "max": NaN,
+      "mean": NaN,
+      "min": NaN,
+      "n": 0
+    },
+    "floor_recovery_floor_tol": 1e-06,
+    "floor_recovery_min_distinct_values": 3,
+    "floor_recovery_min_rel_gap": 1e-09,
+    "floor_recovery_min_spread_per_tau": 0.0001,
+    "floor_recovery_skipped_few_values": 0,
+    "floor_recovery_skipped_ill_conditioned": 0,
+    "history_root_reason_counts": {
+      "irreversible": 18910484
+    },
+    "history_slots_filled_histogram": {
+      "8": 18910484
+    },
+    "history_slots_nonzero_max": 8,
+    "history_window_empty_rows": 0,
+    "input_key_verified": 18910484,
+    "nodes_floor_hits": 0,
+    "phases_per_row": {
+      "1": 18910484
+    },
+    "policy_min_legal_prob_stored": {
+      "max": 1.0,
+      "mean": 0.019982794550571344,
+      "min": 0.0,
+      "n": 18910484
+    },
+    "policy_support_lost_to_float16": 272278341,
+    "policy_support_max": 84,
+    "policy_support_min": 1,
+    "policy_width": 1858,
+    "realized_base_depth_histogram": {
+      "9": 18910484
+    },
+    "realized_value_depth_histogram": {
+      "9": 18910484
+    },
+    "repetition_planes_nonzero_rows": 273483,
+    "row_schema_counts": {
+      "3": 18910484
+    },
+    "rows_dropped_envelope": 0,
+    "rows_dropped_no_result": 1089516,
+    "rows_read": 20000000,
+    "rows_written": 18910484,
+    "support_checks": 18910484,
+    "temp_recovered_from_emitted_policy": {
+      "max": 0.0005035400390625,
+      "mean": 0.0005000004246116112,
+      "min": 0.00048828125,
+      "n": 16975364
+    },
+    "temp_recovery_saturation_q_spread_epsilon": 1e-09,
+    "temp_recovery_skipped_saturated": 503,
+    "value_depth_moved_rows": 0,
+    "value_scheme_realized": {
+      "blend_weight_w": {
+        "max": NaN,
+        "mean": NaN,
+        "min": NaN,
+        "n": 0
+      },
+      "boundary_suppressed_by_flag": 0,
+      "game_rows_max": 0,
+      "game_rows_min": 0,
+      "games": 0,
+      "games_cut_by_limit": 0,
+      "games_with_dropped_tail": 0,
+      "instability_u": {
+        "max": 3.7878129044547677,
+        "mean": 0.017660005739933763,
+        "min": 0.0,
+        "n": 18910484
+      },
+      "l1_delta_vs_search_value": {
+        "max": 0.0,
+        "mean": 0.0,
+        "min": 0.0,
+        "n": 18910484
+      },
+      "played_regret": {
+        "max": 2.0,
+        "mean": 0.103612410165935,
+        "min": 0.0,
+        "n": 18910484
+      },
+      "ply_gaps_nonunit": 0,
+      "rows_differing_from_c_full": 0,
+      "rows_differing_from_search_value": 0,
+      "rows_missing_depths": 0,
+      "rows_missing_played_move": 0,
+      "single_row_games": 0,
+      "stop_boundary_ahead": 0,
+      "stop_boundary_self": 0,
+      "stop_terminal": 0,
+      "w_const_differs_from_map": 0
+    },
+    "values_by_phase": {
+      "0": 495791508
+    },
+    "x_planes": 175
+  },
+  "required_training_overrides": {
+    "search_wdl_frac": "the whole non-outcome share. These shards carry no sf_wdl, so losses.py would redirect any SF share onto the raw game outcome; the searched value is in search_wdl",
+    "sf_wdl_frac": 0.0,
+    "sf_wdl_frac_floor": 0.0
+  },
+  "row_flags": {
+    "is_network_turn": "true \u2014 no network played these plies; set so the rows are not dropped by the train-on-network-turns filter",
+    "is_selfplay": "true \u2014 Stockfish against itself, no curriculum arm",
+    "priority": "1.0 \u2014 no surprise weighting exists for a corpus row"
+  },
+  "rows_per_shard": 8192,
+  "schema": 1,
+  "scheme": {
+    "canonical": "uniform-d9",
+    "deep_depth": null,
+    "depth": 9,
+    "kind": "uniform",
+    "nodes": null,
+    "top_k": null,
+    "value_depth": null,
+    "value_source": "deepest_phase_covering"
+  },
+  "seed": 0,
+  "seed_effect": "permutes rows WITHIN each shard; changes no target value",
+  "shards": [
+    {
+      "path": "shard_000000.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000001.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000002.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000003.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000004.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000005.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000006.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000007.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000008.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000009.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000010.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000011.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000012.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000013.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000014.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000015.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000016.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000017.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000018.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000019.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000020.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000021.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000022.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000023.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000024.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000025.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000026.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000027.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000028.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000029.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000030.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000031.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000032.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000033.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000034.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000035.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000036.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000037.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000038.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000039.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000040.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000041.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000042.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000043.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000044.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000045.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000046.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000047.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000048.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000049.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000050.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000051.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000052.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000053.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000054.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000055.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000056.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000057.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000058.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000059.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000060.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000061.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000062.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000063.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000064.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000065.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000066.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000067.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000068.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000069.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000070.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000071.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000072.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000073.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000074.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000075.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000076.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000077.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000078.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000079.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000080.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000081.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000082.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000083.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000084.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000085.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000086.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000087.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000088.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000089.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000090.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000091.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000092.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000093.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000094.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000095.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000096.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000097.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000098.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000099.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000100.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000101.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000102.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000103.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000104.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000105.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000106.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000107.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000108.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000109.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000110.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000111.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000112.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000113.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000114.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000115.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000116.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000117.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000118.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000119.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000120.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000121.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000122.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000123.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000124.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000125.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000126.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000127.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000128.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000129.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000130.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000131.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000132.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000133.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000134.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000135.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000136.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000137.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000138.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000139.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000140.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000141.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000142.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000143.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000144.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000145.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000146.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000147.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000148.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000149.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000150.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000151.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000152.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000153.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000154.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000155.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000156.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000157.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000158.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000159.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000160.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000161.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000162.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000163.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000164.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000165.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000166.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000167.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000168.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000169.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000170.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000171.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000172.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000173.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000174.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000175.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000176.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000177.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000178.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000179.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000180.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000181.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000182.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000183.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000184.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000185.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000186.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000187.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000188.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000189.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000190.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000191.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000192.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000193.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000194.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000195.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000196.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000197.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000198.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000199.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000200.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000201.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000202.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000203.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000204.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000205.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000206.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000207.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000208.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000209.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000210.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000211.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000212.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000213.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000214.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000215.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000216.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000217.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000218.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000219.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000220.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000221.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000222.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000223.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000224.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000225.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000226.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000227.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000228.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000229.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000230.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000231.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000232.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000233.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000234.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000235.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000236.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000237.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000238.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000239.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000240.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000241.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000242.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000243.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000244.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000245.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000246.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000247.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000248.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000249.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000250.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000251.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000252.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000253.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000254.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000255.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000256.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000257.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000258.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000259.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000260.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000261.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000262.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000263.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000264.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000265.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000266.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000267.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000268.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000269.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000270.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000271.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000272.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000273.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000274.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000275.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000276.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000277.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000278.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000279.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000280.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000281.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000282.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000283.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000284.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000285.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000286.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000287.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000288.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000289.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000290.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000291.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000292.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000293.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000294.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000295.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000296.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000297.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000298.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000299.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000300.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000301.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000302.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000303.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000304.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000305.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000306.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000307.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000308.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000309.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000310.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000311.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000312.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000313.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000314.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000315.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000316.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000317.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000318.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000319.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000320.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000321.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000322.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000323.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000324.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000325.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000326.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000327.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000328.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000329.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000330.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000331.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000332.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000333.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000334.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000335.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000336.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000337.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000338.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000339.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000340.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000341.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000342.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000343.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000344.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000345.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000346.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000347.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000348.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000349.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000350.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000351.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000352.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000353.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000354.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000355.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000356.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000357.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000358.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000359.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000360.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000361.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000362.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000363.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000364.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000365.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000366.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000367.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000368.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000369.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000370.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000371.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000372.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000373.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000374.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000375.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000376.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000377.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000378.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000379.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000380.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000381.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000382.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000383.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000384.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000385.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000386.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000387.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000388.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000389.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000390.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000391.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000392.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000393.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000394.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000395.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000396.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000397.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000398.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000399.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000400.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000401.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000402.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000403.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000404.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000405.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000406.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000407.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000408.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000409.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000410.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000411.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000412.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000413.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000414.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000415.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000416.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000417.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000418.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000419.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000420.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000421.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000422.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000423.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000424.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000425.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000426.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000427.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000428.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000429.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000430.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000431.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000432.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000433.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000434.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000435.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000436.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000437.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000438.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000439.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000440.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000441.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000442.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000443.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000444.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000445.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000446.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000447.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000448.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000449.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000450.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000451.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000452.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000453.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000454.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000455.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000456.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000457.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000458.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000459.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000460.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000461.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000462.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000463.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000464.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000465.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000466.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000467.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000468.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000469.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000470.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000471.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000472.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000473.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000474.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000475.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000476.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000477.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000478.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000479.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000480.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000481.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000482.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000483.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000484.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000485.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000486.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000487.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000488.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000489.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000490.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000491.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000492.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000493.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000494.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000495.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000496.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000497.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000498.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000499.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000500.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000501.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000502.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000503.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000504.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000505.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000506.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000507.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000508.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000509.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000510.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000511.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000512.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000513.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000514.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000515.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000516.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000517.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000518.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000519.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000520.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000521.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000522.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000523.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000524.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000525.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000526.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000527.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000528.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000529.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000530.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000531.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000532.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000533.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000534.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000535.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000536.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000537.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000538.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000539.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000540.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000541.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000542.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000543.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000544.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000545.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000546.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000547.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000548.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000549.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000550.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000551.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000552.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000553.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000554.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000555.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000556.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000557.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000558.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000559.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000560.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000561.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000562.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000563.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000564.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000565.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000566.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000567.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000568.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000569.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000570.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000571.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000572.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000573.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000574.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000575.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000576.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000577.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000578.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000579.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000580.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000581.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000582.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000583.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000584.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000585.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000586.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000587.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000588.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000589.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000590.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000591.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000592.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000593.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000594.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000595.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000596.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000597.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000598.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000599.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000600.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000601.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000602.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000603.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000604.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000605.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000606.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000607.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000608.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000609.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000610.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000611.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000612.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000613.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000614.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000615.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000616.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000617.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000618.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000619.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000620.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000621.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000622.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000623.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000624.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000625.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000626.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000627.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000628.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000629.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000630.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000631.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000632.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000633.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000634.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000635.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000636.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000637.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000638.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000639.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000640.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000641.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000642.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000643.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000644.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000645.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000646.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000647.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000648.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000649.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000650.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000651.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000652.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000653.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000654.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000655.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000656.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000657.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000658.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000659.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000660.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000661.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000662.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000663.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000664.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000665.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000666.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000667.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000668.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000669.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000670.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000671.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000672.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000673.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000674.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000675.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000676.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000677.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000678.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000679.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000680.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000681.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000682.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000683.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000684.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000685.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000686.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000687.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000688.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000689.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000690.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000691.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000692.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000693.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000694.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000695.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000696.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000697.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000698.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000699.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000700.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000701.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000702.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000703.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000704.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000705.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000706.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000707.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000708.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000709.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000710.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000711.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000712.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000713.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000714.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000715.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000716.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000717.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000718.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000719.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000720.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000721.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000722.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000723.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000724.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000725.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000726.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000727.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000728.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000729.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000730.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000731.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000732.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000733.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000734.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000735.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000736.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000737.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000738.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000739.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000740.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000741.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000742.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000743.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000744.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000745.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000746.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000747.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000748.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000749.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000750.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000751.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000752.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000753.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000754.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000755.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000756.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000757.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000758.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000759.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000760.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000761.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000762.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000763.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000764.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000765.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000766.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000767.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000768.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000769.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000770.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000771.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000772.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000773.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000774.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000775.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000776.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000777.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000778.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000779.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000780.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000781.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000782.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000783.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000784.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000785.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000786.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000787.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000788.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000789.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000790.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000791.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000792.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000793.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000794.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000795.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000796.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000797.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000798.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000799.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000800.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000801.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000802.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000803.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000804.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000805.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000806.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000807.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000808.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000809.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000810.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000811.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000812.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000813.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000814.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000815.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000816.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000817.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000818.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000819.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000820.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000821.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000822.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000823.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000824.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000825.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000826.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000827.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000828.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000829.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000830.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000831.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000832.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000833.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000834.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000835.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000836.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000837.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000838.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000839.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000840.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000841.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000842.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000843.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000844.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000845.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000846.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000847.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000848.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000849.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000850.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000851.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000852.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000853.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000854.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000855.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000856.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000857.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000858.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000859.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000860.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000861.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000862.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000863.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000864.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000865.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000866.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000867.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000868.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000869.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000870.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000871.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000872.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000873.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000874.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000875.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000876.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000877.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000878.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000879.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000880.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000881.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000882.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000883.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000884.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000885.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000886.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000887.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000888.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000889.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000890.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000891.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000892.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000893.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000894.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000895.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000896.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000897.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000898.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000899.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000900.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000901.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000902.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000903.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000904.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000905.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000906.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000907.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000908.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000909.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000910.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000911.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000912.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000913.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000914.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000915.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000916.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000917.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000918.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000919.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000920.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000921.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000922.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000923.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000924.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000925.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000926.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000927.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000928.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000929.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000930.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000931.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000932.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000933.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000934.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000935.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000936.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000937.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000938.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000939.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000940.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000941.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000942.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000943.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000944.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000945.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000946.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000947.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000948.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000949.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000950.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000951.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000952.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000953.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000954.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000955.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000956.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000957.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000958.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000959.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000960.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000961.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000962.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000963.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000964.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000965.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000966.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000967.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000968.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000969.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000970.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000971.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000972.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000973.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000974.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000975.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000976.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000977.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000978.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000979.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000980.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000981.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000982.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000983.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000984.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000985.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000986.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000987.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000988.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000989.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000990.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000991.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000992.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000993.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000994.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000995.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000996.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000997.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000998.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_000999.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001000.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001001.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001002.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001003.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001004.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001005.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001006.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001007.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001008.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001009.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001010.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001011.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001012.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001013.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001014.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001015.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001016.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001017.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001018.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001019.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001020.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001021.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001022.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001023.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001024.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001025.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001026.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001027.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001028.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001029.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001030.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001031.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001032.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001033.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001034.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001035.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001036.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001037.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001038.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001039.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001040.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001041.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001042.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001043.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001044.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001045.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001046.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001047.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001048.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001049.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001050.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001051.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001052.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001053.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001054.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001055.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001056.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001057.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001058.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001059.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001060.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001061.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001062.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001063.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001064.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001065.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001066.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001067.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001068.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001069.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001070.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001071.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001072.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001073.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001074.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001075.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001076.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001077.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001078.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001079.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001080.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001081.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001082.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001083.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001084.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001085.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001086.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001087.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001088.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001089.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001090.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001091.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001092.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001093.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001094.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001095.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001096.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001097.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001098.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001099.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001100.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001101.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001102.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001103.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001104.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001105.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001106.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001107.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001108.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001109.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001110.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001111.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001112.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001113.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001114.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001115.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001116.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001117.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001118.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001119.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001120.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001121.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001122.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001123.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001124.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001125.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001126.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001127.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001128.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001129.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001130.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001131.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001132.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001133.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001134.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001135.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001136.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001137.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001138.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001139.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001140.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001141.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001142.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001143.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001144.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001145.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001146.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001147.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001148.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001149.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001150.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001151.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001152.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001153.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001154.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001155.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001156.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001157.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001158.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001159.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001160.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001161.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001162.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001163.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001164.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001165.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001166.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001167.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001168.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001169.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001170.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001171.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001172.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001173.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001174.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001175.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001176.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001177.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001178.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001179.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001180.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001181.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001182.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001183.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001184.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001185.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001186.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001187.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001188.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001189.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001190.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001191.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001192.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001193.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001194.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001195.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001196.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001197.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001198.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001199.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001200.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001201.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001202.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001203.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001204.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001205.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001206.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001207.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001208.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001209.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001210.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001211.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001212.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001213.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001214.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001215.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001216.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001217.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001218.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001219.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001220.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001221.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001222.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001223.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001224.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001225.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001226.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001227.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001228.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001229.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001230.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001231.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001232.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001233.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001234.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001235.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001236.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001237.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001238.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001239.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001240.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001241.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001242.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001243.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001244.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001245.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001246.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001247.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001248.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001249.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001250.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001251.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001252.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001253.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001254.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001255.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001256.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001257.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001258.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001259.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001260.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001261.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001262.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001263.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001264.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001265.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001266.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001267.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001268.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001269.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001270.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001271.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001272.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001273.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001274.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001275.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001276.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001277.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001278.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001279.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001280.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001281.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001282.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001283.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001284.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001285.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001286.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001287.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001288.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001289.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001290.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001291.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001292.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001293.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001294.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001295.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001296.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001297.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001298.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001299.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001300.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001301.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001302.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001303.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001304.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001305.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001306.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001307.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001308.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001309.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001310.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001311.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001312.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001313.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001314.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001315.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001316.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001317.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001318.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001319.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001320.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001321.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001322.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001323.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001324.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001325.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001326.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001327.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001328.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001329.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001330.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001331.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001332.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001333.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001334.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001335.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001336.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001337.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001338.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001339.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001340.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001341.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001342.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001343.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001344.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001345.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001346.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001347.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001348.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001349.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001350.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001351.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001352.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001353.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001354.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001355.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001356.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001357.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001358.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001359.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001360.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001361.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001362.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001363.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001364.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001365.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001366.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001367.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001368.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001369.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001370.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001371.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001372.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001373.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001374.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001375.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001376.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001377.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001378.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001379.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001380.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001381.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001382.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001383.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001384.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001385.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001386.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001387.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001388.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001389.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001390.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001391.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001392.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001393.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001394.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001395.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001396.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001397.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001398.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001399.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001400.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001401.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001402.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001403.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001404.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001405.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001406.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001407.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001408.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001409.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001410.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001411.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001412.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001413.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001414.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001415.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001416.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001417.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001418.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001419.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001420.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001421.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001422.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001423.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001424.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001425.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001426.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001427.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001428.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001429.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001430.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001431.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001432.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001433.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001434.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001435.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001436.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001437.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001438.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001439.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001440.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001441.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001442.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001443.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001444.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001445.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001446.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001447.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001448.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001449.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001450.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001451.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001452.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001453.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001454.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001455.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001456.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001457.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001458.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001459.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001460.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001461.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001462.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001463.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001464.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001465.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001466.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001467.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001468.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001469.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001470.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001471.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001472.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001473.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001474.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001475.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001476.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001477.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001478.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001479.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001480.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001481.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001482.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001483.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001484.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001485.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001486.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001487.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001488.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001489.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001490.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001491.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001492.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001493.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001494.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001495.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001496.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001497.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001498.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001499.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001500.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001501.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001502.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001503.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001504.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001505.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001506.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001507.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001508.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001509.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001510.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001511.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001512.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001513.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001514.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001515.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001516.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001517.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001518.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001519.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001520.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001521.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001522.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001523.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001524.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001525.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001526.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001527.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001528.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001529.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001530.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001531.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001532.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001533.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001534.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001535.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001536.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001537.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001538.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001539.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001540.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001541.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001542.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001543.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001544.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001545.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001546.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001547.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001548.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001549.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001550.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001551.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001552.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001553.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001554.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001555.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001556.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001557.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001558.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001559.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001560.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001561.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001562.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001563.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001564.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001565.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001566.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001567.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001568.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001569.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001570.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001571.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001572.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001573.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001574.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001575.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001576.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001577.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001578.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001579.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001580.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001581.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001582.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001583.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001584.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001585.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001586.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001587.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001588.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001589.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001590.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001591.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001592.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001593.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001594.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001595.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001596.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001597.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001598.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001599.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001600.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001601.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001602.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001603.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001604.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001605.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001606.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001607.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001608.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001609.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001610.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001611.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001612.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001613.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001614.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001615.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001616.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001617.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001618.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001619.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001620.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001621.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001622.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001623.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001624.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001625.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001626.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001627.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001628.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001629.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001630.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001631.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001632.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001633.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001634.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001635.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001636.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001637.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001638.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001639.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001640.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001641.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001642.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001643.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001644.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001645.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001646.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001647.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001648.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001649.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001650.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001651.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001652.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001653.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001654.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001655.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001656.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001657.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001658.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001659.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001660.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001661.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001662.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001663.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001664.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001665.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001666.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001667.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001668.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001669.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001670.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001671.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001672.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001673.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001674.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001675.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001676.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001677.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001678.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001679.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001680.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001681.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001682.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001683.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001684.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001685.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001686.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001687.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001688.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001689.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001690.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001691.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001692.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001693.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001694.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001695.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001696.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001697.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001698.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001699.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001700.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001701.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001702.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001703.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001704.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001705.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001706.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001707.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001708.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001709.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001710.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001711.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001712.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001713.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001714.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001715.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001716.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001717.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001718.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001719.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001720.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001721.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001722.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001723.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001724.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001725.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001726.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001727.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001728.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001729.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001730.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001731.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001732.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001733.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001734.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001735.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001736.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001737.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001738.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001739.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001740.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001741.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001742.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001743.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001744.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001745.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001746.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001747.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001748.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001749.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001750.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001751.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001752.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001753.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001754.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001755.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001756.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001757.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001758.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001759.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001760.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001761.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001762.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001763.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001764.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001765.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001766.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001767.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001768.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001769.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001770.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001771.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001772.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001773.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001774.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001775.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001776.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001777.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001778.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001779.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001780.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001781.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001782.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001783.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001784.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001785.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001786.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001787.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001788.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001789.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001790.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001791.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001792.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001793.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001794.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001795.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001796.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001797.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001798.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001799.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001800.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001801.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001802.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001803.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001804.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001805.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001806.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001807.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001808.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001809.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001810.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001811.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001812.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001813.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001814.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001815.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001816.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001817.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001818.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001819.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001820.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001821.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001822.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001823.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001824.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001825.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001826.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001827.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001828.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001829.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001830.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001831.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001832.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001833.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001834.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001835.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001836.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001837.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001838.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001839.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001840.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001841.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001842.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001843.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001844.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001845.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001846.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001847.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001848.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001849.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001850.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001851.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001852.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001853.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001854.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001855.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001856.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001857.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001858.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001859.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001860.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001861.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001862.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001863.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001864.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001865.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001866.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001867.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001868.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001869.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001870.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001871.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001872.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001873.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001874.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001875.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001876.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001877.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001878.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001879.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001880.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001881.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001882.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001883.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001884.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001885.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001886.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001887.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001888.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001889.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001890.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001891.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001892.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001893.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001894.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001895.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001896.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001897.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001898.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001899.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001900.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001901.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001902.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001903.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001904.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001905.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001906.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001907.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001908.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001909.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001910.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001911.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001912.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001913.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001914.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001915.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001916.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001917.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001918.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001919.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001920.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001921.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001922.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001923.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001924.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001925.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001926.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001927.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001928.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001929.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001930.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001931.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001932.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001933.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001934.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001935.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001936.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001937.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001938.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001939.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001940.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001941.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001942.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001943.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001944.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001945.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001946.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001947.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001948.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001949.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001950.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001951.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001952.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001953.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001954.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001955.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001956.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001957.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001958.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001959.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001960.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001961.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001962.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001963.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001964.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001965.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001966.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001967.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001968.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001969.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001970.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001971.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001972.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001973.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001974.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001975.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001976.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001977.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001978.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001979.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001980.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001981.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001982.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001983.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001984.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001985.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001986.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001987.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001988.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001989.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001990.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001991.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001992.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001993.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001994.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001995.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001996.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001997.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001998.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_001999.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002000.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002001.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002002.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002003.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002004.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002005.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002006.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002007.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002008.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002009.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002010.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002011.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002012.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002013.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002014.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002015.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002016.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002017.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002018.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002019.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002020.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002021.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002022.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002023.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002024.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002025.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002026.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002027.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002028.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002029.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002030.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002031.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002032.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002033.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002034.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002035.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002036.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002037.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002038.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002039.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002040.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002041.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002042.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002043.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002044.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002045.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002046.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002047.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002048.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002049.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002050.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002051.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002052.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002053.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002054.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002055.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002056.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002057.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002058.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002059.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002060.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002061.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002062.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002063.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002064.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002065.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002066.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002067.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002068.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002069.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002070.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002071.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002072.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002073.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002074.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002075.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002076.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002077.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002078.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002079.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002080.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002081.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002082.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002083.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002084.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002085.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002086.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002087.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002088.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002089.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002090.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002091.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002092.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002093.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002094.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002095.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002096.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002097.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002098.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002099.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002100.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002101.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002102.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002103.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002104.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002105.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002106.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002107.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002108.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002109.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002110.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002111.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002112.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002113.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002114.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002115.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002116.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002117.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002118.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002119.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002120.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002121.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002122.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002123.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002124.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002125.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002126.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002127.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002128.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002129.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002130.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002131.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002132.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002133.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002134.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002135.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002136.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002137.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002138.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002139.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002140.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002141.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002142.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002143.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002144.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002145.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002146.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002147.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002148.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002149.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002150.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002151.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002152.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002153.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002154.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002155.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002156.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002157.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002158.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002159.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002160.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002161.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002162.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002163.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002164.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002165.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002166.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002167.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002168.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002169.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002170.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002171.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002172.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002173.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002174.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002175.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002176.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002177.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002178.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002179.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002180.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002181.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002182.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002183.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002184.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002185.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002186.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002187.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002188.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002189.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002190.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002191.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002192.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002193.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002194.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002195.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002196.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002197.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002198.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002199.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002200.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002201.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002202.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002203.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002204.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002205.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002206.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002207.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002208.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002209.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002210.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002211.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002212.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002213.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002214.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002215.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002216.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002217.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002218.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002219.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002220.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002221.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002222.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002223.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002224.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002225.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002226.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002227.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002228.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002229.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002230.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002231.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002232.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002233.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002234.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002235.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002236.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002237.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002238.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002239.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002240.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002241.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002242.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002243.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002244.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002245.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002246.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002247.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002248.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002249.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002250.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002251.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002252.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002253.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002254.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002255.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002256.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002257.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002258.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002259.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002260.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002261.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002262.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002263.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002264.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002265.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002266.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002267.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002268.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002269.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002270.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002271.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002272.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002273.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002274.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002275.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002276.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002277.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002278.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002279.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002280.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002281.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002282.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002283.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002284.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002285.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002286.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002287.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002288.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002289.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002290.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002291.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002292.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002293.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002294.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002295.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002296.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002297.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002298.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002299.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002300.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002301.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002302.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002303.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002304.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002305.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002306.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002307.zarr",
+      "rows": 8192
+    },
+    {
+      "path": "shard_002308.zarr",
+      "rows": 3348
+    }
+  ],
+  "started_utc": "2026-09-02T19:35:15.022368+00:00",
+  "temp_requested": 0.0005,
+  "tool": "scripts/derive_corpus_targets.py",
+  "value_blend": {
+    "baked_into_rows": false,
+    "note": "the row carries the two components; the mixing weights are the trainer's, exactly as on data/lc0_rows"
+  },
+  "value_channels": {
+    "categorical_target": "ABSENT \u2014 outcome-derived, and wdl_target carries the outcome",
+    "moves_left": "ABSENT \u2014 a corpus row does not know its game's length",
+    "search_wdl": "cp_to_wdl_array of the SCHEME's best-move value: Stockfish's searched root value, side-to-move POV. \u2691 NOT our MCTS's value, which is what this column means on production shards",
+    "sf_wdl": "ABSENT \u2014 deliberately. lc0_control_train.py's launch guard 1 (assert_pid_cannot_reassert_sf_wdl) refuses any config with sf_wdl_frac > 0 regardless of what the shards carry, so a value written here could never reach a loss on this rig",
+    "wdl_target": "the corpus row's exact game result, already stored from that row's own side-to-move seat (result_from_pov). 0=W/1=D/2=L"
+  },
+  "value_scheme": {
+    "construction": "Q_t \u2014 the searched root value, unchanged (V0)",
+    "frozen_by": "docs/experiment_ledger.md \u2014 2026-08-31 PREREG VALUE-TARGET ROUND and its two same-day amendments",
+    "grouped_by_game": false,
+    "name": "search",
+    "q_definition": "cp_to_wdl_array of the --scheme's best-move value: the SAME vector the search arm writes, so V0/A/B/C differ only in the retrospect",
+    "z_definition": "one-hot of the row's own `result`, which result_from_pov already stored in that row's seat \u2014 never rotated again"
+  }
+}

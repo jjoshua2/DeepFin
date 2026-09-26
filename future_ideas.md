@@ -3,6 +3,10 @@
 > procedure. Use [project guidance](CLAUDE.md), current source/configuration and
 > [experiment records](docs/experiments/README.md) to establish what applies.
 
+Current bootstrap value-supervision research is tracked in the dated
+[SF-anchored value record](docs/experiments/2026-09-08-sf-anchored-value-bootstrap.md).
+The proposals below retain their historical scope.
+
 # Future ideas
 This file is for longer-term roadmap items that are intentionally out-of-scope for the minimal “working end-to-end” pipeline.
 

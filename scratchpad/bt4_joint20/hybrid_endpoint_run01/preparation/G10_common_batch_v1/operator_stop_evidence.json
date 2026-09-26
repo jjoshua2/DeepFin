@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "observed_unix": 1788827973.7703032,
+  "reason": "Actual multiprocessing result-handler thread died deserializing CorpusIntegrityError; parent remains alive but cannot complete normally. Stop invalid batch, preserve all inputs/partials; original worker error unresolved.",
+  "log": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.derive.log",
+  "log_sha256": "3108e2b065577462ba5d7e78ee8a0da0ee6890482f01193130442e37c4267cbf",
+  "owned_timeout_pid": 271644,
+  "observed_derive_pid": 271668,
+  "action": "Existing STOP marker; coordinator handles owned process-group cleanup."
+}

@@ -1,0 +1,61 @@
+{
+  "pid": 281551,
+  "argv": [
+    "/usr/bin/time",
+    "-o",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.derive.time.json",
+    "-f",
+    "{\"wall_seconds\":%e,\"user_seconds\":%U,\"system_seconds\":%S,\"max_rss_kib\":%M,\"filesystem_inputs\":%I,\"filesystem_outputs\":%O,\"exit_code\":%x}",
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/tmp/deepfin-g10-common-v3-tools/scripts/derive_corpus_targets.py",
+    "--corpus",
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+    "--out",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/derived",
+    "--limit",
+    "265528",
+    "--max-policy-support-misses",
+    "12",
+    "--scheme",
+    "uniform-d9",
+    "--policy-observation",
+    "phase0",
+    "--value-observation",
+    "latest-phase",
+    "--value-scheme",
+    "search",
+    "--temp",
+    "0.0005",
+    "--floor",
+    "0",
+    "--seed",
+    "0",
+    "--rows-per-shard",
+    "8192",
+    "--workers",
+    "2",
+    "--row-provenance"
+  ],
+  "start_unix": 1788831758.2054768,
+  "end_unix": 1788832270.3447351,
+  "exit_code": 0,
+  "resources": {
+    "wall_seconds": 511.2,
+    "user_seconds": 841.21,
+    "system_seconds": 35.27,
+    "max_rss_kib": 867544,
+    "filesystem_inputs": 25896,
+    "filesystem_outputs": 720776,
+    "exit_code": 0
+  },
+  "observed_owned_descendants": {
+    "281552": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python /tmp/deepfin-g10-common-v3-tools/scripts/derive_corpus_targets.py --corpus /home/josh/projects/chess/data/nnue_bootstrap/run06_g10 --out /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/derived --limit 265528 --max-policy-support-misses 12 --scheme uniform-d9 --policy-observation phase0 --value-observation latest-phase --value-scheme search --temp 0.0005 --floor 0 --seed 0 --rows-per-shard 8192 --workers 2 --row-provenance ",
+    "281554": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python -c from multiprocessing.resource_tracker import main;main(6) ",
+    "281555": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=7, pipe_handle=13) --multiprocessing-fork ",
+    "281556": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=7, pipe_handle=15) --multiprocessing-fork "
+  },
+  "observed_spawn_worker_pids": [
+    281555,
+    281556
+  ]
+}

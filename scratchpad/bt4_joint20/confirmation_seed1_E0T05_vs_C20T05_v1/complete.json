@@ -1,0 +1,25 @@
+{
+  "games_sha256": "88d7c7a915ca6c9889f55237462862bacf0c6baae6373eca67d668276a3a69f6",
+  "gpu_seconds": 21237.378068275022,
+  "promotion": "NONE; apply the separately registered rule",
+  "readout_sha256": "3719bd291ca7a7a2625eca2075eac1eb2b5cd1906e978bf6fc7a59fe2be355f7",
+  "schedule_sha256": "6b4281eb68cf07404205166402011930497e251b6d69c3caa8a6d2651b0da334",
+  "training": {
+    "candidate": {
+      "batches": 36935,
+      "checkpoint_sha256": "bc9f029ef1874ae0aa613def4295331e1a894d1a23e12fb466ee3e9ef6bae740",
+      "physical_plan_sha256": "f7a13b63dc32ed29e16cac3352ad4b43640f260f1c4896fdeaf09e6e8b8c7b2d",
+      "rows": 18910484,
+      "seed": 1,
+      "summary_sha256": "c28d2067501b263368cf2699b5b6ec4ff5df01ed6afbedd37bc4422942c9a662"
+    },
+    "reference": {
+      "batches": 36935,
+      "checkpoint_sha256": "ef42d11276529178480a9d255315ee4bf07b2eb39a8516ecb0a7799d03392745",
+      "physical_plan_sha256": "1e8b32380b11f8cbbfe6adfa33bcba6ae9884a8edc1d6e5de33ab98a7faeb696",
+      "rows": 18910484,
+      "seed": 1,
+      "summary_sha256": "034f463d59f2b0a7263a29daf5a8c957e674d217a4a124c041753586f0fe56ae"
+    }
+  }
+}

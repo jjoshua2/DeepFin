@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "created_utc": "2026-09-07T21:27:47.067211+00:00",
+  "status": "AUTHOR_CHECKS_PASS_NOT_MATERIALIZED",
+  "base_commit": "75b955acebd709e5859cd311af819c6228c4f18c",
+  "worktree": "/tmp/deepfin-bt4-hybrid-tools",
+  "branch": "research/bt4-hybrid-screen-tools",
+  "owned_files": {
+    "scripts/bt4_policy_mix.py": {
+      "sha256": "c897fae3c6455e896f078c133e9d3a98b8eb9d86038369ccf8bcf5faf5f3759d",
+      "bytes": 105620
+    },
+    "tests/test_bt4_policy_mix.py": {
+      "sha256": "370d740ae2f8bd9c7a4cbc5a2a287e9163563673a3e241aab6444a310eda079f",
+      "bytes": 55002
+    }
+  },
+  "implementation": {
+    "kind": "c20-global",
+    "algorithm": "stored-c20t05-then-global-bt4-v1",
+    "formula": "0.8*legal_normalize(actual stored C20T05)+0.2*legal_normalize(BT4^2)",
+    "fixed_recipe": {
+      "alpha": 0.2,
+      "bt4_temperature": 0.5,
+      "sf_rank_cap": 3,
+      "sf_cp_window": 20.0
+    },
+    "source_shards": "original SF only",
+    "required_parent_pins": [
+      "expected_c20_summary_sha256",
+      "expected_c20_mix_sha256"
+    ],
+    "parent_checks": [
+      "pinned derive and mix receipts; exact inherited original-SF derive summary",
+      "fixed C20T05 recipe, source, raw BT4, rank summary lineage",
+      "exact shard names/order and array layout",
+      "all non-policy arrays equal original SF per chunk",
+      "actual float16 C policy equals reconstructed C20T05 per chunk",
+      "parent summary provenance unchanged at publication"
+    ],
+    "audit": "descriptive SF audit; same reconstructed float16 C intermediate; T1 diagnostic holds C parent fixed"
+  },
+  "checks": [
+    {
+      "name": "full focused mixer suite",
+      "result": "PASS",
+      "tests": 69,
+      "command": "CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 nice -n 19 taskset -c 0,1 /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python -m pytest tests/test_bt4_policy_mix.py -q --tb=short --maxfail=2",
+      "note": "Followed by test-only np.asarray typing normalization; unchanged implementation."
+    },
+    {
+      "name": "final actual CLI roundtrip test",
+      "result": "PASS",
+      "tests": 1,
+      "test": "test_h20_cli_uses_actual_stored_parent_and_preserves_transitive_provenance"
+    },
+    {
+      "name": "scoped basedpyright",
+      "result": "PASS",
+      "errors": 0,
+      "warnings": 0,
+      "notes": 0,
+      "config": "/tmp/bt4-h20-mixer-types.json"
+    },
+    {
+      "name": "ruff owned files",
+      "result": "PASS"
+    },
+    {
+      "name": "git diff --check",
+      "result": "PASS"
+    },
+    {
+      "name": "actual C20 parent metadata admission",
+      "result": "PASS",
+      "rows": 18910484,
+      "shards": 2309,
+      "derive_sha256": "fc6a33b4f75b154ae2945240d4169b40685618ff0082cc759914a0c4f5b6e8a5",
+      "mix_sha256": "5bf8502a12af0b9ce938a39ddfd9d95df4bfb2b1a0f80292d80d04109cce7100",
+      "scope": "Summaries plus shard-name enumeration only; no actual payload scan."
+    }
+  ],
+  "test_coverage": [
+    "literal actual-stored-parent composition roundtrip and transitive provenance",
+    "wrong summary pin/recipe/inherited derive/source sidecar/rank lineage fail before copy",
+    "changed parent policy/non-policy/array inventory/raw sidecar source identity/rank payload fail without publication",
+    "invalid H20 knobs/missing parent/non-descriptive admission rejected"
+  ],
+  "runtime": {
+    "python": "qualified 3.13 /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "gpu_hidden": true,
+    "numeric_threads": 2,
+    "cpu_affinity": "0,1",
+    "nice": 19,
+    "native_reuse": "Existing ignored native binaries reused after entire chess_anti_engine Git source equivalence; no builds or live checkout edits."
+  },
+  "limitations": [
+    "No real corpus materialization, training, inference, or full corpus payload scan.",
+    "Actual parent payload/formula validation will run in the existing chunkwise materialization pass.",
+    "Outside-C agreement with G20 is only within normalization and float16 storage tolerance, not byte identity.",
+    "Independent review pending; no commit or launch.",
+    "Only H20 is selected for the next screen; B100/G50 are future options, not a mandatory queue."
+  ]
+}

@@ -1,0 +1,150 @@
+{
+  "status": "PASS_REAL_SAVED_G10_VALUE_PILOT_NOT_CORPUS_ADMISSION",
+  "plan_sha256": "40f302fcd03bd8964dbfffecdc58eff9039251cce91b31ad21e613a87754f7ed",
+  "script_sha256": "c6380b5b12058761f82817ac809c1600b27a90543e8ec99c62faa1a67131bf27",
+  "rows": 128,
+  "selector_counts": {
+    "selected_d10": 102,
+    "selected_d12": 26
+  },
+  "row_readings_sha256": "8e9409e1476ce83b85f2fee97500b0fb22ec39be497ce8c6f5d91fdbfe490255",
+  "started_unix": 1789140575.572911,
+  "ended_unix": 1789140578.8430057,
+  "max_rss_kib": 313052,
+  "limitations": [
+    "This is a128-row/3-sourcequalifiedgame purposive sample, not corpus eligibility/coverage or playingstrength evidence.",
+    "API/real writer/replayreader qualification only; no neuralforward/loss/training orinference.",
+    "Outputs remain explicitly incomplete diagnostic sample shards. No derive_targets_summary.json/finalization/admissionreceipt isproduced. Commit sampledsubset metadata (64rows/source) is labeled as such and is not claimed originalrawcorpusinventory.",
+    "Only bankedpayload/source-provenance isconsumed; original compressedshard hashes arehistoricalpins, not newly reverified rawfiles.",
+    "No synthesized fallbackcase orsinglemove copied into this realpilot; only naturally existingstrata count. Existingfocusedtests cover absentstrata."
+  ],
+  "source_results": [
+    {
+      "source_id": "run06_g10",
+      "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+      "source_config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+      "rows": 64,
+      "changed_stored_wdl_rows": 53,
+      "selector_counts": {
+        "selected_d10": 49,
+        "selected_d12": 15
+      },
+      "unchanged_arrays": [
+        "game_id",
+        "has_game_id",
+        "has_is_network_turn",
+        "has_is_selfplay",
+        "has_legal_mask",
+        "has_ply_index",
+        "has_policy",
+        "has_search_wdl",
+        "is_network_turn",
+        "is_selfplay",
+        "legal_mask",
+        "ply_index",
+        "policy_target",
+        "priority",
+        "wdl_target",
+        "x"
+      ],
+      "control_written": {
+        "path": "shard_000000.zarr",
+        "rows": 64,
+        "row_provenance": {
+          "schema": 1,
+          "path": "row_provenance.npz",
+          "rows": 64,
+          "record_bytes": 56,
+          "sha256": "614127693884e2f62b7c4c33afc36c12f8181d5b74a549453d99f86b8379c741"
+        }
+      },
+      "adaptive_written": {
+        "path": "shard_000000.zarr",
+        "rows": 64,
+        "row_provenance": {
+          "schema": 1,
+          "path": "row_provenance.npz",
+          "rows": 64,
+          "record_bytes": 56,
+          "sha256": "614127693884e2f62b7c4c33afc36c12f8181d5b74a549453d99f86b8379c741"
+        }
+      }
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+      "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+      "rows": 64,
+      "changed_stored_wdl_rows": 57,
+      "selector_counts": {
+        "selected_d12": 11,
+        "selected_d10": 53
+      },
+      "unchanged_arrays": [
+        "game_id",
+        "has_game_id",
+        "has_is_network_turn",
+        "has_is_selfplay",
+        "has_legal_mask",
+        "has_ply_index",
+        "has_policy",
+        "has_search_wdl",
+        "is_network_turn",
+        "is_selfplay",
+        "legal_mask",
+        "ply_index",
+        "policy_target",
+        "priority",
+        "wdl_target",
+        "x"
+      ],
+      "control_written": {
+        "path": "shard_000000.zarr",
+        "rows": 64,
+        "row_provenance": {
+          "schema": 1,
+          "path": "row_provenance.npz",
+          "rows": 64,
+          "record_bytes": 56,
+          "sha256": "91dbdc91fcba51356c5a9212a4a67ae92f75aba0067b1cd8407c7e012aef5d8a"
+        }
+      },
+      "adaptive_written": {
+        "path": "shard_000000.zarr",
+        "rows": 64,
+        "row_provenance": {
+          "schema": 1,
+          "path": "row_provenance.npz",
+          "rows": 64,
+          "record_bytes": 56,
+          "sha256": "91dbdc91fcba51356c5a9212a4a67ae92f75aba0067b1cd8407c7e012aef5d8a"
+        }
+      }
+    }
+  ],
+  "source_receipt": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_adaptive_value_pilot_v3/execution/completed.json",
+    "sha256": "db05524a2bb7bb3efa312c75a3c7d395e0034546eaa63f6f016aaf244e93737c"
+  },
+  "parent_terminal": {
+    "session_id": 43345,
+    "exit_code": 0
+  },
+  "failed_attempts": [
+    {
+      "version": 1,
+      "session_id": 72652,
+      "exit_code": 1,
+      "cause": "Harness passed loader tuple instead of arrays dictionary."
+    },
+    {
+      "version": 2,
+      "session_id": 29420,
+      "exit_code": 1,
+      "cause": "Parallel Blosc reordered identical compressed logical blocks; decoded bytes unchanged.",
+      "diagnosis_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_adaptive_value_pilot_v3/v2_failure_diagnosis.json",
+      "diagnosis_sha256": "8bc209ebe399c51d6ce6458929bf649247ce796fe483c92db851949e99f3da08"
+    }
+  ],
+  "review": "Parent reviewed pilot implementation and completed receipt. Pilot author separately checked parent-authored publication evidence; this was editorial review, not independent pilot validation."
+}

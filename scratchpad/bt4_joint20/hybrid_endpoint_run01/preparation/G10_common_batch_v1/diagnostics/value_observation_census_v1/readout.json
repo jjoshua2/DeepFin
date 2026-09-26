@@ -1,0 +1,1632 @@
+{
+  "schema": 1,
+  "status": "COMPLETE_BOUNDED_VALUE_OBSERVATION_CENSUS",
+  "preregistration_sha256": "4857d861848b3fffc88fad86318bf8f94a13245a84a5567e34bf3449c8b91bf0",
+  "script_sha256": "009bda300867c154098cfbcfe51131db9641178c1a42f1122fb2eac64a7b44e9",
+  "counts": {
+    "rows": 531412,
+    "result_and_phase0_policy_valid_rows": 528545,
+    "later_d9_blocks": 678343,
+    "later_d9_complete_false_blocks": 0,
+    "later_d9_not_full_rank_roster_blocks": 0,
+    "later_d9_missing_full_legal_roster_blocks": 598607,
+    "blocks_duplicate_conflicting": 5,
+    "rows_selected_best_conflicting_duplicate": 4,
+    "rows_consumed_duplicate_conflicting": 5,
+    "rows_consumed_value_issue_union": 5,
+    "rows_any_later_duplicate_conflicting": 5
+  },
+  "sources": [
+    {
+      "source_id": "run06_g10",
+      "counts": {
+        "rows": 265528,
+        "result_and_phase0_policy_valid_rows": 263916,
+        "later_d9_blocks": 338665,
+        "later_d9_complete_false_blocks": 0,
+        "later_d9_not_full_rank_roster_blocks": 0,
+        "later_d9_missing_full_legal_roster_blocks": 298965,
+        "blocks_duplicate_conflicting": 2,
+        "rows_selected_best_conflicting_duplicate": 2,
+        "rows_consumed_duplicate_conflicting": 2,
+        "rows_consumed_value_issue_union": 2,
+        "rows_any_later_duplicate_conflicting": 2
+      },
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00000.jsonl.zst",
+          "sha256": "3c93d2d127bc6d11db9eb31425e0c795c96b417106d737632ef4b689569ae17d",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9783581,
+            "st_size": 21154455,
+            "st_mtime_ns": 1788379921244293574,
+            "st_ctime_ns": 1788379921244293574
+          },
+          "counts": {
+            "rows": 8236,
+            "result_and_phase0_policy_valid_rows": 8236,
+            "later_d9_blocks": 10415,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9193
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00001.jsonl.zst",
+          "sha256": "420a0d80c420d4da1a116ac48a2b55e620f9f753859a6374c5fea99c3835412e",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 10685287,
+            "st_size": 20166593,
+            "st_mtime_ns": 1788382176471061836,
+            "st_ctime_ns": 1788382176471061836
+          },
+          "counts": {
+            "rows": 8196,
+            "result_and_phase0_policy_valid_rows": 8193,
+            "later_d9_blocks": 10681,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9238
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00002.jsonl.zst",
+          "sha256": "df010183299c15af5a95856702cf43afbcefca7a19621318eef3d66d4a43529c",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11759586,
+            "st_size": 21067305,
+            "st_mtime_ns": 1788383924667225581,
+            "st_ctime_ns": 1788383924667225581
+          },
+          "counts": {
+            "rows": 8274,
+            "result_and_phase0_policy_valid_rows": 7874,
+            "later_d9_blocks": 10621,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9298
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00003.jsonl.zst",
+          "sha256": "23736c5e4de449fc35a3843d082ad557e17bf69be0e8ac46e8069129cda6e6f8",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9753997,
+            "st_size": 20893615,
+            "st_mtime_ns": 1788385545138790355,
+            "st_ctime_ns": 1788385545138790355
+          },
+          "counts": {
+            "rows": 8232,
+            "result_and_phase0_policy_valid_rows": 8232,
+            "later_d9_blocks": 10593,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9393
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00004.jsonl.zst",
+          "sha256": "953bcdebeba67c4e7d67a664f46d22752a6d46a48a087c187fad7e2885083247",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9755421,
+            "st_size": 21116397,
+            "st_mtime_ns": 1788387084726377187,
+            "st_ctime_ns": 1788387084726377187
+          },
+          "counts": {
+            "rows": 8207,
+            "result_and_phase0_policy_valid_rows": 7807,
+            "later_d9_blocks": 10319,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9156
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00005.jsonl.zst",
+          "sha256": "1bfd7accaf804499574c1ab9d4ae95b6ae2bba5feb219d3075f404a7746563f0",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9754182,
+            "st_size": 21188923,
+            "st_mtime_ns": 1788388663221954585,
+            "st_ctime_ns": 1788388663221954585
+          },
+          "counts": {
+            "rows": 8224,
+            "result_and_phase0_policy_valid_rows": 8224,
+            "later_d9_blocks": 10356,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9172
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00006.jsonl.zst",
+          "sha256": "facbb26b99081b4914e21d2c36b96dfc118663cc16b26c13f9e0620d741d529b",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9754236,
+            "st_size": 21151183,
+            "st_mtime_ns": 1788390168925549313,
+            "st_ctime_ns": 1788390168925549313
+          },
+          "counts": {
+            "rows": 8226,
+            "result_and_phase0_policy_valid_rows": 8226,
+            "later_d9_blocks": 10414,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9254
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00007.jsonl.zst",
+          "sha256": "8e5e0b6a6fa1c5c86d46193cfcb3e15e3fa81f9852828e76c69ef34845148a0f",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9755527,
+            "st_size": 21056116,
+            "st_mtime_ns": 1788391886605088604,
+            "st_ctime_ns": 1788391886605088604
+          },
+          "counts": {
+            "rows": 8311,
+            "result_and_phase0_policy_valid_rows": 8311,
+            "later_d9_blocks": 10756,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9776
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00008.jsonl.zst",
+          "sha256": "5bc84fb96ac31b2b88befd27bb49504b713dbf55c980908dd1990ad2e312362a",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9755545,
+            "st_size": 21070703,
+            "st_mtime_ns": 1788393362688694282,
+            "st_ctime_ns": 1788393362688694282
+          },
+          "counts": {
+            "rows": 8213,
+            "result_and_phase0_policy_valid_rows": 8213,
+            "later_d9_blocks": 10469,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9275
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00009.jsonl.zst",
+          "sha256": "603596d09e45ff973152e5a703b60b38e229a0f06e92797f35b70eb3dc24dcf4",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9758176,
+            "st_size": 21541568,
+            "st_mtime_ns": 1788394711276330728,
+            "st_ctime_ns": 1788394711276330728
+          },
+          "counts": {
+            "rows": 8275,
+            "result_and_phase0_policy_valid_rows": 8275,
+            "later_d9_blocks": 10525,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9321
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00010.jsonl.zst",
+          "sha256": "de75744f6b4313abb0c970362073b416ccc512dd897f84d949aaf77211360431",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9755570,
+            "st_size": 21386458,
+            "st_mtime_ns": 1788396288207909136,
+            "st_ctime_ns": 1788396288207909136
+          },
+          "counts": {
+            "rows": 8331,
+            "result_and_phase0_policy_valid_rows": 8331,
+            "later_d9_blocks": 10546,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9315
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00011.jsonl.zst",
+          "sha256": "ec2e94e5915bf194fa3314e8a006f325d132a3ddac21f09412f7892c59f20b3e",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9755587,
+            "st_size": 20975501,
+            "st_mtime_ns": 1788397881007480484,
+            "st_ctime_ns": 1788397881007480484
+          },
+          "counts": {
+            "rows": 8250,
+            "result_and_phase0_policy_valid_rows": 7850,
+            "later_d9_blocks": 10600,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9214
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00012.jsonl.zst",
+          "sha256": "1389d74dc06ed3865ce7cc6b0ee18865938313fb463d0f240432aec149ead032",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9755599,
+            "st_size": 21487173,
+            "st_mtime_ns": 1788399543603034568,
+            "st_ctime_ns": 1788399543603034568
+          },
+          "counts": {
+            "rows": 8555,
+            "result_and_phase0_policy_valid_rows": 8555,
+            "later_d9_blocks": 11035,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9528
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00013.jsonl.zst",
+          "sha256": "ab68671484355083de2a9220b03af8737dbebf9ab579751c9a456a1a85da9ccb",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9755613,
+            "st_size": 22035065,
+            "st_mtime_ns": 1788401105126615363,
+            "st_ctime_ns": 1788401105126615363
+          },
+          "counts": {
+            "rows": 8421,
+            "result_and_phase0_policy_valid_rows": 8421,
+            "later_d9_blocks": 10715,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9631
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00014.jsonl.zst",
+          "sha256": "aee6024aa328e1ed6bac02c615e32c3e220fb26eea873d5cefb675d646be6f2f",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9755626,
+            "st_size": 22101885,
+            "st_mtime_ns": 1788402564862223227,
+            "st_ctime_ns": 1788402564862223227
+          },
+          "counts": {
+            "rows": 8406,
+            "result_and_phase0_policy_valid_rows": 8406,
+            "later_d9_blocks": 10409,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9449
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00015.jsonl.zst",
+          "sha256": "e582be4bd24d1967f44b606314f4ae58fb086801dcde55956298eb43524105c4",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9755635,
+            "st_size": 21521701,
+            "st_mtime_ns": 1788404116977808073,
+            "st_ctime_ns": 1788404116977808073
+          },
+          "counts": {
+            "rows": 8279,
+            "result_and_phase0_policy_valid_rows": 8278,
+            "later_d9_blocks": 10441,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9353
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00016.jsonl.zst",
+          "sha256": "cc4b7825dfd4a8c0564e12b99e69dbdea2b31a31225466b533559248fbf4fe7b",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9755705,
+            "st_size": 21026965,
+            "st_mtime_ns": 1788405709081382034,
+            "st_ctime_ns": 1788405709081382034
+          },
+          "counts": {
+            "rows": 8279,
+            "result_and_phase0_policy_valid_rows": 8279,
+            "later_d9_blocks": 10396,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9006
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00017.jsonl.zst",
+          "sha256": "b270fde17f041c35a8e7ae61d0ad20f082bfaefdc380686c825a26010e478ed3",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 4656484,
+            "st_size": 20539779,
+            "st_mtime_ns": 1788407443592916194,
+            "st_ctime_ns": 1788407443592916194
+          },
+          "counts": {
+            "rows": 8280,
+            "result_and_phase0_policy_valid_rows": 8280,
+            "later_d9_blocks": 10769,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9157
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00018.jsonl.zst",
+          "sha256": "76182b1926c81e1cca51a7e217b5a967ea54943b5c28bef6c313177a17dac265",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 6440033,
+            "st_size": 21237230,
+            "st_mtime_ns": 1788409275736426797,
+            "st_ctime_ns": 1788409275736426797
+          },
+          "counts": {
+            "rows": 8276,
+            "result_and_phase0_policy_valid_rows": 8276,
+            "later_d9_blocks": 10503,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9311
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00019.jsonl.zst",
+          "sha256": "011248860932a11db432084bd8c5269707f1493a490489d24a32f7e9f1265510",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9838574,
+            "st_size": 21333651,
+            "st_mtime_ns": 1788411015735958095,
+            "st_ctime_ns": 1788411015735958095
+          },
+          "counts": {
+            "rows": 8345,
+            "result_and_phase0_policy_valid_rows": 8345,
+            "later_d9_blocks": 10715,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9543
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00020.jsonl.zst",
+          "sha256": "d080fd83176ebe10be232c52f4ca1d82f7c4639a7e302285590587b5fc4b8287",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9839084,
+            "st_size": 21323755,
+            "st_mtime_ns": 1788412554563545745,
+            "st_ctime_ns": 1788412554563545745
+          },
+          "counts": {
+            "rows": 8319,
+            "result_and_phase0_policy_valid_rows": 8319,
+            "later_d9_blocks": 10506,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9312
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00021.jsonl.zst",
+          "sha256": "1e8efb69a0b5cfdf1573e38c5023609d805c0d4f83807910046a5f22c4978ba7",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9838784,
+            "st_size": 20504982,
+            "st_mtime_ns": 1788413985759163286,
+            "st_ctime_ns": 1788413985759163286
+          },
+          "counts": {
+            "rows": 8256,
+            "result_and_phase0_policy_valid_rows": 8256,
+            "later_d9_blocks": 10653,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9257
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00022.jsonl.zst",
+          "sha256": "60fafb9a310b28a1228d3f91087811956fa1b303017a0c34815212aa9ee1e1a0",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9852715,
+            "st_size": 20982182,
+            "st_mtime_ns": 1788415368942791842,
+            "st_ctime_ns": 1788415368942791842
+          },
+          "counts": {
+            "rows": 8232,
+            "result_and_phase0_policy_valid_rows": 8232,
+            "later_d9_blocks": 10533,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9241
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00023.jsonl.zst",
+          "sha256": "4e5b8f5dd575754f0f6fe0a88085332c6c07cf85da5ea9d42381611edf21d7e1",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9852760,
+            "st_size": 20960284,
+            "st_mtime_ns": 1788416912862376393,
+            "st_ctime_ns": 1788416912862376393
+          },
+          "counts": {
+            "rows": 8328,
+            "result_and_phase0_policy_valid_rows": 7927,
+            "later_d9_blocks": 10801,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9572
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00024.jsonl.zst",
+          "sha256": "481d476982c6f545710a02c2f468b3e50519b500296293591ca315d6ed9d1425",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9852727,
+            "st_size": 22042128,
+            "st_mtime_ns": 1788418326273997784,
+            "st_ctime_ns": 1788418326273997784
+          },
+          "counts": {
+            "rows": 8523,
+            "result_and_phase0_policy_valid_rows": 8522,
+            "later_d9_blocks": 10706,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9403,
+            "blocks_duplicate_conflicting": 1,
+            "rows_selected_best_conflicting_duplicate": 1,
+            "rows_consumed_duplicate_conflicting": 1,
+            "rows_consumed_value_issue_union": 1,
+            "rows_any_later_duplicate_conflicting": 1
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00025.jsonl.zst",
+          "sha256": "93b16f5bc05f4a9f197f2ad916ef98d864fb59f83a8a6ba808fcc594353da0b7",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9854283,
+            "st_size": 20970362,
+            "st_mtime_ns": 1788419883517579833,
+            "st_ctime_ns": 1788419883517579833
+          },
+          "counts": {
+            "rows": 8274,
+            "result_and_phase0_policy_valid_rows": 8274,
+            "later_d9_blocks": 10541,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9377
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00026.jsonl.zst",
+          "sha256": "1eea8b6e7d346a1fcf90f0aa1806c11a0cfd4b3c2a41a55072c8f85f5a05bd8d",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9854940,
+            "st_size": 21962137,
+            "st_mtime_ns": 1788421298897199786,
+            "st_ctime_ns": 1788421298897199786
+          },
+          "counts": {
+            "rows": 8384,
+            "result_and_phase0_policy_valid_rows": 8384,
+            "later_d9_blocks": 10719,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9509
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00027.jsonl.zst",
+          "sha256": "d0647e9e39e7f3e2640867b65eac2e66f9cf6223203d5f4787a1e338dd375f4e",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9682803,
+            "st_size": 21236501,
+            "st_mtime_ns": 1788422996528745767,
+            "st_ctime_ns": 1788422996528745767
+          },
+          "counts": {
+            "rows": 8212,
+            "result_and_phase0_policy_valid_rows": 8206,
+            "later_d9_blocks": 10511,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9531,
+            "blocks_duplicate_conflicting": 1,
+            "rows_selected_best_conflicting_duplicate": 1,
+            "rows_consumed_duplicate_conflicting": 1,
+            "rows_consumed_value_issue_union": 1,
+            "rows_any_later_duplicate_conflicting": 1
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00028.jsonl.zst",
+          "sha256": "19a29205f6c14d93e4ef5f7e86b9801ca197710dfa9407228b380d496e23747d",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9856811,
+            "st_size": 21264838,
+            "st_mtime_ns": 1788424443644357725,
+            "st_ctime_ns": 1788424443644357725
+          },
+          "counts": {
+            "rows": 8219,
+            "result_and_phase0_policy_valid_rows": 8219,
+            "later_d9_blocks": 10545,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9357
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00029.jsonl.zst",
+          "sha256": "9f733b6201f9507003ec31f993dee268ef2251d82dcef17a5aaf309de2f3e529",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9857151,
+            "st_size": 21431562,
+            "st_mtime_ns": 1788425900039964843,
+            "st_ctime_ns": 1788425900039964843
+          },
+          "counts": {
+            "rows": 8368,
+            "result_and_phase0_policy_valid_rows": 8368,
+            "later_d9_blocks": 10716,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9412
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00030.jsonl.zst",
+          "sha256": "24d763b7ef568c97f794008912ec0982084539077413af913fad230926978d20",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9853673,
+            "st_size": 20923772,
+            "st_mtime_ns": 1788427265143598918,
+            "st_ctime_ns": 1788427265143598918
+          },
+          "counts": {
+            "rows": 8271,
+            "result_and_phase0_policy_valid_rows": 8271,
+            "later_d9_blocks": 10567,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9129
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00031.jsonl.zst",
+          "sha256": "876be61a81b1f580b91ece091e5f5fc879660164198dd90767c212c0a8f7e266",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9757740,
+            "st_size": 21249754,
+            "st_mtime_ns": 1788428663319225058,
+            "st_ctime_ns": 1788428663319225058
+          },
+          "counts": {
+            "rows": 8326,
+            "result_and_phase0_policy_valid_rows": 8326,
+            "later_d9_blocks": 10589,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9282
+          }
+        }
+      ],
+      "examples": [
+        {
+          "source_id": "run06_g10",
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_shard": "w00-00024.jsonl.zst",
+          "source_row": 4392,
+          "worker_id": 0,
+          "game_id": 12444,
+          "ply": 108,
+          "input_key": "5eceed0255198e1afcddd64ddb5f339d",
+          "has_result": true,
+          "phase0_policy_valid": false,
+          "result_and_phase0_policy_valid": false,
+          "flags": [
+            "any_later_duplicate_conflicting",
+            "consumed_duplicate_conflicting",
+            "consumed_value_issue_union",
+            "selected_best_conflicting_duplicate"
+          ],
+          "anomalous_phases": [
+            {
+              "phase": 1,
+              "width": 8,
+              "complete": true,
+              "rank_ids": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8
+              ],
+              "duplicates": {
+                "f3g3": [
+                  -781.0,
+                  0.0
+                ],
+                "c4e5": [
+                  -820.0,
+                  0.0
+                ]
+              },
+              "illegal_extra": [],
+              "outside_searchmoves": [],
+              "nonfinite_moves": [],
+              "malformed_rank_ids": false,
+              "claimed_complete_rank_mismatch": false,
+              "duplicate_depth_blocks": false,
+              "consumed_moves": [
+                "a4b5",
+                "c4a5",
+                "c4e5",
+                "d8d7",
+                "d8e8",
+                "f3g3"
+              ],
+              "consumed_conflicting_duplicate_moves": [
+                "c4e5",
+                "f3g3"
+              ]
+            }
+          ]
+        },
+        {
+          "source_id": "run06_g10",
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_shard": "w00-00027.jsonl.zst",
+          "source_row": 3527,
+          "worker_id": 0,
+          "game_id": 13896,
+          "ply": 160,
+          "input_key": "67d60ba56fc920aac65cfe1a49a6ed97",
+          "has_result": true,
+          "phase0_policy_valid": false,
+          "result_and_phase0_policy_valid": false,
+          "flags": [
+            "any_later_duplicate_conflicting",
+            "consumed_duplicate_conflicting",
+            "consumed_value_issue_union",
+            "selected_best_conflicting_duplicate"
+          ],
+          "anomalous_phases": [
+            {
+              "phase": 1,
+              "width": 8,
+              "complete": true,
+              "rank_ids": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8
+              ],
+              "duplicates": {
+                "g7g8": [
+                  -660.0,
+                  0.0
+                ],
+                "g7g5": [
+                  -895.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              "illegal_extra": [],
+              "outside_searchmoves": [],
+              "nonfinite_moves": [],
+              "malformed_rank_ids": false,
+              "claimed_complete_rank_mismatch": false,
+              "duplicate_depth_blocks": false,
+              "consumed_moves": [
+                "b2a2",
+                "g7a7",
+                "g7g5",
+                "g7g6",
+                "g7g8"
+              ],
+              "consumed_conflicting_duplicate_moves": [
+                "g7g5",
+                "g7g8"
+              ]
+            }
+          ]
+        }
+      ],
+      "anomalies_sha256": "a346d5c2c79cfaa09d89f0bb95c486aa877a6794a494bd64fbecddf9b749d331",
+      "wall_seconds": 123.87826502200915,
+      "user_seconds": 121.574661,
+      "system_seconds": 1.6393339999999998,
+      "max_rss_kib": 23828
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "counts": {
+        "rows": 265884,
+        "result_and_phase0_policy_valid_rows": 264629,
+        "later_d9_blocks": 339678,
+        "later_d9_complete_false_blocks": 0,
+        "later_d9_not_full_rank_roster_blocks": 0,
+        "later_d9_missing_full_legal_roster_blocks": 299642,
+        "blocks_duplicate_conflicting": 3,
+        "rows_consumed_duplicate_conflicting": 3,
+        "rows_consumed_value_issue_union": 3,
+        "rows_any_later_duplicate_conflicting": 3,
+        "rows_selected_best_conflicting_duplicate": 2
+      },
+      "shards": [
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00000.jsonl.zst",
+          "sha256": "a499d2921043065b388778435efa2e2e63d3e206ab1310264b75dafa39d9dea0",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9748927,
+            "st_size": 20692331,
+            "st_mtime_ns": 1788472621199432022,
+            "st_ctime_ns": 1788472621199432022
+          },
+          "counts": {
+            "rows": 8243,
+            "result_and_phase0_policy_valid_rows": 8193,
+            "later_d9_blocks": 10535,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9317
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00001.jsonl.zst",
+          "sha256": "34ccb02762295ed292423123f7730a1f8e7ba70b921f19bb33c625a55b7538f3",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11059666,
+            "st_size": 21919438,
+            "st_mtime_ns": 1788474486494931156,
+            "st_ctime_ns": 1788474486494931156
+          },
+          "counts": {
+            "rows": 8354,
+            "result_and_phase0_policy_valid_rows": 8354,
+            "later_d9_blocks": 10449,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9299
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00002.jsonl.zst",
+          "sha256": "2405fbb18ebdc5614cf208773dc9ff225433561c07a78d91b5d53394a483c56c",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11059662,
+            "st_size": 21426334,
+            "st_mtime_ns": 1788476387883037463,
+            "st_ctime_ns": 1788476387883037463
+          },
+          "counts": {
+            "rows": 8241,
+            "result_and_phase0_policy_valid_rows": 8239,
+            "later_d9_blocks": 10385,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9353,
+            "blocks_duplicate_conflicting": 1,
+            "rows_consumed_duplicate_conflicting": 1,
+            "rows_consumed_value_issue_union": 1,
+            "rows_any_later_duplicate_conflicting": 1
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00003.jsonl.zst",
+          "sha256": "2666f2886066bf7ca30f11ff07ef4d5bfcc1bc67c9a4e8fabcf936c4b9c2aba3",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11060680,
+            "st_size": 21366085,
+            "st_mtime_ns": 1788478452417868929,
+            "st_ctime_ns": 1788478452417868929
+          },
+          "counts": {
+            "rows": 8405,
+            "result_and_phase0_policy_valid_rows": 8405,
+            "later_d9_blocks": 10810,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9332
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00004.jsonl.zst",
+          "sha256": "b5423648dbae1c2a49679c2c0a8042a3956cbd4acec33f747c649d5ba967f55d",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11060760,
+            "st_size": 20778596,
+            "st_mtime_ns": 1788480362041355985,
+            "st_ctime_ns": 1788480362041355985
+          },
+          "counts": {
+            "rows": 8202,
+            "result_and_phase0_policy_valid_rows": 8202,
+            "later_d9_blocks": 10601,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9454
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00005.jsonl.zst",
+          "sha256": "a89811567b5e03f1eec7ed345f06240044e5cf18e60a980ca43e5153257dc30f",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11062895,
+            "st_size": 20536391,
+            "st_mtime_ns": 1788482277800842174,
+            "st_ctime_ns": 1788482277800842174
+          },
+          "counts": {
+            "rows": 8220,
+            "result_and_phase0_policy_valid_rows": 7820,
+            "later_d9_blocks": 10512,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9021
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00006.jsonl.zst",
+          "sha256": "ef47930ee996b724c188e7a1b513a4b145621ab0fd900e3db1609150aa1977da",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11060813,
+            "st_size": 21344886,
+            "st_mtime_ns": 1788484285796302396,
+            "st_ctime_ns": 1788484285796302396
+          },
+          "counts": {
+            "rows": 8211,
+            "result_and_phase0_policy_valid_rows": 8211,
+            "later_d9_blocks": 10455,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9419
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00007.jsonl.zst",
+          "sha256": "1cbc9662743a994ddcb0fc2420785cf39db78ad44b2e99f6abb1f2f367c0787b",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11061811,
+            "st_size": 21267578,
+            "st_mtime_ns": 1788486190155790204,
+            "st_ctime_ns": 1788486190155790204
+          },
+          "counts": {
+            "rows": 8336,
+            "result_and_phase0_policy_valid_rows": 8336,
+            "later_d9_blocks": 10614,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9343
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00008.jsonl.zst",
+          "sha256": "ccd55d180a56d6dd7992670d01fd5aaa82225247a30888ed931a10424cfbf1ac",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11067327,
+            "st_size": 21300507,
+            "st_mtime_ns": 1788488436071189849,
+            "st_ctime_ns": 1788488436071189849
+          },
+          "counts": {
+            "rows": 8259,
+            "result_and_phase0_policy_valid_rows": 8259,
+            "later_d9_blocks": 10542,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9281
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00009.jsonl.zst",
+          "sha256": "3f212c77f5de2a6a098495c9eb92eeeb9dd772840c864581de2b0ffb86c9a4e9",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11073318,
+            "st_size": 20963252,
+            "st_mtime_ns": 1788490466766645077,
+            "st_ctime_ns": 1788490466766645077
+          },
+          "counts": {
+            "rows": 8276,
+            "result_and_phase0_policy_valid_rows": 8276,
+            "later_d9_blocks": 10667,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9260
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00010.jsonl.zst",
+          "sha256": "afe729d95c33cd6ea5d6fcfe1f768c685b21ee6d64ef2df5a41c4d583660b2c9",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11075285,
+            "st_size": 21427246,
+            "st_mtime_ns": 1788492468718112480,
+            "st_ctime_ns": 1788492468718112480
+          },
+          "counts": {
+            "rows": 8388,
+            "result_and_phase0_policy_valid_rows": 8388,
+            "later_d9_blocks": 10723,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9486
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00011.jsonl.zst",
+          "sha256": "b8027c3a582ecd9d2132fd74935d5b0b7467cecba7bfd6cab267cf837a7d66f0",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11069804,
+            "st_size": 21359947,
+            "st_mtime_ns": 1788494200813643263,
+            "st_ctime_ns": 1788494200813643263
+          },
+          "counts": {
+            "rows": 8252,
+            "result_and_phase0_policy_valid_rows": 8252,
+            "later_d9_blocks": 10477,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9277
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00012.jsonl.zst",
+          "sha256": "f2d8f839fbfb3edc7ae1a65bfd6bcd01cef2bc6bb857df6f9ee9f4212caffd02",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11086848,
+            "st_size": 20890347,
+            "st_mtime_ns": 1788495983553166073,
+            "st_ctime_ns": 1788495983553166073
+          },
+          "counts": {
+            "rows": 8202,
+            "result_and_phase0_policy_valid_rows": 8202,
+            "later_d9_blocks": 10454,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9199
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00013.jsonl.zst",
+          "sha256": "50b47fb65ee91f360a91eb1b399a532528acb147104a8b8fa393085748ef4b94",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11090718,
+            "st_size": 21478428,
+            "st_mtime_ns": 1788497703465645459,
+            "st_ctime_ns": 1788497703465645459
+          },
+          "counts": {
+            "rows": 8328,
+            "result_and_phase0_policy_valid_rows": 8328,
+            "later_d9_blocks": 10599,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9281
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00014.jsonl.zst",
+          "sha256": "bbd22441a26d2ab2ad4d26009b58274147afccc538c8961d53cfc81bff82210a",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11820791,
+            "st_size": 21149399,
+            "st_mtime_ns": 1788499606100193271,
+            "st_ctime_ns": 1788499606100193271
+          },
+          "counts": {
+            "rows": 8404,
+            "result_and_phase0_policy_valid_rows": 8404,
+            "later_d9_blocks": 10976,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9548
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00015.jsonl.zst",
+          "sha256": "5e9d3ea439037b3423fe72fb60991ff8990aaadc0496477bc364cae0d9cf8191",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11062932,
+            "st_size": 21568893,
+            "st_mtime_ns": 1788501478495691118,
+            "st_ctime_ns": 1788501478495691118
+          },
+          "counts": {
+            "rows": 8287,
+            "result_and_phase0_policy_valid_rows": 8287,
+            "later_d9_blocks": 10615,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9400
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00016.jsonl.zst",
+          "sha256": "e1d13246e65ba363be23cac199bf3f1084a69dd290b88576b3494c01420518f0",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11088053,
+            "st_size": 21535936,
+            "st_mtime_ns": 1788503268556674147,
+            "st_ctime_ns": 1788503268556674147
+          },
+          "counts": {
+            "rows": 8461,
+            "result_and_phase0_policy_valid_rows": 8461,
+            "later_d9_blocks": 10895,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9726
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00017.jsonl.zst",
+          "sha256": "7c9db32af6817bfaee1559410567a5534060139735870e1ce44918fc3b3eca39",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11079099,
+            "st_size": 20964647,
+            "st_mtime_ns": 1788505117622715368,
+            "st_ctime_ns": 1788505117622715368
+          },
+          "counts": {
+            "rows": 8404,
+            "result_and_phase0_policy_valid_rows": 8404,
+            "later_d9_blocks": 10837,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9411
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00018.jsonl.zst",
+          "sha256": "79612e0b9a9a9e07ef0a0f11c2e7e39f4357be564e0f354edc8c344673f4de64",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11085574,
+            "st_size": 21162878,
+            "st_mtime_ns": 1788506925518229069,
+            "st_ctime_ns": 1788506925518229069
+          },
+          "counts": {
+            "rows": 8263,
+            "result_and_phase0_policy_valid_rows": 8263,
+            "later_d9_blocks": 10556,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9486
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00019.jsonl.zst",
+          "sha256": "0e2d4e2007d87d3de2a146f3549d39514f28a45a6d32be171c0184bffdac33a2",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11085585,
+            "st_size": 21482760,
+            "st_mtime_ns": 1788508722077749003,
+            "st_ctime_ns": 1788508722077749003
+          },
+          "counts": {
+            "rows": 8405,
+            "result_and_phase0_policy_valid_rows": 8405,
+            "later_d9_blocks": 10825,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9575
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00020.jsonl.zst",
+          "sha256": "8934ad1187f01259efbfe8a608d625d5c13b55437d280a9ba07fa423d669de2c",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11086222,
+            "st_size": 21089108,
+            "st_mtime_ns": 1788510594881243612,
+            "st_ctime_ns": 1788510594881243612
+          },
+          "counts": {
+            "rows": 8234,
+            "result_and_phase0_policy_valid_rows": 8232,
+            "later_d9_blocks": 10394,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9373,
+            "blocks_duplicate_conflicting": 2,
+            "rows_selected_best_conflicting_duplicate": 2,
+            "rows_consumed_duplicate_conflicting": 2,
+            "rows_consumed_value_issue_union": 2,
+            "rows_any_later_duplicate_conflicting": 2
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00021.jsonl.zst",
+          "sha256": "b5bae67e34194ba20e85f063647c1f1a9a4e56e0e5c246ac72c464dbaa99f0ff",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 9858328,
+            "st_size": 21746737,
+            "st_mtime_ns": 1788512386332764664,
+            "st_ctime_ns": 1788512386332764664
+          },
+          "counts": {
+            "rows": 8391,
+            "result_and_phase0_policy_valid_rows": 8391,
+            "later_d9_blocks": 10613,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9325
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00022.jsonl.zst",
+          "sha256": "77f5ea855596f3a7ef91070f922bdfb12c87459df5352693d5ad2fa555026fb3",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11086290,
+            "st_size": 20840469,
+            "st_mtime_ns": 1788514265776261016,
+            "st_ctime_ns": 1788514265776261016
+          },
+          "counts": {
+            "rows": 8230,
+            "result_and_phase0_policy_valid_rows": 8230,
+            "later_d9_blocks": 10642,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9269
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00023.jsonl.zst",
+          "sha256": "ae05ec8b4ce9106638b2961bdab6afb6b79c49bb0c463b8ccf39fbfe446df868",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11822764,
+            "st_size": 21170258,
+            "st_mtime_ns": 1788516050235783660,
+            "st_ctime_ns": 1788516050235783660
+          },
+          "counts": {
+            "rows": 8325,
+            "result_and_phase0_policy_valid_rows": 7925,
+            "later_d9_blocks": 10619,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9354
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00024.jsonl.zst",
+          "sha256": "9ea3dcfc33517c2653f5305ff04977880556c677c5beab9fa42d5567674a91e7",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11824436,
+            "st_size": 21362470,
+            "st_mtime_ns": 1788517954110352604,
+            "st_ctime_ns": 1788517954110352604
+          },
+          "counts": {
+            "rows": 8312,
+            "result_and_phase0_policy_valid_rows": 8312,
+            "later_d9_blocks": 10656,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9512
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00025.jsonl.zst",
+          "sha256": "45d4b1449a9cce6bf32dfa4495cd0e2dd0575b178e18c6046fafa42b759e6436",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11824435,
+            "st_size": 21050433,
+            "st_mtime_ns": 1788519835642768052,
+            "st_ctime_ns": 1788519835642768052
+          },
+          "counts": {
+            "rows": 8219,
+            "result_and_phase0_policy_valid_rows": 8219,
+            "later_d9_blocks": 10605,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9369
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00026.jsonl.zst",
+          "sha256": "aa454717f5c3308ee5c99c602574ecd17e389fce125e95c913ac8a19a6ddf247",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11824922,
+            "st_size": 21064118,
+            "st_mtime_ns": 1788521466418331865,
+            "st_ctime_ns": 1788521466418331865
+          },
+          "counts": {
+            "rows": 8302,
+            "result_and_phase0_policy_valid_rows": 8302,
+            "later_d9_blocks": 10565,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9284
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00027.jsonl.zst",
+          "sha256": "b05933bf8190155ad62e180c51109ece19a57168ee85b20e61f55edd3d70c401",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11825032,
+            "st_size": 21124320,
+            "st_mtime_ns": 1788523215201860893,
+            "st_ctime_ns": 1788523215201860893
+          },
+          "counts": {
+            "rows": 8351,
+            "result_and_phase0_policy_valid_rows": 8351,
+            "later_d9_blocks": 10686,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9415
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00028.jsonl.zst",
+          "sha256": "850b33bd59df774204e8029c9c4a88ba2c4336532116792f27f3d9a5b94a41aa",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11825068,
+            "st_size": 21763945,
+            "st_mtime_ns": 1788524849693425089,
+            "st_ctime_ns": 1788524849693425089
+          },
+          "counts": {
+            "rows": 8407,
+            "result_and_phase0_policy_valid_rows": 8407,
+            "later_d9_blocks": 10507,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9309
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00029.jsonl.zst",
+          "sha256": "059c05d5167b88db0c0488c963165dd82c90e19a4aac45a6653d014bee577919",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11825094,
+            "st_size": 21860980,
+            "st_mtime_ns": 1788526903268873267,
+            "st_ctime_ns": 1788526903268873267
+          },
+          "counts": {
+            "rows": 8423,
+            "result_and_phase0_policy_valid_rows": 8422,
+            "later_d9_blocks": 10722,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9613
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00030.jsonl.zst",
+          "sha256": "06b7dc2a8d3bde303f2a3e06ea053f92ad919abb32133d38e128179f72f5c79d",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11834791,
+            "st_size": 20647463,
+            "st_mtime_ns": 1788528788140367546,
+            "st_ctime_ns": 1788528788140367546
+          },
+          "counts": {
+            "rows": 8264,
+            "result_and_phase0_policy_valid_rows": 7864,
+            "later_d9_blocks": 10517,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9029
+          }
+        },
+        {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00031.jsonl.zst",
+          "sha256": "58c850fa5c15ad904dc2ec1898c0528b356c09b6bd80d39390e117d6ee762c7a",
+          "stable_stat": {
+            "st_dev": 2096,
+            "st_ino": 11834838,
+            "st_size": 21088015,
+            "st_mtime_ns": 1788530355647944898,
+            "st_ctime_ns": 1788530355647944898
+          },
+          "counts": {
+            "rows": 8285,
+            "result_and_phase0_policy_valid_rows": 8285,
+            "later_d9_blocks": 10625,
+            "later_d9_complete_false_blocks": 0,
+            "later_d9_not_full_rank_roster_blocks": 0,
+            "later_d9_missing_full_legal_roster_blocks": 9322
+          }
+        }
+      ],
+      "examples": [
+        {
+          "source_id": "run07_g10_companion4",
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_shard": "w00-00002.jsonl.zst",
+          "source_row": 7854,
+          "worker_id": 0,
+          "game_id": 512,
+          "ply": 185,
+          "input_key": "a0028e95f20d427a1c851d0cb0b4f10d",
+          "has_result": true,
+          "phase0_policy_valid": false,
+          "result_and_phase0_policy_valid": false,
+          "flags": [
+            "any_later_duplicate_conflicting",
+            "consumed_duplicate_conflicting",
+            "consumed_value_issue_union"
+          ],
+          "anomalous_phases": [
+            {
+              "phase": 1,
+              "width": 8,
+              "complete": true,
+              "rank_ids": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8
+              ],
+              "duplicates": {
+                "e6g5": [
+                  8115.0,
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              "illegal_extra": [],
+              "outside_searchmoves": [],
+              "nonfinite_moves": [],
+              "malformed_rank_ids": false,
+              "claimed_complete_rank_mismatch": false,
+              "duplicate_depth_blocks": false,
+              "consumed_moves": [
+                "e6c5",
+                "e6g5",
+                "h5g4",
+                "h5g5",
+                "h5g6"
+              ],
+              "consumed_conflicting_duplicate_moves": [
+                "e6g5"
+              ]
+            }
+          ]
+        },
+        {
+          "source_id": "run07_g10_companion4",
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_shard": "w00-00020.jsonl.zst",
+          "source_row": 73,
+          "worker_id": 0,
+          "game_id": 3392,
+          "ply": 73,
+          "input_key": "0b3011c0caaf8d09bc672ce10617c3ca",
+          "has_result": true,
+          "phase0_policy_valid": false,
+          "result_and_phase0_policy_valid": false,
+          "flags": [
+            "any_later_duplicate_conflicting",
+            "consumed_duplicate_conflicting",
+            "consumed_value_issue_union",
+            "selected_best_conflicting_duplicate"
+          ],
+          "anomalous_phases": [
+            {
+              "phase": 1,
+              "width": 8,
+              "complete": true,
+              "rank_ids": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8
+              ],
+              "duplicates": {
+                "e5d4": [
+                  -756.0,
+                  0.0
+                ]
+              },
+              "illegal_extra": [],
+              "outside_searchmoves": [],
+              "nonfinite_moves": [],
+              "malformed_rank_ids": false,
+              "claimed_complete_rank_mismatch": false,
+              "duplicate_depth_blocks": false,
+              "consumed_moves": [
+                "c5c4",
+                "e4c3",
+                "e4d2",
+                "e4d6",
+                "e4g5",
+                "e5c3",
+                "e5d4"
+              ],
+              "consumed_conflicting_duplicate_moves": [
+                "e5d4"
+              ]
+            }
+          ]
+        },
+        {
+          "source_id": "run07_g10_companion4",
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_shard": "w00-00020.jsonl.zst",
+          "source_row": 75,
+          "worker_id": 0,
+          "game_id": 3392,
+          "ply": 75,
+          "input_key": "48ac6c6a40d9288c1dbf9777b7c5a535",
+          "has_result": true,
+          "phase0_policy_valid": false,
+          "result_and_phase0_policy_valid": false,
+          "flags": [
+            "any_later_duplicate_conflicting",
+            "consumed_duplicate_conflicting",
+            "consumed_value_issue_union",
+            "selected_best_conflicting_duplicate"
+          ],
+          "anomalous_phases": [
+            {
+              "phase": 1,
+              "width": 8,
+              "complete": true,
+              "rank_ids": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8
+              ],
+              "duplicates": {
+                "d4c3": [
+                  -693.0,
+                  0.0
+                ]
+              },
+              "illegal_extra": [],
+              "outside_searchmoves": [],
+              "nonfinite_moves": [],
+              "malformed_rank_ids": false,
+              "claimed_complete_rank_mismatch": false,
+              "duplicate_depth_blocks": false,
+              "consumed_moves": [
+                "d4c3",
+                "d4g1",
+                "e4d2",
+                "e6e5",
+                "e8d8",
+                "e8g8",
+                "h8f8"
+              ],
+              "consumed_conflicting_duplicate_moves": [
+                "d4c3"
+              ]
+            }
+          ]
+        }
+      ],
+      "anomalies_sha256": "1046441464ef3ef888779263630144c3600bac41300ba3106231272b538f126f",
+      "wall_seconds": 124.4364709869842,
+      "user_seconds": 121.948952,
+      "system_seconds": 2.444179,
+      "max_rss_kib": 23404
+    }
+  ],
+  "started_unix": 1788829110.3206012,
+  "ended_unix": 1788829234.797928,
+  "wall_seconds": 124.47732710838318,
+  "runtime": {
+    "python": "3.13.15 (main, Sep  1 2026, 14:18:08) [Clang 22.1.3 ]",
+    "chess": "1.11.2",
+    "zstandard": "0.25.0",
+    "affinity": [
+      0,
+      1
+    ],
+    "CUDA_VISIBLE_DEVICES": ""
+  },
+  "limitations": [
+    "Scalar agreeing duplicates counted separately, never automatically excluded.",
+    "Missing full legal move support and complete=False in narrowed blocks are descriptive only.",
+    "Consumed value issue union is diagnostic, not an automatic exclusion policy. It includes conflicting duplicates, nonfinite consumed emissions, consumed illegal/outside-searchmoves moves and consumed malformed-rank blocks.",
+    "No inference outside the fixed64 shards and no automatic broader qualification or scan."
+  ]
+}

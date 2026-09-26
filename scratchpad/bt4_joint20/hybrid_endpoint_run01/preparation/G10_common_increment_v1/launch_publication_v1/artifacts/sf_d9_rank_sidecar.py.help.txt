@@ -1,0 +1,38 @@
+usage: sf_d9_rank_sidecar.py [-h] --raw RAW [--source-shards SOURCE_SHARDS]
+                             --shards SHARDS --out OUT --limit LIMIT
+                             [--top-k TOP_K]
+                             [--max-provenance-cache-bytes MAX_PROVENANCE_CACHE_BYTES]
+                             [--rows-per-shard ROWS_PER_SHARD] [--seed SEED]
+                             --expected-rows EXPECTED_ROWS
+                             --expected-shards EXPECTED_SHARDS
+                             --expected-source-summary-sha256 EXPECTED_SOURCE_SUMMARY_SHA256
+
+Bank d9 Stockfish rank/gap observations beside a derived replay corpus. The
+frozen NNUE-bootstrap corpus stores a deliberately cold d9 policy, which does
+not retain the centipawn gaps needed to distinguish true near ties from
+float16 probability ties. Sources with row provenance join by physical source
+rows and verified full-history keys, independently of output
+shuffle/repacking. Legacy sources replay the original derivation's prefix,
+drop rule, shard boundaries, and within-shard permutation, then writes the
+top-ranked compact move indices and their gaps from the best d9 score. Every
+output shard is checked against the derived row's ``(game_id, ply_index)`` and
+legal mask before it is published.
+
+options:
+  -h, --help            show this help message and exit
+  --raw RAW
+  --source-shards SOURCE_SHARDS
+                        same source-bound selection used by derivation;
+                        --limit cuts its ordered stream
+  --shards SHARDS
+  --out OUT
+  --limit LIMIT
+  --top-k TOP_K
+  --max-provenance-cache-bytes MAX_PROVENANCE_CACHE_BYTES
+                        private temporary rank/history index cap when source
+                        has row provenance
+  --rows-per-shard ROWS_PER_SHARD
+  --seed SEED
+  --expected-rows EXPECTED_ROWS
+  --expected-shards EXPECTED_SHARDS
+  --expected-source-summary-sha256 EXPECTED_SOURCE_SUMMARY_SHA256

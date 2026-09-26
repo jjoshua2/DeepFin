@@ -1,0 +1,791 @@
+{
+  "schema": 1,
+  "captured_utc": "2026-09-08T07:29:24.193503+00:00",
+  "files": [
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/complete.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/H20_G100/complete.json",
+      "bytes": 6495,
+      "sha256": "244be89bece5687e9f14081442e5029f7c08bdb8834eddac041f0c1f3edcacf9"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/process.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/H20_G100/process.json",
+      "bytes": 6235,
+      "sha256": "d2ca3bf66dcc09aad920280deac4cd7a03b34c7e6daf6ae78fe2f8051864cd70"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/readout.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/H20_G100/readout.json",
+      "bytes": 3155,
+      "sha256": "3daa6d0d88c8d20a5b657c9cde3582808c467c3c25ca367a9346ef0dcc460972"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/manifest.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/H20_G100/manifest.json",
+      "bytes": 1806,
+      "sha256": "9cd8fab6602ccc8320a6bd8a30b9a8558cb1c128b35a68c765132756f65c761b"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/arena.results.jsonl",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/H20_G100/arena.results.jsonl",
+      "bytes": 3840,
+      "sha256": "f9393711c09f97916ecfa7ff54635ca55da68bb89ac9faa4961039f069646ee6"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/H20_G100/arena.games.jsonl.gz",
+      "source_bytes": 433140,
+      "source_sha256": "2ba32ae8edd7b11b43c67b5e2965aaa9786cb4f0d128fd265e84bece70273d9a",
+      "bytes": 33030,
+      "sha256": "7d0aead7362351a921209856e6c26d11186f41f5514439f6fa355ff757b69360",
+      "encoding": "gzip; exact original bytes recover by decompression"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/process.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/C20T05.s400.process.snapshot.json",
+      "bytes": 6080,
+      "sha256": "0b6ac68a0873ef7e4f872a5b8974aaffadcc37cde3b4e247de5bbaac0b2662ca"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/manifest.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/C20T05.s400.manifest.snapshot.json",
+      "bytes": 2286,
+      "sha256": "d97277a454f20fafd1ddb01e63c3df8498685c689b5e03657cae213b7cf1f8c5"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/independent_review.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/H20_G100/independent_review.json",
+      "bytes": 8024,
+      "sha256": "60e6bfffe2982324d37391f1ab686106f524b9065c613e41f06f0026fdb1ebd8"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/preregistration.md",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/G10_parallel/preregistration.md",
+      "bytes": 4059,
+      "sha256": "957a3b6fae06f4f621f001d4e61e9880cf89d6ecbb78562b88183c9bc4f14779"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/registration.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/G10_parallel/registration.json",
+      "bytes": 1486,
+      "sha256": "6ea1a68c0da25b37303ea61ee2822c73db387b62ba585b0e741333d2e26affc9"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/metadata_snapshot.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/G10_parallel/metadata_snapshot.json",
+      "bytes": 46196,
+      "sha256": "96c9f24be024e39b7300f55646c3aff9c99e514be7e76073f66afab703823d76"
+    }
+  ],
+  "increment_launch_archive": {
+    "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/manifest.json",
+    "sha256": "62ce8f9205e1258ba50d599c32071e280ada24757a8dff31878d5c376f6c05e0",
+    "member_count": 22
+  },
+  "limits": [
+    "C400 process/manifest snapshot only; no C400 game/result/log read.",
+    "Increment launch snapshots only; no completed-increment claim.",
+    "Parallel batch is prospectively registered only; survivors and executable runner/runtime bindings pending."
+  ],
+  "parallel_metadata_archive": {
+    "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/G10_parallel_metadata.tar.gz",
+    "bytes": 122392,
+    "sha256": "92c329410fc0d3827fa73b518f0063ef797778907e005506fe6e5cded4c383cd",
+    "members": [
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/source_manifest.json",
+        "bytes": 2082,
+        "sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/source_shards.json",
+        "bytes": 11053,
+        "sha256": "29c2ddcb8c66d25f66cbf4bdcfe8b514e76457e4313bb56da5bc23697fad5ead"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/closed_source_progress.jsonl",
+        "bytes": 79645,
+        "sha256": "61d921c7a266ba9ce437eb42cc15d0d346aafa6bee5cb4c4cb400e6a9131bb6b"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/closed_bt4_receipts.jsonl",
+        "bytes": 73322,
+        "sha256": "63affcdd3ddef5e95a09561c3df17757cd37ecdcb176c2c09b3f1cb01541921b"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/source_metadata.json",
+        "bytes": 41855,
+        "sha256": "876e5e65f488570d858be00652efa1a9b7c57d8c80a5d8e22e6ebcc705ebefe8"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00064.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "85c6ea2986cc4c2f426c43008766d6a4b9f448da325e6c0f50f8b12ee868d06b"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00065.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "84bb68e178b39175c18aa6186c9c0b65ef6810bcaa8d7d7bcb0438486d350f1a"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00066.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "8887ad75176e9211db0979e8774c14db000db7f677b80c4f8834a72cae2e37d8"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00067.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "0e5381f1bffad6cde8d23d9acc7b290cbd2349601d9c3d748bb31120cfff8510"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00068.bt4.zarr.json",
+        "bytes": 2310,
+        "sha256": "814b58bc1306603bf295c0bc1ba612a008f3a94ed0e49d41b44d5e5571c8e8cd"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00069.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "0b108032fb2e4d11cb3ee8ba66e9685601404b2409d35d26a8caa839fcb111bf"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00070.bt4.zarr.json",
+        "bytes": 2310,
+        "sha256": "1bc14b0cb7e65594979e4cb974b09ccbd4e5c3918f97c644cf81ac07c3c1111c"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00071.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "26f7c97ab71b5ae36e41593cc6a18a6bb06ad716c032f0d14a04d715562ab0ed"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00072.bt4.zarr.json",
+        "bytes": 2310,
+        "sha256": "71768603303928f7365efb8abcd1c0eca41165e39a983e6b89a6553fe2dc581c"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00073.bt4.zarr.json",
+        "bytes": 2310,
+        "sha256": "4d7c2155cad81d4e7b773266f55dcbbeb988cab1458b6494826b8c23ed84d3e4"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00074.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "b8e6659a7b9d28d5162db0204b9f897c27da0c835bf3d564114883b9f52459cd"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00075.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "b7dab6a02cee566e1318695ab6cc5513c13aaca475af56e1b6a035489af619ba"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00076.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "e0914582a447386ecc7fda14e6d8abdbc9a7749814c1f5b56958a141e05b9316"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00077.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "fb11b511581a54b6f3591fc062881d35066c329d080cedaa99ef32505bfefcd2"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00078.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "cbd516ee01c15e711e64c7dd3d9419321938662ee3d370f653e4ae15791fcdd4"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00079.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "6d0a9d54a8e2f30820b3a69e1f32acb54d815a0fe22b67c9aac51a12667cb67b"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00080.bt4.zarr.json",
+        "bytes": 2310,
+        "sha256": "3e8d9db3e4ee2419d3a7583fa0a0fe44a2e73ad3ba2ffae8dc6a517654672957"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00081.bt4.zarr.json",
+        "bytes": 2309,
+        "sha256": "bda3ac85846ffa02d71e17348e8074035db2fd904f59a0870f363b5e16d44c3e"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00082.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "f7c5d2d07437556d8a20f5aac5cc4bfa133912b356a9cfecb589e1c68136ae6e"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00083.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "4a6f3311813d3a16b0355aab1acd8e407500e3b009bbe1e0fd26b42e1cbacb07"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00084.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "86caef393eed9114787490caa3a414ea3838b70a6f5e8441854dccfa9f9472c1"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00085.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "965cf8456b9fb9b4a906f4b0975840c844073f11293dca11c8629015dcf3fc87"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00086.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "d7881418f85af5f40ac471a2b8efe8a866ef326dfa1012e781d1d8e9e5ae2140"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00087.bt4.zarr.json",
+        "bytes": 2310,
+        "sha256": "23cc4e7b88dcf90259ab1d3d82225327e64d5be8d3d9a21e56f66733d1fc8160"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00088.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "5da2a7f8213788c048ac58dd6800ac88585447d852cfc291aee1fc1c7dc8ec28"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00089.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "e6805c591ff384bb265bbf994a8300cccd5f9c7210af30ff980094daf3c50e25"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00090.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "6c82cd5914cc5988c4892ef1bc5d4800a0137256b5992b6876457f6404819769"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00091.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "e69662dad59ead6b35060f94ae9b484c7b0b1a602eb96f9eba97236fcf8dc2ba"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00092.bt4.zarr.json",
+        "bytes": 2310,
+        "sha256": "96a9208d93c54cbd76b5d58d305ecb09d0277be1e0561b12739a18773db009d6"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00093.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "3fbceb5798f66597d178e5818656a085e03c2864589c510e4bc13cc5673ce10b"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00094.bt4.zarr.json",
+        "bytes": 2310,
+        "sha256": "3cd83edfd9eeb00c4148b3221953d985ce9163847ca9edea4a5de70b3940704f"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00095.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "ef522fa911a20bdff0dbf70057dfc09f62172c6bbefd738104337e1f53bc2b27"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00096.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "6e14158ef9bb868b9db3d89510b585b9bf7640186da8f836daf1e12aafd06c9f"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00097.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "eba22dc27866ec690694df8b1b301b04d9ed9200769fddefdf0b8ba8efee9173"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00098.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "275929f08d51574368d93ff905efc4aa268205ba9554068cef826c16b965ff06"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00099.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "3ebfc3e8fa82c9814675470eea87aa715cad09514be8571456270d36cac7a4f0"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00100.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "935d89f30749cd951ad3bdeda674b3b46e21df8744a504ad60b64269b163161d"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00101.bt4.zarr.json",
+        "bytes": 2310,
+        "sha256": "add042186df62a8dc0c37ca26bb87ad1df67dd6a4cf43b87205e3c0d0f32dbb9"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00102.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "4c230ed73662197145b6c2a03be6b88d706d9918c986e35aaef822a3dab1ab50"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00103.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "3536fb68391a3308eb2b2f3665c066ac502cddc7c62e56524240da61f2ea8e82"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00104.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "b6646e75147812dbd3f427ce216c72ad462ade0890b4eb3ff21f91b7293ca112"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00105.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "e0004e376d231367d8f35ae9678b45b25d835c09f23f821dfa2cd909377662db"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00106.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "e5eb6ebc1815f4fa6428a58f00fb65849d391c328a3b20af9057cf450bbf951f"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00107.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "d06bfcf5d72f3cf9530bb4f8c46b77d9d9a06aff57d64d8e19ef5f79e9de4c25"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00108.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "7aae46106a1757554e50dddff01dc17098cb8c7fe019bc400ab7597c22774ad0"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00109.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "ee009b7a598390b694eb2a2ffbef4f54a4aab83f794c888d0c5973f71ec3c30b"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00110.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "f649c77d1c202121221a8720bc1d91d0b2f3955aaa3bfc8aef91485cdaf968e1"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00111.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "131f174ab898dda2d97a8e412cc433e8e5df51d88ba3712cc1253838af7b9353"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00112.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "78ca9749a9e655b7213e265b788815c9e9e6dd25f08b4c8e8b4f11851d089c6c"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00113.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "eb7115cf8b456450b249c1d7b5cfaa3b98fb45d3a97f629869511f3d5884f3e9"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00114.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "ab598cbb29186ec8e1f4214ee6ab525bcd104dc0f74491d9ddba829ac21db8d2"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00115.bt4.zarr.json",
+        "bytes": 2309,
+        "sha256": "5324c6e0516107d459b3f90e81bd65b9cce35210ed7cfcc3041d1b531e5cc09d"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00116.bt4.zarr.json",
+        "bytes": 2310,
+        "sha256": "c2a6c98a4df56eab85aac897b238baefb986e8b24dfaad27c2a81cdaf1f7dcbe"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00117.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "dc48e8495c805c41958440c0272971fbb33caaf107312b7194bd4987d3a162f6"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00118.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "16976338d412e949c4ba79d433033526e2ae732eeecfac80c2e1b24d4bea90ec"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00119.bt4.zarr.json",
+        "bytes": 2309,
+        "sha256": "7bb65373d44952fec1c17d91dba0ad14bb6c2beaae4714d6898f1de871853bf1"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00120.bt4.zarr.json",
+        "bytes": 2310,
+        "sha256": "fb2bd7324ff578456f9c21b101920e9dd2e0508694e5be66e76182e6b14cb961"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00121.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "f334d4e1055ceca725996393e5870c9ae33c3aac32cda7b59f46d9e97bfdc687"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00122.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "4c8d57e7d2d03baf95e5199d8d8a3a6398abc226b3366c37e8ca8af4ea99fe72"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00123.bt4.zarr.json",
+        "bytes": 2310,
+        "sha256": "d95c531bdefc4a05762b4bd5866bd8bf3fe367b208cdba3d780b892dc1ee1261"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00124.bt4.zarr.json",
+        "bytes": 2311,
+        "sha256": "fecdace81dd543adab54e4c1a2a573e8328f61b2d7404aaf3b3aa0effca2636f"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00125.bt4.zarr.json",
+        "bytes": 2312,
+        "sha256": "19b6f6946bb20d8e31d8730c1ae09c52a99c02278093a8269a4665c19f0a78a5"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00126.bt4.zarr.json",
+        "bytes": 2310,
+        "sha256": "7e862814905db5c3de538da117e10285b02278031065f4726b56db1e32a4ecb6"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/sidecar_attrs/w00-00127.bt4.zarr.json",
+        "bytes": 2310,
+        "sha256": "a8a16e9b8d550015bbfa61a4b60addc788b2ec25e69b21c064817125be9d5329"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/source_manifest.json",
+        "bytes": 2103,
+        "sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/source_shards.json",
+        "bytes": 11064,
+        "sha256": "f10d62b6d0f86ae039f122b0eced663d854d30fd6f3e1d0acbfcd247aa8804a5"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/closed_source_progress.jsonl",
+        "bytes": 82474,
+        "sha256": "b9cd5538bae5b2cc74ccb50bb334809c7c077d7ec6442f568201f3892c1f3459"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/closed_bt4_receipts.jsonl",
+        "bytes": 74027,
+        "sha256": "b8fc34aa489a1c1c84f1afd4311e26d06c3760e03e0ad2b5e45d10e860873573"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/source_metadata.json",
+        "bytes": 43971,
+        "sha256": "f87c80fe3d6170aae67c4eb787ffaead0a5d7b1842abe56c96ac9abd8ccf97b8"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00064.bt4.zarr.json",
+        "bytes": 2334,
+        "sha256": "f3f18f90222a290a7033cf399c90aa91456914404338c06d36f9a5b876449a4b"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00065.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "bc7745deb9d461bbb659017a0ba5609d1b79ce9b7fa877172576dec061c65f2e"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00066.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "c4c31248397e53e382cf9597f9c0cf0631b301821df3db06437bad3b56ee1088"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00067.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "70b60ef0b54311901f1a1ab702fae4016643b75405248042be972a79e4c5c276"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00068.bt4.zarr.json",
+        "bytes": 2330,
+        "sha256": "6cce7c5357b877bc5490d2ca10b691cfcf32d91e13c92246e9e4237d0a0045a2"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00069.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "3620f7cfb0831958e15c67b567ef2b0532c831bb5bbb0b83d658a58eaeee9939"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00070.bt4.zarr.json",
+        "bytes": 2332,
+        "sha256": "663c77eca3678c6f5d2448db4cd36b106d091be282c944652baa7e64ebad6989"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00071.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "01f643dc1cc376597677685e8e24cadb1050c2472d9e8d154949b1d534c0046f"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00072.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "4704e9e955f253f5b87cb7fabe66baf4f4a6da9614f17b657f0827df0c577f1f"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00073.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "c909194bb822f00f524845eebd00d9752def60f51c188729e99c49170b30f0f0"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00074.bt4.zarr.json",
+        "bytes": 2331,
+        "sha256": "f2e107dbf74f01c99834f8bdcbccec387a64ca2296d7d0d4b005b51cc5d34c37"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00075.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "12510508c6d5bcfbab16f194180855e4992d8f2bfe44c3e4ce7d3900da9f5277"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00076.bt4.zarr.json",
+        "bytes": 2331,
+        "sha256": "20eb1d0684b7e7dccf455d61f36eb0b24bf18bd1a6022001756acf6abe8777a6"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00077.bt4.zarr.json",
+        "bytes": 2332,
+        "sha256": "30ed22c30524eff62c066d7c3a992bec30674b24e70812b1df2dfa2afaeb2f59"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00078.bt4.zarr.json",
+        "bytes": 2334,
+        "sha256": "5d9cb24f1a6e87f372d19458c0d47a07eaecbe713d273931c4bddff66048a2be"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00079.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "ac474ab0477b80fe63de0815a3b50060ae74b37b9deb80e0765c99cc3d90f4e6"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00080.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "68b82f2977761f340bd89e3fbf4e5cbb6c72a4b767e27b73f5f58af416da6c33"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00081.bt4.zarr.json",
+        "bytes": 2332,
+        "sha256": "fae66556699eae17a7d9b5b25d6c18e3fe4837aa39e32f9195bca8ddb0007b43"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00082.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "235bab4033fc90864380c149d6e6e22fc78dc23b0fe1ba28b3801c60c0efc174"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00083.bt4.zarr.json",
+        "bytes": 2332,
+        "sha256": "83595d0109c8bdb22b1c3e15a1db99c2e0e671fa77a375ea2b49787959e7ec90"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00084.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "6ed54ac6f4f3678050830fe8a3b765983299c63996df342f99a85aacd5635c71"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00085.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "ea0868d66a4a1aa2ee2ed2b6561ba50f118909c0bc2af43fb4c1ae5943733539"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00086.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "d99148b9b451be576c67f6bc1a70c31770ecc52d5f422c1a52bbf8f269fef23f"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00087.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "8a25e6c1cc69b1c356376454b51163bce30f55c5474503422000df26e7a87337"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00088.bt4.zarr.json",
+        "bytes": 2334,
+        "sha256": "593762381c16e1ce4358f9d5c77323dd51f1eaaeff6dec23477b9a0d94d57939"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00089.bt4.zarr.json",
+        "bytes": 2334,
+        "sha256": "650b8be02adf61db05b3eed568df6c2860fc13449539a1627dd022d04d8c9817"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00090.bt4.zarr.json",
+        "bytes": 2334,
+        "sha256": "419bcb4214e738b20d0f3356a3718ff5c4574a38a106bf88feece1ce82a477e7"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00091.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "57f74e2af52e17b495a70949635054668b07fd7d439f59a52b27e199e2576e6c"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00092.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "edf89fdbc3b0b8efb882f043014e120c6e983e293aaecb4c73df10cf3a876812"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00093.bt4.zarr.json",
+        "bytes": 2334,
+        "sha256": "a7cdcbbda07bad0e14f0761d44d246b67d3727a60bc787abf02c94eef9f36f31"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00094.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "c56560c155b1ac04ed3440ddefb35096329d0af0df182b126b493e7ea6cfd012"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00095.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "57c7c15d1323dc8524d58b8992e06454d5ec20eb22444a18761f14e44071795d"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00096.bt4.zarr.json",
+        "bytes": 2332,
+        "sha256": "9cf6a231f8401139619bb5cf00a19f86e8acdf77de1482b2f5e28dd8ce54f1dd"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00097.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "228d070d001401027e542115f72c4674b5ac61e73ab096cecc93af1a75f68d03"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00098.bt4.zarr.json",
+        "bytes": 2334,
+        "sha256": "c4d3b1a9cd1f8dd1cdbd195d23c6b5a7a7082b02df30234d51dfe61395562962"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00099.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "e7a6f1853ea7dc2525a56e511f9db7c84e44a835c904df980a2551ee389ae3eb"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00100.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "2a0b8c1190932a7558245d445e7d1f4f087891f92acf0ccfe22299dd3e54a36f"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00101.bt4.zarr.json",
+        "bytes": 2332,
+        "sha256": "1065f64d26f56f903f3310b8fc26c7e9da3bb996f900ba785105dd501ff48c67"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00102.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "0a7331d8a69cf4cc39065ffdd64bed5eed0706e0534d0f2083869532c95abad9"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00103.bt4.zarr.json",
+        "bytes": 2331,
+        "sha256": "fa433b8d8304881481fed10e07b45f7372c31da155fe157a481f7b4b11771c92"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00104.bt4.zarr.json",
+        "bytes": 2332,
+        "sha256": "cafd160ccdf595feda9cf16ed82778ae2b42378f05dadd79a906a9687ed81510"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00105.bt4.zarr.json",
+        "bytes": 2334,
+        "sha256": "034e84f6f86a6bc19c519a20bc76120063c0c39bd91ea94c5bc21dbf407388fb"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00106.bt4.zarr.json",
+        "bytes": 2334,
+        "sha256": "581840e4bac7baeda5e060692f7a225da131cb7a40175d8a44bf82f1095bb41f"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00107.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "94cf62f4280044ca6ff4feade445e1cf86b20c5080630189f8241d4fb18ae244"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00108.bt4.zarr.json",
+        "bytes": 2331,
+        "sha256": "65a287165b7777bbb3a238a3b14880fcb37d8b0a85615dbdbca589df04303fad"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00109.bt4.zarr.json",
+        "bytes": 2334,
+        "sha256": "74adfcfd874612f8f1465faea88e111d051d8c464eba0e88ae2df9bfc8763c4b"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00110.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "177c0df5549ce244ef0b475bcb9ae0f6a34a47a428a28908e203cb3ea15f328d"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00111.bt4.zarr.json",
+        "bytes": 2332,
+        "sha256": "7bd67f7914a23aa55806c82280d8fc7d163f7f7c543b8aa33af4e241a365ebe9"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00112.bt4.zarr.json",
+        "bytes": 2330,
+        "sha256": "707e46ff5feb70de711f94cd507997175a2b220f44ae33a7e53c63aaba02895b"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00113.bt4.zarr.json",
+        "bytes": 2332,
+        "sha256": "363b698e0b2a5b57d36f4f3e08cb131b8e7e7f9c79597d282dcf9dd8c130ade7"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00114.bt4.zarr.json",
+        "bytes": 2332,
+        "sha256": "1e4caacbbc4dc89f6244c660bce1d18cb361f9c9db95ca46093f62d9c8020557"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00115.bt4.zarr.json",
+        "bytes": 2331,
+        "sha256": "cc14af0c3b8ad716108f77ad0280e3ab59e2d1b8a391ae42ac6107a5b52019c4"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00116.bt4.zarr.json",
+        "bytes": 2332,
+        "sha256": "a9fc3f154be8e658ef55595283657f663af98ade32c5fa9bbcc655c3c1f8c979"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00117.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "319be48c03faf84508e094bdcfc9408d48b1a20c74493aa6120a0f56c24380b3"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00118.bt4.zarr.json",
+        "bytes": 2334,
+        "sha256": "f9f8762ad8836fedc5d8d437d0901591a9c31fcea2b1763c15b21babb7cf7cff"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00119.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "d1d892dae9a90afab5a355ca13d2d4f6a501613815f2e5dfda5e5fadb2332db3"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00120.bt4.zarr.json",
+        "bytes": 2332,
+        "sha256": "ce2f46e818ec1803db6aeffc0d8180c497394749e7867cbdb64f247e5e8821b0"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00121.bt4.zarr.json",
+        "bytes": 2332,
+        "sha256": "52462e02b0cf65c878353db5634582c477ec242fe8c8febbd4428239499102ed"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00122.bt4.zarr.json",
+        "bytes": 2334,
+        "sha256": "18dc1aa6de5368fe0b7901e2ef9bb795df7e4f581f3f87e788746c115bc32a3e"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00123.bt4.zarr.json",
+        "bytes": 2334,
+        "sha256": "ab1e37263b0b190501e51e7b0cbbaf11b8be21e615554c93371eaaa4fe680e88"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00124.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "ac58a573cf49bc89093242f2790cd3f66ed25753ae311e6578cbda7ba1a0c281"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00125.bt4.zarr.json",
+        "bytes": 2334,
+        "sha256": "defc0d21528085aea472f4c5ad4decf8dc67be8236e82d8350346eb101119af7"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00126.bt4.zarr.json",
+        "bytes": 2332,
+        "sha256": "8d803a7aac83dc97ef46c964123fb55275e1d67cee82b1436aff4541d27e299e"
+      },
+      {
+        "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/sidecar_attrs/w00-00127.bt4.zarr.json",
+        "bytes": 2333,
+        "sha256": "484ee5ef9f237ab044bdff6e7facff61662e5850c18ae2e655eefc6bdc397184"
+      }
+    ],
+    "member_count": 138,
+    "scope": "Closed receipt and source metadata only; no raw payloads, derived data, runner freeze or launch."
+  },
+  "status": "COMPLETED_G100_AND_LAUNCH_SNAPSHOTS_WITH_UNLAUNCHED_PARALLEL_REGISTRATION"
+}

@@ -1,0 +1,25 @@
+{
+  "status": "COORDINATOR_LAUNCHED_TRAINING_NOT_YET_CONFIRMED",
+  "pid": 288450,
+  "started_unix": 1788835717.6885586,
+  "argv": [
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/python3",
+    "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_one_epoch_screen.py",
+    "--manifest",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20.launch_manifest.json",
+    "--execute"
+  ],
+  "launch_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20.launch_manifest.json",
+    "sha256": "20fa6a6be386bee435f0a12c75314d4dd5ba646213124c239a6247dec73f84dc"
+  },
+  "independent_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.training_launch_review.json",
+    "sha256": "29ec9d2852ea5a887405b1e913641282733db7fc5a8e56c8312d3d5fe8728e53"
+  },
+  "GPU_runtime": "frozen wise-cloud7ec261509fb7345cf1ca0ad73809193fc2749bb1; original Python3.10/Torch2.11cu128",
+  "next": "Coordinator performs actualruntime/pins and queues sharedGPUlease; no other candidate selected."
+}

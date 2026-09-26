@@ -1,0 +1,10 @@
+{
+  "status": "PASS_METADATA_READINESS_ONLY",
+  "files": 506,
+  "source_stat_attrs_rechecks": 488,
+  "metadata_sha256": "5a7cb26122a3acdb0025e2af59c9ef5d6982487f17a9e78c904dd62be06ac04c",
+  "manifest_proposal_sha256": "df291f0220237663a5f71937c4623d691405eaeaa6942534e97a36b388d56905",
+  "raw_or_policy_payload_reads": 0,
+  "runtime_or_pipeline_actions": 0,
+  "next_action": "Implement separately assigned shared preflight cache sizing before root adopts any new runtime/registration."
+}

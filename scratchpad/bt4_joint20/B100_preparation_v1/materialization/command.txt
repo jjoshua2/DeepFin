@@ -1,0 +1,1 @@
+/usr/bin/nice -n 19 /usr/bin/ionice -c 3 /usr/bin/taskset -c 0,1 /usr/bin/python3 /home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/materialization/run_materialization.py 5830a332beeb57f50a21495fb318afebdd47ca64a9fc7b4621ded82b7363a37c

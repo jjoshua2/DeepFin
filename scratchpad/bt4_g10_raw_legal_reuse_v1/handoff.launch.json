@@ -1,0 +1,42 @@
+{
+  "status": "PREPARED_NOT_ARMED",
+  "original_driver_sha256": "e309086e111c9f7b4bd2b3807573e84ee38c39fb1a46b5e5385e6609207044e9",
+  "original_driver": "scratchpad/bt4_g10_raw/driver.sh",
+  "observed_old_driver_pid": 4251,
+  "observed_old_waiting_worker_pid": 288651,
+  "new_runtime": "/tmp/deepfin-bt4-label-runtime-pr537",
+  "new_operations_dir": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1",
+  "shared_driver_lock": "/home/josh/projects/chess/scratchpad/bt4_g10_raw/driver.lock",
+  "old_pause_marker": "/home/josh/projects/chess/scratchpad/bt4_g10_raw/pause.request",
+  "handoff_request_sha256": "54388b8f5a684b9b840b7489ff1e5b8a257cd8ab5de133d43a6e4c718ea8ffce",
+  "transition": "Start qualified new driver waiting for existing driver lease, then create absent old pause.request with exact owned content. Existing queuedgroup completes normally, old driver pauses atloopboundary, newdriver acquireslease, verifiesmatchinghandoff request andoldpaused proof thenconsumesownmarker. Newdriver respects bothnewandoriginalpause.request markers afterwards. No processkill.",
+  "limits": {
+    "driver_lease_wait_seconds": 21600,
+    "source_and_sidecar_state": "unchanged existing run06/run07raw+g10_raw sidecars",
+    "group_shards": 16,
+    "batch_size": 1024,
+    "ORT_threads": 16,
+    "OMP_MKL_OPENBLAS_threads": 2,
+    "gpu_mem_gb": 24,
+    "min_free_GiB": 150,
+    "group_boundary_sleep_seconds": 15
+  },
+  "adoption_evidence": "After takeover verify actualdriver/childcwd andsourcehashes, realizedCUDAprovider andfirstnewlycompletedsidecarstamps. Ordinarynextgroup provides descriptive throughput including ownstartup/identityscan time separately; no timingrepeats orreal-inference claim before completion.",
+  "recovery": "If qualification/launchfails, do notarmoldpause. If olddriverpaused butnewfails, preservepartialsidecarsandfailmarker; diagnose beforequalifiedresume. Neverclearanunowned/changedpausemarker.",
+  "old_environment_observation": {
+    "PATH": "/usr/bin:/bin:/home/josh/.local/bin",
+    "OMP_NUM_THREADS": "2",
+    "MKL_NUM_THREADS": "2",
+    "OPENBLAS_NUM_THREADS": "2"
+  },
+  "frozen_utc": "2026-09-08T03:44:08.526362+00:00",
+  "runtime_commit": "4e600902e1fd08727e1d83e009d6e241be0c7cba",
+  "runtime_qualification_sha256": "aed87c6f60fdc826380bd01c562f976ead23359fe4566b88ce69adbd7a0a6ac9",
+  "driver_sha256": "6ffb75dbc950c35ded80b794880949b04a5e7159d66f36fbf120d7884a98ebdd",
+  "runtime_verifier_sha256": "c2e170daca34b60bfa2e5f18bd4cae6d60e561f373805b4f9d2bdd686e7ce99a",
+  "old_environment_source": "Observed host /proc/4251/environ and /proc/288651/environ in this turn; OMP/MKL/OPENBLAS2 and PATH explicitly preserved",
+  "dependency_guard": "Before waiting and before each normalgroup: exact runtimecommit/cleantrackedtree/2filehashes, pinnedqualification, recordedinterpreter/libraryrepresentativefilemetadata and4nativefilemetadata+hashes. Doesnotclaim hermeticwholedependencytree. Existingnormal labelerchecksmodel/provider/writer+GPUleases.",
+  "handoff_consumer_sha256": "ea20ed7050a29e4f782097e76461808b3a7fda8fa39a72864ad6febabf9f758c",
+  "correction": "Independentfixture reproducedpre-moverace. Move intoexclusiveprivatearchive, validateactualconsumedbytes, restorechangedpauseviano-overwritehardlink, andstaypaused. Bindpython3resolvedtargettocandidateinterpreter. No liveattemptoccurred.",
+  "consumed_request_archive": "consumed_handoff/request.json"
+}

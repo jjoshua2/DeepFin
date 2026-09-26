@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "status": "DIAGNOSED_CROSS_INTERPRETER_COMPUTED_FLOAT_DIFFERENCE_NOT_OPERATIONAL_RECERTIFICATION",
+  "pins": {
+    "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/reader_numeric_diagnosis_v1/replay.py": "4234e60dedd35c4b5dbf18f38746fabbb7ef22663765b143f48a8226ab7799dc",
+    "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/reader_numeric_diagnosis_v1/python310.json": "0c1b3b6a95acedb24e74f4242aed36783b9be7153b393ff966accd995893f9f3",
+    "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/reader_numeric_diagnosis_v1/python313.json": "f5d6364ec0f7bc8536ca9411543d9b7cc0baa247ba860075b6d428e6c4e75b7f",
+    "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low.reader_manifest.json": "3da398cc2154bcca9112265c39d43865389e4ca5458bcce662f85f6fa4045cc3",
+    "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low/arena.games.jsonl": "e2fd08f244e35483107beaa5105923975b69160699c9809c04c9f9d0e43aadab",
+    "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low/arena.results.jsonl": "686394babbe3631dbbfbf9bae73af6eaca7d79dc9c9e137537861eddd308c1cf",
+    "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low/process.json": "f62315cd57d8981456755fd7262a90001b23a4b9326e7aba1ca3260e4d541acb",
+    "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low/readout.stdout.json": "cb491b66febd67e2a18a6de1e28739d9b8ad1a642576105b3dc7c214a9a616d7"
+  },
+  "commands": [
+    "CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 nice -n19 taskset -c6,7 /usr/bin/python3 scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/reader_numeric_diagnosis_v1/replay.py",
+    "CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 nice -n19 taskset -c6,7 /tmp/deepfin-recipe-screen-tools-v3/.venv/bin/python scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/reader_numeric_diagnosis_v1/replay.py"
+  ],
+  "findings": {
+    "python310_inferable_sprt_field_differences": 0,
+    "python313_different_fields": [
+      "llr_first",
+      "llr_trajectory[0][1]"
+    ],
+    "llr_first_delta": 2.0159384144652348e-19,
+    "look128_llr_delta": 4.440892098500626e-16,
+    "final192_llr_identical": 4.830781243313984,
+    "verdict_both": "H1",
+    "look128_h1_margin": -0.07312796721831916,
+    "look192_h1_margin": 1.9404094854178195,
+    "raw_finished_games": 806,
+    "complete_pairs": 377
+  },
+  "interpretation": "Same source and bank reproduce all inferable SPRT fields exactly under producerPython3.10;Python3.13 differs only in computed floating arithmetic. llr_first is regularized empty-sample initialization, not the128-pair first declared look. No ordering/deciding-sample discrepancy found.",
+  "proposed_scope": "If fixing reader, tolerance only finite computed likelihood values/trajectory; keep exact spec/look indices/verdict/counts/IDs/settings and reject any boundary-side crossing change. Do not loosen same() globally.",
+  "limits": [
+    "SPRT replay only, not full bank protocol recertification.",
+    "No live source edits, GPU, games, or mutation of frozen operational receipts.",
+    "Generic-profile implementation paused before edits."
+  ]
+}

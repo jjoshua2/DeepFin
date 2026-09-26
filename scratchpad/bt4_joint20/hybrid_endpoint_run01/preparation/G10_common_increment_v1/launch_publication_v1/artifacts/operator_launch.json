@@ -1,0 +1,23 @@
+{
+  "pid": 312086,
+  "start_unix": 1788849983.6317284,
+  "argv": [
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/usr/bin/taskset",
+    "-c",
+    "2,3",
+    "/usr/bin/python3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run_common.py",
+    "--execute",
+    "--expected-plan-sha256",
+    "87a33a55678ff0c02daa61bfe7aaab0acb82dd019753247a26c8a1323d9aa752"
+  ],
+  "launch_sha256": "87a33a55678ff0c02daa61bfe7aaab0acb82dd019753247a26c8a1323d9aa752",
+  "independent_review_sha256": "1082128adf0d87a9bd1ababbc88b4c744e9ff541928f619b468c00f3a8be7e7b",
+  "scope": "Fixed CPU common-input increment; no teacher mixing or training; actual worker startup separate receipt."
+}

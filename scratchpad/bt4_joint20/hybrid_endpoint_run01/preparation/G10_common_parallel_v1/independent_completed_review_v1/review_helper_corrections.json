@@ -1,0 +1,10 @@
+{
+  "scope": "Review-only helper corrections, no operational code or pipeline execution",
+  "initial_attempts": [
+    "Markdown preregistration was wrongly passed to json.loads; helper corrected to hash its original bytes.",
+    "value_scheme is a structured dictionary; helper corrected to compare value_scheme.name against search."
+  ],
+  "final_status": "PASS",
+  "helper_sha256": "235c44ca7d3d1dc3c1c62709285a700b89b28eb0107707600847c1ba9c04dbeb",
+  "review_sha256": "1e4c06f0fd500212b4bac2f852936a20af2de21f7543c6e9eef2de6dc6924ecc"
+}

@@ -1,0 +1,34 @@
+{
+  "status": "PASS",
+  "script_sha256": "239b6436055f6c5abca229ac3263640049a218e98bede1900f2bcd70443290b8",
+  "cases": [
+    {
+      "case": "success",
+      "result": "PASS",
+      "status": "COMPLETE",
+      "returncode": 0
+    },
+    {
+      "case": "failure",
+      "result": "PASS",
+      "status": "FAILED_OR_STOPPED",
+      "returncode": 7
+    },
+    {
+      "case": "stop",
+      "result": "PASS",
+      "status": "FAILED_OR_STOPPED",
+      "returncode": -15
+    },
+    {
+      "case": "coordinator_death",
+      "result": "PASS",
+      "evidence": "real timeout child retains lock after coordinator SIGKILL, then releases it"
+    },
+    {
+      "case": "output_sample_and_symlink_refusal",
+      "result": "PASS"
+    }
+  ],
+  "limits": "Tiny real owned subprocess/filesystem fixtures only; publication metadata and free-space observations substituted; no operational data or bulk launch."
+}

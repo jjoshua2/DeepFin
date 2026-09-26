@@ -1,0 +1,20 @@
+/home/josh/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[metadata] 500/2309 shards: /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m
+[metadata] 1000/2309 shards: /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m
+[metadata] 1500/2309 shards: /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m
+[metadata] 2000/2309 shards: /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m
+[plan] recomputing source canonical schedule
+[metadata] 500/2309 shards: /home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/staged_shards
+[metadata] 1000/2309 shards: /home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/staged_shards
+[metadata] 1500/2309 shards: /home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/staged_shards
+[metadata] 2000/2309 shards: /home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/staged_shards
+[plan] recomputing C physical-path schedule
+[verified] C: {'corpus': '/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05', 'staging': 'verified actual', 'metadata_matches_source': True, 'canonical_plan_sha256': 'dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f', 'physical_plan_sha256': '70063ded8e105f34bd8012001a49f506d256eaebefa1261345feae0983b5dd34', 'training_completion_verified': True, 'summary_sha256': 'cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd'}
+[metadata] 500/2309 shards: /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05
+[metadata] 1000/2309 shards: /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05
+[metadata] 1500/2309 shards: /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05
+[metadata] 2000/2309 shards: /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05
+[plan] recomputing H20 physical-path schedule
+[verified] H20: {'corpus': '/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05', 'staging': 'prospective only', 'metadata_matches_source': True, 'canonical_plan_sha256': 'dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f', 'physical_plan_sha256': '7349d7287be32b5ec0119c45ace5ef4e3e9762c52675401a942fdf6347983192', 'training_completion_verified': False}
+[receipt] /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.prospective_schedule.json

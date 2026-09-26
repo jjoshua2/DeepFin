@@ -1,0 +1,26 @@
+{
+  "rows": 8192,
+  "unchanged_arrays": [
+    "game_id",
+    "has_game_id",
+    "has_is_network_turn",
+    "has_is_selfplay",
+    "has_legal_mask",
+    "has_ply_index",
+    "has_policy",
+    "has_search_wdl",
+    "is_network_turn",
+    "is_selfplay",
+    "legal_mask",
+    "ply_index",
+    "priority",
+    "search_wdl",
+    "wdl_target",
+    "x"
+  ],
+  "changed_policy_rows": 8138,
+  "new_positive_entries": 161350,
+  "illegal_positive_entries": 0,
+  "max_total_mass_drift": 0.00034999847412109375,
+  "verdict": "PASS"
+}

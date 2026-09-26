@@ -1,0 +1,41 @@
+{
+  "status": "CACHE_SIZING_PROPOSAL_NO_LAUNCH",
+  "source_pins": [
+    {
+      "path": "/tmp/deepfin-g10-worker01-tools/scripts/sf_d9_rank_sidecar.py",
+      "sha256": "4a230d849d87770d33a3896f9a4c96d96676a377116dae9fcb37beecafcd71fa"
+    },
+    {
+      "path": "/tmp/deepfin-g10-worker01-tools/scripts/adapt_raw_bt4_sidecars.py",
+      "sha256": "e8952e031d93db83a589d9a23ae9eba7c1530e1df1901a00991cfe611272c2f7"
+    },
+    {
+      "path": "/tmp/deepfin-g10-worker01-tools/scripts/corpus_row_provenance.py",
+      "sha256": "af81340e33e6832cd20b0369d230b9b4b3dea90f6ba42b2ef5d846ad336ba4f3"
+    }
+  ],
+  "rank_contract": "For top_k3 record dtype68B: limit*(dtype.itemsize+1)+selected_raw_shards*512. Runtime also refuses an individual shard payload above64MiB.",
+  "adapter_contract": "Before first verification per raw shard require accumulated actual .npy bytes + rows*56+4096 <= max_index_bytes. Sum rows*56+shards*4096 is a conservative provision for all raw shards under current fixed small dtype/header.",
+  "sources": {
+    "run06_g10": {
+      "raw_rows": 2025055,
+      "raw_shards": 244,
+      "rank_required_bytes": 139853723,
+      "rank_declared_cap_bytes_proposed": 268435456,
+      "adapter_conservative_required_bytes": 114402504,
+      "adapter_declared_cap_bytes_proposed": 268435456
+    },
+    "run07_g10_companion4": {
+      "raw_rows": 2022184,
+      "raw_shards": 244,
+      "rank_required_bytes": 139655624,
+      "rank_declared_cap_bytes_proposed": 268435456,
+      "adapter_conservative_required_bytes": 114241728,
+      "adapter_declared_cap_bytes_proposed": 268435456
+    }
+  },
+  "all_four_private_caps_bytes": 1073741824,
+  "output_accounting": "Existing sampled8GiB aggregate covers caches too; no separate uncharged directories. Linear observed output estimate3.99GiB plus worst declared1GiB private caches fits8GiB;2x observed output allowance includes this cache headroom, not an additional8GiB plus caches. Sampling remains no strict quota.",
+  "actual_worker01_failure": "Parent reported run07 rank required73413295bytes exceeded64MiB after successful derivation. Exact64MiB defaults are not scalable. No recovery or result read by this preparer.",
+  "remaining": "Reusable prelaunch sizing gate assigned separately; current output projection is not evidence of successful larger pipeline."
+}

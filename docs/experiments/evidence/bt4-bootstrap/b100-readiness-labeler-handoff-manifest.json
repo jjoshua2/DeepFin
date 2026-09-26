@@ -1,0 +1,296 @@
+{
+  "schema": 1,
+  "scope": "Completed B100 cached-bank descriptive audit, unlaunched bulk materialization preparation, legal-reuse runtime qualification and handoff armed waiting for old group boundary. No takeover/new label group/throughput or strength result; no new training selection.",
+  "entries": [
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/consume_handoff.py",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/consume_handoff.py",
+      "bytes": 1260,
+      "sha256": "ea20ed7050a29e4f782097e76461808b3a7fda8fa39a72864ad6febabf9f758c"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/driver.prepared.sh",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/driver.prepared.sh",
+      "bytes": 4924,
+      "sha256": "5da2b0842f75bf1b701a7f3238deb157af69048770adc811fbfdf07296ca5ae0"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/driver.sh",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/driver.sh",
+      "bytes": 5194,
+      "sha256": "6ffb75dbc950c35ded80b794880949b04a5e7159d66f36fbf120d7884a98ebdd"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/handoff.launch.json",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/handoff.launch.json",
+      "bytes": 3422,
+      "sha256": "9dd0e6bbfca6a4a02c30181e8e764555253b17a54ba11671ede3e3d3c7711838"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/handoff.launch.v1.json",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/handoff.launch.v1.json",
+      "bytes": 3005,
+      "sha256": "627863dd88266496dce4d55456df26b1c21713941cb7a9b3905263c5cd7f802f"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/handoff.preparation.json",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/handoff.preparation.json",
+      "bytes": 2125,
+      "sha256": "5993de10e4c36e1e1b3f3474c2edf5330fdc7a2563392be447c8049582a946ab"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/handoff.request.template.json",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/handoff.request.template.json",
+      "bytes": 336,
+      "sha256": "54388b8f5a684b9b840b7489ff1e5b8a257cd8ab5de133d43a6e4c718ea8ffce"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_findings_v1.json",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_findings_v1.json",
+      "bytes": 1499,
+      "sha256": "7d07e54d145060bf7625a09b5697f4659e55947946a8acd94dfce4c25860ba04"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_fixture_v2.json",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_fixture_v2.json",
+      "bytes": 1795,
+      "sha256": "99f5512f9c627f38e526577ea2039b4a5ce68197c9409ac1946bf602be1b7af5"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_fixture_v2.py",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_fixture_v2.py",
+      "bytes": 4632,
+      "sha256": "6a280ef63e9a9d0ed893ac3e4d5bd301891ab466a08bb102911ec63e0516e7cd"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_review_v2.json",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_review_v2.json",
+      "bytes": 3557,
+      "sha256": "0933de58462155c222f6666899013d3edc78dbc05b7699fe0c684a9064ee3703"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/original_driver.sh",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/original_driver.sh",
+      "bytes": 3711,
+      "sha256": "e309086e111c9f7b4bd2b3807573e84ee38c39fb1a46b5e5385e6609207044e9"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/reviewed_v1/driver.sh",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/reviewed_v1/driver.sh",
+      "bytes": 5119,
+      "sha256": "619eaa2acad0ade493ecf0614492af809f7fad1ade0170bd8d6fce5c2c1aa8d6"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/reviewed_v1/verify_runtime.py",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/reviewed_v1/verify_runtime.py",
+      "bytes": 1458,
+      "sha256": "8ac3f13d293b74e7b80ff3880d0e659e77bcae1e8573b7da9dea76c251c99b18"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/verify_runtime.py",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/verify_runtime.py",
+      "bytes": 1621,
+      "sha256": "c2e170daca34b60bfa2e5f18bd4cae6d60e561f373805b4f9d2bdd686e7ce99a"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/audit.log",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/audit.log",
+      "bytes": 269,
+      "sha256": "59f65486ca369ddec6cb51529cb3ee02594ad70376e590f98c7770a149440201"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/audit_B100T05.json",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/audit_B100T05.json.gz",
+      "bytes": 401177,
+      "sha256": "e195c5806d9032651f44d17892ed3e52bf8916e8558fa4da85371f7c62ea024b",
+      "encoding": "gzip",
+      "source_bytes": 3653879,
+      "source_sha256": "4f3f204439b3f6cd900b2754df83c60d5bb3dd18efdce70d5656382757c776fa"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/completed_readout.json",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/completed_readout.json",
+      "bytes": 4057,
+      "sha256": "07b077f43288b63dc15f9aa372ace70e6e7aabf84a05e56c26b5e21d22119b17"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/launch.json",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/launch.json",
+      "bytes": 4559,
+      "sha256": "66fef04553ae637725f2add0a7b73405fb8f24e3eb97da13446269ba69f6b640"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/README.md",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/README.md",
+      "bytes": 2411,
+      "sha256": "998c677c2d3c33853b57ab1ca990201a6f621ef69ee9efd272d2bf76a19ff860"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/author_validation.json",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/author_validation.json",
+      "bytes": 993,
+      "sha256": "c9c26ed7290ad7106eafbc8ac17408c5b7836da1f463a8bf8f45f98a69d0cdd1"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/command.txt",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/command.txt",
+      "bytes": 255,
+      "sha256": "4872929ab1216a3f5c0a7103dc94bcfb92d6b64dcb721172ad72e3965a362da3"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/independent_review.json",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/independent_review.json",
+      "bytes": 4674,
+      "sha256": "a36dc771ea310cd5d87e6ef34a67a6ca86efc12b0ce66e4d7ae101abc76f84ce"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/launch.json",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/launch.json",
+      "bytes": 20677,
+      "sha256": "5830a332beeb57f50a21495fb318afebdd47ca64a9fc7b4621ded82b7363a37c"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/preparation_receipt.json",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/preparation_receipt.json",
+      "bytes": 2243,
+      "sha256": "5eff9f8847d3f47c53c4f3b86bdbd7bad774073a6c7fbfd89ad04d21a8a6e35c"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/qualify_supervisor.fixture.py",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/qualify_supervisor.fixture.py",
+      "bytes": 3990,
+      "sha256": "bf3f8a6ac1b0368b49f3fec91d2e7bf2428afbe6739021db1bafe6aab64b8bbc"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/run_materialization.py",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/run_materialization.py",
+      "bytes": 8318,
+      "sha256": "239b6436055f6c5abca229ac3263640049a218e98bede1900f2bcd70443290b8"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/supervisor.patch",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/supervisor.patch.gz",
+      "bytes": 2425,
+      "sha256": "8178191bd9d05419cc5a22ab39fa00e6662711c5ffa582ccb066f1e4c2c9bef8",
+      "encoding": "gzip",
+      "source_bytes": 7580,
+      "source_sha256": "7b1f07ab4ac1080cb8c2e7a7595ac2bb611e94acecb1cebe8f525f755f2acfc5"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/supervisor_qualification.json",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/supervisor_qualification.json",
+      "bytes": 901,
+      "sha256": "3d0ba88b6666858f07bd0def5923bc24054db08384728d0092a8f9ad9344598c"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/readiness_plan.original.json",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/readiness_plan.original.json",
+      "bytes": 8132,
+      "sha256": "9067e117632af2135e1f937b0e76144f9c7612d51c258a6a8cf691248e998cad"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/run_audit.py",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/run_audit.py",
+      "bytes": 4945,
+      "sha256": "0366358f6bfa91dae24eb6a01a79b4fb4276ea427e4f1db80be3090c82f2fe59"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/B100_preparation_v1/status.json",
+      "published": "scratchpad/bt4_joint20/B100_preparation_v1/status.json",
+      "bytes": 1999,
+      "sha256": "2aa077496616b7c62c7842dfd4219d694655d2052fe5938ea7597846c4827f88"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/B100_readiness_plan.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/B100_readiness_plan.json",
+      "bytes": 8132,
+      "sha256": "9067e117632af2135e1f937b0e76144f9c7612d51c258a6a8cf691248e998cad"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/candidate_imports.json",
+      "published": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/candidate_imports.json",
+      "bytes": 6408,
+      "sha256": "59871680851bbe6869f1c56bf6bab950666b1f52fee896b5871b00cda8900aa3"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/candidate_imports.log",
+      "published": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/candidate_imports.log",
+      "bytes": 412,
+      "sha256": "7ef55e4e93fc57e50834c150e92b996b346f94b99bf885e3da07a49f98457fe3"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/live_imports.json",
+      "published": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/live_imports.json",
+      "bytes": 6450,
+      "sha256": "0a4dc63f976f4db16d879bbbfd4fd1ee9adf11a59e9fd76e4c352376922fd6f5"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/live_imports.log",
+      "published": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/live_imports.log",
+      "bytes": 426,
+      "sha256": "1b29943836e93b9c114cc177f7df8703cc47ab03384212e004062624ac0d4f22"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/proposed_launch.json",
+      "published": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/proposed_launch.json",
+      "bytes": 2394,
+      "sha256": "6979835550d5744d5860e7aad43ce00380cc77871f92efb5e67554e71a5f51ba"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/qualification.json",
+      "published": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/qualification.json",
+      "bytes": 7989,
+      "sha256": "aed87c6f60fdc826380bd01c562f976ead23359fe4566b88ce69adbd7a0a6ac9"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/qualify_imports.py",
+      "published": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/qualify_imports.py",
+      "bytes": 5376,
+      "sha256": "0e3d7245c0a0db8316be78d30de943d9cce000b2a7eb194948066884f39fdbfd"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/snapshot_preparation.json",
+      "published": "scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/snapshot_preparation.json",
+      "bytes": 3307,
+      "sha256": "e7b1a8fcfdbe2311a02f52537bc43c7dab3b11f3015dcdd5a555f00e08cbf4f8"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_review_v2.json",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_review_v2.json",
+      "bytes": 3557,
+      "sha256": "0933de58462155c222f6666899013d3edc78dbc05b7699fe0c684a9064ee3703"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_fixture_v2.json",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_fixture_v2.json",
+      "bytes": 1795,
+      "sha256": "99f5512f9c627f38e526577ea2039b4a5ce68197c9409ac1946bf602be1b7af5"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_fixture_v2.py",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_fixture_v2.py",
+      "bytes": 4632,
+      "sha256": "6a280ef63e9a9d0ed893ac3e4d5bd301891ab466a08bb102911ec63e0516e7cd"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/started.json",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/started.json",
+      "bytes": 1438,
+      "sha256": "240a8256c7f7d4f3bd1f00f150e33bc3bc2285027d75fa421c07807900e80143"
+    },
+    {
+      "source": "scratchpad/bt4_g10_raw_legal_reuse_v1/armed.json",
+      "published": "scratchpad/bt4_g10_raw_legal_reuse_v1/armed.json",
+      "bytes": 1456,
+      "sha256": "1de9a716d99acf5253a6b1b64026ada01dfcf9dc59b1ddc0b656d2f060806b38"
+    }
+  ],
+  "source_bytes": 3827312,
+  "published_bytes": 569455,
+  "preservation": "Original bytes retained, including blocked handoff review and superseded v1 scripts/plans. Gzip source/encoded hashes and sizes recorded. Existing source banks are referenced, not duplicated.",
+  "inspection": "Selected UTF-8 receipts, plans, operational scripts and bounded logs inspected; no private-key/token patterns or unrelated material selected. Archived host-bound drivers are evidence, not portable execution instructions.",
+  "external": "Source/derived corpora, model binaries, active labeler outputs and runtime dependencies remain external; original paths/pins retained.",
+  "status_snapshot_utc": "2026-09-08T03:51:30.928559+00:00",
+  "finalized_utc": "2026-09-08T04:00:31.857556+00:00",
+  "initial_capture_utc": "2026-09-08T03:47:29.991328+00:00"
+}

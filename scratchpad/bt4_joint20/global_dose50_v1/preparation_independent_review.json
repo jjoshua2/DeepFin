@@ -1,0 +1,55 @@
+{
+  "artifacts_sha256": {
+    "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_dose50_v1/cpu_runtime_qualification.json": "f34a03c31af9c504c6e74d0b03b70efd3977b6041527391aa019bf41a5519297",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_dose50_v1/preparation.md": "08706292cf0c23156854772cfe2748aa314909c0ad72cbecc3a6e5deb5fbf1fe",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_dose50_v1/preparation_plan.json": "392c470b56957effc8c1e3bf941c0b4aaac8ca4284ec44a9738dfb3d5b3692fd",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_dose50_v1/run_preparation.py": "a1c9b364f4767cf9251ff10bce785deb82c65a8a4ef8e0955cb5d67e5a3abdc0",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_dose50_v1/supervisor_qualification_v2.json": "9877091f267df69dd602d2d800324e077a7db96434ac44615485782a72e1305d",
+    "/tmp/deepfin-bt4-toolchain/scripts/bt4_policy_mix.py": "5fe8202f1e9681b042caeea06614cdbe3b55cf41ec2100182ce3e58e95e377c7"
+  },
+  "blockers": [],
+  "checked_unix": 1788714266.7829065,
+  "checks": {
+    "audit": "PASS: uses existing banked FEN-only d9/BT4 cache, descriptive SF comparator with mandatory fidelity/lineage invariants; 10000 bootstrap seed20260903; no teacher inference.",
+    "behavioral_qualification": "Six isolated real-child cases reported PASS at exact reviewed supervisor SHA, including injected observation error and reaping. I inspected the qualification receipt; did not rerun those cases.",
+    "cpu_dispatch": "PASS: qualified parser dispatches audit/mix only; CUDA hidden, numerical limits2 and blosc.set_nthreads(2), nice19; no label/inference call.",
+    "publication": "PASS: output and .writing preexistence refused; copy source then alter policy only, stored-policy reread/illegal-mass/count/mass checks, immutable record check and completed summaries before final rename. Failure preserves partial output.",
+    "recipe": "PASS: global alpha0.5 BT4T0.5, individual legal normalization, float16 policy storage; no restriction to exact ties or SF-close moves.",
+    "scientific_scope": "PASS: one coarse50% sharpened-global candidate addresses unresolved mixture weight; not a selected winner or autoqueued training grid. G20T05 remains natural temperature-matched dose control.",
+    "source_guard": "PASS: source summary SHA/size contract, sidecar completed summary/remap/ONNX identities, per-shard source policy and row fingerprint matching enforced by frozen mixer.",
+    "supervisor": "PASS: shared preparation flock, exclusive stage status/log admission, completed audit/plan/hash dependency for mix,300GiB start/150GiB polling reserve, owned child group cleanup,10m audit/4h mix timeout commands."
+  },
+  "corrected_findings": [
+    {
+      "problem": "Original /usr/bin/python3 could not import toolchain CPython3.13 native dependency",
+      "resolution": "Plan now uses qualified /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python; actual frozen runpy module import/parser/descriptive admission pass on Python3.13.15."
+    },
+    {
+      "problem": "Initial commands did not enforce stated disk admission/reserve",
+      "resolution": "Thin supervisor now checks300GiB admission and150GiB reserve every30seconds, preserving live jobs."
+    },
+    {
+      "problem": "First supervisor could leave child running unmonitored if status/disk inspection raised",
+      "resolution": "Current source installs handlers before spawn, carries pending stop, and SIGTERMs/reaps its owned process group in finally while holding preparation lock."
+    }
+  ],
+  "limitations": [
+    "This review qualifies data preparation, not completed publication, training provenance, playing strength, search scaling or recipe selection.",
+    "Recheck launch pins and free space immediately before execution using reviewed supervisor; do not invoke unguarded mix command.",
+    "Timeout and cleanup use cooperative SIGTERM with reaping; no SIGKILL escalation. An uninterruptible or SIGTERM-ignoring owned process can exceed nominal timeout while supervisor retains its lock.",
+    "Non-policy copy/ordered schedule verification and completed target identity remain required before any training; publication alone is insufficient.",
+    "Audit uses FEN-only cached teacher inputs while training sidecars retain actual history. Negative SF-agreement result is descriptive.",
+    "Behavioral checks are author-run isolated process tests; reviewer independently inspected source and performed actual qualified-runtime import/parser checks."
+  ],
+  "resource_snapshot": {
+    "existing_G20T05_apparent_bytes": 11967314064,
+    "existing_source_apparent_bytes": 9638905995,
+    "free_gib_at_review": 454.3518524169922,
+    "output_and_partial_absent": true
+  },
+  "reviewer": "bank_pr517_quality",
+  "scope": "Independent review of prospective G50T05 construction, exact audit/mix argv, qualified CPU import/parser path, supervisor resource/cleanup controls and mixer source/publication contracts. No training or arena approval.",
+  "verdict": "PASS_FOR_BOUNDED_CPU_DATA_PREPARATION"
+}

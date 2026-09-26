@@ -1,0 +1,109 @@
+"""Describe the completed fixed value bank; no fitting or teacher-quality verdict."""
+from pathlib import Path
+import hashlib
+import json
+import numpy as np
+
+HERE = Path(__file__).resolve().parent
+BANK = HERE / 'run'
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def normalized(values):
+    a = np.asarray(values, dtype=np.float64)
+    assert a.shape == (128, 3) and np.isfinite(a).all() and (a >= 0).all()
+    assert np.all(np.abs(a.sum(1) - 1) < .002)
+    return a / a.sum(1, keepdims=True)
+
+def entropy(p):
+    return -(p * np.log(np.maximum(p, np.finfo(float).tiny))).sum(1)
+
+def main():
+    complete = json.loads((BANK / 'complete.json').read_text())
+    assert complete['status'] == 'COMPLETE_MATCHED_VALUE_BANK'
+    assert complete['rows'] == 128 and complete['completed_batches'] == {'BT4': 32, 'Ceres': 32}
+    identities = json.loads((BANK / 'identities.json').read_text())
+    assert len(identities) == 128
+    used = set()
+    def checked(name):
+        p = BANK / name
+        proof = complete['outputs'][name]
+        assert p.stat().st_size == proof['bytes'] and sha(p) == proof['sha256'], name
+        used.add(name)
+        return p
+    checked('identities.json')
+    with np.load(checked('source_inputs.npz'), allow_pickle=False) as z:
+        sf = z['search_wdl'].copy()
+        outcome = z['wdl_target'].copy()
+    raw = {'SF': sf}
+    for teacher, output, name in [('BT4', '/output/wdl', 'BT4'), ('Ceres', 'value', 'Ceres_primary'), ('Ceres', 'value2', 'Ceres_secondary')]:
+        parts = []
+        for b in range(32):
+            with np.load(checked(f'{teacher}.{b:03d}.npz'), allow_pickle=False) as z:
+                part = z[output].copy()
+            assert part.shape == (4, 3) and np.isfinite(part).all()
+            assert part.dtype == (np.dtype('float32') if teacher == 'BT4' else np.dtype('float16'))
+            parts.append(part)
+        raw[name] = np.concatenate(parts)
+    probabilities = {'SF': normalized(sf), 'BT4': normalized(raw['BT4'])}
+    for name in ('Ceres_primary', 'Ceres_secondary'):
+        a = raw[name].astype(np.float64)
+        a = np.exp(a - a.max(1, keepdims=True))
+        probabilities[name] = normalized(a / a.sum(1, keepdims=True))
+    weights = np.array([r['weight'] for r in identities], dtype=float)
+    assert np.isfinite(weights).all() and (weights > 0).all()
+    weights /= weights.sum()
+    avg = lambda a: float(weights @ np.asarray(a))
+    q = {k: p[:, 0] - p[:, 2] for k, p in probabilities.items()}
+    def correlation(a, b):
+        a, b = a - avg(a), b - avg(b)
+        den = np.sqrt(avg(a*a) * avg(b*b))
+        return None if den == 0 else avg(a*b) / float(den)
+    stats = {}
+    for name, p in probabilities.items():
+        stats[name] = {'weighted_mean_wdl': (weights @ p).tolist(), 'weighted_entropy_nats': avg(entropy(p)),
+                       'weighted_mean_centered_q': avg(q[name]), 'weighted_mean_abs_centered_q': avg(np.abs(q[name]))}
+    pairwise = {}
+    names = list(probabilities)
+    for i, a in enumerate(names):
+        for b in names[i+1:]:
+            pa, pb = probabilities[a], probabilities[b]
+            pairwise[a + '__' + b] = {'weighted_abs_q_difference': avg(np.abs(q[a]-q[b])),
+                'weighted_abs_draw_difference': avg(np.abs(pa[:, 1]-pb[:, 1])),
+                'weighted_total_variation': avg(np.abs(pa-pb).sum(1)/2),
+                'weighted_jsd_nats': avg(entropy((pa+pb)/2)-(entropy(pa)+entropy(pb))/2),
+                'weighted_q_correlation': correlation(q[a], q[b])}
+    residual = {'weighted_BT4_Ceres_primary_q_residual_correlation_relative_to_SF':
+                correlation(q['BT4']-q['SF'], q['Ceres_primary']-q['SF'])}
+    groups = {}
+    for label, mask in [('white_to_move', np.array([r['stm']=='w' for r in identities])),
+                        ('black_to_move', np.array([r['stm']=='b' for r in identities])),
+                        ('SF_abs_q_le_0.1', np.abs(q['SF']) <= .1), ('SF_abs_q_ge_0.8', np.abs(q['SF']) >= .8)]:
+        mass = float(weights[mask].sum())
+        groups[label] = {'rows': int(mask.sum()), 'sample_weight_fraction': mass,
+                        'weighted_mean_centered_q': {n: float(weights[mask] @ v[mask] / mass) if mass else None for n,v in q.items()}}
+    rows = []
+    for i, ident in enumerate(identities):
+        rows.append({'source': 'nnue_bootstrap/' + Path(ident['source_dir']).name,
+            **{k: ident[k] for k in ('raw_shard','physical_row','derived_shard','derived_row','worker_id','game_id','ply','input_key','stratum','weight','stm','fen')},
+            'outcome_class_WDL': int(outcome[i]), 'native_outputs': {k:v[i].tolist() for k,v in raw.items()},
+            'probabilities_WDL': {k:v[i].tolist() for k,v in probabilities.items()}})
+    report = {'status': 'DESCRIPTIVE_MATCHED_VALUE_SAMPLE', 'rows':128,
+        'complete_sha256': sha(BANK/'complete.json'), 'analysis_sha256': sha(Path(__file__)),
+        'outputs_verified': {n:complete['outputs'][n] for n in sorted(used)},
+        'weighting': 'Existing two-stage inverse-selection weights, normalized over the fixed sample; not a new independent sample.',
+        'centered_q': 'W-L; expected score is (1+q)/2.', 'heads':stats, 'pairwise':pairwise,
+        'residual_alignment':residual, 'groups':groups,
+        'limits':['Descriptive sample only; no uncertainty or population-optimality claim.',
+                  'SF is cp-derived parametric WDL; neural disagreement is not automatically error correction.',
+                  'Ceres heads separately use temperature1; not the native blended package.',
+                  'No dose or temperature fitting, teacher selection, or game-outcome accuracy ruler.',
+                  'Current-side-to-move WDL follows declared adapter contracts, without a new native oracle.']}
+    for name, data in [('value_rows.json',rows), ('value_readout.json',report)]:
+        with (HERE/name).open('x') as f:
+            json.dump(data,f,indent=2,allow_nan=False);f.write('\n')
+    print(json.dumps({k: report[k] for k in ('status','heads','pairwise','residual_alignment')},indent=2))
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,19 @@
+{
+  "status": "PASS_ACTUAL_CPU_IMPORT",
+  "actual": {
+    "python": "3.13.15 (main, Sep  1 2026, 14:18:08) [Clang 22.1.3 ]",
+    "packages": {
+      "torch": "2.14.0+cpu",
+      "numpy": "2.2.6",
+      "zarr": "2.18.7",
+      "numcodecs": "0.15.1",
+      "python-chess": "1.999"
+    }
+  },
+  "torch_threads": 2,
+  "blosc_threads": 2,
+  "mixer_file": "/tmp/deepfin-h20-recovery-tools/scripts/bt4_policy_mix.py",
+  "mixer_sha256": "cd8059e408a539e4617e13b576890c353a95bd8b3835142c27a92c7ab5917ce3",
+  "runtime_qualification_sha256": "58d51f0962a1608bf2bcb02fabbde2a14e77275a8ca83953d4f7088ebfe20c70",
+  "no_corpus_or_training_executed": true
+}

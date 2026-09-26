@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "status": "PASS_REGISTERED_CORPUS_QUALIFICATION",
+  "profile": "SoftSF10",
+  "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_softsf_cp10",
+  "rows": 18910484,
+  "shards": 2309,
+  "source": {
+    "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+    "derive_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef"
+  },
+  "derive_summary": {
+    "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_softsf_cp10/derive_targets_summary.json",
+    "sha256": "be4bc2b477574d0a1e0d72ef52d45273170964669253bec5d9f08a0f7fcaabc3"
+  },
+  "rewrite_summary": {
+    "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_softsf_cp10/sf_policy_rewrite_summary.json",
+    "sha256": "cead18347ff448e6f18caefd6cbfe26a5366f868a4f23c696a15958e8bf52276"
+  },
+  "completed_inspection": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/completed_qualification_v1/completed_readout.json",
+    "sha256": "0b07e68ec6300f7dcea52a037c35cf73a65d5aa98239d01f4576faacfe1af9d0"
+  },
+  "metadata": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/completed_qualification_v1/current_metadata.jsonl",
+    "sha256": "c768c0e68498e888334c83be8b25160c009972fa6d2638104048ad837437c796",
+    "bytes": 7700515
+  },
+  "proof_scope": {
+    "producer": "Completed reviewed producer validates all rows and nonpolicy compressed copies; reused without repeated payload scan.",
+    "current": "All2309 original/output attrs and17output array layouts, declared raw stat identities and source/summary pins checked, with before/after metadata stability.",
+    "history": "Inherited original history and historical-control limitations; no re-encoding or retroactive valid_control claim.",
+    "pending": "Original prospective schedule and separately reviewed training manifest still required; no training launched."
+  },
+  "publisher_sha256": "d0248cfc2f7316b5ca45894d3dcae85f5849aad93ba2424eccc07ad4a3ef4b88",
+  "completed_unix": 1788895377.8464417,
+  "elapsed_seconds": 2.8343136310577393
+}

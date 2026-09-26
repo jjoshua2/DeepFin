@@ -1,0 +1,82 @@
+{
+  "status": "PASS_FIXED_HARDLINK_COPY_ONLY_PRELAUNCH_REVIEW",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "checked_unix": 1788749180.345741,
+  "files": {
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/archive_pools.py": "f46f44a29ab303c8e8eb1ee4f41b83f7087031847a502ca26b5a6f6499381419",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/archive_pools.py": "2c25416f40bbcbc61c56e9687947449ca33259f2aef5b3ba13b40f86571a40e0",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/plan.json": "1b224dfe8497060989e2678ed993dfdd5beb87e33e2daf8f32f0c3132f119794",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/candidate.patch": "9113759e7a259f4b2085b32e2de9e93171f39f16d90c8e47a80abce4d1684b72",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/qualification.json": "52e372639d4ab5ed04c2d9c3c05771700185fc7b7c2347f85e404e838c76b57b",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/qualify.py": "b8a19677ba603cca8bd6e75cb792986a0def06ec4ee525ae6422a7f85d1f45af",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/preparation.md": "af3cef0bca2b5a18bf62cecd8242a74bba15ff3496ef3ad11f4c81f92f52719a"
+  },
+  "selected_pools": [
+    "recover_ckpt751_20260711",
+    "scaleup_512x16_window_20260707",
+    "swap_512x16_20260711"
+  ],
+  "actual_plan_only": {
+    "mode": "PLAN_ONLY",
+    "plan_sha256": "1b224dfe8497060989e2678ed993dfdd5beb87e33e2daf8f32f0c3132f119794",
+    "pools": [
+      {
+        "name": "recover_ckpt751_20260711",
+        "estimated_tar_bytes": 34359738368
+      },
+      {
+        "name": "scaleup_512x16_window_20260707",
+        "estimated_tar_bytes": 34359738368
+      },
+      {
+        "name": "swap_512x16_20260711",
+        "estimated_tar_bytes": 34359738368
+      }
+    ],
+    "source": "/home/josh/projects/chess/data/salvage",
+    "destination": "/mnt/e/chess_archive_20260906/salvage"
+  },
+  "unchanged_function_ast": [
+    "save",
+    "sha",
+    "Pace",
+    "hash_stream",
+    "assert_stat",
+    "walk",
+    "mount_check",
+    "resources",
+    "references",
+    "inventory",
+    "check_source",
+    "verify_tar",
+    "terminate",
+    "main"
+  ],
+  "review_checks": [
+    "Exact actual diff equals pinned patch; only private staging ROOT, source hardlink acceptance+nlink identity, GNU tar hard-dereference and topology limitation changed. Original driver unchanged.",
+    "GNU tar hard-dereference materializes every enumerated regular path independently. Unchanged streaming verifier rejects actual hardlink/symlink members, compares ordered names/types/metadata/content for every entry, rejects extra or missing members, and checks source stat.",
+    "Inventory counts file bytes at every path, including repeated inode payloads; tar expansion is bounded by the existing32GiB ceiling rather than source allocated size.",
+    "st_nlink added for files and directories; changes through external aliases affect inode ctime/mtime and link additions/removals change nlink. Source guards around inventory, member verification and final source checks detect ordinary concurrent changes. This is not an atomic cross-pool filesystem snapshot.",
+    "Private staging ROOT preserves original failed recover/scaleup attempts. External destinations remain fixed and existing archives/attempts refuse automatic adoption.",
+    "All source files and external aliases retained. Only verified local staging tar is unlinked; no source-removal path. Protected pools are absent from the fixed3pool plan. Historical swap restart reference remains relevant to any later retirement.",
+    "Inherited mount,150GiB local reserve plus staging reservation,16GiB RAM minimum, external free-space, nice19 CPU0,1,32MiB/s checksum and16MiB/s rsync bounds unchanged."
+  ],
+  "author_fixture_review": {
+    "qualification_status": "PASS_TEMP_FIXTURES_NO_ARCHIVE_LAUNCH",
+    "cases": 10,
+    "reviewed_implementation": true,
+    "evidence": "Read complete actual fixture: real inventory, GNU tar creation, streaming verifier, restore bytes/types/inodes; default hardlink tar rejection; external alias write with mtime restored, link addition/removal and symlink refusals. Mount/resources replaced only inside fixtures. No concrete gap requiring redundant fixture run identified.",
+    "independent_fixture_execution": false
+  },
+  "launch_conditions": [
+    "Parent waits for current SFSL copy queue to become terminal; no concurrent archive I/O lane.",
+    "Use exact reviewed private driver and fixed plan. Runtime resource, mount, process-reference, source stability and full archive verification remain mandatory.",
+    "Any failure stops and retains source/partial state; no automatic retry or adoption."
+  ],
+  "limits": [
+    "No actual source payload hashes/tree scans, GPU/inference, arena outcome reads, copying, deletion or launch performed by reviewer. Only small code/evidence hashes and default plan-only entrypoint used.",
+    "Content and checked ordinary metadata preserved; hardlink inode sharing deliberately lost on restore, with no cross-pool atomicity or independent ACL/xattr semantic guarantee.",
+    "Known inaccessible processes/external aliases retain original qualified visibility limits. This review does not authorize or qualify source removal.",
+    "New source manifests have additional st_nlink field. Existing retirement tools requiring old exact schema cannot be applied unchanged; separate retirement review would be necessary."
+  ]
+}

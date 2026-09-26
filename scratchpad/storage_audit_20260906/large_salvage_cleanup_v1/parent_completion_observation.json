@@ -1,0 +1,81 @@
+{
+  "checked_unix": 1788745167.5157075,
+  "verified_completions": [
+    {
+      "name": "bt4heads_iter112_20260817",
+      "completed_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/bt4heads_iter112_20260817.completed.json",
+      "completed_receipt_sha256": "c8b674adc0b88cda68f498f9ccb953606cb61458c080c31538a02cadf82ab838",
+      "allocated_bytes_removed": 3906228224,
+      "external_proof": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/bt4heads_iter112_20260817.restore.json",
+      "original_and_quarantine_absent": true
+    },
+    {
+      "name": "f_only_midpoint_20260818",
+      "completed_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/f_only_midpoint_20260818.completed.json",
+      "completed_receipt_sha256": "5a6acdde36b3506056dd2f7f68dfcebb93cf873d42b7a5606a2330ee5659af3d",
+      "allocated_bytes_removed": 3878465536,
+      "external_proof": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/f_only_midpoint_20260818.restore.json",
+      "original_and_quarantine_absent": true
+    },
+    {
+      "name": "post_quarantine_20260801",
+      "completed_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/post_quarantine_20260801.completed.json",
+      "completed_receipt_sha256": "1ea680a94535ab08d17c91331095813c2c277e386656502beecb20843f8f8b41",
+      "allocated_bytes_removed": 3722571776,
+      "external_proof": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/post_quarantine_20260801.restore.json",
+      "original_and_quarantine_absent": true
+    },
+    {
+      "name": "pre_abandonfix_20260724",
+      "completed_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_abandonfix_20260724.completed.json",
+      "completed_receipt_sha256": "5110072177a0b4f1c9d86e31363a63f032c01ba128aee3d606527e90605060f4",
+      "allocated_bytes_removed": 3997048832,
+      "external_proof": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/pre_abandonfix_20260724.restore.json",
+      "original_and_quarantine_absent": true
+    },
+    {
+      "name": "pre_aot_deploy_20260714",
+      "completed_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_aot_deploy_20260714.completed.json",
+      "completed_receipt_sha256": "0b3f4aa72b490f79b587bc15d58746a1e195ad637d3421b80639dfdb9602540c",
+      "allocated_bytes_removed": 3694477312,
+      "external_proof": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/pre_aot_deploy_20260714.restore.json",
+      "original_and_quarantine_absent": true
+    },
+    {
+      "name": "pre_audit_window_20260726",
+      "completed_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_audit_window_20260726.completed.json",
+      "completed_receipt_sha256": "0b1310d7e8c46c67a59004a045136e3407c5e486aff28d538f40ab24b7facc2c",
+      "allocated_bytes_removed": 3737165824,
+      "external_proof": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/pre_audit_window_20260726.restore.json",
+      "original_and_quarantine_absent": true
+    },
+    {
+      "name": "pre_durable_deploy_20260726",
+      "completed_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_durable_deploy_20260726.completed.json",
+      "completed_receipt_sha256": "ce90f309bfdb91b72369fbf0819c7847470e5e226dad3c88ef9a6195bcb0647e",
+      "allocated_bytes_removed": 4032315392,
+      "external_proof": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/pre_durable_deploy_20260726.restore.json",
+      "original_and_quarantine_absent": true
+    },
+    {
+      "name": "pre_lc0_control_20260819",
+      "completed_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_lc0_control_20260819.completed.json",
+      "completed_receipt_sha256": "1ddb5b19df924e7f76d417c66b726233bcf9f9cc3b0a53125492edbf3c457fa7",
+      "allocated_bytes_removed": 3964899328,
+      "external_proof": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/pre_lc0_control_20260819.restore.json",
+      "original_and_quarantine_absent": true
+    },
+    {
+      "name": "pre_mainmerge_20260810",
+      "completed_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_mainmerge_20260810.completed.json",
+      "completed_receipt_sha256": "9ca751fea75db35ee2201155531601ef22060d9f9c02f767236b51fc57f20603",
+      "allocated_bytes_removed": 3999940608,
+      "external_proof": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/pre_mainmerge_20260810.restore.json",
+      "original_and_quarantine_absent": true
+    }
+  ],
+  "total_allocated_bytes_removed": 34933112832,
+  "limits": "Gross removed source allocation. Does not subtract retained membership indexes or incorporate concurrent generation; separate from prior observed free-space deltas. Archive was freshly hashed by frozen runtime; parent checks exact completion/proof bytes and current archive metadata, without repeated payload reads.",
+  "status": "ALL_NINE_COMPLETED",
+  "maximum_resident_kbytes": 32660
+}

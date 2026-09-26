@@ -1,0 +1,75 @@
+{
+  "bank_sha256": {
+    "25": "55af2ba812271130a88a45ffbdb09f14b5146c627d39330bf3cf376bf79088e4",
+    "400": "20ae76e774408cb249ee9ff4858be985e790debd95620d41b60f44cb4587d342"
+  },
+  "blockers": [],
+  "checked_utc": "2026-09-06T07:39:26.859864+00:00",
+  "checkpoint_sha256": {
+    "candidate": "c7d0bb38f952150db004b29699e0509437bcec7928d79cd44f69125ffa5fa817",
+    "reference": "b41a5614bae5bf67cb32916c4ace8d26db27fd9152b7c496be40427424b08fb8"
+  },
+  "completion_receipt_sha256": "b3fd465bdc34b541d37ea8c4583c1d54a139a8684c82100ac07cd322f61cbfa0",
+  "cpu_affinity": [
+    0,
+    1
+  ],
+  "interaction_400_minus_25": {
+    "ci95": [
+      -0.0385,
+      0.026
+    ],
+    "discordant_pairs": 380,
+    "method": "percentile; PCG64 default_rng; linear percentile",
+    "pair_outcome_covariance": -0.005398296593186373,
+    "samples": 10000,
+    "score_advantage": -0.0065,
+    "seed": 20260903,
+    "unit": "aligned opening pair"
+  },
+  "interpretation": "E0 beats S0 at400 simulations in this fixed seed/opening screen. The400-minus25 interval includeszero; no demonstrated increase or decrease in relative advantage over S0.",
+  "limitations": [
+    "Nominal exploratory intervals without family-wise correction.",
+    "Relative advantage across budgets is not either model's absolute improvement with search.",
+    "This is not evidence about uncompleted global or SF-close arms.",
+    "E0 historical training-runtime provenance limitation remains."
+  ],
+  "manifest_sha256": "64b45d136d7dd08c59791e14714c6cf2605ddd676cb538e478946ff814994132",
+  "method": "Independent stdlib raw result/color scoring, sample-variance paired normal95% interval; independent NumPy aligned-pair percentile bootstrap. No producer/readout estimator imports.",
+  "next_action": "Continue full registered global arms, SF-close follow-up and independent-seed/fresh-opening confirmation sequence. No optional stopping, queue change or recipe selection.",
+  "numpy_version": "2.2.6",
+  "parent_readout_match": true,
+  "parent_readout_sha256": "c01d543975058e34a7c7851b14e2400ac31f30190ce5da9d24d1396a106d10c3",
+  "protocol_receipt_sha256": "a14ac44fe5248e89019ac22fe34fd35aa7c637227d6dbfa7f8ea25f95bb072f7",
+  "reproducer_path": "/tmp/deepfin-e0-trio-independent-review.py",
+  "reproducer_sha256": "49d95077244b742e4bb238afeab3fea6a836db5dcbf2ca9c8bddb6569b6ee99d",
+  "result_E0_400": {
+    "WDL": [
+      398,
+      466,
+      136
+    ],
+    "elo": 93.20119723402958,
+    "elo_ci95": [
+      77.59861548687265,
+      109.18004756025508
+    ],
+    "games": 1000,
+    "pairs": 500,
+    "pentanomial": {
+      "DD_WL": 162,
+      "LD_DL": 58,
+      "LL": 12,
+      "WD_DW": 192,
+      "WW": 76
+    },
+    "score": 0.631,
+    "score_ci95": [
+      0.6098528060389836,
+      0.6521471939610164
+    ],
+    "score_se": 0.010789384673987974,
+    "verdict": "SUCCESS"
+  },
+  "scope": "New completed E0:400 cell and preregistered aligned E0:400-minus-E0:25 interaction; existing E0:25/E0:100 review retained. No live G20T1 results read."
+}

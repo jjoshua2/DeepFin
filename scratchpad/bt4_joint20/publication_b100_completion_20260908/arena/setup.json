@@ -1,0 +1,8 @@
+{
+  "checkout": "/tmp/deepfin-recipe-screen-tools-v3",
+  "commit": "794292baa3bc5984c252abd421e89725e6939343",
+  "package_setup_lock_diff_from_v2": "empty",
+  "native_links": "Same four verified native payload inodes as v2; no rebuild",
+  "python_environment": "/tmp/deepfin-bt4-sf-close-followup/.venv",
+  "no_old_writes": true
+}

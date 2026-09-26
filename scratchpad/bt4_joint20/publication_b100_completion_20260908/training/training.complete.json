@@ -1,0 +1,34 @@
+{
+  "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+  "checkpoint": {
+    "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+    "role": "B100",
+    "sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62"
+  },
+  "complete": true,
+  "historical_valid_control": false,
+  "historical_validity_problems": [
+    "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+    "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+    "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+  ],
+  "input_pins": {
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/bt4_policy_mix_summary.json": "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/derive_targets_summary.json": "47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py": "4e8e27e861021dd4c75a1a21404ff9aed0d55775e0212def585bc21b1d8cde18"
+  },
+  "physical_plan_sha256": "a48c86e454f51a63297d8b5731c8c60d7c831827a46f2bf0dc142b336364a342",
+  "role": "B100",
+  "run": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1",
+  "schedule": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/realized_schedule.json",
+    "sha256": "371fdb551d9cc4286482a0075a07a46317de02661dfa726427dfd8427837609f"
+  },
+  "summary_sha256": "d43427b3c8ddde5e6d661bd48b43a843938fb0d65bfbf5484ee88fe2f11f71e5",
+  "training_charge_seconds": 9258.993950499978
+}

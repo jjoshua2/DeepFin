@@ -1,0 +1,1210 @@
+{
+  "completed_utc": "2026-09-08T10:30:44Z",
+  "depth": 9,
+  "gap_definition": "rank1_effective_cp-minus-ranked_effective_cp",
+  "index_encoding": "lc0_1858",
+  "kind": "sf_d9_rank_gap_sidecar",
+  "outputs": [
+    {
+      "path": "shard_000000.zarr",
+      "payload_sha256": "0e42285e5f42e1d573107ce150d7a5f29d78eb8d0c43f97609d4f54d8819dddd",
+      "rows": 8192,
+      "source_row_identity_sha256": "f748ea91a12f17c198d6fa4d3197d798af0373c03c2db1a530e28d34e17a0489"
+    },
+    {
+      "path": "shard_000001.zarr",
+      "payload_sha256": "503a50e130bcfdab29c9426592652cdacf7601f0d88dbce360a225beeffa4e28",
+      "rows": 8192,
+      "source_row_identity_sha256": "61d21b86a5d334861d47b376cdf58b5da4fdab606f2560e01c6804132a7ddb21"
+    },
+    {
+      "path": "shard_000002.zarr",
+      "payload_sha256": "bef429e3ef526672e78998b6606919478721796bf9852ac5f94a83ea13b20da4",
+      "rows": 8192,
+      "source_row_identity_sha256": "6a2af4faa8ad951b9493e877ada2446161c84bd92276e4f8efcb964e005c6c2a"
+    },
+    {
+      "path": "shard_000003.zarr",
+      "payload_sha256": "ef2bf56f1cdccadc3cc76171597949381395837288ee07826f676f0fa06b3bac",
+      "rows": 8192,
+      "source_row_identity_sha256": "87d28f338228c823a01f324067f0f24ae36034b9d0030c567eb556a198b89d77"
+    },
+    {
+      "path": "shard_000004.zarr",
+      "payload_sha256": "a063728f869da3c18b94c9bf0e3676a37a6d4cc3496814db00857cafb0faf534",
+      "rows": 8192,
+      "source_row_identity_sha256": "296e49a7215d60d9afc676ad60cce60621878674a9df1ca8d9522b8540604056"
+    },
+    {
+      "path": "shard_000005.zarr",
+      "payload_sha256": "e59f1e777a29ba8a24b881d39fcd490a4fa5354af315966e1280ba03f1d89f23",
+      "rows": 8192,
+      "source_row_identity_sha256": "66bbfef434a76f7e6924fd7b99303466e91ff77943e139ad7f24cc1b0f4aa595"
+    },
+    {
+      "path": "shard_000006.zarr",
+      "payload_sha256": "d852d4bc582da31027350f91b43465a390c238117abf2b180c396f69e2b9c7de",
+      "rows": 8192,
+      "source_row_identity_sha256": "edacd949715d6dde349c667abfa6b428558167579112886bef2f3b93c7ca81b0"
+    },
+    {
+      "path": "shard_000007.zarr",
+      "payload_sha256": "b42818c0df77efe3fd554bbcec89094760d4402fa0b1d0c16810d5c6293cee95",
+      "rows": 8192,
+      "source_row_identity_sha256": "c082ceee86b8cdedda0a2cfb4df5ca67ce8ecf4e4ce03356e69b2a7f492fb936"
+    },
+    {
+      "path": "shard_000008.zarr",
+      "payload_sha256": "4749bc6a626d827dd23f9433f77261b0cfa29cfcbaf8521c0acf9b1766e810ff",
+      "rows": 8192,
+      "source_row_identity_sha256": "66d6452a5cd9dfdf0f8b90e624a55615b4b58d51182cd81842d335307036f43d"
+    },
+    {
+      "path": "shard_000009.zarr",
+      "payload_sha256": "ee8067a0c27fff5196ee965984945d385beb04872be7af08142722b485a1791d",
+      "rows": 8192,
+      "source_row_identity_sha256": "d8d38b18badd18b662c05b0e11d0106ea7fd7a0da237effe82861f028148f093"
+    },
+    {
+      "path": "shard_000010.zarr",
+      "payload_sha256": "271f3eb6a05c0b5ca6cfd0b3065122bfe818714b59446a6d0c9e56679d4744d2",
+      "rows": 8192,
+      "source_row_identity_sha256": "a16a8c375f36fd55fdac6492877be4f1895542c608bd508f91711b6b73792e56"
+    },
+    {
+      "path": "shard_000011.zarr",
+      "payload_sha256": "c4653d89b4ab56a26cb091a14e2009f813acf7caf824c452e98957b153475c23",
+      "rows": 8192,
+      "source_row_identity_sha256": "ceb98b0b56ba1ac365058dccf1b4babbe2d997b0cfaad6d452fc6030a5bf2e7a"
+    },
+    {
+      "path": "shard_000012.zarr",
+      "payload_sha256": "8dad2f79a89290aeb0c9ed3114b17827d23fa839381e726daece7901bc6ea848",
+      "rows": 8192,
+      "source_row_identity_sha256": "040e9fcd0347fd254347e131ffc209c331dc3126ec9bfce061b891dcd5876945"
+    },
+    {
+      "path": "shard_000013.zarr",
+      "payload_sha256": "6eb59e6f57f3732ff0fd9525114f2d0d67d09fedfa02b3a226b270fa0fd6c856",
+      "rows": 8192,
+      "source_row_identity_sha256": "6a001b35db34ce40f521cabad522f286bf92ed695d4cc4fdf5b0e3567ecc63f1"
+    },
+    {
+      "path": "shard_000014.zarr",
+      "payload_sha256": "2adf78c3552d340b846de4c91a7124eb71ee01fc991c10413f3172a617ada78e",
+      "rows": 8192,
+      "source_row_identity_sha256": "fa04e56214c76c67401f3b19513bc79a5ed4d3b86b803e3d622d8432b9413886"
+    },
+    {
+      "path": "shard_000015.zarr",
+      "payload_sha256": "60bb4f6caf58f408043a38a0d671531412bdd33c180c9d554ae4a6d0b99bcb47",
+      "rows": 8192,
+      "source_row_identity_sha256": "57d1b3abcebc428e6a6da4a5c21e805f5f08544cee9bc975ed3ea2b88c4489a3"
+    },
+    {
+      "path": "shard_000016.zarr",
+      "payload_sha256": "e64f0dcb28207691df4facfaf01f77bd285c5a35b46d9056a1f5ddb04edbaaed",
+      "rows": 8192,
+      "source_row_identity_sha256": "d667f58cbdd0c7ffa82077329ce27406de1ddb14575f4d6b096382d11618480a"
+    },
+    {
+      "path": "shard_000017.zarr",
+      "payload_sha256": "9eaea2df320017cf389984221421dddfccc7dce5826b79d36dfa9142fbe2e0d0",
+      "rows": 8192,
+      "source_row_identity_sha256": "1db6a918ab1cd6226e284c53826dec4e1dacc19b273c831329639f6bb2032c21"
+    },
+    {
+      "path": "shard_000018.zarr",
+      "payload_sha256": "3fe7b86f73afd9af8d5b05628ad373925372b4705b515ca9a0383ecd29a5dec4",
+      "rows": 8192,
+      "source_row_identity_sha256": "be1c2f5ac20a1365e7c174b44f4fb24b833ef7662fac5fe0e1b3ee0ae10c289f"
+    },
+    {
+      "path": "shard_000019.zarr",
+      "payload_sha256": "7934cbc08670981892d8f98440db7cc057919f0feb8d834e76f09df1f8e62ab4",
+      "rows": 8192,
+      "source_row_identity_sha256": "f1f0b7f6caa08bb90cc0574a0efeca3e68cafa077a070da1823bb58183755e95"
+    },
+    {
+      "path": "shard_000020.zarr",
+      "payload_sha256": "f84cad76f29ac553d013d7f39a5c894f7ff511be0c94e1ed0b700b1a724986c6",
+      "rows": 8192,
+      "source_row_identity_sha256": "f3e9d4f5903a78531d61e1ffd9682f85be6774ceb038640d133d6e3d60e93c94"
+    },
+    {
+      "path": "shard_000021.zarr",
+      "payload_sha256": "73f12d8dbae27b261d3d9d8582f7765878d94b84f55d7895ac682ddf8e394d21",
+      "rows": 8192,
+      "source_row_identity_sha256": "6c823e28276b5d29e05bb7422da005a33ab4c84c573cde53b6ea35a549487e2e"
+    },
+    {
+      "path": "shard_000022.zarr",
+      "payload_sha256": "3dc3789d88889afe95e14fd5a56e350b7dc13035f8bf0158450da4dbca98e8c0",
+      "rows": 8192,
+      "source_row_identity_sha256": "d31b58fb685af435f5f70496f00e8dd9a071264139e7cfc0b0f39f6577781523"
+    },
+    {
+      "path": "shard_000023.zarr",
+      "payload_sha256": "97b2f94c2247a0d0906c600cb05568b0139c194d2e1c6234a39c2740c8d2d4c6",
+      "rows": 8192,
+      "source_row_identity_sha256": "172bdbaa419616237f4780fd765340eff816131453666ef3ee48f7c2e43bca66"
+    },
+    {
+      "path": "shard_000024.zarr",
+      "payload_sha256": "3188b4b441e88a05e6a57ee83202db3da2db21c25d52587fefe74c4f0536a3b7",
+      "rows": 8192,
+      "source_row_identity_sha256": "357c51a2c728695fe92baca168dd1400fa3ddf2759f41fff5dd061fc74399601"
+    },
+    {
+      "path": "shard_000025.zarr",
+      "payload_sha256": "070fcf2c89aa4eee9f113dd42433c3643efe3652ca016870f9283bfb4bc3c6ed",
+      "rows": 8192,
+      "source_row_identity_sha256": "8459fc7809473b1308496274599590ff875e369d16799efa276c602e616617ff"
+    },
+    {
+      "path": "shard_000026.zarr",
+      "payload_sha256": "3ba3daa0f6fab7b7ff094bbfba5dc9ab017fb5120fe87c622039d28075d6128a",
+      "rows": 8192,
+      "source_row_identity_sha256": "87cff92ed36a74cf812f3c0d970edc85fb894fa5501dc95a9741b14db06a4e45"
+    },
+    {
+      "path": "shard_000027.zarr",
+      "payload_sha256": "e858515c4464d37b1c3846fbc1f4ecae2dc308bfee656e09f3a15365c86f3c8b",
+      "rows": 8192,
+      "source_row_identity_sha256": "6d2a5bb082005846083bfb2c48176a958c6bfb9bce7c5e00e54cdd159c836df5"
+    },
+    {
+      "path": "shard_000028.zarr",
+      "payload_sha256": "67f14e75ba714f41b59084e018c03b5a77ba2bac959a96273aca79acf5b2b001",
+      "rows": 8192,
+      "source_row_identity_sha256": "a9f424753469d75180dd93fde652848c68913bbe6f36b6a3ad8f49e6d040e252"
+    },
+    {
+      "path": "shard_000029.zarr",
+      "payload_sha256": "9135276ccefec155ff6685525ea9f5f9dfe3718fc074369e8db0b23601a67a72",
+      "rows": 8192,
+      "source_row_identity_sha256": "018555857b0f41897a2e1db40e63a5c02709e52e55a86d0156bc0408fd018508"
+    },
+    {
+      "path": "shard_000030.zarr",
+      "payload_sha256": "5b99d961ec47eb843f79f5e40fa9511f99ac0a28c2d1d124b10a2ce688dd244c",
+      "rows": 8192,
+      "source_row_identity_sha256": "db52cc3e958141fe9839ad329ab07bf880d25a9cb9f4abbd785ef3d5fd3c04c5"
+    },
+    {
+      "path": "shard_000031.zarr",
+      "payload_sha256": "3cb634385e7df333fd5e1cd39e95b4c86621f6034c06b0d194c42ca6516d766a",
+      "rows": 8192,
+      "source_row_identity_sha256": "b837439e98264f13e4a6b2c3cd849e74bc188704c5db57f46215b4968fd1b1f5"
+    },
+    {
+      "path": "shard_000032.zarr",
+      "payload_sha256": "eb477216030f1568488173032471db56cde136d2b154c0779fe4581b8e145528",
+      "rows": 8192,
+      "source_row_identity_sha256": "42208249843a29a91e9be4f7f790ca2f0bb7b58f21f7010ada2bb468236a4f14"
+    },
+    {
+      "path": "shard_000033.zarr",
+      "payload_sha256": "43683d80ab9b60ab57fab3e70893825ffa72132ccf468448d2bfe24d590903da",
+      "rows": 8192,
+      "source_row_identity_sha256": "bbdea58e33c84e77c07deeec21d96cf85c655289a8b23fc32adcf8c6b9b5512b"
+    },
+    {
+      "path": "shard_000034.zarr",
+      "payload_sha256": "aa545dc2cdbfd48199163def8165ce3fcdaeb2e6bedc3a3e3afa43eb5e2803c0",
+      "rows": 8192,
+      "source_row_identity_sha256": "e1fba54c5fcb89c6cc5ce112e70898eec3801403d593ec967a2f446207e7230b"
+    },
+    {
+      "path": "shard_000035.zarr",
+      "payload_sha256": "6be0bb305d02b589d687a4fa5e166302f4cbff8f0ca42da4d389602850df9dbe",
+      "rows": 8192,
+      "source_row_identity_sha256": "e5026cfaa5cf3e1b44b2b58f5a91ad07f9ea926ee19f76ca74771e87f5074461"
+    },
+    {
+      "path": "shard_000036.zarr",
+      "payload_sha256": "d21e9b835bd7d4a89014f038e632430a4f8526c0b2fe4a9edc0783776d0090ba",
+      "rows": 8192,
+      "source_row_identity_sha256": "8723d1d56cb1d3e754bdc1e0ccbfae8f1c7a83ba663214b208f5b6f107bf09a3"
+    },
+    {
+      "path": "shard_000037.zarr",
+      "payload_sha256": "382e69960e0aade4717088fd0250ac8c1706297d94735ea38aa0e464c9c88d53",
+      "rows": 8192,
+      "source_row_identity_sha256": "c138ba07b7a4a638675ecbe38557ad9297c1ba058a2f9fa1bfa841f6dd437268"
+    },
+    {
+      "path": "shard_000038.zarr",
+      "payload_sha256": "9f41be0e689327493fd7365f555b98d8f58e77027f6f1e5924b7549aa396de31",
+      "rows": 8192,
+      "source_row_identity_sha256": "37f9c01c7ad02f5641db1e4112fb46269615c69dfef9af1b5ac768933ae2da87"
+    },
+    {
+      "path": "shard_000039.zarr",
+      "payload_sha256": "fa5481db54d4f44b995b28c5827df75b00255e3385708accf2aa3bfde91c5a90",
+      "rows": 8192,
+      "source_row_identity_sha256": "9e26848f2c3b2e2b55dfeb1a51685ca2aa3717763eec3584a8cb790301b33a9e"
+    },
+    {
+      "path": "shard_000040.zarr",
+      "payload_sha256": "619082457b99b604da753fc6060dd8693f9bba13702fc59f33d844c519cb8dad",
+      "rows": 8192,
+      "source_row_identity_sha256": "fd19e226cf85b398a9042bdacf73b55f2c2ae3f0010292b4b22c444963fbd887"
+    },
+    {
+      "path": "shard_000041.zarr",
+      "payload_sha256": "028684c8d23af3243fe22fe659d302d7a598d057888d1a6657202ec2c94f5f72",
+      "rows": 8192,
+      "source_row_identity_sha256": "0b826a5cb908bbc80c313062a3d07f4c576675527eeb673b1c950f1ab8c8dfa1"
+    },
+    {
+      "path": "shard_000042.zarr",
+      "payload_sha256": "b7dffbd2d4dfa34634466c15ad1c341d945875c503d7f32bf7690b777d87eafd",
+      "rows": 8192,
+      "source_row_identity_sha256": "099c17d5ef3b87bf20c65f333a205467451d0d9bf8af77e3706f48745ada1566"
+    },
+    {
+      "path": "shard_000043.zarr",
+      "payload_sha256": "07503406836f86c20b8a5bef444195cb4d06b2763a92dcab7032763e7f2b5b77",
+      "rows": 8192,
+      "source_row_identity_sha256": "4dd1dcb602faa98ff814b853d6de6079a599855d96abc8a24ad79372bd7d533e"
+    },
+    {
+      "path": "shard_000044.zarr",
+      "payload_sha256": "ef1bf9e477a2c58af1491b659e80d0cbe13424bed67138ab8b251d00b5316e49",
+      "rows": 8192,
+      "source_row_identity_sha256": "9db4461c8dd5dee337a07db9e68d56688dbe348b02b1fe82a02d50ce28a977f8"
+    },
+    {
+      "path": "shard_000045.zarr",
+      "payload_sha256": "c867d045350e5627785b4d20881579817cd5f20a17496080618f6841bcdab6ff",
+      "rows": 8192,
+      "source_row_identity_sha256": "f25003214867b1f794c7384a437c34a943168a287282aced4619b7098fc64752"
+    },
+    {
+      "path": "shard_000046.zarr",
+      "payload_sha256": "11752fa7072673a93c7297a957c66ab07bf25f310b68fb52a36e9b4c7c9f2e40",
+      "rows": 8192,
+      "source_row_identity_sha256": "71d73af5ae08b20ac4d38df91ae77e7fc34e81b72da0333c938d3230b1391ebe"
+    },
+    {
+      "path": "shard_000047.zarr",
+      "payload_sha256": "9e93cf326970d9da9ee70204b5811e4abbbd15235b177f9a9818210840cb09da",
+      "rows": 8192,
+      "source_row_identity_sha256": "c057f7c21d2f161838df2eaebc27c57b9af6dce6fe7dbae4e85e11bd0ab3352f"
+    },
+    {
+      "path": "shard_000048.zarr",
+      "payload_sha256": "a04f0c771bc1d322552380d9791ecc1b4b6979098174d041f04d9d591a1f4298",
+      "rows": 8192,
+      "source_row_identity_sha256": "768789b126296fef0807da1570255ca379c8090da6a0af2a375e2731b7fffb67"
+    },
+    {
+      "path": "shard_000049.zarr",
+      "payload_sha256": "e349795d6ef955387f896098ae82771af6f96fca306714157bb33f11763ccbb5",
+      "rows": 8192,
+      "source_row_identity_sha256": "5ec89ff112b9325802635d683f026bc02e8899f47c5baf6e6a95174da05b5a70"
+    },
+    {
+      "path": "shard_000050.zarr",
+      "payload_sha256": "a8eb8565240cce737d703f15028e1d85c7a96347e7582da369f1cb15bf1a0d7b",
+      "rows": 8192,
+      "source_row_identity_sha256": "02bc629dc266171233b8c0cc46a2ba3718519c403a5ca0d6dd15689dd5b515ea"
+    },
+    {
+      "path": "shard_000051.zarr",
+      "payload_sha256": "aed42f30ebe554413cc53750575f8e8417d6359cde525cc4506272ad0f34fa22",
+      "rows": 8192,
+      "source_row_identity_sha256": "7cf6c5047c441ec5c80e34b67318c550bbcaf09ef124ef1ca133a571f229b6c1"
+    },
+    {
+      "path": "shard_000052.zarr",
+      "payload_sha256": "80599d2377f0157309285f117a1edaceaac6e9af64c79d753bcdfc67293a54cb",
+      "rows": 8192,
+      "source_row_identity_sha256": "be1a286a9d5049558098c07a2d2d7200fd4aa6a84cbc582c0a2e80745172c8c1"
+    },
+    {
+      "path": "shard_000053.zarr",
+      "payload_sha256": "5a507745fc4594cbe83753ed6d0dd13e8bf026f3716b0c870fea0d0709f1a3bc",
+      "rows": 8192,
+      "source_row_identity_sha256": "df530d10e24c16a66b8946be370d49643c2dba89c041db3f2a08b0c3768385bb"
+    },
+    {
+      "path": "shard_000054.zarr",
+      "payload_sha256": "859343977cf9ae2a0ad1e8535a62d6bdb75f9d2ef61efa2b38c1051f2c429cde",
+      "rows": 8192,
+      "source_row_identity_sha256": "58d25f5df808fafdca69102eff824c52f7689f12d0a6b76d66d54ca0a21b1c57"
+    },
+    {
+      "path": "shard_000055.zarr",
+      "payload_sha256": "091d312e5c8073bedb6dbad921c6b55f8c844d124bd51f1b6ee237c1e2bd6c9c",
+      "rows": 8192,
+      "source_row_identity_sha256": "a0d02b40baf20ada0bdddf96d8f7721b7f81c3ad62bb96d71e81f205704d459d"
+    },
+    {
+      "path": "shard_000056.zarr",
+      "payload_sha256": "737bc0a20b47953d799b2c0d3496e6df6182c14400630c814619a91383730b39",
+      "rows": 8192,
+      "source_row_identity_sha256": "fbdbc3467ae1a4598b822b25ebc23813fe34b94f5d3b1f096d9f031adedf7469"
+    },
+    {
+      "path": "shard_000057.zarr",
+      "payload_sha256": "8ff3f3a765f9705ca5045bc0d35a6425c38594f0fa2a9e3837722db0f572f249",
+      "rows": 8192,
+      "source_row_identity_sha256": "121c1c62e99dd5216b6c59eba4040fa8393cbdac4c1279401bf19155524724e1"
+    },
+    {
+      "path": "shard_000058.zarr",
+      "payload_sha256": "5d56f3de6a06f411672d9c668642041d882c27897d360a558f356c0ff03081ca",
+      "rows": 8192,
+      "source_row_identity_sha256": "536e5d0ea388c8fb825b066a93baf329c5eb33a858a0c5e51a62f98fd915f1c8"
+    },
+    {
+      "path": "shard_000059.zarr",
+      "payload_sha256": "607059e937cef86e3548c96c495fbb6e573319908f2e248709ae7e444b25cf86",
+      "rows": 8192,
+      "source_row_identity_sha256": "586af83c2bad3a88b9d3420cfa85c67c4bee4de62bdc1d80bb0c78720c47197a"
+    },
+    {
+      "path": "shard_000060.zarr",
+      "payload_sha256": "da37d26fdcedf01b9a0677c0abb309ede01174a9fa83c8955d5771cc3b2105e3",
+      "rows": 8192,
+      "source_row_identity_sha256": "85da040c45690a5acc2a25d5babf061484d1def5b20ebe1c12b455e76d701e2e"
+    },
+    {
+      "path": "shard_000061.zarr",
+      "payload_sha256": "52bf4c5e7e42e50873133e29d512fc729ec7796022149dd064ba293e4c202abd",
+      "rows": 8192,
+      "source_row_identity_sha256": "51aa064df1babfdaf9e1556f9b589ffd6f5421366aa7320065e05e08443e67d5"
+    },
+    {
+      "path": "shard_000062.zarr",
+      "payload_sha256": "df9dbea236f83e178bcdda7f34336f4771221e554ff9ba868366167734182542",
+      "rows": 8192,
+      "source_row_identity_sha256": "11386060ade3509bdf46be7e15442b2d63ca83814d888486ca6a34ff968405cf"
+    },
+    {
+      "path": "shard_000063.zarr",
+      "payload_sha256": "66c4c06716dd060581b6be9df19608cab6f6acb6bfa2b2aefe8fcb382948832b",
+      "rows": 8192,
+      "source_row_identity_sha256": "3ad2dfb6c246ac9ae1282d5ecf4c214633c9616ab933ef00b2284d17c4f5a943"
+    },
+    {
+      "path": "shard_000064.zarr",
+      "payload_sha256": "50b981e5854ca4413998e71e0e428270a8b5f0cfeb13855d47280812bf610c5c",
+      "rows": 1126,
+      "source_row_identity_sha256": "0f31d9316ceee198b9b9a394709afa53c53e0c1e193ce03462641a05d3a7bf52"
+    }
+  ],
+  "raw_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+  "raw_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+  "raw_limit": 530624,
+  "raw_rows_read": 530624,
+  "row_provenance": {
+    "cache_budget_bytes": 67108864,
+    "cache_record_bytes": 68,
+    "cache_seen_bytes_per_row": 1,
+    "join": "source-qualified-physical-row-and-full-history-keys-v1",
+    "observation": "complete-phase0-d9",
+    "policy_observation": "phase0",
+    "policy_support_exclusions_sha256": "28ef28a290cea90bb58706e9c7ea7d4217151339015a35a01b0e9bb991cd3286",
+    "raw_record_sha256": {
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/manifest.json": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/derived/policy_support_misses.jsonl": "28ef28a290cea90bb58706e9c7ea7d4217151339015a35a01b0e9bb991cd3286"
+    },
+    "raw_shards_read_once": 64,
+    "raw_source_metadata": {
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00128.jsonl.zst": [
+        2096,
+        15777960,
+        21262475,
+        1788712167741242887,
+        1788712167741242887
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00129.jsonl.zst": [
+        2096,
+        15784021,
+        21418430,
+        1788713920304774179,
+        1788713920304774179
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00130.jsonl.zst": [
+        2096,
+        15784054,
+        21574240,
+        1788715964320225006,
+        1788715964320225006
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00131.jsonl.zst": [
+        2096,
+        15854372,
+        21007248,
+        1788718253651611160,
+        1788718253651611160
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00132.jsonl.zst": [
+        2096,
+        15895657,
+        20675787,
+        1788720292923064142,
+        1788720292923064142
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00133.jsonl.zst": [
+        2096,
+        15795260,
+        21807173,
+        1788722245038541431,
+        1788722245038541431
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00134.jsonl.zst": [
+        2096,
+        15895740,
+        21253124,
+        1788724117974038028,
+        1788724117974038028
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00135.jsonl.zst": [
+        2096,
+        15897394,
+        21243618,
+        1788726183357488121,
+        1788726183357488121
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00136.jsonl.zst": [
+        2096,
+        15777962,
+        21771647,
+        1788728059568980945,
+        1788728059568980945
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00137.jsonl.zst": [
+        2096,
+        15897503,
+        21421264,
+        1788730094840435888,
+        1788730094840435888
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00138.jsonl.zst": [
+        2096,
+        15897528,
+        20849070,
+        1788731867699961480,
+        1788731867699961480
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00139.jsonl.zst": [
+        2096,
+        15900638,
+        21254647,
+        1788733968663399285,
+        1788733968663399285
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00140.jsonl.zst": [
+        2096,
+        15906349,
+        21632403,
+        1788735855854890303,
+        1788735855854890303
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00141.jsonl.zst": [
+        2096,
+        15908181,
+        21531427,
+        1788737680094402083,
+        1788737680094402083
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00142.jsonl.zst": [
+        2096,
+        14165166,
+        21700239,
+        1788739552857898720,
+        1788739552857898720
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00143.jsonl.zst": [
+        2096,
+        14172142,
+        21455256,
+        1788741528413371240,
+        1788741528413371240
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00144.jsonl.zst": [
+        2096,
+        14173564,
+        21507147,
+        1788743570716821219,
+        1788743570716821219
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00145.jsonl.zst": [
+        2096,
+        14173594,
+        21551039,
+        1788745446632319982,
+        1788745446632319982
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00146.jsonl.zst": [
+        2096,
+        14177823,
+        20523845,
+        1788747403271793814,
+        1788747403271793814
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00147.jsonl.zst": [
+        2096,
+        14177838,
+        21443170,
+        1788749311987281767,
+        1788749311987281767
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00148.jsonl.zst": [
+        2096,
+        14179785,
+        21378328,
+        1788751093030803493,
+        1788751093030803493
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00149.jsonl.zst": [
+        2096,
+        14181584,
+        21266051,
+        1788753001870291245,
+        1788753001870291245
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00150.jsonl.zst": [
+        2096,
+        14188567,
+        21243904,
+        1788754852725795310,
+        1788754852725795310
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00151.jsonl.zst": [
+        2096,
+        14188584,
+        21576325,
+        1788756768297281072,
+        1788756768297281072
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00152.jsonl.zst": [
+        2096,
+        14188603,
+        20897316,
+        1788758423664837686,
+        1788758423664837686
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00153.jsonl.zst": [
+        2096,
+        14188617,
+        20935200,
+        1788760166348370004,
+        1788760166348370004
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00154.jsonl.zst": [
+        2096,
+        14188633,
+        21074153,
+        1788761827299925667,
+        1788761827299925667
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00155.jsonl.zst": [
+        2096,
+        14192662,
+        21984291,
+        1788763577407454285,
+        1788763577407454285
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00156.jsonl.zst": [
+        2096,
+        14192683,
+        21553531,
+        1788765451842952470,
+        1788765451842952470
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00157.jsonl.zst": [
+        2096,
+        14192700,
+        21543583,
+        1788767375910436286,
+        1788767375910436286
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00158.jsonl.zst": [
+        2096,
+        14192717,
+        22466763,
+        1788769114205967411,
+        1788769114205967411
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00159.jsonl.zst": [
+        2096,
+        14192732,
+        21095677,
+        1788770997593464579,
+        1788770997593464579
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00160.jsonl.zst": [
+        2096,
+        14193797,
+        21273075,
+        1788772785860985253,
+        1788772785860985253
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00161.jsonl.zst": [
+        2096,
+        14197895,
+        21112893,
+        1788774620584493336,
+        1788774620584493336
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00162.jsonl.zst": [
+        2096,
+        14203340,
+        21397068,
+        1788776389348018542,
+        1788776389348018542
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00163.jsonl.zst": [
+        2096,
+        14161620,
+        20260561,
+        1788778096623558843,
+        1788778096623558843
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00164.jsonl.zst": [
+        2096,
+        14203475,
+        21242215,
+        1788779767847112714,
+        1788779767847112714
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00165.jsonl.zst": [
+        2096,
+        14203491,
+        21129903,
+        1788781728262585110,
+        1788781728262585110
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00166.jsonl.zst": [
+        2096,
+        14203510,
+        21287864,
+        1788783410314135624,
+        1788783410314135624
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00167.jsonl.zst": [
+        2096,
+        14203525,
+        21029789,
+        1788784987741712533,
+        1788784987741712533
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00168.jsonl.zst": [
+        2096,
+        14203540,
+        20353420,
+        1788786725785247893,
+        1788786725785247893
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00169.jsonl.zst": [
+        2096,
+        14203556,
+        20979001,
+        1788788468412781019,
+        1788788468412781019
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00170.jsonl.zst": [
+        2096,
+        14192708,
+        21684383,
+        1788790230016304472,
+        1788790230016304472
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00171.jsonl.zst": [
+        2096,
+        14203595,
+        21480227,
+        1788791944647845860,
+        1788791944647845860
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00172.jsonl.zst": [
+        2096,
+        14203611,
+        21353667,
+        1788793749739362411,
+        1788793749739362411
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00173.jsonl.zst": [
+        2096,
+        14203622,
+        20875970,
+        1788795360402929347,
+        1788795360402929347
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00174.jsonl.zst": [
+        2096,
+        14203641,
+        20881954,
+        1788796971522498207,
+        1788796971522498207
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00175.jsonl.zst": [
+        2096,
+        14203655,
+        21137943,
+        1788798829757999860,
+        1788798829757999860
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00176.jsonl.zst": [
+        2096,
+        14203669,
+        20567455,
+        1788800340157593189,
+        1788800340157593189
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00177.jsonl.zst": [
+        2096,
+        14203685,
+        21441243,
+        1788802216205090704,
+        1788802216205090704
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00178.jsonl.zst": [
+        2096,
+        14203702,
+        21387025,
+        1788803888144646633,
+        1788803888144646633
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00179.jsonl.zst": [
+        2096,
+        14203718,
+        21516671,
+        1788805605028180864,
+        1788805605028180864
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00180.jsonl.zst": [
+        2096,
+        14203736,
+        20974220,
+        1788807131671773015,
+        1788807131671773015
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00181.jsonl.zst": [
+        2096,
+        14203747,
+        20474331,
+        1788808902399297286,
+        1788808902399297286
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00182.jsonl.zst": [
+        2096,
+        14203767,
+        21030066,
+        1788810647826828527,
+        1788810647826828527
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00183.jsonl.zst": [
+        2096,
+        14203784,
+        21215964,
+        1788812327790378325,
+        1788812327790378325
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00184.jsonl.zst": [
+        2096,
+        14203800,
+        20960541,
+        1788814135145894677,
+        1788814135145894677
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00185.jsonl.zst": [
+        2096,
+        14203821,
+        20823787,
+        1788815865517428004,
+        1788815865517428004
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00186.jsonl.zst": [
+        2096,
+        14208558,
+        21454566,
+        1788817723892930417,
+        1788817723892930417
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00187.jsonl.zst": [
+        2096,
+        14208760,
+        21462978,
+        1788819799348371820,
+        1788819799348371820
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00188.jsonl.zst": [
+        2096,
+        14290916,
+        20846547,
+        1788821577227895751,
+        1788821577227895751
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00189.jsonl.zst": [
+        2096,
+        14281907,
+        21357719,
+        1788823434739398862,
+        1788823434739398862
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00190.jsonl.zst": [
+        2096,
+        14234630,
+        21087295,
+        1788825443698859739,
+        1788825443698859739
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00191.jsonl.zst": [
+        2096,
+        14224564,
+        20741342,
+        1788827364202345347,
+        1788827364202345347
+      ]
+    },
+    "rows_dropped_policy_support": 12,
+    "value_observation": "latest-phase"
+  },
+  "rows": 525414,
+  "rows_dropped_no_result": 5198,
+  "rows_dropped_policy_support": 12,
+  "rows_per_shard": 8192,
+  "schema": 1,
+  "seed": 0,
+  "shards": 65,
+  "source_derive_summary_sha256": "a65d576f386e0b64fda3c85f4f389164a2c444c5f11f7ddab1085806226d518f",
+  "source_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/derived",
+  "source_selection": {
+    "order": "original corpus shard order; limit applies after selection",
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/source_shards.json",
+    "schema": 1,
+    "sha256": "97017b5423ae8f2b87f5f14f1c23d5d1f76c764b6230e3d6eefeed1dfac68c4b",
+    "shards": [
+      {
+        "rows": 8199,
+        "source_sha256": "4792ee7789258fa2230880ac9186fb3bc61bfe57270e2cc079957b3b4a61a43c",
+        "source_shard": "w00-00128.jsonl.zst"
+      },
+      {
+        "rows": 8314,
+        "source_sha256": "bd904b2736fdcec75d9d7db554d0ea9de6d59450af346ee79d183ec29f924031",
+        "source_shard": "w00-00129.jsonl.zst"
+      },
+      {
+        "rows": 8332,
+        "source_sha256": "d2c9ca381a68e130dc914caee6910ced18bb6777bc2131bd257e56efb48e5796",
+        "source_shard": "w00-00130.jsonl.zst"
+      },
+      {
+        "rows": 8320,
+        "source_sha256": "d394f0fb015e1a842058c51d5de872533ae7b816faf54575e4cae1e6ca01f5e1",
+        "source_shard": "w00-00131.jsonl.zst"
+      },
+      {
+        "rows": 8213,
+        "source_sha256": "7477f9783ecbea806e82b58ebf91a6974cdef37512ce0d020107bfef437682b1",
+        "source_shard": "w00-00132.jsonl.zst"
+      },
+      {
+        "rows": 8236,
+        "source_sha256": "39e404e77c4721bf7762b85c9d0dcff4f529e6f2edaca380fcabf20f36a15dba",
+        "source_shard": "w00-00133.jsonl.zst"
+      },
+      {
+        "rows": 8248,
+        "source_sha256": "a70b65d15e779c3f45b3ab86d971c49135fa35dd8a4b67316dd369feac2d7e9b",
+        "source_shard": "w00-00134.jsonl.zst"
+      },
+      {
+        "rows": 8235,
+        "source_sha256": "3118be8a6929fd0f2edfbfde7d36aeee24b8f06d693017800ee6adfe3c3d6f2b",
+        "source_shard": "w00-00135.jsonl.zst"
+      },
+      {
+        "rows": 8554,
+        "source_sha256": "84c81ca768960fab21de1033c44b3258d6ca95c6ebeb8c7c919af1915ebbfe37",
+        "source_shard": "w00-00136.jsonl.zst"
+      },
+      {
+        "rows": 8280,
+        "source_sha256": "fb3acabd961ee42f13a55e4900f1d5ace393dc6ef11da0f53c69cb83c2f0d15a",
+        "source_shard": "w00-00137.jsonl.zst"
+      },
+      {
+        "rows": 8253,
+        "source_sha256": "4d683c7956abc864a27d95cced7e253d5a97d98c7cf58da01c8c213e9ee8e595",
+        "source_shard": "w00-00138.jsonl.zst"
+      },
+      {
+        "rows": 8284,
+        "source_sha256": "5bbe6e482faed8e56272021189d402db6b7f7bb3c848b5c2bc16a2bd3d07574a",
+        "source_shard": "w00-00139.jsonl.zst"
+      },
+      {
+        "rows": 8378,
+        "source_sha256": "655ac993cd767b3c8096977737ab2c85104d2ca9143925995206dba46d8c8b59",
+        "source_shard": "w00-00140.jsonl.zst"
+      },
+      {
+        "rows": 8434,
+        "source_sha256": "d43a91ee9b6c715c9fc26ca9aa58237d843a10f43e4921fd0a084994835fada1",
+        "source_shard": "w00-00141.jsonl.zst"
+      },
+      {
+        "rows": 8386,
+        "source_sha256": "aa9691484bfcf2a593c1a826758ccf4aa73dc7a3a1ce8087b0585d0dffae0782",
+        "source_shard": "w00-00142.jsonl.zst"
+      },
+      {
+        "rows": 8325,
+        "source_sha256": "c5620afaa0482f0478ff1cbc4bf951614e40ebf37ed6db4bb88734d8eb0f6f5a",
+        "source_shard": "w00-00143.jsonl.zst"
+      },
+      {
+        "rows": 8318,
+        "source_sha256": "8685e03dfa89a6dcde5d57aa6b009b5106544bcc1854aef4e970260ccfbb6ce1",
+        "source_shard": "w00-00144.jsonl.zst"
+      },
+      {
+        "rows": 8367,
+        "source_sha256": "9dda4c132ea48881b080b8f8489e918cadf2525d8cd0ac4461c11016fe66372a",
+        "source_shard": "w00-00145.jsonl.zst"
+      },
+      {
+        "rows": 8243,
+        "source_sha256": "12f32e9882313be663ccead021ee4d6c4f7b604faee02f679084544265ef54a0",
+        "source_shard": "w00-00146.jsonl.zst"
+      },
+      {
+        "rows": 8448,
+        "source_sha256": "951e329cdcf340b692b65063177d344d00516643445a88b926e59ec5a6dd2e9c",
+        "source_shard": "w00-00147.jsonl.zst"
+      },
+      {
+        "rows": 8466,
+        "source_sha256": "809dfd731f041871fa894eb61c32645fc8be54af341a2cd3a5e61cca7d561935",
+        "source_shard": "w00-00148.jsonl.zst"
+      },
+      {
+        "rows": 8251,
+        "source_sha256": "b4432cfe2ff56cbb44cd7d50fc43dd42ecb78c20bc4450500dda19556619ffc4",
+        "source_shard": "w00-00149.jsonl.zst"
+      },
+      {
+        "rows": 8255,
+        "source_sha256": "dd1cb2ddfec43058cf262c52c007a9fb01d05c056980f9d6d7b2ed268369488f",
+        "source_shard": "w00-00150.jsonl.zst"
+      },
+      {
+        "rows": 8433,
+        "source_sha256": "69be7a80064bec465880601beee106b7b0ec1b1ed0c0973c16779195e2e5af4a",
+        "source_shard": "w00-00151.jsonl.zst"
+      },
+      {
+        "rows": 8411,
+        "source_sha256": "c9a585fd6c67119c8cb111ffc5382ec0025675cea770ef59c93a4ced71bbdd5a",
+        "source_shard": "w00-00152.jsonl.zst"
+      },
+      {
+        "rows": 8268,
+        "source_sha256": "8a5e1010174a52d25bfac9223a116481c68d7832a0ebb669edf3c9c85da179ee",
+        "source_shard": "w00-00153.jsonl.zst"
+      },
+      {
+        "rows": 8267,
+        "source_sha256": "af168e725e5d253f3d16472a09b85afc4c5b762ec7f1cfcacaf19df4e5381ae3",
+        "source_shard": "w00-00154.jsonl.zst"
+      },
+      {
+        "rows": 8406,
+        "source_sha256": "04564f695a80c665232a7a92c16ad92b5eed7ea85f57261ea4bb0a6f0036b306",
+        "source_shard": "w00-00155.jsonl.zst"
+      },
+      {
+        "rows": 8302,
+        "source_sha256": "57040529382ef4cc1c681703652e786c804733e44f59a7d0e77e821c384cc916",
+        "source_shard": "w00-00156.jsonl.zst"
+      },
+      {
+        "rows": 8238,
+        "source_sha256": "e3fd76dbcad78cf8610ab1e482c7dff8b48488f63ca2aa554fc1abab60b64f75",
+        "source_shard": "w00-00157.jsonl.zst"
+      },
+      {
+        "rows": 8405,
+        "source_sha256": "7233bf0c92b9ce03dd63886e8c68d071d24561a241065c60f395e30b5051a818",
+        "source_shard": "w00-00158.jsonl.zst"
+      },
+      {
+        "rows": 8218,
+        "source_sha256": "1de998ef31a556a7f9ff35525c22e781d1fa22d1a1022d26b07ecd000ba91d3f",
+        "source_shard": "w00-00159.jsonl.zst"
+      },
+      {
+        "rows": 8200,
+        "source_sha256": "80dbbc63705d463ab45838d0fc46a6a2c9f992082c30960efa96dd43f38a1194",
+        "source_shard": "w00-00160.jsonl.zst"
+      },
+      {
+        "rows": 8266,
+        "source_sha256": "51a0d687032c9f43b716da0b4d45a1ba4bae8246ef41140657d382e2052b46b2",
+        "source_shard": "w00-00161.jsonl.zst"
+      },
+      {
+        "rows": 8480,
+        "source_sha256": "9a25eb68e0f9132704f2d8a79dca4581c48404d5550733897c396bb20beb3f68",
+        "source_shard": "w00-00162.jsonl.zst"
+      },
+      {
+        "rows": 8203,
+        "source_sha256": "b35a73c1538cb819305cd4d4569c6fa5a1d5f3c894ed667bfd2bd55ae88a39f0",
+        "source_shard": "w00-00163.jsonl.zst"
+      },
+      {
+        "rows": 8290,
+        "source_sha256": "ea99501ad8dec271e3856d9c6dc516d8b8ac11335f02bd683755fb0cc9e87698",
+        "source_shard": "w00-00164.jsonl.zst"
+      },
+      {
+        "rows": 8330,
+        "source_sha256": "6b869e0404f86fe8697c9bb756de2ccb535de98d3e90ec628dc6085f2540693c",
+        "source_shard": "w00-00165.jsonl.zst"
+      },
+      {
+        "rows": 8335,
+        "source_sha256": "b1d42e97cb4a80679c848847d4225d35804f2a9940cd1a4af0380c973b1126ba",
+        "source_shard": "w00-00166.jsonl.zst"
+      },
+      {
+        "rows": 8242,
+        "source_sha256": "09fabdcf573571408dc19f0cd8c3adc6702873ef69187fba4785b92437c0bc67",
+        "source_shard": "w00-00167.jsonl.zst"
+      },
+      {
+        "rows": 8204,
+        "source_sha256": "d4a803e8c06103a5ad9822da2ff6dcabb8eccbc1dd1dee8b2c395e8e5ee60d25",
+        "source_shard": "w00-00168.jsonl.zst"
+      },
+      {
+        "rows": 8255,
+        "source_sha256": "a39032d550e938c9dadf4fcf687eabba711df3bd63722c9f737bd3d431f55d04",
+        "source_shard": "w00-00169.jsonl.zst"
+      },
+      {
+        "rows": 8224,
+        "source_sha256": "84a24fd3d464e39deb120f1bd1319448bb44ee3e8bb5a5ea50f8917ce898a7b8",
+        "source_shard": "w00-00170.jsonl.zst"
+      },
+      {
+        "rows": 8231,
+        "source_sha256": "76b73446708ff2e64433e12361946eabbd8a497da13e9a6eb67ca13f45818591",
+        "source_shard": "w00-00171.jsonl.zst"
+      },
+      {
+        "rows": 8315,
+        "source_sha256": "13265b13c04e97319028808fe21fb439237d0ee95b0f018c34c6c888088081b8",
+        "source_shard": "w00-00172.jsonl.zst"
+      },
+      {
+        "rows": 8209,
+        "source_sha256": "54f8f512fcd48d5eb7bbfb724945921d3fd50b6d3521f04f520ec350e04e41ec",
+        "source_shard": "w00-00173.jsonl.zst"
+      },
+      {
+        "rows": 8222,
+        "source_sha256": "d2fa0becd992e8931c3df48b32f42b22485f9beadfcd76ec235c26d38e5b183d",
+        "source_shard": "w00-00174.jsonl.zst"
+      },
+      {
+        "rows": 8226,
+        "source_sha256": "fd936ef1c070303e111df6dd99968bd8a9546c5ca8251880400ca56b86aa5a52",
+        "source_shard": "w00-00175.jsonl.zst"
+      },
+      {
+        "rows": 8198,
+        "source_sha256": "c82410023e4268a018e31e7a40653dd70f2472cb00fb26667b361106dd471d53",
+        "source_shard": "w00-00176.jsonl.zst"
+      },
+      {
+        "rows": 8289,
+        "source_sha256": "92b85ebc1f1ad7ce103b94c2724cadecac780dae028d09ba816682af7f432577",
+        "source_shard": "w00-00177.jsonl.zst"
+      },
+      {
+        "rows": 8291,
+        "source_sha256": "cf67513e621c8a7fbb111f4c36f89c59dd0487aa673a4b506c4c7d3d2d80b397",
+        "source_shard": "w00-00178.jsonl.zst"
+      },
+      {
+        "rows": 8210,
+        "source_sha256": "d7758777eaa5ab4080eedfcccafef421eb7bd4e1903f282ffc9bb3927f71007c",
+        "source_shard": "w00-00179.jsonl.zst"
+      },
+      {
+        "rows": 8195,
+        "source_sha256": "2e8b0e81b48396d0b0adbff2dd5670e2c7da910cbd56c3433e0cd1529f9aa5ce",
+        "source_shard": "w00-00180.jsonl.zst"
+      },
+      {
+        "rows": 8206,
+        "source_sha256": "85f52b63d299adc129ddb4594a71b47a2972c881b89a4fd4a6101b1203dde18d",
+        "source_shard": "w00-00181.jsonl.zst"
+      },
+      {
+        "rows": 8245,
+        "source_sha256": "ead0711a4039e2896bd552734a679d361500098bddee51f30b02acc5abda40fc",
+        "source_shard": "w00-00182.jsonl.zst"
+      },
+      {
+        "rows": 8361,
+        "source_sha256": "18ec2d18bf19afd3058219e16705702d80b81b30e904b6de0b380c1b095fd40b",
+        "source_shard": "w00-00183.jsonl.zst"
+      },
+      {
+        "rows": 8339,
+        "source_sha256": "9526e37d6d0b329011facfd540940e4297e7e7610480d70d7f5358966c93ae02",
+        "source_shard": "w00-00184.jsonl.zst"
+      },
+      {
+        "rows": 8277,
+        "source_sha256": "ab51d53acd51dbfd22b264197eab9216ebee4d6b64f43e1a2433cb62dcd76c57",
+        "source_shard": "w00-00185.jsonl.zst"
+      },
+      {
+        "rows": 8216,
+        "source_sha256": "21959ca1ab055f23ff03d075c03107c0651f73c70307f6b0fbc736ddb00352f0",
+        "source_shard": "w00-00186.jsonl.zst"
+      },
+      {
+        "rows": 8417,
+        "source_sha256": "b129037ab054b638f8d8234b76dc1c67b790efb7208eecf875fa9c7ca75ba1cb",
+        "source_shard": "w00-00187.jsonl.zst"
+      },
+      {
+        "rows": 8251,
+        "source_sha256": "849a0314353ab6f82bdacf6899eeb24d065ba6b5cc9c5e216d6a2c29729b5c8e",
+        "source_shard": "w00-00188.jsonl.zst"
+      },
+      {
+        "rows": 8210,
+        "source_sha256": "93e37a36883285eef7984ecc021cf99b5874a842a2ec407791dcaa140efceccc",
+        "source_shard": "w00-00189.jsonl.zst"
+      },
+      {
+        "rows": 8192,
+        "source_sha256": "29dccb468dab15726263913d1a8a28a78196f731a4ab30dd539d1562157892fb",
+        "source_shard": "w00-00190.jsonl.zst"
+      },
+      {
+        "rows": 8208,
+        "source_sha256": "05e3b1ad188318e2f784ff0037bdadda8e7240418164305ee3e8ebc3050d7f9f",
+        "source_shard": "w00-00191.jsonl.zst"
+      }
+    ],
+    "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+    "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+    "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+  },
+  "top_k": 3
+}

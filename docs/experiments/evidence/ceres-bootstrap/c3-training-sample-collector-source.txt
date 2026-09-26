@@ -1,0 +1,366 @@
+"""One bounded bank-only Ceres CPU sample; no corpus writes or teacher labels."""
+from __future__ import annotations
+import argparse
+import hashlib
+import itertools
+import json
+import os
+from pathlib import Path
+import resource
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+
+def sha(path):
+    h = hashlib.sha256()
+    with Path(path).open('rb') as f:
+        for block in iter(lambda: f.read(1 << 20), b''):
+            h.update(block)
+    return h.hexdigest()
+
+
+def stat(path):
+    p = Path(path)
+    if p.is_symlink() or not p.is_file():
+        raise ValueError(f'expected regular nonsymlink file: {p}')
+    s = p.stat()
+    return [s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns]
+
+
+def write(path, value):
+    with Path(path).open('x') as f:
+        json.dump(value, f, indent=2, allow_nan=False)
+        f.write('\n')
+
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+
+def row_key(row):
+    return (row['source_dir'], row['derived_shard'], int(row['derived_row']))
+
+
+def metrics(distributions, cp, close, sf_max, np):
+    result = {}
+    best = cp == cp.max()
+    for name, p in distributions.items():
+        positive = p > 0
+        entropy = float(-np.sum(p[positive] * np.log(p[positive])))
+        result[name] = dict(entropy=entropy, effective_support=float(np.exp(entropy)),
+            positive_support=int(positive.sum()), top1=float(p.max()),
+            top1_legal_offset=int(p.argmax()), raw_cp_best_mass=float(p[best].sum()),
+            sf_nearclose_mass=float(p[close].sum()), sf_stored_maxima_mass=float(p[sf_max].sum()))
+    pairwise = {}
+    for a, b in itertools.combinations(distributions, 2):
+        p, q = distributions[a], distributions[b]
+        midpoint = (p + q) / 2
+        def kl(x):
+            ix = x > 0
+            return float(np.sum(x[ix] * np.log(x[ix] / midpoint[ix])))
+        pairwise[a + '__' + b] = dict(jsd=(kl(p) + kl(q)) / 2,
+            total_variation=float(np.abs(p - q).sum() / 2),
+            top1_agreement=bool(p.argmax() == q.argmax()),
+            a_mass_on_b_top1=float(p[q.argmax()]), b_mass_on_a_top1=float(q[p.argmax()]))
+    return result, pairwise
+
+
+def main(plan_path, expected_sha):
+    started_unix, start = time.time(), time.monotonic()
+    plan_path = Path(plan_path).resolve()
+    require(sha(plan_path) == expected_sha, 'plan pin differs')
+    plan = json.loads(plan_path.read_text())
+    require(plan['status'] == 'PREPARED_NOT_EXECUTED', 'plan status')
+    state = plan_path.parent
+    out = Path(plan['output'])
+    out.mkdir(exist_ok=False)
+    records, consumed = [], {}
+    phase = 'admission'
+    peak_output = 0
+    def signal_stop(signum, frame):
+        raise RuntimeError(f'termination signal {signum}; preserve partial sample')
+    signal.signal(signal.SIGTERM, signal_stop)
+    signal.signal(signal.SIGINT, signal_stop)
+    def guard():
+        nonlocal peak_output
+        require(not (state/'STOP').exists() and not (state.parent/'STOP').exists(), 'STOP requested')
+        require(time.monotonic() - start < plan['limits']['work_seconds'], 'work deadline reached')
+        require(shutil.disk_usage(out).free >= plan['limits']['free_reserve_bytes'], 'free reserve reached')
+        size = sum(p.stat().st_size for p in out.iterdir() if p.is_file())
+        peak_output = max(peak_output, size)
+        require(size <= plan['limits']['output_bytes'], 'sampled output cap reached')
+    def verify_file(path, proof):
+        path = Path(path)
+        before = stat(path)
+        require(before[2] == proof['bytes'] and sha(path) == proof['sha256'], f'file pin: {path}')
+        require(stat(path) == before, f'changed while checking: {path}')
+        consumed[str(path)] = {'stat': before, **proof}
+    try:
+        guard()
+        require(os.environ.get('CUDA_VISIBLE_DEVICES') == '', 'GPU must be hidden')
+        require(os.sched_getaffinity(0) == set(plan['limits']['affinity']), 'affinity differs')
+        require(os.getpriority(os.PRIO_PROCESS, 0) == 19, 'nice differs')
+        for key in ['OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS']:
+            require(os.environ.get(key) == '2', f'{key} must be2')
+        resource.setrlimit(resource.RLIMIT_AS, (plan['limits']['address_space_bytes'],) * 2)
+        verify_file(plan_path, dict(bytes=plan_path.stat().st_size, sha256=expected_sha))
+        for name, proof in plan['pins'].items():
+            verify_file(name, proof)
+        runtime = Path(plan['runtime'])
+        head = subprocess.check_output(['git', '-C', str(runtime), 'rev-parse', 'HEAD'], text=True).strip()
+        require(head == plan['runtime_head'], 'runtime HEAD differs')
+        require(str(Path(sys.executable).resolve()) == plan['python_resolved'], 'python identity differs')
+        sys.path.insert(0, str(runtime))
+        import chess
+        import numpy as np
+        import onnxruntime as ort
+        from chess_anti_engine.encoding.encode import encode_position
+        from chess_anti_engine.encoding.ceres_tpg import encode_ceres_tpg_bytes
+        from chess_anti_engine.moves.leela_index import leela_index_for_move, compact_index_for_move
+        from scripts import derive_corpus_targets as derive
+        from scripts import gen_sf_rooted_corpus as corpus
+        from scripts.sf_d9_rank_sidecar import rank_observation
+        from scripts import bt4_policy_mix as mix
+        require(ort.__version__ == plan['versions']['onnxruntime'] and np.__version__ == plan['versions']['numpy'], 'runtime versions differ')
+        corpus.apply_history_rep_fix()
+        # Bind the actual imported local code; the reviewed HEAD and explicit core pins
+        # are admission, while these hashes record the remaining imported dependencies.
+        loaded = {}
+        for module in list(sys.modules.values()):
+            file = getattr(module, '__file__', None)
+            if file and any(Path(file).is_relative_to(runtime / name)
+                            for name in ('chess_anti_engine', 'scripts')):
+                file = Path(file)
+                if file.suffix == '.py':
+                    proof = dict(bytes=file.stat().st_size, sha256=sha(file))
+                    verify_file(file, proof)
+                    loaded[str(file)] = proof
+                elif file.suffix == '.so':
+                    resolved = str(file.resolve())
+                    require(resolved in plan['pins'], f'unpinned loaded native module:{file}')
+                    loaded[str(file)] = {'resolved': resolved, **plan['pins'][resolved]}
+        model = Path(plan['model']['path'])
+        require(stat(model) == plan['model']['stat'], 'model storage changed since graph qualification')
+        # The old graph receipt did not bind its hash to a storage tuple. One
+        # before/after-stat hash now binds the actual model to that known digest.
+        verify_file(model, dict(bytes=plan['model']['stat'][2], sha256=plan['model']['sha256']))
+        guard()
+        write(out/'started.json', dict(status='RUNNING', started_unix=started_unix,
+            pid=os.getpid(), plan_sha256=expected_sha, argv=sys.argv,
+            runtime_head=head, python=sys.version, numpy=np.__version__, onnxruntime=ort.__version__,
+            affinity=sorted(os.sched_getaffinity(0)), loaded_local_code=loaded,
+            model_binding=plan['model'], limits=plan['limits']))
+        selection = json.loads(Path(plan['selection']).read_text())
+        choices = selection['selected']
+        require(len(choices) == 128 and len({row_key(r) for r in choices}) == 128, 'selection cardinality')
+        shard_counts = {}
+        for r in choices:
+            shard_counts[r['derived_shard']] = shard_counts.get(r['derived_shard'], 0) + 1
+        require(len(shard_counts) == 64 and set(shard_counts.values()) == {2}, 'selection cluster structure')
+        wanted = {row_key(r): r for r in choices}
+        bank = Path(plan['bank'])
+        complete = json.loads((bank/'complete.json').read_text())
+        require(complete['status'] == 'COMPLETE_QUALIFIED_TRAINING_SAMPLE', 'original bank incomplete')
+        # Verify the entire39MB existing raw bank while streaming it once, rather
+        # than rereading any original corpus shard or hashing the bank twice.
+        phase = 'bank_join'
+        found, raw_hash, byte_count = {}, hashlib.sha256(), 0
+        raw_path = bank/'raw_rows.jsonl'
+        before = stat(raw_path)
+        with raw_path.open('rb') as f:
+            for n, line in enumerate(f):
+                if n % 128 == 0:
+                    guard()
+                raw_hash.update(line)
+                byte_count += len(line)
+                row = json.loads(line)
+                key = row_key(row)
+                if key in wanted:
+                    require(key not in found, 'duplicate selected raw row')
+                    for name in ['source_dir', 'derived_shard', 'derived_row', 'game_id', 'ply', 'stratum', 'weight']:
+                        require(row[name] == wanted[key][name], f'selection join differs: {name}')
+                    found[key] = row
+        require(set(found) == set(wanted), 'missing selected raw row; no replacements')
+        proof = complete['outputs']['raw_rows.jsonl']
+        require(byte_count == proof['bytes'] and raw_hash.hexdigest() == proof['sha256'], 'raw bank hash differs')
+        require(stat(raw_path) == before, 'raw bank changed')
+        consumed[str(raw_path)] = {'stat': before, **proof}
+        prepared, raw_ids = [], set()
+        options = derive.DeriveOptions(scheme=derive.parse_scheme('uniform-d9'), temp=.0005,
+            cp_slope=.006, cp_draw_width=120, limit=128, seed=0, rows_per_shard=8192, max_envelope_misses=0)
+        deriver = derive.TargetDeriver(options)
+        with (out/'selected_raw_rows.jsonl').open('x') as rawout:
+            for shard in sorted(shard_counts):
+                guard()
+                require(Path(shard).name == shard and shard.endswith('.zarr'), 'unsafe shard name')
+                file = bank/(shard+'.npz')
+                verify_file(file, complete['outputs'][file.name])
+                with np.load(file, allow_pickle=False) as z:
+                    row_lookup = {int(v): i for i, v in enumerate(z['selected_rows'])}
+                    require(len(row_lookup) == 64, 'original selected_rows duplicates')
+                    for choice in [r for r in choices if r['derived_shard'] == shard]:
+                        wrapper = found[row_key(choice)]
+                        raw = wrapper['raw']
+                        raw_id = (wrapper['source_dir'], wrapper['raw_shard'], wrapper['physical_row'])
+                        require(raw_id not in raw_ids, 'duplicate raw physical identity')
+                        raw_ids.add(raw_id)
+                        require(raw['schema'] == 3 and raw['run']['config_sha256'] == plan['source_config_sha256'], 'raw schema/config')
+                        require(raw['result'] is not None, 'qualified row lost result')
+                        for name, rawname in [('game_id','game_id'), ('ply','ply'), ('worker_id','worker_id'), ('input_key','input_key')]:
+                            require(wrapper[name] == raw[rawname], f'raw wrapper differs:{name}')
+                        # board_from_row is the original shared replay; explicitly
+                        # validate every move first because Board.push is not a legality test.
+                        replay = chess.Board(raw['history_root_fen'])
+                        require(replay.is_valid(), 'invalid history root')
+                        for uci in raw['history_uci']:
+                            move = chess.Move.from_uci(uci)
+                            require(move in replay.legal_moves, 'illegal history move')
+                            replay.push(move)
+                        board = deriver._board_for(raw)
+                        require(board.fen() == replay.fen() and board.is_valid(), 'history endpoint differs')
+                        require(len(board.move_stack) == raw['history_plies'] == len(raw['history_uci']), 'history length differs')
+                        plane = np.asarray(encode_position(board, add_features=True,
+                            input_history_encoding=derive.INPUT_HISTORY_ENCODING,
+                            input_extra_features=derive.INPUT_EXTRA_FEATURES), dtype=np.float32)
+                        deriver._verify_input_key(raw, plane, count_emitted=False)
+                        i = row_lookup[choice['derived_row']]
+                        require(int(z['game_id'][i]) == wrapper['game_id'] and int(z['ply_index'][i]) == wrapper['ply'], 'NPZ identity mismatch')
+                        require(np.array_equal(plane.astype(np.float16), z['x'][i]), 'original stored history input differs')
+                        legal_moves = list(board.legal_moves)
+                        require(len(legal_moves) > 0, 'terminal training row')
+                        compact = np.asarray([compact_index_for_move(board, m) for m in legal_moves], dtype=np.int64)
+                        leela = np.asarray([leela_index_for_move(board, m) for m in legal_moves], dtype=np.int64)
+                        for indices in [compact, leela]:
+                            require(np.all((indices >= 0) & (indices < 1858)) and len(set(indices.tolist())) == len(legal_moves), 'invalid legal mapping')
+                        legal = np.asarray(z['legal_mask'][i], dtype=bool)
+                        require(np.array_equal(np.flatnonzero(legal), np.sort(compact)), 'stored legal mask mismatch')
+                        for name in ['has_policy', 'has_legal_mask', 'has_game_id', 'has_ply_index']:
+                            require(bool(z[name][i]), f'absent source field:{name}')
+                        distributions = {}
+                        for name, field in [('SF','policy_target'), ('C','C_policy'), ('BT4','BT4_policy')]:
+                            full = np.asarray(z[field][i], dtype=np.float64)
+                            require(full.shape == (1858,) and np.isfinite(full).all() and (full >= 0).all() and not np.any(full[~legal]), f'invalid stored {name} policy')
+                            p = full[compact]
+                            require(p.sum() > 0, f'zero stored {name} legal mass')
+                            distributions[name] = p / p.sum()
+                        bt = distributions['BT4'] ** 2  # Fixed historical T0.5 context, not fitted.
+                        distributions['BT4_T05'] = bt / bt.sum()
+                        cp = np.asarray(z['effective_cp'][i], dtype=np.float64)[compact]
+                        require(np.isfinite(cp).all(), 'missing banked legal raw score')
+                        obs = rank_observation(raw, top_k=len(legal_moves))
+                        require(obs.count == len(legal_moves) and set(obs.indices.tolist()) == set(compact.tolist()), 'raw complete legal rank roster differs')
+                        sf_full = np.asarray(z['policy_target'][i])
+                        ranks = np.full((1, 3), 65535, dtype=np.uint16)
+                        gaps = np.full((1, 3), np.inf, dtype=np.float32)
+                        k = min(3, obs.count)
+                        ranks[0,:k], gaps[0,:k] = obs.indices[:k], obs.gaps_cp[:k]
+                        close_full = mix._source_candidate_set(sf_full[None], legal[None],
+                            scope='sf-cp-window', near_max_ratio=1.0, sf_rank_indices=ranks, sf_rank_gaps_cp=gaps,
+                            sf_rank_cap=3, sf_cp_window=20.)
+                        close = close_full[0][compact]
+                        sf_max = distributions['SF'] == distributions['SF'].max()
+                        tpg = encode_ceres_tpg_bytes(board, history_len=8, fill_in_history=True,
+                            q_positive_blunders=.03, q_negative_blunders=.03)
+                        require(tpg.shape == (64,137) and tpg.dtype == np.uint8, 'TPG byte shape/type')
+                        rawout.write(json.dumps(wrapper, allow_nan=False)+'\n')
+                        identity = {k:v for k,v in wrapper.items() if k != 'raw'}
+                        identity.update(weight=choice['subsample_inverse_probability_weight'],
+                            history_root_reason=raw['history_root_reason'], history_plies=raw['history_plies'],
+                            fen=board.fen(), legal_uci=[m.uci() for m in legal_moves],
+                            compact_indices=compact.tolist(), leela_indices=leela.tolist(),
+                            tpg_sha256=hashlib.sha256(tpg.tobytes()).hexdigest(),
+                            sf_close_count=int(close.sum()), sf_stored_max_count=int(sf_max.sum()))
+                        prepared.append((identity, tpg, compact, leela, cp, close, sf_max, distributions))
+        require(len(prepared) == 128, 'prepared row cardinality')
+        guard()
+        phase = 'session_construction'
+        session_start = time.monotonic()
+        so = ort.SessionOptions()
+        so.intra_op_num_threads, so.inter_op_num_threads = 2, 1
+        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+        so.log_severity_level = 3
+        session = ort.InferenceSession(str(model), sess_options=so, providers=['CPUExecutionProvider'])
+        require(session.get_providers() == ['CPUExecutionProvider'], 'unexpected execution provider')
+        inputs = session.get_inputs()
+        require(len(inputs) == 1 and inputs[0].name == 'squares_byte' and inputs[0].type == 'tensor(uint8)' and inputs[0].shape[1:] == [64,137], 'C3 input contract')
+        policy = next(o for o in session.get_outputs() if o.name == 'policy')
+        require(policy.type == 'tensor(float16)' and policy.shape[-1] == 1858, 'C3 output contract')
+        write(out/'session.json', dict(status='PASS_SESSION_CONSTRUCTION', seconds=time.monotonic()-session_start,
+            providers=session.get_providers(), onnxruntime=ort.__version__, graph_optimization='extended'))
+        run_options = ort.RunOptions()
+        run_options.only_execute_path_to_fetches = True
+        phase = 'inference'
+        for first in range(0,128,4):
+            guard()
+            batch = prepared[first:first+4]
+            x = np.stack([row[1] for row in batch])
+            t = time.monotonic()
+            logits = session.run(['policy'], {'squares_byte':x}, run_options)[0]
+            require(logits.shape == (4,1858) and logits.dtype == np.float16, 'actual policy output shape/type')
+            # Save unmodified graph outputs before interpretation; a malformed batch
+            # remains evidence and never becomes a successful partial sample.
+            with (out/f'batch_{first//4:03d}.npz').open('xb') as f:
+                np.savez_compressed(f, inputs=x, policy_logits=logits)
+            require(np.isfinite(logits).all(), 'nonfinite raw Ceres logits; no substitution')
+            for offset, (identity, tpg, compact, leela, cp, close, sf_max, distributions) in enumerate(batch):
+                values = logits[offset, leela].astype(np.float64)
+                p = np.exp(values-values.max())
+                require(np.isfinite(p).all() and p.sum() > 0, 'invalid Ceres legal softmax')
+                distributions['Ceres'] = p/p.sum()
+                stats, comparisons = metrics(distributions, cp, close, sf_max, np)
+                rec = dict(identity, metrics=stats, comparisons=comparisons,
+                    bt4_ceres_top1_disagree=bool(distributions['BT4'].argmax() != distributions['Ceres'].argmax()),
+                    raw_effective_cp=cp.tolist(), distributions={k:v.tolist() for k,v in distributions.items()},
+                    batch=first//4, batch_offset=offset)
+                records.append(rec)
+            write(out/f'batch_{first//4:03d}.json', dict(first_row=first, inference_seconds=time.monotonic()-t, rows=records[-4:]))
+            print(json.dumps(dict(completed_rows=len(records), elapsed_seconds=time.monotonic()-start)), flush=True)
+        phase = 'final_validation'
+        guard()
+        require(stat(model) == plan['model']['stat'], 'model storage changed')
+        for path, proof in consumed.items():
+            require(stat(path) == proof['stat'], f'consumed input storage changed: {path}')
+        for path in plan['pins']:
+            require(sha(path) == plan['pins'][path]['sha256'], f'final pin changed: {path}')
+        require(sha(plan_path) == expected_sha, 'plan changed')
+        weights = np.array([r['weight'] for r in records])
+        labels = list(records[0]['metrics'])
+        aggregate = {label:{name:float(np.average([r['metrics'][label][name] for r in records], weights=weights))
+            for name in ['entropy','effective_support','positive_support','top1','raw_cp_best_mass','sf_nearclose_mass','sf_stored_maxima_mass']} for label in labels}
+        comparisons = {pair:{name:float(np.average([r['comparisons'][pair][name] for r in records], weights=weights))
+            for name in records[0]['comparisons'][pair]} for pair in records[0]['comparisons']}
+        write(out/'readout.json', dict(status='COMPLETE_DESCRIPTIVE_TRAINING_SAMPLE', rows=128,
+            derived_shards=len(shard_counts), raw_shards=len({(r['source_dir'],r['raw_shard']) for r in records}),
+            source_worker_games=len({(r['source_dir'],r['worker_id'],r['game_id']) for r in records}),
+            source_raw_shard_games=len({(r['source_dir'],r['raw_shard'],r['game_id']) for r in records}),
+            units={'entropy':'nats','jsd':'nats','top1':'maximum policy probability, not accuracy'},
+            sf_nearclose_definition='Union of all stored SF maxima and raw d9 rank<=3 within20cp',
+            weighted_metrics=aggregate, weighted_comparisons=comparisons,
+            bt4_ceres_top1_disagree_rows=sum(r['bt4_ceres_top1_disagree'] for r in records),
+            limitations=plan['limitations']))
+        write(out/'consumed_inputs.json', consumed)
+        guard()
+        outputs = {p.name:dict(bytes=p.stat().st_size,sha256=sha(p)) for p in out.iterdir() if p.is_file()}
+        guard()
+        write(out/'complete.json', dict(status='COMPLETE_DESCRIPTIVE_TRAINING_SAMPLE', rows=128,
+            started_unix=started_unix, ended_unix=time.time(), elapsed_seconds=time.monotonic()-start,
+            cpu_seconds=time.process_time(), max_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+            sampled_peak_output_bytes=peak_output, outputs=outputs, plan_sha256=expected_sha,
+            model_sha256=plan['model']['sha256'], versions=plan['versions']))
+    except BaseException as exc:
+        write(out/'failed.json', dict(status='FAILED_PARTIAL_EVIDENCE_ONLY', error=f'{type(exc).__name__}: {exc}',
+            phase=phase, completed_rows=len(records), started_unix=started_unix, ended_unix=time.time(),
+            elapsed_seconds=time.monotonic()-start, partial_bank_preserved=True))
+        raise
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--plan', required=True)
+    parser.add_argument('--expected-plan-sha256', required=True)
+    args = parser.parse_args()
+    main(args.plan, args.expected_plan_sha256)

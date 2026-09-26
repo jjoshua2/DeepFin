@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "status": "INDEPENDENT_DESIGN_RECOMMENDATION_ONLY",
+  "created_utc": "2026-09-08T07:40:02.046501+00:00",
+  "files": {
+    "recommendation.md": "8d44e3aacc3e7b6046ecbbcee04ad2e8c633f10756f06d73a31292c8f87b2d07",
+    "planning_calculations.json": "dcc3f085e521548ac83c7ccdbd9e7da80e7f5fae8c288841328a447e5037d893"
+  },
+  "inputs": {
+    "/tmp/deepfin-bt4-adapter-single-pass/scripts/arena_standard.py": "bc91cfc38acd00ad475061d12e6358a4bace2c7ac5cdc77675001de063c378d7",
+    "/tmp/deepfin-bt4-adapter-single-pass/chess_anti_engine/eval/sprt.py": "cfc74d61382dd35d0158c7e74d787fc0bd2978090f83be097528d587b25a343c",
+    "/tmp/deepfin-bt4-adapter-single-pass/scripts/bt4_joint_readout.py": "a17c89537903c56ee7bb0ec084d5133e1139cc6c6cc605dc882b06279276ceeb",
+    "/tmp/deepfin-bt4-adapter-single-pass/docs/eval_protocol.md": "1410ef5aa60948a941987150a93244d647d66866f3a913f1b0f31547f477203b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md": "e7003c65cad50d81fe5d28d4878dc3ddfd342a95248b03edd961564d67fc72f6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/arena.games.jsonl": "98064bf64dce7581182403bc2a3c57c7f35e07675fd2a9c7e66c109179755ad1",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/arena.games.jsonl": "2ba32ae8edd7b11b43c67b5e2965aaa9786cb4f0d128fd265e84bece70273d9a"
+  },
+  "current_match_changed": false,
+  "C400_outcomes_read": false
+}

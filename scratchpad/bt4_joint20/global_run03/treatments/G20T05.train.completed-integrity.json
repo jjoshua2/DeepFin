@@ -1,0 +1,18 @@
+{
+  "checked_unix": 1788701066.5305216,
+  "checkpoint_sha256": "bd8c208a95247373f423be0649329e9c100db64ab1b5a5e68fd7a6aec3769a74",
+  "summary_sha256": "9bd74d24ce9a6400528d36229fc3ca3dfde38320390ae2396448039ee984c4b0",
+  "steps": 36935,
+  "steps_realized": 36935,
+  "seed": 0,
+  "batch_size": 512,
+  "compute_loss_calls": 36935,
+  "closed_charges": [
+    {
+      "file": "G20T05.train.1788691634462496784.gpu-charge.json",
+      "seconds": 9360.765503452
+    }
+  ],
+  "schedule_verification": "pending matched_schedule_completed_G20T05.json",
+  "scope": "Actual completed checkpoint and summary bytes; basic epoch counts and closed GPU accounting. Full metadata/schedule verifier running separately."
+}

@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "/usr/bin/python3",
+    "/tmp/deepfin-bt4-prior-one/scripts/bt4_joint_readout.py",
+    "--profile",
+    "sf-close",
+    "--prior-temperature",
+    "1.0",
+    "--reference",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/checkpoint.pt",
+    "--cell",
+    "C20T05:25=/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.games.jsonl",
+    "--cell",
+    "C20T05:100=/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.games.jsonl",
+    "--cell",
+    "C20T05:400=/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.games.jsonl"
+  ],
+  "reader_sha256": "bdb6b2e2a2dc04c087b7ae36628211015aaba50ac96c4110a5f372c56cefd79f",
+  "elapsed_seconds": 4.736648082733154,
+  "output_sha256": "2dde2ce5b46bc69b662be129b3752ffe37f93aa383f2d3bd06dbeb5d581a7257",
+  "completion_receipts": {
+    "25": "86fd3402ea63d61cd70f91786c3d797f91419f66afcf369efd0c0db6fe247c68",
+    "100": "bbeefc69de0e2db2ea697500c77739bbe46c25ed3957909063873a2cc31f2e6c",
+    "400": "332fbb8a168285ae38c6566bb29dd12c44b28fcebea1ea927b7767b9e9370de2"
+  }
+}

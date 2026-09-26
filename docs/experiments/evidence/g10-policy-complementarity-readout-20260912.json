@@ -1,0 +1,514 @@
+{
+  "rows": 32768,
+  "groups": 167,
+  "counts": {
+    "mate_excluded": 8775
+  },
+  "layout": {
+    "shard_000000.zarr": 8192,
+    "shard_000001.zarr": 8192,
+    "shard_000002.zarr": 8192,
+    "shard_000003.zarr": 8192
+  },
+  "old_aggregate_exact_parity": true,
+  "summary_sha256": "5c9f385057ce9c4fe7b881243c8764262a383232b6ac2ad6767f8d9b70246248",
+  "row_bank_sha256": "7e45c8c02cdd216f1060354259be370be74250a6c2056e46dc89954ba9b256e7",
+  "max_mass_arithmetic_reconstruction_error": 3.3306690738754696e-16,
+  "strata": {
+    "all_ordinary": {
+      "rows": 23993,
+      "flagged_rows": 19484,
+      "groups": 167,
+      "partitions": {
+        "confirmed": {
+          "moves": 23056,
+          "bt4": 522.6474612720546,
+          "ceres": 552.5655254690296,
+          "arithmetic50": 537.6064933705427,
+          "same_move_retained": 456.6473122354919,
+          "same_move_removed": 66.00014903656246,
+          "same_move_added": 95.91821323353943,
+          "net_ceres_minus_bt4": 29.918064196975024,
+          "mean_mass": {
+            "bt4": 0.0217833310245511,
+            "ceres": 0.023030280726421437,
+            "arithmetic50": 0.022406805875486296
+          },
+          "bt4_mass_removed_fraction": 0.12628043552708906
+        },
+        "contradicted": {
+          "moves": 525,
+          "bt4": 67.04166894421364,
+          "ceres": 65.60633243370827,
+          "arithmetic50": 66.32400068896096,
+          "same_move_retained": 59.38719944235121,
+          "same_move_removed": 7.654469501862472,
+          "same_move_added": 6.219132991357078,
+          "net_ceres_minus_bt4": -1.4353365105053655,
+          "mean_mass": {
+            "bt4": 0.002794217852882659,
+            "ceres": 0.002734394716530166,
+            "arithmetic50": 0.0027643062847064128
+          },
+          "bt4_mass_removed_fraction": 0.11417480534728139
+        },
+        "ties": {
+          "moves": 286,
+          "bt4": 35.872980287856365,
+          "ceres": 36.31637576283014,
+          "arithmetic50": 36.09467802534328,
+          "same_move_retained": 32.30579199941946,
+          "same_move_removed": 3.5671882884369124,
+          "same_move_added": 4.010583763410706,
+          "net_ceres_minus_bt4": 0.4433954749737765,
+          "mean_mass": {
+            "bt4": 0.0014951435955427152,
+            "ceres": 0.0015136237970587313,
+            "arithmetic50": 0.0015043836963007243
+          },
+          "bt4_mass_removed_fraction": 0.0994394181864078
+        },
+        "unavailable": {
+          "moves": 239904,
+          "bt4": 915.0907604344987,
+          "ceres": 988.102991076131,
+          "arithmetic50": 951.596875755325,
+          "same_move_retained": 784.6290918398889,
+          "same_move_removed": 130.46166859461047,
+          "same_move_added": 203.47389923624493,
+          "net_ceres_minus_bt4": 73.0122306416323,
+          "mean_mass": {
+            "bt4": 0.038139905823969436,
+            "ceres": 0.041182969660989915,
+            "arithmetic50": 0.0396614377424801
+          },
+          "bt4_mass_removed_fraction": 0.14256691711395417
+        }
+      },
+      "total_flagged_mass": {
+        "bt4": 1540.6528709386234,
+        "ceres": 1642.591224741699,
+        "arithmetic50": 1591.622047840172
+      },
+      "mean_flagged_mass": {
+        "bt4": 0.06421259829694592,
+        "ceres": 0.06846126890100025,
+        "arithmetic50": 0.06633693359897354
+      }
+    },
+    "balanced_abs_d9_le100": {
+      "rows": 2250,
+      "flagged_rows": 2147,
+      "groups": 167,
+      "partitions": {
+        "confirmed": {
+          "moves": 2096,
+          "bt4": 4.957282223278403,
+          "ceres": 3.076929489797512,
+          "arithmetic50": 4.017105856537957,
+          "same_move_retained": 2.203722172254443,
+          "same_move_removed": 2.753560051023957,
+          "same_move_added": 0.8732073175430672,
+          "net_ceres_minus_bt4": -1.880352733480891,
+          "mean_mass": {
+            "bt4": 0.0022032365436792903,
+            "ceres": 0.0013675242176877831,
+            "arithmetic50": 0.0017853803806835364
+          },
+          "bt4_mass_removed_fraction": 0.5554575928910788
+        },
+        "contradicted": {
+          "moves": 1,
+          "bt4": 7.943391543015424e-06,
+          "ceres": 5.930067590661062e-06,
+          "arithmetic50": 6.936729566838243e-06,
+          "same_move_retained": 5.930067590661062e-06,
+          "same_move_removed": 2.0133239523543617e-06,
+          "same_move_added": 0.0,
+          "net_ceres_minus_bt4": -2.0133239523543617e-06,
+          "mean_mass": {
+            "bt4": 3.5303962413401884e-09,
+            "ceres": 2.635585595849361e-09,
+            "arithmetic50": 3.0829909185947747e-09
+          },
+          "bt4_mass_removed_fraction": 0.25345898429552616
+        },
+        "ties": {
+          "moves": 0,
+          "bt4": 0.0,
+          "ceres": 0.0,
+          "arithmetic50": 0.0,
+          "same_move_retained": 0.0,
+          "same_move_removed": 0.0,
+          "same_move_added": 0.0,
+          "net_ceres_minus_bt4": 0.0,
+          "mean_mass": {
+            "bt4": 0.0,
+            "ceres": 0.0,
+            "arithmetic50": 0.0
+          },
+          "bt4_mass_removed_fraction": null
+        },
+        "unavailable": {
+          "moves": 26338,
+          "bt4": 6.08921187999255,
+          "ceres": 3.968990534129903,
+          "arithmetic50": 5.0291012070612275,
+          "same_move_retained": 2.6060368576605515,
+          "same_move_removed": 3.4831750223320053,
+          "same_move_added": 1.362953676469357,
+          "net_ceres_minus_bt4": -2.1202213458626464,
+          "mean_mass": {
+            "bt4": 0.0027063163911077996,
+            "ceres": 0.0017639957929466237,
+            "arithmetic50": 0.002235156092027212
+          },
+          "bt4_mass_removed_fraction": 0.572023948415516
+        }
+      },
+      "total_flagged_mass": {
+        "bt4": 11.046502046662496,
+        "ceres": 7.045925953995006,
+        "arithmetic50": 9.046214000328751
+      },
+      "mean_flagged_mass": {
+        "bt4": 0.004909556465183332,
+        "ceres": 0.0031315226462200027,
+        "arithmetic50": 0.004020539555701667
+      }
+    },
+    "outside_balanced": {
+      "rows": 21743,
+      "flagged_rows": 17337,
+      "groups": 167,
+      "partitions": {
+        "confirmed": {
+          "moves": 20960,
+          "bt4": 517.690179048776,
+          "ceres": 549.4885959792324,
+          "arithmetic50": 533.5893875140043,
+          "same_move_retained": 454.44359006323754,
+          "same_move_removed": 63.24658898553848,
+          "same_move_added": 95.04500591599641,
+          "net_ceres_minus_bt4": 31.79841693045637,
+          "mean_mass": {
+            "bt4": 0.023809510143438167,
+            "ceres": 0.025271977003138133,
+            "arithmetic50": 0.024540743573288153
+          },
+          "bt4_mass_removed_fraction": 0.12217073366496968
+        },
+        "contradicted": {
+          "moves": 524,
+          "bt4": 67.0416610008221,
+          "ceres": 65.60632650364069,
+          "arithmetic50": 66.32399375223137,
+          "same_move_retained": 59.387193512283616,
+          "same_move_removed": 7.65446748853852,
+          "same_move_added": 6.219132991357078,
+          "net_ceres_minus_bt4": -1.4353344971814153,
+          "mean_mass": {
+            "bt4": 0.00308336756661096,
+            "ceres": 0.003017353930167902,
+            "arithmetic50": 0.00305036074838943
+          },
+          "bt4_mass_removed_fraction": 0.11417478884427784
+        },
+        "ties": {
+          "moves": 286,
+          "bt4": 35.872980287856365,
+          "ceres": 36.31637576283014,
+          "arithmetic50": 36.09467802534328,
+          "same_move_retained": 32.30579199941946,
+          "same_move_removed": 3.5671882884369124,
+          "same_move_added": 4.010583763410706,
+          "net_ceres_minus_bt4": 0.4433954749737765,
+          "mean_mass": {
+            "bt4": 0.0016498634175530684,
+            "ceres": 0.001670255979525831,
+            "arithmetic50": 0.0016600596985394506
+          },
+          "bt4_mass_removed_fraction": 0.0994394181864078
+        },
+        "unavailable": {
+          "moves": 213566,
+          "bt4": 909.0015485545055,
+          "ceres": 984.1340005420013,
+          "arithmetic50": 946.5677745482627,
+          "same_move_retained": 782.0230549822287,
+          "same_move_removed": 126.97849357227825,
+          "same_move_added": 202.1109455597758,
+          "net_ceres_minus_bt4": 75.13245198749587,
+          "mean_mass": {
+            "bt4": 0.04180662965342894,
+            "ceres": 0.04526210736982023,
+            "arithmetic50": 0.04353436851162502
+          },
+          "bt4_mass_removed_fraction": 0.13969007398744204
+        }
+      },
+      "total_flagged_mass": {
+        "bt4": 1529.6063688919598,
+        "ceres": 1635.5452987877047,
+        "arithmetic50": 1582.5758338398416
+      },
+      "mean_flagged_mass": {
+        "bt4": 0.07034937078103112,
+        "ceres": 0.0752216942826521,
+        "arithmetic50": 0.07278553253184204
+      }
+    },
+    "missed_t300_gate": {
+      "rows": 22247,
+      "flagged_rows": 17738,
+      "groups": 167,
+      "partitions": {
+        "confirmed": {
+          "moves": 14191,
+          "bt4": 258.46789324854717,
+          "ceres": 270.8473325800814,
+          "arithmetic50": 264.65761291431363,
+          "same_move_retained": 223.99718739067058,
+          "same_move_removed": 34.47070585787604,
+          "same_move_added": 46.850145189410206,
+          "net_ceres_minus_bt4": 12.379439331534229,
+          "mean_mass": {
+            "bt4": 0.011618101013554509,
+            "ceres": 0.012174555336903016,
+            "arithmetic50": 0.011896328175228734
+          },
+          "bt4_mass_removed_fraction": 0.13336552337171106
+        },
+        "contradicted": {
+          "moves": 249,
+          "bt4": 28.81288747757638,
+          "ceres": 29.68890617094451,
+          "arithmetic50": 29.250896824260433,
+          "same_move_retained": 25.897632868221738,
+          "same_move_removed": 2.915254609354638,
+          "same_move_added": 3.7912733027227827,
+          "net_ceres_minus_bt4": 0.8760186933681311,
+          "mean_mass": {
+            "bt4": 0.0012951358600070291,
+            "ceres": 0.0013345127959250465,
+            "arithmetic50": 0.0013148243279660374
+          },
+          "bt4_mass_removed_fraction": 0.10117884268362322
+        },
+        "ties": {
+          "moves": 114,
+          "bt4": 10.742476750692026,
+          "ceres": 10.960728146033073,
+          "arithmetic50": 10.851602448362552,
+          "same_move_retained": 9.744486435792163,
+          "same_move_removed": 0.9979903148998632,
+          "same_move_added": 1.2162417102409049,
+          "net_ceres_minus_bt4": 0.21825139534104743,
+          "mean_mass": {
+            "bt4": 0.00048287305033002317,
+            "ceres": 0.0004926834245531116,
+            "arithmetic50": 0.0004877782374415675
+          },
+          "bt4_mass_removed_fraction": 0.09290132416023829
+        },
+        "unavailable": {
+          "moves": 214161,
+          "bt4": 738.5883015938279,
+          "ceres": 793.3768597120188,
+          "arithmetic50": 765.9825806529255,
+          "same_move_retained": 630.0044427606382,
+          "same_move_removed": 108.58385883318734,
+          "same_move_added": 163.37241695137723,
+          "net_ceres_minus_bt4": 54.78855811819096,
+          "mean_mass": {
+            "bt4": 0.03319945617808369,
+            "ceres": 0.0356621953392376,
+            "arithmetic50": 0.034430825758660744
+          },
+          "bt4_mass_removed_fraction": 0.14701540573939512
+        }
+      },
+      "total_flagged_mass": {
+        "bt4": 1036.6115590706436,
+        "ceres": 1104.8738266090777,
+        "arithmetic50": 1070.7426928398622
+      },
+      "mean_flagged_mass": {
+        "bt4": 0.04659556610197526,
+        "ceres": 0.049663946896618766,
+        "arithmetic50": 0.048129756499297086
+      }
+    },
+    "balanced_missed_t300_gate": {
+      "rows": 2006,
+      "flagged_rows": 1903,
+      "groups": 166,
+      "partitions": {
+        "confirmed": {
+          "moves": 1250,
+          "bt4": 3.880421927699897,
+          "ceres": 2.849703548150271,
+          "arithmetic50": 3.3650627379250837,
+          "same_move_retained": 2.0549474497501246,
+          "same_move_removed": 1.825474477949772,
+          "same_move_added": 0.7947560984001456,
+          "net_ceres_minus_bt4": -1.0307183795496262,
+          "mean_mass": {
+            "bt4": 0.0019344077406280643,
+            "ceres": 0.0014205900040629466,
+            "arithmetic50": 0.0016774988723455054
+          },
+          "bt4_mass_removed_fraction": 0.4704319561022102
+        },
+        "contradicted": {
+          "moves": 1,
+          "bt4": 7.943391543015424e-06,
+          "ceres": 5.930067590661062e-06,
+          "arithmetic50": 6.936729566838243e-06,
+          "same_move_retained": 5.930067590661062e-06,
+          "same_move_removed": 2.0133239523543617e-06,
+          "same_move_added": 0.0,
+          "net_ceres_minus_bt4": -2.0133239523543617e-06,
+          "mean_mass": {
+            "bt4": 3.9598163225400916e-09,
+            "ceres": 2.9561652994322343e-09,
+            "arithmetic50": 3.457990810986163e-09
+          },
+          "bt4_mass_removed_fraction": 0.25345898429552616
+        },
+        "ties": {
+          "moves": 0,
+          "bt4": 0.0,
+          "ceres": 0.0,
+          "arithmetic50": 0.0,
+          "same_move_retained": 0.0,
+          "same_move_removed": 0.0,
+          "same_move_added": 0.0,
+          "net_ceres_minus_bt4": 0.0,
+          "mean_mass": {
+            "bt4": 0.0,
+            "ceres": 0.0,
+            "arithmetic50": 0.0
+          },
+          "bt4_mass_removed_fraction": null
+        },
+        "unavailable": {
+          "moves": 23710,
+          "bt4": 5.562989129707569,
+          "ceres": 3.6322217435457946,
+          "arithmetic50": 4.597605436626675,
+          "same_move_retained": 2.3106736163792827,
+          "same_move_removed": 3.2523155133282846,
+          "same_move_added": 1.321548127166516,
+          "net_ceres_minus_bt4": -1.9307673861617745,
+          "mean_mass": {
+            "bt4": 0.0027731750397345808,
+            "ceres": 0.001810678835267096,
+            "arithmetic50": 0.002291926937500835
+          },
+          "bt4_mass_removed_fraction": 0.5846345260608571
+        }
+      },
+      "total_flagged_mass": {
+        "bt4": 9.44341900079901,
+        "ceres": 6.481931221763656,
+        "arithmetic50": 7.962675111281325
+      },
+      "mean_flagged_mass": {
+        "bt4": 0.004707586740178968,
+        "ceres": 0.003231271795495342,
+        "arithmetic50": 0.003969429267837151
+      }
+    },
+    "t300_gate": {
+      "rows": 1746,
+      "flagged_rows": 1746,
+      "groups": 163,
+      "partitions": {
+        "confirmed": {
+          "moves": 8865,
+          "bt4": 264.17956802350784,
+          "ceres": 281.7181928889501,
+          "arithmetic50": 272.9488804562287,
+          "same_move_retained": 232.65012484482097,
+          "same_move_removed": 31.529443178686318,
+          "same_move_added": 49.068068044128836,
+          "net_ceres_minus_bt4": 17.538624865442273,
+          "mean_mass": {
+            "bt4": 0.15130559451518205,
+            "ceres": 0.16135062593868849,
+            "arithmetic50": 0.15632811022693513
+          },
+          "bt4_mass_removed_fraction": 0.11934853029921183
+        },
+        "contradicted": {
+          "moves": 276,
+          "bt4": 38.228781466637265,
+          "ceres": 35.91742626276373,
+          "arithmetic50": 37.07310386470051,
+          "same_move_retained": 33.489566574129434,
+          "same_move_removed": 4.73921489250784,
+          "same_move_added": 2.427859688634295,
+          "net_ceres_minus_bt4": -2.311355203873532,
+          "mean_mass": {
+            "bt4": 0.02189506384114391,
+            "ceres": 0.020571263609830318,
+            "arithmetic50": 0.021233163725487118
+          },
+          "bt4_mass_removed_fraction": 0.12396981307509923
+        },
+        "ties": {
+          "moves": 172,
+          "bt4": 25.13050353716435,
+          "ceres": 25.3556476167971,
+          "arithmetic50": 25.243075576980715,
+          "same_move_retained": 22.561305563627304,
+          "same_move_removed": 2.5691979735370496,
+          "same_move_added": 2.794342053169801,
+          "net_ceres_minus_bt4": 0.22514407963274863,
+          "mean_mass": {
+            "bt4": 0.014393186447402263,
+            "ceres": 0.014522134946619187,
+            "arithmetic50": 0.014457660697010719
+          },
+          "bt4_mass_removed_fraction": 0.10223424173485343
+        },
+        "unavailable": {
+          "moves": 25743,
+          "bt4": 176.50245884067087,
+          "ceres": 194.7261313641154,
+          "arithmetic50": 185.6142951023937,
+          "same_move_retained": 154.6246490792484,
+          "same_move_removed": 21.877809761422533,
+          "same_move_added": 40.10148228486739,
+          "net_ceres_minus_bt4": 18.22367252344452,
+          "mean_mass": {
+            "bt4": 0.10108960987438194,
+            "ceres": 0.11152699390842806,
+            "arithmetic50": 0.10630830189140532
+          },
+          "bt4_mass_removed_fraction": 0.12395186959503877
+        }
+      },
+      "total_flagged_mass": {
+        "bt4": 504.0413118679803,
+        "ceres": 537.7173981326264,
+        "arithmetic50": 520.8793550003037
+      },
+      "mean_flagged_mass": {
+        "bt4": 0.28868345467811013,
+        "ceres": 0.3079710184035661,
+        "arithmetic50": 0.2983272365408383
+      }
+    }
+  },
+  "elapsed_seconds": 9.442456380988006,
+  "limitations": [
+    "Convenience first-four-shard sample; no bootstrap or strength inference.",
+    "All raw masses use common original teacher normalization, not conditional roster normalization.",
+    "Unavailable includes any absent d9 winner, even if the flagged move is scored.",
+    "Confirmed/contradicted use the same saved SF ruler, with final mate-domain scores retained as in existing ranking semantics.",
+    "Per-move removals and additions can coexist on a row or within an outcome; net mass alone hides this.",
+    "Missed T300 means best-minus-next-lower gap is absent or <=300, not that the >300 per-move gap is absent."
+  ]
+}

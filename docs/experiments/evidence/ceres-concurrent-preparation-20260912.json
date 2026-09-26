@@ -1,0 +1,231 @@
+{
+  "observed_utc": "2026-09-12T04:58:52.317966+00:00",
+  "status_snapshot": {
+    "schema": 1,
+    "status": "RUNNING",
+    "plan_sha256": "74196667c267557e55c8fdac5f852e514ab70bec1670e48d3bedc7e6bd0acf9a",
+    "profile": "B100CeresV25",
+    "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_ceres_value25",
+    "cpu_affinity": [
+      2,
+      3
+    ],
+    "preparation_lock": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/B100CeresV25.preparation.lock",
+    "started_unix": 1789188987.2836962,
+    "deadline_unix": 1789217782.0,
+    "returncode": null,
+    "argv": [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      "--kill-after=30s",
+      "28764.715574s",
+      "/tmp/deepfin-ceres-value-materialization-lane/.venv/bin/python",
+      "/tmp/deepfin-ceres-value-materialization-lane/scripts/ceres_value_mix.py",
+      "--manifest",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/teacher_manifest_assembly_v1/completed_snapshot16_v1/value_manifest.json",
+      "--expected-manifest-sha256",
+      "ada83e09bf4dfed7af24db1f6cfa297cc308ae6ac6744ac78bb5942d7b385cef",
+      "--out",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_ceres_value25",
+      "--batch-size",
+      "128",
+      "--minimum-free-gib",
+      "150",
+      "--max-seconds",
+      "28764.715574",
+      "--stop",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/value_concurrent_preparation_v1/execution/STOP",
+      "--execute"
+    ],
+    "pid": 648754,
+    "pgid": 648754
+  },
+  "scope": "One metadata snapshot of active value launch; not a terminal receipt",
+  "parent_preflight": {
+    "disk_free_gib": 294.316,
+    "mem_available_kib": 56392632,
+    "stops_absent": true
+  },
+  "policy_baseline": {
+    "observed_unix": 1789188757.7371097,
+    "method": "Metadata only: directories and ceres_policy_postprocess attrs; stamps indicate completed policy writes, not final corpus admission",
+    "b50_status": "RUNNING",
+    "started_unix": 1789177891.3571887,
+    "deadline_unix": 1789206685.0,
+    "elapsed_seconds": 10866.379920959473,
+    "shard_directories": 1135,
+    "policy_stamped_shards": 1135,
+    "total_shards": 2309,
+    "stamped_shards_per_second_since_start": 0.10445060896598786,
+    "projected_completion_unix_at_baseline_rate": 1789199997.4992483,
+    "disk_free_gib": 294.4778060913086
+  },
+  "policy_plan": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/materialization_snapshot16_v1/CeresB50.plan.json",
+    "sha256": "1bc2189980f8551c765cbe9d97669d6c362be56a37e17af97395365175090011"
+  },
+  "value_plan": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/value_concurrent_preparation_v1/B100CeresV25.plan.json",
+    "sha256": "74196667c267557e55c8fdac5f852e514ab70bec1670e48d3bedc7e6bd0acf9a"
+  },
+  "frozen_producer_runtime_base": "f6b8b83aa0a17a4170a4c4e30a62b5ff08eb8a9e",
+  "value_runtime": "0719ad87e763250ffee45aab63190a9fd9659fd6",
+  "main_supervisor_pr": 662,
+  "main_supervisor_commit": "d5f6e295c0305fde80ee6b8d327e2798b8a560cb",
+  "independent_final_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/value_concurrent_preparation_v1/independent_final_review.json",
+    "sha256": "3df9a076f4564a743e34627c858a5fc9ae7d88d3d27f23c3759afb899d0e9814"
+  },
+  "validation": {
+    "returncode": 0,
+    "stdout": "{\"status\": \"PLAN_VALIDATED_NOT_EXECUTED\", \"profile\": \"B100CeresV25\", \"corpus\": \"/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_ceres_value25\"}\n",
+    "stderr": ""
+  },
+  "co_run_readout": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/value_concurrent_preparation_v1/co_run_checkpoint.json",
+    "sha256": "eef29a88489ec49d4d087362ea8b8609c0ccac0bc34f1b5d566dd4a195615ca5",
+    "result": {
+      "observed_unix": 1789190247.226312,
+      "scheduled_unix": 1789190187,
+      "method": "One scheduled metadata-only co-run checkpoint; no process-handle polling or array reads",
+      "baseline_sha256": "61000fb15f1d1be252f981f176343b772bde6b8711ad74c08655854d376cafff",
+      "baseline": {
+        "observed_unix": 1789188757.7371097,
+        "method": "Metadata only: directories and ceres_policy_postprocess attrs; stamps indicate completed policy writes, not final corpus admission",
+        "b50_status": "RUNNING",
+        "started_unix": 1789177891.3571887,
+        "deadline_unix": 1789206685.0,
+        "elapsed_seconds": 10866.379920959473,
+        "shard_directories": 1135,
+        "policy_stamped_shards": 1135,
+        "total_shards": 2309,
+        "stamped_shards_per_second_since_start": 0.10445060896598786,
+        "projected_completion_unix_at_baseline_rate": 1789199997.4992483,
+        "disk_free_gib": 294.4778060913086
+      },
+      "processes": {
+        "B50": {
+          "status": "RUNNING",
+          "started_unix": 1789177891.3571887,
+          "deadline_unix": 1789206685.0,
+          "directory_count": 1313,
+          "recipe_stamped_shards": 1313,
+          "metadata_unreadable_during_write": 0,
+          "state": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/materialization_snapshot16_v1/CeresB50_execution",
+          "cpu_metadata": {
+            "pid": {
+              "pid": 599481,
+              "affinity": [
+                0,
+                1
+              ],
+              "stat": [
+                "0",
+                "0"
+              ]
+            }
+          }
+        },
+        "value": {
+          "status": "RUNNING",
+          "started_unix": 1789188987.2836962,
+          "deadline_unix": 1789217782.0,
+          "directory_count": 176,
+          "metadata_unreadable_during_write": 0,
+          "state": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/value_concurrent_preparation_v1/execution",
+          "cpu_metadata": {
+            "pid": {
+              "pid": 648754,
+              "affinity": [
+                2,
+                3
+              ],
+              "stat": [
+                "0",
+                "0"
+              ]
+            }
+          },
+          "progress_scope": "176 directories observed; value recipe completion stamps were not qualified by this B50-focused check."
+        }
+      },
+      "interval_seconds": 1489.489202260971,
+      "new_stamped_shards": 178,
+      "interval_stamped_shards_per_second": 0.11950405530285468,
+      "baseline_rate_ratio": 1.144120235256538,
+      "projected_b50_completion_unix": 1789198581.6715112,
+      "b50_deadline_margin_seconds": 8103.328488826752,
+      "near_deadline_condition": false,
+      "slower_than_baseline": false,
+      "stop_rule_triggered": false,
+      "ssd_free_gib": 291.84761810302734,
+      "available_ram_gib": 53.587589263916016,
+      "limitations": [
+        "Baseline sampled before value launch; interval includes a short pre-launch portion.",
+        "Stamped shards indicate write progress, not final admitted completion; projection excludes unmeasured final publication overhead.",
+        "Concurrent native-WDL labeling may overlap this interval; no causal speedup or isolation claim."
+      ],
+      "action": "CONTINUE_REGISTERED_VALUE_ALLOCATION_NO_STOP",
+      "recommendation": "Retain both preparations; current B50 projection is comfortably before original deadline."
+    }
+  },
+  "native_bt4_unit": {
+    "scope": "Saved-output qualification of one completed unit; not full source or training admission",
+    "new_rows": 524288,
+    "new_shards": 64,
+    "range": [
+      128,
+      191
+    ],
+    "same_source_completed_rows": 1572864,
+    "all_direct_qualified_bank_rows": 2099240,
+    "wall_seconds": 359.5122230052948,
+    "saved_array_bytes_decoded": 33554432,
+    "WDL_values": {
+      "native_dtype": "float32",
+      "finite_and_range_valid": true,
+      "max_abs_unit_mass_error": 1.4647957868874073e-07,
+      "min": 3.341245147225891e-08,
+      "max": 0.9999997615814209,
+      "normalized_rounding_tolerance": 2e-06
+    },
+    "pins": {
+      "plan.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice128_v1/plan.json",
+        "sha256": "54a3ecece9afcc84056be103e283ea466ea42372ce26c60522fc4259e175be3a"
+      },
+      "run_slice.py": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice128_v1/run_slice.py",
+        "sha256": "a9c72d54d6d681eb82bc154c84c47387ed29250481f5644ab5a42d6f4c3c5c01"
+      },
+      "complete.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice128_v1/complete.json",
+        "sha256": "e2b89f402a7262174a9d082f58add5d5d4208b6812ec35da9d0bb7bafe5c4e31"
+      },
+      "terminal.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice128_v1/terminal.json",
+        "sha256": "8ae26f0ee8f89e61b7616c7c73ec0ccf25aaae2d52c3962d3147d1e05208bf77"
+      },
+      "independent_review.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice128_v1/independent_review.json",
+        "sha256": "3817ef059b83d2642f432824ed531d2b680fd131005ff54aaea21ec11b214432"
+      },
+      "independent_completed_review/check.py": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice128_v1/independent_completed_review/check.py",
+        "sha256": "d178a204661a1c40d980bb52496dd184c72a9a8cf81af89492316ee5b5ae6cae"
+      },
+      "independent_completed_review/receipt.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice128_v1/independent_completed_review/receipt.json",
+        "sha256": "f5890ae33fe85f772d886ede0b0cd5123959da3a30092e6c19848bc1bc0d2c4a"
+      }
+    },
+    "invocation": {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_large_slice128_v1/run06_g10/invocations/1789189791810685422/completed.json",
+      "sha256": "a8398069cce907054df3165b560b4637c8645e19917d991c3a9c0e44dc2b007e"
+    },
+    "independent_readout_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice128_v1/independent_completed_review/independent_review.json",
+      "sha256": "3a1b17d8fa3c4676c2e7b0a1b9ccd2a80a937bac06682e8b7aa95fbf223c1442"
+    }
+  }
+}

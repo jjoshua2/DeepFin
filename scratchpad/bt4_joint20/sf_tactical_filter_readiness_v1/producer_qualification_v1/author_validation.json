@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "status": "AUTHOR_VALIDATION_PASS",
+  "base": "526eaccbaf859b2011191e6bf16d54e92fbc47e9",
+  "worktree": "/tmp/deepfin-sf-tactical-policy",
+  "files": {
+    "scripts/sf_policy_rewrite.py": "f2926d10ca695d2cbbcd12f03a26cee23529f6e798e9a3585148392858fda176",
+    "tests/test_sf_tactical_policy.py": "94ef59a3b5a5c6416148afd9983814c0e01a7dc32245861836162c151948fd48",
+    "docs/corpus_derivation.md": "9d9493c9d54ca42531f0b059165a5b957a27245b67922ebcaddf4326d8190a48"
+  },
+  "patch": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/producer_qualification_v1/reviewed_candidate.patch",
+    "sha256": "67b6b423873120271fb119e70396787db06933274a709dda9cd6522842747715"
+  },
+  "validation": {
+    "distinct_cases": 58,
+    "new_cases": 40,
+    "existing_sf_rewrite_cases": 18,
+    "successful_check_executions": 61,
+    "sequence": [
+      "57 focused PASS at prior candidate",
+      "2 mate-zero diagnostic checks PASS1.48s (1 new, 1 repeated actual producer)",
+      "2 import-cycle resolution checks PASS1.07s (actual producer and missing-chunk refusal)",
+      "Final unchanged candidate whole host lint PASS: Ruff, Basedpyright0/0/0, Vulture"
+    ],
+    "whole_gate_scope": "full repository; initial failed import-cycle gate retained; final whole gate after dependency removal passed"
+  },
+  "commands": {
+    "focused": "taskset -c 0,1 nice -n 19 ionice -c 3 env CUDA_VISIBLE_DEVICES='' PYTHONPATH=. OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 .venv/bin/python -c 'import numcodecs.blosc as b; b.set_nthreads(2); import pytest; raise SystemExit(pytest.main([\"-q\",\"-ra\",\"tests/test_sf_tactical_policy.py\",\"tests/test_sf_policy_rewrite.py\"]))'",
+    "mate_delta_pytest_args": [
+      "-q",
+      "-o",
+      "addopts=",
+      "tests/test_sf_tactical_policy.py::test_winning_mates_with_zero_b100_mass_are_reported_not_invented",
+      "tests/test_sf_tactical_policy.py::test_real_shuffled_producer_loader_and_compressed_nonpolicy_parity"
+    ],
+    "chunk_delta_pytest_args": [
+      "-q",
+      "-o",
+      "addopts=",
+      "tests/test_sf_tactical_policy.py::test_real_shuffled_producer_loader_and_compressed_nonpolicy_parity",
+      "tests/test_sf_tactical_policy.py::test_parent_and_raw_refusals[chunk]"
+    ],
+    "final_static": "taskset -c 0,1 nice -n 19 ionice -c 3 env CUDA_VISIBLE_DEVICES='' PATH=/tmp/deepfin-sf-tactical-policy/.venv/bin:/usr/bin:/bin VIRTUAL_ENV=/tmp/deepfin-bt4-sf-close-followup/.venv PYTHONPATH=. OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 ./scripts/lint.sh"
+  },
+  "scope": [
+    "tiny synthetic full-history7raw/6derived rows with real serial deriver, B100 arithmetic, tactical writer, replay loader",
+    "all16 nonpolicy arrays compressed-byte equality and ordinary-copy inode separation",
+    "explicit raw bounds accounting/domain, mate categories, float16 support loss, unchanged inherited history and no-result/shuffle proof",
+    "No full-corpus read, GPU inference, bulk rewrite, training or operational qualification"
+  ],
+  "initial_findings": [
+    "Fixture JSON list/tuple equality corrected",
+    "Fixture nonpolicy mutation initially matched already-stored value; changed to a distinct distribution",
+    "Malformed-score fixture initially broke rank order before reaching domain check; restrict mutation to first row",
+    "Whole gate exposed local-import cycle; replaced dependency with direct expected-chunk presence loop"
+  ],
+  "logs": {
+    "sf-tactical-focused-v1.log": "b72a1da4519f119c71654edd5b3eb58a0bedc7db4883beefd5e5a988850d676c",
+    "sf-tactical-focused-v2.log": "0712be0982f95c7bcffc473d2d65da5baaea9fbf22509c077ffabff283053ca6",
+    "sf-tactical-score-delta.log": "415c9b804e83a6d3c1dd869d282ac0acc81f2891716ffc7db60f89779c06acb0",
+    "sf-tactical-focused-final.log": "8803a764e82b7ae2740d03e287ef5fd39cbae299dfccf8a53532febfdd4fa17d",
+    "sf-tactical-zero-mate-delta.log": "eae41752667c8e98631a6c52b6d957ed9a905677e81fe2830028aa1f0cddb61f",
+    "sf-tactical-chunk-delta.log": "c1d8f48099cc272eee7081e7697774f672c6441172edefcebcff16f62f03a9ff",
+    "sf-tactical-whole-host-lint.log": "b8c48a2101b05e6b3ae59a9d60dffc17c86dd23cf89ef55a2019689712e75ad7",
+    "sf-tactical-whole-host-lint-final.log": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc",
+    "sf-tactical-final-scoped-host-lint.log": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc"
+  },
+  "training_admission": "Separate authorized follow-up in /tmp/deepfin-sf-tactical-admission; no producer-only training claim"
+}

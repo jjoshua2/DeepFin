@@ -1,0 +1,229 @@
+{
+  "artifacts_sha256": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/C20T05.completed_epoch_independent_review.json": "7ed7bd8863db4fb7bf2fa98016b7cdb269b751dc696c4f8827acc58f8cae5d5a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/completed_full_screen_readout.json": "2dde2ce5b46bc69b662be129b3752ffe37f93aa383f2d3bd06dbeb5d581a7257",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/completed_full_screen_readout_provenance.json": "ecd281d27e6ce9524299c1374858747ccd7fc7ce11de16f6873e2242af2ca8c5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/completed_s100_independent_review.json": "7a840f31bac2bc247ad03d2663f081cb951c082e2e6ee39b9b498bb3c4f9f920",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/completed_s25_independent_review.json": "b274ea656c08d9fbaf20b3bb97df3b9d7a794281ff99b353fdac2185ffde4ddf",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/preregistration.md": "c4c5a0b861efce888a62c9fc085d61509da0ab805790e108f0f293ea33d029b4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/review_completed_full_screen.py": "66a1bb589874618122483c6df30262bc81159ee0d3fa06aba308b4a7ded05c6a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.1788723645349374826.gpu-charge.json": "3165e93f2adae69a5504bf80cc77f75880bbc41d65b1df90c0164946d9bb1ce8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.complete.json": "bbeefc69de0e2db2ea697500c77739bbe46c25ed3957909063873a2cc31f2e6c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.games.jsonl": "60b070d2f45bb05d52634bfc56675949d86ce9b982c1d59c454c5210851078ae",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.process.json": "9840215515462cfee37ff969316e311b65f63494688f7ddb3d2c2d1af338f8c4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.status.json": "ef8ff523fef939b44e3e7e80f58f7d830bcfbe2009621c93c3945b2d48fc32ed",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.1788721768891951572.gpu-charge.json": "fa6fe116461c7466fee117be95046538f0b7149f627951f10ccb39dfbb614e39",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.complete.json": "86fd3402ea63d61cd70f91786c3d797f91419f66afcf369efd0c0db6fe247c68",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.games.jsonl": "7143d2d508dabb90c04d9527fb3c2d91b4bce711dae94c16ace8aa9058141253",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.process.json": "c2b2c1f51e670e526ddef11d2ce80fe3cc5be916d55354e627f9e1aa531e4095",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.status.json": "1da91e6143149cd9f2911456b8e41c95dc7c0e54f282f8a51bf4e539a95451f7",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.1788726147530882878.gpu-charge.json": "751af67b5103bca3e7e516ee9b220d1f4276f02d4a021655cfea89886b5e39a3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.complete.json": "332fbb8a168285ae38c6566bb29dd12c44b28fcebea1ea927b7767b9e9370de2",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.games.jsonl": "d7af69c0371904b4ce93ee2d75e6be3459b7f0d46ce863f12c076afd2d41f1fe",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.process.json": "027f2ac346b72b8f703ffd4874f1cc3e9fd4f38af41e0d46503e2b51aae2a0a2",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.status.json": "1b97fb6ce8ce0f889889b799df73486de06b4c4054ebdb633e19ce0e967e0cda",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.train.1788712072203493219.gpu-charge.json": "9ae1c7034758452e62ac25eb4dbf49eab0ba4c993ff8bfe1ca0de1cd1b7d16b4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df",
+    "/tmp/deepfin-bt4-prior-one/scripts/bt4_joint_readout.py": "bdb6b2e2a2dc04c087b7ae36628211015aaba50ac96c4110a5f372c56cefd79f"
+  },
+  "blockers": [],
+  "candidate_sha256": "8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3",
+  "cap_gpu_hours": 12,
+  "checked_unix": 1788732025.457985,
+  "closed_gpu_hours": 5.375580223047222,
+  "closed_gpu_seconds": 19352.08880297,
+  "gpu_charges": {
+    "C20T05.s100.arena": {
+      "complete": true,
+      "owner_pid": 127437,
+      "seconds": 2500.3103942470043,
+      "stage": "C20T05.s100.arena",
+      "started_unix": 1788723645.3494003
+    },
+    "C20T05.s25.arena": {
+      "complete": true,
+      "owner_pid": 127437,
+      "seconds": 1535.2387404689944,
+      "stage": "C20T05.s25.arena",
+      "started_unix": 1788721768.891972
+    },
+    "C20T05.s400.arena": {
+      "complete": true,
+      "owner_pid": 127437,
+      "seconds": 5620.625097796001,
+      "stage": "C20T05.s400.arena",
+      "started_unix": 1788726147.5309398
+    },
+    "C20T05.train": {
+      "complete": true,
+      "owner_pid": 127437,
+      "seconds": 9695.914570458,
+      "stage": "C20T05.train",
+      "started_unix": 1788712072.20351
+    }
+  },
+  "interpretation": "C20T05 beats E0 at each tested budget with positive nominal paired 95% intervals, including registered primary100 and deployment400. The registered400-minus25 interval crosses zero: increasing relative advantage with search is unestablished. No promotion or recipe winner against global mixing follows.",
+  "limitations": [
+    "One training seed; nominal exploratory intervals without multiplicity adjustment.",
+    "C combines widening and BT4 sharpening versus E0; this does not isolate widening.",
+    "Historical E0 runtime and valid_control qualification remain as documented in prior independent reviews.",
+    "Direct-E0 Elo cannot be subtracted from global direct-S0 Elo to infer recipe head-to-head strength.",
+    "A favorable fixed-checkpoint result still needs prospective fresh-opening and independent-training-seed confirmation before restart recommendation.",
+    "GPU accounting totals the four closed stage charge receipts; no inference, games, launch, process changes or promotion performed by reviewer."
+  ],
+  "method": "Independent raw result/color/pair scoring for all3000games; paired mean +/-1.96 sample-SE and monotone Elo transform for each cell. Registered interaction uses independent explicit NumPy PCG64(seed20260903),10000aligned-pair resamples and percentile CI. No producer estimators imported.",
+  "paired_opening_sequence_sha256": "fae308c5200e357a21ae3d117ec3eae89b71493cfa2060c24f3bbfed874382a1",
+  "protocol_fingerprints": {
+    "25": "1c6e66d57c01",
+    "100": "f7e969b8ff8b",
+    "400": "01841af3605c"
+  },
+  "provenance_scope": "Previously independent C25/C100/training proofs reused by exact SHA and unchanged frozen manifest pins. All three completion receipts, process commands, settings, raw banks and closed GPU charge receipts independently checked. No model payload or full-corpus hashing repeated.",
+  "reference_sha256": "c7d0bb38f952150db004b29699e0509437bcec7928d79cd44f69125ffa5fa817",
+  "registered_interaction_400_minus_25": {
+    "ci95": [
+      -0.0335,
+      0.0375
+    ],
+    "discordant_pairs": 374,
+    "pair_outcome_covariance": 0.0008807615230460922,
+    "score_advantage": 0.0025
+  },
+  "results": {
+    "25": {
+      "candidate_black_wdl": {
+        "D": 107,
+        "L": 193,
+        "W": 200
+      },
+      "candidate_white_wdl": {
+        "D": 106,
+        "L": 147,
+        "W": 247
+      },
+      "elo": 37.318464796070536,
+      "elo_ci95": [
+        18.927691643099738,
+        55.920150288133016
+      ],
+      "games": 1000,
+      "pairs": 500,
+      "pentanomial": {
+        "DD_WL": 185,
+        "LD_DL": 79,
+        "LL": 48,
+        "WD_DW": 94,
+        "WW": 94
+      },
+      "score": 0.5535,
+      "score_ci95": [
+        0.5272122223208081,
+        0.5797877776791919
+      ],
+      "score_se": 0.013412131468975472,
+      "terminations": {
+        "max_plies": 2,
+        "rules": 998
+      },
+      "wdl": {
+        "D": 213,
+        "L": 340,
+        "W": 447
+      }
+    },
+    "100": {
+      "candidate_black_wdl": {
+        "D": 118,
+        "L": 173,
+        "W": 209
+      },
+      "candidate_white_wdl": {
+        "D": 101,
+        "L": 145,
+        "W": 254
+      },
+      "elo": 50.73574877909367,
+      "elo_ci95": [
+        31.736722759559573,
+        70.04123609439236
+      ],
+      "games": 1000,
+      "pairs": 500,
+      "pentanomial": {
+        "DD_WL": 180,
+        "LD_DL": 71,
+        "LL": 48,
+        "WD_DW": 90,
+        "WW": 111
+      },
+      "score": 0.5725,
+      "score_ci95": [
+        0.5455462063154743,
+        0.5994537936845257
+      ],
+      "score_se": 0.013751935553329422,
+      "terminations": {
+        "max_plies": 5,
+        "rules": 995
+      },
+      "wdl": {
+        "D": 219,
+        "L": 318,
+        "W": 463
+      }
+    },
+    "400": {
+      "candidate_black_wdl": {
+        "D": 154,
+        "L": 190,
+        "W": 156
+      },
+      "candidate_white_wdl": {
+        "D": 150,
+        "L": 102,
+        "W": 248
+      },
+      "elo": 39.0767285869751,
+      "elo_ci95": [
+        21.983885445507667,
+        56.36019376621577
+      ],
+      "games": 1000,
+      "pairs": 500,
+      "pentanomial": {
+        "DD_WL": 177,
+        "LD_DL": 95,
+        "LL": 32,
+        "WD_DW": 121,
+        "WW": 75
+      },
+      "score": 0.556,
+      "score_ci95": [
+        0.5315951997888388,
+        0.5804048002111613
+      ],
+      "score_se": 0.012451428679163875,
+      "terminations": {
+        "max_plies": 9,
+        "rules": 991
+      },
+      "wdl": {
+        "D": 304,
+        "L": 292,
+        "W": 404
+      }
+    }
+  },
+  "reviewer": "bank_pr517_quality",
+  "runtime": {
+    "CUDA_VISIBLE_DEVICES": "",
+    "cpu_affinity": [
+      0,
+      1
+    ],
+    "nice": 19,
+    "numpy": "2.2.6",
+    "python": "3.13.15 (main, Sep  1 2026, 14:18:08) [Clang 22.1.3 ]"
+  },
+  "verdict": "PASS_COMPLETED_FULL_SF_CLOSE_SCREEN"
+}

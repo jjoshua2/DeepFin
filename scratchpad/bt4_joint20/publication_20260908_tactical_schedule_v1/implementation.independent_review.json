@@ -1,0 +1,80 @@
+{
+  "status": "PASS_NO_FINDINGS",
+  "reviewed_unix": 1788921441.47911,
+  "producer_head": "c98d3d320e46a165bdb5a28b469d638c4eab6c13",
+  "producer_patch": {
+    "path": "/tmp/sf-tactical-producer-final.patch",
+    "sha256": "67b6b423873120271fb119e70396787db06933274a709dda9cd6522842747715",
+    "bytes": 40677
+  },
+  "admission_head": "732d469ca1c909d016e67cb86bc4346663edb721",
+  "admission_patch": {
+    "path": "/tmp/tactical-admission-final.patch",
+    "sha256": "a312471af0ea8186affac31b6c6dff096147d05f0b14dae61bdb50ba19cc02c8",
+    "bytes": 22943
+  },
+  "evidence": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/producer_qualification_v1/author_validation.json",
+      "sha256": "615c2d25ae92935c27dceb02b93895f12b58987a76bf677db375d2791a7d5b13",
+      "bytes": 4581
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/training_admission_v1/author_validation.json",
+      "sha256": "b02cc986c22fcc2143caf744b108a89164396be8068f556aa5667d11e1e63a8c",
+      "bytes": 3071
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/independent_review_v1/probe.py",
+      "sha256": "db5862f0f92f437d47a1b285d5354e42e89c9725de05c846a4a008175d35a1e4",
+      "bytes": 3857
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/independent_review_v1/probe.log",
+      "sha256": "b36b554bc8c6b324d4f6c52d1fc494673571151a05b0d6dfef60ca584a866c0c",
+      "bytes": 1125
+    }
+  ],
+  "checks": {
+    "status": "PASS",
+    "independent_arithmetic_cases": 5,
+    "bindings": {
+      "producer:scripts/sf_policy_rewrite.py": "f2926d10ca695d2cbbcd12f03a26cee23529f6e798e9a3585148392858fda176",
+      "producer:tests/test_sf_tactical_policy.py": "94ef59a3b5a5c6416148afd9983814c0e01a7dc32245861836162c151948fd48",
+      "producer:docs/corpus_derivation.md": "9d9493c9d54ca42531f0b059165a5b957a27245b67922ebcaddf4326d8190a48",
+      "producer:unchanged_functions": [
+        "observation",
+        "target",
+        "source_contract",
+        "shard_contract",
+        "copy_shard"
+      ],
+      "admission:scripts/bt4_one_epoch_screen.py": "94531a1f66107e560484d4a54482045da4a9c8651ec5bbc7987c43992e0d7d98",
+      "admission:tests/test_bt4_tactical_training_admission.py": "a9817fa339502a22392f2e19d33533daadf8a8e62400f4010af27ad5933c2116",
+      "admission:docs/toolchains.md": "1e5d3e11781d1b998eaf1513811f576744cd3233702d2ba54c36e5eb1a64e930",
+      "admission:unchanged_functions": [
+        "train_command",
+        "completed_training",
+        "execute",
+        "verify_schedule",
+        "verify_window_cadence"
+      ]
+    },
+    "author_logs_hash_checked": 12
+  },
+  "findings": [],
+  "reviewed_behavior": [
+    "Actual parser flags select tactical branch; both B100 pins required; nondefault softmax mode/temperature refused before output. Legacy target/join/copy functions unchanged by AST.",
+    "Original raw full-legal single-phase d9 support, ordered worker/game/ply plus original history key, original missing-result complement and PCG64 within-shard permutation are reused. Original stored SF q policy must reconstruct exactly.",
+    "Pinned B100 alpha1/T0.5 parent summary/shard lineage required. Actual stored float16 policy supplies base; all16 nonpolicy compressed files verified against original SF and copied independently. Missing chunks, modified sources/output or late STOP refuse publication.",
+    "Winning/losing mates classified categorically using disjoint shared mate domain; no mate-distance cp gaps. Relative floor is a multiplier. Existing zero support remains zero and whole winning-mate-zero-mass rows are counted. Float16 support loss/rounding diagnostics retained; all-one attenuation preserves bytes.",
+    "Genuine tactical summary removes stale B100 mix stamps. Producer identities exactly match the four new admission pins. Fixed B100Tactical100 schema3 training-only branch requires the genuine recipe/source/count/qualification identity and full output roster; old source/value/history metadata preserved.",
+    "Training command, completed-training consumer, execute, schedule verification and cadence ASTs unchanged. No automatic arenas or runtime adoption; eventual matched_original_epoch arena uses separately qualified completed training."
+  ],
+  "validation_limits": [
+    "Five independent tiny arithmetic cases used AST-isolated actual tactical_target and scalar math.fsum/math.exp oracle; no producer/loader suite repeated.",
+    "Producer author58distinct cases and final whole host static PASS are supported by inspected exact logs. Admission131 focused PASS; initial whole-type fixture-only failure plus final scoped Ruff/types/Vulture PASS accurately distinguished. All12 author logs hash-checked.",
+    "Author actual tiny shuffled producer/loader tests establish row alignment and copied arrays. Admission full-cardinality tests are synthetic metadata; no actual full corpus or historical GPU/trainer execution qualified here.",
+    "Admission consumes a separately pinned corpus qualification and reviewed producer receipts; it is not a fresh payload validator or authorization for bulk rewrite/training. Raw bound-line accounting inherits original parser discarding upper/lowerbound lines, not per-row independent exact-bound evidence."
+  ]
+}

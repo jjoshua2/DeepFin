@@ -1,0 +1,42 @@
+{
+  "status": "PASS",
+  "exit_code": 0,
+  "checkout": "/tmp/deepfin-g10-increment-tools",
+  "commit": "f77101a59fb2b38fd8e68c4cf44111e869a54115",
+  "qualification_sha256": "e910fecc0426761428d062ffcfe69771a26df70777cc1c915570d6b0d9a2c05d",
+  "command_sha256": "ab6d546073942cb3cb41694418d924312a54017dfa5bc21bd16a0571c2302acb",
+  "log_sha256": "1237cfcb5c6f6586feed23fe7a7dc63b9c27db3c30b3d242400f3d73b41aaa4b",
+  "probe_sha256": "e1fadef683b236e740521c1d679d9a4735e6cde7c5215eb7122bc19a87ccb120",
+  "tracked_clean": true,
+  "features": {
+    "closed_shard_selection": true,
+    "support_exclusion_requires_result": true
+  },
+  "packages": {
+    "torch": {
+      "version": "2.14.0+cpu",
+      "module_path": "/tmp/deepfin-bt4-sf-close-followup/.venv/lib/python3.13/site-packages/torch/__init__.py"
+    },
+    "numpy": {
+      "version": "2.2.6",
+      "module_path": "/tmp/deepfin-bt4-sf-close-followup/.venv/lib/python3.13/site-packages/numpy/__init__.py"
+    },
+    "zarr": {
+      "version": "2.18.7",
+      "module_path": "/tmp/deepfin-bt4-sf-close-followup/.venv/lib/python3.13/site-packages/zarr/__init__.py"
+    },
+    "numcodecs": {
+      "version": "0.15.1",
+      "module_path": "/tmp/deepfin-bt4-sf-close-followup/.venv/lib/python3.13/site-packages/numcodecs/__init__.py"
+    },
+    "python-chess": {
+      "version": "1.999",
+      "module_path": "/tmp/deepfin-bt4-sf-close-followup/.venv/lib/python3.13/site-packages/chess/__init__.py"
+    },
+    "zstandard": {
+      "version": "0.25.0",
+      "module_path": "/tmp/deepfin-bt4-sf-close-followup/.venv/lib/python3.13/site-packages/zstandard/__init__.py"
+    }
+  },
+  "operational_pipeline_launched": false
+}

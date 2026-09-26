@@ -1,0 +1,735 @@
+{
+  "schema_version": 1,
+  "captured_utc": "2026-09-08T06:34:46.760647+00:00",
+  "purpose": "Completed H20/C100 development screen and prospective unlaunched G10 closed-shard increment. No new outcomes or runtime adoption. Includes first optimized labeler group and next registered arena launch snapshot, no next-arena outcomes.",
+  "files": [
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/complete.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/H20_C100/complete.json",
+      "original_bytes": 6501,
+      "original_sha256": "62578be405f53144d0eb5e5cf8936489dabed6a8bfcec30af2bc598dc13db664",
+      "published_bytes": 6501,
+      "published_sha256": "62578be405f53144d0eb5e5cf8936489dabed6a8bfcec30af2bc598dc13db664",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/process.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/H20_C100/process.json",
+      "original_bytes": 6241,
+      "original_sha256": "3d6e5481dac5db7d2f0cc6766ac104229b733a45a3d4d81638bdd07e1fdd87ff",
+      "published_bytes": 6241,
+      "published_sha256": "3d6e5481dac5db7d2f0cc6766ac104229b733a45a3d4d81638bdd07e1fdd87ff",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/manifest.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/H20_C100/manifest.json",
+      "original_bytes": 1807,
+      "original_sha256": "382449a1d37ddda6aefbddb7437feb80aa4d0025b88b12e6673d76eaf84f03b5",
+      "published_bytes": 1807,
+      "published_sha256": "382449a1d37ddda6aefbddb7437feb80aa4d0025b88b12e6673d76eaf84f03b5",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/readout.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/H20_C100/readout.json",
+      "original_bytes": 3154,
+      "original_sha256": "3d9c971b3415bd45e84ed911fc7716b715bc97706d27774e47cd92c8219dd232",
+      "published_bytes": 3154,
+      "published_sha256": "3d9c971b3415bd45e84ed911fc7716b715bc97706d27774e47cd92c8219dd232",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/arena.results.jsonl",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/H20_C100/arena.results.jsonl",
+      "original_bytes": 3841,
+      "original_sha256": "6a184c9837877eda1fa5680e93baeff45bb5cbb50907b481ffd964ada6f303d6",
+      "published_bytes": 3841,
+      "published_sha256": "6a184c9837877eda1fa5680e93baeff45bb5cbb50907b481ffd964ada6f303d6",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/independent_review.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/H20_C100/independent_review.json",
+      "original_bytes": 6447,
+      "original_sha256": "f4674d5553c257a675864ed3e04d34af0c2847405dc2bc3fa5ab62e68fbf9348",
+      "published_bytes": 6447,
+      "published_sha256": "f4674d5553c257a675864ed3e04d34af0c2847405dc2bc3fa5ab62e68fbf9348",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/H20_C100/arena.games.jsonl.gz",
+      "original_bytes": 432991,
+      "original_sha256": "98064bf64dce7581182403bc2a3c57c7f35e07675fd2a9c7e66c109179755ad1",
+      "published_bytes": 32678,
+      "published_sha256": "9140c804a58f192525d831d9e446512eec72cc75c5b8467456c554021288889d",
+      "encoding": "gzip"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/preregistration.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/preregistration.json",
+      "original_bytes": 7301,
+      "original_sha256": "687fdf49977dfde4934d14bf7c3655e0250ae8a90491b34c740d7cc92ff6f51b",
+      "published_bytes": 7301,
+      "published_sha256": "687fdf49977dfde4934d14bf7c3655e0250ae8a90491b34c740d7cc92ff6f51b",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/qualification_contract.md",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/qualification_contract.md",
+      "original_bytes": 6219,
+      "original_sha256": "f2c28e4b0092643be3834dc4b08433711afc17d44680bf8441abbd3c1d7d302c",
+      "published_bytes": 6219,
+      "published_sha256": "f2c28e4b0092643be3834dc4b08433711afc17d44680bf8441abbd3c1d7d302c",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/metadata_capture.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/metadata_capture.json",
+      "original_bytes": 20505,
+      "original_sha256": "531837a7f5a80f16a05043cb925e9e448f34143dc17b0497ec1d5302ec6361fa",
+      "published_bytes": 20505,
+      "published_sha256": "531837a7f5a80f16a05043cb925e9e448f34143dc17b0497ec1d5302ec6361fa",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/source_shards.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/source_shards.json",
+      "original_bytes": 5677,
+      "original_sha256": "ed97677f8a312d3bd686654421b7915d1f1181cf1d54513b9c5325e4ad6a6147",
+      "published_bytes": 5677,
+      "published_sha256": "ed97677f8a312d3bd686654421b7915d1f1181cf1d54513b9c5325e4ad6a6147",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/source_shards.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/source_shards.json",
+      "original_bytes": 5688,
+      "original_sha256": "4964faba4857721f945b96a909914ae97fc206f907df5b8dc97d89b97dd170dd",
+      "published_bytes": 5688,
+      "published_sha256": "4964faba4857721f945b96a909914ae97fc206f907df5b8dc97d89b97dd170dd",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/readout.json",
+      "published_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/readout.json",
+      "original_bytes": 8431,
+      "original_sha256": "85ba67526a254eb4685ab7aa19766a2350107fbd2dce0b0e136becb056dfaeea",
+      "published_bytes": 8431,
+      "published_sha256": "85ba67526a254eb4685ab7aa19766a2350107fbd2dce0b0e136becb056dfaeea",
+      "encoding": "identity",
+      "snapshot": false
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/process.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/G20T05.s100.process.snapshot.json",
+      "original_bytes": 6078,
+      "original_sha256": "e287c8da69bac32bf3b03db74840499ac3d573439084abed09ccf55fd07ac5ab",
+      "published_bytes": 6078,
+      "published_sha256": "e287c8da69bac32bf3b03db74840499ac3d573439084abed09ccf55fd07ac5ab",
+      "encoding": "identity",
+      "snapshot": true
+    }
+  ],
+  "archives": [
+    {
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/G10_increment_metadata.tar.gz",
+      "encoding": "tar+gzip",
+      "uncompressed_tar_bytes": 542720,
+      "uncompressed_tar_sha256": "a1b5c47315c8e534e99ffe3bf8993f5aebb111e8a079959f29b204c83e993107",
+      "published_bytes": 74706,
+      "published_sha256": "c4a38f211e738dd5d1eb754da90aa051e6882e6f8cc565852485756676c5090c",
+      "member_count": 77,
+      "members": [
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/metadata_capture.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/metadata_capture.json",
+          "bytes": 20505,
+          "sha256": "531837a7f5a80f16a05043cb925e9e448f34143dc17b0497ec1d5302ec6361fa"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/preregistration.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/preregistration.json",
+          "bytes": 7301,
+          "sha256": "687fdf49977dfde4934d14bf7c3655e0250ae8a90491b34c740d7cc92ff6f51b"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/qualification_contract.md",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/qualification_contract.md",
+          "bytes": 6219,
+          "sha256": "f2c28e4b0092643be3834dc4b08433711afc17d44680bf8441abbd3c1d7d302c"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/closed_bt4_receipts.jsonl",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/closed_bt4_receipts.jsonl",
+          "bytes": 36661,
+          "sha256": "5d3ec78f380f017dcec56b0d4429a2918c2e6463a7d061e21e3c62d080ffee98"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/closed_source_progress.jsonl",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/closed_source_progress.jsonl",
+          "bytes": 41005,
+          "sha256": "8e2d533ccbe8daab1058730f3ad5853ba737a2db5d01941afd6f8a84a21e5dab"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00032.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00032.bt4.zarr.json",
+          "bytes": 2310,
+          "sha256": "8428e6a2100cf47f561c7852037f6506d16e29e9c199de39ac0fc0eb272d2717"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00033.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00033.bt4.zarr.json",
+          "bytes": 2311,
+          "sha256": "9f7cab558b06818f7e322aab63e1e80bf98e18c456b76df7a9069bdc17959e91"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00034.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00034.bt4.zarr.json",
+          "bytes": 2312,
+          "sha256": "d717ac09a34fc45b8e67c23d3e4b31ca70d7611fab3fc401c025160602ef6594"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00035.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00035.bt4.zarr.json",
+          "bytes": 2311,
+          "sha256": "4df2040d3e3c918e50d6f561d97865154433a133fb797275331d2ad0d76cfcb4"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00036.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00036.bt4.zarr.json",
+          "bytes": 2310,
+          "sha256": "556e171ff82b7cd497e1860aeeb20b15a377d1c3fd57ce2d01bf03a32b85937d"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00037.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00037.bt4.zarr.json",
+          "bytes": 2310,
+          "sha256": "39899c847eba2f7442fd08bcef687c827002f46adda32258d85c53393582577d"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00038.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00038.bt4.zarr.json",
+          "bytes": 2311,
+          "sha256": "7518a670c7720ab1cf75f17cd8f6fd50f79a9c1a94f6bb9790733528d7c4a21b"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00039.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00039.bt4.zarr.json",
+          "bytes": 2306,
+          "sha256": "319ad25afb5bbd0e660d5ac127749370c5fc187df7df1e4168c67e26c43d8d99"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00040.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00040.bt4.zarr.json",
+          "bytes": 2311,
+          "sha256": "3f9d882431df42ac3e78ac8f21604675122866ec6308575a4bf05826fcbeae3e"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00041.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00041.bt4.zarr.json",
+          "bytes": 2310,
+          "sha256": "a93c5836b82fd53d91919bd06d5dd3c77a9668ff727633ec356e14ba1b356871"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00042.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00042.bt4.zarr.json",
+          "bytes": 2311,
+          "sha256": "64eb3f5606367edd8cf91809c00eb7ec4637c2062f77ae665030a0ffa81ffb94"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00043.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00043.bt4.zarr.json",
+          "bytes": 2312,
+          "sha256": "04806c5c5fb9bc639b6eb65ac33116addcc4fe7a52f89b4078a3cec7b2dde267"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00044.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00044.bt4.zarr.json",
+          "bytes": 2309,
+          "sha256": "556803007606416a293112676b5e3b196dcf0b125114ab195da0da11dc85c22f"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00045.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00045.bt4.zarr.json",
+          "bytes": 2310,
+          "sha256": "04b8bff7fd60304f62a43cc8ff06566d05d9e7d47081c5ca40a0da764923cfff"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00046.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00046.bt4.zarr.json",
+          "bytes": 2310,
+          "sha256": "665d059f67775a7942ff4430f93c40e0b7380a1830f4e8caf5b45f649744ec7f"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00047.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00047.bt4.zarr.json",
+          "bytes": 2310,
+          "sha256": "0f124961bf562e752b2d5b5d9b3fa4ded1778965a16895fea605d9d057e32fe2"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00048.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00048.bt4.zarr.json",
+          "bytes": 2311,
+          "sha256": "ef28bd51bc87a8f6ad64a8769fb950f621194e1d488e1a8b34b4063f98372351"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00049.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00049.bt4.zarr.json",
+          "bytes": 2310,
+          "sha256": "6d43dffd9179229362272a7cd81597ef3b0bc3718049ad82356782a6a7e0eba3"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00050.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00050.bt4.zarr.json",
+          "bytes": 2311,
+          "sha256": "b15d2c1f33ba7424185151db45f9482a618ae226c155a6a6ef5ee150de46770f"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00051.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00051.bt4.zarr.json",
+          "bytes": 2312,
+          "sha256": "1f1096f171923eafd20a2ded5a4057deb222d349f2f17f0f57b4776b51c9d11a"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00052.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00052.bt4.zarr.json",
+          "bytes": 2311,
+          "sha256": "52c007a568dc52caa90bb633c3b9994e700b537d47a2b059cc397295f1d7fe82"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00053.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00053.bt4.zarr.json",
+          "bytes": 2311,
+          "sha256": "9ef7a7c4fc8b372551a885a6e0138a09d0978e628d539bfa511a565fc9082945"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00054.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00054.bt4.zarr.json",
+          "bytes": 2311,
+          "sha256": "6ba9276633daef71dc68c14edde4839d8bed1d8481cfbc125ebbfcf8886e0191"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00055.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00055.bt4.zarr.json",
+          "bytes": 2309,
+          "sha256": "dc2f24422e97d244be685727488c8063d1b3dc426298d366f162d5c6b55fb391"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00056.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00056.bt4.zarr.json",
+          "bytes": 2312,
+          "sha256": "fe3d5d50a7fa6ff6f4fdedefa7a46e32fb97f61064b9612c968137fc1efecd5b"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00057.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00057.bt4.zarr.json",
+          "bytes": 2311,
+          "sha256": "4b32e8ded6244e39f4e2ed1e2a7450af3db52c55bb6db6ce30a3dd6cf7be7075"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00058.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00058.bt4.zarr.json",
+          "bytes": 2309,
+          "sha256": "3a2827a0983aa2b658e58bebb7389180b8a07005ab4c556c0c8b7063405164fc"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00059.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00059.bt4.zarr.json",
+          "bytes": 2309,
+          "sha256": "885ee60d47b23614c67cf8f52a87cb4d66d5efeff827b752bbf27d299fe5666a"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00060.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00060.bt4.zarr.json",
+          "bytes": 2312,
+          "sha256": "269ea0a3d660b7acdcda564381df9bedccf2f14bf4c7b43dc50031d12d600a26"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00061.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00061.bt4.zarr.json",
+          "bytes": 2310,
+          "sha256": "31df5d53391b2e2922ed10f19528bd5ff9e7ceafc11894e1ef1c3ea640f989ed"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00062.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00062.bt4.zarr.json",
+          "bytes": 2311,
+          "sha256": "ecc7fc5b7e875080c691801e08ab68429ffe63f1fac3027ac76a490b474b1f1f"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00063.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/sidecar_attrs/w00-00063.bt4.zarr.json",
+          "bytes": 2312,
+          "sha256": "ab28a0bda7813150e894ed94fdff8167460fc5f06b31b6cdf2b049795c8de07e"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/source_manifest.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/source_manifest.json",
+          "bytes": 2082,
+          "sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/source_metadata.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/source_metadata.json",
+          "bytes": 20946,
+          "sha256": "2646f9f116f5a76d215aa1e4467b24846292395582a9a966f8824bb146c23d4d"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/source_shards.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/source_shards.json",
+          "bytes": 5677,
+          "sha256": "ed97677f8a312d3bd686654421b7915d1f1181cf1d54513b9c5325e4ad6a6147"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/closed_bt4_receipts.jsonl",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/closed_bt4_receipts.jsonl",
+          "bytes": 37019,
+          "sha256": "918f291e649c2d3a7ad045cbea07592c486e224cf58768f1e4bac87e321ce7e3"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/closed_source_progress.jsonl",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/closed_source_progress.jsonl",
+          "bytes": 38434,
+          "sha256": "92c8134a5efe8a48c61f1fe20bbf21a3b7e00c34c3805fcf7ed9c863833b6f43"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00032.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00032.bt4.zarr.json",
+          "bytes": 2334,
+          "sha256": "5cece66dbe60ae9678bb75143fc5bba9123e3c5c2e7c6c36b1b1e99e3d94dd87"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00033.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00033.bt4.zarr.json",
+          "bytes": 2330,
+          "sha256": "fda3f1296fbd17e744faf9a08767959d37950b17e6060cd46b95b03eb974f40c"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00034.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00034.bt4.zarr.json",
+          "bytes": 2333,
+          "sha256": "baae88908f28003d613a5f37a57d7e0ecfc25064fc96f3b8693202729ff16445"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00035.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00035.bt4.zarr.json",
+          "bytes": 2334,
+          "sha256": "253bc9d507bd03e0e963f642fdbbb8880f852d454a730089eee2652014bc6ad9"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00036.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00036.bt4.zarr.json",
+          "bytes": 2333,
+          "sha256": "8a7b29b23483b0aa86b66ba200aabc047757051b5dc64792297d970426fb9de2"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00037.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00037.bt4.zarr.json",
+          "bytes": 2334,
+          "sha256": "290705d2c1d5d38090a8c46fd2728a8c7e5e41cba641987aa8b0e6ec9043ddfb"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00038.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00038.bt4.zarr.json",
+          "bytes": 2334,
+          "sha256": "778e487f131a39461bb46f6e01ae567f99c4ae51f8c9995deb22fb53a5876f66"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00039.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00039.bt4.zarr.json",
+          "bytes": 2333,
+          "sha256": "2c09a8b5f42ac31e41b0e7b5aca48fbee1854e89038493324fa8c8415a51e1ce"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00040.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00040.bt4.zarr.json",
+          "bytes": 2334,
+          "sha256": "7a4756169dece6616812d48746a322a3c86a834563a19403856a5729c961396e"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00041.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00041.bt4.zarr.json",
+          "bytes": 2331,
+          "sha256": "f23d4b03a2c011c3ed406c7137c7cd148b786f30d6dd590ab64bbed34a011a17"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00042.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00042.bt4.zarr.json",
+          "bytes": 2333,
+          "sha256": "4d725483424ae425db962983e43918d8f61985dbf3563849da86c439a26cc091"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00043.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00043.bt4.zarr.json",
+          "bytes": 2333,
+          "sha256": "f956b1c041d44ec780246cfee648a93c02c280291b302d3871efcce06bb7c131"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00044.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00044.bt4.zarr.json",
+          "bytes": 2334,
+          "sha256": "4adc0b323b016a24abf4f850f1a4c3a8cfc547b529a01696f27de7dbba13e27e"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00045.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00045.bt4.zarr.json",
+          "bytes": 2332,
+          "sha256": "7f52883bcc0a7f9aa0403c26862589caec65a5c5a04b363b3cf3588a71232265"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00046.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00046.bt4.zarr.json",
+          "bytes": 2332,
+          "sha256": "1c40dce7be3b930dc0910b7eb310fcc15727238ddb3f0c2e08e061ed833e6e80"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00047.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00047.bt4.zarr.json",
+          "bytes": 2333,
+          "sha256": "084218b570ce70209664ae3e250f3799a4d7278feb237f38b337230b7fd52c24"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00048.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00048.bt4.zarr.json",
+          "bytes": 2334,
+          "sha256": "76aac98ac917155624b3f2cb56788b6abd9b77ba2145f3dcf47224644c684a8c"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00049.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00049.bt4.zarr.json",
+          "bytes": 2333,
+          "sha256": "64bd4552817fb65f205526379cc8dfb1c7bc9d0e5ac53ed90e7590d8cd87b17f"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00050.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00050.bt4.zarr.json",
+          "bytes": 2334,
+          "sha256": "1efa7a22809e63bd85c0232b982bbd8c412544a4afead0fdac31a23f02ba7bd0"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00051.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00051.bt4.zarr.json",
+          "bytes": 2334,
+          "sha256": "f0a1fc76ee323b5189202664605240410921afec5706bd50d409e825863fca3f"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00052.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00052.bt4.zarr.json",
+          "bytes": 2334,
+          "sha256": "1f67bbf7b9f62e457a1906a45b24a46f2b8e2d4e143e31e6badded61fdb8810a"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00053.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00053.bt4.zarr.json",
+          "bytes": 2334,
+          "sha256": "f68252ac2e6a36c23be277d789048164ceb6c1e52891eda28b3d9a0c06db07fe"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00054.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00054.bt4.zarr.json",
+          "bytes": 2333,
+          "sha256": "cd1d7b941823588108805e53b222fc83ca6ca70794b848cf8089be54b99c8f7a"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00055.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00055.bt4.zarr.json",
+          "bytes": 2334,
+          "sha256": "f632f70d2db8ea405990282c4c07390b80dab94ad56fc9f427d2a7477291061c"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00056.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00056.bt4.zarr.json",
+          "bytes": 2334,
+          "sha256": "c0418a21bbc92ee4cbb365b8fb179db8026315ba16b84e760a77cbe643d9b262"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00057.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00057.bt4.zarr.json",
+          "bytes": 2332,
+          "sha256": "9a67a6b11ee4c9a3d62d01af1a5f81338860bbaa931d3bc6642ee8c6f0063bf8"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00058.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00058.bt4.zarr.json",
+          "bytes": 2332,
+          "sha256": "d5de2f62e863bd759888b6b542244f79d415430ced7289c25444d2c769398f2c"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00059.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00059.bt4.zarr.json",
+          "bytes": 2332,
+          "sha256": "e26e66b54aec38a0541ac88bcf781f2c59ceafec1effbcbd32fe68a2ec8b7a78"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00060.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00060.bt4.zarr.json",
+          "bytes": 2332,
+          "sha256": "026a766143c3524b057e4fda2d279bfb8767f4ac0e2358b50c9bdf49dac74bc9"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00061.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00061.bt4.zarr.json",
+          "bytes": 2333,
+          "sha256": "ebb95025712438b33eed843ec8d5ad7c534510b19824f7ca399a1ac84e63529b"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00062.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00062.bt4.zarr.json",
+          "bytes": 2333,
+          "sha256": "1c134a3a69e0e5c75582c16ea443b97bed9268a2e860ff6ee7431d165fecb288"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00063.bt4.zarr.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/sidecar_attrs/w00-00063.bt4.zarr.json",
+          "bytes": 2334,
+          "sha256": "02fa4fbc3201397e012483692ed350a2cc0d649377aa0a96c5f4220c4376d967"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/source_manifest.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/source_manifest.json",
+          "bytes": 2103,
+          "sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/source_metadata.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/source_metadata.json",
+          "bytes": 22018,
+          "sha256": "dced3e3280d36f8cab9f19eeca7e7c53c63dfc01d8f53cc31c73c2c121290246"
+        },
+        {
+          "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/source_shards.json",
+          "member_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/source_shards.json",
+          "bytes": 5688,
+          "sha256": "4964faba4857721f945b96a909914ae97fc206f907df5b8dc97d89b97dd170dd"
+        }
+      ]
+    },
+    {
+      "published_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/metadata.tar.gz",
+      "encoding": "tar+gzip",
+      "uncompressed_tar_bytes": 71680,
+      "uncompressed_tar_sha256": "d6907a6482811d1934d3f43958930aef69837f36eb907033ebf457bdedd945c7",
+      "published_bytes": 9387,
+      "published_sha256": "d8fcbdce2aacad39ea5d792d74265109aaa34354d567b946e268776d1708d5fb",
+      "member_count": 18,
+      "members": [
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/driver.snapshot.log",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/driver.snapshot.log",
+          "bytes": 2387,
+          "sha256": "fe9f6a7325bcf46030e1e97a57663176dc68580b6e596bae23430605d675352a"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/readout.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/readout.json",
+          "bytes": 8431,
+          "sha256": "85ba67526a254eb4685ab7aa19766a2350107fbd2dce0b0e136becb056dfaeea"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w00-00249.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w00-00249.jsonl.zst.attrs.json",
+          "bytes": 2311,
+          "sha256": "df740a80e4996a2a30a8219d5e44fe1632aaf2970d19847df2eb430105a921d6"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w01-00251.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w01-00251.jsonl.zst.attrs.json",
+          "bytes": 2312,
+          "sha256": "c49e43a19ab27ccd6e6ae0028a162e93dc137c433e262a7adc32defee2436ab5"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w03-00251.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w03-00251.jsonl.zst.attrs.json",
+          "bytes": 2310,
+          "sha256": "6217a7478d9bee3f5a61066d26c04dc1e0574eb3d94ba871f8f4aebc83ed6c5d"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w04-00250.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w04-00250.jsonl.zst.attrs.json",
+          "bytes": 2310,
+          "sha256": "7399be0d7b123ab87de4997801885e34f521df84c8f24e00db7305d08922a896"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w05-00249.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w05-00249.jsonl.zst.attrs.json",
+          "bytes": 2311,
+          "sha256": "6bec0b6986b5fd6b3ca9ecff0ce35c13c1033aaa061eb792028db82e8e8362e6"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w06-00250.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w06-00250.jsonl.zst.attrs.json",
+          "bytes": 2310,
+          "sha256": "c673a9726c8e389e9c8d6d656d1692fdb3bca85a4c859177368cbb8d66179e48"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w07-00251.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w07-00251.jsonl.zst.attrs.json",
+          "bytes": 2311,
+          "sha256": "a90c1c10b0c854a9f1d6fd9679ae881fb7616415635958ae74051278deb2b45f"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w08-00251.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w08-00251.jsonl.zst.attrs.json",
+          "bytes": 2311,
+          "sha256": "51299961c199a0a62dec0a691a6cca99a7d8ce3b7ed85772d5e6b197ede30892"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w09-00248.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w09-00248.jsonl.zst.attrs.json",
+          "bytes": 2311,
+          "sha256": "e2ab00af7a9f4cd00b2d423b0411f75b6a64f4bf75b46131a2ab681969504dc7"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w10-00249.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w10-00249.jsonl.zst.attrs.json",
+          "bytes": 2312,
+          "sha256": "cdd999c2ff1b790ec377b2dc4e04412b41907eda741db5564e96354920c95b3f"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w11-00250.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w11-00250.jsonl.zst.attrs.json",
+          "bytes": 2311,
+          "sha256": "03cedc75c442f0d81117f62b61207b2bad70eb4a52869877e87fc390924acb50"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w00-00191.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w00-00191.jsonl.zst.attrs.json",
+          "bytes": 2334,
+          "sha256": "3b95e53f94d56fb138908ddcde31ced1d2826b80dffc353a9b9fef74762e40ef"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w00-00192.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w00-00192.jsonl.zst.attrs.json",
+          "bytes": 2333,
+          "sha256": "fcc296d2c303072c9493b444538d9f66b2bc1f71ced12d5d200799a57b8f28e0"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w01-00189.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w01-00189.jsonl.zst.attrs.json",
+          "bytes": 2332,
+          "sha256": "b36182b8f56096b3a490b175e7ed9d4bcd9e40aaecec11193f753e365e9af920"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w02-00190.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w02-00190.jsonl.zst.attrs.json",
+          "bytes": 2332,
+          "sha256": "3ec635d9ba04bf6e78568b6929cc7eabaade1768823f20f9ef6fd45e0a25a2c3"
+        },
+        {
+          "source_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w03-00189.jsonl.zst.attrs.json",
+          "member_path": "scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w03-00189.jsonl.zst.attrs.json",
+          "bytes": 2333,
+          "sha256": "6779a3d1c2b26c167a086bfa3ad144ffdb3044c61860e370de0ad0f71e1b60a2"
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Frozen original records retain host paths as historical provenance; relocate through manifest mappings. Archived plans are evidence, not current executable instructions.",
+    "Checkpoint/corpus/teacher payloads and bulk logs remain external. No rolling G100/C400 outcomes, wrapper, runtime qualification or launch files included.",
+    "The 77-member increment archive contains metadata only, not raw corpus or sidecar payloads; original metadata-capture claims remain metadata-only."
+  ],
+  "finalized_utc": "2026-09-08T06:37:22.028335+00:00"
+}

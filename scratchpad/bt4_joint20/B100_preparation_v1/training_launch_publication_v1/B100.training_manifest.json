@@ -1,0 +1,36 @@
+{
+  "schema": 3,
+  "mode": "training_only",
+  "profile": "B100",
+  "state": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training",
+  "run": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1",
+  "training_seconds": 16200,
+  "runtime_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json",
+    "sha256": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df"
+  },
+  "preregistration": {
+    "path": "/tmp/deepfin-b100-training-tools/docs/experiments/2026-09-08-bt4-pure-policy-endpoint.md",
+    "sha256": "6fb262dbfe27380bdce11bd2099305ccf6137beecd6824881857cc5d8c24f96c"
+  },
+  "prospective_schedule": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/prospective_schedule_v1/B100.prospective_schedule.json",
+    "sha256": "fd55938971e05a876891a0ba9a0107f8a370612047ab51d116385f0c9a4c0a0b"
+  },
+  "launcher_sha256": "d6216fdfc0c65782fb41a71c11164b0bf07f72b78be78148e1e6937175e5a815",
+  "stage_helper_sha256": "325164d7237680c4460e31b91c9e4e61a5f2951fc5928328fa39da507a12de48",
+  "input_pins": {
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py": "4e8e27e861021dd4c75a1a21404ff9aed0d55775e0212def585bc21b1d8cde18",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/derive_targets_summary.json": "47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/bt4_policy_mix_summary.json": "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38"
+  },
+  "data_qualification": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/qualification_preparation_v1/B100.dataset_qualification.json",
+    "sha256": "d1872b2e902a439477c4c4fe4486efcdab1e252837b5f3afd8a95c5506d9cdf4"
+  }
+}

@@ -1,0 +1,8 @@
+..............................................................           [100%]
+=============================== warnings summary ===============================
+tests/test_bt4_raw_corpus_sidecar.py::test_forked_descriptor_keeps_real_flock_after_parent_context_exits
+  /tmp/deepfin-bt4-legal-reuse/tests/test_bt4_raw_corpus_sidecar.py:145: DeprecationWarning: This process (pid=9) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    child_pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+torch threads: capped at 2 (realized 2) to leave CPU for live training — lift with CAE_TEST_THREADS=auto

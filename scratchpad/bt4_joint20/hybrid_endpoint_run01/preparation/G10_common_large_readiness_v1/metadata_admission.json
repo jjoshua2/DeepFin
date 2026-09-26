@@ -1,0 +1,19 @@
+{
+  "status": "PASS_SHARED_SCHEMA_METADATA_ONLY",
+  "helper": {
+    "path": "/tmp/deepfin-selection-admission/scripts/corpus_selection_schema.py",
+    "sha256": "1837aca122cba9c09f4e67779e0eb1c2ae71fbe314e234fcbd5725fd15ed3567"
+  },
+  "checks": [
+    "Exact five-key source/header binding and three-key entry grammar",
+    "All selected closed receipt/attrs/row/storage metadata joins",
+    "Same teacher and functional mapping blobs",
+    "Source-qualified zero prior or within-selection game overlap"
+  ],
+  "not_done": [
+    "No raw or sidecar chunk payload reads or hashes",
+    "No actual inventory/content-hashing consumer call",
+    "No exclusion census or survivor qualification",
+    "No runtime/runner adoption, registration, launch or derived data"
+  ]
+}

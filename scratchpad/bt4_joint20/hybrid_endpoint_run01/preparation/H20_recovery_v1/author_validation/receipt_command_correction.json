@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "status": "COMMAND_TEXT_CORRECTION_ONLY",
+  "created_utc": "2026-09-08T02:19:44.745197+00:00",
+  "original_receipt": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/author_validation/receipt.json",
+    "sha256": "1ace7bd84db934c079036d07050200846d7ff863d5723a64aa93c0996b03d56d",
+    "preserved_unchanged": true
+  },
+  "correction": "Original commands used inaccurate condensed shorthand taskset -c0,1. Actual recorded exec_command tool calls used taskset -c 0,1. These are copied from this agent conversation tool history, not inferred from test logs. No tests were rerun.",
+  "working_directory": "/tmp/deepfin-h20-recovery",
+  "actual_executed_commands": {
+    "passing_recovery_tests": "env CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2 BLOSC_NTHREADS=2 nice -n 19 ionice -c 3 taskset -c 0,1 .venv/bin/python -m pytest -q tests/test_bt4_policy_mix_recovery.py > /tmp/h20-recovery-tests-v2.log 2>&1",
+    "passing_normal_regressions": "env CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2 BLOSC_NTHREADS=2 nice -n 19 ionice -c 3 taskset -c 0,1 .venv/bin/python -m pytest -q tests/test_bt4_policy_mix.py -k 'mix_corpus or h20' > /tmp/h20-recovery-normal-regressions.log 2>&1",
+    "passing_types": "env OMP_NUM_THREADS=2 nice -n 19 taskset -c 0,1 .venv/bin/basedpyright --pythonpath /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python scripts/bt4_policy_mix.py tests/test_bt4_policy_mix_recovery.py > /tmp/h20-recovery-types-v2.log 2>&1",
+    "passing_ruff": "env OMP_NUM_THREADS=2 nice -n 19 taskset -c 0,1 .venv/bin/ruff check scripts/bt4_policy_mix.py tests/test_bt4_policy_mix_recovery.py",
+    "passing_diff_check": "git diff --check -- scripts/bt4_policy_mix.py tests/test_bt4_policy_mix_recovery.py"
+  },
+  "validation_scope_clarification": "Scoped checks satisfy the current project guidance for this change. Parent reports the remaining Vulture check passed; no additional whole-repository gate or repeated32 tests/typecheck is required. This note does not independently attest the parent Vulture log.",
+  "actions": "Only this new correction receipt was written; original receipt, reviewed code, tests, and running execution checkout unchanged."
+}

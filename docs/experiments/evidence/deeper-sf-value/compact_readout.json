@@ -1,0 +1,207 @@
+{
+  "status": "COMPLETE_DIAGNOSTIC_NOT_TRAINING_ADMISSION",
+  "readout_sha256": "b0789da1c5024e1e5251a9791e50b40a03b14074515cf9237c75b9744ab656a3",
+  "rows_sha256": "097c8387cb9ceccf56e1343864063bb28fd429dd27a7f60e8d3292e7c322abdc",
+  "plan_sha256": "0b5cbda7987a4df36abc5158e67a47a3761a7f2060cf9096de42dae78132c3bf",
+  "script_sha256": "035b97e8ee5d4c8e73687020a8902acfd0fd4a093b6abbd4402ef9856c4eb7e9",
+  "counts": {
+    "rows": 531412,
+    "policy_result_rows": 528545,
+    "eligible_rows": 525296,
+    "current_best_outside_final_roster": 8196,
+    "rows_no_complete_multi_move_d10": 3298,
+    "rows_phase0_duplicate_move": 17,
+    "rows_phase0_searchmove_roster": 17,
+    "rows_phase2_duplicate_move": 1,
+    "rows_phase2_searchmove_roster": 1,
+    "rows_phase1_duplicate_move": 1,
+    "rows_phase1_searchmove_roster": 1,
+    "rows_current_consumed_duplicate_conflicting": 5,
+    "rows_current_consumed_value_issue_union": 5,
+    "rows_phase1_duplicate_searchmove": 5,
+    "rows_phase1_incomplete": 5,
+    "rows_phase1_rank_roster": 5
+  },
+  "wall_seconds": 503.6123535633087,
+  "max_rss_kib": 76172,
+  "groups": [
+    {
+      "key": [
+        "overall"
+      ],
+      "sums": {
+        "rows": 525296,
+        "abs_q_delta": 3740.98938575387,
+        "signed_q_delta": -155.70949983596802,
+        "wdl_tv": 2731.428547697604,
+        "draw_delta": -428.34022741814584,
+        "best_sets_disjoint": 114308,
+        "best_sets_differ": 147037,
+        "q_shift_ge_005": 12400,
+        "nonmate_rows": 444683,
+        "nonmate_abs_cp_delta": 67418660.0,
+        "nonmate_signed_cp_delta": 4084652.0
+      }
+    },
+    {
+      "key": [
+        "source",
+        "run06_g10",
+        "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187"
+      ],
+      "sums": {
+        "rows": 262263,
+        "abs_q_delta": 1861.436856240034,
+        "signed_q_delta": -75.29027050733566,
+        "wdl_tv": 1359.6871761537702,
+        "draw_delta": -212.17343520562764,
+        "best_sets_disjoint": 56881,
+        "best_sets_differ": 73193,
+        "q_shift_ge_005": 6151,
+        "nonmate_rows": 221113,
+        "nonmate_abs_cp_delta": 34993387.0,
+        "nonmate_signed_cp_delta": 2563129.0
+      }
+    },
+    {
+      "key": [
+        "gate",
+        "10"
+      ],
+      "sums": {
+        "rows": 379298,
+        "abs_q_delta": 2855.4915102273226,
+        "signed_q_delta": -8.100378826260567,
+        "wdl_tv": 2099.9221581185,
+        "draw_delta": -231.3481866423876,
+        "best_sets_disjoint": 74246,
+        "best_sets_differ": 80396,
+        "q_shift_ge_005": 9633,
+        "nonmate_rows": 330372,
+        "nonmate_abs_cp_delta": 32247086.0,
+        "nonmate_signed_cp_delta": 11769992.0
+      }
+    },
+    {
+      "key": [
+        "score",
+        "intermediate"
+      ],
+      "sums": {
+        "rows": 60431,
+        "abs_q_delta": 1562.0766502767801,
+        "signed_q_delta": -105.1563061028719,
+        "wdl_tv": 1063.3601618111134,
+        "draw_delta": -194.76167368143797,
+        "best_sets_disjoint": 9312,
+        "best_sets_differ": 11366,
+        "q_shift_ge_005": 8941,
+        "nonmate_rows": 60431,
+        "nonmate_abs_cp_delta": 1058528.0,
+        "nonmate_signed_cp_delta": -141048.0
+      }
+    },
+    {
+      "key": [
+        "gate",
+        "12"
+      ],
+      "sums": {
+        "rows": 145998,
+        "abs_q_delta": 885.4978755265474,
+        "signed_q_delta": -147.60912100970745,
+        "wdl_tv": 631.5063895790994,
+        "draw_delta": -196.99204077575848,
+        "best_sets_disjoint": 40062,
+        "best_sets_differ": 66641,
+        "q_shift_ge_005": 2767,
+        "nonmate_rows": 114311,
+        "nonmate_abs_cp_delta": 35171574.0,
+        "nonmate_signed_cp_delta": -7685340.0
+      }
+    },
+    {
+      "key": [
+        "score",
+        "near_equal"
+      ],
+      "sums": {
+        "rows": 20429,
+        "abs_q_delta": 214.5056388527155,
+        "signed_q_delta": 23.49882860481739,
+        "wdl_tv": 112.14398287981749,
+        "draw_delta": -4.308465167880058,
+        "best_sets_disjoint": 2300,
+        "best_sets_differ": 7893,
+        "q_shift_ge_005": 717,
+        "nonmate_rows": 20429,
+        "nonmate_abs_cp_delta": 81795.0,
+        "nonmate_signed_cp_delta": 8667.0
+      }
+    },
+    {
+      "key": [
+        "score",
+        "decisive"
+      ],
+      "sums": {
+        "rows": 363823,
+        "abs_q_delta": 1957.6197718977928,
+        "signed_q_delta": -75.22583645582199,
+        "wdl_tv": 1550.4525310674096,
+        "draw_delta": -225.6207812245417,
+        "best_sets_disjoint": 99444,
+        "best_sets_differ": 115504,
+        "q_shift_ge_005": 2735,
+        "nonmate_rows": 363823,
+        "nonmate_abs_cp_delta": 66278337.0,
+        "nonmate_signed_cp_delta": 4217033.0
+      }
+    },
+    {
+      "key": [
+        "score",
+        "mate_band"
+      ],
+      "sums": {
+        "rows": 80613,
+        "abs_q_delta": 6.7873247265815735,
+        "signed_q_delta": 1.1738141179084778,
+        "wdl_tv": 5.471871939258969,
+        "draw_delta": -3.6493073442864086,
+        "best_sets_disjoint": 3252,
+        "best_sets_differ": 12274,
+        "q_shift_ge_005": 7
+      }
+    },
+    {
+      "key": [
+        "source",
+        "run07_g10_companion4",
+        "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e"
+      ],
+      "sums": {
+        "rows": 263033,
+        "abs_q_delta": 1879.552529513836,
+        "signed_q_delta": -80.41922932863235,
+        "wdl_tv": 1371.7413715438304,
+        "draw_delta": -216.1667922125183,
+        "best_sets_disjoint": 57427,
+        "best_sets_differ": 73844,
+        "q_shift_ge_005": 6249,
+        "nonmate_rows": 223570,
+        "nonmate_abs_cp_delta": 32425273.0,
+        "nonmate_signed_cp_delta": 1521523.0
+      }
+    }
+  ],
+  "source_qualified_game_clusters": 2700,
+  "limits": [
+    "No GPU, new SF inference, rewrite, full-history encoding or training admission. Current derivation semantics verified from code; this does not certify whole derived arrays.",
+    "Fixed historical64-shard bank is purposive and not the current16.4M population. No broad coverage inference.",
+    "D12 selection depends on d10 gap and restricted root rosters with shared TT. It is not full-root uniform d12 or an accuracy bound.",
+    "Generation results are not optimal-play truth; no outcome fit/calibration or playing-strength claim.",
+    "Retain raw phase anomaly counters even when selected-block structure passes; counters refer to whole phase and are not silently interpreted as selected-block corruption.",
+    "2GiB address-space cap is stricter than RSS, output cap sampled every2048rows may overshoot by that bounded batch. No hidden resume."
+  ]
+}

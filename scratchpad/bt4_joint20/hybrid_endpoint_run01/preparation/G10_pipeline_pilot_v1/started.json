@@ -1,0 +1,25 @@
+{
+  "pid": 267943,
+  "start_unix": 1788824565.988348,
+  "argv": [
+    "/usr/bin/timeout",
+    "--signal=TERM",
+    "--kill-after=30s",
+    "1769.999s",
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/usr/bin/taskset",
+    "-c",
+    "0,1",
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run_pilot.py",
+    "--worker",
+    "--expected-plan-sha256",
+    "7a25dcd9f2a6dff5d2420078fee51dd032ad227316d3ca727e83c97801015c1f"
+  ],
+  "plan_sha256": "7a25dcd9f2a6dff5d2420078fee51dd032ad227316d3ca727e83c97801015c1f"
+}

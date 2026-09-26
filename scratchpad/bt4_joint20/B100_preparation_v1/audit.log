@@ -1,0 +1,1 @@
+[bt4-audit] SF comparison=graduate_tie, mode=descriptive, training_permitted=True: n=4000, expected delta=-0.3174 cp [-2.7881, 2.1311], top1 delta=-8.0825 cp [-11.2971, -4.9287] -> /home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/audit_B100T05.json

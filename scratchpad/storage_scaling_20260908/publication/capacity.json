@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "kind": "sanitized_projection_of_banked_read_only_assessment",
+  "observed_unix": 1788898596.1839285,
+  "local_ext4": {
+    "total_bytes": 3245616308224,
+    "available_bytes": 397491019776
+  },
+  "archive_9p": {
+    "total_bytes": 10000695029760,
+    "available_bytes": 8185459122176
+  },
+  "local_reserve_bytes": 161061273600,
+  "local_available_above_reserve_bytes": 236429746176,
+  "scenario_100m_g10_raw": {
+    "additional_raw_bytes_proxy": 163468510188.74265,
+    "headroom_after_raw_growth_bytes_proxy": 72961235987.25735,
+    "common_bundle_100m_logical_bytes_proxy": 106413754414.43793,
+    "common_basis": {
+      "rows": 1057326,
+      "peak_sampled_logical_output_bytes": 1125140293
+    },
+    "one_final_recipe_100m_allocated_bytes_proxy": 77172686389.20082,
+    "one_recipe_basis": "Completed original B100 allocated bytes / 18,910,484 rows; different G10 history/policy entropy can alter size.",
+    "headroom_after_raw_plus_full_common_bytes_proxy": -33452518427.180573,
+    "headroom_after_raw_common_one_recipe_bytes_proxy": -110625204816.3814,
+    "headroom_after_raw_common_two_recipes_bytes_proxy": -187797891205.5822,
+    "limitations": "The full 100M common-data component is gross, not all incremental: existing completed common rows occupy some present disk. Subtract their retained output to obtain the exact incremental requirement. Logical common bytes understate allocated blocks. Excludes future raw BT4 sidecars, extra value banks, checkpoints, temporary copies and concurrent growth. 100M raw rows is not exactly 100M valid training rows. Not a storage guarantee."
+  },
+  "assumptions": [
+    "100M means G10 raw rows in this scenario; eligible training rows and a future mixture with the original 20M are distinct allocations.",
+    "No archive throughput/direct-training qualification follows from capacity.",
+    "Raw-growth and common/recipe projections use different byte measures and workloads; they are not precise future allocation forecasts.",
+    "The 100M common-data cost is gross, including an existing prepared subset. Concurrent growth, future raw teacher sidecars, extra WDL, checkpoints and temporary outputs are omitted."
+  ],
+  "source": {
+    "path": "scratchpad/storage_scaling_20260908/assessment.json",
+    "sha256": "691a5fe7755cfc28ccd5b845686e063e6edb88cbf3379672f2206758d3aa46f8",
+    "bytes": 6353,
+    "location": "original local evidence; not all original artifacts are included in this publication"
+  }
+}

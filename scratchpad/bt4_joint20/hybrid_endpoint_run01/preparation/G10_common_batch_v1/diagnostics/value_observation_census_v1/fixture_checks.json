@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "script_sha256": "009bda300867c154098cfbcfe51131db9641178c1a42f1122fb2eac64a7b44e9",
+  "cases": [
+    "partial narrowed block accepted",
+    "agreeing duplicates descriptive",
+    "consumed conflicting duplicates flagged",
+    "later overwrite shadows conflicting duplicate",
+    "nonfinite final value flagged",
+    "invalid used rank flagged"
+  ],
+  "scope": "Synthetic copies of one already banked row; no source mutation or raw scan"
+}

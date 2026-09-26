@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "status": "COMPLETE_BOUNDED_LABEL_STRUCTURE_CENSUS",
+  "created_utc": "2026-09-08T00:53:47.973914+00:00",
+  "scope": {
+    "closed_shards": 64,
+    "physical_rows": 531412,
+    "completed_exit_code": 0,
+    "sole_scan": true,
+    "source_payloads_or_runtime_modified": false
+  },
+  "observations": {
+    "phase0_d9_claim_complete_and_have_exact_rank_ids": 531412,
+    "phase0_d9_duplicate_and_missing_move_rows": 17,
+    "phase0_d9_extra_illegal_move_rows": 0,
+    "failure_counts_by_source": {
+      "run07_g10_companion4": 5,
+      "run06_g10": 12
+    },
+    "failures_all_have_result": true,
+    "source_qualified_failure_games": 9,
+    "missing_results": 2850,
+    "result_bearing_valid_phase0_support": 528545,
+    "later_d9_block_available_rows": 531412,
+    "latest_phase_best_cp_differs_from_phase0_best": 382113
+  },
+  "interpretation": [
+    "The original derive failure is a real source-label completeness defect hidden by a rank-only complete flag, independently reproduced outside multiprocessing.",
+    "All selected raw compressed hashes matched the registered closed receipts during the streamed census, and metadata stayed stable; source drift during this diagnostic is not supported.",
+    "The 17 defective rows are separate from 2850 missing-result rows; all 17 otherwise pass result presence.",
+    "Counts do not justify silently dropping malformed rows, substituting d8, deduplicating incomplete support, or adopting latest-phase policy. An explicit source-qualified exclusion/relabel decision remains required."
+  ],
+  "important_metric_caveat": {
+    "field": "result_and_policy_and_value_structural_ok",
+    "correct_meaning": "Result present + valid phase0 full-policy support + finite available latest-phase values. It does NOT validate narrowed later-phase rank IDs, unique moves, searchmoves roster or complete flags.",
+    "not_claimed": "Full corpus training/rank/value eligibility, full history identity or BT4 payload requalification."
+  },
+  "next_bounded_action_recommendation": "Qualify narrowed d9 value rosters on the same fixed 64-shard set using explicit phase searchmoves/rank/uniqueness checks before final eligible-row policy; retain all original rows and source-qualified failure refs. This is a recommendation only; no additional scan, filter, relabeling, or preparation launched.",
+  "resource_usage": {
+    "wall_seconds": 129.54290771484375,
+    "gnu_time_user_seconds": 252.04,
+    "gnu_time_system_seconds": 4.49,
+    "gnu_time_max_rss_kib": 25144,
+    "rss_scope": "GNU time maximum process RSS, not sum over workers; per-worker peaks are in readout",
+    "gpu_hidden": true,
+    "affinity": [
+      0,
+      1
+    ],
+    "workers": 2
+  },
+  "artifacts": [
+    {
+      "path": "banked_fixture_checks.json",
+      "bytes": 530,
+      "sha256": "3ab3a2746909887cc783b0c5765554cc04e574d14b1200e2ca6fd3e6f6840ea1"
+    },
+    {
+      "path": "census.log",
+      "bytes": 5681,
+      "sha256": "b25d5446aff73db0046e9c9d55af88eb8588546ab148a49d31bf05e38d80afbf"
+    },
+    {
+      "path": "census.py",
+      "bytes": 7912,
+      "sha256": "ccfb63a100825ebd6aa01b8ddb36c7860278fec1a9eb7ead4eba662bdb6a00b3"
+    },
+    {
+      "path": "preregistration.json",
+      "bytes": 3630,
+      "sha256": "7f2b4a995756712d7ddc8d6257fc7f62075e2fa728b595f7683df54d91f12b6a"
+    },
+    {
+      "path": "readout.json",
+      "bytes": 99167,
+      "sha256": "423a29c3a545005c3162b131864fe55c70483fab05710e77acdc73d4c8276ff3"
+    },
+    {
+      "path": "run06_g10.failures.jsonl",
+      "bytes": 6413,
+      "sha256": "cbb7f56be2986022eafaefc92b422fca5bede6dda554408b359b833ff5da2a85"
+    },
+    {
+      "path": "run06_g10.no_result.jsonl",
+      "bytes": 380640,
+      "sha256": "dfa8cfc21f7eb51989689dbe9477dc56e980325d947c1beb43ae0305338e89a9"
+    },
+    {
+      "path": "run06_g10.progress.jsonl",
+      "bytes": 30384,
+      "sha256": "8f6c10e4e28a7dfff997658f619819fb38f3660ec67d3a72a3a1d20b38d6c142"
+    },
+    {
+      "path": "run07_g10_companion4.failures.jsonl",
+      "bytes": 2914,
+      "sha256": "656a4d5fb1e0f35c393f0ca0d77f37710809d3c3e681e88024fc64728e0d0008"
+    },
+    {
+      "path": "run07_g10_companion4.no_result.jsonl",
+      "bytes": 324160,
+      "sha256": "5c80e82c5bd9d174e59928155d1cf9580353568d57ac5062aeed6f0aaf5c8f01"
+    },
+    {
+      "path": "run07_g10_companion4.progress.jsonl",
+      "bytes": 30662,
+      "sha256": "1aef4cf3593f533fc406574208f95adc5700a797409c72737f13604e8e2e1887"
+    },
+    {
+      "path": "time.txt",
+      "bytes": 925,
+      "sha256": "88b3db39ea2dec1d2b0471a2a276b5558db10d6475717f51b6d9d6df822f52c4"
+    }
+  ]
+}

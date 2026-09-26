@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "status": "PASS_COMPLETED_SOFTSF10_B100_INDEPENDENT_REVIEW",
+  "reviewed_unix": 1788917310.3731377,
+  "bindings": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/complete.json": "b026b0f138d0d8627e7333d038fbacd72743ffe1661259719c28291ea3439990",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low/complete.json": "f44b27ec938f87b75c069fe3f6c72f4890dd39a644d6733eac1027301895921c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low/readout.stdout.json": "26ffa3d10ac4aac3d06a162ca5354f5e2dd7daef333237d27e56dcc19599a717",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low.reader_manifest.json": "55852d6598ac1efe622473745b86b82c60d37951f53f7aa4091fe1fdbcf0ec7e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/complete.json": "be2a0ce804d32590e7b606e3b6f35f4bc7caf97ab6a6e594dea4acba91fe906c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/readout.stdout.json": "2c21ddaf92bd068ca80f651832c04fe485fab854c9fab7c428a5ac8126a07085",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high.reader_manifest.json": "c8f143053a68024c5413d37de73ca4db0fe855a7a0ee5678f7372efb0d00c25a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low/arena.results.jsonl": "d0cf783fd6f95dfcb0ba5ea496d5eed63d172565f2166bd23f95e562baf2a502",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low/process.json": "ee66424da30f1a61ebe579d1ed9b7207c2f5164bb91f88f83f1bc3b36219823f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low.launch.json": "46141afb9893e697fb58ab62d0ccd5c217a3ee693c57c3c48edc04d596d0c174",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/training_arena_registration_v1/qualified_preparation.panel.json": "b4f1d16b488ff9efa0c466706b74595559a807c99a0e4ca75379a4d0745cfb6c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low/arena.games.jsonl": "b9d5d080646a6a234d6a1c9766a8de7c387ccbb6e1ceffbfb5daa1980852a6fb",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/arena.results.jsonl": "dd7bb30d2e2d5ccf9fa0570403e66e58bb1106273d317fc9652c3c9d584f5011",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/process.json": "53f7efcf1615ffc25d2a270d8910498ff93626f296b17afea22bb1d52106fdac",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high.launch.json": "c2292c9a18854314ece6fbe340d080e0c78e890aeb68b4f9f52ebf3dc49f40ba",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/arena.games.jsonl": "16b2dc63dcd99cf9a14ab68f2d63bb73778ab0c1d69c80288c98ec0f1475954a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/training_arena_registration_v1/independent_arena_launch_review_v1/receipt.json": "a7061f9c59f886b510763d7ff54a5e10acffb44885afb4d859e800912df26298",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/independent_result_review_v1/review.py": "da86b8076c667b7030a18386f5007313b4597b99ed6da596008f2a86edfb38b1",
+    "/tmp/deepfin-softsf10-screen-tools/scripts/bt4_recipe_readout.py": "eaee60b49a633fde040fef02b543cd4a5db20c29cac5d64fed2c11c7f2ca76a5",
+    "/tmp/deepfin-softsf10-screen-tools/chess_anti_engine/eval/sprt.py": "5f778573d4a702e625b3b6d3220536076dd41fd866c749bda9c9fb8aff749056"
+  },
+  "calculations": {
+    "low": {
+      "WDL": {
+        "W": 56,
+        "D": 39,
+        "L": 161
+      },
+      "score": 0.294921875,
+      "score_se": 0.02637017767931152,
+      "elo": -151.4121018449954,
+      "elo_ci95": [
+        -197.17273611938717,
+        -110.13453455855786
+      ],
+      "pairs": 128,
+      "finished_games": 371,
+      "stage_seconds": 726.2557431610185,
+      "first_crossing": {
+        "finished_record_ordinal": 371,
+        "pairs": 128,
+        "verdict": "H0",
+        "llr": -4.434051295632626
+      },
+      "finished_outside_deciding_prefix": 115,
+      "inflight": 13,
+      "not_started": 616,
+      "admitted": 384,
+      "complete_pairs": 179,
+      "consultations_not_reconstructible": true
+    },
+    "high": {
+      "WDL": {
+        "W": 50,
+        "D": 44,
+        "L": 162
+      },
+      "score": 0.28125,
+      "score_se": 0.023854154130703072,
+      "elo": -162.9941306313072,
+      "elo_ci95": [
+        -205.52494766753898,
+        -124.59490721214297
+      ],
+      "pairs": 128,
+      "finished_games": 256,
+      "stage_seconds": 1340.4740589219728
+    }
+  },
+  "aligned_interaction": {
+    "mean_score400_minus100": -0.013671875,
+    "CI95": [
+      -0.08203125,
+      0.05859375
+    ],
+    "pairs": 128,
+    "samples": 10000,
+    "seed": 20260903,
+    "generator": "PCG64"
+  },
+  "arena_seconds": 2066.7298020829912,
+  "package_seconds": 11585.736436289968,
+  "findings": [],
+  "conclusions": [
+    "The registered low ordered GSPRT reaches H0 at its first128-pair look; stopped Elo and its ordinary interval are descriptive, not sequentially calibrated.",
+    "Protected high400 probe completed all128 pairs independently of low verdict and strongly favors B100 at these matched checkpoints.",
+    "Aligned score interaction interval crosses zero: no supported relative search-scaling recovery from100 to400, and two budgets do not determine a scaling curve.",
+    "No promotion; this is a same-seed development comparison. SoftSF10 keeps SF value supervision and changes the policy recipe; this does not decide every softer SF temperature or neural-value intervention."
+  ],
+  "verification": [
+    "One actual production high reader admission including low, plus independent raw result/POV/pair arithmetic and arrival-order canonical monitor replay.",
+    "Both banks/settings/process argv/terminal runtime/checkpoint hashes and same opening panel bind to the previously independently qualified final launch.",
+    "First crossing stays128 despite later completed suffix; admitted384=371finished+13inflight, with616unstarted. Consultation count/inflight reality remain producer telemetry, not inferred from bank ordering.",
+    "Independent PCG64 paired bootstrap recomputes registered aligned interaction; metadata/source hashes stable through review."
+  ],
+  "limits": [
+    "No new matches, inference, model loading, original corpus scan, native build or test suite.",
+    "Full played move lists and consumed initial history are not stored in these game rows; legal play/history lineage relies on frozen producer and qualified opening panel.",
+    "Inherited training/purity/runtime caveats from the pinned launch review remain.",
+    "No controlled lookahead speedup claim: checkpoints, game trajectories and stopping samples differ from historical matches."
+  ]
+}

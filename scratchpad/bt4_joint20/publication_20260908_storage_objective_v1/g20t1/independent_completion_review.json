@@ -1,0 +1,101 @@
+{
+  "status": "PASS_COPY_AND_CONTENT_VERIFICATION_COMPLETE_SOURCE_RETAINED",
+  "reviewed_unix": 1788919345.2769904,
+  "evidence": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/plan.json",
+      "sha256": "4677ddb5a3797d1025d498d44190ae869c8ce84e1d076f8652194d4027383c96",
+      "bytes": 6987
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/archive_G20T1.py",
+      "sha256": "481a1ae3e01e4e09a8280ab122c925a79b38d6fb56822cceeb5323969e928e71",
+      "bytes": 20619
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/run_registered.py",
+      "sha256": "fcedb5eb73f91c8a48e5fc295f5e8ff55a0c7fc5cf3ba568a46c4d5e23c33cf8",
+      "bytes": 2570
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/operator.actual_complete.json",
+      "sha256": "29ea229d3040e0334010e776527ef8b06224e91585c40e5db936a511ec386d74",
+      "bytes": 910
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/staging/qtemp_0.0005_hist_20m_bt4_global_G20T1/verified.json",
+      "sha256": "17f9d6b9a0e625eab66608c84dddeca9fc4c66491a0348d796334e2f3ea8455a",
+      "bytes": 2590
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/run/resources.txt",
+      "sha256": "64100847ddd1e59248b19a3db9fa626f1cb3a3998af122ab0b25332f8e6e9bbd",
+      "bytes": 1093
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/storage_scaling_20260908/retention_feasibility_v1/receipt.json",
+      "sha256": "3435f530436461ddad2d795b7de0316b313d8b372756b6ce43695eb89de8a21e",
+      "bytes": 6107
+    }
+  ],
+  "independent_checks": {
+    "saved_source_manifest_sha256": "bab02f0a00202b821695c512d6610de18849905abe385d671dec04e49948c65d",
+    "manifest_entries": 713331,
+    "logical_regular_source_bytes": 12171591409,
+    "all_manifest_names_within_single_pool": true,
+    "manifest_hash_and_count_match_verified_receipt": true,
+    "source_root_stamp_and_two_top_level_summary_hashes_currently_unchanged": true,
+    "external_current_stat": {
+      "st_dev": 75,
+      "st_ino": 281474978208045,
+      "st_mode": 33279,
+      "st_size": 13529845760,
+      "st_mtime_ns": 1788910014118988800,
+      "st_ctime_ns": 1788910015692161100
+    },
+    "external_size_mtime_match_completed_readback": true,
+    "observation_unix": 1788919073.9605522
+  },
+  "verified_operation": {
+    "members": 713331,
+    "archive_bytes": 13529845760,
+    "local_and_external_sha256": "c742245979a3878ba8c8d212703f7a95ebae4e7df740a7a8f7ca2de4f607aa2d",
+    "outer_exit_code": 0,
+    "outer_wall_seconds": 2977.5667877197266,
+    "inclusive_limit_seconds": 14400,
+    "cpu_seconds": 526.65,
+    "maximum_rss_kib": 89388,
+    "source_deleted": false
+  },
+  "chain": [
+    "Per-file no-follow regular-source inventory hashes and stable identity stamps.",
+    "Exact ordered tar member names/types/permissions/owners/mtime/sizes and all regular contents verified against inventory.",
+    "Local archive SHA equals full external readback SHA; external identity stable during readback.",
+    "All source manifest stamps rechecked before completion; final plan identity unchanged.",
+    "Only verified temporary local tar removed; original corpus retained."
+  ],
+  "reclamation": {
+    "content_preservation_evidence_sufficient": true,
+    "source_removal_executed": false,
+    "source_bytes_reclaimed": 0,
+    "remaining_concrete_checks": [
+      "Compare all current source entry stamps and exact deletion directory membership against saved manifest immediately before reclamation; this review checked only root and two summaries.",
+      "Confirm current scoped active consumers/dependencies do not use these shard payloads. Original copy-time process observation had incomplete visibility and is not a present consumer proof.",
+      "Recheck external identity against this observation and retain original verified receipts/source manifest; no fresh 13GB hash is required solely by this review if archive identity remains stable."
+    ],
+    "retain_locally": [
+      "bt4_policy_mix_summary.json",
+      "derive_targets_summary.json",
+      "Frozen checkpoint, training completion, run summary, realized schedule and arena receipts outside corpus."
+    ],
+    "proposed_removal_scope": "Only exact archived shard directories after the above checks; preserve top-level summaries at original paths.",
+    "restoration": "Training/row consumers require restoring full arrays, not summaries alone. Refresh identity-based qualification after restoration where inode/ctime is bound.",
+    "space_note": "Logical source bytes and tar bytes are not allocated-byte reclamation measurements; measure actual free/allocated delta only after an authorized successful removal."
+  },
+  "limits": [
+    "No new source payload or external tar payload hash, transfer, deletion, inference or repeated process fixture.",
+    "Saved source manifest streamed once independently; current complete source-tree stability has not been rechecked.",
+    "ACL/xattrs were captured by tar but not independently compared.",
+    "No measured physical reserve/staging peak is inferred from success; existing enforced guards and recorded process resources are distinguished."
+  ]
+}

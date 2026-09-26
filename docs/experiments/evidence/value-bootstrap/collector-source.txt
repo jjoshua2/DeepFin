@@ -1,0 +1,201 @@
+"""Fixed 128-row value bank. CPU only; no policies, new rows, or retries."""
+from __future__ import annotations
+import argparse
+import gc
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import resource
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+
+def main(plan_path, expected):
+    start, started = time.monotonic(), time.time()
+    plan_path = Path(plan_path).resolve()
+    def sha(p):
+        h = hashlib.sha256()
+        with Path(p).open('rb') as f:
+            for b in iter(lambda: f.read(1 << 20), b''): h.update(b)
+        return h.hexdigest()
+    def require(ok, message):
+        if not ok: raise ValueError(message)
+    require(sha(plan_path) == expected, 'plan pin')
+    plan = json.loads(plan_path.read_text())
+    require(plan['status'] == 'PREPARED_NOT_EXECUTED', 'plan status')
+    out = Path(plan['output']); out.mkdir(exist_ok=False)
+    def write(name, value):
+        with (out/name).open('x') as f:
+            json.dump(value, f, indent=2, allow_nan=False); f.write('\n')
+    def stat(p):
+        p=Path(p); require(p.is_file() and not p.is_symlink(), f'not regular: {p}')
+        s=p.stat(); return [s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns]
+    consumed, completed_batches = {}, {}
+    phase='admission'
+    def guard():
+        require(not (plan_path.parent/'STOP').exists() and not (plan_path.parent.parent/'STOP').exists(), 'STOP')
+        require(time.monotonic()-start < 860, 'work deadline')
+        require(shutil.disk_usage(out).free >= 150*(1 << 30), '150 GiB reserve')
+        require(sum(p.stat().st_size for p in out.iterdir() if p.is_file()) <= 64*(1 << 20), 'sampled 64 MiB output cap')
+    def verify(p, proof):
+        p=Path(p); before=stat(p)
+        require(before[2] == proof['bytes'] and sha(p) == proof['sha256'], f'input pin: {p}')
+        require(stat(p) == before, f'changed while hashing: {p}')
+        consumed[str(p)]=dict(stat=before, **proof)
+    def stop(signum, frame): raise RuntimeError(f'signal {signum}; partial bank preserved')
+    signal.signal(signal.SIGTERM, stop); signal.signal(signal.SIGINT, stop)
+    try:
+        guard()
+        require(os.environ.get('CUDA_VISIBLE_DEVICES') == '', 'GPU visible')
+        require(os.sched_getaffinity(0) == {2,3} and os.getpriority(os.PRIO_PROCESS,0) == 19, 'CPU limits')
+        for key in ('OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS'):
+            require(os.environ.get(key) == '2', f'thread environment: {key}')
+        resource.setrlimit(resource.RLIMIT_AS, (12*(1 << 30),)*2)
+        resource.setrlimit(resource.RLIMIT_FSIZE, (64*(1 << 20),)*2)
+        verify(plan_path, dict(bytes=plan_path.stat().st_size,sha256=expected))
+        for p, proof in plan['pins'].items(): verify(p,proof)
+        runtime=Path(plan['runtime'])
+        require(subprocess.check_output(['git','-C',str(runtime),'rev-parse','HEAD'],text=True).strip() == plan['runtime_head'], 'runtime head')
+        require(str(Path(sys.executable).resolve()) == plan['python_resolved'], 'interpreter')
+        sys.path.insert(0,str(runtime))
+        import chess
+        import numpy as np
+        import onnxruntime as ort
+        import torch
+        import numcodecs.blosc as blosc
+        from scripts import derive_corpus_targets as derive
+        from scripts import gen_sf_rooted_corpus as corpus
+        from chess_anti_engine.encoding.encode import encode_position
+        from chess_anti_engine.encoding.lc0 import x_to_lc0_planes
+        torch.set_num_threads(2); blosc.set_nthreads(2)
+        require(ort.__version__ == plan['versions']['onnxruntime'] and np.__version__ == plan['versions']['numpy'], 'versions')
+        corpus.apply_history_rep_fix()
+        loaded={}
+        for module in list(sys.modules.values()):
+            name=getattr(module,'__file__',None)
+            if name and any(Path(name).is_relative_to(runtime/x) for x in ('scripts','chess_anti_engine')):
+                actual=str(Path(name).resolve())
+                require(actual in plan['pins'], f'unpinned project import: {actual}')
+                loaded[name]=dict(resolved=actual, **plan['pins'][actual])
+        write('started.json',dict(status='RUNNING',started_unix=started,pid=os.getpid(),plan_sha256=expected,
+            argv=sys.argv,python=sys.version,executable=str(Path(sys.executable).resolve()),numpy=np.__version__,onnxruntime=ort.__version__,torch=torch.__version__,
+            torch_threads=torch.get_num_threads(),blosc_threads=blosc.get_nthreads(),affinity=sorted(os.sched_getaffinity(0)),loaded_project=loaded))
+        sample=Path(plan['ceres_bank']); parent=Path(plan['source_bank'])
+        sample_complete=json.loads((sample/'complete.json').read_text())
+        source_complete=json.loads((parent/'complete.json').read_text())
+        require(sample_complete['status']=='COMPLETE_DESCRIPTIVE_TRAINING_SAMPLE' and source_complete['status']=='COMPLETE_QUALIFIED_TRAINING_SAMPLE','bank status')
+        def sample_file(name):
+            p=sample/name; verify(p,sample_complete['outputs'][name]); return p
+        raw_path=sample_file('selected_raw_rows.jsonl')
+        wrappers=[json.loads(x) for x in raw_path.read_text().splitlines()]
+        require(len(wrappers)==128,'128 rows only')
+        key=lambda r:(r['source_dir'],r['derived_shard'],r['derived_row'])
+        choices=json.loads(Path(plan['selection']).read_text())['selected']
+        selected={key(r):r for r in choices}
+        require(len(selected)==128 and len({key(r) for r in wrappers})==128 and {key(r) for r in wrappers}==set(selected),'exact selection')
+        # Copy only the existing selected raw histories, not the larger parent raw bank.
+        with (out/'selected_raw_rows.jsonl').open('xb') as f: f.write(raw_path.read_bytes())
+        metadata=[]; byte_batches=[]
+        for b in range(32):
+            rec=json.loads(sample_file(f'batch_{b:03d}.json').read_text())
+            require(rec['first_row']==b*4 and len(rec['rows'])==4,'batch order')
+            with np.load(sample_file(f'batch_{b:03d}.npz'),allow_pickle=False) as z: byte_batches.append(z['inputs'].copy())
+            metadata.extend(rec['rows'])
+        options=derive.DeriveOptions(scheme=derive.parse_scheme('uniform-d9'),temp=.0005,cp_slope=.006,cp_draw_width=120,limit=128,seed=0,rows_per_shard=8192,max_envelope_misses=0)
+        deriver=derive.TargetDeriver(options)
+        original=[]; source_values=[]; outcomes=[]; identity=[]
+        phase='matched_input_preparation'
+        # Parent NPZ cache is one selected derived shard; exactly two selected rows per shard.
+        current=None; arrays={}
+        for i,(wrapper,meta) in enumerate(zip(wrappers,metadata)):
+            guard(); raw=wrapper['raw']; choice=selected[key(wrapper)]
+            for field in ('source_dir','raw_shard','physical_row','derived_shard','derived_row','worker_id','game_id','ply','input_key','stratum'):
+                require(wrapper[field]==meta[field],f'bank identity: {field}')
+            require(meta['weight']==choice['subsample_inverse_probability_weight'] and wrapper['weight']==choice['weight'],'weights')
+            require(raw['run']['config_sha256']==plan['source_config_sha256'] and raw['schema']==3 and raw['result'] is not None,'source regime')
+            for field in ('worker_id','game_id','ply','input_key'): require(wrapper[field]==raw[field],f'raw identity: {field}')
+            replay=chess.Board(raw['history_root_fen']); require(replay.is_valid(),'history root')
+            for uci in raw['history_uci']:
+                move=chess.Move.from_uci(uci); require(move in replay.legal_moves,'illegal history'); replay.push(move)
+            board=deriver._board_for(raw)
+            require(board.fen()==replay.fen()==meta['fen'] and board.is_valid(),'history endpoint')
+            require(len(board.move_stack)==raw['history_plies']==len(raw['history_uci']),'history length')
+            require(raw['stm']==('w' if board.turn else 'b'),'side to move')
+            x=np.asarray(encode_position(board,add_features=True,input_history_encoding=derive.INPUT_HISTORY_ENCODING,input_extra_features=derive.INPUT_EXTRA_FEATURES),dtype=np.float32)
+            deriver._verify_input_key(raw,x,count_emitted=False)
+            shard=wrapper['derived_shard']
+            if shard!=current:
+                require(Path(shard).name==shard,'unsafe shard')
+                p=parent/(shard+'.npz'); verify(p,source_complete['outputs'][p.name])
+                with np.load(p,allow_pickle=False) as z:
+                    arrays={n:z[n].copy() for n in ('selected_rows','x','game_id','ply_index','search_wdl','has_search_wdl','wdl_target')}
+                current=shard
+            ix=np.flatnonzero(arrays['selected_rows']==wrapper['derived_row']); require(len(ix)==1,'parent selected row')
+            j=int(ix[0]); require(int(arrays['game_id'][j])==wrapper['game_id'] and int(arrays['ply_index'][j])==wrapper['ply'],'parent identity')
+            require(np.array_equal(x.astype(np.float16),arrays['x'][j]),'stored quantized input identity')
+            byte=byte_batches[i//4][i%4]
+            require(byte.dtype==np.uint8 and byte.shape==(64,137) and hashlib.sha256(byte.tobytes()).hexdigest()==meta['tpg_sha256'],'saved original Ceres input')
+            sf=arrays['search_wdl'][j].copy(); z=arrays['wdl_target'][j].copy()
+            require(bool(arrays['has_search_wdl'][j]) and sf.shape==(3,) and np.isfinite(sf).all() and (sf>=0).all() and abs(float(sf.sum())-1)<.002,'SF target')
+            require(int(z) in (0,1,2),'outcome class')
+            original.append(x);source_values.append(sf);outcomes.append(z)
+            identity.append({**{k:v for k,v in wrapper.items() if k!='raw'},'weight':meta['weight'],'parent_weight':wrapper['weight'],'stm':raw['stm'],'fen':meta['fen'],'ceres_input_sha256':meta['tpg_sha256'],'original_float32_sha256':hashlib.sha256(x.tobytes()).hexdigest(),'stored_float16_sha256':hashlib.sha256(x.astype(np.float16).tobytes()).hexdigest()})
+        planes=np.stack(original); del original,arrays
+        bt4=x_to_lc0_planes(planes,input_history_encoding=derive.INPUT_HISTORY_ENCODING)
+        feeds={'BT4':bt4,'Ceres':np.concatenate(byte_batches)}
+        with (out/'source_inputs.npz').open('xb') as f:
+            np.savez_compressed(f,original_float32_x=planes,bt4_lc0_inputs=bt4,ceres_byte_inputs=feeds['Ceres'],search_wdl=np.stack(source_values),wdl_target=np.asarray(outcomes))
+        write('identities.json',identity)
+        for teacher in ('BT4','Ceres'):
+            guard(); phase=teacher+'_session'; spec=plan['teachers'][teacher]
+            verify(spec['path'],dict(bytes=spec['stat'][2],sha256=spec['sha256']))
+            require(stat(spec['path'])==spec['stat'],'model storage since metadata')
+            so=ort.SessionOptions();so.intra_op_num_threads=2;so.inter_op_num_threads=1
+            so.graph_optimization_level=ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED;so.log_severity_level=3
+            t=time.monotonic(); session=ort.InferenceSession(spec['path'],sess_options=so,providers=['CPUExecutionProvider'])
+            require(session.get_providers()==['CPUExecutionProvider'],'provider fallback')
+            ins=session.get_inputs();require(len(ins)==1 and ins[0].name==spec['input']['name'] and ins[0].type==spec['input']['ort_type'] and ins[0].shape[1:]==spec['input']['shape'],'input contract')
+            outputs={x.name:x for x in session.get_outputs()}
+            for name, desc in spec['outputs'].items():
+                require(name in outputs and outputs[name].type==desc['ort_type'] and outputs[name].shape[-1]==3,'value head contract')
+            write(teacher+'.session.json',dict(seconds=time.monotonic()-t,providers=session.get_providers(),input=spec['input'],outputs=spec['outputs'],new_BT4_runtime_qualification=teacher=='BT4'))
+            feed=feeds[teacher]; require(str(feed.dtype)==spec['input']['dtype'],'feed dtype')
+            run_options=ort.RunOptions();run_options.only_execute_path_to_fetches=True
+            completed_batches[teacher]=0; phase=teacher+'_inference'
+            for b in range(32):
+                guard(); t=time.monotonic(); names=list(spec['outputs'])
+                values=session.run(names,{spec['input']['name']:feed[b*4:(b+1)*4]},run_options)
+                # Save native arrays before interpretation or finite validation.
+                with (out/f'{teacher}.{b:03d}.npz').open('xb') as f: np.savez_compressed(f,**dict(zip(names,values)))
+                interpreted={}
+                for name, v in zip(names,values):
+                    desc=spec['outputs'][name]
+                    require(v.shape==(4,3) and str(v.dtype)==desc['dtype'] and np.isfinite(v).all(),'raw value shape/dtype/finite')
+                    p=v.astype(np.float64)
+                    if desc['kind']=='probabilities': require((p>=0).all() and (p<=1).all() and np.all(np.abs(p.sum(1)-1)<.002),'BT4 probability contract')
+                    else: p=np.exp(p-p.max(1,keepdims=True))
+                    p/=p.sum(1,keepdims=True); interpreted[name]=p.tolist()
+                write(f'{teacher}.{b:03d}.json',dict(first_row=b*4,rows=4,inference_seconds=time.monotonic()-t,interpretation=interpreted))
+                completed_batches[teacher]+=1
+                print(json.dumps(dict(teacher=teacher,completed_rows=(b+1)*4,elapsed_seconds=time.monotonic()-start)),flush=True)
+            del session;gc.collect()
+        phase='final_validation';guard()
+        for p,proof in consumed.items(): require(stat(p)==proof['stat'],f'input storage changed: {p}')
+        for p,proof in plan['pins'].items(): require(sha(p)==proof['sha256'],f'final code/evidence pin: {p}')
+        require(sha(plan_path)==expected,'final plan pin')
+        write('consumed_inputs.json',consumed);guard()
+        files={p.name:dict(bytes=p.stat().st_size,sha256=sha(p)) for p in out.iterdir() if p.is_file()}
+        guard();write('complete.json',dict(status='COMPLETE_MATCHED_VALUE_BANK',rows=128,completed_batches=completed_batches,plan_sha256=expected,outputs=files,started_unix=started,ended_unix=time.time(),elapsed_seconds=time.monotonic()-start,cpu_seconds=time.process_time(),max_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,limitations=plan['limitations']))
+    except BaseException as exc:
+        write('failed.json',dict(status='FAILED_PARTIAL_EVIDENCE_ONLY',phase=phase,error=f'{type(exc).__name__}: {exc}',completed_batches=completed_batches,ended_unix=time.time(),partial_preserved=True))
+        raise
+
+
+if __name__=='__main__':
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--plan',required=True);p.add_argument('--expected-plan-sha256',required=True)
+    a=p.parse_args();main(a.plan,a.expected_plan_sha256)

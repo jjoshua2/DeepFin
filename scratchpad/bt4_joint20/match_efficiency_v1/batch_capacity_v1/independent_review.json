@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "status": "PASS_STATIC_REVIEW_PENDING_CPU_PREFLIGHT_NOT_LAUNCH",
+  "reviewer": "bank_pr517_quality independent of author",
+  "reviewed_utc": "2026-09-08T08:09:31.966417+00:00",
+  "plan_sha256": "b7c372f10284f951785e0d788c86e5c2bacd6a9489271652922d6025d9673235",
+  "reviewed_source_pins": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/probe_batch_capacity.py": "25732805271904b2677f531b12bf4e37791511ce3b443a532296c2ca09a0f820",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/run_batch_capacity.py": "a194179f4805373fecddab999f6e0e80525de112f82b7b25f8cb011aa5b1aac2",
+    "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_direct_screen.py": "325164d7237680c4460e31b91c9e4e61a5f2951fc5928328fa39da507a12de48",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/arena_standard.py": "bc91cfc38acd00ad475061d12e6358a4bace2c7ac5cdc77675001de063c378d7",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/selfplay/match.py": "6daed1d7d5ed5e2afc60b14a8e448f229fa415aad68645104e551a58f2f1ceb3",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/pbt2_small.yaml": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/uci/model_loader.py": "76041fc68a50f4ecacde8e828e7aa4c2fdf593d0403d7aff2bcc02f8af881ea3",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/moves/__init__.py": "58217eeb1dd6eb6c056254f86532ac68a9b738e4da345137553702b3b7850f96"
+  },
+  "findings": [],
+  "verified": [
+    "Actual current frozen helper/runtime interfaces match calls: runtime_identity/probe, owned stage, persistent two-slot evaluator, checkpoint eval-mode loader, independent legal action-space map.",
+    "Exact full resolved training search checked before cells; policy temperature1.0, Gumbel full_tree, virtual loss1 and target_batch0 flow to actual cold search consumer.",
+    "Six cells each measure1024 opening boards for both models,2048 root decisions; separate warmup positions outside measured128:1152 panel. No board advancement or complete games.",
+    "Actual model relation flags feed true largest-pool256 leaf bound; each tested width asserts required bound. This allocation is sufficient across range, not current arena memory parity or proof of256 rolling throughput.",
+    "Compiled model eval-mode and inference-only switch, persistent evaluators, synchronized warmup/timing, legal returned action checks; integer action conversion is provided by match consumer.",
+    "Existing owned GNUtimeout1170s plus30s grace inherits GPU lease; new session cleanup preserves unrelated processes. Runtime environment binds wise-cloud config, numeric2, CUDA0; caller affinity4,5 and nice19 inherited; ionice3 set in GPU command.",
+    "Pinned current C400 completion required after GPU lease acquisition; competing GPU process check and repins precede launch. STOP/resource polling continues through owned stage.",
+    "Pinned runtime versions and exact frozen runtime HEAD match existing qualified identities; all compact Python/config/manifest pins match actual files."
+  ],
+  "limitations": [
+    "Read-only static review only; no GPU, model load, opening sample, runtime import/probe or performance measurement performed. Parent should run the proposed cheap CPU preflight before actual launch.",
+    "Checkpoint/book/native payload hashes were not repeated in review; actual launcher verifies them and runtime identity before launch.",
+    "20minute cap bounds GPU child stage including its input hashing/loading/compilation; preflight and blocking lease wait are outside stage cap. STOP during lease wait is observed after acquisition, as existing helper specifies.",
+    "Memoryfraction0.75 caps PyTorch allocator only; it is not a24GiB whole-process GPU quota. OOM fails once without retry.",
+    "Warmup for each width consumes that width from separate128-position prefix; dynamic compilation/order/cache effects remain possible. Aggregated model throughput only; no per-model performance comparison.",
+    "One fixed-order component observation omits whole-game pool refill, drain and position distribution; no equal-action, strength, causal speedup or runtime adoption claim."
+  ],
+  "recommended_cpu_preflight": "With CUDA hidden under frozen runtime, import functions and compare actual resolved SideSearch dataclass to plan, check model/evaluator/search signatures and inspect leaf helper bound for known relation flags. No inference required."
+}

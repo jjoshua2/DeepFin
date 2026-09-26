@@ -1,0 +1,34 @@
+{
+  "base_commit": "bb01468b1a0eb0e6a97102e069525911ef04f76a",
+  "benchmark": {
+    "command": "bash /home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v3/run_once.sh",
+    "completed_sha256": "758a9bdb31c45518d8bef8153e5e9e7215452ecce9f45b299e6b11b34ab17a9a",
+    "scope": "One CPU-only exact-source old/new postprocessing loop and helper under the same frozen wise-cloud3.10runtime; shared fixed logits, actual source-qualified1024boards, no repeats or real model inference. Firstv1 run andv2preflight failedimports before any timed numerical invocation; preserved as setup evidence."
+  },
+  "branch": "perf/bt4-legal-move-reuse",
+  "candidate_hashes": {
+    "scripts/bt4_policy_dump.py": "d6b62559952aee3b0baeeadfdb584aeb9a6fd88b0d2285ab162ee39776be2cf8",
+    "scripts/bt4_raw_corpus_sidecar.py": "6a58dab2deddc8cae3d801ec988d25b4e80c16f530fb3fc3df756440f2748c23",
+    "tests/test_bt4_legal_move_reuse.py": "021e4c4f64f7ce097859e5dbd2042e00769d7cceab330d3435a1d9a98330b9be"
+  },
+  "checkout": "/tmp/deepfin-bt4-legal-reuse",
+  "created_utc": "2026-09-08T03:14:01.487660+00:00",
+  "lint": {
+    "command": "PATH=\"$PWD/.venv/bin:$PATH\" CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 nice -n 19 ionice -c 3 taskset -c 0,1 .venv/bin/python scripts/validate.py lint",
+    "environment": "host execution so basedpyright can inspect existing development site-packages",
+    "exit_code": 0,
+    "log_sha256": "31b70a13995b1dbbe0308b0f48e3b6809b6aea3eef176229f450f6cf7936d3dd",
+    "result": "Ruff PASS; basedpyright0errors/0warnings; vulture clean",
+    "seconds": 161.51
+  },
+  "publication_status": "Ready for parent review; not committed/pushed/adopted by author",
+  "schema": 1,
+  "static_after_gate": "Only documentation/evidence added after whole gate; no production-code changes.",
+  "tests": {
+    "command": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 nice -n 19 ionice -c 3 taskset -c 0,1 .venv/bin/python -m pytest -q tests/test_bt4_legal_move_reuse.py tests/test_bt4_policy_dump.py tests/test_bt4_raw_corpus_sidecar.py",
+    "count": 62,
+    "exit_code": 0,
+    "log_sha256": "d3b19f082836c8769762dc204e0e8cadfae1d9573b44595c22a6a5be127eeb80",
+    "post_run_test_only_change": "Regex literal marked raw for Ruff; pattern semantics unchanged."
+  }
+}

@@ -1,0 +1,127 @@
+{
+  "schema": 1,
+  "snapshot_date": "2026-09-09",
+  "scope": "Curated scientific fields and exact original evidence hashes. No operational logs, process identifiers or host paths copied.",
+  "V50": {
+    "status": "TRAINING_COMPLETE_REGISTERED_LOW_ARENA_STARTED_NO_RESULT",
+    "training_receipt_sha256": "056747dd1efb43443b541556b89af01c93609bf1e3591cb87099073b23efbba4",
+    "overall_complete_sha256": "4c5a3415055874e5abf069773ce3962f53f1b34ab11db84eab167de919b8dfe5",
+    "summary_sha256": "8155659a8eab0a24916c8e0734206333d46bcb7c4ab27aef6e043850c9eacbe0",
+    "checkpoint_sha256": "f813e47e43907f1dd7b716a191b69f7444d9b70bdce53cd90010d613d6e504a8",
+    "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+    "physical_plan_sha256": "955a522c848d921102dda466f60daea8831263cefa1dc76483ca5013150678b8",
+    "realized_schedule_sha256": "7a35fc20a5556050aa0b4a0c0ae93fc50d93e80b183b979482e20c3f942f5d0e",
+    "independent_training_review_sha256": "994413d9a389cced864b1f9a0146abea9be5844658476d4a6f1496bff53c833e",
+    "rows": 18910484,
+    "updates": 36935,
+    "windows": 420,
+    "seed": 0,
+    "batch_size": 512,
+    "planner_workers": 16,
+    "loader_workers": 16,
+    "training_stage_seconds": 9075.038120101,
+    "realized_schedule_stage_seconds": 257.01789950199964,
+    "realized_schedule_report_seconds": 252.1988782740009,
+    "all_windows_finite": true,
+    "nonfinite_skips": 0,
+    "transient_retries": 0,
+    "recipe": {
+      "SF_value_weight": 0.5,
+      "BT4_value_weight": 0.5,
+      "value_order": "WDL",
+      "value_pov": "side_to_move",
+      "native_BT4_kind": "probabilities",
+      "policy": "unchanged B100 teacher T0.5",
+      "mutated_array": "search_wdl"
+    },
+    "historical_valid_control": false,
+    "historical_limitations": [
+      "No held-out purity receipt.",
+      "Architecture/trainer premise checked against committed pins rather than a live configuration.",
+      "Game-epoch sampling differs from the historical replacement-sampled control."
+    ],
+    "arena": {
+      "status": "LOW_STAGE_STARTED_NO_COMPLETED_RESULT_IN_THIS_SNAPSHOT",
+      "low_started_utc": "2026-09-09T17:23:44.294623+00:00",
+      "profile": "matched_original_epoch",
+      "reference_checkpoint_sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62",
+      "cpu_preparation_sha256": "24df36961110830d7aca02040e46bd1b994893e5ca05ae81d8152412c85b8c4d",
+      "independent_cpu_preparation_review_sha256": "27c64576f87cb47466863dad3405e4bca337f00b42bd1b965a028e7f8fb5482a",
+      "launch_manifest_sha256": "aa7a51bb2965beff7e5df9af5133c092c817971edd5b9996b4fb8c1f5dcf4c4a",
+      "original_operator_start_sha256": "5a3e00018ef290cdddf475b13ae7cefd82b3b0399d44576bffc6aeac47f64dfe",
+      "common_prior_temperature": 1.0,
+      "low_simulations": 100,
+      "low_SPRT": {
+        "elo0": 0,
+        "elo1": 15,
+        "alpha": 0.05,
+        "beta": 0.1,
+        "first_pairs": 128,
+        "step_pairs": 64,
+        "cap_pairs": 500,
+        "lookahead_pairs": 64
+      },
+      "protected_high": {
+        "simulations": 400,
+        "fixed_pairs": 128,
+        "status": "PLANNED_AFTER_VALID_LOW_NOT_COMPLETED"
+      },
+      "stage_seconds_each": 5400,
+      "runtime_and_panel": "Existing qualified original-epoch recipe runtime and full16-ply opening histories.",
+      "playing_strength_result": null
+    }
+  },
+  "T1": {
+    "status": "MATERIALIZATION_AND_METADATA_QUALIFICATION_COMPLETE_NO_TRAINING",
+    "rows": 18910484,
+    "shards": 2309,
+    "recipe": {
+      "kind": "global",
+      "algorithm": "legal-normalized-global-arithmetic-v1",
+      "alpha": 1.0,
+      "bt4_temperature": 1.0,
+      "mutated_arrays": [
+        "policy_target"
+      ],
+      "SF_value": "unchanged",
+      "nonpolicy_arrays_retained": 16
+    },
+    "materialization_outer_exit_code": 0,
+    "materialization_wall_seconds": 6825.746402978897,
+    "materialization_plan_sha256": "5305a89462da8bfb6567bae8e28dac2c37ddce6edd4ec46ec100e2a279407b56",
+    "materialization_status_sha256": "ddafe3765a8ad8199c9efebc4969c0c0fab21ff4ab20778022377d7ca78940a4",
+    "outer_completion_receipt_sha256": "887c45f1fd4092f97ea7961bbcf01d270188531d328c4da078dc1c84861e8e32",
+    "mix_summary_sha256": "6f066c580f1c5fe23f79239b19fcdeccbeba4e41f5988ae1520e36cdd9f2e379",
+    "derive_summary_sha256": "38fa679802e07f2b55e27544bb6050b19bd2f24c3e54d48b4855e3f73f586f7b",
+    "qualification_sha256": "2b02fb6fb29f79f510d2add727a8186b96ebf7e2688ffd3d86c1c3e8d22b8b8a",
+    "qualification_status": "PASS_REGISTERED_CORPUS_QUALIFICATION",
+    "qualifier_sha256": "420d66d853dcf96bb4c33778b87945a1bacced36e888b91090ff93e4e673c661",
+    "metadata_manifest_sha256": "73ffcad31740a0da3cb4f2250ba07093ced855c63c242d35748e44770411540d",
+    "qualification_scope": "Pinned successful global mixer copied original SF tree, changed only policy_target, validated source/BT4 row identity and legal normalized output chunks before stamps/final mass gates. No C-parent or rank reconstruction applies.",
+    "qualification_limits": [
+      "Metadata/process qualification only; no second corpus payload scan or independent non-policy payload checksum.",
+      "The cached4000-row FEN audit is descriptive, not whole-corpus SF strength admission.",
+      "Schedule qualification, final comparator/registration, manifest review and launch remain separate; no training selected."
+    ],
+    "two_epoch_training_complete": false,
+    "matches_complete": false,
+    "remaining": "Complete actual T1 two-epoch prospective witnesses and matched logical-order admission, then genuine training and final checkpoint/arena bindings.",
+    "prospective_schedule": {
+      "status": "STARTED_NO_RESULT_IN_THIS_SNAPSHOT",
+      "plan_sha256": "dd78af2ae8ccf0ada663f23c32f6e6d04ff5d83112e597536f8bea104d14b259",
+      "original_start_receipt_sha256": "9c4cb4e1337a1ceb29e5d756bed7902738a02f672bab287d59b12123e744a69c",
+      "inclusive_seconds": 1800,
+      "address_space_gib": 12,
+      "working_memory_gib": 8,
+      "GPU_hidden": true
+    },
+    "independent_completed_review_sha256": "398821ad30c8ba7941de60093dab0cdd309761734447216744b785004ebeb291",
+    "independent_review_scope": "Completed producer/qualification receipt chain and source-qualified recipe admission; no independent non-policy payload checksum or planner completion claim."
+  },
+  "limits": [
+    "Training completion is not playing-strength evidence; no V50 arena result is read or reported.",
+    "T1 uses original float32 BT4 sidecars, not inversion of sharpened float16 targets or the20% mixture G20T1.",
+    "T1 qualification reuses completed producer proofs and checks metadata; no second corpus payload scan or independent unchanged-array checksum.",
+    "Current one-epoch V50 and later two-epoch T1/B100 trajectories remain separate comparisons."
+  ]
+}

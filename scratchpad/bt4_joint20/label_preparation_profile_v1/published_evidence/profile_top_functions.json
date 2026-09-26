@@ -1,0 +1,187 @@
+{
+  "functions": [
+    {
+      "cumulative_seconds": 3.0199947220000003,
+      "file": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/profile_preparation.py",
+      "function": "measured",
+      "line": 84,
+      "primitive_calls": 5,
+      "self_seconds": 5.0619000000000004e-05,
+      "total_calls": 5
+    },
+    {
+      "cumulative_seconds": 1.100245361,
+      "file": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/profile_preparation.py",
+      "function": "legal_mapping",
+      "line": 111,
+      "primitive_calls": 1,
+      "self_seconds": 0.015962042000000003,
+      "total_calls": 1
+    },
+    {
+      "cumulative_seconds": 0.9716835,
+      "file": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/profile_preparation.py",
+      "function": "<lambda>",
+      "line": 105,
+      "primitive_calls": 1,
+      "self_seconds": 0.0036660300000000002,
+      "total_calls": 1
+    },
+    {
+      "cumulative_seconds": 0.96801747,
+      "file": "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/bt4_raw_corpus_sidecar.py",
+      "function": "encode_rows",
+      "line": 442,
+      "primitive_calls": 1,
+      "self_seconds": 0.018843513000000003,
+      "total_calls": 1
+    },
+    {
+      "cumulative_seconds": 0.8739141800000001,
+      "file": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/profile_preparation.py",
+      "function": "decode",
+      "line": 94,
+      "primitive_calls": 1,
+      "self_seconds": 0.0005537060000000001,
+      "total_calls": 1
+    },
+    {
+      "cumulative_seconds": 0.873345625,
+      "file": "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/derive_corpus_targets.py",
+      "function": "iter_corpus_rows",
+      "line": 2419,
+      "primitive_calls": 1025,
+      "self_seconds": 0.001873941,
+      "total_calls": 1025
+    },
+    {
+      "cumulative_seconds": 0.8170315800000001,
+      "file": "/usr/lib/python3.10/json/__init__.py",
+      "function": "loads",
+      "line": 299,
+      "primitive_calls": 1024,
+      "self_seconds": 0.0018238030000000001,
+      "total_calls": 1024
+    },
+    {
+      "cumulative_seconds": 0.8145514580000001,
+      "file": "/usr/lib/python3.10/json/decoder.py",
+      "function": "decode",
+      "line": 332,
+      "primitive_calls": 1024,
+      "self_seconds": 0.0036243910000000002,
+      "total_calls": 1024
+    },
+    {
+      "cumulative_seconds": 0.8084235710000001,
+      "file": "/usr/lib/python3.10/json/decoder.py",
+      "function": "raw_decode",
+      "line": 343,
+      "primitive_calls": 1024,
+      "self_seconds": 0.8084235710000001,
+      "total_calls": 1024
+    },
+    {
+      "cumulative_seconds": 0.5527039380000001,
+      "file": "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/derive_corpus_targets.py",
+      "function": "board_from_row",
+      "line": 2317,
+      "primitive_calls": 1024,
+      "self_seconds": 0.020912197,
+      "total_calls": 1024
+    },
+    {
+      "cumulative_seconds": 0.35977748600000004,
+      "file": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/profile_preparation.py",
+      "function": "<setcomp>",
+      "line": 119,
+      "primitive_calls": 1024,
+      "self_seconds": 0.019123701,
+      "total_calls": 1024
+    },
+    {
+      "cumulative_seconds": 0.359495783,
+      "file": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/moves/leela_index.py",
+      "function": "compact_index_for_move",
+      "line": 222,
+      "primitive_calls": 54850,
+      "self_seconds": 0.026916674,
+      "total_calls": 54850
+    },
+    {
+      "cumulative_seconds": 0.31073166700000004,
+      "file": "/home/josh/.local/lib/python3.10/site-packages/chess/__init__.py",
+      "function": "generate_legal_moves",
+      "line": 3702,
+      "primitive_calls": 56898,
+      "self_seconds": 0.037323,
+      "total_calls": 56898
+    },
+    {
+      "cumulative_seconds": 0.29988427100000004,
+      "file": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/profile_preparation.py",
+      "function": "<listcomp>",
+      "line": 118,
+      "primitive_calls": 1024,
+      "self_seconds": 0.021988202000000002,
+      "total_calls": 1024
+    },
+    {
+      "cumulative_seconds": 0.297698835,
+      "file": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/moves/encode.py",
+      "function": "move_to_index",
+      "line": 688,
+      "primitive_calls": 54850,
+      "self_seconds": 0.05590624,
+      "total_calls": 54850
+    },
+    {
+      "cumulative_seconds": 0.254456738,
+      "file": "/home/josh/.local/lib/python3.10/site-packages/chess/__init__.py",
+      "function": "from_uci",
+      "line": 685,
+      "primitive_calls": 69354,
+      "self_seconds": 0.14451877500000002,
+      "total_calls": 69354
+    },
+    {
+      "cumulative_seconds": 0.21635678600000002,
+      "file": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/profile_preparation.py",
+      "function": "<listcomp>",
+      "line": 117,
+      "primitive_calls": 1024,
+      "self_seconds": 0.020137149,
+      "total_calls": 1024
+    },
+    {
+      "cumulative_seconds": 0.21065095,
+      "file": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/moves/encode.py",
+      "function": "_oriented_move_delta",
+      "line": 111,
+      "primitive_calls": 54850,
+      "self_seconds": 0.090637671,
+      "total_calls": 54850
+    },
+    {
+      "cumulative_seconds": 0.205960424,
+      "file": "/home/josh/.local/lib/python3.10/site-packages/chess/__init__.py",
+      "function": "push",
+      "line": 2310,
+      "primitive_calls": 14504,
+      "self_seconds": 0.08117716600000001,
+      "total_calls": 14504
+    },
+    {
+      "cumulative_seconds": 0.18948789200000002,
+      "file": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/profile_preparation.py",
+      "function": "<listcomp>",
+      "line": 116,
+      "primitive_calls": 1024,
+      "self_seconds": 0.014702359000000002,
+      "total_calls": 1024
+    }
+  ],
+  "selection": "First20 records sorted by cumulative seconds; nested times are not additive.",
+  "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/functions.json",
+  "source_sha256": "270f572be9f0772fc47b7a7ac8d0beb5e453b010d10ba1397377e966d9876eb6"
+}

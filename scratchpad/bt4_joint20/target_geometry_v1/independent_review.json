@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "status": "PASS_FIXED_TRAINING_BANK_DIAGNOSTIC",
+  "reviewer": "independent review_pr517_bootstrap",
+  "reviewed_utc": "2026-09-08T04:25:10.779078+00:00",
+  "inputs": {
+    "analyze.py": "1350377a8d7e026dd7abe9ea700a0ed44bbcfcfa9b685ee18c75c2c942011987",
+    "plan.json": "5be56feb1c568b983ad2a22f3644a706b699e7571c09767f5efd0ad189181b05",
+    "preregistration.md": "5f6b1332cfbd55ff599bff8a1b34dbf43cfa3e568b630d2364bc2b3ea71e3aa8",
+    "prelaunch_review.json": "6946975dc5b78e83afd1491039305dcd9936235652436f5cf83590d22aec128a",
+    "execution.json": "6ea440d56860e644215cb3cfaefd5e464e4dbbcc79c5edd6d6f725b1f4960d04",
+    "execution.log": "813c096a295a4aac808d5ef4a5729c0d1aa0bd6a684e6f766cd6fd65905df866",
+    "readout.json": "6d66d3b4cbe40da2d3dd310fabfe88c6f7041003d9f0b6c3e1d4f74eaca796ef"
+  },
+  "checks": [
+    "Read actual AST-extracted helper definitions: C is all legal stored SF maxima union top-three original MultiPV ranks within20 effective cp; rank cap does not constrain the stored-max union. Rank/gap dtype matches normal sidecar path.",
+    "Raw rows aligned by derived row and game/ply; legal index set and each effective-cp score compared against bank; target bank aligns source IDs/selected rows/legal mask and actual SF target. Existing128-row/43-game provenance reused.",
+    "q is exact existing WDL float32 result promoted before W-minus-L subtraction, with slope.006/draw width120; reward equality is checked and source softmax reconstruction has explicit.0005 tolerance. Actual SF/C statistics use banked stored arrays, not that approximate reconstruction.",
+    "Raw-effective-cp alternatives use exact max-shifted float64 softmax and float32\u2192float16 double rounding, then legal normalization for geometry. Stored mass error is measured before normalization.",
+    "Recomputed every aggregate target metric and histograms from retained per-row results; all agree. Original command equals execution command, exit0; all15 recorded defining/data/helper pins remain unchanged.",
+    "No diagnostic rerun, new corpus scan, teacher inference, bootstrap, or training. Recalculation was limited to retained per-row arithmetic."
+  ],
+  "findings": {
+    "C_size_gt3": 17,
+    "C_size_gt3_strata": {
+      "mate_present": 12,
+      "above_200": 3,
+      "within_200": 1,
+      "below_-200": 1
+    },
+    "all_C_size_gt3_equal_stored_max_count": true,
+    "q_exact_flat": 10,
+    "q_flat_strata": {
+      "mate_present": 9,
+      "below_-200": 1
+    },
+    "stored_maxima_span_effective_cp": 21,
+    "stored_maxima_span_cp_strata": {
+      "mate_present": 18,
+      "above_200": 3
+    },
+    "all21_cp_spread_sets_have_exact_zero_q_spread": true,
+    "selected_enlarged_beyond_stored_maxima": 36,
+    "strata_rows": {
+      "below_-200": 31,
+      "within_200": 8,
+      "above_200": 50,
+      "mate_present": 39
+    },
+    "max_abs_SF_C_outside_mass_difference": 8.715207336618125e-05
+  },
+  "interpretation": [
+    "The broad C sets here arise from preserved stored maxima; for21 cp-distinct tied-max sets, q is already exactly flat across those moves. This supports q-map saturation/precision as a mechanism in these rows; it does not quantify float16-created ties or corpus prevalence.",
+    "Raw-effective-cp alternatives are not simply softer SF. Mate encoding retains distance/sign and separates mate from ordinary cp, whereas q saturates. This simultaneously changes score geometry and concentration, especially in decisive positions.",
+    "Aggregate cp10 entropy(.543) is below SF(.747), yet among89 nonmate rows cp10 entropy(.654) exceeds SF(.410). The39 mate-present rows reverse this: cp10.291 versus SF1.517. Closest aggregate mean entropy temperatures20 for SF/10 for C are descriptive and not reliable training choices.",
+    "A future raw-effective-cp arm would test a distinct score transformation, including mate treatment, not isolated entropy calibration. Explicit mate policy and strata diagnostics are needed to interpret such a trial; this readout does not select it or supersede H20/B100 exploration.",
+    "C approximately preserves outside-set source mass; observed maximum normalized stored-array difference8.72e-5 is compatible with float16 rounding and renormalization, not a new global-tail intervention."
+  ],
+  "limits": [
+    "128 positions from one8192-row seen-training shard and43 correlated games; only8 nonmate positions with best score within\u00b1200. No heldout, population, strength or search-scaling inference.",
+    "mate_present means any legal move in mate band; best_in_mate_band is recorded separately. Strata describe policy observation, not stored value labels.",
+    "Recorded analyzer body elapsed.269seconds differs from full process.723seconds; process CPU includes startup. No throughput generalization.",
+    "No changes to implementation, data, temperature selection, or running operations."
+  ],
+  "blockers": []
+}

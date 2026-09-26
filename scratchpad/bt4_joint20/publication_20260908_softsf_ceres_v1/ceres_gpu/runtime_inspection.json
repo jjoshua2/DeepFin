@@ -1,0 +1,377 @@
+{
+  "status": "PASS_CPU_IMPORT_AND_LIBRARY_RESOLUTION_NO_SESSION",
+  "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+  "executable": "/usr/bin/python3.10",
+  "numpy": "1.26.2",
+  "onnxruntime": "1.23.2",
+  "available_providers": [
+    "TensorrtExecutionProvider",
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "LD_LIBRARY_PATH": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib:/usr/local/cuda/targets/x86_64-linux/lib",
+  "ldd": "\tlinux-vdso.so.1 (0x00007f5fcf3ce000)\n\tlibcublasLt.so.12 => /usr/local/cuda/targets/x86_64-linux/lib/libcublasLt.so.12 (0x00007f5f82e00000)\n\tlibcublas.so.12 => /usr/local/cuda/targets/x86_64-linux/lib/libcublas.so.12 (0x00007f5f7c600000)\n\tlibcurand.so.10 => /usr/local/cuda/targets/x86_64-linux/lib/libcurand.so.10 (0x00007f5f71e00000)\n\tlibcufft.so.11 => /usr/local/cuda/targets/x86_64-linux/lib/libcufft.so.11 (0x00007f5f60000000)\n\tlibcudart.so.12 => /usr/local/cuda/targets/x86_64-linux/lib/libcudart.so.12 (0x00007f5f5fc00000)\n\tlibcudnn.so.9 => /home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn.so.9 (0x00007f5f5f800000)\n\tlibdl.so.2 => /lib/x86_64-linux-gnu/libdl.so.2 (0x00007f5fcf3b2000)\n\tlibrt.so.1 => /lib/x86_64-linux-gnu/librt.so.1 (0x00007f5fcf3ad000)\n\tlibpthread.so.0 => /lib/x86_64-linux-gnu/libpthread.so.0 (0x00007f5fcf3a8000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007f5f5f400000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007f5fb5119000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007f5fb50f9000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f5f5f000000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007f5fcf3d0000)\n",
+  "pins": [
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/numpy/__init__.py",
+      "sha256": "11a9455eb4297e45351657f5a60f198c21831c7a395f8c59a7361fb2edf785e5",
+      "bytes": 16754,
+      "stat": [
+        2096,
+        34054365,
+        16754,
+        1787014331368818369,
+        1787014331368818369
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/numpy/core/_multiarray_umath.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "66fd7a7c485be559a11fa2cd69b5d86ab87198f187067b572ab7f30ea1e41fa4",
+      "bytes": 7431089,
+      "stat": [
+        2096,
+        34054932,
+        7431089,
+        1787014331629711231,
+        1787014331629711231
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn.so.9",
+      "sha256": "94f44e2e8fb2d4bca8c534b14f03ef84e095376dad72a257fd854377ef0b3427",
+      "bytes": 129240,
+      "stat": [
+        2096,
+        33807796,
+        129240,
+        1787014861429038134,
+        1787014861429038134
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_adv.so.9",
+      "sha256": "a0b81bcbf08d179bae332c62218ed907f51f311b5fbd2156f0c0b13a6c1bcf63",
+      "bytes": 272749720,
+      "stat": [
+        2096,
+        33807800,
+        272749720,
+        1787014866329693533,
+        1787014866329693533
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_cnn.so.9",
+      "sha256": "94341125830e58eaa50b908f73f356802c5f66a60a1940efa5f6b427cc6058aa",
+      "bytes": 4203784,
+      "stat": [
+        2096,
+        33807852,
+        4203784,
+        1787014866425693530,
+        1787014866425693530
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_engines_precompiled.so.9",
+      "sha256": "5192b64e6a1c59165716bbe4517b37f0dfdfa349dfbb1772a4ba38a1e83b0b41",
+      "bytes": 515924288,
+      "stat": [
+        2096,
+        33807923,
+        515924288,
+        1787014873526190921,
+        1787014873526190921
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_engines_runtime_compiled.so.9",
+      "sha256": "d6184fc49c8e93c47440de8d63b77f7e7d5ad1e5e223b82608789fe599035d2f",
+      "bytes": 31483304,
+      "stat": [
+        2096,
+        33807924,
+        31483304,
+        1787014873821693297,
+        1787014873821693297
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_graph.so.9",
+      "sha256": "74d0007de32dd07a5a1e7a0e9d2c53cb101ac9bd7b0d5d88b63cc6e7a3691129",
+      "bytes": 4451608,
+      "stat": [
+        2096,
+        33807925,
+        4451608,
+        1787014873861693296,
+        1787014873861693296
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_heuristic.so.9",
+      "sha256": "b7051f52dea857d0c0c612865b058e538d703d35cb4fbfa066e81cbca785fda5",
+      "bytes": 60822016,
+      "stat": [
+        2096,
+        33807927,
+        60822016,
+        1787014874429693278,
+        1787014874429693278
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_ops.so.9",
+      "sha256": "282e3829ea9dd547ab02bd880e68bc96fcf06e5ac50da48b571288502467f372",
+      "bytes": 106964632,
+      "stat": [
+        2096,
+        33807928,
+        106964632,
+        1787014876605693211,
+        1787014876605693211
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/__init__.py",
+      "sha256": "1ca44e862e236031dde5dfb8a4d217e3770fa43201dadcf0b947fd43ed16d20e",
+      "bytes": 14874,
+      "stat": [
+        2096,
+        33556126,
+        14874,
+        1774996556538983259,
+        1783009385050018131
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/capi/libonnxruntime.so.1.23.2",
+      "sha256": "c7111c65636e247bb31d922af77ce77c47b4f902b670c13f635a9912f1b39845",
+      "bytes": 21152312,
+      "stat": [
+        2096,
+        33556137,
+        21152312,
+        1774996556658983227,
+        1783009385055192582
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/capi/libonnxruntime_providers_cuda.so",
+      "sha256": "d4c2601ea14a704cfabeb8222b769a71e9cfbacc86b797ccaa5eaea7c492ca4f",
+      "bytes": 435854600,
+      "stat": [
+        2096,
+        33556138,
+        435854600,
+        1774996559990982342,
+        1783009385055192582
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/capi/libonnxruntime_providers_shared.so",
+      "sha256": "ee7bf6d4d32f523dbdebf9dec70a1b3287a1a60d019192490732750dc385f98c",
+      "bytes": 14632,
+      "stat": [
+        2096,
+        33556139,
+        14632,
+        1774996559990982342,
+        1783009385055192582
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/capi/libonnxruntime_providers_tensorrt.so",
+      "sha256": "130243507df6b6f432a9722a5aeeafb184da20811efd629584ef46477caec172",
+      "bytes": 760488,
+      "stat": [
+        2096,
+        33556140,
+        760488,
+        1774996559994982341,
+        1783009385055192582
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/capi/onnxruntime_inference_collection.py",
+      "sha256": "e63ae30f05880589a999b5e79537042bad6baed6f749ef9d779edd74730ae587",
+      "bytes": 59838,
+      "stat": [
+        2096,
+        33556142,
+        59838,
+        1774996559998982339,
+        1783009385055192582
+      ]
+    },
+    {
+      "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/capi/onnxruntime_pybind11_state.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "c0da77661bac217b929677466c9229e79031954dd3465b71198daf876ad66fe9",
+      "bytes": 22582104,
+      "stat": [
+        2096,
+        33556143,
+        22582104,
+        1774996560134982303,
+        1783009385055192582
+      ]
+    },
+    {
+      "path": "/usr/bin/python3.10",
+      "sha256": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49",
+      "bytes": 5937704,
+      "stat": [
+        2096,
+        89253,
+        5937704,
+        1772538992000000000,
+        1773693016214688042
+      ]
+    },
+    {
+      "path": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "sha256": "e01b1ce7be2987f3b8560e26d0df2623f9dd5cec17be923ae28a785bc0d32d50",
+      "bytes": 2220400,
+      "stat": [
+        2096,
+        89424,
+        2220400,
+        1784895077000000000,
+        1786141137282391359
+      ]
+    },
+    {
+      "path": "/usr/lib/x86_64-linux-gnu/libdl.so.2",
+      "sha256": "d255ba9c9e3a7c35115e578c898147edaba1a2bcf742cc3a76995ceed9d5ac4f",
+      "bytes": 14432,
+      "stat": [
+        2096,
+        89427,
+        14432,
+        1784895077000000000,
+        1786141137282391359
+      ]
+    },
+    {
+      "path": "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "sha256": "fc9d43b2f6c20e53b009238f767c5b949d202389e20de9e202ea684b4ba3729a",
+      "bytes": 125488,
+      "stat": [
+        2096,
+        16203,
+        125488,
+        1766181126000000000,
+        1773692995438699302
+      ]
+    },
+    {
+      "path": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "sha256": "df621c68dbfed7e843434ef2faedb9f4d4b0543ad161e9a55eaf4d4ce2443176",
+      "bytes": 940560,
+      "stat": [
+        2096,
+        89428,
+        940560,
+        1784895077000000000,
+        1786141137286391359
+      ]
+    },
+    {
+      "path": "/usr/lib/x86_64-linux-gnu/libpthread.so.0",
+      "sha256": "fbed9505adacada2abb37c6b43be2df6de81e742712c6025694ba48de62c7e78",
+      "bytes": 21448,
+      "stat": [
+        2096,
+        89440,
+        21448,
+        1784895077000000000,
+        1786141137294391358
+      ]
+    },
+    {
+      "path": "/usr/lib/x86_64-linux-gnu/librt.so.1",
+      "sha256": "83eda8758c8697323bedf48bc0186c006cca2205441a988cb0f5072b96262100",
+      "bytes": 14664,
+      "stat": [
+        2096,
+        89443,
+        14664,
+        1784895077000000000,
+        1786141137298391356
+      ]
+    },
+    {
+      "path": "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.30",
+      "sha256": "ff0825e113603c3866680d5d52216bc6d8eedf3a59f52a0aef67ff01994db128",
+      "bytes": 2260296,
+      "stat": [
+        2096,
+        15655,
+        2260296,
+        1766181126000000000,
+        1773692994370699662
+      ]
+    },
+    {
+      "path": "/usr/local/cuda-12.9/targets/x86_64-linux/lib/libcublas.so.12.9.1.4",
+      "sha256": "d63456d94f1b8e2408a8a9538c8740eb474c9eba48a84f420b15e2e10fbcd048",
+      "bytes": 105140976,
+      "stat": [
+        2096,
+        2263,
+        105140976,
+        1748715224000000000,
+        1773692949306709962
+      ]
+    },
+    {
+      "path": "/usr/local/cuda-12.9/targets/x86_64-linux/lib/libcublasLt.so.12.9.1.4",
+      "sha256": "96ddf4891ca4f4ed1475966783a9185df2abd64a81c3cc713b96d036696fc541",
+      "bytes": 749205904,
+      "stat": [
+        2096,
+        2330,
+        749205904,
+        1748715224000000000,
+        1773692965182705035
+      ]
+    },
+    {
+      "path": "/usr/local/cuda-12.9/targets/x86_64-linux/lib/libcudart.so.12.9.79",
+      "sha256": "256e6409e4f06f618e1fb53d4844a6b81cdded1013afa8ade40c22f99eb133b7",
+      "bytes": 741088,
+      "stat": [
+        2096,
+        2354,
+        741088,
+        1747087761000000000,
+        1773692967338704377
+      ]
+    },
+    {
+      "path": "/usr/local/cuda-12.9/targets/x86_64-linux/lib/libcufft.so.11.4.1.4",
+      "sha256": "edff31b0fbda98a7918b15f5bf562ea8bf4eab7e81376f7a8037b05c153fb5f8",
+      "bytes": 289566960,
+      "stat": [
+        2096,
+        2250,
+        289566960,
+        1748192874000000000,
+        1773692948170710315
+      ]
+    },
+    {
+      "path": "/usr/local/cuda-12.9/targets/x86_64-linux/lib/libcurand.so.10.3.10.19",
+      "sha256": "ab8c07338fa663c018b16df5b3f3878c84aaae98bda930e9e8bad340427b0faa",
+      "bytes": 166965432,
+      "stat": [
+        2096,
+        2253,
+        166965432,
+        1741064153000000000,
+        1773692948886710093
+      ]
+    }
+  ],
+  "limitation": "Provider availability and library resolution do not establish a working CUDA session; that is the proposed probe."
+}

@@ -1,0 +1,152 @@
+"""Bind genuine completed V50 metadata; never run a verifier, train, or prepare models."""
+import argparse
+import copy
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+STATE = Path(__file__).resolve().parent
+PREP = STATE.parent
+SCHEDULE = PREP / 'prospective_schedule_v1'
+BINDING_SHA = 'aac77c64810a92e823ee49c6bbdc57cf409032a06e3d865e939a4ed593f479fa'
+READS = {}
+
+
+def sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def read(path, digest):
+    path = Path(path)
+    assert isinstance(digest, str) and len(digest) == 64 and all(c in '0123456789abcdef' for c in digest), 'actual SHA256 required'
+    assert path.is_absolute() and path.is_file() and not path.is_symlink(), 'missing regular prerequisite'
+    assert path.stat().st_size <= 16 * 1024**2, 'metadata exceeds bounded read'
+    data = path.read_bytes()
+    assert hashlib.sha256(data).hexdigest() == digest, 'metadata pin differs'
+    READS[path] = digest
+    return json.loads(data)
+
+
+def fresh(path):
+    assert not path.exists() and not path.is_symlink(), 'exclusive output already exists'
+
+
+def write(path, value):
+    fresh(path)
+    for source, digest in READS.items():
+        assert sha(source) == digest, 'prerequisite changed during finalization'
+    with path.open('x') as stream:
+        json.dump(value, stream, indent=2)
+        stream.write('\n')
+    print(json.dumps({'status': 'BOUND_METADATA_NOT_LAUNCHED', 'path': str(path), 'sha256': sha(path)}))
+
+
+def main():
+    parser = argparse.ArgumentParser(allow_abbrev=False, description=__doc__)
+    sub = parser.add_subparsers(dest='stage', required=True)
+    for name in ('schedule', 'training'):
+        p = sub.add_parser(name, allow_abbrev=False)
+        p.add_argument('--qualification-sha256', required=True)
+        if name == 'training':
+            p.add_argument('--prospective-sha256', required=True)
+            p.add_argument('--prospective-completion-sha256', required=True)
+    p = sub.add_parser('arena-preparation', allow_abbrev=False)
+    p.add_argument('--training-completion-sha256', required=True)
+    p.add_argument('--training-manifest-sha256', required=True)
+    args = parser.parse_args()
+    binding = read(STATE / 'draft_binding.json', BINDING_SHA)
+    tools = Path(binding['runtime'])
+    assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=tools, text=True).strip() == binding['head']
+    assert not subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=tools, text=True).strip()
+    for path, digest in {**binding['drafts'], **binding['coordinator_pins']}.items():
+        assert sha(path) == digest, 'frozen preparation source changed'
+        READS[Path(path)] = digest
+    sys.path.insert(0, str(tools))
+    from scripts import bt4_one_epoch_screen as epoch
+    envelope = read(STATE / 'B100V50.training_manifest.draft.json', binding['drafts'][str(STATE / 'B100V50.training_manifest.draft.json')])
+    assert envelope['status'] == 'DRAFT_NOT_A_LAUNCHER_MANIFEST'
+    m = envelope['manifest']
+    if args.stage == 'arena-preparation':
+        # This binds receipt identities only. The existing --prepare owns full
+        # checkpoint/book/runtime verification and its one bounded CPU probe.
+        finalized = read(PREP / 'B100V50.training_manifest.json', args.training_manifest_sha256)
+        # Launch validation requires fresh outputs. Here outputs must already
+        # exist: compare the complete immutable draft contract, permitting only
+        # its four pending SHA bindings, then use completed-training admission.
+        expected = copy.deepcopy(m)
+        pending = [(expected['input_pins'], key, finalized['input_pins'][key])
+                   for key, value in expected['input_pins'].items() if value is None]
+        pending += [(expected[key], 'sha256', finalized[key]['sha256'])
+                    for key in ('prospective_schedule', 'data_qualification')]
+        for obj, key, digest in pending:
+            assert isinstance(digest, str) and len(digest) == 64 and all(c in '0123456789abcdef' for c in digest), 'actual completed manifest SHA256 required'
+            obj[key] = digest
+        assert finalized == expected, 'completed manifest differs from prospective registration'
+        saved_path = Path(m['state']) / 'manifest.json'
+        assert saved_path.stat().st_size <= 16 * 1024**2, 'saved manifest exceeds bounded read'
+        assert read(saved_path, sha(saved_path)) == finalized, 'saved training manifest differs'
+        receipt_path = Path(m['state']) / 'training.complete.json'
+        completed = read(receipt_path, args.training_completion_sha256)
+        assert completed['complete'] is True and completed['role'] == 'B100V50'
+        assert completed['run'] == m['run'] and completed['canonical_plan_sha256'] == epoch.CANONICAL
+        assert completed['input_pins'] == finalized['input_pins'], 'completed training inputs differ'
+        draft = STATE / 'B100V50_B100.preparation_manifest.draft.json'
+        arena_m = read(draft, binding['drafts'][str(draft)])['manifest']
+        checkpoint = completed['checkpoint']
+        assert checkpoint['path'] == arena_m['candidate']['path'] and checkpoint['role'] == 'B100V50'
+        assert isinstance(checkpoint['sha256'], str) and len(checkpoint['sha256']) == 64 and all(c in '0123456789abcdef' for c in checkpoint['sha256'])
+        arena_m['candidate'] = checkpoint
+        arena_m['candidate_training']['sha256'] = args.training_completion_sha256
+        # Existing consumer checks completion, role, checkpoint, run, canonical
+        # schedule and pinned summary/report. It does not read checkpoint bytes.
+        for ref in ({'path': str(Path(m['run']) / 'summary.json'), 'sha256': completed['summary_sha256']}, completed['schedule']):
+            read(ref['path'], ref['sha256'])
+        epoch.arena.verify_candidate_training(arena_m)
+        write(STATE / 'B100V50_B100.preparation_manifest.json', arena_m)
+        return
+    qualification = read(Path(m['data_qualification']['path']), args.qualification_sha256)
+    m['data_qualification']['sha256'] = args.qualification_sha256
+    for key, filename in [('derive_summary', 'derive_targets_summary.json'), ('rewrite_summary', 'bt4_value_rewrite_summary.json')]:
+        ref = qualification[key]
+        path = epoch.corpus_for(m) / filename
+        assert ref['path'] == str(path), 'genuine V50 summary path differs'
+        read(path, ref['sha256'])
+        m['input_pins'][str(path)] = ref['sha256']
+    epoch.validate(m)
+    epoch.verify_data_qualification(m)
+    for path, digest in m['input_pins'].items():
+        assert sha(path) == digest, 'source/runtime pin differs'
+        READS[Path(path)] = digest
+    epoch.verify_value_recipe(m, read(epoch.corpus_for(m) / 'bt4_value_rewrite_summary.json', qualification['rewrite_summary']['sha256']),
+                             read(epoch.corpus_for(m) / 'derive_targets_summary.json', qualification['derive_summary']['sha256']))
+    if args.stage == 'schedule':
+        path = SCHEDULE / 'plan.draft.json'
+        plan = read(path, binding['drafts'][str(path)])['plan']
+        for key, digest in plan['input_pins'].items():
+            if digest is None:
+                plan['input_pins'][key] = (args.qualification_sha256 if key == m['data_qualification']['path'] else m['input_pins'][key])
+        plan['status'] = 'REGISTERED_BEFORE_EXECUTION'
+        fresh(SCHEDULE / 'operator_command.json')
+        write(SCHEDULE / 'plan.json', plan)
+        path = SCHEDULE / 'operator_command.draft.json'
+        operator = read(path, binding['drafts'][str(path)])
+        operator.update(status='PREPARED_NOT_LAUNCHED', plan_sha256=sha(SCHEDULE / 'plan.json'))
+        write(SCHEDULE / 'operator_command.json', operator)
+        return
+    report = read(Path(m['prospective_schedule']['path']), args.prospective_sha256)
+    completed = read(SCHEDULE / 'completed.json', args.prospective_completion_sha256)
+    assert completed['status'] == 'PASS_PROSPECTIVE_B100V50_SCHEDULE' and completed['exit_code'] == 0
+    assert completed['report'] == {'path': m['prospective_schedule']['path'], 'sha256': args.prospective_sha256}
+    schedule_plan = read(SCHEDULE / 'plan.json', completed['plan_sha256'])
+    assert schedule_plan['input_pins'][m['data_qualification']['path']] == args.qualification_sha256
+    assert completed['all_input_pins_unchanged'] is True
+    m['prospective_schedule']['sha256'] = args.prospective_sha256
+    epoch.check_pins(m)
+    epoch.verify_schedule(report, prospective=True, m=m)
+    write(PREP / 'B100V50.training_manifest.json', m)
+
+
+if __name__ == '__main__':
+    main()

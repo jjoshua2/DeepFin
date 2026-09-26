@@ -1,0 +1,96 @@
+{
+  "status": "PASS_PREPARATION_ONLY_NOT_LAUNCHED",
+  "reviewed_unix": 1788924082.8347783,
+  "plan": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/plan.json",
+    "sha256": "d17c36201f3157934f6b2adf9d11b4f5a42df1cb3561db46e2d86addd378592c",
+    "bytes": 11827
+  },
+  "author": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/author_preparation.json",
+    "sha256": "0aae9fbd68b89417984dfccdbad6f3dbebfc08aee12342c6c32cef0c44722da8",
+    "bytes": 4678
+  },
+  "evidence": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/archive_G50T05.py",
+      "sha256": "bd57c14dfb9aeac233d13b794634e30f6fe21b494bfe9f5719bf8f985d50b663",
+      "bytes": 20623
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/run_registered.py",
+      "sha256": "415cbc6ad349da1fa42d8db7a5366e9ca23210fe7e9c0fae20614fff56318d59",
+      "bytes": 2571
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/operator_command.json",
+      "sha256": "c580f6ca1af87d53c68bcf1d2c276c00ff49146ccc6c9f6b2d2e0c913a0a40da",
+      "bytes": 1113
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/preparation_checks.json",
+      "sha256": "71f9573b22f6d6726fddb0a0d102593afbe42d7a427dc0de7c19a9b7b64cced2",
+      "bytes": 4875
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/README.md",
+      "sha256": "d1e4ab09596be79e3ae255c95a3ab4acc732e4b51274433b70793bc1b315625b",
+      "bytes": 3850
+    }
+  ],
+  "checks": {
+    "all_author_files_hash_verified": 13,
+    "full_helper_wrapper_bytes_equal_after_literal_profile_substitution": true,
+    "limits_and_shared_lock_identical_to_completed_predecessor": true,
+    "actual_wrapper_argv_constructed_without_execution": [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      "--kill-after=30s",
+      "14369.999999s",
+      "/usr/bin/flock",
+      "--exclusive",
+      "--nonblock",
+      "--no-fork",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation.lock",
+      "/usr/bin/time",
+      "-v",
+      "-o",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/run/resources.txt",
+      "/usr/bin/ionice",
+      "-c",
+      "3",
+      "/usr/bin/nice",
+      "-n",
+      "19",
+      "/usr/bin/taskset",
+      "-c",
+      "0,1",
+      "/usr/bin/python3.10",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/archive_G50T05.py",
+      "--plan",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/plan.json",
+      "--pool",
+      "qtemp_0.0005_hist_20m_bt4_global_G50T05",
+      "--execute",
+      "--deadline",
+      "1788938482.834736"
+    ],
+    "source_root_current_stamp_and_two_summary_hashes_match_plan": true,
+    "recipe_global_alpha_point5_Tpoint5": true,
+    "original_SF_projection_unchanged_except_policy": true,
+    "completed_training_arena_and_retention_evidence_hashes_match": true,
+    "fresh_run_staging_final_archive_absent": true
+  },
+  "findings": [],
+  "scope": [
+    "Exact full source copy includes summaries and shard provenance; source retained. Mandatory outer14370TERM+30KILL and independently bounded owned children preserve4h inclusive limit, nonblocking sharedlease, STOP,24GiB staging/150GiBreserve/CPU0,1/numeric2 and no retry.",
+    "Actual parent G50 training/arena completed; current value/tactical/horizon sources use originalSF/B100 and remain untouched. Frozen G50 checkpoint/summary and schedule/arena evidence retained separately.",
+    "Prior sandbox read-only mount refusal and corrected host metadata admission are honestly retained. Inert OMP_NUM_THREADSS typo does not replace actual OMP_NUM_THREADS=2."
+  ],
+  "limits": [
+    "No source/checkpoint/archive payload hash or source-tree scan, locks, process fixtures, transfer or deletion run.",
+    "Current external mount/resources/consumer guards rerun at actual launch; existing author host observation is a past readiness snapshot.",
+    "This is copy-only admission; future source reclamation needs completed content/external verification and fresh exact-source/consumer review.",
+    "G20T05 duration is a scheduling reference, not measuredG50 completion guarantee or physical space reclamation."
+  ]
+}

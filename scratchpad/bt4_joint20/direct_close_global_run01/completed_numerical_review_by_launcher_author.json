@@ -1,0 +1,79 @@
+{
+  "authorship_limit": "Reviewer authored launcher. Arithmetic is independently implemented without importing launcher or frozen reader; this is not independent launcher review. Root can independently verify this numerical readout.",
+  "charge": {
+    "closed": true,
+    "gpu_stage_hours": 0.6534350277702753,
+    "gpu_stage_wall_seconds": 2352.366099972991,
+    "hard_seconds": 5400
+  },
+  "checks": {
+    "actual_command_and_closed_receipt_match": true,
+    "all1000_unique_pair_halves": true,
+    "checkpoint_book_native_sha256_rehashed": true,
+    "full_search_and_protocol_matches_qualified_C100_except_reference": true,
+    "opening_sequence_matches_qualified_seed42_bank": true,
+    "runtime_HEAD_and_tracked_clean_verified": true
+  },
+  "limits": [
+    "Nominal exploratory existing-seed-zero checkpoint comparison on reused development openings.",
+    "Not independent recipe confirmation, a search-scaling slope, 100M transfer or RL strength evidence.",
+    "GPU charge is closed stage wall time, not measured GPU utilization time."
+  ],
+  "pins": {
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so": "9d8cc4ba5ab20e78cfc0d183c62801765002ca49d56dbf10010f16a95291e01d",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so": "c5ce10c2ac0210e825be7f0ad14fe575a6d89745bcb5c3ffcdc24e3f381e4082",
+    "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05_epoch_v2/checkpoint.pt": "bd8c208a95247373f423be0649329e9c100db64ab1b5a5e68fd7a6aec3769a74",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/checkpoint.pt": "8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/arena/arena.games.jsonl": "bb97f201bad3db23d25fcb6ed34ade70447a8e65f9ce9f327abdd8ddcbcc9d86",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/arena/complete.json": "f89648b3bceb9e2d658de4c564b9c633155944b76591ba6d9a0e4f71186e5615",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/arena/manifest.json": "9eaf7a73a3d79b20aec5c707e2f3066111d829ccc5099944bd070236f08ea18d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/arena/process.json": "02bce30a14776aa51bdc4e7df6cde3147ade7ceb71e433d8f93346b10399ebf7",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/preregistration.md": "2f003bb37fdc99d797bd2d79fd0703f275a198d1f0320d6e1fa3b61950373d31",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df",
+    "/tmp/deepfin-bt4-direct-screen/scripts/bt4_direct_screen.py": "b1c7da6f7ccdb49f7149e181d873be6a41d2f7d4b8527768f903dee3b93415ec",
+    "/tmp/deepfin-bt4-prior-one/scripts/bt4_joint_readout.py": "bdb6b2e2a2dc04c087b7ae36628211015aaba50ac96c4110a5f372c56cefd79f"
+  },
+  "result": {
+    "candidate": "C20T05",
+    "elo": 29.95345180759873,
+    "elo_ci95": [
+      11.885181142668145,
+      48.184947993150836
+    ],
+    "games": 1000,
+    "pairs": 500,
+    "pentanomial": {
+      "DD_WL": 175,
+      "LD_DL": 88,
+      "LL": 48,
+      "WD_DW": 108,
+      "WW": 81
+    },
+    "preregistered_decision": "FAVORS_C",
+    "published_max_abs_error": 3.197442310920451e-14,
+    "reference": "G20T05",
+    "score": 0.543,
+    "score_ci95": [
+      0.5170974818967696,
+      0.5689025181032304
+    ],
+    "score_se": 0.013215570460831815,
+    "sims": 100,
+    "terminations": {
+      "max_plies": 2,
+      "rules": 998
+    },
+    "wdl": {
+      "D": 258,
+      "L": 328,
+      "W": 414
+    }
+  },
+  "reviewed_unix": 1788735777.9326656,
+  "script_sha256": "414416762fcc9457e5f697b16d644d2700ea1f6b68e0c39b1f4096a11ac3b949",
+  "status": "PASS_NUMERICAL_AND_PROVENANCE_RECHECK",
+  "terminal_observation": "Host ps confirmed coordinator167286,timeout167547,arena167548 absent and no PGID/SID167547 members before final recomputation."
+}

@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "status": "AUTHOR_FOCUSED_VALIDATION_PASS",
+  "created_utc": "2026-09-08T02:14:41.178246+00:00",
+  "code_commit": "44aafa625",
+  "files": [
+    {
+      "path": "/tmp/deepfin-h20-recovery/scripts/bt4_policy_mix.py",
+      "bytes": 118940,
+      "sha256": "cd8059e408a539e4617e13b576890c353a95bd8b3835142c27a92c7ab5917ce3"
+    },
+    {
+      "path": "/tmp/deepfin-h20-recovery/tests/test_bt4_policy_mix_recovery.py",
+      "bytes": 9385,
+      "sha256": "5af7aedd87b8ea0766aee3341c275a7e389ed47f1d0fda23ca2f2405c2aa3ce2"
+    }
+  ],
+  "validation": {
+    "new_recovery_tests": 8,
+    "existing_normal_mixer_and_H20_tests": 24,
+    "scoped_types": "0 errors,0 warnings,0 notes",
+    "ruff": "PASS",
+    "git_diff_check": "PASS"
+  },
+  "commands": {
+    "new_tests": "env CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2 BLOSC_NTHREADS=2 nice -n19 ionice -c3 taskset -c0,1 .venv/bin/python -m pytest -q tests/test_bt4_policy_mix_recovery.py",
+    "normal_regressions": "same environment, pytest tests/test_bt4_policy_mix.py -k \"mix_corpus or h20\"",
+    "types": "nice -n19 taskset -c0,1 .venv/bin/basedpyright --pythonpath /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python scripts/bt4_policy_mix.py tests/test_bt4_policy_mix_recovery.py (host subprocess access)"
+  },
+  "observed_test_failures_resolved": [
+    "Initial recovery test fixture used rounded source masses that violated existing C-parent selected-mass bound before reaching recovery; replaced fixture inputs with already validated exact H20 fixture fractions. No production threshold change.",
+    "Type checker required explicit dict[str,Any] for mixed/null recovered summary values; annotation added without runtime changes."
+  ],
+  "behavior_evidence": [
+    "A real first-shard successful H20 materialization is interrupted before the second; recovery completes it while forbidding every prefix array __getitem__ read and proving all prefix file bytes unchanged.",
+    "Bad prefix stamp/layout, unknown producer, live original PID, changed recipe and corrupted suffix nonpolicy array all refuse publication and preserve partial evidence.",
+    "Known c897 producer alone qualifies process-proof stamps; original failed124 status persists, full descriptive statistics remain null, suffix measurements explicit, analytical mass certificate distinguished from observations."
+  ],
+  "logs": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/author_validation/h20-recovery-tests.log",
+      "bytes": 226658,
+      "sha256": "6b4b54177aa12ae8bda9ca68211ea209df9aafe2085c2776708bde1a10a66bcd"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/author_validation/h20-recovery-tests-v2.log",
+      "bytes": 187,
+      "sha256": "b95c8f6117086519232b8e53d8db321b9d5ec6c45df99368b1a47798b82e2811"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/author_validation/h20-recovery-normal-regressions.log",
+      "bytes": 187,
+      "sha256": "724f1dd7013108ec02bb43a72f7026bcc3bccb9e68c742a2a3704875d3a5dd81"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/author_validation/h20-recovery-types.log",
+      "bytes": 3248,
+      "sha256": "3fb8438e040ac3bb16ef1320f211b12240cac6f25fa836d04e2a38a38cd195ff"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/author_validation/h20-recovery-types-v2.log",
+      "bytes": 30,
+      "sha256": "56882e01cb80173ef053c4096e4ee43e3123a15f5c0a06715f96988d48fbd91c"
+    }
+  ],
+  "limits": [
+    "No operational recovery, corpus payload scan, process mutation or training launched by author.",
+    "Independent final review and parent whole static gate/publication are separate."
+  ]
+}

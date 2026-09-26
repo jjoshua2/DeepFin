@@ -1,0 +1,266 @@
+{
+  "status": "PASS_COMPLETED_FULL_ORIGINAL_DERIVED_WDL_BANK",
+  "reviewed_unix": 1788928203.563201,
+  "findings": [],
+  "evidence": [
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json",
+      "sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+      "bytes": 162597
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/bt4_derived_wdl_v1/remainder_preparation_v1/plan.json",
+      "sha256": "2b7cfb8a10f4e2231b23c62f4c378a1b91b8858807d165ce46929fce72b87a53",
+      "bytes": 24460
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/bt4_derived_wdl_v1/remainder_preparation_v1/actual_complete.json",
+      "sha256": "6119d025a3c68560622ed90b98dd90dfc20b8cd24291b9fda8e7aae0d37b36fd",
+      "bytes": 1799
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/bt4_derived_wdl_v1/prefix128_preparation_v1/completed_readout.json",
+      "sha256": "5f94706c55d96472f594c776902abdd4dddb07031bda69fb7db310b208d51f18",
+      "bytes": 3757
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/bt4_derived_wdl_v1/pilot_preparation_v1/root_pilot_readout.json",
+      "sha256": "59d43dbee13dcd28f1fca80a550dda91132925858fbc104ad5d640aafdc52bb5",
+      "bytes": 1653
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788892198151725070/completed.json",
+      "sha256": "4a9e1deeeddb744a410b82ebee528386bc03b3c5bf87f332411f8c091002db17",
+      "bytes": 578
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788892198151725070/child_completed.json",
+      "sha256": "39520e7b7cb15853d6076f9b197ece149b4278a1befabb5060390b02765d8958",
+      "bytes": 543
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788892198151725070/started.json",
+      "sha256": "64acee4a8c5813ba8e4ac71b88093acbb2c42176dcdc5adbb31e34b14cd0591f",
+      "bytes": 1239
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788892198151725070/child_started.json",
+      "sha256": "dd478ae22876a1ff9a6ce97f9aca6760c28f9dc530750bf25a9d51e872689355",
+      "bytes": 127
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788893217183288997/completed.json",
+      "sha256": "8b19958537435c7f99a6eb8e845f0b3ef65edaa2a43be51c1c5e50de14ed1f37",
+      "bytes": 9095
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788893217183288997/child_completed.json",
+      "sha256": "eec65b4ccd9cd5d8edb2a9f7727fc7c507963ca1e12c9d59711bff672a9b94a6",
+      "bytes": 9059
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788893217183288997/started.json",
+      "sha256": "fd29ea38ebf89c3e2f08608219d96c66469a8cb2e40c33ad5f6ec82677f980ce",
+      "bytes": 1245
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788893217183288997/child_started.json",
+      "sha256": "31ebb392b16bd190bf2cd56f0cd8b99f64089ecb7e35fda67110b20f4f40a976",
+      "bytes": 127
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788916886162766345/completed.json",
+      "sha256": "ecc2ba1fa4c5a897d9ce2705dcfd91575126564f1623dd0add358ff43811dd33",
+      "bytes": 146582
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788916886162766345/child_completed.json",
+      "sha256": "5b22ea2a75245c4ab9f514cc371c3f722030c815f73c3765e21abf5427f680b7",
+      "bytes": 146546
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788916886162766345/started.json",
+      "sha256": "5ebf6eaa76c9f6a80c8af8fe18097bc6961495dc104e3a2e4407dae3b80f7259",
+      "bytes": 1246
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788916886162766345/child_started.json",
+      "sha256": "eceac5851253ad8e2e01ab5683dfe419b4fa84771ff801d95745ea01d8a890c3",
+      "bytes": 127
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/shard_000000.zarr/.zattrs",
+      "sha256": "2cea7dad67257193280b40f7a5bdace1dff58ee924c83ae4746468a16ecd6ed5",
+      "bytes": 2994
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/shard_000001.zarr/.zattrs",
+      "sha256": "e8d81660ae77179a9b8b7a41b053c3d1e7b78ed89f96a6a82087281f8be4095b",
+      "bytes": 2994
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/shard_000128.zarr/.zattrs",
+      "sha256": "ed4fdc354b067e7aa6cc72c9ee46e7c88a937df90a67fdfa5391893cd931400c",
+      "bytes": 2994
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/shard_000129.zarr/.zattrs",
+      "sha256": "ad974c233f2bda72c9d81128c83331b8a11f68e1b38f651dff983492559a8ae7",
+      "bytes": 2994
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1/shard_002308.zarr/.zattrs",
+      "sha256": "a81ee7e78baa28abc0df692cbae008067b94d06d3f02d5ebe55bbe01ec424e6a",
+      "bytes": 2994
+    },
+    {
+      "path": "/tmp/deepfin-bt4-derived-wdl-runtime/chess_anti_engine/encoding/lc0.py",
+      "sha256": "a20b56a7c0666e134791855c0f124a66504013983f8f97948539a015dac9c3ee",
+      "bytes": 33802
+    },
+    {
+      "path": "/tmp/deepfin-bt4-derived-wdl-runtime/scripts/bt4_derived_wdl_sidecar.py",
+      "sha256": "6fdaf63038f58e71d6ee6ab8fc6bbc04cca422b1469ecd0f65eabf890085a370",
+      "bytes": 24321
+    },
+    {
+      "path": "/tmp/deepfin-bt4-derived-wdl-runtime/scripts/bt4_raw_corpus_sidecar.py",
+      "sha256": "1c63aa4147ef8717855d226f30094cbc03431e556cd7106d0619adee7945363a",
+      "bytes": 55658
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/bt4_graph_metadata.json",
+      "sha256": "a4a9ac0e8b621531c89a317522d9fd95ae4b634c0443238f23e3abc4a92ee08e",
+      "bytes": 1483
+    }
+  ],
+  "coverage": {
+    "ordered_shards": 2309,
+    "rows": 18910484,
+    "duplicate_or_missing_shards": 0,
+    "exact_selection_equals_original_source_summary": true,
+    "invocations": [
+      {
+        "invocation": "1788892198151725070",
+        "start_shard": 0,
+        "shards": 1,
+        "rows": 8192,
+        "all_new": true,
+        "complete_sha256": "4a9e1deeeddb744a410b82ebee528386bc03b3c5bf87f332411f8c091002db17",
+        "parent_elapsed_seconds_including_wait": 8.43140983581543
+      },
+      {
+        "invocation": "1788893217183288997",
+        "start_shard": 1,
+        "shards": 128,
+        "rows": 1048576,
+        "all_new": true,
+        "complete_sha256": "8b19958537435c7f99a6eb8e845f0b3ef65edaa2a43be51c1c5e50de14ed1f37",
+        "parent_elapsed_seconds_including_wait": 1795.9357521533966
+      },
+      {
+        "invocation": "1788916886162766345",
+        "start_shard": 129,
+        "shards": 2180,
+        "rows": 17853716,
+        "all_new": true,
+        "complete_sha256": "ecc2ba1fa4c5a897d9ce2705dcfd91575126564f1623dd0add358ff43811dd33",
+        "parent_elapsed_seconds_including_wait": 10605.184565782547
+      }
+    ]
+  },
+  "teacher": {
+    "model_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+    "output": "/output/wdl",
+    "kind": "probabilities",
+    "dtype": "float32",
+    "order": [
+      "win",
+      "draw",
+      "loss"
+    ],
+    "pov": "side_to_move",
+    "input": "Actual stored derived x transformed to float32 LC0 112x8x8 feed; inherited original history."
+  },
+  "common_actual_started_settings": {
+    "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+    "expected_source_summary_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "onnx": "/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx",
+    "expected_onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+    "out": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/original20m_stored_v1",
+    "wdl_output": "/output/wdl",
+    "wdl_output_kind": "probabilities",
+    "batch_size": 128,
+    "threads": 2,
+    "gpu_mem_gb": 8.0,
+    "gpu_lock": "/home/josh/projects/chess/scratchpad/gpu0_experiment.lock",
+    "minimum_free_gib": 150.0
+  },
+  "source_producer_sha256": {
+    "chess_anti_engine/encoding/lc0.py": "a20b56a7c0666e134791855c0f124a66504013983f8f97948539a015dac9c3ee",
+    "scripts/bt4_derived_wdl_sidecar.py": "6fdaf63038f58e71d6ee6ab8fc6bbc04cca422b1469ecd0f65eabf890085a370",
+    "scripts/bt4_raw_corpus_sidecar.py": "1c63aa4147ef8717855d226f30094cbc03431e556cd7106d0619adee7945363a"
+  },
+  "boundary_metadata_checks": [
+    {
+      "shard": "shard_000000.zarr",
+      "attrs_sha256": "2cea7dad67257193280b40f7a5bdace1dff58ee924c83ae4746468a16ecd6ed5",
+      "rows": 8192,
+      "providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    },
+    {
+      "shard": "shard_000001.zarr",
+      "attrs_sha256": "e8d81660ae77179a9b8b7a41b053c3d1e7b78ed89f96a6a82087281f8be4095b",
+      "rows": 8192,
+      "providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    },
+    {
+      "shard": "shard_000128.zarr",
+      "attrs_sha256": "ed4fdc354b067e7aa6cc72c9ee46e7c88a937df90a67fdfa5391893cd931400c",
+      "rows": 8192,
+      "providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    },
+    {
+      "shard": "shard_000129.zarr",
+      "attrs_sha256": "ad974c233f2bda72c9d81128c83331b8a11f68e1b38f651dff983492559a8ae7",
+      "rows": 8192,
+      "providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    },
+    {
+      "shard": "shard_002308.zarr",
+      "attrs_sha256": "a81ee7e78baa28abc0df692cbae008067b94d06d3f02d5ebe55bbe01ec424e6a",
+      "rows": 3348,
+      "providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    }
+  ],
+  "completion": {
+    "all_three_parent_child_receipts_agree": true,
+    "parent_completion_requires_actual_child_exit0_in_pinned_source": true,
+    "remainder_captured_outer_exit_code": 0,
+    "remainder_wall_seconds": 10612.761518239975,
+    "remainder_within_registered4h": true,
+    "observed_failed_receipts_absent": true
+  },
+  "limits": [
+    "No full sidecar payload/hash scan, source feature replay, model read/inference or current all-shard metadata audit. This review relies on exact completed producer receipts plus five boundary attrs and previously reviewed pilot/prefix evidence.",
+    "CUDA provider admission is recorded; it is not a kernel-placement trace or proof that all operations executed on GPU.",
+    "Native WDL validation, stored-feed/source identity and output readback come from pinned producer code. Historical input/history limitations remain; no raw-history or original float32 key reconstruction.",
+    "Receipt elapsed spans include lease waiting, preparation, inference and writes; not pure GPU compute time or controlled throughput.",
+    "Full bank completion supports subsequent separately qualified value-target rewrite/admission; it is not a value-training or playing-strength result. Active V50 job untouched."
+  ]
+}

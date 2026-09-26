@@ -1,0 +1,35 @@
+{
+  "status": "PREPARED_NOT_EXECUTED",
+  "created_utc": "2026-09-08T03:32:06.430502+00:00",
+  "launch_sha256": "5830a332beeb57f50a21495fb318afebdd47ca64a9fc7b4621ded82b7363a37c",
+  "supervisor_sha256": "239b6436055f6c5abca229ac3263640049a218e98bede1900f2bcd70443290b8",
+  "runnable_argv": [
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/usr/bin/taskset",
+    "-c",
+    "0,1",
+    "/usr/bin/python3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/materialization/run_materialization.py",
+    "5830a332beeb57f50a21495fb318afebdd47ca64a9fc7b4621ded82b7363a37c"
+  ],
+  "verified_small_or_executable_pins": 112,
+  "reused_qualified_native_pins": [
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so",
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so",
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so",
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so"
+  ],
+  "runtime_reuse": "Same frozen44a checkout, CPython3.13.15/Torch2.14cpu/NumPy2.2.6/Zarr2.18.7/Numcodecs0.15.1 and privateTorch2/Blosc2 bootstrap as successful H20 recovery and completed B100 audit. No repeated inference/import/payload qualification. Executor rehashes every pin before and after lock acquisition.",
+  "fresh_paths_checked": [
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05.writing"
+  ],
+  "input_lineage": "Original SF source summary391837... and raw BT4 history sidecar summary68b32a...; no C-parent or SF-rank CLI input. Existing mixer retains full source/history/policy validation.",
+  "cost": "Actual G50 global materialization7382.36 seconds provides about2-hour planning baseline; 4-hour cap includes30-second kill grace. No guarantee of identical performance/compression.",
+  "checks": "Tiny real child success/failure/STOP/coordinator-death lease and output-sampling fixtures captured separately; no bulk operation started."
+}

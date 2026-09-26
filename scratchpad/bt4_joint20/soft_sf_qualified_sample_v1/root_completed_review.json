@@ -1,0 +1,22 @@
+{
+  "status": "PASS_INDEPENDENT_COMPLETED_BANK_ARITHMETIC_AND_HASH_REVIEW",
+  "rows": 4096,
+  "shards": 64,
+  "weighted_entropy": {
+    "SF": 0.5494697927127713,
+    "C": 0.49358180789710543,
+    "cp10_ideal": 0.47767014601990493,
+    "cp10_stored": 0.47767002929334834,
+    "cp20_ideal": 0.7691579997058533,
+    "cp20_stored": 0.7691591184117124,
+    "cp40_ideal": 1.25088580335832,
+    "cp40_stored": 1.2508855796995022,
+    "cp80_ideal": 1.831957376373066,
+    "cp80_stored": 1.831956722990659
+  },
+  "temperature_cp": 10,
+  "wall_seconds": 3.123899882019032,
+  "complete_sha256": "32a329ec01c0b205f9397c72928f407f3ef4131a0b1d165f461b3e4e78ae3dcb",
+  "reviewer_source_sha256": "e98fdb4c45d5482ad6219bbf7b09cf99aec7761bc8215b320a894739eee71670",
+  "scope": "All output hashes, exact selected rows and identities, every banked entropy/support/top1/raw-best mass and weighted choice independently recomputed. Source-history/SF/C joins were reviewed in the producing code and passing execution; original corpus was not rescanned. This is target geometry, not strength or full-corpus qualification."
+}

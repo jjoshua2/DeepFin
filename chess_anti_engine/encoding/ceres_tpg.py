@@ -261,6 +261,94 @@ def encode_ceres_tpg_bytes(
     return out
 
 
+def stored_x_to_ceres_tpg_bytes(
+    x: np.ndarray, *, input_history_encoding: str, history_rep_fix: bool,
+) -> np.ndarray:
+    """Convert original stored float16 features to default byte TPG records.
+
+    Accepts (175, 8, 8) or (B, 175, 8, 8), only ``lc0_root_legacy_meta``
+    with corrected repetition history. The eight piece/repetition slots are
+    already root-relative. Missing trailing slots copy the oldest real slot,
+    matching ``encode_ceres_tpg_bytes``'s default fill, not LC0's current-slot
+    fill. Original EP metadata must be retained; ``x_to_lc0_planes`` drops it.
+
+    This preserves recorded history features, not an original move stack or
+    float32 input key. The caller must bind the qualified source lineage.
+    Structural validation is not a proof that the history is a legal game.
+    Only symmetric default Q=.03, zero ply and filled eight-slot TPG are
+    supported; the Board encoder remains the API for other options.
+    """
+    if input_history_encoding != "lc0_root_legacy_meta" or history_rep_fix is not True:
+        raise ValueError("requires lc0_root_legacy_meta with history_rep_fix=True")
+    arr = np.asarray(x)
+    single = arr.ndim == 3
+    if arr.dtype != np.float16 or arr.ndim not in (3, 4) or arr.shape[-3:] != (175, 8, 8):
+        raise ValueError("expected stored float16 (175,8,8) or (B,175,8,8)")
+    rows = arr[None] if single else arr
+    if not len(rows) or not np.isfinite(rows).all():
+        raise ValueError("empty or nonfinite stored input")
+    history = rows[:, :104].reshape(-1, 8, 13, 64)
+    if not np.all((history == 0) | (history == 1)):
+        raise ValueError("history must contain binary piece/repetition planes")
+    pieces, repetitions = history[:, :, :12], history[:, :, 12]
+    occupied = pieces.sum(axis=2)
+    real = occupied.any(axis=2)
+    counts = real.sum(axis=1)
+    if (np.any(occupied > 1) or np.any(counts == 0)
+            or not np.array_equal(real, np.arange(8)[None] < counts[:, None])):
+        raise ValueError("overlapping pieces or noncontiguous/missing real history")
+    if (not np.all(pieces[:, :, [5, 11]].sum(axis=3) == real[:, :, None])
+            or not np.all(repetitions == repetitions[:, :, :1])
+            or np.any(repetitions[~real])):
+        raise ValueError("invalid kings or repetition planes")
+    metadata = rows[:, 104:110].reshape(-1, 6, 64)
+    if not np.all(metadata == metadata[:, :, :1]):
+        raise ValueError("nonuniform scalar metadata")
+    bits = metadata[:, :5, 0]
+    if not np.all((bits == 0) | (bits == 1)) or not np.all(rows[:, 111] == 1):
+        raise ValueError("invalid castling/color/bias metadata")
+    rule50 = metadata[:, 5, 0].astype(np.float32)
+    clocks = np.rint(rule50 * 100)
+    if (np.any(rule50 < 0) or np.any(rule50 > 1)
+            or not np.array_equal((clocks / 100).astype(np.float16), metadata[:, 5, 0])):
+        raise ValueError("rule50 is outside the stored integer-counter domain")
+    ep = rows[:, 110]
+    if not np.all((ep == 0) | (ep == 1)) or not np.all(ep == ep[:, :1, :]):
+        raise ValueError("invalid EP file plane")
+    ep_files = ep[:, 0]
+    if np.any(ep_files.sum(axis=1) > 1):
+        raise ValueError("multiple EP files")
+
+    batch = np.arange(len(rows))
+    slots = np.minimum(np.arange(8)[None], counts[:, None] - 1)
+    codes = np.where(occupied > 0, pieces.argmax(axis=2) + 1, 0)
+    for flag, king, rook, rook_code, king_code in (
+        (0, 4, 0, 4, 6), (1, 4, 7, 4, 6),
+        (2, 60, 56, 10, 12), (3, 60, 63, 10, 12),
+    ):
+        if np.any((bits[:, flag] != 0) & (
+                (codes[:, 0, king] != king_code) | (codes[:, 0, rook] != rook_code))):
+            raise ValueError("castling rights contradict orthodox king/rook placement")
+    codes = codes[batch[:, None], slots]
+    reps = repetitions[:, :, 0][batch[:, None], slots]
+    out = np.zeros((len(rows), 64, CERES_TPG_NUM_FEATURES), dtype=np.uint8)
+    squares = np.arange(64)
+    for slot in range(8):
+        out[batch[:, None], squares, slot * CERES_TPG_PIECES_PER_SLOT + codes[:, slot]] = _ONE_BYTE
+    out[:, :, HISTORY_REPETITION_BASE:HISTORY_REPETITION_BASE + 8] = reps[:, None, :] * _ONE_BYTE
+    out[:, :, CAN_OO:OPPONENT_CAN_OOO + 1] = bits[:, None, [1, 0, 3, 2]] * _ONE_BYTE
+    out[:, :, MOVE50_COUNT] = (clocks * 2).astype(np.uint8)[:, None]
+    out[:, :, Q_POSITIVE_BLUNDERS:Q_NEGATIVE_BLUNDERS + 1] = _scaled_byte(CERES_TPG_DEFAULT_Q_BLUNDER)
+    for index in np.flatnonzero((counts > 1) & ep_files.any(axis=1)):
+        square = _EN_PASSANT_PAWN_RANK * 8 + int(ep_files[index].argmax())
+        if codes[index, 0, square] != 7:
+            raise ValueError("EP file has no capturable enemy pawn")
+        out[index, square, IS_EN_PASSANT] = _ONE_BYTE
+    out[:, squares, RANK_ONE_HOT_BASE + squares // 8] = _ONE_BYTE
+    out[:, squares, FILE_ONE_HOT_BASE + squares % 8] = _ONE_BYTE
+    return out[0] if single else out
+
+
 def encode_ceres_tpg(
     board: chess.Board,
     *,

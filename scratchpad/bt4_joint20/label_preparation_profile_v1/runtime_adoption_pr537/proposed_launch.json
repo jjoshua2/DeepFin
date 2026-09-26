@@ -1,0 +1,58 @@
+{
+  "argv": [
+    "nice",
+    "-n",
+    "10",
+    "/usr/bin/python3",
+    "scripts/bt4_raw_corpus_sidecar.py",
+    "--source",
+    "run06_g10=/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+    "--source",
+    "run07_g10_companion4=/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+    "--out-root",
+    "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw",
+    "--onnx",
+    "/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx",
+    "--batch-size",
+    "1024",
+    "--threads",
+    "16",
+    "--gpu-mem-gb",
+    "24",
+    "--max-shards",
+    "16",
+    "--gpu-lock",
+    "/home/josh/projects/chess/scratchpad/gpu0_experiment.lock",
+    "--min-free-gib",
+    "150"
+  ],
+  "code_pins": {
+    "scripts/bt4_policy_dump.py": {
+      "main_blob": "dcb91cc2b183f4cfd788b246dd63f48b7b9cec3c",
+      "sha256": "d6b62559952aee3b0baeeadfdb584aeb9a6fd88b0d2285ab162ee39776be2cf8"
+    },
+    "scripts/bt4_raw_corpus_sidecar.py": {
+      "main_blob": "e1e71331549776d61607c0bfeb453f25501736f2",
+      "sha256": "6a58dab2deddc8cae3d801ec988d25b4e80c16f530fb3fc3df756440f2748c23"
+    }
+  },
+  "cwd": "/tmp/deepfin-bt4-label-runtime-pr537",
+  "environment_inheritance": "Preserve old driver environment otherwise. Qualification-only CUDA hiding, affinity and numeric thread2 overrides are NOT part of this normal label-group proposal.",
+  "environment_overrides": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "PYTHONPATH": "."
+  },
+  "expected_policy_output": "/output/policy",
+  "expected_providers": [
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "interpreter_sha256": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49",
+  "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+  "runtime_commit": "4e600902e1fd08727e1d83e009d6e241be0c7cba",
+  "runtime_parent": "7ec261509fb7345cf1ca0ad73809193fc2749bb1",
+  "shared_gpu_lease": "/home/josh/projects/chess/scratchpad/gpu0_experiment.lock",
+  "shared_writer_lease": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/.bt4_raw_sidecar.writer.lock",
+  "status": "PROPOSED_NOT_EXECUTED_PARENT_OWNS_TRANSITION",
+  "transition": "Parent will gracefully pause old driver at existing group boundary, preserve queued16shard group, and serialize new driver on original driver.lock; no process signals or adoption by qualification author."
+}

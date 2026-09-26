@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "status": "COMPLETE_NO_ADDITIONAL_AFFECTED_ELIGIBLE_ROWS",
+  "created_utc": "2026-09-08T01:01:43.313808+00:00",
+  "scope": {
+    "shards": 64,
+    "raw_rows": 531412,
+    "later_d9_blocks": 678343,
+    "result_bearing_phase0_valid_subset": 528545,
+    "source_hashes_counts_and_stable_stats_passed": true,
+    "exit_code": 0
+  },
+  "findings": {
+    "all_rows": {
+      "duplicate_agreeing": 0,
+      "duplicate_conflicting": 5,
+      "illegal_extra": 0,
+      "outside_searchmoves": 0,
+      "nonfinite": 0,
+      "malformed_rank_ids": 0,
+      "claimed_complete_rank_mismatch": 0,
+      "duplicate_depth_blocks": 0
+    },
+    "later_conflicting_duplicate_rows": 5,
+    "later_conflicting_duplicate_rows_by_source": {
+      "run06_g10": 2,
+      "run07_g10_companion4": 3
+    },
+    "all_five_already_excluded_by_phase0_support": true,
+    "four_select_best_move_with_conflicting_duplicate": true,
+    "new_affected_rows_in528545_subset": 0,
+    "qualified_subset_counts": {},
+    "qualified_subset_missing_counter_means_zero": true,
+    "partial_later_blocks": 0,
+    "later_blocks_missing_full_legal_roster": 598607,
+    "missing_full_legal_roster_is_expected_narrowing_not_failure": true
+  },
+  "conclusion": "For this fixed batch, later-phase d9 observation ambiguities add no rows to the existing17 phase0-support failures. Explicit handling of those17 plus the existing2850 no-result exclusions leaves528545 rows with no observed policy/value structural issue under the checked consumer semantics. No additional qualification pass is proposed for this question.",
+  "scope_limits": [
+    "These are structural observations, not new engine labels, history encoding, BT4 verification, derived/training artifacts, or a statement about unscanned corpus rows.",
+    "A repeated move is classified as conflicting when any of its recorded scores differ; a group containing both repeats and disagreements is conflicting, not agreeing-only.",
+    "Existing latest-phase semantics preserved: last depth block, last duplicate score, latest phase for each phase0 move. CompleteFalse or missing fullwidth alone was never an invalidity criterion.",
+    "No label changes, exclusion implementation, runtime changes or new preparation launched by this diagnostic."
+  ],
+  "resources": {
+    "wall_seconds": 124.47732710838318,
+    "gnu_time_user_seconds": 243.65,
+    "gnu_time_system_seconds": 4.12,
+    "gnu_time_max_process_rss_kib": 24860,
+    "affinity": [
+      0,
+      1
+    ],
+    "numeric_threads": 2,
+    "gpu_hidden": true
+  },
+  "artifacts": [
+    {
+      "path": "census.log",
+      "bytes": 3350,
+      "sha256": "242f13f61e4c9efeed92ab511ef6c77ccc5762777640021294234cdf7856d2b8"
+    },
+    {
+      "path": "census.py",
+      "bytes": 8720,
+      "sha256": "009bda300867c154098cfbcfe51131db9641178c1a42f1122fb2eac64a7b44e9"
+    },
+    {
+      "path": "fixture_checks.json",
+      "bytes": 464,
+      "sha256": "efffc732d13775cb52ed7ce943e94217e44954648e9c1162af06b476826e7828"
+    },
+    {
+      "path": "preregistration.json",
+      "bytes": 5100,
+      "sha256": "4857d861848b3fffc88fad86318bf8f94a13245a84a5567e34bf3449c8b91bf0"
+    },
+    {
+      "path": "readout.json",
+      "bytes": 61995,
+      "sha256": "f2f642059fb9b79a2bfb92cb77b6e7969c2236bd104da5e16b331c15c4d970a4"
+    },
+    {
+      "path": "run06_g10.anomalies.jsonl",
+      "bytes": 1775,
+      "sha256": "a346d5c2c79cfaa09d89f0bb95c486aa877a6794a494bd64fbecddf9b749d331"
+    },
+    {
+      "path": "run07_g10_companion4.anomalies.jsonl",
+      "bytes": 2619,
+      "sha256": "1046441464ef3ef888779263630144c3600bac41300ba3106231272b538f126f"
+    },
+    {
+      "path": "time.txt",
+      "bytes": 929,
+      "sha256": "de6aa66d4ebf60e5d8d24254bd7bfdbfcfacfe545c9f1def08f6485a1bcd8d0b"
+    }
+  ]
+}

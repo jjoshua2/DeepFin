@@ -1,0 +1,93 @@
+{
+  "schema": 1,
+  "status": "PASS_EXACT_REGISTERED_H20_TRAINING_AND_COMPARISON_LAUNCH",
+  "created_utc": "2026-09-08T02:46:51.767888+00:00",
+  "reviewer": "independent review_pr517_bootstrap",
+  "inputs": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20.launch_manifest.json",
+      "sha256": "20fa6a6be386bee435f0a12c75314d4dd5ba646213124c239a6247dec73f84dc",
+      "bytes": 3135
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.prospective_schedule.json",
+      "sha256": "16785c5b25610f10d876913e24dcea04fe4696dd053b68dea8683efa9664e2c8",
+      "bytes": 732722
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.schedule_execution.json",
+      "sha256": "3e4a1083c553278b48ed0ea34e120e84f3f382328e786933c026ec923dd0194e",
+      "bytes": 929
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/build_H20_manifest.py",
+      "sha256": "ef3e2896820bc52c2e7f7a42d93d9566cd6966b13c5ef3ad7e6c3a6e8eba5529",
+      "bytes": 5833
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json",
+      "sha256": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df",
+      "bytes": 7513
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.dataset_qualification.json",
+      "sha256": "acc28fa8eda714326ce171ee2492323408d2d5339b538533dac0c52c80ccef5a",
+      "bytes": 10551
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md",
+      "sha256": "e7003c65cad50d81fe5d28d4878dc3ddfd342a95248b03edd961564d67fc72f6",
+      "bytes": 12266
+    }
+  ],
+  "code": [
+    {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_one_epoch_screen.py",
+      "sha256": "0e8015dcbf486be6d23fdf957406703450aa8eb8578ced0f560d8bc9169c7ae1",
+      "bytes": 21734
+    },
+    {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_direct_screen.py",
+      "sha256": "325164d7237680c4460e31b91c9e4e61a5f2951fc5928328fa39da507a12de48",
+      "bytes": 22033
+    },
+    {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_joint_readout.py",
+      "sha256": "a17c89537903c56ee7bb0ec084d5133e1139cc6c6cc605dc882b06279276ceeb",
+      "bytes": 32405
+    }
+  ],
+  "completed_publication_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/independent_completed_publication_review.json",
+    "sha256": "8785c60ea6564663b8e7dc55c76128f4b9c9a3f9a36f4ab986cdbeff2c613ee9",
+    "bytes": 6310
+  },
+  "blockers": [],
+  "independent_validation": [
+    "Exactmanifest20fa6a6b and frozenHEAD054042f990c0e1b86787ad1366ccb8abcacc6aab checked. Launcher/direct/reader hashes match accepted finalprofileimplementation. Allmanifest small input/runtime/prereg/dataqualification/schedule pins and C-parent summaries verified.",
+    "Ran only stdlib metadata predicates validate(),verify_data_qualification(),verify_schedule(prospective=True) on actualmanifest; no check_pins weights/native/GPUprobe or commandexecution. Freshcanonicalstate/runoutputsabsent and parentsavailable.",
+    "Actualprospectiveverifierexit0 in371.9711854seconds (internalelapsed368.5427157), seed0 batch512, NumPy1.26.2 samefrozenGPUtrainingruntime.2309orderedgamecolumnrecords sum18910484rows;36935batches(36699full236ragged).",
+    "H20andcompletedC canonicaldc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f match. H20physical7349d7287be32b5ec0119c45ace5ef4e3e9762c52675401a942fdf6347983192, stagingprospectiveonly andtraining_completion_verifiedfalse correctlyrecorded. CompletedCsummary/stagingproofremainsqualified.",
+    "Actualtrainargv: frozenwise-cloudPython3.10/Torch2.11cu128/NumPy1.26.2, lc0_positive_controlconfig, game_epochsteps0 seed0 batch512 window88,16plan/loadworkers, --allow-invalid-control retainedhistoricalqualificationlimitation. No switch to CPUmaterializationruntime.",
+    "Exactfixedpackage: H20oneepoch thenC1001000games,G1001000games,C400500games. Priorpolicytemperature1.0 bothsides and fullqualifiedsearchshape remainexplicitinunchangeddirecthelper. C400requirescompletedC100bank/completion and first250matcheddevelopmentpairs; no freshconfirmationopeningconsumption.",
+    "Caps16200secondstraining,5400perarena,total32400GPUseconds; sharedGPUlease,survivingownedtimeout,STOPandafterleasepins insideacceptedlauncher. Completedrealizedschedule andfullwindow/finite/no-skip/no-retrycheck gatearenas."
+  ],
+  "launch_argv": [
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/python3",
+    "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_one_epoch_screen.py",
+    "--manifest",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20.launch_manifest.json",
+    "--execute"
+  ],
+  "launch_environment": {
+    "CHESS_EXPERIMENT_ROOT": "/home/josh/projects/chess"
+  },
+  "limitations": [
+    "Prospectivecanonicalproofisnotrealizedtrainingevidence. Exactroworderiscodesupportedinferencefromorderedgamecolumns/pinnedplanner; samehistoricalNumPystamp/controlpuritylimitations retained.",
+    "No dataset/raw/checkpointpayloadhash,repeatcanonicalscan,tests,inference,GPUprobe ortraininglaunch executedbyreviewer. Actualruntimeprobe,weights/nativepins andleasechecks remaininsideacceptedlauncherbeforework.",
+    "ManifestqualifiesonlyregisteredH20package; no automaticB100/G50queue,searchscalingorstrengthconclusion."
+  ]
+}

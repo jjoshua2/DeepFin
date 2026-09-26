@@ -1,0 +1,171 @@
+{
+  "admission": {
+    "experiment_record": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/preregistration.json",
+      "sha256": "a8b0d58b0ce3873c776dc9941efe2e6d90058eb516e26e9faea77c8c53f22e85"
+    },
+    "mode": "descriptive"
+  },
+  "algorithm": "stored-c20t05-then-global-bt4-v1",
+  "alpha": 0.2,
+  "audit_receipt": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_H.json",
+    "sha256": "ff90681c56e83f7f2fe6a49187378d8d0a09473513e5032df975bd0623db4d67"
+  },
+  "bt4_temperature": 0.5,
+  "c20_parent": {
+    "derive_summary": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/C20T05/derive_targets_summary.json",
+      "sha256": "0f00e4c0d7c3f58aeb6445b5cabe5b487cbed887a3c74a82d33f40b65bda82d0"
+    },
+    "mix_summary": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/C20T05/bt4_policy_mix_summary.json",
+      "sha256": "f063a53c200e3c226729316432379e648932dfed0a6cd358e0f75d7a8a8ce532"
+    },
+    "policy_target_postprocess": {
+      "admission": {
+        "experiment_record": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/preregistration.json",
+          "sha256": "a8b0d58b0ce3873c776dc9941efe2e6d90058eb516e26e9faea77c8c53f22e85"
+        },
+        "mode": "descriptive"
+      },
+      "algorithm": "stored-top-ties-union-sf-d9-cp-window-v1",
+      "alpha": 1.0,
+      "audit_receipt": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_C.json",
+        "sha256": "ea44e62d8c818d61346ef523df4729740f48212957249654f6fb1fc52642abe5"
+      },
+      "bt4_temperature": 0.5,
+      "candidate_set_wider_fraction": 0.2597339191993165,
+      "candidate_set_wider_rows": 2128,
+      "changed_fraction": 0.4323202734041255,
+      "changed_rows": 3542,
+      "changed_unique_max_rows": 2037,
+      "completed_utc": "2026-09-07T23:45:50Z",
+      "expected_rows": 8193,
+      "expected_shards": 2,
+      "formula": "redistribute alpha of stored top-tie union d9 cp-window mass by temperature-scaled BT4 prior",
+      "kind": "sf-cp-window",
+      "mean_entropy_nats": {
+        "bt4": 2.0803353398758397,
+        "mixed": 0.4999951065311222,
+        "source": 0.5584501356166993
+      },
+      "mean_l1_from_source": 0.3701364355012873,
+      "mixed_bt4_top1_agreement": 0.6991334065665812,
+      "mixed_source_top1_agreement": 0.7328207005980715,
+      "mutated_arrays": [
+        "policy_target"
+      ],
+      "near_max_ratio": null,
+      "rows": 8193,
+      "schema": 1,
+      "selected_mass_abs_drift": {
+        "max": 0.0003662109375,
+        "mean": 4.655137307097096e-05,
+        "mean_bound": 0.0002,
+        "reference": "stored_selected_mass",
+        "row_bound": 0.005
+      },
+      "sf_cp_window": 20.0,
+      "sf_rank_cap": 3,
+      "sf_rank_sidecar_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/rank",
+      "sf_rank_sidecar_summary": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/rank/sf_d9_rank_sidecar_summary.json",
+        "sha256": "75b24dff25ac0185f64abb5e39e56a735b14ec42005c9c4d413d615989785734"
+      },
+      "shards": 2,
+      "sidecar_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/bt4",
+      "sidecar_summary": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/bt4/bt4_policy_sidecar_summary.json",
+        "sha256": "902707d4f95ca13de534dacfc526bffc84c3ffc75446598a90ebe52fec0cab5c"
+      },
+      "source_bt4_top1_agreement": 0.4851702673013548,
+      "source_candidate_multi_fraction": 0.43244232881728306,
+      "source_candidate_multi_rows": 3543,
+      "source_derive_summary_sha256": "e55a86c0be0c7a800fad7636f4684e7dbb2c0c6bd694603fbac7256eccaa1b67",
+      "source_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/derived",
+      "source_top_tied_fraction": 0.18369339680214816,
+      "source_top_tied_rows": 1505,
+      "top1_ge_0_99_fraction": {
+        "mixed": 0.4994507506407909,
+        "source": 0.5873306481142438
+      },
+      "value_columns_unchanged": [
+        "wdl_target",
+        "search_wdl"
+      ]
+    },
+    "source_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/C20T05",
+    "validation": "all parent non-policy arrays equal original SF; actual float16 policy equals C20T05 reconstruction per chunk"
+  },
+  "candidate_set_wider_fraction": 0.9325033565238618,
+  "candidate_set_wider_rows": 7640,
+  "changed_fraction": 0.9945075064079092,
+  "changed_rows": 8148,
+  "changed_unique_max_rows": 6643,
+  "completed_utc": "2026-09-07T23:46:00Z",
+  "expected_rows": 8193,
+  "expected_shards": 2,
+  "formula": "0.8*legal_normalize(actual stored C20T05)+0.2*legal_normalize(BT4^2)",
+  "kind": "c20-global",
+  "mean_entropy_nats": {
+    "bt4": 2.0803353398758397,
+    "mixed": 0.8090802793634887,
+    "source": 0.5584501356166993
+  },
+  "mean_l1_from_source": 0.494844307450053,
+  "mixed_bt4_top1_agreement": 0.7048700109849871,
+  "mixed_source_top1_agreement": 0.7272061515928231,
+  "mutated_arrays": [
+    "policy_target"
+  ],
+  "near_max_ratio": null,
+  "parent_recipe": {
+    "alpha": 1.0,
+    "bt4_temperature": 0.5,
+    "kind": "sf-cp-window",
+    "normalize_stored_parent": true,
+    "sf_cp_window": 20.0,
+    "sf_rank_cap": 3,
+    "storage_dtype": "float16"
+  },
+  "rows": 8193,
+  "schema": 1,
+  "selected_mass_abs_drift": {
+    "max": 0.0003662109375,
+    "mean": 0.00011454810156834427,
+    "mean_bound": 0.0009765625,
+    "reference": "normalized_total_legal_mass",
+    "row_bound": 0.0009765625
+  },
+  "sf_cp_window": 20.0,
+  "sf_rank_cap": 3,
+  "sf_rank_sidecar_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/rank",
+  "sf_rank_sidecar_summary": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/rank/sf_d9_rank_sidecar_summary.json",
+    "sha256": "75b24dff25ac0185f64abb5e39e56a735b14ec42005c9c4d413d615989785734"
+  },
+  "shards": 2,
+  "sidecar_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/bt4",
+  "sidecar_summary": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/bt4/bt4_policy_sidecar_summary.json",
+    "sha256": "902707d4f95ca13de534dacfc526bffc84c3ffc75446598a90ebe52fec0cab5c"
+  },
+  "source_bt4_top1_agreement": 0.4851702673013548,
+  "source_candidate_multi_fraction": 0.9945075064079092,
+  "source_candidate_multi_rows": 8148,
+  "source_derive_summary_sha256": "e55a86c0be0c7a800fad7636f4684e7dbb2c0c6bd694603fbac7256eccaa1b67",
+  "source_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/derived",
+  "source_top_tied_fraction": 0.18369339680214816,
+  "source_top_tied_rows": 1505,
+  "top1_ge_0_99_fraction": {
+    "mixed": 0.15745148297326986,
+    "source": 0.5873306481142438
+  },
+  "value_columns_unchanged": [
+    "wdl_target",
+    "search_wdl"
+  ]
+}

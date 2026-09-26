@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "status": "PASS_BOUNDED_PUBLICATION_SUPPLEMENT",
+  "reviewed_utc": "2026-09-08T00:07:26.892900+00:00",
+  "scope": "Only selected next common-data preparation section and two appended original evidence files; no operational launch qualification.",
+  "files": {
+    "docs/experiments/2026-09-07-g10-transfer-readiness.md": "746b7efe411d8454e6cdada3f1902b7f8cd196bdf9f24262627d67b53102eae6",
+    "docs/experiments/evidence/bt4-bootstrap/g10-pipeline-pilot-manifest.json": "91c490162a3978a20692dda52d4df3b29613267cd522881f19ead6840a7fe095",
+    "docs/experiments/README.md": "f140e6f2fa4df56b7f1a62af97fad54d80c601bfca01888b29155856375dade7"
+  },
+  "prior_completed_review_sha256": "226ac6b77c588708bc45eebed7954d21effa2ab48ec7c65f8d1959554483e119",
+  "checks": {
+    "prior_completed_document_exact_after_removing_new_section": true,
+    "original_87_manifest_entries_unchanged": true,
+    "new_evidence_byte_identical": [
+      {
+        "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/independent_completed_review.json",
+        "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/independent_completed_review.json",
+        "bytes": 24937,
+        "sha256": "226ac6b77c588708bc45eebed7954d21effa2ab48ec7c65f8d1959554483e119"
+      },
+      {
+        "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/post_pilot_preparation_assessment_v1.json",
+        "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/post_pilot_preparation_assessment_v1.json",
+        "bytes": 29876,
+        "sha256": "d1d9b4d9f22b4c196d591c5f99afcfb654ff1232f741274034e853ab6546f5ca"
+      }
+    ],
+    "prefixes_each_first_32_contiguous": true,
+    "raw_rows_by_source": {
+      "run06_g10": 265528,
+      "run07_g10_companion4": 265884
+    },
+    "raw_rows_total": 531412,
+    "new_relative_links_resolve": [
+      "../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/post_pilot_preparation_assessment_v1.json"
+    ],
+    "credential_pattern_scan_new_evidence_no_hits": true,
+    "git_diff_check": true
+  },
+  "findings": [
+    "No blockers. Prospective counts, source separation, phase-zero policy/latest-phase value, two-worker derive/adapt/rank-only stages and resource caps agree with the recorded assessment.",
+    "The section correctly requires frozen commands/identities before launch and measurement during one useful pass; CPU-vs-I/O attribution remains unmeasured.",
+    "No new GPU, teacher, training, arena, C/H materialization, full-scale qualification or strength claim. Batch remains selected but unlaunched in this snapshot."
+  ],
+  "limits": [
+    "No bulk corpus/sidecar payload reads, operational scans, tests or launches.",
+    "This supplements publication review only; final registered runtime/command/resource enforcement still requires the separate operational preparation review."
+  ]
+}

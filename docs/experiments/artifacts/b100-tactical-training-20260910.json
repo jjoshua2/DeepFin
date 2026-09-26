@@ -1,0 +1,124 @@
+{
+  "status": "COMPLETE_UNRESOLVED_RETAIN_B100",
+  "profile": "B100Tactical100",
+  "recipe": {
+    "base": "stored B100 teacher T0.5",
+    "gap_cp": 100,
+    "decay_cp": 100,
+    "relative_floor": 0.1,
+    "mate_handling": "categorical-v1",
+    "value": "all original SF value and nonpolicy arrays unchanged"
+  },
+  "counts": {
+    "rows": 18910484,
+    "shards": 2309,
+    "planned_updates": 36935,
+    "planned_windows": 420,
+    "games": 97968
+  },
+  "control_checkpoint_sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62",
+  "preregistration_sha256": "f21b63451b060679fa28b31dbe71c8d362e4b9a26540f3c5b65e1fabdb1bb1cc",
+  "data_qualification_sha256": "824688565a33315f4ede4e309a019e59848d6d604c97d620bedcc3d52667834a",
+  "training_manifest_sha256": "b83b04b0a687ec6b75281b460f49b31509f83e0d823f9f75ca6e85fdb91cb428",
+  "prospective_schedule_sha256": "5b2d774b11732c81512a0293772bdbbc74955919ce05a8e88addb49c743a73b1",
+  "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+  "producer_exit_code": 0,
+  "materialization_producer_seconds": 21242.78,
+  "recovery_qualification_seconds": 59.28774046897888,
+  "training_started_utc": "2026-09-10T22:33:07.097986+00:00",
+  "training_stage_seconds_cap": 16200,
+  "primary_match": {
+    "simulations_each": 400,
+    "pairs": 128,
+    "games": 256,
+    "search_priors_each": 1.0,
+    "opening_seed": 20260909,
+    "opening_panel_sha256": "3c955d68a6c010e373b44418f3bbbf1500cf9192d04ca17ffdd3dcd191d7cbb1",
+    "max_plies": 300,
+    "tablebases": false,
+    "owned_stage_seconds_cap": 5400,
+    "lease_wait_seconds_cap": 3600,
+    "whole_operation_seconds_cap": 10230,
+    "reader": "qualified strict checkpoint package and paired complete-game reader"
+  },
+  "decision": {
+    "metric": "mean candidate score over 128 swapped opening pairs, paired nominal 95 percent interval and descriptive Elo",
+    "above_half": "interval wholly above 0.5 supports this bounded recipe and may motivate fresh-seed/fresh-panel confirmation",
+    "below_half": "interval wholly below 0.5 favors control",
+    "otherwise": "unresolved; choose next science by effect size, uncertainty and distinct hypotheses; no automatic extension"
+  },
+  "recovery": {
+    "original_supervisor_status": "FAILED_EXCEPTION",
+    "reason": "Producer serialized cp_domain floats; admission expected integer JSON spelling. PR620 fixes admission; original failed receipt retained and completed data independently qualified through reviewed recovery inspector."
+  },
+  "limitations": [
+    "One training seed and reused development panel; no promotion or seed generalization.",
+    "Cannot recover stored zero BT4 support. SF d9 scores and bound limitations remain.",
+    "Materialization and schedule qualification are prerequisites; this scientific registration is not an executable manifest.",
+    "Completed matched exact-epoch training and one fixed match; no promotion. Historical trainer purity/live-configuration caveats remain; this is not a claim about the replacement-sampled historical control."
+  ],
+  "training_completion": {
+    "checkpoint_sha256": "e2d4ed704908fa8579b39c655ed3329f375fa6a819eab6d2786aed1d8531ab08",
+    "receipt_sha256": "23a0073db30083e86ef0b45cafbd4aa4e1485c096b25c9bab62bb9b3527be6dd",
+    "summary_sha256": "8c78478e220032b58ae545b5e13ab10eeb33c503e4effa285268eaca9b6daa9e",
+    "realized_schedule_sha256": "1e45b1ff898ac235c97fe8456b2816da2ec824882367477673e3635bb5cd1aa3",
+    "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+    "rows_realized": 18910484,
+    "updates_realized": 36935,
+    "training_stage_seconds": 9063.984949160003,
+    "outer_seconds": 9355.235896587372,
+    "outer_exit_code": 0
+  },
+  "support_diagnostic": {
+    "winning_mate_rows": 1841617,
+    "winning_mate_rows_without_any_positive_B100_mate_move": 0,
+    "stored_support_loss_move_entries": 6711,
+    "fraction_of_rows_with_any_storage_support_loss_upper_bound": 0.00035488250855980207,
+    "maximum_ideal_to_stored_TV": 0.00022405048887653382,
+    "scope": "Producer-tagged mate scores; no per-line bound flags retained. Positive mass on at least one winning-mate move does not prove adequate probability or search success. Storage loss count is move entries, not rows."
+  },
+  "match_preparation": {
+    "status": "CPU_PAIR_PREPARED_AND_REVIEWED",
+    "prepared_sha256": "23d15775bb5c5449f821b4a560c05f4bdd1ade3dbf204c7e8878ec2b6c441497",
+    "cpu_observed_sha256": "f1f8153bf484e55c5293f2127fc2e81e7afc6701946f1509f331fe93248d2026",
+    "cpu_outer_seconds": 113.80079412460327,
+    "architecture_parameters_each": 61444448,
+    "cuda_initialized_during_cpu_preparation": false,
+    "review": "Independent Grok source review found no integration defects; parent verified actual completed CPU package and fixed contract."
+  },
+  "match_execution": {
+    "status": "COMPLETE_REVIEWED",
+    "operator_started_utc": "2026-09-11T01:16:40.375162+00:00",
+    "whole_deadline_utc": "2026-09-11T04:06:37.112125+00:00",
+    "candidate_checkpoint_sha256": "e2d4ed704908fa8579b39c655ed3329f375fa6a819eab6d2786aed1d8531ab08",
+    "reference_checkpoint_sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62",
+    "result": {
+      "games": 256,
+      "pairs": 128,
+      "score": 0.48046875,
+      "score_se": 0.028225892825118896,
+      "elo": -13.578611811075177,
+      "elo_ci95": [
+        -52.407784073670335,
+        24.91309238381682
+      ],
+      "pentanomial": {
+        "WW": 19,
+        "WD_DW": 21,
+        "DD_WL": 40,
+        "LD_DL": 27,
+        "LL": 21
+      }
+    },
+    "lease_acquired_utc": "2026-09-11T01:20:08.551501+00:00",
+    "lease_wait_seconds": 208.17502328701084,
+    "arena_started_utc": "2026-09-11T01:20:08.553343+00:00",
+    "outer_exit_code": 0,
+    "outer_elapsed_seconds": 1669.7665450572968,
+    "bank_sha256": "0b87633879f36c90bac25e9bdf2697226ba176983892f3ff32f1212f55c6fce1",
+    "contract_sha256": "5d9b48050520172383e61b9efc9cc7b7c8397841cef0458969d0478b6b16a5b7",
+    "readout_sha256": "58fe7dc21a0bb269f9777ae293ac46feaa782ad3b03ba0990558cf2b708d58de",
+    "parent_review_sha256": "3a7d6a07954642d4951f47e4f19909a0af6dbee725b61f6e4d6431bd5cbade94"
+  },
+  "observed_decision": "Unresolved under registered paired interval rule. Retain B100; no extra games or promotion. Prepare distinct Ceres policy/value mixtures."
+}

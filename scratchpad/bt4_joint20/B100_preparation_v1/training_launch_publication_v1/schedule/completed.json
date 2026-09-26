@@ -1,0 +1,61 @@
+{
+  "status": "PASS_PROSPECTIVE_B100_SCHEDULE",
+  "started_unix": 1788856615.4861355,
+  "ended_unix": 1788857099.0881004,
+  "wall_seconds": 483.5730457305908,
+  "exit_code": 0,
+  "report": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/prospective_schedule_v1/B100.prospective_schedule.json",
+    "sha256": "fd55938971e05a876891a0ba9a0107f8a370612047ab51d116385f0c9a4c0a0b"
+  },
+  "plan_sha256": "168750acfae542f68ce96e6e1037b416d14c22644d0ebdd9de3c593103c06c31",
+  "all_input_pins_unchanged": true,
+  "canonical": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+  "source_plan": {
+    "batch_size": 512,
+    "batches_planned": 36935,
+    "full_batches_planned": 36699,
+    "game_identity": "resolved_shard_parent+game_id",
+    "games": 97968,
+    "min_batch_rows_planned": 511,
+    "mode": "game_epoch",
+    "plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+    "ragged_batches_planned": 236,
+    "row_order": "seeded_shuffle_within_shard_game_segments",
+    "rows_planned": 18910484,
+    "seed": 0,
+    "shards": 2309,
+    "sources": 1
+  },
+  "arms": {
+    "B100": {
+      "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+      "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05",
+      "metadata_matches_source": true,
+      "physical_plan_sha256": "a48c86e454f51a63297d8b5731c8c60d7c831827a46f2bf0dc142b336364a342",
+      "staging": "prospective only",
+      "training_completion_verified": false
+    },
+    "C": {
+      "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+      "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05",
+      "metadata_matches_source": true,
+      "physical_plan_sha256": "70063ded8e105f34bd8012001a49f506d256eaebefa1261345feae0983b5dd34",
+      "staging": "verified actual",
+      "summary_sha256": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+      "training_completion_verified": true
+    }
+  },
+  "runtime": {
+    "numpy": "1.26.2",
+    "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+    "torch": "2.11.0+cu128"
+  },
+  "gpu_used": false,
+  "limits": [
+    "No feature/target decoding or identity check; unchanged non-policy rows require separate mixer provenance.",
+    "Plan hashes cover game choices and shard paths, not per-row offsets; row-order equality is a code-backed inference.",
+    "Historical NumPy version without a banked runtime stamp remains unknown.",
+    "An unfinished run or prospective corpus is not realized training evidence."
+  ]
+}

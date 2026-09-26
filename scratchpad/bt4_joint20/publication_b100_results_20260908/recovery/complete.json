@@ -1,0 +1,25 @@
+{
+  "complete": true,
+  "profile": "B100_H20",
+  "gpu_seconds": 2795.103441606014,
+  "training_gpu_seconds": 9258.993950499978,
+  "package_gpu_seconds": 12054.097392105992,
+  "low": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/reader_numeric_diagnosis_v1/full_reader_python310/readout.json",
+    "sha256": "a512b433f1b446b3b6b7fe7440807244c7ed600a49ee4bd1f7d55a78e36cea20"
+  },
+  "low_reader_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low.reader_manifest.json",
+    "sha256": "3da398cc2154bcca9112265c39d43865389e4ca5458bcce662f85f6fa4045cc3"
+  },
+  "recovery": "HIGH_ONLY_ORIGINAL_LOW_REUSED",
+  "original_failure": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/failed.json",
+    "sha256": "127d0cea0dc0d030811526b3b60c219f66da77f91e93791e0472d3682d50d2ff"
+  },
+  "high": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high/complete.json",
+    "sha256": "e373d7a5a78f8367180348366ff5f3adb027772dc5710c7f2bb271d1c09eba63"
+  },
+  "promotion": "NONE; same-seed development screen"
+}

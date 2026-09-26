@@ -1,0 +1,73 @@
+{
+  "reviewed_unix": 1788676812.2706485,
+  "reviewer": "review_toolchain_reconciliation",
+  "verdict": "PASS; no blockers",
+  "readout_sha256": "5c54a340c3268a6640ee8084354cfb13afa941066efe5244186fe11c9cf93e3a",
+  "scope": "Independent PGN-result/color recomputation of completed25/100sim cells and nominal paired95% intervals; actual checkpoint/book hashes, bank hashes, complete receipts, header fingerprints, realized protocol and commands verified. No live400 log read.",
+  "cells": {
+    "E0:25": {
+      "wdl": [
+        465,
+        345,
+        190
+      ],
+      "result": {
+        "games": 1000,
+        "pairs": 500,
+        "score": 0.6375,
+        "score_ci95": [
+          0.614415648708506,
+          0.660584351291494
+        ],
+        "elo": 98.06887127959205,
+        "elo_ci95": [
+          80.93714732493812,
+          115.67856794646664
+        ],
+        "verdict": "SUCCESS",
+        "pentanomial": {
+          "WW": 111,
+          "WD_DW": 144,
+          "DD_WL": 167,
+          "LD_DL": 65,
+          "LL": 13
+        }
+      }
+    },
+    "E0:100": {
+      "wdl": [
+        441,
+        376,
+        183
+      ],
+      "result": {
+        "games": 1000,
+        "pairs": 500,
+        "score": 0.629,
+        "score_ci95": [
+          0.6050336770013389,
+          0.6529663229986611
+        ],
+        "elo": 91.7106943320892,
+        "elo_ci95": [
+          74.08779275243296,
+          109.80766443973727
+        ],
+        "verdict": "SUCCESS",
+        "pentanomial": {
+          "WW": 102,
+          "WD_DW": 166,
+          "DD_WL": 142,
+          "LD_DL": 68,
+          "LL": 22
+        }
+      }
+    }
+  },
+  "limitations": [
+    "Exploratory seed-zero checkpoint comparisons; nominal paired intervals without family-wise correction.",
+    "Historical E0 training runtime remains incompletely stamped.",
+    "No 400-simulation result, search-scaling conclusion, global-mixture result, recipe selection or promotion.",
+    "Full global, SF-close and independent confirmation sequence remains pending."
+  ]
+}

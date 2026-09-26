@@ -1,18 +1,11 @@
 """``derive_corpus_targets.py --workers N``: the parallel read emits one corpus.
 
-⚑⚑ THE IDENTITY ASSERTED HERE IS OVER THE DATA, NOT OVER THE COMPRESSED FILES,
-AND THAT IS NOT A WEAKENING -- IT IS THE STRONGEST CLAIM THAT IS TRUE HERE, and
-:func:`codec_is_deterministic` measures whether "here" still applies rather than
-hard-coding it: where the codec IS reproducible, :func:`assert_same_corpus`
-compares the files too.  The shard
-writer goes through ``numcodecs`` Blosc, whose MULTI-THREADED encoder emits
-different compressed bytes for identical input on every call, so
-``--workers 1`` does not reproduce its own files either.
-the test below measures
-exactly that, and it is in this file so nobody "tightens" the assertions below
-into something that fails at random.  What every test here compares is what a
-shard MEANS: each array's dtype, shape and decompressed bytes, the ``.zattrs``
-stamps, the shard layout, and the summary.
+Identity is asserted over array dtype, shape and decompressed bytes, attributes,
+shard layout and summary. Raw file equality is additionally required in the
+explicit single-threaded context-encoder regime, with matching parent/child
+probe observations. Repeated sampled buffers alone do not establish byte identity
+for other payloads under threaded compression. Either equal or unequal compressed
+chunks can therefore be a valid observation in the default adaptive regime.
 
 The fixtures write the corpus's JSONL shards DIRECTLY rather than through
 ``corpus.ShardWriter``, and that is deliberate: the writer rotates only in
@@ -253,32 +246,22 @@ def probe_roles() -> tuple[bool, bool]:
     return repeats, agree
 
 
-def codec_is_deterministic() -> bool:
-    """Would ``--workers 1`` and the repack write the same BYTES for one array?
+def byte_identity_is_required() -> bool:
+    """Require bytes in the controlled context-encoder regime, not from samples.
 
-    ⚑⚑ PROBED, IN BOTH PROCESS ROLES, because the two paths do not use the same
-    encoder.  ``numcodecs`` disables Blosc's thread pool outside the main
-    process: ``--workers 1`` writes in the MAIN process (threaded) and the
-    repack writes in a SPAWNED lane (context encoder), and the two emit
-    different bytes for identical input.  A probe taken only in the parent
-    answers "is this process repeatable", which is a different question from the
-    one :func:`assert_same_corpus` needs -- and today the difference is masked
-    only because the threaded encoder is not repeatable either.  If a future
-    Blosc made it repeatable, a parent-only probe would return True and every
-    identity test would start demanding byte equality between a threaded write
-    and a child's -- red for a reason that has nothing to do with ``--workers``.
+    Three identical compressions of synthetic buffers are an observation, not a
+    determinism guarantee for other data. Threaded Blosc can repeat those samples
+    yet vary real shards. Require an explicit ``use_threads=False`` configuration
+    before the positive parent/child observations enable raw-byte assertions.
+    Spawned workers already use the context encoder; the controlled integration
+    test below measures full sequential/parallel file equality in that regime.
 
-    ⚑ ALSO NOT ASSUMED IN THE OTHER DIRECTION.  Today it returns False, which is
-    why the assertions in this file are over decompressed arrays.  That is a
-    property of the installed ``numcodecs`` and of
-    ``numcodecs.blosc.use_threads``, either of which can change under us, so the
-    regime is measured and every assertion states the strongest thing true in it.
-    ``test_whether_the_shard_files_are_byte_reproducible_is_measured`` checks
-    this verdict against what two real derivations actually wrote, so a probe
-    that stops matching reality is itself a failure.
+    Keep both role observations: neither a repeatable parent nor equal samples
+    across roles alone justifies strengthening the corpus comparison. The ordinary
+    regime always retains exact decompressed data, dtype, shape and attrs checks.
     """
     repeats, agree = probe_roles()
-    return repeats and agree
+    return numcodecs.blosc.use_threads is False and repeats and agree
 
 
 def file_bytes(root: Path) -> dict[str, str]:
@@ -327,17 +310,14 @@ def assert_same_corpus(sequential: Path, parallel: Path) -> None:
     )
     differing = sorted(key for key in want if want[key] != got[key])
     assert not differing, f"{len(differing)} array(s) differ, first {differing[:6]}"
-    if codec_is_deterministic():
-        # ⚑ THE ASSERTION TIGHTENS ITSELF.  Where the codec is reproducible
-        # there is no reason to settle for array equality, and requiring it here
-        # means the day someone pins `use_threads = False` (or numcodecs stops
-        # varying) every test in this file starts checking the bytes without
-        # anyone having to notice.
+    if byte_identity_is_required():
+        # Strengthen to raw bytes only under the controlled encoder mode AND
+        # matching role observations; a positive sample probe alone is insufficient.
         one, two = file_bytes(sequential), file_bytes(parallel)
         assert sorted(one) == sorted(two)
         by_bytes = sorted(key for key in one if one[key] != two[key])
         assert not by_bytes, (
-            f"the codec is deterministic here and {len(by_bytes)} file(s) still "
+            f"the controlled codec byte contract requires equality and {len(by_bytes)} file(s) still "
             f"differ, first {by_bytes[:6]}"
         )
     assert canonical_summary(sequential / derive.SUMMARY_NAME) == (
@@ -373,114 +353,138 @@ def both_ways(
 # ── the property the whole file rests on ─────────────────────────────────────
 
 
+def assert_sequential_file_observation(
+    one: dict[str, str], two: dict[str, str], *, parent_repeats: bool,
+) -> None:
+    """Validate a real byte observation without demanding codec nondeterminism.
+
+    Only an explicitly single-threaded context encoder AND a repeating parent
+    probe enable the byte-equality gate. A sample that happens to repeat under
+    threaded compression cannot certify other payloads. Otherwise compressed
+    chunks may differ OR agree. No regime permits missing files or changed
+    metadata. Array equality is checked separately by the real derivation test.
+    """
+    assert sorted(one) == sorted(two), "derived file layout differs"
+    differing = sorted(key for key in one if one[key] != two[key])
+    if numcodecs.blosc.use_threads is False and parent_repeats:
+        assert not differing, (
+            f"the controlled parent codec requires equality but derived files differ: {differing[:6]}"
+        )
+    assert all(key.endswith(("/0.0", "/0.0.0.0")) for key in differing), (
+        f"something other than a compressed chunk differs: {differing[:6]}"
+    )
+
+
 def test_whether_the_shard_files_are_byte_reproducible_is_measured(
     tmp_path: Path,
 ) -> None:
-    """⚑⚑ WHY THE ASSERTIONS HERE ARE OVER ARRAYS AND NOT OVER FILES.
+    """Compare actual sequential data and files; do not require them to vary.
 
-    Two SEQUENTIAL derivations of one corpus at one ``--seed`` write the same
-    numbers.  Whether they write the same BYTES is a property of the installed
-    Blosc, not of this tool: the multi-threaded encoder's output varies call to
-    call.  ⚑ MEASURED 2026-08-31 on ``numcodecs 0.13.1`` -- one process
-    compressing one array four times gave four digests, and two back-to-back
-    ``--workers 1`` runs differed in 11 of 324 files, every one an ``x`` or
-    ``policy_target`` chunk (the arrays big enough for the threading to engage).
-
-    ⚑ THE ASSERTION IS NOT "THE FILES MUST DIFFER".  That would be a test of the
-    codec's flakiness, and it would fail the day the tool became reproducible --
-    exactly when it should instead start demanding more.  Both regimes are
-    stated here, and :func:`assert_same_corpus` follows the same rule, so a
-    deterministic environment silently upgrades every identity test in this file
-    from array equality to byte equality.
+    The independent probe uses different, larger buffers than these 54 rows.
+    Neither variable NOR repeated sample output determines whether these two
+    derivations must differ or agree. A threaded positive probe previously caused
+    CI to reject identical arrays whose compressed chunks differed. Full byte
+    equality remains mandatory in the controlled context-encoder test below.
     """
     rows = [row for gid in range(6) for row in game(gid, 9)]
     corpus_dir = write_split_corpus(tmp_path, rows, [20, 20, 14])
     first, second = tmp_path / "one", tmp_path / "two"
     run(corpus_dir, first)
     run(corpus_dir, second)
-
-    # The DATA is identical either way, and that is what every other test here
-    # compares.
     assert shard_content(first) == shard_content(second)
-
-    one, two = file_bytes(first), file_bytes(second)
-    assert sorted(one) == sorted(two)
-    differing = sorted(key for key in one if one[key] != two[key])
-
-    # ⚑⚑ THE PROBE IS CHECKED AGAINST WHAT TWO REAL DERIVATIONS WROTE, and this
-    # is the assertion that keeps the whole scheme honest. `codec_is_deterministic`
-    # decides whether `assert_same_corpus` compares bytes; if it ever disagreed
-    # with reality -- it probes buffers up to 11.5 MB while the tool's smallest
-    # chunk is a few KB, and Blosc's threading engages on SIZE -- the identity
-    # tests would silently sit at array-only comparison for good, or go red for
-    # a reason unrelated to --workers. An earlier cut asserted
-    # `all(... for key in differing)`, which `all([])` satisfies vacuously and
-    # so could not notice either.
-    #
-    # ⚑⚑ AGAINST `parent_repeats`, NOT AGAINST THE FULL VERDICT, and the
-    # difference is a real false alarm this test used to be able to raise. Both
-    # runs above are `--workers 1`, i.e. two writes by a PARENT process, so what
-    # they measure is exactly "does the parent repeat itself". The full verdict
-    # also demands that a spawned lane agree with the parent -- a third property
-    # these two runs never exercise. A future numcodecs that made the THREADED
-    # encoder repeatable while the roles still disagreed would leave `differing`
-    # empty and the verdict False, and the old `!=` would have fired blaming the
-    # probe for a mismatch that is not one. (Third review, P2#2.)
-    parent_repeats, roles_agree = probe_roles()
-    assert bool(differing) != parent_repeats, (
-        f"the codec probe says the parent repeats itself={parent_repeats} and "
-        f"two identical sequential derivations "
-        f"{'differ in ' + str(len(differing)) + ' file(s)' if differing else 'wrote identical files'}. "
-        "The probe no longer describes what this tool writes, so the byte "
-        "comparison in assert_same_corpus is gated on the wrong answer."
+    assert canonical_summary(first / derive.SUMMARY_NAME) == (
+        canonical_summary(second / derive.SUMMARY_NAME)
     )
-    # The verdict may only be stronger than reality in the safe direction: it
-    # can decline to compare bytes that happen to match, never demand bytes that
-    # do not.
-    assert not (codec_is_deterministic() and differing)
-    # ⚑ And `roles_agree` is PINNED, so the both-roles half of the probe is a
-    # value some test reads rather than a term that cannot move the verdict
-    # while `parent_repeats` is already False. If this flips, the probe's second
-    # half started mattering and the comment above it should be re-measured.
-    assert roles_agree is False, (
-        "a spawned child now agrees with the parent about Blosc's output. That "
-        "is a change in numcodecs' use_threads behaviour, not in this PR -- "
-        "re-measure codec_is_deterministic's docstring before editing this."
+    parent_repeats, _ = probe_roles()
+    assert_sequential_file_observation(
+        file_bytes(first), file_bytes(second), parent_repeats=parent_repeats,
     )
-    if differing:
-        # Only Blosc's own compressed chunks may vary; a `.zarray`, a `.zattrs`
-        # or a chunk of a small column moving would be a real difference.
-        assert all(key.endswith(("/0.0", "/0.0.0.0")) for key in differing), (
-            f"something other than a compressed chunk differs: {differing[:6]}"
-        )
+
+
+@pytest.mark.parametrize("use_threads", [None, True, False])
+@pytest.mark.parametrize("parent_repeats", [False, True])
+@pytest.mark.parametrize("same_chunk", [False, True])
+def test_byte_observation_does_not_generalize_from_samples(
+    monkeypatch: pytest.MonkeyPatch, use_threads: bool | None,
+    parent_repeats: bool, same_chunk: bool,
+) -> None:
+    monkeypatch.setattr(numcodecs.blosc, "use_threads", use_threads)
+    one = {"shard_0.zarr/x/0.0.0.0": "first", "shard_0.zarr/.zattrs": "same"}
+    two = {**one, "shard_0.zarr/x/0.0.0.0": "first" if same_chunk else "second"}
+    if use_threads is False and parent_repeats and not same_chunk:
+        with pytest.raises(AssertionError, match="derived files differ"):
+            assert_sequential_file_observation(one, two, parent_repeats=parent_repeats)
+    else:
+        assert_sequential_file_observation(one, two, parent_repeats=parent_repeats)
+
+
+@pytest.mark.parametrize("use_threads", [None, True, False])
+@pytest.mark.parametrize("parent_repeats", [False, True])
+@pytest.mark.parametrize("change", ["missing", "metadata", "small_column"])
+def test_codec_probe_cannot_hide_nonchunk_changes(
+    monkeypatch: pytest.MonkeyPatch, use_threads: bool | None,
+    parent_repeats: bool, change: str,
+) -> None:
+    monkeypatch.setattr(numcodecs.blosc, "use_threads", use_threads)
+    one = {"shard_0.zarr/x/0.0.0.0": "chunk", "shard_0.zarr/.zattrs": "attrs",
+           "shard_0.zarr/result/0": "result"}
+    two = dict(one)
+    if change == "missing":
+        del two["shard_0.zarr/x/0.0.0.0"]
+    elif change == "metadata":
+        two["shard_0.zarr/.zattrs"] = "changed"
+    else:
+        two["shard_0.zarr/result/0"] = "changed"
+    with pytest.raises(AssertionError, match=r"layout differs|derived files differ|other than a compressed chunk"):
+        assert_sequential_file_observation(one, two, parent_repeats=parent_repeats)
+
+
+@pytest.mark.parametrize("use_threads", [None, True, False])
+@pytest.mark.parametrize(("repeats", "agrees"), [(False, False), (False, True),
+                                               (True, False), (True, True)])
+def test_codec_gate_observes_mode_and_both_roles(
+    monkeypatch: pytest.MonkeyPatch, use_threads: bool | None,
+    repeats: bool, agrees: bool,
+) -> None:
+    # Include false-positive threaded probes: even two positive observations
+    # cannot certify byte equality for every subsequently compressed payload.
+    monkeypatch.setattr(numcodecs.blosc, "use_threads", use_threads)
+    monkeypatch.setitem(globals(), "probe_roles", lambda: (repeats, agrees))
+    assert byte_identity_is_required() is (use_threads is False and repeats and agrees)
+
+
+@pytest.mark.parametrize("use_threads", [None, True, False])
+def test_positive_codec_samples_never_hide_changed_arrays(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, use_threads: bool | None,
+) -> None:
+    monkeypatch.setattr(numcodecs.blosc, "use_threads", use_threads)
+    monkeypatch.setitem(globals(), "probe_roles", lambda: (True, True))
+    first, second = tmp_path / "one", tmp_path / "two"
+    for path in (first, second):
+        group = zarr.open_group(str(path / "shard_0.zarr"), mode="w")
+        group.create_dataset("x", data=np.zeros((2, 3), dtype=np.float16))
+    group = zarr.open_group(str(second / "shard_0.zarr"), mode="a")
+    group["x"][0, 0] = 1.0
+    with pytest.raises(AssertionError, match=r"array\(s\) differ"):
+        assert_same_corpus(first, second)
 
 
 def test_the_byte_comparison_branch_works_where_the_codec_is_reproducible(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """⚑⚑ THE SELF-TIGHTENING BRANCH, ACTUALLY RUN.
+    """Exercise actual full-file equality in the controlled encoder mode.
 
-    :func:`assert_same_corpus` compares raw file bytes as well as arrays *when
-    the codec is reproducible*, so that the day someone pins ``use_threads =
-    False`` every identity test here starts checking bytes with nobody having to
-    notice.  ⚑ A third review measured the obvious problem with that: the branch
-    has never executed in any environment we ship in, because the probe returns
-    False here.  A guardian that only wakes up after a library change, and has
-    never been run, is not a guardian.
-
-    So the environment it is written for is CONSTRUCTED: Blosc's thread pool is
-    pinned off for the duration, which makes the parent's encoder the same
-    deterministic context encoder a spawned lane already uses -- and then a real
-    ``--workers 3`` derivation is put through the full byte comparison.  This
-    doubles as the proof that the pin genuinely would deliver byte identity,
-    which is what makes the "worth deciding separately" note in the PR a real
-    option rather than a guess.
+    Turn off Blosc's internal pool for this test only. The parent then uses the
+    same single-threaded context encoder as spawned workers. Check both real
+    probe roles, then require identical files for full sequential/three-worker
+    derivations. Do not replace the comparison with a sampled-codec assertion.
+    This test configuration does not alter production compression behavior.
     """
     monkeypatch.setattr(numcodecs.blosc, "use_threads", False)
     probe_roles.cache_clear()
     try:
         # ⚑ The REAL gate, not a stub. Pinning the pool off is enough to make
-        # `codec_is_deterministic()` return True on its own, so what runs below
+        # `byte_identity_is_required()` return True on its own, so what runs below
         # is the production branch reached the production way.
         assert probe_roles() == (True, True), (
             "pinning use_threads=False did not make the encoder reproducible; "
@@ -1226,6 +1230,7 @@ def test_the_merge_rules_do_not_name_a_field_twice() -> None:
         + derive._CONSTANT_FIELDS
         + derive._SENTINEL_MIN_FIELDS
         + derive._ORDERED_EXAMPLE_FIELDS
+        + derive._POLICY_SUPPORT_FIELDS
         + derive._REPACK_OWNED_FIELDS
         + derive._GAME_OWNED_FIELDS
         + tuple(n for owned in derive._STREAM_OWNED_FIELDS.values() for n in owned)

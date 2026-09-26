@@ -1,0 +1,166 @@
+{
+  "schema": 1,
+  "status": "READ_ONLY_DESIGN_RECOMMENDATION_YES_WITH_BOUNDED_PAIR_SUPERVISION",
+  "created_unix": 1788862719.1134677,
+  "checkout": "/tmp/deepfin-recipe-screen-tools-v2",
+  "head": "ee46d0f1139211be15d84e4f9391c240dc51dbc7",
+  "source_hashes": {
+    "scripts/common_input_batch.py": "665adc91160236ca6d17e25d7e55ea2b20d51db890df1f44a13798594cbaa20b",
+    "scripts/adapt_raw_bt4_sidecars.py": "e8952e031d93db83a589d9a23ae9eba7c1530e1df1901a00991cfe611272c2f7",
+    "scripts/sf_d9_rank_sidecar.py": "4a230d849d87770d33a3896f9a4c96d96676a377116dae9fcb37beecafcd71fa",
+    "tests/test_common_input_batch.py": "3033101156136011d05de38e2b823240aa502aa2e69de8392372e7a2e9eb69a4"
+  },
+  "time_receipt_hashes": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derive.time.json": "7b62df63ff65cbe9a344698f5c21fb4fdb30283e855ba1b027c6415956cec64a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/snapshot.time.json": "ba875aeb960ecfb896adc992f8d5ec5f4af509af1fbd84f767556bfb7b69a72d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/adapt.time.json": "07a74481f4704e2cffd5c466e3494c236f77f1f06c341520e4ec15eddbc8e2fd",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/rank.time.json": "b288ed35f1eaa992d512560e398529b8b6ab3bf4547a544813f55c41c085500e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/qualify.time.json": "785e199f6045c6a6135adf54c63b56402107047ec6595fdff4c76959b9582caf",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derive.time.json": "d27ad05688031833d4c162c5d35f9eadad87254561549dd1f0cd5870c1f2c95a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/snapshot.time.json": "ae9dcc693a956918c32dde1165048d11cbfc3327a44414d82b54947183db930d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/adapt.time.json": "64c15bb439abe5ce395dda723b66cc0133ca2c9ff6775f5c6d40c9d2fba5a99f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/rank.time.json": "e67a12b721ea85c824648bbce380539b717ff198c79750133e3e12d48565c04d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/qualify.time.json": "7f39cbe1f75eecdb2d019ddc18949c93f282bee3b4a6c392286386cf6fb19121"
+  },
+  "historical_observations": {
+    "run06_g10": {
+      "stages": {
+        "derive": {
+          "wall_seconds": 924.34,
+          "user_seconds": 1700.87,
+          "system_seconds": 111.92,
+          "max_rss_kib": 947880,
+          "filesystem_inputs": 5574856,
+          "filesystem_outputs": 1442896,
+          "exit_code": 0
+        },
+        "snapshot": {
+          "wall_seconds": 4.07,
+          "user_seconds": 3.56,
+          "system_seconds": 0.56,
+          "max_rss_kib": 325748,
+          "filesystem_inputs": 0,
+          "filesystem_outputs": 24,
+          "exit_code": 0
+        },
+        "adapt": {
+          "wall_seconds": 1000.3,
+          "user_seconds": 919.11,
+          "system_seconds": 89.97,
+          "max_rss_kib": 1386312,
+          "filesystem_inputs": 3948048,
+          "filesystem_outputs": 468352,
+          "exit_code": 0
+        },
+        "rank": {
+          "wall_seconds": 679.01,
+          "user_seconds": 655.59,
+          "system_seconds": 23.1,
+          "max_rss_kib": 714380,
+          "filesystem_inputs": 2817448,
+          "filesystem_outputs": 87024,
+          "exit_code": 0
+        },
+        "qualify": {
+          "wall_seconds": 97.0,
+          "user_seconds": 79.18,
+          "system_seconds": 19.38,
+          "max_rss_kib": 989036,
+          "filesystem_inputs": 1135568,
+          "filesystem_outputs": 56,
+          "exit_code": 0
+        }
+      },
+      "serial_stage_sum_seconds": 2704.7200000000003,
+      "ideal_overlap_stage_sum_seconds": 2025.7100000000003,
+      "ideal_saved_seconds": 679.01,
+      "ideal_fraction_saved": 0.25104631902747787,
+      "sum_adapter_rank_reported_max_rss_gib": 2.003376007080078
+    },
+    "run07_g10_companion4": {
+      "stages": {
+        "derive": {
+          "wall_seconds": 919.02,
+          "user_seconds": 1692.19,
+          "system_seconds": 101.45,
+          "max_rss_kib": 954180,
+          "filesystem_inputs": 5597888,
+          "filesystem_outputs": 1441456,
+          "exit_code": 0
+        },
+        "snapshot": {
+          "wall_seconds": 4.46,
+          "user_seconds": 3.53,
+          "system_seconds": 0.92,
+          "max_rss_kib": 326092,
+          "filesystem_inputs": 64336,
+          "filesystem_outputs": 32,
+          "exit_code": 0
+        },
+        "adapt": {
+          "wall_seconds": 1003.46,
+          "user_seconds": 915.14,
+          "system_seconds": 97.7,
+          "max_rss_kib": 1365480,
+          "filesystem_inputs": 4010448,
+          "filesystem_outputs": 468904,
+          "exit_code": 0
+        },
+        "rank": {
+          "wall_seconds": 673.85,
+          "user_seconds": 653.55,
+          "system_seconds": 21.42,
+          "max_rss_kib": 715036,
+          "filesystem_inputs": 2759568,
+          "filesystem_outputs": 86896,
+          "exit_code": 0
+        },
+        "qualify": {
+          "wall_seconds": 95.44,
+          "user_seconds": 79.95,
+          "system_seconds": 19.29,
+          "max_rss_kib": 988832,
+          "filesystem_inputs": 1108792,
+          "filesystem_outputs": 64,
+          "exit_code": 0
+        }
+      },
+      "serial_stage_sum_seconds": 2696.23,
+      "ideal_overlap_stage_sum_seconds": 2022.38,
+      "ideal_saved_seconds": 673.8499999999999,
+      "ideal_fraction_saved": 0.2499230406901488,
+      "sum_adapter_rank_reported_max_rss_gib": 1.9841346740722656
+    }
+  },
+  "conclusion": "Adapt and rank can run concurrently after the same completed derive and immutable snapshot, within each existing two-core lane. No producer semantics need change. This is an implementation recommendation, not qualification or measured speedup.",
+  "dependency_evidence": [
+    "common_input_batch.lane currently runs derive, snapshot, writes adapter_manifest, then adapt, rank, qualify. Rank argv references original raw source, selected-shards manifest and completed derived output/summary only; no adapted output is consumed.",
+    "adapt reads original raw/closed BT4 receipt data and derived replay/provenance read-only. It writes only adapted_output.writing, including ._raw_identity_cache, then atomically publishes adapted_output.",
+    "rank reads original raw and derived replay/provenance/eligibility read-only. It writes only rank_output.writing, including ._rank_identity_cache, then atomically publishes rank_output.",
+    "Both independently recheck source identities before publication. qualify requires both complete summaries, exact matching inventory/lineage, original snapshot stability and all-row ordinary consumer validation; leave this gate unchanged and start it only after both children succeed."
+  ],
+  "minimal_design": [
+    "Keep derive and snapshot serial. Freeze/read summary and adapter manifest once, construct the same two argv arrays with unchanged values.",
+    "Extend only the existing stage start/poll/finalize mechanism to own a fixed pair of adapt and rank children. A single lane polling loop tracks both and calls the existing guard every polling interval; avoid a generic scheduler or concurrent calls sharing Guard state.",
+    "Keep separate GNU-time files/logs/started/completed receipts for each child and preserve every original command. Record actual overlap/start/end rather than summing overlapping wall times into elapsed duration.",
+    "Inherit existing lane timeout process group, affinity, CPUhidden environment, numeric-thread2 bootstrap, nice19 and ionice3. Do not create detached stage sessions that escape the lane timeout.",
+    "On spawn/started-receipt/child/resource/STOP failure, cancel and reap both owned children, propagate failure promptly so existing parent whole-lane process-group cleanup kills descendants, preserve partial/final sibling evidence, and never enter qualify or emit lane/package completion. Independent timeout still bounds children after coordinator death.",
+    "Wait for both zero exits and valid timing receipts, then unchanged qualify, final pin/storage/guard checks and completion. No retries/adoption/changes to current frozen runtime.",
+    "Make concurrency explicit in the future frozen plan/receipt; preserve serial default for old manifests if adding an option. A single opt-in adapter_rank_overlap boolean is sufficient, not a general stage DAG."
+  ],
+  "resources_and_interpretation": [
+    "Historical adapt and rank CPU time approximately equals their wall time; derive consumes approximately two CPUs. Two overlapping readers may use the lane two-core allocation more fully without expanding its cpuset.",
+    "Both processes retain two numerical/compression threads, so bursts can contend within the same two-core cpuset. Do not silently change thread settings while attributing any benefit solely to stage overlap.",
+    "Run06 ideal critical path saves679.01 seconds (~25.10% of summed stage wall); run07 saves673.85 seconds. Actual simultaneous raw decompression, Zarr reads, hashing, page cache and disk writes may reduce or reverse this saving. This is no measured25% throughput claim.",
+    "The actual manifest8GiB limit is new_output_cache_bytes, sampled every60s; it is not a process RAM cap. Two cache budgets64MiB each can coexist per lane. Keep the same aggregate cache/output and150GiB free-space guards; concurrency does not make sampled bounds instantaneous.",
+    "Summed separately measured adapt+rank peak RSS is about2.00GiB per lane and3.99GiB over both lanes. This is a conservative historical addition, not a measured simultaneous peak or hard bound; account for lane/owner imports and other active jobs.",
+    "Current output totals fit previous allowance, but overlapping private cache lifetimes add potential128MiB across two lanes versus serialized cache residency. Reuse existing guard rather than increase budget invisibly."
+  ],
+  "meaningful_future_tests": [
+    "Actual tiny pair barrier proves both children are live concurrently under the lane cpuset and qualify begins only after both complete; compare semantic payload arrays/provenance/inventory with serial baseline, allowing timestamps/paths/receipts to differ.",
+    "One child fails while sibling owns a sleeping grandchild: assert whole owned group is eventually absent/zombie within bounded wait, unrelated sentinel survives, qualify and lane completion absent.",
+    "Second spawn or started-receipt write failure after first child begins cleans first child/descendants; preserve partial evidence.",
+    "STOP/deadline/output-bound event while both run exercises same fail-cleanup path. Existing tests cover two independent source lanes and serial stages, but do not establish this new within-lane fan-out."
+  ],
+  "limits": "No edits, tests, corpus payload reads, new timing, GPU, process changes or operational launch. Actual future implementation, resource window and immutable runtime binding require separate review."
+}

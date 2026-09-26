@@ -1,0 +1,18 @@
+{
+  "status": "PASS_CPU_IMPORT_AND_METADATA",
+  "actual": {
+    "python": "3.13.15 (main, Sep  1 2026, 14:18:08) [Clang 22.1.3 ]",
+    "packages": {
+      "torch": "2.14.0+cpu",
+      "numpy": "2.2.6",
+      "zarr": "2.18.7",
+      "numcodecs": "0.15.1",
+      "python-chess": "1.999"
+    }
+  },
+  "torch_threads": 2,
+  "blosc_threads": 2,
+  "derive_file": "/tmp/deepfin-g10-common-v3-tools/scripts/derive_corpus_targets.py",
+  "runtime_qualification_sha256": "585848ed40b71cd7a610814d27eed814456e30eb1112fe99fad1f53d5b255352",
+  "no_corpus_or_training_executed": true
+}

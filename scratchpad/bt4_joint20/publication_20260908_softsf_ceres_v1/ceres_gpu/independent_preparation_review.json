@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "status": "PASS_PREPARED_SOURCE_AND_METADATA_REVIEW_NOT_CUDA_QUALIFICATION",
+  "reviewed_utc": "2026-09-08T22:33:44.600878+00:00",
+  "plan_sha256": "b43878b598ffe6fea94370d1a7e98ff98f668adf71905d5ba87d1bd6822e9809",
+  "collector_sha256": "14161c5da30d310cce4a7f442739f64582fd6bfe1e5abe1779cd130b991f6cf1",
+  "operator_sha256": "4c5d081896738b125489e75e64630e24b72c55b5de80a5e261f7dba534160031",
+  "author_preparation_sha256": "a82e24b72d9f67a9bda6b5a9eaf04c1439a070d17ebab8bc297ed8e2c0de92c8",
+  "findings": [],
+  "reviewed_files": [
+    {
+      "path": "README.md",
+      "sha256": "98ceb0dbcfd23a276dd4b989e82e56e8ebf7cacfec7a5db7791628a9f783098d",
+      "bytes": 5143
+    },
+    {
+      "path": "prepare.py",
+      "sha256": "02124e76d6e624075c2ba41145a7c0893993dc5e06c4d7bab93eeece85c9391a",
+      "bytes": 5659
+    },
+    {
+      "path": "freeze_plan.py",
+      "sha256": "afa04c669c4a1291f85c9e39954707bba30e12c50f99cb3f70a4e1b236cb2d61",
+      "bytes": 7293
+    },
+    {
+      "path": "collect.py",
+      "sha256": "14161c5da30d310cce4a7f442739f64582fd6bfe1e5abe1779cd130b991f6cf1",
+      "bytes": 11815
+    },
+    {
+      "path": "run_probe.py",
+      "sha256": "4c5d081896738b125489e75e64630e24b72c55b5de80a5e261f7dba534160031",
+      "bytes": 6846
+    },
+    {
+      "path": "plan.json",
+      "sha256": "b43878b598ffe6fea94370d1a7e98ff98f668adf71905d5ba87d1bd6822e9809",
+      "bytes": 23457
+    },
+    {
+      "path": "operator_command.json",
+      "sha256": "bd98fa360fa930a0dec5f52f44c5ff7e920c807631a8a3c951ac3e8908fa4718",
+      "bytes": 954
+    },
+    {
+      "path": "reference_rows.json",
+      "sha256": "4f09017553806c1868c8566a03ee4e047a4d277f9ecbe64cff51a351954f3cf3",
+      "bytes": 192874
+    },
+    {
+      "path": "reference_assembly.json",
+      "sha256": "247767f3de68dce7f97c4fec2560db5144b5225db2a761931de4a3b8e044b17f",
+      "bytes": 38607
+    },
+    {
+      "path": "runtime_inspection.json",
+      "sha256": "30a104d2708070c8044723eecd79bcdd05c399603806249f6da9830fbc8565ac",
+      "bytes": 12047
+    },
+    {
+      "path": "check_preparation.py",
+      "sha256": "f1611d3284d0ecc0e1fafacdc86ab8384b97b74a746d6860244d2d068842699b",
+      "bytes": 3000
+    },
+    {
+      "path": "preparation_checks.json",
+      "sha256": "a8d7baaf99240eeaed4799b03071695c00a7993642c7beb6085dee62f8206931",
+      "bytes": 910
+    }
+  ],
+  "saved_array_reference": [
+    {
+      "path": "references.npz",
+      "sha256": "c9b726994d74d433558fc98f1decb3673d41dab2a0bc8183b6cdaab99a81713b",
+      "verification": "Author identity reused; size only independently checked, no array read or payload hash repetition."
+    }
+  ],
+  "supervisor_sha256": "41d736832d026f32ec90b36cd75d541c7004540df37d686bd78bae268c36c329",
+  "evidence": [
+    "Actual prepare.py joins the two completed original banks on all 128 row identities, source/shard/game/ply, weight, original byte hashes and equality; preserves native float16 policy/value. Reused its completed small-bank join evidence; no reassembly or inference.",
+    "Actual collector requests policy and primary value together in one CUDA session, 128 rows for each B1/4/16/32: 172 calls, 512 row-evaluations. Complete legal-roster softmax and WDL softmax compare against original CPU B4 and GPU B1, with prespecified raw/probability tolerances and near-tie top-move rule.",
+    "Installed pinned ORT Python source confirms enable_fallback=False disables constructor retry and disable_fallback disables run retry. Actual first-call profile requires CUDA Gemm/MatMul-family events; only listed small integer/bool-output CPU shape events accepted. Later calls use same session, final providers checked.",
+    "Child-only library environment and pinned executable/module/library identities are bound. Loaded matching CUDA/ORT library paths must match pinned content and storage identity before child PASS. Reviewer did not hash model or large libraries, import ORT, or create any session.",
+    "Explicit outer TERM870+KILL30 bounds admission and teardown within 900 seconds from recorded outer start. Inner owned-stage timeout uses floor(absolute remaining)-20 including its 30-second grace; child work refuses at deadline-40. Existing owned stage supplies its own timeout group and inherited lease descriptor, including if operator exits unexpectedly.",
+    "Nonblocking shared GPU lease plus exact device metadata and empty compute-owner admission refuse busy GPU; no queue, retry, process interception or fallback. Parent and child STOP checks, parent sampled guards and owned-stage failure cleanup traced.",
+    "8GiB ORT arena, sampled 12GiB device/RSS, 128MiB aggregate logical output and per-file ceiling, 150GiB reserve, 16GiB host availability are correctly distinguished. CPU affinity0,1, numeric2 and low priority are explicit in both operator/child command paths.",
+    "Fresh output absent at review. All 12 non-array author members hashes and sizes checked; references.npz size checked and author/assembly hash reused. Existing numerical/provider refusal evidence inspected without rerunning it."
+  ],
+  "limits": [
+    "PASS authorizes readiness assessment only; future operator must record actual absolute start/deadline/outer exit, and completed CUDA receipts must be reviewed before compatibility claims.",
+    "CPU ORT1.29 versus GPU ORT1.23.2 compares combined backend/version/batch variation, not isolated device error; WDL tolerance is prospective engineering acceptance.",
+    "Only first B1 call is profiled. Other shapes share the session partition and disabled Python fallback; no claim of independent per-batch profile proof.",
+    "One ascending saved-row sweep has compilation/cache/order effects. Timing excludes normalization/storage/guards; no production labeler throughput or playing-strength inference.",
+    "Resource limits are sampled except per-file RLIMIT_FSIZE and ORT arena. Transient aggregate/RSS/device overshoot remains possible.",
+    "Native repetition-edge and nondefault-Q encoder parity remain unresolved. No model payload read/hash, GPU work, test rerun, original corpus access or active-state change performed."
+  ]
+}

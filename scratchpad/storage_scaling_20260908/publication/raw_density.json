@@ -1,0 +1,158 @@
+{
+  "schema": 1,
+  "observed_unix": 1788898596.1839285,
+  "sources": [
+    {
+      "source": "data/nnue_bootstrap/run06_g10",
+      "config": {
+        "path": "data/nnue_bootstrap/run06_g10/manifest.json",
+        "sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4"
+      },
+      "closed_shards": 3437,
+      "closed_rows": 28526032,
+      "closed_logical_bytes": 72889252327,
+      "closed_allocated_bytes": 72902512640,
+      "logical_bytes_per_row": 2555.183711740911,
+      "scope": "Complete records from one snapshot of each append-only worker progress file and their named closed raw file stats. No raw payload read; current open/incomplete tail omitted.",
+      "progress_snapshots": [
+        {
+          "observed_bytes": 364340,
+          "complete_records": 286,
+          "snapshot_sha256": "c9d49d6aa89b51d157e34ddc7fc0c36c6adb6370f19803f87b35572e597000ea",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run06_g10/w00.progress.jsonl"
+        },
+        {
+          "observed_bytes": 369301,
+          "complete_records": 287,
+          "snapshot_sha256": "dc22695f677ccc7af1d62c2163d88867711c1d34d8fe96c0dc2e9ceb67150031",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run06_g10/w01.progress.jsonl"
+        },
+        {
+          "observed_bytes": 369036,
+          "complete_records": 288,
+          "snapshot_sha256": "c523fa6d2165e32d4f0a02c685579e542e1a239486eca67432880040ef064538",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run06_g10/w02.progress.jsonl"
+        },
+        {
+          "observed_bytes": 363188,
+          "complete_records": 287,
+          "snapshot_sha256": "86c0fa9513e9d5cb919bac4828f6f8090b8f7bb335054d2e995b23d9ee4bfe94",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run06_g10/w03.progress.jsonl"
+        },
+        {
+          "observed_bytes": 366854,
+          "complete_records": 287,
+          "snapshot_sha256": "167f69a61ec3c4b3a6f2e2e5c426a8039b64ec764069a6d8ab38797a06c601a6",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run06_g10/w04.progress.jsonl"
+        },
+        {
+          "observed_bytes": 366039,
+          "complete_records": 286,
+          "snapshot_sha256": "1de6b269fbd9bc38a5d61395b7edda78de45c73fb37cd1b7b030172b7cfca258",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run06_g10/w05.progress.jsonl"
+        },
+        {
+          "observed_bytes": 366165,
+          "complete_records": 286,
+          "snapshot_sha256": "e1bd48ae360e462257af2b01a08b7fc007dbc326274191068dfcde196d861b21",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run06_g10/w06.progress.jsonl"
+        },
+        {
+          "observed_bytes": 367244,
+          "complete_records": 287,
+          "snapshot_sha256": "067deeb70ccbed3653a5c7aa02203b3938485ca0faf1821e6fc49c5555dc0eb5",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run06_g10/w07.progress.jsonl"
+        },
+        {
+          "observed_bytes": 367832,
+          "complete_records": 287,
+          "snapshot_sha256": "36e8fa7cb2d37c23554d88b4b7c993979afc153ec13d9db830383837c1372e00",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run06_g10/w08.progress.jsonl"
+        },
+        {
+          "observed_bytes": 364392,
+          "complete_records": 285,
+          "snapshot_sha256": "7edc77e1315019407cc5e4c5a492c83f84183162ba05ee37f0be0b2a097f8c35",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run06_g10/w09.progress.jsonl"
+        },
+        {
+          "observed_bytes": 361144,
+          "complete_records": 285,
+          "snapshot_sha256": "5552bd51d76bfbe7063a5754f4a85c76667cc587ffa2db60ee03f9b88a991791",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run06_g10/w10.progress.jsonl"
+        },
+        {
+          "observed_bytes": 364154,
+          "complete_records": 286,
+          "snapshot_sha256": "18c1cb86bb76fa623e08a5051627a8c47db3e5f966fa22ef4b069cfb07eab652",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run06_g10/w11.progress.jsonl"
+        }
+      ]
+    },
+    {
+      "source": "data/nnue_bootstrap/run07_g10_companion4",
+      "config": {
+        "path": "data/nnue_bootstrap/run07_g10_companion4/manifest.json",
+        "sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "closed_shards": 904,
+      "closed_rows": 7499839,
+      "closed_logical_bytes": 19165075769,
+      "closed_allocated_bytes": 19168604160,
+      "logical_bytes_per_row": 2555.398291749996,
+      "scope": "Complete records from one snapshot of each append-only worker progress file and their named closed raw file stats. No raw payload read; current open/incomplete tail omitted.",
+      "progress_snapshots": [
+        {
+          "observed_bytes": 283706,
+          "complete_records": 227,
+          "snapshot_sha256": "da6bb617fe15a6318bfe23119175f64971bf6044a17163003e65f10d4fe585b3",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run07_g10_companion4/w00.progress.jsonl"
+        },
+        {
+          "observed_bytes": 283541,
+          "complete_records": 225,
+          "snapshot_sha256": "708600475851046f29e0b59fb9fb5ad243636069b26a24a202d0a56c7612224d",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run07_g10_companion4/w01.progress.jsonl"
+        },
+        {
+          "observed_bytes": 289828,
+          "complete_records": 226,
+          "snapshot_sha256": "496ffd7aebe3eb44c81cf13e9e6e9cb0432c57d7b1d4997a3fba646e2ad62685",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run07_g10_companion4/w02.progress.jsonl"
+        },
+        {
+          "observed_bytes": 285208,
+          "complete_records": 226,
+          "snapshot_sha256": "88d8a478034c6a50be0ffe285aac05ff6a9573c8b43a88b16cf8dbe3e3bd1f40",
+          "grew_during_read": false,
+          "path": "data/nnue_bootstrap/run07_g10_companion4/w03.progress.jsonl"
+        }
+      ]
+    }
+  ],
+  "rows": 36025871,
+  "logical_bytes": 92054328096,
+  "logical_bytes_per_row": 2555.2283828474265,
+  "method": "One snapshot of each worker progress JSONL, parse only complete records, stat their named closed raw files. No raw payload reads. Partial/open tails and later growth excluded.",
+  "source": {
+    "path": "scratchpad/storage_scaling_20260908/metadata_inventory.json",
+    "sha256": "645b6a4ca21bc058f7e36cf347cfe56ec81a63da62a5430fa4544ca2d684b3ff",
+    "bytes": 34573,
+    "location": "original local evidence; not all original artifacts are included in this publication"
+  }
+}

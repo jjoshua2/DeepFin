@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "reason": "Initial metadata validation correctly refused occupied runtime-owned state/python_bootstrap. No operational attempt or source outputs were created.",
+  "old_receipt_preserved": "runtime_qualification.json",
+  "old_validation_preserved": "manifest_validation.json",
+  "old_bootstrap_bytes_preserved": "original_qualification_bootstrap/sitecustomize.py",
+  "new_preflight_bootstrap": "qualification_bootstrap/sitecustomize.py",
+  "new_bootstrap_sha256": "51ee145258e3ba0aa9de78ca7c57900ee06d73fa6b7fef6be00bc38cf84d41b5",
+  "new_bootstrap_exact_runner_constant": true,
+  "state_python_bootstrap_absent": true,
+  "new_receipt": "runtime_qualification_v2.json",
+  "new_manifest": "runner_manifest_v2.json",
+  "new_launch": "launch_preparation_v2.json",
+  "old_files_not_launch_candidates": true
+}

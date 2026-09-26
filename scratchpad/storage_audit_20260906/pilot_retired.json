@@ -1,0 +1,10 @@
+{
+  "status": "VERIFIED_LOCAL_COPY_REMOVED_PATH_LINKED_TO_ARCHIVE",
+  "source_path": "/home/josh/projects/chess/data/salvage/DRIFT_20260728_postC17_iter192",
+  "archive": "/mnt/e/chess_backup_20260827/salvage/DRIFT_20260728_postC17_iter192",
+  "verification_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/pilot_verified.json",
+  "completed_unix": 1788726124.743403,
+  "source_logical_bytes": 1374992965,
+  "observed_free_bytes_change": 1375039488,
+  "caution": "Disk free change includes concurrent generation; accessing the original path now requires the mounted external drive."
+}

@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "observed_utc": "2026-09-07T22:07:53.968805+00:00",
+  "completed_readiness_check_utc": "2026-09-07T22:10:25.780925+00:00",
+  "status": "READ_ONLY_G10_READINESS_NOT_TRANSFER_QUALIFIED",
+  "headline": "Raw history-aware BT4 labeling advances the intended G10 inputs; the aligned SF observation/derived-rank/join qualification is not prepared yet.",
+  "counts": {
+    "closed_source_rows": 30631839,
+    "closed_source_shards": 3691,
+    "receipt_backed_bt4_rows": 24924692,
+    "receipt_backed_bt4_shards": 3003,
+    "backlog_closed_rows": 5707147,
+    "backlog_closed_shards": 688,
+    "fully_qualified_G10_matched_recipe_rows": 0,
+    "fully_qualified_G10_matched_recipe_shards": 0,
+    "complete_phase0_d9_plus_bt4_rows": "unknown from existing counters; no all-row d9 completeness/legal coverage receipt",
+    "35m_G10_only_raw_BT4_gap": 10075308,
+    "35m_G10_only_closed_raw_gap": 4368161
+  },
+  "count_definitions": {
+    "closed_source": "Unique names in complete captured generator-progress lines; unlisted/in-flight files excluded.",
+    "receipt_backed_bt4": "Distinct source_id/source_shard/physical-row identities with completed raw BT4 receipts, matching sidecar attrs/five array layouts, source manifest/config, raw file size+mtime, history and ONNX identities. No directory-count completeness inference.",
+    "distinctness": "Not globally deduplicated chess positions. Cross-run game IDs require the source namespace; no row fingerprint payloads were scanned.",
+    "full_transfer_qualification": "No completed G10 derived replay source + selected SF d9/rank alignment + raw-BT4 join + matched recipes/schedule qualification exists at the configured destinations. Existing old20M qualification is separate and is not counted as new G10."
+  },
+  "sources": {
+    "run06_g10": {
+      "manifest_sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4",
+      "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+      "closed_source_rows": 24476040,
+      "closed_source_shards": 2949,
+      "closed_source_games": 125196,
+      "receipt_backed_bt4_rows": 20186464,
+      "receipt_backed_bt4_shards": 2432,
+      "backlog_closed_rows": 4289576,
+      "backlog_closed_shards": 517,
+      "validation_errors": [],
+      "final_source_summary_present": false
+    },
+    "run07_g10_companion4": {
+      "manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9",
+      "config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+      "closed_source_rows": 6155799,
+      "closed_source_shards": 742,
+      "closed_source_games": 31528,
+      "receipt_backed_bt4_rows": 4738228,
+      "receipt_backed_bt4_shards": 571,
+      "backlog_closed_rows": 1417571,
+      "backlog_closed_shards": 171,
+      "validation_errors": [],
+      "final_source_summary_present": false
+    }
+  },
+  "active_labeling": {
+    "host_observation_utc": "2026-09-07T22:08:17.570434+00:00",
+    "driver_pid": 4251,
+    "generator_pids": [
+      4741,
+      4743
+    ],
+    "labeler_pids_at_observation": [
+      249537,
+      249553
+    ],
+    "sources": [
+      "run06_g10",
+      "run07_g10_companion4"
+    ],
+    "runtime_checkout": ".dev/worktree/wise-cloud",
+    "raw_labeler_sha256": "eb85a1d0db620f4e78d68685157fff73d3ac98840b92d732338c7ce07c59e632",
+    "config": {
+      "batch_size": 1024,
+      "threads": 16,
+      "gpu_mem_gb": 24,
+      "max_shards_per_lease": 16,
+      "min_free_gib": 150,
+      "one_eval_no_search": true,
+      "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0"
+    },
+    "selection": "Closed shards only, ordered by raw mtime/source_id/shard name across both runs; no phase-dependent or outcome-dependent row filter. Raw history inputs are verified before inference.",
+    "does_advance_useful_common_inputs": true,
+    "why": "Both source runs are the intended history/schema3 G10 generation and the raw policies retain source/config/shard/fingerprint identities. Teacher temperature is applied later, so these priors can support C/H/global/BT4-only variants without new inference. They do not provide independent SF rank validation.",
+    "earlier_status_observation": {
+      "updated_unix": 1788818593.8832314,
+      "complete_sidecars": 2992,
+      "new_receipt_backed_shards_since_that_status": 11
+    },
+    "driver_final_verify_receipt_present": false
+  },
+  "observation_selectors": {
+    "source_and_run": "run06_g10 / nnue_bootstrap_run06_g10 (seed20260902,12workers,520000games) and run07_g10_companion4 / nnue_bootstrap_run07_g10_companion4 (seed20260903,4workers,130000games). Both schema3/history_rep_fixtrue; banked pieces>=7; same engine/book/cp mapping.",
+    "generator": "all:9,8:10,4:12; full legal phase0 d9, narrowed phase1 d10 top8, phase2 d12 top4 only when d10 top1-top2 gap<=10cp; tables carried within games. Generator can bank incomplete/fallback final depth blocks, so intended all:9 is not a counted proof of complete d9 for every row.",
+    "default_deriver": "uniform-d9 obtains each move value from the latest phase containing depth9; --value-depth9 alone does not force phase0. Policy/value observation selection is not currently exposed as an explicit fixed-depth phase0 selector.",
+    "rank_tool": "sf_d9_rank_sidecar.d9_lines requires exactly one complete phase0 d9 block and rank/legal consistency; it expects a particular derived source/shuffle/row contract.",
+    "required_transfer_choice": "Declare and stamp one SF observation convention for policy, root value, near-close ranks and any independent cp-quality rewards. A phase0-d9 transfer best preserves the old observation type, but not the old generator search state or data distribution. Legacy latest-phase d9 is a different deliberate treatment."
+  },
+  "smallest_preparation_gap": [
+    "Preregister a source-qualified common snapshot/subset of already receipt-backed G10 shards, including both source namespaces and all row selectors; do not freeze current in-flight shards.",
+    "On a bounded bank, qualify complete legal phase0 d9 coverage, result eligibility, and phase0 versus latest-phase policy/value/rank changes. Existing one-row evidence proves a difference can occur, not its prevalence.",
+    "Implement/qualify an explicit SF observation selector and a raw-BT4-to-derived replay join that carries original source_id/shard/row/game/ply fingerprints through filtering and per-shard shuffle; the current raw sidecar format is not directly the derived-sidecar format consumed by the mixer.",
+    "Derive the matched source and corresponding rank/BT4 sidecars once on that shared row set, record exclusions and exact identities, then materialize chosen recipes with unchanged non-policy/value treatment and verify canonical schedules.",
+    "For a G10-only35M transfer, current frozen progress lacks4,368,161closed raw rows and10,075,308BT4-labeled rows before any eligibility drops. Existing18.9Msource could count toward a separately declared combined corpus, but that is a mixture/design decision and does not bypass the G10 alignment gap."
+  ],
+  "limits": [
+    "No source/sidecar policy payload scan, large payload hashes, GPU probe, tests, label/generator changes, or pipeline implementation.",
+    "Readiness counts are a bounded append-only prefix observation, not an atomic global snapshot or an estimate of eventual valid/deduplicated training rows.",
+    "No completed SF d9/rank qualification count can be inferred from source directory or BT4 receipt count.",
+    "No implication that waiting for35M alone resolves observation/join semantics."
+  ],
+  "evidence": {
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/metadata_inventory.json": {
+      "bytes": 10246,
+      "sha256": "a5593be6c4d137c5c8dab431f1300ca7b0ec070b11992c42dee72c0dd598667c"
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/receipt_backed_membership.jsonl": {
+      "bytes": 1494948,
+      "sha256": "c5aad096774818266bd1024a4ce28e03c4820e6c2f9f5be20f4531fcf7171965"
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/active_processes.json": {
+      "bytes": 6863,
+      "sha256": "e032cbe65594dc244ce821106fdc01c2d0f774a794452a80bf354ccc0bc5624b"
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/implementation_evidence.json": {
+      "bytes": 2028,
+      "sha256": "d73edc10bfa7c15cca2a2a60f874bd8ec30fdb8e0532ec32067bba323382b602"
+    }
+  }
+}

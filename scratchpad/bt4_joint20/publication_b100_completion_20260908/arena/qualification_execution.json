@@ -1,0 +1,20 @@
+{
+  "status": "PASS_INACTIVE_QUALIFICATION_ONLY",
+  "exit_code": 0,
+  "command": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 BLOSC_NTHREADS=2 PYTHONPATH=/tmp/deepfin-recipe-screen-tools-v3 nice -n 19 ionice -c 3 taskset -c 6,7 timeout --signal=TERM --kill-after=5s 90s /tmp/deepfin-recipe-screen-tools-v3/.venv/bin/python scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/prepare_inactive.py",
+  "cwd": "/home/josh/projects/chess",
+  "qualification": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/inactive_qualification.json",
+    "sha256": "a4d2716c5ef5a3980072ba1a66e4eb2d67cb9ad4ebb338698a51799c7b1d0bbe"
+  },
+  "log": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/prepare_inactive.log",
+    "sha256": "4bb4673173d49fdda04c2c5584b087b6936d5a3007ecfbae0a187653fa2c45df"
+  },
+  "setup": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/setup.json",
+    "sha256": "0f77f4dba560f6768c9dd4b2f4fbb633c50779ed18ac58a211c93b540235ac89"
+  },
+  "no_model_book_or_gpu_work": true,
+  "no_new_tests_or_suite": true
+}

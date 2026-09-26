@@ -1,0 +1,20 @@
+Traceback (most recent call last):
+  File "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run_common.py", line 377, in <module>
+    main()
+    ~~~~^^
+  File "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run_common.py", line 336, in main
+    return worker(plan)
+  File "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run_common.py", line 283, in worker
+    stage(name + '.derive', command(plan, 'derive_corpus_targets.py', '--corpus', source['source_dir'], '--out', source['derived_output'],
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+          '--limit', source['raw_rows'], *reg['derive_common_args']), plan)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run_common.py", line 149, in stage
+    guard()
+    ~~~~~^^
+  File "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run_common.py", line 71, in guard
+    require(not (STATE / 'STOP').exists(), 'STOP requested')
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run_common.py", line 41, in require
+    raise ValueError(message)
+ValueError: STOP requested

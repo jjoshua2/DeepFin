@@ -1,0 +1,13 @@
+{
+  "status": "PASS_PUBLICATION_FINAL_VALIDATION_SUPPLEMENT",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "reviewed_unix": 1788740443.3133178,
+  "commit": "12f26da49f83225086e237ad0257494346abdb05",
+  "prior_review_sha256": "8237f0f485602a53395bef992cb8bac2872fc7e8b822eb55ecf76b017efe1cbd",
+  "author_validation_sha256": "c579e978ba087cb6234ecf6c19bcab13f8bc2e2153475d064e9e816752d13ebb",
+  "checked": [
+    "Committed six file hashes exactly match reviewed publication.",
+    "Saved final main-based whole type log hash and0errors0warnings0notes verified."
+  ],
+  "scope": "Publication validation only; no experiment launch/selection or test rerun."
+}

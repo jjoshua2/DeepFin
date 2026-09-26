@@ -1,0 +1,27 @@
+{
+  "status": "COORDINATOR_STARTED_GPU_STAGE_NOT_YET_OBSERVED",
+  "started_unix": 1788907107.2459388,
+  "pid": 466338,
+  "operator_pid": 466337,
+  "command": [
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/tmp/deepfin-softsf10-screen-tools/.venv/bin/python",
+    "/tmp/deepfin-softsf10-screen-tools/scripts/bt4_recipe_screen.py",
+    "--manifest",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/training_arena_registration_v1/SoftSF10_B100.launch_manifest.json",
+    "--expected-manifest-sha256",
+    "a23cbf3aceac07bb352d450bfc77f6ff08324395f82e78af6f9319f4a3acd6ca",
+    "--execute"
+  ],
+  "cwd": "/tmp/deepfin-softsf10-screen-tools",
+  "manifest_sha256": "a23cbf3aceac07bb352d450bfc77f6ff08324395f82e78af6f9319f4a3acd6ca",
+  "independent_review_sha256": "a7061f9c59f886b510763d7ff54a5e10acffb44885afb4d859e800912df26298",
+  "arena_gpu_cap_per_stage_seconds": 5400,
+  "package_gpu_cap_including_training_seconds": 27000,
+  "lease_wait_separate_from_gpu_charge": true
+}

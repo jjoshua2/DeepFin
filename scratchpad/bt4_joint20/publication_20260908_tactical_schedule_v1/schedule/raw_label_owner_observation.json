@@ -1,0 +1,41 @@
+{
+  "observed_unix": 1788922381.9402726,
+  "scope": "One exact driver owner and direct children from host /proc and ps; no broad process scan. Initial sandbox namespace did not expose the owner, then authorized host read confirmed it.",
+  "owner": {
+    "pid": 423973,
+    "cmdline": "/usr/bin/bash /home/josh/projects/chess/scratchpad/bt4_g10_raw_wdl_v1/driver.sh",
+    "cwd": "/tmp/deepfin-bt4-label-runtime-pr580-overlay",
+    "direct_child_pid": 477385,
+    "child_profile": {
+      "policy_and_wdl": true,
+      "batch_size": 1024,
+      "threads": 16,
+      "max_shards": 16,
+      "gpu_mem_gib": 24
+    }
+  },
+  "markers": {
+    "pause.request": false,
+    "driver.paused": false,
+    "driver.fail": false,
+    "driver.done": false
+  },
+  "saved_log_observation": "Last bounded tail ended waiting for GPU lease. Previous group reported one8355-row shard430.0pos/s; no throughput extrapolation used.",
+  "queue_contract": {
+    "acquisition": "LOCK_EX|LOCK_NB in retry/poll loop; not a guaranteed FIFO queue",
+    "lease_lifetime": "held until disposable CUDA child joins; inherited descriptor protects child if parent dies",
+    "inter_group_sleep_seconds": 15,
+    "pause_or_edit_performed": false
+  },
+  "live_receipt_presence": {
+    "derived_remainder_invocation": "1788916886162766345",
+    "derived_remainder_files": [
+      "started.json",
+      "child_started.json"
+    ],
+    "derived_remainder_completed_present": false,
+    "g20t05_outer_completed_present": false,
+    "ceres_actual_start_present": false
+  },
+  "limits": "Current receipt absence is not a prediction or proof of future state; no output shard count, feature, model or inference read."
+}

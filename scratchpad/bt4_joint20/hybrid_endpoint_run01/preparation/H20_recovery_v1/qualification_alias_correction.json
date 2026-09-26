@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "status": "QUALIFIER_CORRECTION_AFTER_METADATA_ADMISSION_FAILURE",
+  "created_unix": 1788834864.6776147,
+  "original_qualifier": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/qualify_H20_recovered_dataset.py",
+    "sha256": "3148d28b9263e5988399338b9796c58d61fb3b8d72120f0e5b53dfed98aa4934"
+  },
+  "corrected_qualifier": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/qualify_H20_recovered_dataset_v2.py",
+    "sha256": "6accd83208e55d02b7b8c94cbfa3a65dd9ffcb7aaf738d30c2c2abc3d453bac6"
+  },
+  "failed_execution": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/qualification_execution.json",
+  "cause": "Original regular-file-only runtime pin reader rejected four intentional native-library symlinks. Their resolved binary contents match the qualified runtime pins; source/corpus metadata is not aliased. No dataset qualifier outputs were created.",
+  "change": "Allow only these four exact binary aliases when read as raw pinned bytes; verify canonical target, target SHA and target/link stability. Every other input still requires regular file.",
+  "runtime_aliases": {
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so": "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so",
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so": "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so",
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so": "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so",
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so": "/tmp/deepfin-bt4-sf-close-followup/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so"
+  },
+  "clarification": "The v3/recovery reuse shares the same target binary inodes via hard-linked symlink entries; it did not copy new binary bytes. Earlier same-inode-binary wording did not describe the link indirection. No executable changed.",
+  "new_payload_scan": false
+}

@@ -1,0 +1,298 @@
+{
+  "status": "COMPLETE_QUALIFIED_TRAINING_SAMPLE",
+  "rows": 4096,
+  "derived_shards": 64,
+  "raw_shards": 127,
+  "unique_source_games": 2082,
+  "weighted_mean_entropy_self_normalized": {
+    "SF": 0.5494697927127733,
+    "C": 0.4935818078971049,
+    "cp10_ideal": 0.47767014601990543,
+    "cp10_stored": 0.4776700292933493,
+    "cp20_ideal": 0.7691579997058553,
+    "cp20_stored": 0.7691591184117121,
+    "cp40_ideal": 1.250885803358321,
+    "cp40_stored": 1.2508855796995018,
+    "cp80_ideal": 1.8319573763730612,
+    "cp80_stored": 1.8319567229906562
+  },
+  "entropy_matching_temperature_cp": 10,
+  "elapsed_s": 285.72792116500204,
+  "cpu_seconds": 247.558786756,
+  "max_rss_kib": 663736,
+  "outputs": {
+    "shard_001043.zarr.npz": {
+      "sha256": "fdcdc5330c57c480c900d58093099a6dc7d84268d07d4a995eab26b3b6f74c6f",
+      "bytes": 62128
+    },
+    "raw_rows.jsonl": {
+      "sha256": "7a95754b15922e9572f310c69bd1eea1d2a3d68fb64e58e4eb671432ceb08aaa",
+      "bytes": 39367624
+    },
+    "shard_001849.zarr.npz": {
+      "sha256": "b4a3a9fe80481ea716548902b36364a4b544cf318f0a86bedd59513195700530",
+      "bytes": 64233
+    },
+    "shard_001823.zarr.npz": {
+      "sha256": "e62f48edd7813d355149dbca4b4127fbc1d3556b9260ca1a2c384869b0cbda4c",
+      "bytes": 64171
+    },
+    "shard_000378.zarr.npz": {
+      "sha256": "a1115b50fa2b9928f17c7ca36f179e2561b60e5379264fed45a611874e6ccea1",
+      "bytes": 60868
+    },
+    "shard_002287.zarr.npz": {
+      "sha256": "75093ae4d1f16c68a7ae49d6223a3c65d263b45381575714fb5d06ac52d3494a",
+      "bytes": 63632
+    },
+    "shard_001440.zarr.npz": {
+      "sha256": "739f3fed6b7dc012d2bebc9ae026d2cad83a8b0a992581bc01ae3c5adfcce456",
+      "bytes": 60427
+    },
+    "shard_001536.zarr.npz": {
+      "sha256": "f7fd9fd5503d6947810cb4a0a039fee7f2614af4ac4e12499b4d039a8e12d50d",
+      "bytes": 58123
+    },
+    "shard_001730.zarr.npz": {
+      "sha256": "b29bf1183a30879bcb4637f97dad836ce44992aa7576139398c090824404d060",
+      "bytes": 63671
+    },
+    "shard_000616.zarr.npz": {
+      "sha256": "79c075bb5655f66d623a7fa2dc1c27881f1c06e979c369041937fa4a041991ab",
+      "bytes": 61225
+    },
+    "shard_000671.zarr.npz": {
+      "sha256": "7f81b05c59ba47e0bb568be37b2cd080761a6382e7aa68e0afa719ff7e2ce5d0",
+      "bytes": 59212
+    },
+    "shard_001009.zarr.npz": {
+      "sha256": "d4969c3a4289e08d1187ad8e9f2f66a95e72cdcee0dea401876b0301b4d99b9d",
+      "bytes": 59438
+    },
+    "shard_000017.zarr.npz": {
+      "sha256": "dfdeb0bd2e30d6407570a522f2dc75f5d140214c28d1fae75fbf7e77ca584798",
+      "bytes": 61300
+    },
+    "shard_000888.zarr.npz": {
+      "sha256": "9c8712f2373feae39a0ce998ca07dba575d5a845dfe924e1f04fa9593609f03d",
+      "bytes": 62258
+    },
+    "shard_001460.zarr.npz": {
+      "sha256": "d8b0514464776f290da5c61d8b6c9032c04257db4e87d76b9947c7ed4ca44ed9",
+      "bytes": 63668
+    },
+    "shard_000134.zarr.npz": {
+      "sha256": "cb3a2fef25d59f9a463f7b282a1e3272d8438b8e765f81fe4f8a36c6d60a76a0",
+      "bytes": 64185
+    },
+    "shard_001667.zarr.npz": {
+      "sha256": "291c6fffda6f6da5f2aadec94926e3d9ffe8b120974ff2c97efedec754f8da04",
+      "bytes": 62356
+    },
+    "shard_002168.zarr.npz": {
+      "sha256": "32667d1aa81385e7bc1ffb207221119b428c0b6ccb3617d01d285e1833e5c3f7",
+      "bytes": 60770
+    },
+    "shard_000264.zarr.npz": {
+      "sha256": "b3650c7947a5da653503b4d963907e0697f9450d7c1407e77d61f3b4e3977f6b",
+      "bytes": 60347
+    },
+    "shard_002242.zarr.npz": {
+      "sha256": "fd45a8b56cc5f7b6890d6b0254a4e9c09fc6aec10a8f8fc93ada28432bfa1d6d",
+      "bytes": 58991
+    },
+    "shard_000462.zarr.npz": {
+      "sha256": "4264b0c0538bab13541e7d637a87ffa8e16f0e4cf3d2ccd1981f8c0b4f93e37f",
+      "bytes": 62617
+    },
+    "shard_000405.zarr.npz": {
+      "sha256": "20108798fbeea2ea2baf7417315a4121661ed14ca03bb326a3ce734b2c1325b5",
+      "bytes": 66857
+    },
+    "shard_000509.zarr.npz": {
+      "sha256": "d3348fc92235897a95700e0702387e0555aecb33762475df569f57ad27d38b97",
+      "bytes": 63932
+    },
+    "shard_001123.zarr.npz": {
+      "sha256": "8ca49fece05b4ccdf3193e03b76b918bca7072bc88067583c417f3dfab04dda3",
+      "bytes": 59917
+    },
+    "shard_000297.zarr.npz": {
+      "sha256": "2b9b54a8c307f3ff30d6646487d9fa82e4c46f21f4e4cea318d526597d54d5c4",
+      "bytes": 61860
+    },
+    "shard_000783.zarr.npz": {
+      "sha256": "a71b850f9ef5b31e0c6ccdd75ea368b75c300337819a6d52f936d9bbb111555a",
+      "bytes": 60732
+    },
+    "shard_000087.zarr.npz": {
+      "sha256": "d33ef993ed393657b0a4605a4d6b478496ed6c7bc2f2db62c0b06e348bf79546",
+      "bytes": 56948
+    },
+    "shard_001949.zarr.npz": {
+      "sha256": "7f75c1fe02474d036f15c57a06dd5048246e6d1db1ce316c20355dfc8fac9290",
+      "bytes": 63788
+    },
+    "shard_000069.zarr.npz": {
+      "sha256": "a5f23151d0678925d16d66e71ddc3b6a7b97f5c6c2a6302ba23c0513955d918d",
+      "bytes": 59522
+    },
+    "shard_001342.zarr.npz": {
+      "sha256": "d057888a3b2d340c007e15379a2e636df978129fb4a1a5e51071d9ed0820a2ee",
+      "bytes": 61800
+    },
+    "shard_002210.zarr.npz": {
+      "sha256": "5bddd55b95eda599d79159bab175b94dea7f0505ae938dcc38f1d3cd49010acf",
+      "bytes": 58257
+    },
+    "shard_001397.zarr.npz": {
+      "sha256": "614073ab9b332ff9ff26b023dd7f20e6ab83a936706ed561f48dbe7ed30c6faa",
+      "bytes": 61446
+    },
+    "shard_002052.zarr.npz": {
+      "sha256": "d3cde28f7e1c22f64c4191a93459425e47a7c1f8f191bf96e4a9c5d2e0347b34",
+      "bytes": 62490
+    },
+    "shard_001092.zarr.npz": {
+      "sha256": "2a860a7e3dbcc7535e4de9a5cad81f07de451c74e7e1ab490f209da4abcf1d3d",
+      "bytes": 61513
+    },
+    "selection.json": {
+      "sha256": "c642f0b2f5ab90160dc607ce34eb9a224acb9a21b3114cc3628df673a966950f",
+      "bytes": 1023156
+    },
+    "consumed_inputs.json": {
+      "sha256": "3e25fc38d83259ca96b19939b109e14c498fe93c0a0b3638b54af9c8110eee6d",
+      "bytes": 13985392
+    },
+    "shard_002000.zarr.npz": {
+      "sha256": "a98a8ed1c1c12c72462e3322bd79db1fe560c766023406daa6cfadae71b8bc06",
+      "bytes": 64507
+    },
+    "shard_002129.zarr.npz": {
+      "sha256": "2bb4d0f3978dd3a926f2800d64022e36f868df426269e560bc3ffea138ce212e",
+      "bytes": 61919
+    },
+    "shard_002113.zarr.npz": {
+      "sha256": "b7bf7a00a80371dd9585af9d197d394b931157c632cf9a39b6541587859771a3",
+      "bytes": 58580
+    },
+    "shard_000568.zarr.npz": {
+      "sha256": "9bde80efba38be03cd67dd050b2a81e1c6bc16a9024d60cf15ce39e5799a4a67",
+      "bytes": 61111
+    },
+    "shard_000349.zarr.npz": {
+      "sha256": "3543c162ae2a96694b71f9a63cdaf490b46335d3871d3e0b66b811e16fe76c19",
+      "bytes": 61126
+    },
+    "shard_001251.zarr.npz": {
+      "sha256": "36fd12a9a4199f54f6c74aa5e9c00f8a4e8993627a3473e08401e9409d55843c",
+      "bytes": 64474
+    },
+    "shard_001632.zarr.npz": {
+      "sha256": "ed4a0828c37a8e11597d7719ed8bfff2b26907384da5a2f9775af3872a4affaf",
+      "bytes": 57677
+    },
+    "shard_001321.zarr.npz": {
+      "sha256": "5c31baf7f6b698e023e9fcbc45395738a1eb136d7f6eae2c7de13ed10c587d64",
+      "bytes": 62356
+    },
+    "shard_000591.zarr.npz": {
+      "sha256": "7f25b65af12cf74b4aa18a910b502940d68bb60ba7b0d2d6918e11a497ffdeaa",
+      "bytes": 59603
+    },
+    "shard_000723.zarr.npz": {
+      "sha256": "621ac0fd2333fa6c6f4e2d221e8f823d65e5c93fabdac136a696c4fa185c770f",
+      "bytes": 61717
+    },
+    "shard_001880.zarr.npz": {
+      "sha256": "d5946bc786ba3529cc7ee20de163e7064dc5f22d9a21bfb4e4e01a07d762ec3f",
+      "bytes": 62007
+    },
+    "shard_000845.zarr.npz": {
+      "sha256": "cfd8c7d19f349648e5d829eaa803f1dc285b8d061fbe0b58224e7705841fd0b5",
+      "bytes": 61044
+    },
+    "shard_000186.zarr.npz": {
+      "sha256": "b841bebe80420ef920751a283e2bddc01daadea078aa8393ca802591ac3bbaff",
+      "bytes": 62175
+    },
+    "shard_001480.zarr.npz": {
+      "sha256": "0db441756d904125c73cc161125ee6360db6dd69b487f79c989a73dd858ff3eb",
+      "bytes": 61935
+    },
+    "shard_000475.zarr.npz": {
+      "sha256": "8439cb2300f773c5df58178eff2faaddd2cf1db4fac9716dd9910b68894ab9df",
+      "bytes": 64419
+    },
+    "shard_000174.zarr.npz": {
+      "sha256": "65aa9e422576fbc005cd4cf7752852d97af038cee99877369358e2a94fa8e966",
+      "bytes": 63483
+    },
+    "shard_001222.zarr.npz": {
+      "sha256": "cf5f130289150607920a737dc6c4efcd95b7e8da5cb544dcdfb0584ba357cbdf",
+      "bytes": 61760
+    },
+    "shard_002082.zarr.npz": {
+      "sha256": "7a59a4213dd445fca03d1cbc6be1abb6fec0bd23aa2ec6b27333bae67f6b0cb9",
+      "bytes": 61537
+    },
+    "shard_001585.zarr.npz": {
+      "sha256": "510a448cd8f643f09bb80e7a78eada43a093cbfe015b46c0ac0136e61a06032d",
+      "bytes": 59095
+    },
+    "shard_001794.zarr.npz": {
+      "sha256": "9966dcddce4d959370f4b32cc363f99fb64dcc73adcf675367aff0da4f456a4d",
+      "bytes": 62674
+    },
+    "shard_001282.zarr.npz": {
+      "sha256": "f57a36d7c0d1379a30f4299190f6bd66718f142885acdd83cab130562e81d9fc",
+      "bytes": 61890
+    },
+    "shard_001159.zarr.npz": {
+      "sha256": "f5cbf7681c319b1590069c84eef2ecfb5564b18c8dab7202a8bec5cf62383bd4",
+      "bytes": 63656
+    },
+    "shard_000903.zarr.npz": {
+      "sha256": "a78adb268f8ed2fc8727e89bdc0201395f0ff205d441db91da8018e1f721b44c",
+      "bytes": 57857
+    },
+    "shard_000962.zarr.npz": {
+      "sha256": "12ea3c58eefdd45c33b6aa09733dfa21a19404be3ac06c3c066e1152e8f2eb78",
+      "bytes": 60030
+    },
+    "shard_000717.zarr.npz": {
+      "sha256": "630322d09022b8ecbcd41f517d596765f6adcce887c656971f5b93ca644ccf2d",
+      "bytes": 64896
+    },
+    "shard_001080.zarr.npz": {
+      "sha256": "e4031c953c63e9614300fdfae93b4b57f4f2de4f6865941167ec8fdb53159b1a",
+      "bytes": 60640
+    },
+    "shard_000801.zarr.npz": {
+      "sha256": "75ae699342b671a41617fa451ca410c0060b0860aab28565b1d25a2d243d35c5",
+      "bytes": 58175
+    },
+    "shard_001591.zarr.npz": {
+      "sha256": "ded497a29dcfd42f4da5d5c457717be4995f6d4f881a203e25413c05e8eb342b",
+      "bytes": 63490
+    },
+    "shard_001932.zarr.npz": {
+      "sha256": "2551c7a0d1fd2998f673a97aa3653d67c0dc043adc55271c3fd42ba258a113a4",
+      "bytes": 61916
+    },
+    "shard_001742.zarr.npz": {
+      "sha256": "b3f096ca21b631f7ea2c3fed1314b08f9499ad19481b385c3cd30bcb1a6cf74a",
+      "bytes": 61813
+    },
+    "shard_000246.zarr.npz": {
+      "sha256": "0402ed05c2a6771400f1783e930a59b2b6b4b5b8180baf37939f4b96925a01ea",
+      "bytes": 62716
+    },
+    "observations.json": {
+      "sha256": "b39d0232339e22a61a8382a0dc383fc2eff2313ff7f8dd929090bf6b5bea775c",
+      "bytes": 8801970
+    }
+  },
+  "limits": "Stratified cluster training sample, not iid/heldout or gameplay evidence. No new GPU selection. Raw mate effective-cp unchanged. All selected joins must pass; no dropped/replacement rows. Full corpus Soft-SF derivation remains unqualified."
+}

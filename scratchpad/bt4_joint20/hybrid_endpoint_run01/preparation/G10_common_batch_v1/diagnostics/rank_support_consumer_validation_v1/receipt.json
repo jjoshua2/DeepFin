@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "status": "FOCUSED_BEHAVIOR_PASS_COMBINED_STATIC_AND_INDEPENDENT_REVIEW_PENDING",
+  "created_utc": "2026-09-08T01:16:04.327088+00:00",
+  "worktree": "/tmp/deepfin-phase0-support",
+  "owned_files": [
+    {
+      "path": "/tmp/deepfin-phase0-support/scripts/sf_d9_rank_sidecar.py",
+      "bytes": 36988,
+      "sha256": "7d3ea7a94012ada235dd20f35ca3da62a5c6c867ef69bdd11e702070891fdb87"
+    },
+    {
+      "path": "/tmp/deepfin-phase0-support/tests/test_sf_d9_rank_support_exclusions.py",
+      "bytes": 6426,
+      "sha256": "fa016c876f097bd9750a8484b37f04d51ea16b13c08f3ad05eccf4a86a719cdc"
+    }
+  ],
+  "shared_deriver_at_freeze": {
+    "path": "/tmp/deepfin-phase0-support/scripts/derive_corpus_targets.py",
+    "bytes": 374481,
+    "sha256": "a5370ccac14517b781c073e81ab9e6d82c70583af616561ec33bd7784a887df9"
+  },
+  "behavior": [
+    "Only explicit phase0 d9 provenance-based policy-support exclusions are admitted.",
+    "Typed source-qualified proof, actual JSONL equality to pinned summary, correct count/budget, and known history schema are required.",
+    "Excluded raw rows are rechecked for missing/duplicate legal support, finite well-formed ranks, and exact original plus quantized history identity before bypassing rank extraction.",
+    "Every declared excluded ref must be encountered; any derived reference to an excluded row is rejected; support/no-result/envelope accounting remains separate.",
+    "Loaded evidence-byte hash and file metadata are rechecked at publication; default no-exclusion rank path remains unchanged."
+  ],
+  "validation": {
+    "final_focused_tests": 11,
+    "historical_rank_regressions": 13,
+    "ruff_final": "PASS",
+    "git_diff_check_final": "PASS",
+    "scoped_host_typecheck": "0 errors / 0 warnings / 0 notes before final history-schema guard and corresponding test; root combined final gate remains pending",
+    "sandbox_typecheck_limitation": "Could not discover installed dependencies; verbose path log retained. Host subprocess access resolved environment discovery, without changing code or dependencies."
+  },
+  "commands": {
+    "new_tests": "env CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2 BLOSC_NTHREADS=2 nice -n19 taskset -c0,1 .venv/bin/python -m pytest -q tests/test_sf_d9_rank_support_exclusions.py",
+    "historical_tests": "same CPU environment, pytest tests/test_sf_d9_rank_sidecar.py",
+    "typecheck": "nice -n19 taskset -c0,1 .venv/bin/basedpyright --pythonpath /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python scripts/sf_d9_rank_sidecar.py tests/test_sf_d9_rank_support_exclusions.py"
+  },
+  "logs": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-final-tests.log",
+      "bytes": 187,
+      "sha256": "f1b0e06e99ef1bafc34cb622c1c039c7223f830197de5e9f7ad68132a3b168ca"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-historical-tests.log",
+      "bytes": 187,
+      "sha256": "192590313658fde90c82ca350ad7fb706912c092e702284b9a368a4730ddf400"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-types-host.log",
+      "bytes": 30,
+      "sha256": "56882e01cb80173ef053c4096e4ee43e3123a15f5c0a06715f96988d48fbd91c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-types-path.log",
+      "bytes": 4435,
+      "sha256": "68b0744400ecf3a96e716dfae7e85594d0cd0e1521d3c73ea1887a61cbc381da"
+    }
+  ],
+  "limitations": [
+    "No operational source scan, retry, derivation, labeling, training, or live/frozen checkout changes.",
+    "Independent review and final combined static gate are parent-owned before publication."
+  ]
+}

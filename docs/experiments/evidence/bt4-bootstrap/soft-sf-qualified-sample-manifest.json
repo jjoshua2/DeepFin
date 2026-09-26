@@ -1,0 +1,190 @@
+{
+  "schema": 1,
+  "scope": "Completed4096-row training-only Soft-SF sample. Original compact evidence is byte-preserved or losslessly gzip encoded. No runtime adoption or training/strength selection.",
+  "path_conventions": {
+    "path": "Published repository-relative archive",
+    "source_path": "Original producing-checkout-relative path; historical absolute paths inside original evidence remain unchanged, not portable execution instructions."
+  },
+  "files": [
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/prepare.py",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/prepare.py",
+      "source_bytes": 4363,
+      "source_sha256": "2e655ad82a2f239249eee86c70fbbf4f8da71da5492a1600c28e7d3dba869a00",
+      "published_bytes": 4363,
+      "sha256": "2e655ad82a2f239249eee86c70fbbf4f8da71da5492a1600c28e7d3dba869a00",
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/plan.json.gz",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/plan.json",
+      "source_bytes": 713729,
+      "source_sha256": "8e7e4b3ca4af65c0e021eb0017003c45914e3bdc729a7d2a72e8837a18339bfc",
+      "published_bytes": 34716,
+      "sha256": "03835806cb4faea95ef47b6110ba96bd35eb57ca5b92610bf9a5b32cfb613e0d",
+      "encoding": "gzip"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/preregistration.md",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/preregistration.md",
+      "source_bytes": 3335,
+      "source_sha256": "e3d0c9c8d5a370932380c8ca0a54813104f549d61f9827e30d2f4486f8f2e817",
+      "published_bytes": 3335,
+      "sha256": "e3d0c9c8d5a370932380c8ca0a54813104f549d61f9827e30d2f4486f8f2e817",
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/collect.py",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/collect.py",
+      "source_bytes": 14234,
+      "source_sha256": "f9b029f8f664c232f3988edf1d2a9f076966c6a0051101533c4947a6451bb94a",
+      "published_bytes": 14234,
+      "sha256": "f9b029f8f664c232f3988edf1d2a9f076966c6a0051101533c4947a6451bb94a",
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/preparation_receipt.json",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/preparation_receipt.json",
+      "source_bytes": 2032,
+      "source_sha256": "46aa0cffff5c6982a55587fd686aca32daadb1565d7f5ca594a84e7a8ad2bede",
+      "published_bytes": 2032,
+      "sha256": "46aa0cffff5c6982a55587fd686aca32daadb1565d7f5ca594a84e7a8ad2bede",
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/native_reuse.json",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/native_reuse.json",
+      "source_bytes": 4308,
+      "source_sha256": "472ee9797ed4dc83873d09f888f45bb0fa56e035e8ff3809a82f046e0f50afec",
+      "published_bytes": 4308,
+      "sha256": "472ee9797ed4dc83873d09f888f45bb0fa56e035e8ff3809a82f046e0f50afec",
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/import_probe.log",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/import_probe.log",
+      "source_bytes": 562,
+      "source_sha256": "6665249ff10d3e01a08f0a6142dae08759011cb5cdeca3d02ed05910d1a500bd",
+      "published_bytes": 562,
+      "sha256": "6665249ff10d3e01a08f0a6142dae08759011cb5cdeca3d02ed05910d1a500bd",
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/import_probe_v2.log",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/import_probe_v2.log",
+      "source_bytes": 332,
+      "source_sha256": "ddcbdfa7fde0b430a892eb0f0f1a0fe1a8768a718446fb3d61edacee4405bd65",
+      "published_bytes": 332,
+      "sha256": "ddcbdfa7fde0b430a892eb0f0f1a0fe1a8768a718446fb3d61edacee4405bd65",
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/root_prelaunch_review.json",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/root_prelaunch_review.json",
+      "source_bytes": 1321,
+      "source_sha256": "db2f0f15decfc828830fb5e49dd91e273a3c8cf3ce8ff3b2439546964dce7b1b",
+      "published_bytes": 1321,
+      "sha256": "db2f0f15decfc828830fb5e49dd91e273a3c8cf3ce8ff3b2439546964dce7b1b",
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/operator_launch.json",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/operator_launch.json",
+      "source_bytes": 1166,
+      "source_sha256": "b8d46ef6d3bda137c1b837a3424c1cc9280efe338fa2e4f7f2187cd1b9e644ef",
+      "published_bytes": 1166,
+      "sha256": "b8d46ef6d3bda137c1b837a3424c1cc9280efe338fa2e4f7f2187cd1b9e644ef",
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/execution.log",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/execution.log",
+      "source_bytes": 4360,
+      "source_sha256": "03afe241d4cedd840bd0d4381e3fd67b477c272b31dd3c485ea799bd4d47732e",
+      "published_bytes": 4360,
+      "sha256": "03afe241d4cedd840bd0d4381e3fd67b477c272b31dd3c485ea799bd4d47732e",
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/completed_readout.json",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/completed_readout.json",
+      "source_bytes": 15189,
+      "source_sha256": "7fc0a18aaa3af9fc7afe723a9019dd5c928a84da4f270f44b185b22dec96549c",
+      "published_bytes": 15189,
+      "sha256": "7fc0a18aaa3af9fc7afe723a9019dd5c928a84da4f270f44b185b22dec96549c",
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/bank/complete.json",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/bank/complete.json",
+      "source_bytes": 10683,
+      "source_sha256": "32a329ec01c0b205f9397c72928f407f3ef4131a0b1d165f461b3e4e78ae3dcb",
+      "published_bytes": 10683,
+      "sha256": "32a329ec01c0b205f9397c72928f407f3ef4131a0b1d165f461b3e4e78ae3dcb",
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/bank/observations.json.gz",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/bank/observations.json",
+      "source_bytes": 8801970,
+      "source_sha256": "b39d0232339e22a61a8382a0dc383fc2eff2313ff7f8dd929090bf6b5bea775c",
+      "published_bytes": 1217080,
+      "sha256": "2aa19c45c090b6e2f685c11fd8286d98c85612dd502df2c86a64b01c772c532b",
+      "encoding": "gzip"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/bank/selection.json.gz",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/bank/selection.json",
+      "source_bytes": 1023156,
+      "source_sha256": "c642f0b2f5ab90160dc607ce34eb9a224acb9a21b3114cc3628df673a966950f",
+      "published_bytes": 43808,
+      "sha256": "aa747a1634861436ba8e10d258e84bd401f0157d985f9b342b81a41ed434f9d6",
+      "encoding": "gzip"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/bank/consumed_inputs.json.gz",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/bank/consumed_inputs.json",
+      "source_bytes": 13985392,
+      "source_sha256": "3e25fc38d83259ca96b19939b109e14c498fe93c0a0b3638b54af9c8110eee6d",
+      "published_bytes": 1635700,
+      "sha256": "4d775df492daee22401425cf6a49bc9ad2e7673272177b2891401ba764f0ea7d",
+      "encoding": "gzip"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/bank/raw_rows.jsonl.gz",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/bank/raw_rows.jsonl",
+      "source_bytes": 39367624,
+      "source_sha256": "7a95754b15922e9572f310c69bd1eea1d2a3d68fb64e58e4eb671432ceb08aaa",
+      "published_bytes": 7363831,
+      "sha256": "5f0de0c6dca25ded38c350e414adbbc223a7d72007d4eb19873257da8897905d",
+      "encoding": "gzip"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/root_verify_bank.py",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/root_verify_bank.py",
+      "source_bytes": 3862,
+      "source_sha256": "e98fdb4c45d5482ad6219bbf7b09cf99aec7761bc8215b320a894739eee71670",
+      "published_bytes": 3862,
+      "sha256": "e98fdb4c45d5482ad6219bbf7b09cf99aec7761bc8215b320a894739eee71670",
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/root_completed_review.json",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/root_completed_review.json",
+      "source_bytes": 1100,
+      "source_sha256": "a1b5db541e57820900cc3350a793ecc746ef06f06d1bf92f14f25ef96eaae74c",
+      "published_bytes": 1100,
+      "sha256": "a1b5db541e57820900cc3350a793ecc746ef06f06d1bf92f14f25ef96eaae74c",
+      "encoding": "identity"
+    }
+  ],
+  "external": {
+    "sample_npz_parts": {
+      "files": 64,
+      "location": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/bank",
+      "hash_catalog": "scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/bank/complete.json",
+      "reason": "Array payloads remain external; exact hashes/bytes are in original completion. Full raw observations and row metrics are published losslessly."
+    },
+    "full_corpora": "Original raw/derived/SF/C/BT4 corpora remain external; original complete/consumed-input receipts bind identities."
+  }
+}

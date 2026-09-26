@@ -1,0 +1,90 @@
+{
+  "checkout": "/tmp/deepfin-g10-increment-tools",
+  "commit": "f77101a59fb2b38fd8e68c4cf44111e869a54115",
+  "prior_receipt": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/runtime_qualification.json",
+    "sha256": "585848ed40b71cd7a610814d27eed814456e30eb1112fe99fad1f53d5b255352"
+  },
+  "python": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+  "compatible_native_source_files": [
+    "chess_anti_engine/encoding/_bitboard_planes_impl.h",
+    "chess_anti_engine/encoding/_cboard_impl.h",
+    "chess_anti_engine/encoding/_features_ext.c",
+    "chess_anti_engine/encoding/_features_impl.h",
+    "chess_anti_engine/encoding/_lc0_ext.c",
+    "chess_anti_engine/encoding/_slider_attacks_impl.h",
+    "chess_anti_engine/mcts/_check_resolver.h",
+    "chess_anti_engine/mcts/_mcts_tree.c",
+    "chess_anti_engine/mcts/_position_dag.h",
+    "chess_anti_engine/mcts/_search_terminal.h",
+    "chess_anti_engine/mcts/_value_provider.h",
+    "chess_anti_engine/nnue/_arm_providers.h",
+    "chess_anti_engine/nnue/_fastq_certificate.h",
+    "chess_anti_engine/nnue/_fastq_search.h",
+    "chess_anti_engine/nnue/_fastq_see.h",
+    "chess_anti_engine/nnue/_nnue_dag_api.h",
+    "chess_anti_engine/nnue/_nnue_dag_store.h",
+    "chess_anti_engine/nnue/_nnue_ext.c",
+    "chess_anti_engine/nnue/_nnue_impl.h",
+    "chess_anti_engine/nnue/_nnue_provider.h",
+    "chess_anti_engine/nnue/_nnue_state.h",
+    "scripts/fuzz/cboard_libfuzzer.c",
+    "setup.py"
+  ],
+  "native_links": [
+    {
+      "path": "/tmp/deepfin-g10-increment-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so",
+      "target": "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "6f4bb0ec267a4ebd73ffe0a0d699a427f4e1a29d261b3a21658033056567722d"
+    },
+    {
+      "path": "/tmp/deepfin-g10-increment-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so",
+      "target": "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "73798b545d5351ca3cde0f1221bf3008675ef459d6765c62ba8193120299ab84"
+    },
+    {
+      "path": "/tmp/deepfin-g10-increment-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so",
+      "target": "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "7dad156c2793b60f685582ebacdbaa51eb5ecc22fd462865da203955c28fd49a"
+    },
+    {
+      "path": "/tmp/deepfin-g10-increment-tools/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so",
+      "target": "/tmp/deepfin-bt4-sf-close-followup/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "b9cb9a26ff7c017f995a6ce6d7852ff90ec3e43cf2772bc14dafff8c1836f8fc"
+    }
+  ],
+  "initial_pins": {
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/encoding/_bitboard_planes_impl.h": "8fdc0ea17025c5543d15997573b2080a1ef99dd9f0b55dab0bb9c3af41cb8d9b",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/encoding/_cboard_impl.h": "13560b4908282aca68c3f6c5747dc3848f036f3a494f24500e76fc44a3646572",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/encoding/_features_ext.c": "1aca319fa2ae1eae4bba5707c61a7767421f1cf53a1510a8a739fb2557d9e053",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/encoding/_features_impl.h": "2c493fe44eb486cee95adcf5f3cec7e549d206a1ca0793c612073c96ed0a8335",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/encoding/_lc0_ext.c": "dad4106e18c6da4757aec828a1aefa6991ac99964317b0716d03b1daf659c86f",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/encoding/_slider_attacks_impl.h": "4bcd20d696241a218adfb15bdf31d0e72ba0a5c75d5c6dd29bbd53ec79d59d5d",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/mcts/_check_resolver.h": "13c0e6bc10fb43a92164ac411a3d6d6761a14b3b99117dcd83e66e2dc94d8f6e",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/mcts/_mcts_tree.c": "01a03ee6e5762b5814a242bde1d40fbf1c2636b50d66f21b287aca32703f6bd6",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/mcts/_position_dag.h": "3c7da5adccdc056632483bbe8d384dd44c687b66c6c6ea13549408e3970a02d3",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/mcts/_search_terminal.h": "a7143cb2dd5c1fb548f67e0aaf6dda41d05246f72ac749cc4b132a8d5fa447b9",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/mcts/_value_provider.h": "a8de0ee5f65fc5f5881f4c095f823a17c2e2c8bc6814a99375c228f9045db84a",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/nnue/_arm_providers.h": "6188fa6d85f34c7aff99f674adee705c6a11b82ad54ab78a92dc5d5a6eca192d",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/nnue/_fastq_certificate.h": "ae2bbacdfc1120e37c6c926a31536f5e362924bbe40c4ef085f8ae50b76d55e9",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/nnue/_fastq_search.h": "c2e2bd7f7a47d676a681e2f794eeb87fcea013c413e8c33d99b51c041329b925",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/nnue/_fastq_see.h": "94ad8e2ea1129d5e5589870b3c675a5427b7ad7eb62e8a79f8c65950576a3b26",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/nnue/_nnue_dag_api.h": "9e68c3e7eb0960d147c1f36c405180a237100674d6f182625a503808634e9e6e",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/nnue/_nnue_dag_store.h": "ec7b273cb213f379aa66d5e80fcd8f0b5da8daf982479f54cebd344219b6ee46",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/nnue/_nnue_ext.c": "f618c3617f736bb61ee2b68eb7146cb62ef30740f4f55e6d0d8204246b005e5f",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/nnue/_nnue_impl.h": "b086f94530b1c5898e088aa92f2c8fd12c0439746f998bbf3754870601a7672b",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/nnue/_nnue_provider.h": "0e3de96f06ef2e12361d977bb0eb6d8602468c9f56606a6e70b151856fe526a9",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/nnue/_nnue_state.h": "f3e55228ae4648e401de32dbd5777fb785681a96ece3005314edeeaf6f0bbfff",
+    "/tmp/deepfin-g10-increment-tools/scripts/fuzz/cboard_libfuzzer.c": "755dc44555e4c3da41ddf917b53847bdff428aeab74e2c8812ce5169f24b3e1e",
+    "/tmp/deepfin-g10-increment-tools/setup.py": "e20da672deebd4b92da4264cf8529e98f0c006d70f16e0c155bb00128a3da66f",
+    "/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13": "93a93f4c8af5ae6f127fb0310f923d5fab89eb7257a0b801eec2e44b3f199840",
+    "/tmp/deepfin-g10-increment-tools/uv.lock": "4add8d8c91906df42eb15fe28bda3eb613192fdd257059e3ec7d097f917e66ef",
+    "/tmp/deepfin-g10-increment-tools/pyproject.toml": "6cf79d98f28a2258fa4a64247d20b8faf251dba549bd8771851eb5787934d082",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so": "6f4bb0ec267a4ebd73ffe0a0d699a427f4e1a29d261b3a21658033056567722d",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so": "73798b545d5351ca3cde0f1221bf3008675ef459d6765c62ba8193120299ab84",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so": "7dad156c2793b60f685582ebacdbaa51eb5ecc22fd462865da203955c28fd49a",
+    "/tmp/deepfin-g10-increment-tools/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so": "b9cb9a26ff7c017f995a6ce6d7852ff90ec3e43cf2772bc14dafff8c1836f8fc"
+  },
+  "environment_changed": false,
+  "native_build_performed": false
+}

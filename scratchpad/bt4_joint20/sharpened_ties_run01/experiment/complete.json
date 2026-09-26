@@ -1,0 +1,7 @@
+{
+  "arena_receipt_sha256": "88db42f679a500bf0b159fcb8339ec59d3408a76b29fa2040c83a2b1104a0578",
+  "complete": true,
+  "gpu_seconds": 12143.50117322299,
+  "promotion": "NONE; apply preregistered rule",
+  "training_receipt_sha256": "3a19abb9d67edd83b07b13295db7d6ec9c6fecae82e15baf9a9b41fbce0afe0a"
+}

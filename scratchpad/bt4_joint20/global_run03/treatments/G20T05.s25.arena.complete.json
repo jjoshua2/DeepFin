@@ -1,0 +1,9 @@
+{
+  "checkpoint_sha256": "bd8c208a95247373f423be0649329e9c100db64ab1b5a5e68fd7a6aec3769a74",
+  "games_sha256": "031c1d4cd6e8fb4cb66f85c8b7103bf3c15f3b811aa171ef8f9f0e7d93ad0a87",
+  "policy_temp": 1.0,
+  "raw_rows": 1000,
+  "readout": "unread",
+  "reference_sha256": "b41a5614bae5bf67cb32916c4ace8d26db27fd9152b7c496be40427424b08fb8",
+  "replaced_orphan_rows": 0
+}

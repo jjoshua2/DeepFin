@@ -1,0 +1,20 @@
+{
+  "status": "complete",
+  "end_unix": 1788824770.0482335,
+  "raw_storage_identities": {
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00000.jsonl.zst": [
+      2096,
+      9783581,
+      21154455,
+      1788379921244293574,
+      1788379921244293574
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00000.jsonl.zst": [
+      2096,
+      9748927,
+      20692331,
+      1788472621199432022,
+      1788472621199432022
+    ]
+  }
+}

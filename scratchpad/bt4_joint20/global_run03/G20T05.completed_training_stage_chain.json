@@ -1,0 +1,49 @@
+{
+  "checked_unix": 1788701437.9906437,
+  "checkpoint_and_summary_receipt": "treatments/G20T05.train.completed-integrity.json",
+  "checkpoint_and_summary_receipt_sha256": "c19aa7a31ce276185a3ae021c202270c219ae4180ac42eca80026211db3a5b61",
+  "completed_schedule_receipt": "matched_schedule_completed_G20T05.json",
+  "completed_schedule_receipt_sha256": "5bb8e1173d53c1f300e4b10a45c473c2df2e13e34e4b9ccb5d0005640e3fa0fe",
+  "completed_schedule_elapsed_seconds": 272.4977829559939,
+  "runtime": {
+    "numpy": "1.26.2",
+    "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+    "torch": "2.11.0+cu128"
+  },
+  "verification": {
+    "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+    "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05",
+    "metadata_matches_source": true,
+    "physical_plan_sha256": "d1ad09d9eb1373f5d1dece3742c0d1703b4df686f933303431420502cc2ef192",
+    "staging": "verified actual",
+    "summary_sha256": "9bd74d24ce9a6400528d36229fc3ca3dfde38320390ae2396448039ee984c4b0",
+    "training_completion_verified": true
+  },
+  "sampling": {
+    "mode": "game_epoch",
+    "rows_planned": 18910484,
+    "batches_planned": 36935,
+    "full_batches_planned": 36699,
+    "ragged_batches_planned": 236,
+    "min_batch_rows_planned": 511,
+    "shards": 2309,
+    "sources": 1,
+    "games": 97968,
+    "game_identity": "resolved_shard_parent+game_id",
+    "row_order": "seeded_shuffle_within_shard_game_segments",
+    "batch_size": 512,
+    "seed": 0,
+    "plan_sha256": "d1ad09d9eb1373f5d1dece3742c0d1703b4df686f933303431420502cc2ef192",
+    "plan_workers": 16,
+    "load_workers": 16,
+    "rows_realized": 18910484,
+    "batches_realized": 36935,
+    "same_game_repeats_max": 0,
+    "peak_decoded_rows": 225477,
+    "peak_decoded_shards": 39,
+    "decoded_rows_resident": 0,
+    "realized_sha256": "d1ad09d9eb1373f5d1dece3742c0d1703b4df686f933303431420502cc2ef192",
+    "complete": true
+  },
+  "scope": "Completed trained checkpoint lineage, all staged shard mappings and full ordered game metadata; source-normalized scheduler inputs and realized completion. No full feature/target payload re-audit; row-order equality is a code-backed inference, not banked per-row trace."
+}

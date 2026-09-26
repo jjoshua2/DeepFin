@@ -1,0 +1,28 @@
+{
+  "status": "PREPARED_NOT_EXECUTED",
+  "plan": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/plan.json",
+    "sha256": "4677ddb5a3797d1025d498d44190ae869c8ce84e1d076f8652194d4027383c96",
+    "bytes": 6987
+  },
+  "argv_template": [
+    "/usr/bin/timeout",
+    "--signal=TERM",
+    "--kill-after=30s",
+    "14370s",
+    "/usr/bin/python3.10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/run_registered.py",
+    "--plan-sha256",
+    "4677ddb5a3797d1025d498d44190ae869c8ce84e1d076f8652194d4027383c96",
+    "--deadline",
+    "{outer_start_unix_plus_14400}"
+  ],
+  "deadline": "Substitute one actual outer start+14400 timestamp at launch; no separate lane budgets or reset after waiting.",
+  "environment": {
+    "CUDA_VISIBLE_DEVICES": "",
+    "OMP_NUM_THREADS": "2",
+    "MKL_NUM_THREADS": "2",
+    "OPENBLAS_NUM_THREADS": "2"
+  },
+  "capture": "Parent captures the exact substituted argv, wall-clock start/end and outer exit. run/started.json and resources.txt plus staging/<name>/{started,verified,failed}.json retain helper evidence."
+}

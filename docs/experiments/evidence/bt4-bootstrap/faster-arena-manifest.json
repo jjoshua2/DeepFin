@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "created_utc": "2026-09-08T07:58:35.771650+00:00",
+  "scope": "Completed banked planning/occupancy evidence; no prospective match performance",
+  "files": [
+    {
+      "path": "scratchpad/bt4_joint20/faster_arena_design_v1/recommendation.md",
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/recommendation.md",
+      "sha256": "8d44e3aacc3e7b6046ecbbcee04ad2e8c633f10756f06d73a31292c8f87b2d07",
+      "bytes": 9805
+    },
+    {
+      "path": "scratchpad/bt4_joint20/faster_arena_design_v1/planning_calculations.json",
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/planning_calculations.json",
+      "sha256": "dcc3f085e521548ac83c7ccdbd9e7da80e7f5fae8c288841328a447e5037d893",
+      "bytes": 4444
+    },
+    {
+      "path": "scratchpad/bt4_joint20/faster_arena_design_v1/review.json",
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/review.json",
+      "sha256": "c4868de3d22881af0d91c5597a389a50f78fe2aecd3a83fa39150e1f9d50a527",
+      "bytes": 1492
+    },
+    {
+      "path": "scratchpad/bt4_joint20/faster_arena_design_v1/main_documentation_correction.json",
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/main_documentation_correction.json",
+      "sha256": "d1c82d219e23a6e198e2c1b30801b09ad52a056a92a2dbe717eddafbca261015",
+      "bytes": 376
+    },
+    {
+      "path": "scratchpad/bt4_joint20/match_efficiency_v1/banked_chunk_occupancy.json",
+      "source_path": "scratchpad/bt4_joint20/match_efficiency_v1/banked_chunk_occupancy.json",
+      "sha256": "385833d091dbb712bc90e48f2836ee2fa1f0b32fba9890d2505e5bed52576c62",
+      "bytes": 8656
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/independent_review.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/independent_review.json",
+      "sha256": "f4674d5553c257a675864ed3e04d34af0c2847405dc2bc3fa5ab62e68fbf9348",
+      "bytes": 6447
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/independent_review.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/independent_review.json",
+      "sha256": "60e6bfffe2982324d37391f1ab686106f524b9065c613e41f06f0026fdb1ebd8",
+      "bytes": 8024
+    }
+  ]
+}

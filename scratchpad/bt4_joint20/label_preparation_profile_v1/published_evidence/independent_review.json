@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "status": "PASS_INDEPENDENT_CORRECTNESS_AND_DATA_PARITY_REVIEW",
+  "created_utc": "2026-09-08T03:10:14.070654+00:00",
+  "checkout": "/tmp/deepfin-bt4-legal-reuse",
+  "base_commit": "bb01468b1a0eb0e6a97102e069525911ef04f76a",
+  "candidate_file_sha256": {
+    "scripts/bt4_policy_dump.py": "d6b62559952aee3b0baeeadfdb584aeb9a6fd88b0d2285ab162ee39776be2cf8",
+    "scripts/bt4_raw_corpus_sidecar.py": "6a58dab2deddc8cae3d801ec988d25b4e80c16f530fb3fc3df756440f2748c23",
+    "tests/test_bt4_legal_move_reuse.py": "021e4c4f64f7ce097859e5dbd2042e00769d7cceab330d3435a1d9a98330b9be"
+  },
+  "findings": [],
+  "review_scope": [
+    "Actual26-added/18-removed production diff and new focused tests; helper caller path through raw label_shard and public UCI API.",
+    "Leela gather and independent AZ4672-to-compact1858 scatter unchanged; both converters consume the same unmodified chess.Move objects. Neither mutates Board or Move.",
+    "Complete legal list still enumerated once inside helper; removed expected-set calculation repeated the same compact conversion over the same legal list, not an independent teacher mapping. Duplicate/injective,negative/out-of-range, probability shape/finite/nonnegative/mass and final row checks remain.",
+    "Original nonfinite-logit fill of-1e9, float64 softmax, move ordering and float32 stored policy unchanged. Nonfinite logits were historically converted, not rejected; this patch does not newly relax them.",
+    "Both-color castling, all promotions, both-color en passant, pinned pieces and terminal helpers compared to frozen legacy projection in author fixtures. Terminal helper returns empty; raw writer still refuses its zero-mass distribution.",
+    "Actual label_shard fixture proves all5 stored arrays, their SHA256, entropy/top1/legal-count sums equal legacy projection. Independent subset reran this real publication path plus4 corrupt mapping/shape refusals,2 independent Leela slot cases and terminal helper.",
+    "Adoption trace: remap_provenance binds only3 unchanged REMAP_SOURCES; functional_remap_identity excludes git_head but retains last-remap commit/dirty/blob hashes. Current identity matches two existing raw BT4 source metadata records. validate_existing, pending_shards, verify_shard and adapter have no new edited-writer-hash admission."
+  ],
+  "validation": {
+    "author_focused_cases": 62,
+    "author_log": {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/legal_move_reuse_v1/author_focused_tests.log",
+      "sha256": "d3b19f082836c8769762dc204e0e8cadfae1d9573b44595c22a6a5be127eeb80"
+    },
+    "independent_cases": 8,
+    "independent_record": {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/legal_move_reuse_v1/independent_focused_checks.txt",
+      "sha256": "ae9068dafc09aa2eb5bafea0610e9b9c50388c6fb0e2f33cf2fe41239f28b749"
+    },
+    "adoption_metadata_only": {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/legal_move_reuse_v1/independent_adoption_check.json",
+      "sha256": "d34cc8d437ab93dbcaea03b3c6b068a5d75b7031777b83e4f4c75e61f4c3b4ea"
+    },
+    "author_warning": "Existing forked-descriptor test emits multiprocessing fork-in-multithreaded-process DeprecationWarning; test passed.",
+    "whole_lint": "Author running; not yet a claimed pass in this receipt.",
+    "CPU_benchmark": "Author pending at this review; no speedup or end-to-end throughput claim assessed."
+  },
+  "limitations": [
+    "CPU fixtures and static consumer trace; no ONNX/GPU inference, new real raw labels, corpus scans, active labeler restart or adoption.",
+    "Same labels plus unchanged functional mapping supports compatibility under otherwise identical qualified runtime/model/provider/source settings; future operational adoption must retain those settings.",
+    "Timing/performance and final publication integration separate from this correctness review."
+  ]
+}

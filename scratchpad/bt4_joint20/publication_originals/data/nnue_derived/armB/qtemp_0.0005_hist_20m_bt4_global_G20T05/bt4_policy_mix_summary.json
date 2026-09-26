@@ -1,0 +1,72 @@
+{
+  "admission": {
+    "experiment_record": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run01/preregistration.md",
+      "sha256": "0efd4e6e5217237b90ebeffa33edf400019b02b360258b32233a2e3366bc1565"
+    },
+    "mode": "descriptive"
+  },
+  "algorithm": "legal-normalized-global-arithmetic-v1",
+  "alpha": 0.2,
+  "audit_receipt": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/audit_G20T05.json",
+    "sha256": "20e14a75c113338847a4ebca778a88103ef7759bf85ce69469a40a4429f408c5"
+  },
+  "bt4_temperature": 0.5,
+  "candidate_set_wider_fraction": 0.9305018845630815,
+  "candidate_set_wider_rows": 17596241,
+  "changed_fraction": 0.9936447422498547,
+  "changed_rows": 18790303,
+  "changed_unique_max_rows": 15356377,
+  "completed_utc": "2026-09-06T01:51:56Z",
+  "expected_rows": 18910484,
+  "expected_shards": 2309,
+  "formula": "mixed=(1-alpha)*stored_stockfish+alpha*bt4_raw_one_eval",
+  "kind": "global",
+  "mean_entropy_nats": {
+    "bt4": 2.0525573055367654,
+    "mixed": 0.8944542047093159,
+    "source": 0.5689733823705948
+  },
+  "mean_l1_from_source": 0.1990219911593897,
+  "mixed_bt4_top1_agreement": 0.6353807232009503,
+  "mixed_source_top1_agreement": 0.8488930796271529,
+  "mutated_arrays": [
+    "policy_target"
+  ],
+  "near_max_ratio": null,
+  "rows": 18910484,
+  "schema": 1,
+  "selected_mass_abs_drift": {
+    "max": 0.00041490793228149414,
+    "mean": 0.00010681839689379564,
+    "mean_bound": 0.0009765625,
+    "reference": "normalized_total_legal_mass",
+    "row_bound": 0.0009765625
+  },
+  "sf_cp_window": null,
+  "sf_rank_cap": null,
+  "sf_rank_sidecar_dir": null,
+  "sf_rank_sidecar_summary": null,
+  "shards": 2309,
+  "sidecar_dir": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m",
+  "sidecar_summary": {
+    "path": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json",
+    "sha256": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3"
+  },
+  "source_bt4_top1_agreement": 0.4936922820166845,
+  "source_candidate_multi_fraction": 0.9936491842302926,
+  "source_candidate_multi_rows": 18790387,
+  "source_derive_summary_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+  "source_dir": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+  "source_top_tied_fraction": 0.18159239076059608,
+  "source_top_tied_rows": 3434000,
+  "top1_ge_0_99_fraction": {
+    "mixed": 0.15595491897510397,
+    "source": 0.5938493166013096
+  },
+  "value_columns_unchanged": [
+    "wdl_target",
+    "search_wdl"
+  ]
+}

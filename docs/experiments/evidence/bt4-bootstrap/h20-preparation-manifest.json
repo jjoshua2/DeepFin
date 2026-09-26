@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "scope": "Completed H20 audit and qualification evidence; corpus materialization still running, no training or playing results. Archived host commands and PIDs are provenance, not portable execution instructions.",
+  "captured_unix": 1788818223.2602906,
+  "entries": [
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/audit_H20.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/audit_H20.json",
+      "bytes": 3657526,
+      "sha256": "b4afec2b811634d25768ce41ff5caded2f47ee9e4232922c7b0085e9bf142694"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/audit.status.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/audit.status.json",
+      "bytes": 1997,
+      "sha256": "c35aaca48b963a2be30ce1f3d183cfe689a692b0f83403cffd8e2f60039a4232"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation_plan.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation_plan.json",
+      "bytes": 20450,
+      "sha256": "a43ca32437855afecb296df9b026d8714904b638be90d4bc0c714785294250a2"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/run_preparation.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/run_preparation.py",
+      "bytes": 5027,
+      "sha256": "0bc8cfbbd833432e59065d4486469922435df07d9a58b9459b8eee17e7312140"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md",
+      "bytes": 12266,
+      "sha256": "e7003c65cad50d81fe5d28d4878dc3ddfd342a95248b03edd961564d67fc72f6"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/implementation_review.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/implementation_review.json",
+      "bytes": 6459,
+      "sha256": "302f1abd79a149365bb782bb28720ba26a7f68ee0da5ec225f89b789ab00c091"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/cpu_preparation_independent_review.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/cpu_preparation_independent_review.json",
+      "bytes": 4117,
+      "sha256": "2927d829dccb0128494720759e64c71707d2f9078d676add87afc6c21306603a"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/launcher_validation.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/launcher_validation.json",
+      "bytes": 5215,
+      "sha256": "a64c80154c44e9f1010a57f7be708fb4ba878d4d42eb1a8e516d61c63d3a92ba"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.mixer_author_validation.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.mixer_author_validation.json",
+      "bytes": 4215,
+      "sha256": "23606f7e665e709745c023d50d19691691035015a4c48cfa34ca0ad27aeb389f"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/opening_prefix_qualification.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/opening_prefix_qualification.json",
+      "bytes": 747,
+      "sha256": "ec18c330e4790dc8dc2fd1d40df5f694cf35e86937fa0c67b2686201a4365fab"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_experiment_options.md",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_experiment_options.md",
+      "bytes": 4651,
+      "sha256": "c181ff335effc7e649b39c96ccd5d2ffdcc72d081ad8c60ad388e8099e3231e1"
+    }
+  ]
+}

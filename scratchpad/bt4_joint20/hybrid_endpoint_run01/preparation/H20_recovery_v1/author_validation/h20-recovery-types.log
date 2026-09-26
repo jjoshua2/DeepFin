@@ -1,0 +1,29 @@
+/tmp/deepfin-h20-recovery/scripts/bt4_policy_mix.py
+  /tmp/deepfin-h20-recovery/scripts/bt4_policy_mix.py:2566:44 - error: No overloads for "__init__" match the provided arguments (reportCallIssue)
+  /tmp/deepfin-h20-recovery/scripts/bt4_policy_mix.py:2566:49 - error: Argument of type "int | Any | str | float | dict[str, str] | dict[str, str | None] | dict[str, Any] | dict[str, float] | dict[str, str | float] | list[str] | None" cannot be assigned to parameter "iterable" of type "Iterable[list[bytes]]" in function "__init__"
+    Type "int | Any | str | float | dict[str, str] | dict[str, str | None] | dict[str, Any] | dict[str, float] | dict[str, str | float] | list[str] | None" is not assignable to type "Iterable[list[bytes]]"
+      "float" is incompatible with protocol "Iterable[list[bytes]]"
+        "__iter__" is not present (reportArgumentType)
+  /tmp/deepfin-h20-recovery/scripts/bt4_policy_mix.py:2570:13 - error: No overloads for "update" match the provided arguments (reportCallIssue)
+  /tmp/deepfin-h20-recovery/scripts/bt4_policy_mix.py:2570:50 - error: Cannot access attribute "update" for class "int"
+    Attribute "update" is unknown (reportAttributeAccessIssue)
+  /tmp/deepfin-h20-recovery/scripts/bt4_policy_mix.py:2570:50 - error: Cannot access attribute "update" for class "str"
+    Attribute "update" is unknown (reportAttributeAccessIssue)
+  /tmp/deepfin-h20-recovery/scripts/bt4_policy_mix.py:2570:50 - error: Cannot access attribute "update" for class "float"
+    Attribute "update" is unknown (reportAttributeAccessIssue)
+  /tmp/deepfin-h20-recovery/scripts/bt4_policy_mix.py:2570:50 - error: "update" is not a known attribute of "None" (reportOptionalMemberAccess)
+  /tmp/deepfin-h20-recovery/scripts/bt4_policy_mix.py:2570:50 - error: Cannot access attribute "update" for class "list[str]"
+    Attribute "update" is unknown (reportAttributeAccessIssue)
+  /tmp/deepfin-h20-recovery/scripts/bt4_policy_mix.py:2571:17 - error: Argument of type "dict[str, str | None]" cannot be assigned to parameter "m" of type "Iterable[tuple[str, str | float]]" in function "update"
+    "Literal['mean']" is not assignable to "tuple[str, str | float]"
+    "Literal['max']" is not assignable to "tuple[str, str | float]"
+    "Literal['qualification']" is not assignable to "tuple[str, str | float]" (reportArgumentType)
+  /tmp/deepfin-h20-recovery/scripts/bt4_policy_mix.py:2571:17 - error: Argument of type "dict[str, str | None]" cannot be assigned to parameter "m" of type "Iterable[tuple[str, float]]" in function "update"
+    "Literal['mean']" is not assignable to "tuple[str, float]"
+    "Literal['max']" is not assignable to "tuple[str, float]"
+    "Literal['qualification']" is not assignable to "tuple[str, float]" (reportArgumentType)
+  /tmp/deepfin-h20-recovery/scripts/bt4_policy_mix.py:2571:17 - error: Argument of type "dict[str, str | None]" cannot be assigned to parameter "m" of type "Iterable[tuple[str, str]]" in function "update"
+    "Literal['mean']" is not assignable to "tuple[str, str]"
+    "Literal['max']" is not assignable to "tuple[str, str]"
+    "Literal['qualification']" is not assignable to "tuple[str, str]" (reportArgumentType)
+11 errors, 0 warnings, 0 notes

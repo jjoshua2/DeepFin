@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "status": "REGISTERED_NOT_LAUNCHED",
+  "registered_utc": "2026-09-08T07:29:20.937381+00:00",
+  "metadata_snapshot_sha256": "96c9f24be024e39b7300f55646c3aff9c99e514be7e76073f66afab703823d76",
+  "preregistration_sha256": "957a3b6fae06f4f621f001d4e61e9880cf89d6ecbb78562b88183c9bc4f14779",
+  "raw_rows": 1062946,
+  "shards": 128,
+  "max_concurrent_sources": 2,
+  "expected_survivors": null,
+  "derive_options": {
+    "scheme": "uniform-d9",
+    "policy_observation": "phase0",
+    "value_observation": "latest-phase",
+    "value_scheme": "search",
+    "temp": 0.0005,
+    "floor": 0,
+    "seed": 0,
+    "rows_per_shard": 8192,
+    "workers": 2,
+    "row_provenance": true
+  },
+  "limits": {
+    "wall_seconds_including_kill": 14400,
+    "numeric_threads": 2,
+    "nice": 19,
+    "ionice_class": 3,
+    "CUDA_VISIBLE_DEVICES": "",
+    "new_output_cache_bytes": 8589934592,
+    "minimum_free_bytes": 161061273600,
+    "adapter_index_cache_bytes": 67108864,
+    "rank_index_cache_bytes": 67108864
+  },
+  "intended_cpu_affinities": {
+    "run06_g10": [
+      0,
+      1
+    ],
+    "run07_g10_companion4": [
+      2,
+      3
+    ]
+  },
+  "preceding_jobs_must_be_preserved": {
+    "B100_supervisor_pid": 301740,
+    "B100_mixer_pid": 304973,
+    "G10_increment_supervisor_pid": 312086,
+    "G10_increment_timeout_pid": 312101
+  },
+  "runtime_and_runner_binding": "Pending final reviewed reusable runner; metadata readiness does not authorize a guessed executable manifest."
+}

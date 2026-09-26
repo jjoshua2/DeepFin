@@ -1,0 +1,41 @@
+{
+  "status": "PUBLISHED_DESCRIPTIVE_EVIDENCE",
+  "rows": 128,
+  "teacher_models": {
+    "BT4_winner": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+    "Ceres_C3_768_30_pre8_I8": "44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3"
+  },
+  "files": {
+    "collector-source.txt": {
+      "bytes": 14774,
+      "sha256": "28f772e58355fccbf208481ff6ed9acc52ed375921a25482b90453890d913e0d"
+    },
+    "derived-input-equivalence.json": {
+      "bytes": 2377,
+      "sha256": "6370067a1bcbf8791b54049b8839b900c81a71e0e65dd0478322ecd9d604db28"
+    },
+    "matched-inputs.npz": {
+      "bytes": 154226,
+      "sha256": "57abe2fb02a5b8530c08d89dc72b70b93437238cfedf565646fd033920ad629f"
+    },
+    "matched-value-readout.json": {
+      "bytes": 14150,
+      "sha256": "d09ecc4227ab2eabca7a5bc4d30ef7d97269d0ead8dbe7ea5038e7273b9cb8cc"
+    },
+    "matched-value-rows.json": {
+      "bytes": 174693,
+      "sha256": "740d421764cfe1f4b58f809b16bf6606cdaf523ea0fdb59fe3d20244ea8ed1f5"
+    },
+    "readout-source.txt": {
+      "bytes": 6137,
+      "sha256": "318a545d750bb26cbb4d2d485b061607344412a8a8af628eef8d3a41828838cd"
+    }
+  },
+  "external_receipts": {
+    "plan_sha256": "9b6d0e159b71247056b44c6e7aae86f241fc55433443fdb9d3aaeb48121720fd",
+    "completed_bank_sha256": "eb2a4ed18b936832516f48aa82204dee01bb414d2d4b9e82b2a45f2575a538a3",
+    "independent_readout_review_sha256": "4887b22f547a407d806aba11d42c22f8c2a0198f34bafeed83bf008d06dc125b",
+    "source_equivalence_receipt_sha256": "8f005b9ad8cd70964327c2604c6389776a1ed0b21d369e75151c6cffc654cf4f"
+  },
+  "interpretation": "Rows retain native teacher outputs and separately normalized WDL; full input arrays and SF/outcome targets are included. Ceres logits use independent T1 softmax. Root readout independently checked from native arrays. Runtime/operator details and source receipts remain local; no native-value oracle, calibration or playing-strength claim."
+}

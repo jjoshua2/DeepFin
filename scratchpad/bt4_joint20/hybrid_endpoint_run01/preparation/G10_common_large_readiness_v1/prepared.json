@@ -1,0 +1,26 @@
+{
+  "status": "READINESS_ONLY_NOT_REGISTERED_NOT_LAUNCHED",
+  "metadata": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/metadata_snapshot.json",
+    "sha256": "5a7cb26122a3acdb0025e2af59c9ef5d6982487f17a9e78c904dd62be06ac04c"
+  },
+  "admission": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/metadata_admission.json",
+    "sha256": "4c089c4c8049f2af72c9d38b8dc429140763520214c19a3064e0a2e2149f6997"
+  },
+  "prior_selection_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/prior_selection_review.json",
+    "sha256": "c8b012612430475d95f9f2e706f8f532c706fc8fb5e6d9bed125feb52e066fcd"
+  },
+  "games": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/game_disjointness.json",
+    "sha256": "2f4b3c729a393ddde0df6cd64016687ba63555651d851c886a437dadc8fba6f9"
+  },
+  "resources": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/eligibility_and_resources.json",
+    "sha256": "712378452708d1253fd999984e233cf86e2b04beca3a15c4e4d1863b81edc905"
+  },
+  "rows": 4047239,
+  "shards": 488,
+  "next_steps": "Root selects and registers current Worker01 runtime, omission budgets and launch only after active Worker01 completion and review. Fresh paths are proposals; no output or launch manifest exists."
+}

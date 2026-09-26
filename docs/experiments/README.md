@@ -3,6 +3,7 @@
 Start here for experiment planning and readouts. [Project guidance](../../CLAUDE.md)
 holds durable constraints; [evaluation](../eval_protocol.md) explains which
 measurements support which claims.
+For future bootstrap choices, see the [adaptive decision policy](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#september-13-adaptive-decisions-for-the-remaining-bootstrap-research): registered result classification and the next research decision are separate.
 
 ## Records
 
@@ -11,14 +12,84 @@ measurements support which claims.
 | [Bootstrap research toward RL restart](2026-09-06-bootstrap-research-roadmap.md) | Overall data, mixing, objective and search decisions toward a larger bootstrap and RL restart |
 | [Graded TailRL bootstrap screen](2026-09-06-tailrl-bootstrap.md) | Exact finite-action objective and bounded CPU mechanism comparison; no training or strength result |
 | [TailRL-inspired policy coverage](2026-09-05-tailrl-policy-coverage.md) | Frozen-cohort checkpoint diagnostic and isolated upper-tail loss prototype; no training readout |
+| [Full-width SF d8/d6 generation](2026-09-22-sf-shallow-generation.md) | Two equal-wall CPU generation arms; eligible rows, closed games, startup costs and limits; no strength or root-only generation claim |
+| [Bend subset successor and full ordinal proof](2026-09-21-bend-subset-successor.md) | Actual U64 borrow, compact successor, full Nat-indexed order/coverage/nonduplication and period; affine tables remain separate |
+| [Bend compact-index bijection](2026-09-21-bend-compact-index-bijection.md) | Nine new universal PEXT/PDEP range/inverse/bijection laws; carry-rippler ordering remains separate |
+| [Bend subset source laws](2026-09-21-bend-subset-source-laws.md) | Eight initial production-step laws with negative controls and independent native table checks; full P1 ordering/refinement still open |
+| [Bend-owned native neural leaves](2026-09-21-bend-native-leaf.md) | Actual search inputs and legal priors in Bend, native model execution without Python runtime; CPU fixture only |
+| [Bend policy/input composition](2026-09-21-bend-policy-composition.md) | Recovered Bend policy vocabulary paired with complete input from one Game; no inference or Python runtime |
+| [Bend complete feature inputs](2026-09-20-bend-classical-encoding.md) | Complete 146/175-plane inputs authored in Bend, exact C parity and current U64 compiler; no model/policy execution |
+| [Bend neural history encoding](2026-09-20-bend-history-encoding.md) | Bend-authored 112-plane history/metadata block with exact Python/C comparisons; partial input, no neural inference |
+| [Bend-owned draw rules](2026-09-20-bend-owned-draws.md) | Standalone native history identity and automatic root/leaf draws, no Python runtime; claims/encoding remain separate |
+| [September 20 standalone compiler adoption](2026-09-20-bend-compiler-adoption.md) | Pin the Bend-owned engine to upstream-synced U64 2.0.20; immutable source/cache contract and runtime requalification |
+| [Bend-owned standalone](2026-09-20-bend-standalone.md) | Bend UCI/FEN/history/table/evaluator ownership; static interpreter-free runtime, diagnostic only |
+| [Bend UCI interface](2026-09-20-bend-uci-interface.md) | Opt-in bounded UCI frontend, actual native search/client checks and stop isolation; no full-UCI, GPU or strength claim |
+| [Bend optional claims](2026-09-20-bend-claim-options.md) | Explicit zero-valued claim choice preserving legal continuations; native and host contracts, opt-in only |
+| [Bend search draws](2026-09-19-bend-search-draws.md) | History-aware automatic leaf draws, terminal-zero cache and native backup; optional claims remain separate |
+| [Bend neural play](2026-09-19-bend-neural-play.md) | Native evaluator across played roots, bounded multi-game queue and host draw policy; CPU lifecycle gate, not trained strength or throughput |
+| [Bend root advancement](2026-09-19-bend-root-advancement.md) | Same-process legal play/search, transactional epoch-bound root changes and retained host history; fresh trees, no subtree reuse or GPU claim |
+| [Bend checkpoint preflight and retention](2026-09-18-bend-checkpoint-preflight.md) | Fail-closed readiness, exact-checkpoint package reuse and retained failure evidence; no trained/CUDA execution claim |
+| [Bend checkpoint qualification](2026-09-18-bend-checkpoint-qualification.md) | Explicit checkpoint architecture/weights, native transformer CPU qualification, guarded CUDA BF16 path; no trained/GPU performance claim |
+| [Bend evaluator batching](2026-09-18-bend-evaluator-batching.md) | Bounded cross-search CPU batches, cancellation and epoch isolation; no trained/CUDA or throughput claim |
+| [Bend neural boundary](2026-09-18-bend-neural-boundary.md) | Real history/policy encoding and persistent native CPU AOTI smoke joined to Bend search; untrained TinyNet, no CUDA or production claim |
+| [Bend search sessions](2026-09-18-bend-search-sessions.md) | Persistent bounded Bend PUCT with external test policy/WDL, cancellation/reply validation and reset; CPU functionality gate, no neural or production claim |
+| [Bend scalar branches](2026-09-18-bend-scalar-branches.md) | Profile-guided scalar U64/list selection; allocation mechanism and paired perft confirmation, no production adoption |
+| [Bend perft native baseline](2026-09-18-bend-perft-baseline.md) | Paired old/new Bend versus CBoard, conservative king-safety filter; CPU-only, no production adoption |
+| [Ceres CPU semantics oracle](2026-09-13-ceres-cpu-semantics.md) | CPU oracle complete after comparator-only recovery: 144 histories match bytes; 131 value cases quantify FP16 getter differences, no neural parity claim |
+| [Saved joint raw-label eligibility](2026-09-13-saved-joint-raw-eligibility.md) | 21.40M saved joint-label raw candidates outside covered rosters; 512-shard audit complete: 4,219,426 eligible / 4,249,935 raw rows; 88 exact exclusions qualified; 4,219,426-row / 516-shard derivation launched, no completion or training admission |
+| [Bounded raw scale labels](2026-09-13-bounded-raw-scale-labels.md) | Completed 184 raw shards / 1,527,153 rows in 2638.682s; 12-group limit exhausted; baseline audit complete: 1,517,925 eligible rows, 30 phase-zero support failures and 9,198 no-result drops; exact filtered derivation complete: 1,517,925 rows / 186 derived shards; joint saved-policy/native-WDL adapter complete; B100 materialization complete after a preserved pre-writer command failure; metadata establishes 1,517,925 additional physical-source rows beyond existing 35M; potential 36,832,502-row union remains unadmitted |
+| [Native BT4 value endpoint](2026-09-13-native-bt4-value-endpoint.md) | V100 seed-101 completed 35,314,577 rows / 68,974 updates; actual CPU preparation passed; fixed 512-game / 400-simulation V100-versus-V50 arena launched, no result yet |
+| [Ceres100 policy endpoint preparation](2026-09-13-ceres100-policy-preparation.md) | Pure-Ceres endpoint completed: +2.04 Elo [−22.16, +26.26] versus B100 over 512 games at 400 simulations; unresolved, retain B100 policy |
+| [Ceres materializer batch screen](2026-09-12-ceres-materializer-batch-benchmark.md) | Real 8,192-row outputs identical at 128/512; observed timings confounded by cache/order, no production speedup claim |
+| [Ceres source-read cache](2026-09-12-ceres-source-block-cache.md) | CPU component benchmark: identical batches,1.74s→0.12s reads; future collector cache/timers, no GPU throughput claim |
+| [Small G10 Ceres pilot](2026-09-11-g10-ceres-pilot.md) | 6,130,891 G10 Ceres rows / 751 shards qualified including complete batch-v3 run06; saved consumer qualification, not training admission; science remains first4 only |
+| [Conservative research recovery](2026-09-12-conservative-research-recovery.md) | Guarded SF generation resumed; all 15 remaining native-WDL cohorts completed and qualified within two hours, covering the accepted 16.40M G10 positions; subsequent metadata consumer admission passed |
+| [Saved SF negative constraints](2026-09-11-sf-negative-constraints-screen.md) | Completed 262,079-row SF/BT4 diagnostic: >300cp flagged mass mostly unscored; no blanket T300 promotion or Ceres strength claim |
+| [Saved G10 value pilot and coverage](2026-09-11-g10-value-pilot-and-coverage.md) | 1,574,952 matched saved-SF rows; native BT4 WDL and metadata manifest admission complete for all 16,404,093 accepted common G10 positions; original B100 policy products now complete for all 20 (16,404,093 rows); fixed SF50/native BT4 WDL50 value products now also complete for all 20, including the four-root writer; [combined 35.3M value result supports V50 at +31.30 Elo](2026-09-13-combined35m-value-transfer.md) |
+| [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | Both CeresV25 fixed-400 matches complete: +6.79 Elo vs B100 and +25.83 vs B100V50, intervals include zero; retain B100 incumbent/Ceres alternative; no automatic extra games |
+| [Combined 35.3M value transfer](2026-09-13-combined35m-value-transfer.md) | Completed 512-game/400-simulation comparison: V50 +31.30 Elo [+8.53, +54.34]; provisional 35M value recipe after reviewed read-only recovery |
+| [All-move SF downside candidate](2026-09-12-sf-allmove-downside.md) | Completed 18.91M-row training at 2/2 workers; fixed 400-simulation comparison +17.66 Elo [−17.97, +53.66] versus B100, unresolved; selected G10 phase-zero/provenance pilot completed 8,192 rows in 9.889s, no full rewrite or training selected |
+| [SF tactical guidance for BT4 policy](2026-09-10-bt4-sf-tactical-training.md) | Completed 400-simulation match: tactical recipe −13.6 Elo [−52.4,+24.9]; unresolved, retain B100 |
+| [Deeper SF value census](2026-09-11-deeper-sf-value-census.md) | Complete: saved SF values pass label-change thresholds; 3,247 single-move exclusions and two malformed rosters explained; opt-in selector selected, no strength claim |
+| [Saved adaptive SF value selector](2026-09-11-adaptive-sf-value-selector.md) | Opt-in deriver implementation and independent review passed; no real-corpus rewrite or training result |
+| [BT4 target temperature and horizon: results](2026-09-10-bt4-target-temperature-horizon-results.md) | Complete: all three fixed deep matches; relative horizon change +5.664 points [−2.734, +13.867], direction and placement unresolved; [registration record](2026-09-09-bt4-target-temperature-horizon.md) retained |
+| [B100 search-prior calibration](2026-09-09-b100-prior-calibration.md) | Complete: 0.7 versus 1.0 gives +16.30 Elo [−20.83, +53.80]; no follow-up selected, common prior 1.0 retained |
+| [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Ongoing SSD-to-external transfer and verified reclamation for 100M; G20T1/G20T05/G50T05 reclamation complete; run04/run05 external copies verified and 870 closed shards reclaimed; metadata and unlisted tails retained; legacy E0 archive verified and 2,309 cold shard directories reclaimed; Tactical100 archive verified and 2,309 exact shards reclaimed; both summaries/checkpoints retained; Downside300 archive verified and 2,309 exact shards reclaimed; root summaries and all experiment artifacts retained; Ceres100 external copy verified and 2309 exact shards reclaimed, both summaries and all checkpoints retained; SoftSF10 archive verified and exact 2,309 shards reclaimed with both summaries retained; H20T05 copy-only archive launched, source retained and verification pending |
+| [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | Full 18.91M WDL bank and V50 training complete; V50 arena started, no playing result |
+| [B100 tactical policy readiness](2026-09-08-b100-tactical-policy-readiness.md) | Producer/admission merged; corrected bounded preparation independently reviewed; V50-first schedule, no tactical rewrite/training |
+| [Next value and policy contrasts](2026-09-08-bootstrap-next-value-and-policy-contrasts.md) | September 13 adaptive decision policy: retain registered result labels; estimates, uncertainty, mechanism and cost guide further tests or provisional use; V100 remains selected |
+| [SF-anchored value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) | Matched 128-row WDL diagnostic complete; B100V50 is the first value contrast |
+| [Ceres teacher readiness](2026-09-08-ceres-teacher-readiness.md) | C3 CPU/sample evidence retained; approximate fixed32 policy + primary-value collector implemented, 8,192-row integrated cost pilot prepared, not launched |
+| [Faster recipe matches](2026-09-08-faster-recipe-matches.md) | First prospective SPRT plus fixed deep probe completed in46m35s; speculative scheduling bottleneck identified; no controlled speedup claim |
+| [BT4 adapter identity collection](2026-09-08-bt4-adapter-single-pass.md) | Exact identity parity and 34.1% CPU component reduction in one closed-shard pair; full-pipeline benefit unmeasured |
+| [Qualified Soft-SF training sample](2026-09-08-soft-sf-qualified-training-sample.md) | Complete: SoftSF10 loses first-look low SPRT and fixed400 probe (−162.99 Elo); no clear depth recovery |
+| [BT4 target geometry](2026-09-08-bt4-target-geometry.md) | Fixed 128-row training sample: C support/maxima and raw-cp controls; no temperature or strength selection |
+| [BT4 raw-label legal-move reuse](2026-09-07-bt4-label-legal-reuse.md) | Exact policy parity; first optimized group completed 132,467 rows, throughput descriptive only |
+| [G10 adapter/rank overlap](2026-09-08-g10-stage-overlap.md) | Adopted in Worker01 attempt; cache failure, no measured speedup |
+| [G10 qualified inventory](2026-09-11-g10-qualified-inventory.md) | 16,404,093 accepted common-input rows; native WDL coverage remains separate; transfer training/strength unestablished |
+| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | Historical preparation and alignment protocol; later inventory linked above |
+| [G50 versus B100 policy dose](2026-09-08-bt4-g50-b100-dose-comparison.md) | Complete: G50 loses shallow SPRT and fixed deep comparison (−50.57 Elo); B100 retained, depth interaction unresolved |
+| [Pure BT4 policy endpoint](2026-09-08-bt4-pure-policy-endpoint.md) | B100 beats H20: shallow H1, deep +46.42 Elo [11.23,82.58]; search interaction unresolved, same-seed development |
+| [Bootstrap training-horizon readiness](2026-09-08-bootstrap-training-horizon-readiness.md) | CPU and bounded compiled-CUDA checks passed; full SF/B100 planner passed; training comparison not launched |
+| [BT4 hybrid and global endpoints](2026-09-07-bt4-hybrid-endpoints.md) | H20 package complete: C100 +45.07, G100 +85.78, C400 +34.86 Elo; aligned search interaction unresolved; no promotion |
+| [External archive and restore record](2026-09-07-storage-archive.md) | 38 verified archives, qualified local cleanup, retained dependencies and restore instructions |
+| [Fresh paired BT4 confirmation](2026-09-07-bt4-fresh-confirmation.md) | Completed fresh seed-one comparison: C beats E by 37.67 Elo [18.72, 56.85] at 100 sims |
+| [Direct SF-close versus global sharpened BT4](2026-09-06-bt4-direct-close-global.md) | Completed 100-simulation comparison favors C over G20T05 |
+| [Sharpened stored SF top ties versus SF-close](2026-09-06-bt4-sharpened-ties-screen.md) | Completed E0T05 seed-zero epoch and direct 100-simulation screen favoring C20T05 |
+| [BT4 bootstrap results](2026-09-06-bt4-bootstrap-results.md) | Completed screens and confirmation; C is the selected next-stage baseline |
+| [50% sharpened global BT4 preparation](2026-09-06-bt4-global-dose50-preparation.md) | Reviewed CPU target preparation for a larger teacher dose; no training or matches queued |
 | [Global BT4 mixing and search scaling](2026-09-05-bt4-global-search-scaling.md) | Matched SF control, full-distribution mixtures and 25/100/400-simulation playing screen |
 | [BT4 near-tie policy targets](2026-09-05-bt4-joint-targets.md) | Superseded six-arm plan and completed control diagnostic |
 | [Varying-horizon online controller](varying_horizon_online_controller.md) | Preregistration and staged evaluation of online search continuation |
 | [Value head architecture](value_head_arch.md) | Historical April 2026 experiments |
 | [Historical ledger](../experiment_ledger.md) | Frozen July–September 2026 record, including yardsticks, gotchas and recovery snapshots |
+| [BT4 complete pipeline screen](2026-09-21-bt4-pipeline-benchmark.md) | Fixed ABCCBA batch128 projected-decoder/prefetch comparison; exact inputs and outputs, complete labeling plus verification, reviewed and queued after factorial matches |
 
 These descriptions identify the records, not the state of a running experiment.
 Check subsequent readouts and the actual process/artifacts before resuming work.
+
+The [BT4 evidence catalog](evidence/bt4-bootstrap/README.md) provides published
+registrations, machine-readable readouts, game banks and provenance receipts.
 
 ## New experiments and follow-ups
 
@@ -30,8 +101,11 @@ linking the original evidence; do not append to the frozen ledger.
 Include the hypothesis, baseline/control, realized settings and revision, deciding
 command/threshold, uncertainty method, budget, horizon, confounds, artifact identities
 and recovery plan. Add the readout against the precommitted rule, with its limits and
-next decision. Keep raw observations outside git where appropriate and preserve enough
-provenance to reinterpret them without rerunning the experiment.
+next decision. Publish compact supporting evidence with the record: realized settings,
+readouts, review receipts and manageable game banks, with a source/hash manifest.
+Keep large corpora, checkpoints and transient logs external and document their
+identities and retrieval or restore locations. Historical absolute paths inside
+frozen evidence are provenance, not portable command defaults.
 
 ## Finding prior evidence
 
@@ -51,3 +125,7 @@ For durable knowledge, use [model heads](../model_heads.md),
 [the loop audit](../rl_loop_audit.md) and [operations](../operations.md), following their
 links to supporting experiments. The `experiment-readout` Skill covers the reusable
 analysis workflow.
+
+- [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
+
+- [Bounded owning ring and calibrated collection comparison](2026-09-23-bend-owning-collections.md): Search.Tree payloads, layout failure/workaround, and matched-work timings; no scheduler adoption.

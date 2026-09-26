@@ -1,0 +1,70 @@
+{
+  "bank_sha256": "e9bafbc59a65314727b8e5ed783d2ede7f199fd8ebebc8ba2b1d8ec0bd6c3f1e",
+  "blockers": [],
+  "checked_utc": "2026-09-06T08:54:05.658237+00:00",
+  "checkpoint_sha256": {
+    "candidate": "e94b5dc53d55d7fdb119b214f0b59ccc79a7963f933124d3e1f731478bb32b6d",
+    "reference": "b41a5614bae5bf67cb32916c4ace8d26db27fd9152b7c496be40427424b08fb8"
+  },
+  "closed_charges": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.1788681859907069204.gpu-charge.json",
+      "seconds": 2725.2366457690005,
+      "sha256": "c6fa752d43f405dd53ffdf1cbe78beb1723389decafbd394caec47684f28de9c"
+    }
+  ],
+  "completion_receipt_sha256": "5c5edef66a0fdf7db3f46272794839ca79794cf2e2f4171694736ef11943c72b",
+  "cpu_affinity": [
+    0,
+    1
+  ],
+  "interpretation": "Primary nominal95% Elo lower bound is positive: promising against S0 under the preregistered rule. This is not recipe promotion.",
+  "limitations": [
+    "Nominal exploratory intervals without family-wise adjustment.",
+    "Higher-budget result remains unread; no search-scaling conclusion.",
+    "Separate S0 comparisons are not direct G20T1-versus-E0 head-to-head Elo.",
+    "No unrelated corpus/runtime audit was repeated."
+  ],
+  "manifest_sha256": "64b45d136d7dd08c59791e14714c6cf2605ddd676cb538e478946ff814994132",
+  "method": "Independent stdlib PGN-result/color score; normalized score per opening pair; sample variance across500pairs; mean +/-1.96SE and400log10(p/(1-p)) Elo transform. No producer/readout estimator imports.",
+  "next_action": "Continue400sim and all sharpened-global/SF-close cells, then independent-seed/fresh-opening confirmation. No optional stopping or queue changes.",
+  "parent_readout_match": true,
+  "parent_readout_sha256": "db028a8375e38be7673b10f9b263d7310f6f23790127e5a7bb3030b9b51d30cc",
+  "previous25_review_sha256": "914b6074630938ac6ee14d9618f594da820481b4c672271596ad08077ab88bc9",
+  "protocol_receipt_sha256": "44626befbe69c57c5b518acbf8702fdb7ff1156866f531b3ad943a5283457525",
+  "reproducer_path": "/tmp/deepfin-g20t1-primary-independent-review.py",
+  "reproducer_sha256": "c1d1eeb5bd4a3c1b303d9331fb53cf91323d7b233d020fb2c21e8254b3311e43",
+  "result_primary100": {
+    "WDL": [
+      344,
+      478,
+      178
+    ],
+    "elo": 58.21299991410259,
+    "elo_ci95": [
+      42.693123349264674,
+      73.96666700374251
+    ],
+    "games": 1000,
+    "pairs": 500,
+    "pentanomial": {
+      "DD_WL": 173,
+      "LD_DL": 90,
+      "LL": 14,
+      "WD_DW": 162,
+      "WW": 61
+    },
+    "score": 0.583,
+    "score_ci95": [
+      0.5611329569822373,
+      0.6048670430177626
+    ],
+    "score_se": 0.011156654600899301,
+    "terminations": {
+      "max_plies": 44,
+      "rules": 956
+    },
+    "verdict": "SUCCESS"
+  },
+  "scope": "New completed G20T1:100 primary comparison against S0 and cross-budget opening/header alignment with already reviewed25. No400 results read."
+}

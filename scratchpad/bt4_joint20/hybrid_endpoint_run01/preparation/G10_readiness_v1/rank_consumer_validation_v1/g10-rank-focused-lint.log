@@ -1,0 +1,22 @@
+
+::: running lint tools in parallel
+
+::: ruff check
+RUF043 Pattern passed to `match=` contains metacharacters but is neither escaped nor raw
+   --> tests/test_sf_d9_rank_sidecar.py:261:42
+    |
+259 |     (derived / tool.DERIVE_SUMMARY).write_text(json.dumps(summary))
+260 |     out = tmp_path / 'bad_ranks'
+261 |     with pytest.raises(ValueError, match='identity mismatch|another raw source|duplicate'):
+    |                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+262 |         tool.main(_rank_args(source, derived, out))
+263 |     assert not out.exists()
+    |
+help: Use a raw string or `re.escape()` to make the intention explicit
+
+Found 1 error.
+
+::: basedpyright
+0 errors, 0 warnings, 0 notes
+
+::: vulture (dead code, min confidence 80)

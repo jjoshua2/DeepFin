@@ -1,0 +1,497 @@
+{
+  "schema": 1,
+  "recorded_unix": 1788774288.7573187,
+  "scope": "Historical compact archive and separately qualified retirement evidence; no payloads, source inventories, mutable runtime tools or credentials",
+  "archive_receipts": 38,
+  "archived_bytes": 85320079360,
+  "artifacts": [
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/completed.json",
+      "published_path": "scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/completed.json",
+      "bytes": 24468,
+      "sha256": "cafc5f01c1a653f5ac9acb4135c6d48b5c6279404a3e484f34cc61a8062ab6c4",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/independent_review.json",
+      "published_path": "scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/independent_review.json",
+      "bytes": 3798,
+      "sha256": "a34f253efefe185aa852e25e73841cbfa91df171de66515e0e1ffbf648e01c6e",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/archive_completion.json",
+      "published_path": "scratchpad/storage_audit_20260906/archive_completion.json",
+      "bytes": 840,
+      "sha256": "fdb188c02229fd18aed14e6c199525f7e67ba05a18263d53df96970d2e968760",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/independent_review.json",
+      "published_path": "scratchpad/storage_audit_20260906/hardlink_copy_v1/independent_review.json",
+      "bytes": 5582,
+      "sha256": "61f524d99fdd3989e4829cddcebe22edf61852130920f020fe2166918a0d67c1",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/plan.json",
+      "published_path": "scratchpad/storage_audit_20260906/hardlink_copy_v1/plan.json",
+      "bytes": 1362,
+      "sha256": "1b224dfe8497060989e2678ed993dfdd5beb87e33e2daf8f32f0c3132f119794",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/qualification.json",
+      "published_path": "scratchpad/storage_audit_20260906/hardlink_copy_v1/qualification.json",
+      "bytes": 3734,
+      "sha256": "52e372639d4ab5ed04c2d9c3c05771700185fc7b7c2347f85e404e838c76b57b",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/staging/recover_ckpt751_20260711/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/hardlink_copy_v1/staging/recover_ckpt751_20260711/verified.json",
+      "bytes": 2538,
+      "sha256": "8abd4fea2bf0039a5c25fc3f0fcdd89fd91d27184bb5a0404e0dc051674c0c4a",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/staging/scaleup_512x16_window_20260707/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/hardlink_copy_v1/staging/scaleup_512x16_window_20260707/verified.json",
+      "bytes": 2580,
+      "sha256": "4c77c64b61fb4db85db3d509980c334015488b1c515e931e003a2e1e644cd1f3",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/hardlink_copy_v1/staging/swap_512x16_20260711/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/hardlink_copy_v1/staging/swap_512x16_20260711/verified.json",
+      "bytes": 2508,
+      "sha256": "aa7767325828a01cefe6680d5c2e9662a650d1b2aa9f9841b7938fc3a4572c88",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/bt4heads_iter112_20260817.completed.json",
+      "published_path": "scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/bt4heads_iter112_20260817.completed.json",
+      "bytes": 873,
+      "sha256": "c8b674adc0b88cda68f498f9ccb953606cb61458c080c31538a02cadf82ab838",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/f_only_midpoint_20260818.completed.json",
+      "published_path": "scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/f_only_midpoint_20260818.completed.json",
+      "bytes": 869,
+      "sha256": "5a6acdde36b3506056dd2f7f68dfcebb93cf873d42b7a5606a2330ee5659af3d",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/independent_review.json",
+      "published_path": "scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/independent_review.json",
+      "bytes": 4971,
+      "sha256": "d3f0c637a4bb5536bd725481bd56f84f15391b496e0c0f15618d01a648b21cf9",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/parent_completion_observation.json",
+      "published_path": "scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/parent_completion_observation.json",
+      "bytes": 5295,
+      "sha256": "6f4a72b7ebbb1adcb5789b0f5bd6882573cf242ec336c190dd9e2cfe74e9f407",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/plan.json",
+      "published_path": "scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/plan.json",
+      "bytes": 15113,
+      "sha256": "12c67cc7dbe82d4e1dc8948c23da80f865a11d43cdf3b6d9e70a621d86283694",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/post_quarantine_20260801.completed.json",
+      "published_path": "scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/post_quarantine_20260801.completed.json",
+      "bytes": 869,
+      "sha256": "1ea680a94535ab08d17c91331095813c2c277e386656502beecb20843f8f8b41",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_abandonfix_20260724.completed.json",
+      "published_path": "scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_abandonfix_20260724.completed.json",
+      "bytes": 865,
+      "sha256": "5110072177a0b4f1c9d86e31363a63f032c01ba128aee3d606527e90605060f4",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_aot_deploy_20260714.completed.json",
+      "published_path": "scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_aot_deploy_20260714.completed.json",
+      "bytes": 864,
+      "sha256": "0b3f4aa72b490f79b587bc15d58746a1e195ad637d3421b80639dfdb9602540c",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_audit_window_20260726.completed.json",
+      "published_path": "scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_audit_window_20260726.completed.json",
+      "bytes": 873,
+      "sha256": "0b1310d7e8c46c67a59004a045136e3407c5e486aff28d538f40ab24b7facc2c",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_durable_deploy_20260726.completed.json",
+      "published_path": "scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_durable_deploy_20260726.completed.json",
+      "bytes": 880,
+      "sha256": "ce90f309bfdb91b72369fbf0819c7847470e5e226dad3c88ef9a6195bcb0647e",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_lc0_control_20260819.completed.json",
+      "published_path": "scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_lc0_control_20260819.completed.json",
+      "bytes": 869,
+      "sha256": "1ddb5b19df924e7f76d417c66b726233bcf9f9cc3b0a53125492edbf3c457fa7",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_mainmerge_20260810.completed.json",
+      "published_path": "scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/pre_mainmerge_20260810.completed.json",
+      "bytes": 861,
+      "sha256": "9ca751fea75db35ee2201155531601ef22060d9f9c02f767236b51fc57f20603",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/linked_pool_dependencies.json",
+      "published_path": "scratchpad/storage_audit_20260906/linked_pool_dependencies.json",
+      "bytes": 700,
+      "sha256": "1f9a7e5065562e30dd7cc3134dcc8830929fcb73a8d5ffb12704faeda9bda027",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/pilot_removal_review.json",
+      "published_path": "scratchpad/storage_audit_20260906/pilot_removal_review.json",
+      "bytes": 3746,
+      "sha256": "04a1984e93683db7ed5f6d83d3760ada1e7311e2fcee9ec93ca5ffa195d15a84",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/pilot_retired.json",
+      "published_path": "scratchpad/storage_audit_20260906/pilot_retired.json",
+      "bytes": 607,
+      "sha256": "ad856e7aa058117a2b3d9a4b43b4e26583c6aa34582711f95189ebe749adb07a",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/pilot_verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/pilot_verified.json",
+      "bytes": 8273,
+      "sha256": "cdb29b313779c22621b77364d68935dde0233c6cf1612f6fb63cf72ece553966",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/small_checkpoint_cleanup_v1/apf_endpoint_checkpoint_000297_20260818.completed.json",
+      "published_path": "scratchpad/storage_audit_20260906/small_checkpoint_cleanup_v1/apf_endpoint_checkpoint_000297_20260818.completed.json",
+      "bytes": 19704,
+      "sha256": "4e4e39a67483c59696da1f9b8ac9e56f17d65daffb4295ccad963263d67b9218",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/small_checkpoint_cleanup_v1/f_only_readout_iter487_20260819.completed.json",
+      "published_path": "scratchpad/storage_audit_20260906/small_checkpoint_cleanup_v1/f_only_readout_iter487_20260819.completed.json",
+      "bytes": 16189,
+      "sha256": "a88a4a381788799e386495c02f787d258203eaeafc23ae6b66266a257927b9c7",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/small_checkpoint_cleanup_v1/independent_review.json",
+      "published_path": "scratchpad/storage_audit_20260906/small_checkpoint_cleanup_v1/independent_review.json",
+      "bytes": 6024,
+      "sha256": "c6cac2cac5e248a515b4a3a17c51a6baf3d90f3a8fd53279b489318f13fe89e9",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/small_checkpoint_cleanup_v1/iter118_pre_value_easy_drop.completed.json",
+      "published_path": "scratchpad/storage_audit_20260906/small_checkpoint_cleanup_v1/iter118_pre_value_easy_drop.completed.json",
+      "bytes": 15691,
+      "sha256": "fde5e58180b46bc559091a824785be5a8c5160e778b1408c3139b2cddb2273e8",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/ANCHOR_20260727_preC17_step65475_lr3e-5/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/ANCHOR_20260727_preC17_step65475_lr3e-5/verified.json",
+      "bytes": 2507,
+      "sha256": "07d1c56bfe0e3d9769938264d1f2d68b0756cb623c1686afe8bdbfeefc81e8ef",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/apf_endpoint_checkpoint_000297_20260818/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/apf_endpoint_checkpoint_000297_20260818/verified.json",
+      "bytes": 2507,
+      "sha256": "0acb580a916e278acce3e48eab496686f2535b76c2db7decf6066c106ec474f4",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/bt4heads_iter112_20260817/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/bt4heads_iter112_20260817/verified.json",
+      "bytes": 2420,
+      "sha256": "0a861bf575dea7689ab7f063adc78983ff4958ba991fe2a446ce14318e99e489",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/f_only_midpoint_20260818/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/f_only_midpoint_20260818/verified.json",
+      "bytes": 2412,
+      "sha256": "31e04c73bab886623130c491df142f5308cbe59bfcc756ece6fd79debe1c9f56",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/f_only_readout_iter487_20260819/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/f_only_readout_iter487_20260819/verified.json",
+      "bytes": 2449,
+      "sha256": "c975307723f64db61c1f10c0f2de955fdc84a23b37e0b20c29a3c58dd4a6d94d",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/iter118_pre_value_easy_drop/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/iter118_pre_value_easy_drop/verified.json",
+      "bytes": 2420,
+      "sha256": "1d89fb84ed0e6bed1f0947c03c3516a1388e82d780d704b3002118c90ee96fb6",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/post_quarantine_20260801/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/post_quarantine_20260801/verified.json",
+      "bytes": 2413,
+      "sha256": "7bfa87d571df1e7c177eea1077a86a864f538ae4423a9c333415a2d965fa4a43",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_abandonfix_20260724/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_abandonfix_20260724/verified.json",
+      "bytes": 2406,
+      "sha256": "f7875a24b4a63f9d408a7be5ed26f81d3b9f6da646e618a40e5f17807f080339",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_aot_deploy_20260714/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_aot_deploy_20260714/verified.json",
+      "bytes": 2406,
+      "sha256": "5644adaafd6396f0c150a4d5eb9e53c6603a74f0e579364f6f226bd8dbafd6d8",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_audit_window_20260726/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_audit_window_20260726/verified.json",
+      "bytes": 2420,
+      "sha256": "f2139f6ac351c0bd9f9a494396d32c1eb4babd1f031d7d00ffcaa848ca811107",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_batching_20260727/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_batching_20260727/verified.json",
+      "bytes": 2380,
+      "sha256": "3d862b1bed154e138ee08e7addf27a1920429b6bd96530b68996a28b4d887ab5",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_bundle_20260727/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_bundle_20260727/verified.json",
+      "bytes": 2367,
+      "sha256": "999c8ea2d5c21a43715cfa34d921b66ecd0d94d510a1bdc9e65631efe8b978d5",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_dole_ckpt686_20260708/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_dole_ckpt686_20260708/verified.json",
+      "bytes": 2407,
+      "sha256": "365c76e197c0ed58a40239c1ab406fafebdfdcb421d29e25ff206cc3cadb51f9",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_durable_deploy_20260726/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_durable_deploy_20260726/verified.json",
+      "bytes": 2434,
+      "sha256": "62929db451d2e1df205e9e4207e25a92639922f84f7bfca896def83ca42bfb41",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_lc0_control_20260819/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_lc0_control_20260819/verified.json",
+      "bytes": 2410,
+      "sha256": "b4757f9620d5a3355b068b87bcfc344bdd30f6f9d47f32d628def4abc53a78a1",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_mainmerge_20260810/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_mainmerge_20260810/verified.json",
+      "bytes": 2399,
+      "sha256": "315305a224e353861d810c6a9a169737f61799547333299a01c0c30747a290e4",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_offline_pause_20260728/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_offline_pause_20260728/verified.json",
+      "bytes": 2415,
+      "sha256": "fec8f208007eb62547ef0392db829bdacb66ca5d1150a8b3476b12fddccd47f4",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_pairing_20260819/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_pairing_20260819/verified.json",
+      "bytes": 2385,
+      "sha256": "baab9550fb73fc24c0f32111d501aff2dabfca82f856f1b79b25b7c0f035706d",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_policy_adapter_20260812/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_policy_adapter_20260812/verified.json",
+      "bytes": 2434,
+      "sha256": "3b77cdaf90db6ae8248af5701f863fa459aa7cb8f58c311d47db099b1e7f6ff1",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_restart_20260730/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_restart_20260730/verified.json",
+      "bytes": 2372,
+      "sha256": "78faf3de41f3302514e19af146f9f6e9fea0c24577e53b5faabf4e255b118119",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_restart_20260804/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_restart_20260804/verified.json",
+      "bytes": 2385,
+      "sha256": "2e1b575ae3c907e71b68844b4061d5bd02f5db8bc1a96fbf2cfc25895c92e31c",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_restart_bundle_20260731/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_restart_bundle_20260731/verified.json",
+      "bytes": 2431,
+      "sha256": "80561d7b3c33eb8565a9671885c52bbeee96e0629bbe3ec0601ab0bba2bce0cc",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_search_authority_20260809/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_search_authority_20260809/verified.json",
+      "bytes": 2448,
+      "sha256": "c9588edda81b902555aacd4ec195ffa6723b3f8c22655159b6d2e81ab67b5548",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_seeding_20260730/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_seeding_20260730/verified.json",
+      "bytes": 2373,
+      "sha256": "80faf218d978d542d91950652bad5596c89afc11fad38fd98f8367b7600d1144",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_sf_reallocation_ck148_20260722/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_sf_reallocation_ck148_20260722/verified.json",
+      "bytes": 2482,
+      "sha256": "63477cad3cf10d3154a15e584cb053e28a1d04244bb1d11e960a53a12dfb13b8",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_sf_reallocation_ck148_20260722_v2/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_sf_reallocation_ck148_20260722_v2/verified.json",
+      "bytes": 2504,
+      "sha256": "38a2920dddc07682ca942d2be18c66ff58fbef6dcd2daf24674a703116a5f4de",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_sfp0_restore_20260727/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_sfp0_restore_20260727/verified.json",
+      "bytes": 2409,
+      "sha256": "0b425ed2d29ccdd9e703280b291fb8dd8ae094c579cc6498dfa2e4577e0ffc36",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_sims100_20260812/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_sims100_20260812/verified.json",
+      "bytes": 2384,
+      "sha256": "226e87b01743bca4cdf597cf52bcc6e6aef20e6ff7c99cc1174330d0ae92767f",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_stop_iter190_20260817/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_stop_iter190_20260817/verified.json",
+      "bytes": 2420,
+      "sha256": "e1bcfe957e07878fa2220323cf72f8e645a5c5311339227a6bd6cbc98f8d1a18",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_v2feed_ckpt678_20260708/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_v2feed_ckpt678_20260708/verified.json",
+      "bytes": 2421,
+      "sha256": "cefc00d326bffffde6f32ab0c0e3103c08d319f3b8a42908c1aafc40d6e41d6b",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_views5_20260724/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_views5_20260724/verified.json",
+      "bytes": 2378,
+      "sha256": "6d96f873360287d81e111860e652e0f4f697bce430c92b9efbf97eea1de27fb4",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_zclip65_20260727/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/pre_zclip65_20260727/verified.json",
+      "bytes": 2384,
+      "sha256": "52139623402d972df78b562bae7d0bc0d7defcf2357a4a9400fb41065468e9e3",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/prechange_20260702_ckpt479/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/prechange_20260702_ckpt479/verified.json",
+      "bytes": 2426,
+      "sha256": "c4b386ff5df05600be98bda56430c6e2ff288d567c19068d37c1497ff8be385c",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/sfsl_baseline_iter190_20260817/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/sfsl_baseline_iter190_20260817/verified.json",
+      "bytes": 2457,
+      "sha256": "b8220508b52fe5ef79b87bc4a71cb7fe8e64a0742bf501a0744b685955c3f6bf",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/sfsl_gate_iter231_20260818/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/staging/sfsl_gate_iter231_20260818/verified.json",
+      "bytes": 2428,
+      "sha256": "314f49a0b9f06c2a06f2d5cb8eb3ccf66338512051902cf5945fcbff4f0245f4",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/transfer_status.json",
+      "published_path": "scratchpad/storage_audit_20260906/transfer_status.json",
+      "bytes": 18030,
+      "sha256": "9836872abf06055c0814136688ae9bd7365aec2f0b6ba8c6d3135f6a5fcd3bc8",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/zarr_pilot/cleanup_completed.json",
+      "published_path": "scratchpad/storage_audit_20260906/zarr_pilot/cleanup_completed.json",
+      "bytes": 8111,
+      "sha256": "cd19afe225fd140ed7c2e9275f359a9e35d735ae69ebc374caeaacbb3ab3d67e",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/zarr_pilot/cleanup_independent_review.json",
+      "published_path": "scratchpad/storage_audit_20260906/zarr_pilot/cleanup_independent_review.json",
+      "bytes": 3583,
+      "sha256": "cdd7a8c955341fef35f265f72a63962e47ab20b0deac1cf19b43b6e8162cf8b8",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/zarr_pilot/verified.json",
+      "published_path": "scratchpad/storage_audit_20260906/zarr_pilot/verified.json",
+      "bytes": 642,
+      "sha256": "005dddf06333a3690ec4f5b5bdd27e2a4474b01cdeb28f2bd84c53d6aaacb80d",
+      "kind": "byte_identical_historical_json"
+    },
+    {
+      "original_path": "/mnt/e/chess_archive_20260906/RESTORE.md",
+      "published_path": "scratchpad/storage_audit_20260906/publication_originals/RESTORE.md",
+      "bytes": 2346,
+      "sha256": "4e40f53668c8b04dfb79c6d01e5ce30c4b4c358830c516f45e9f60c3cae9f30f",
+      "kind": "byte_identical_external_restore_instructions"
+    }
+  ],
+  "limits": [
+    "Source archival readback claims are those of the completed pinned receipts; publication did not rehash 79GiB of tar payloads.",
+    "Absolute paths, PIDs, commands and statuses are historical provenance, not portable commands or current process observations.",
+    "Nine-pool allocated bytes and earlier concurrent free-space deltas are different measurements."
+  ]
+}

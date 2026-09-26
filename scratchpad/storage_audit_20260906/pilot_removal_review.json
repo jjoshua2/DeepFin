@@ -1,0 +1,41 @@
+{
+  "status": "PASS_BOUNDED_FIXED_PILOT_REMOVAL_REVIEW",
+  "reviewed_unix": 1788726141.7483315,
+  "source": "/home/josh/projects/chess/data/salvage/DRIFT_20260728_postC17_iter192",
+  "archive": "/mnt/e/chess_backup_20260827/salvage/DRIFT_20260728_postC17_iter192",
+  "reviewed_artifact_sha256": {
+    "verify_pilot.py": "11e446161e418c6e292e7a1717188dfec11c6600435c6421200d4b5182732248",
+    "retire_pilot.py": "6442c70863a183eef2f8cbe1bbd73bbe6bdbb4075af4fbe5730413dde490b799",
+    "pilot_rsync.log": "e79f31945ce7611e4031bf2e2cf87e8dbe24024d0ff5f4b3583c638157681ce8",
+    "pilot_verified.json": "cdb29b313779c22621b77364d68935dde0233c6cf1612f6fb63cf72ece553966"
+  },
+  "scope": "Independent static review of the fixed pilot verifier, stored proof, rsync log, and final removal script. Removal was not executed by this reviewer; no payload hashes were repeated.",
+  "verified_proof_structure": {
+    "regular_files": 11,
+    "descendant_directories": 2,
+    "logical_bytes": 1374992965,
+    "paired_hash_read_bytes": 2749985930,
+    "source_and_archive_regular_file_nlink": 1,
+    "different_source_and_archive_devices": true,
+    "exact_relative_path_and_file_size_alignment": true
+  },
+  "findings": [],
+  "resolved_findings": [
+    "Final script rechecks the external mount, archive directory, and exact archive metadata inventory immediately before deleting the quarantine.",
+    "Final readback requires the source symlink to resolve to an existing directory and uses strict path resolution on both sides."
+  ],
+  "reasoning": [
+    "The verifier reads every regular file from each tree, compares full SHA256, and requires unchanged per-tree inode, device, size, mtime, ctime, link count and block metadata before and after. The proof contains all 11 file hashes and both matching path inventories.",
+    "Removal revalidates both inventories before staging. All regular files in the proof have one hard link, so no known alternate local hard-link consumer is hidden by the path inventory.",
+    "The exact source is renamed to a fixed sibling quarantine; the original path becomes an external archive symlink. Only the quarantine is passed to rmtree. Symlink creation failure attempts rollback; failed subsequent inventory or mount checks preserve quarantine without deletion.",
+    "The post-rename source inventory check preserves descendant identity. A later rmtree failure can leave a partially removed quarantine while the verified external copy remains the recovery source.",
+    "The rsync log reports 11 regular files totaling 1374992965 bytes, already copied with zero transfer bytes; parent observed successful process exit. The independent full-content proof is stronger evidence of equality than the transfer summary alone."
+  ],
+  "execution_conditions_and_limits": [
+    "Execute the reviewed script with normal Python assertion checks enabled, without -O or PYTHONOPTIMIZE; the code uses assertions as its safety gates.",
+    "This is a single-owner fixed-path retirement, not a general concurrent archive collector. It does not lock out future users or mutations; retain the parent-confirmed absence of live pilot consumers and avoid concurrent edits.",
+    "The process check examines host /proc cwd and open-fd path targets. It skips inaccessible processes and does not prove absence of mmap-only or future readers. Parent live-job/config inspection supplies additional scope evidence.",
+    "External availability can change after any pre-deletion check. Access through the preserved source symlink requires /mnt/e to remain mounted; the archive is the surviving copy.",
+    "No deletion or process changes were performed by this reviewer. The review does not authorize retirement of any other salvage directory."
+  ]
+}

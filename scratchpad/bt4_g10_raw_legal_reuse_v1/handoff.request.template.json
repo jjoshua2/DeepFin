@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "purpose": "Graceful PR537 labeler handoff after current old group; no training interruption",
+  "created_utc": "2026-09-08T03:35:36.249338+00:00",
+  "old_driver_pid_observed": 4251,
+  "new_operations_dir": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1",
+  "marker_owner": "PR537-legal-reuse-v1"
+}

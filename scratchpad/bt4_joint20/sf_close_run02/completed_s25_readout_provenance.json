@@ -1,0 +1,22 @@
+{
+  "checked_unix": 1788723431.1556792,
+  "argv": [
+    "/usr/bin/python3",
+    "/tmp/deepfin-bt4-prior-one/scripts/bt4_joint_readout.py",
+    "--profile",
+    "sf-close",
+    "--prior-temperature",
+    "1.0",
+    "--reference",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/checkpoint.pt",
+    "--cell",
+    "C20T05:25=/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.games.jsonl"
+  ],
+  "reader_sha256": "bdb6b2e2a2dc04c087b7ae36628211015aaba50ac96c4110a5f372c56cefd79f",
+  "completion_receipt_sha256": "86fd3402ea63d61cd70f91786c3d797f91419f66afcf369efd0c0db6fe247c68",
+  "game_bank_sha256": "7143d2d508dabb90c04d9527fb3c2d91b4bce711dae94c16ace8aa9058141253",
+  "readout_sha256": "f503ef802628da01cbf3720ef001be7cfcd5f9dfdafc33e558bbdd5fda0f6240",
+  "elapsed_seconds": 3.17488169670105,
+  "stderr": "/home/josh/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.\n  import pynvml  # type: ignore[import]\n",
+  "scope": "Completed s25 cell only; primary s100 and search-scaling contrast remain unread."
+}

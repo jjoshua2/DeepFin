@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "reviewer": "archive_review",
+  "reviewed_unix": 1789137089.9694235,
+  "verdict": "PASS_FOR_BOUNDED_DESCRIPTIVE_DIAGNOSTIC_WITH_SELECTOR_LIMIT",
+  "blocking_findings": [],
+  "reviewed_sha256": {
+    "census.py": "035b97e8ee5d4c8e73687020a8902acfd0fd4a093b6abbd4402ef9856c4eb7e9",
+    "preregistration.json": "0b5cbda7987a4df36abc5158e67a47a3761a7f2060cf9096de42dae78132c3bf",
+    "fixture_checks.py": "690dcf6cece51bfb1858ef3b1ee1879f33dc5f3b5b3b4c713bbf39cd05e721f7",
+    "parent_launch.json": "5ee5330e966ede6e1a4424ae1097184ff08ca033ee88d045204eac5cfa7e696c",
+    "operator_command.json": "1b794a8145bc73e8953b81e89910fadc6271a589e96821f5ea7a93c9eb9c2afa"
+  },
+  "checks": [
+    "Current baseline matches actual RowBank overwrite semantics: last depth block/last duplicate per move, then latest phase carrying that phase0 move at d9, with maximum over the original support. Consumed ambiguity flags exclude paired metrics.",
+    "Adaptive gate comparison matches production banked rank1 minus rank2, threshold10 and observed depth10; strict complete requested d9/d10/d12, unique rank/move rosters, legal support and recorded phase/gate checks exclude malformed and forced-stop rows rather than fallback.",
+    "Shared scalar cp_to_wdl uses declared slope0.006/draw width120, WDL side-to-move and float32. This is a diagnostic mapping before stored float16, not native UCI WDL or target-array equivalence. Mate-band pairs are excluded from CP means but retained in WDL statistics and explicit strata.",
+    "Best-set differences and disjointness are separated, avoiding arbitrary first-tied-move disagreement. Group sums retain source/config/shard/game identity, no position-independent CI is constructed.",
+    "Eligibility denominator is fixed result-and-phase0-valid528545; total physical531412 and all selected shard rows/hashes/stats must match. Declared 99.9% coverage and WDL-TV/large-Q-shift thresholds allocate investigation only, not playing strength.",
+    "Resource declaration matches command: one CPU process restricted to2cores, hidden GPU, numericthreads2,2GiBaddress-space,1770sTERM+30KILL; sampled512MiBoutputs and150GiBreserve checked each2048rows/per-shard. Exclusive execution directory prevents implicit retry. Completion still requires parent outer terminal status."
+  ],
+  "nonblocking_limits": [
+    {
+      "id": "top_k_roster_not_reconstructed",
+      "detail": "Production sets the next searchmoves to the leading8/4 moves from deepest_block_with_width of the previous phase. Census checks subset ancestry and width, but not exact equality/order to those previous top-k selections. Its descriptive current-versus-recorded-final comparison remains valid; do not claim full reconstruction/qualification of production roster selection from a passing row."
+    },
+    {
+      "id": "structural_validator_not_general_parser",
+      "detail": "Malformed shapes/types or absent phase0d9 can raise rather than produce per-row flags because historical inspector and strict_block assume bank structure. A crash yields no COMPLETE receipt; this does not silently admit invalid rows. Scope is the already frozen structurally inspected bank."
+    },
+    {
+      "id": "descriptive_scope",
+      "detail": "The purposive64-shard bank, adaptive depth, restricted rosters and warm TT do not establish full-root d12 truth, calibration, current16.4M coverage, target quality or strength. Existing declarations correctly limit these claims."
+    }
+  ],
+  "result_review": {
+    "status": "PENDING_COMPACT_READOUT_AND_PARENT_TERMINAL",
+    "readout_present_at_review": false
+  },
+  "operations": "Read-only source/plan/fixture review. No running script edits, repeated source census, fixture reruns, model/GPU or payload scans."
+}

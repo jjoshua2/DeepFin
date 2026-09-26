@@ -1,0 +1,38 @@
+{
+  "status": "PASS",
+  "base_commit": "f77101a59fb2b38fd8e68c4cf44111e869a54115",
+  "source_sha256": {
+    "scripts/bt4_raw_corpus_sidecar.py": "eea20f9d114cc56fec62b2779e14ba2f58147bebc195f1b2db7b018c63f1920c",
+    "scripts/adapt_raw_bt4_sidecars.py": "e8952e031d93db83a589d9a23ae9eba7c1530e1df1901a00991cfe611272c2f7",
+    "tests/test_bt4_adapter_single_pass.py": "743329f31ea701ed233e3aff89c06b5a35e7536c4101003a9fba88bee8b74b41"
+  },
+  "tests": {
+    "cases": 27,
+    "exit_code": 0,
+    "command": "env CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 PYTHONPATH=. nice -n19 ionice -c3 taskset -c4,5 .venv/bin/python -m pytest -q tests/test_bt4_adapter_single_pass.py tests/test_adapt_raw_bt4_sidecars.py tests/test_bt4_raw_corpus_sidecar.py",
+    "scope": "9 new cases plus18 existing; test-only style cleanup afterward (dict literal, underscore unused arguments, raw regex), production bytes unchanged."
+  },
+  "whole_lint": {
+    "status": "PASS",
+    "seconds": 201.56,
+    "exit_code": 0,
+    "command": "env CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 PATH=\"$PWD/.venv/bin:$PATH\" nice -n19 ionice -c3 taskset -c4,5 .venv/bin/python scripts/validate.py lint",
+    "ruff": "PASS",
+    "basedpyright_errors": 0,
+    "vulture": "PASS"
+  },
+  "measurement": {
+    "plan_sha256": "ddcf39367b1c4d2cb4266a6a5d3d7ac616cacbef0cedf75c5725048f30da5221",
+    "completed_sha256": "2cc7fb0c832568b5cc7f0dfd3046533ee7c691b440dca2cb547ada7d7d3b9a54",
+    "resources_sha256": "61a3ad775184b3bd88ac17fe0b6355aa8191448ac3497b5cf10aa54f5aa6672f",
+    "command_sha256": "ea9f70dad0630b29dde78a288afc7a1dc7f2928124a8c150df2bb632ff33b1e2",
+    "exit_code": 0,
+    "scope": "One baseline-first pair of actual RawInputs.get calls, not full adapter pipeline or GPU inference."
+  },
+  "independent_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/independent_review_v1/receipt.json",
+    "sha256": "e7f7702a6554df1791d3d27ab3e84ae2309af77359928fb4ce43b13e24495ea8"
+  },
+  "runtime": "Existing CPython313 native binaries linked after tracked C/C++/headers/setup bytes match qualified f77101 runtime; no rebuild. Python3.13.15, NumPy2.2.6, Torch2.14CPU;2 numeric threads,CPU4,5,nice19,ionice3.",
+  "no_live_adoption": true
+}

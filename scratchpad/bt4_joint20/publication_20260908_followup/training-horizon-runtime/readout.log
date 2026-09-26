@@ -1,0 +1,38 @@
+/home/josh/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Matplotlib created a temporary cache directory at /tmp/matplotlib-hnctgeoc because the default path (/home/josh/.config/matplotlib) is not a writable directory; it is highly recommended to set the MPLCONFIGDIR environment variable to a writable directory, in particular to speed up the import of Matplotlib and to better support multiprocessing.
+{
+  "status": "PASS_BOUNDED_CPU_PATH_WITH_DIAGNOSTIC_LIMITS",
+  "commit": "ee46d0f1139211be15d84e4f9391c240dc51dbc7",
+  "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+  "versions": {
+    "torch": {
+      "version": "2.11.0+cu128",
+      "path": "/home/josh/.local/lib/python3.10/site-packages/torch/__init__.py"
+    },
+    "numpy": {
+      "version": "1.26.2",
+      "path": "/home/josh/.local/lib/python3.10/site-packages/numpy/__init__.py"
+    },
+    "zarr": {
+      "version": "2.18.3",
+      "path": "/home/josh/.local/lib/python3.10/site-packages/zarr/__init__.py"
+    },
+    "pytest": {
+      "version": "9.0.2",
+      "path": "/home/josh/.local/lib/python3.10/site-packages/pytest/__init__.py"
+    }
+  },
+  "native_loaded": {
+    "chess_anti_engine.encoding._lc0_ext": {
+      "path": "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df"
+    },
+    "chess_anti_engine.encoding._features_ext": {
+      "path": "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c"
+    }
+  },
+  "wall_seconds_since_registered_plan": 384.4298667907715
+}
+receipt_sha256 fe48cf12903e41aeee2c78a9980d489f36e49e952f9bd80e2b3001ced5ba42b4

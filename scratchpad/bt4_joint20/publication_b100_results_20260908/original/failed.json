@@ -1,0 +1,5 @@
+{
+  "complete": false,
+  "error": "InvalidCell('operationally invalid low readout: 2')",
+  "gpu_seconds_completed_stages": 1387.4798684359994
+}

@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "status": "PASS",
+  "reviewed_unix": 1788869150.569577,
+  "base": "5ff68d99ed438f2667bd133282cc780925429d6d",
+  "head": "e963a18e4b0f15a1f85189da2cced97a96102d0e",
+  "patch_sha256": "f0d30eacebe8974c1cfe7b1c116152888ab8c93c9bacb39cf434f3f4cecd8e55",
+  "files": [
+    {
+      "path": "/tmp/deepfin-arena-forced-openings/scripts/bt4_recipe_readout.py",
+      "sha256": "7f24a5dcb6a99fa11ed1003596c2df09697611ac0eacdeac84515aa889d7faec"
+    },
+    {
+      "path": "/tmp/deepfin-arena-forced-openings/tests/test_bt4_recipe_readout.py",
+      "sha256": "8dbf9d5b5fa6f5c851aded14acebf444c4ce6caece00b598b1895644e5a8a787"
+    }
+  ],
+  "findings": [],
+  "evidence": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_forced_openings_v1/author_validation.json",
+      "sha256": "a87139a71e0bbfe699039f4aeed4dd221004f69fd42d191aa511bac483e3072c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_forced_openings_v1/focused_validation.json",
+      "sha256": "8176f7cd729fb0f5ac66c4e08f4afe58f2949e689ba86ad2d5108c05f3ae3b3e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_forced_openings_v1/registered_forced_opening.json",
+      "sha256": "a053f8cc6abf6f81ef77e1c2aa741e54cc755da73ca32e91b286b08c86cd52a8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_forced_openings_v1/actual_cpu_preparation.log",
+      "sha256": "c51ce7a8641b1713ab62d5bef5d957e2d2a2b5a3b0db770e06a2a902cbfb279b"
+    }
+  ],
+  "conclusions": [
+    "Only legal_moves.count() >= 2 is removed. Valid nonterminal forced-move openings are valid match inputs; zero-legal-move endpoints remain excluded by is_game_over().",
+    "Exact 16-ply replay, legal UCI handling, valid root/endpoint, exact endpoint FEN, nonterminal status and 500 unique endpoints remain. AST comparison confirms every other readout function unchanged.",
+    "Independently matched the regression fixture to saved canonical panel index55 (panel SHA b4f1d16b488ff9efa0c466706b74595559a807c99a0e4ca75379a4d0745cfb6c). No opening is deleted or replaced.",
+    "The actual recipe uses load_paired_openings from the PGN book, not the separate FEN-seed loader which intentionally skips forced seeds. Arena and capacity-probe code unchanged.",
+    "Tests retain forced-position acceptance and terminal, illegal move, legal altered history, wrong endpoint and duplicate refusals; statistical and identity contracts unchanged."
+  ],
+  "validation": {
+    "distinct_tests_passed": 37,
+    "full_reader_before_last_added_case": 36,
+    "final_forced_subset": 6,
+    "canonical_host_lint": "PASS 158.17s; 0 errors, 0 warnings, 0 notes; bound actual log inspected",
+    "diff_check": "PASS before author commit",
+    "independent_scope": "Source/AST review and fixture-to-saved-panel comparison; no repeated suite."
+  },
+  "limits": [
+    "No GPU, book resampling, model/checkpoint reads, matches or active runtime changes. Recovery files left frozen.",
+    "Actual runtime adoption and new CPU preparation remain parent-owned.",
+    "Initial reviewer literal_eval could not evaluate chess.STARTING_FEN; corrected static comparison used its explicit standard FEN. No source changes.",
+    "Author committed during finalization; initially empty staged diff was detected and replaced by exact base-to-committed-head comparison, matching frozen patch."
+  ]
+}

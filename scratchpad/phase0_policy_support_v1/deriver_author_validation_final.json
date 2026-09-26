@@ -1,0 +1,20 @@
+{
+  "cases": 17,
+  "checks": "Ruff on owned Python files and git diff --check PASS; parent handling final static scope after full gate on preceding candidate.",
+  "command": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 nice -n 19 ionice -c 3 taskset -c 0,1 .venv/bin/python -m pytest -q tests/test_phase0_policy_support_exclusions.py",
+  "created_utc": "2026-09-08T01:19:39.297315+00:00",
+  "exit_code": 0,
+  "grouped_test": "qzphase middle+tail drops across raw-shard/worker handoff, matching all array stamps/data, exact NPZ, exclusions and dropped tail count.",
+  "log": "/tmp/phase0-support-boundary-tests.log",
+  "log_sha256": "7609a40d800ea86e0793d4eb42cfeb955f540528b1944b3b4b7846fcf16b102d",
+  "new_boundary": "Exact legal-count rank slots and all-legal phase0 metadata required; only move support can differ. Positive actual-shape missing+duplicate via replacing move slot.",
+  "runtime_scope": "Synthetic CPU fixtures only; original source and live jobs untouched.",
+  "schema": 1,
+  "source_hashes": {
+    "docs/corpus_derivation.md": "627b04fea1716ea695fcb1266e53d04b4bbb41b79a48917fbd1f66f78e90fb6d",
+    "scripts/derive_corpus_targets.py": "c2af7b62644cf5658c1dfc2564b2196c51c8860dd91152f2db05d3d2614311a6",
+    "tests/test_derive_parallel.py": "458a3ee0077c1d6f104536192e5ae878e659dfebfe18b5c0b3bea6c51d4804bc",
+    "tests/test_phase0_policy_support_exclusions.py": "a752c1a948c3ed99ed430941439831b5b4cf15def5dd70ad0d742726784cf368"
+  },
+  "supersedes_candidate_contract": "deriver_author_validation.json; old positive fixtures allowed truncated/appended rank slots. Preserved as historical evidence, not final contract."
+}

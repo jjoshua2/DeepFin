@@ -250,7 +250,7 @@ import time
 from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -845,9 +845,12 @@ class PhaseResult:
     depth_requested: int
     searchmoves: tuple[str, ...] | None
     parse: StreamParse
+    extension_stop_reason: str | None = None
 
     def as_row(self) -> dict[str, Any]:
         return {
+            **({"extension_stop_reason": self.extension_stop_reason}
+               if self.extension_stop_reason is not None else {}),
             "index": self.index,
             "width_requested": self.width_requested,
             "width_realized": self.width_realized,
@@ -1405,6 +1408,34 @@ class StaircaseSearcher:
         candidates: list[str] = legal
         gate_decision: StaircaseGateDecision | None = None
         for index, phase in enumerate(self.staircase):
+            if index:
+                previous = results[-1]
+                previous_block, _ = deepest_block_with_width(
+                    previous.parse.blocks, want=previous.width_realized,
+                )
+                expected = set(legal if previous.searchmoves is None else previous.searchmoves)
+                moves = [pv.move for pv in previous_block.lines]
+                valid_roster = (
+                    previous_block.complete
+                    and len(moves) == previous.width_realized
+                    and len(set(moves)) == len(moves)
+                    and set(moves) <= expected
+                    and (previous.searchmoves is None or set(moves) == expected)
+                    and expected <= set(legal)
+                    and [pv.rank for pv in previous_block.lines] == list(range(1, len(moves) + 1))
+                    and all(math.isfinite(pv.effective_cp) for pv in previous_block.lines)
+                )
+                if not valid_roster:
+                    # Keep the observed phase and anomalies; never turn duplicate
+                    # rank snapshots into a deduplicated or repaired search request.
+                    results[-1] = replace(previous, extension_stop_reason="invalid_candidate_roster")
+                    if self.staircase_policy == STAIRCASE_POLICY_G10 and index == len(self.staircase) - 1:
+                        gate_decision = StaircaseGateDecision(
+                            margin_cp=None, extended=False, reason="invalid_candidate_roster",
+                            decision_depth_observed=previous_block.depth,
+                        )
+                    break
+                candidates = moves
             if (
                 self.staircase_policy == STAIRCASE_POLICY_G10
                 and index == len(self.staircase) - 1
@@ -1472,7 +1503,6 @@ class StaircaseSearcher:
             )
             results.append(result)
             self.stats.add_phase(result)
-            candidates = [pv.move for pv in block.lines]
         self.stats.search_s += time.perf_counter() - started
         self.stats.positions += 1
         if gate_decision is not None:
@@ -4395,7 +4425,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "must sit INSIDE the outer read deadline, or the stamp would name "
             "a bound the engine never enforces",
         )
+    worker_concurrency = args.worker_concurrency
+    if worker_concurrency is not None and int(worker_concurrency) < 1:
+        raise ValueError("--worker-concurrency must be positive")
     buckets = split_games(int(args.games), int(args.workers))
+    effective_concurrency = min(
+        len(buckets),
+        len(buckets) if worker_concurrency is None else int(worker_concurrency),
+    )
     out_dir = Path(args.out_dir)
     resume = bool(args.resume)
     # Both refusals happen HERE, before the engine handshake and before a
@@ -4480,6 +4517,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     ]
 
     started_utc = datetime.now(timezone.utc).isoformat()
+    execution = {
+        "started_utc": started_utc,
+        "resume": resume,
+        "worker_concurrency_requested": worker_concurrency,
+        "worker_concurrency_effective": effective_concurrency,
+        "logical_workers": len(specs),
+        "config_sha256": config_sha,
+    }
+    # Append per invocation: a resume keeps the scientific manifest untouched.
+    with open(out_dir / "execution_invocations.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(execution, sort_keys=True) + "\n")
     started = time.perf_counter()
     results: list[dict[str, Any]]
     if len(specs) == 1:
@@ -4490,7 +4538,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     else:
         ctx = multiprocessing.get_context("spawn")
         results = []
-        with ProcessPoolExecutor(max_workers=len(specs), mp_context=ctx) as pool:
+        with ProcessPoolExecutor(max_workers=effective_concurrency, mp_context=ctx) as pool:
             futures = {pool.submit(run_worker, spec): spec for spec in specs}
             for future in as_completed(futures):
                 spec = futures[future]
@@ -4518,6 +4566,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         engine_record=engine_record, engine_id_name=engine_id_name,
         staircase=staircase, started_utc=started_utc, wall_s=wall_s,
     )
+    summary["execution"] = execution
     with open(out_dir / SUMMARY_NAME, "x", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=2, sort_keys=True, default=_json_default)
         fh.write("\n")
@@ -4564,6 +4613,12 @@ def build_parser() -> argparse.ArgumentParser:
              "the run's cost invisible in the command that produced it.",
     )
     p.add_argument("--workers", type=int, default=1)
+    p.add_argument(
+        "--worker-concurrency", type=int, default=None,
+        help="Maximum concurrent logical workers (positive; default: all). "
+             "Limits resident processes without changing worker IDs, game "
+             "partitions or resume configuration. Not a RAM byte limit.",
+    )
     p.add_argument(
         "--staircase", default=DEFAULT_STAIRCASE,
         help=f"narrowing rungs as '<width>:<depth>,...' (default "

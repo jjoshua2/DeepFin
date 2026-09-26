@@ -1,0 +1,150 @@
+{
+  "profile": "sf-close",
+  "reference_role": "E0",
+  "prior_temperature": 1.0,
+  "cells": {
+    "C20T05:25": {
+      "status": "READ",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.games.jsonl",
+      "sha256": "7143d2d508dabb90c04d9527fb3c2d91b4bce711dae94c16ace8aa9058141253",
+      "settings": {
+        "mode": "matched_sims",
+        "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/checkpoint.pt",
+        "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/checkpoint.pt",
+        "games": 1000,
+        "seed": 42,
+        "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "openings_kind": "book",
+        "opening_plies": 16,
+        "sims_candidate": 25,
+        "sims_reference": 25,
+        "ms_per_move": null,
+        "max_plies": 300,
+        "temperature": 0.1,
+        "gumbel_add_noise": true,
+        "search_candidate": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "search_reference": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "volatility_candidate": null,
+        "uci_args": "",
+        "syzygy": "",
+        "syzygy_max_pieces": 6
+      },
+      "execution": [
+        "on",
+        "4096"
+      ],
+      "raw_game_rows": 1000,
+      "superseded_orphan_rows": 0,
+      "result": {
+        "games": 1000,
+        "pairs": 500,
+        "score": 0.5535,
+        "score_ci95": [
+          0.5272122223208081,
+          0.5797877776791919
+        ],
+        "elo": 37.31846479607052,
+        "elo_ci95": [
+          18.927691643099706,
+          55.920150288132994
+        ],
+        "verdict": "SUCCESS",
+        "pentanomial": {
+          "WW": 94,
+          "WD_DW": 94,
+          "DD_WL": 185,
+          "LD_DL": 79,
+          "LL": 48
+        }
+      },
+      "strength_interpretation": "PROMISING"
+    },
+    "C20T05:100": {
+      "status": "UNREAD"
+    },
+    "C20T05:400": {
+      "status": "UNREAD"
+    }
+  },
+  "search_interactions_25_to_400": {
+    "C20T05": {
+      "status": "UNREAD",
+      "missing_cells": [
+        "C20T05:400"
+      ]
+    }
+  },
+  "global_arm_comparisons_by_budget": {},
+  "missing_cells": [
+    "C20T05:100",
+    "C20T05:400"
+  ],
+  "screen_complete": false,
+  "bootstrap": {
+    "unit": "aligned opening pair",
+    "samples": 10000,
+    "seed": 20260903,
+    "method": "percentile"
+  },
+  "primary_strength_budget": 100,
+  "deployment_relevant_budget": 400,
+  "promotion": "NONE; prospective independent-seed/fresh-opening confirmation required",
+  "limitations": [
+    "Checkpoint/book contents and build provenance require the external run manifest.",
+    "Score differences against E0 are not direct head-to-head Elo between candidate recipes.",
+    "Positive search interaction means increasing relative advantage against E0, not absolute improvement with search.",
+    "Exploratory one-training-seed screen: nominal intervals without family-wise correction.",
+    "No optimal recipe or promotion follows from this screen; report 400-simulation strength separately.",
+    "E0 retains its historical runtime provenance limit; new arms require matched runtime evidence.",
+    "C20T05 changes both support and BT4 temperature versus E0; this is a recipe comparison, not an isolated support effect.",
+    "Direct-E0 Elo cannot be subtracted from the global screen's direct-S0 Elo to infer head-to-head strength."
+  ]
+}

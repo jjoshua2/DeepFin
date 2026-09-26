@@ -1,0 +1,37 @@
+{
+  "pid": 344360,
+  "start_unix": 1788860798.258814,
+  "argv": [
+    "/usr/bin/timeout",
+    "--signal=TERM",
+    "--kill-after=30s",
+    "14369.180s",
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/usr/bin/taskset",
+    "-c",
+    "2,3",
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/tmp/deepfin-g10-parallel-tools/scripts/common_input_batch.py",
+    "--manifest",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/runner_manifest.json",
+    "--expected-manifest-sha256",
+    "802615056d68a8268a0eb340e3efc3273b883dc12415e0fcbb36ab62d5294733",
+    "--action",
+    "lane",
+    "--source",
+    "run07_g10_companion4",
+    "--deadline",
+    "1788875197.4382536"
+  ],
+  "cpu_affinity": [
+    2,
+    3
+  ],
+  "numeric_threads": 2,
+  "manifest_sha256": "802615056d68a8268a0eb340e3efc3273b883dc12415e0fcbb36ab62d5294733"
+}

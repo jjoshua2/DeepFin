@@ -1,0 +1,30 @@
+{
+  "status": "CANDIDATE_COMPLETE_VERIFIED_MATCHED_SCHEDULE_PENDING",
+  "checked_unix": 1788770934.6870635,
+  "candidate_summary_sha256": "c28d2067501b263368cf2699b5b6ec4ff5df01ed6afbedd37bc4422942c9a662",
+  "candidate_checkpoint_sha256_from_qualified_launcher": "bc9f029ef1874ae0aa613def4295331e1a894d1a23e12fb466ee3e9ef6bae740",
+  "candidate_checkpoint_rehashed_by_parent": false,
+  "candidate_rows": 18910484,
+  "candidate_batches": 36935,
+  "candidate_windows": 420,
+  "candidate_all_window_loss_and_mean_grad_finite": true,
+  "candidate_nonfinite_skip_and_cuda_retries": 0,
+  "candidate_physical_plan_sha256": "f7a13b63dc32ed29e16cac3352ad4b43640f260f1c4896fdeaf09e6e8b8c7b2d",
+  "candidate_gpu_seconds": 9284.944867974002,
+  "both_training_gpu_seconds": 19074.00681784001,
+  "candidate_terminal_pids": [
+    207040,
+    207041
+  ],
+  "coordinator_pid": 199324,
+  "schedule_supervisor_pid": 217024,
+  "reference_and_candidate_epoch_counts_match": true,
+  "canonical_matched_schedule_still_pending": true,
+  "historical_control_valid": false,
+  "historical_control_limitations": [
+    "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+    "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+    "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+  ],
+  "fresh_arena_outcomes_read": false
+}

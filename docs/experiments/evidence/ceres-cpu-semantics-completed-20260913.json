@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "status": "PASS_COMPLETED_CPU_SEMANTICS_NOT_NEURAL_PARITY",
+  "original_runtime": "58504cea518742a4e258a9b7d10f47fc07a68c4d",
+  "corrected_comparator_commit": "1f1f1a07684d6bfef7e05b8f17036233bd279d11",
+  "coverage": {
+    "history_cases": 144,
+    "explicit_fixtures": 16,
+    "saved_positions": 128,
+    "python_byte_comparisons": 144,
+    "saved_bank_byte_comparisons": 128,
+    "total_byte_comparisons": 272,
+    "bytes_per_history": 8768,
+    "byte_mismatches": 0,
+    "value_cases": 131,
+    "getter_bits_per_case": 12
+  },
+  "value_deltas_vs_float64_mathematical_profile": {
+    "bank128": {
+      "cases": 128,
+      "max_abs_wdl_delta": 0.001248383063357849,
+      "max_abs_getter_q_delta": 0.0012965669560817128,
+      "max_abs_w_minus_l_delta": 0.0008723145685568534
+    },
+    "synthetic3": {
+      "cases": 3,
+      "max_abs_wdl_delta": 0.0007860233765805136,
+      "max_abs_getter_q_delta": 0.0007973128441016719,
+      "max_abs_w_minus_l_delta": 0.0005226546409766719
+    }
+  },
+  "interpretation": "The actual pinned Ceres encoder agrees on declared full histories with Python and stored128 inputs; actual getters differ slightly from mathematical .55/1.5/.4 profile. This establishes CPU source semantics on these cases, not all-history universal parity, effective deployed settings, neural/CUDA parity, calibration or strength.",
+  "failure_history": "Initial compare failed on C# shortest float32 JSON versus exact float64 equality after native oracle completed. Original failure and outputs preserved; corrected strict float32 comparison alone completed0 in0.283844s under original deadline.",
+  "readout": {
+    "path": "/tmp/deepfin-ceres-cpu-semantics-64558176/results/readout.json",
+    "sha256": "914458aa5c69b92fcd35ec9a592f35058ace38dbf95c3e9237fc7ab7ff388026"
+  },
+  "saved_artifact_pins": {
+    "oracle.json": {
+      "path": "/tmp/deepfin-ceres-cpu-semantics-64558176/results/oracle.json",
+      "sha256": "7712a669aefb4b228eec59d36c9df4424faa42c6bb4220859420a78776ac3b08"
+    },
+    "transport.json": {
+      "path": "/tmp/deepfin-ceres-cpu-semantics-64558176/results/transport.json",
+      "sha256": "7f9c5fed6f0de079934580139878a78da8decf241bdd2acf521b0b530206e071"
+    },
+    "reference.json": {
+      "path": "/tmp/deepfin-ceres-cpu-semantics-64558176/results/reference.json",
+      "sha256": "e9b5e8aacac2b4b1bb002e4490fa87ff0e699bcf5c29457952b2e46f7969b886"
+    }
+  },
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/compare_recovery_v1/plan.json": "a957396075fd4cea27972428e17c510b7d80d6482377e032e00eda3303dc89c1",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/compare_recovery_v1/command.txt": "b38fcf71025d2a207aaace4e159953d7278f849c668f1113f9827fd8d0cea2a0",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/compare_recovery_v1/outer_started.json": "49169f784e5ff97b393ecb8cade1e0d2002edda699fac5009f7ceb746ab9e37a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/compare_recovery_v1/outer_terminal.json": "ed654e6772fa067af6277112cc4e71c9366674a366c6e1ed072c330fbbf074cc",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/compare_recovery_v1/independent_review.json": "e738b51ff6dcb74da1d567bdd1e8a56142296870020e3a7bc4c98b0d1f3e9d4d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/compare_recovery_v1/independent_completed_review.json": "5d635b9ead995b64f23ea3f36ad5c2d77215cc4821151c25707976ce058fb6c5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/implementation_v2/outer_terminal.json": "56546ccedaf1b90a12825f43c2ebe7e1081594c7c6558ff685a9302f38d948a6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/implementation_v2/execution/progress.json": "13f172da285d6ca235349c3fc17297f167ba291927ce10a6f2da48016cf9b106",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/implementation_v2/execution/transport_oracle_readout/oracle.log": "1511f7ef4851611f38f80d2cea2d550ef7049d4573bd4f240f510187c6500805"
+  }
+}

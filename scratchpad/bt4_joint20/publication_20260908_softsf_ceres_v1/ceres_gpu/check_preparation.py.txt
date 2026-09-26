@@ -1,0 +1,36 @@
+"""Small numerical/provider refusal checks; no ORT session or GPU."""
+import hashlib, importlib.util, json, os, subprocess, sys, time
+from pathlib import Path
+import numpy as np
+STATE=Path(__file__).resolve().parent
+start=time.monotonic();assert os.environ['CUDA_VISIBLE_DEVICES']==''
+for name in ('collect.py','run_probe.py','prepare.py','freeze_plan.py'):
+    compile((STATE/name).read_text(),str(STATE/name),'exec')
+spec=importlib.util.spec_from_file_location('collector_checks',STATE/'collect.py');c=importlib.util.module_from_spec(spec);spec.loader.exec_module(c)
+p=json.loads((STATE/'plan.json').read_text());h=hashlib.sha256((STATE/'plan.json').read_bytes()).hexdigest()
+with np.load(STATE/'references.npz',allow_pickle=False) as z:policy=z['cpu_policy'];value=z['cpu_value']
+rows=json.loads((STATE/'reference_rows.json').read_text());checks=[]
+assert c.compare(policy,value,policy,value,rows,p['tolerances'])['pass'];checks.append('actual saved128 CPU references exactly self-match')
+bad=policy.copy();bad[0,rows[0]['leela_indices'][0]]+=np.float16(2)
+try:result=c.compare(bad,value,policy,value,rows,p['tolerances'])
+except ValueError:pass
+else:assert not result['pass']
+checks.append('material raw/policy perturbation refuses')
+bad=value.copy();bad[0,0]=np.nan
+try:c.compare(policy,bad,policy,value,rows,p['tolerances'])
+except ValueError:pass
+else:raise AssertionError('NaN accepted')
+checks.append('nonfinite value refuses')
+def event(provider,op,dtype):return {'name':'fixture','args':{'provider':provider,'op_name':op,'output_type_shape':[{dtype:[1]}]}}
+gpu=event('CUDAExecutionProvider','Gemm','float16');shape=event('CPUExecutionProvider','Shape','int64')
+assert c.provider_proof([gpu,shape],p['allowed_CPU_shape_ops'])['CUDA_neural_kernel_events']==1
+for invalid in [[shape],[gpu,event('CPUExecutionProvider','Gemm','float16')],[gpu,event('CPUExecutionProvider','Cast','float')]]:
+ try:c.provider_proof(invalid,p['allowed_CPU_shape_ops'])
+ except ValueError:pass
+ else:raise AssertionError('unqualified provider trace accepted')
+checks.append('CUDA compute plus integer shape accepts; CPU-only or CPU floating compute refuses')
+describe=subprocess.check_output([sys.executable,str(STATE/'run_probe.py'),'--expected-plan-sha256',h],text=True,timeout=10)
+d=json.loads(describe);assert d['status']=='PREPARED_NOT_LAUNCHED' and not (STATE/'run').exists();checks.append('actual nonexecuting operator CLI has no output/lease/session side effects')
+result={'status':'PASS_CPU_ONLY_PREPARATION_CHECKS_NO_SESSION','seconds':time.monotonic()-start,'checks':checks,'plan_sha256':h,'source_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'command':[sys.executable,str(Path(__file__).resolve())],'scope':'Compiled own sources, pure numerical/provider event fixtures and actual --describe route. No ORT session, CUDA work or live process changes.'}
+with (STATE/'preparation_checks.json').open('x') as f:json.dump(result,f,indent=2);f.write('\n')
+print(json.dumps(result,indent=2))

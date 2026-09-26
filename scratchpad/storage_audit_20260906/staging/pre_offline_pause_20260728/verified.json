@@ -1,0 +1,67 @@
+{
+  "pool": "pre_offline_pause_20260728",
+  "source": "/home/josh/projects/chess/data/salvage/pre_offline_pause_20260728",
+  "source_deleted": false,
+  "plan_sha256": "f389eeff35235a5097f39a3a5b4dd22a7c860ca36bc5038fbaabb4211491a5bb",
+  "started_unix": 1788737654.112948,
+  "mount": {
+    "target": "/mnt/e",
+    "source": "E:\\",
+    "fstype": "9p",
+    "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+  },
+  "resources": {
+    "local_free_bytes": 484902887424,
+    "available_RAM_bytes": 59402559488
+  },
+  "references": {
+    "observed_source_references": [],
+    "other_user_processes_not_inspected": [
+      1,
+      9,
+      12,
+      13,
+      71,
+      72,
+      87,
+      88,
+      103,
+      104
+    ],
+    "same_user_processes_not_inspected": [
+      68
+    ],
+    "complete_process_visibility": false,
+    "scope": "Copy only; source retained and stability independently checked. Not source-removal qualification."
+  },
+  "inventory": {
+    "entries": 10,
+    "logical_file_bytes": 687525725
+  },
+  "tar_bytes": 687544320,
+  "verified_members": 10,
+  "tar_sha256": "0daf2d2a35f74f12f8b35981a105f054f9cece7fe637fe8b3c17bf36c5ccb8ed",
+  "source_manifest_sha256": "77d939902d631bc8af7025b52f925da62e273db5e248aa4060c36598b19f8fa5",
+  "rsync_command": [
+    "rsync",
+    "--no-whole-file",
+    "--partial-dir=.pre_offline_pause_20260728.partial",
+    "--bwlimit=16384",
+    "--fsync",
+    "--",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_offline_pause_20260728/pre_offline_pause_20260728.tar",
+    "/mnt/e/chess_archive_20260906/salvage/pre_offline_pause_20260728.tar"
+  ],
+  "rsync_exit_code": 0,
+  "external_tar_sha256": "0daf2d2a35f74f12f8b35981a105f054f9cece7fe637fe8b3c17bf36c5ccb8ed",
+  "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE",
+  "finished_unix": 1788737802.3175402,
+  "external_archive": "/mnt/e/chess_archive_20260906/salvage/pre_offline_pause_20260728.tar",
+  "external_size": 687544320,
+  "external_mtime_ns": 1788737778613281500,
+  "limitations": [
+    "Source retained; removal requires separate parent verification.",
+    "Observed fd/cwd consumers rejected; inaccessible process IDs disclosed. Not deletion qualification.",
+    "File mode/uid/gid/mtime and all contents verified; GNU tar captures ACL/xattrs but these are not independently compared."
+  ]
+}

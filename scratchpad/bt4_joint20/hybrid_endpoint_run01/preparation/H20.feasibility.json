@@ -1,0 +1,100 @@
+{
+  "status": "ARITHMETIC_FEASIBLE_EXISTING_MIXER_REJECTS_NESTED_C_SOURCE",
+  "created_unix": 1788815435.8838115,
+  "elapsed_seconds": 0.8515760898590088,
+  "recipe": "H20 = 0.8*legal_normalize(stored C20T05) + 0.2*legal_normalize(raw BT4^2), then existing float32/float16 storage path",
+  "pins": {
+    "/tmp/deepfin-bt4-hybrid-screen/scripts/bt4_policy_mix.py": "5fe8202f1e9681b042caeea06614cdbe3b55cf41ec2100182ce3e58e95e377c7",
+    "data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/derive_targets_summary.json": "fc6a33b4f75b154ae2945240d4169b40685618ff0082cc759914a0c4f5b6e8a5",
+    "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/bt4_policy_mix_summary.json": "5bf8502a12af0b9ce938a39ddfd9d95df4bfb2b1a0f80292d80d04109cce7100",
+    "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05/bt4_policy_mix_summary.json": "ff50d6b3f4c8ab38233de723c68924980d745335a374a71d6cfc3eac71c248ab",
+    "data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3",
+    "data/lc0/sf_d9_rank_sidecars/armB_qtemp0005_hist20m_top8/sf_d9_rank_sidecar_summary.json": "165c43e5180146a37e308b9d2dc204190f9cbc5e8a971e0daf5ec8acfa7542fa",
+    "scratchpad/tailrl_bootstrap_v1/bank.npz": "541a353090e375b528e27ea6c58df770651b214f04e49ebea50945c3d6cf444e",
+    "scratchpad/tailrl_bootstrap_v1/teacher_targets_v1/targets.npz": "325ec0ac868ea50863d6bbe1e55b54ec6a286e955153675e08874ec49c204175",
+    "scratchpad/tailrl_bootstrap_v1/teacher_targets_v1/provenance.json": "15b24d87f75e9be0fd868758474e387de9314a3e2a0641ff70867a7f88e99a40"
+  },
+  "admission": {
+    "C_source_contract_helper": "PASS because inherited d9 scheme/cp metadata remain unchanged; insufficient by itself to authorize nested policy",
+    "sidecar_source_dir_actual": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+    "nested_C_source_expected": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05",
+    "sidecar_source_dir_matches_C": false,
+    "rejections": [
+      "mix_corpus sidecar summary requires source_dir == current source, so original sidecar refuses C before copy.",
+      "Per-shard raw sidecar pins original SF policy SHA, not changed C policy SHA; removing path check alone still refuses.",
+      "Final derive summary refuses any existing policy_target_postprocess; bypassing first checks would waste full materialization before refusal."
+    ],
+    "audit_problem": "Current audit global reconstruction assumes original SF d9 targets. A standard global .2 audit cannot honestly certify nested C arithmetic/lineage; H20-specific descriptive audit or explicit chained formula required."
+  },
+  "sample": {
+    "sampling": "Reuse frozen128 seed20260906 uniformly chosen first-shard training rows; not heldout or strength evidence.",
+    "rows": 128,
+    "games": 43,
+    "all_nonpolicy_fields_unchanged_sample": [
+      "game_id",
+      "has_game_id",
+      "has_is_network_turn",
+      "has_is_selfplay",
+      "has_legal_mask",
+      "has_ply_index",
+      "has_policy",
+      "has_search_wdl",
+      "is_network_turn",
+      "is_selfplay",
+      "legal_mask",
+      "ply_index",
+      "priority",
+      "search_wdl",
+      "wdl_target",
+      "x"
+    ],
+    "bank_x_game_ply_legal_equal": true,
+    "C_formula_reconstructed_bitwise_float16": true,
+    "C_raw_outside_selected_equal_SF": true,
+    "selected_rows_with_more_than_one_move": 63,
+    "H20_max_row_mass_error": 0.00026226043701171875,
+    "B100_max_row_mass_error": 0.0003541111946105957,
+    "G20_actual_vs_recomputed_max_abs": 0.0,
+    "H20_vs_G20_outside_max_abs": 6.103515625e-05,
+    "H20_vs_G20_outside_differing_float16_entries": 11,
+    "outside_continuous_max_normalization_difference": 2.3091954105519674e-05,
+    "outside_quantization_only_bound_violations": 0,
+    "outside_normalization_plus_quantization_bound_pass": true,
+    "outside_interpretation": "Stored C preserves SF outside set exactly, but whole-row legal normalization induces small outside differences before H20/globalG20 rounding. Equal outside holds modulo both normalization and storage tolerance, not exact bit identity.",
+    "prior_sidecar_full_lineage_check_reused": {
+      "receipt": "scratchpad/tailrl_bootstrap_v1/teacher_targets_v1/provenance.json",
+      "full_key_and_source_policy_hash_verified": true,
+      "selected_fingerprints_verified": true
+    }
+  },
+  "needed_patch": {
+    "recommendation": "Add narrowly explicit H20 composition with originalSF provenance root and pinned C derive/mix receipt, rather than relaxing generic sidecar validation. Validate BT4/rank against originalSF, then C lineage+selected-set formula and unchanged nonpolicy against originalSF. Compute final mix from stored C (retain float16 normalization semantics).",
+    "carry_forward": "Record ordered parentC postprocess plus new global step and originalSF/C/BT4/rank hashes. Do not overwrite parent provenance or silently call nested target originalSF.",
+    "admission": "Descriptive H20-specific arithmetic/lineage audit pinned to prereg, not SF strength gate. Reject unsupported/nested parent recipes and stale metadata before copy.",
+    "bounded_tests_needed": [
+      "aligned actual-source fixture yields literal storedC mixture",
+      "sidecar wrong originalSF policy/keys and C changed nonpolicy rejected",
+      "parent postprocess unsupported or mismatched rejected pre-copy",
+      "outside-set tolerance includes normalization drift",
+      "float16 finite legal mass and no silent parameter ignore"
+    ]
+  },
+  "storage": {
+    "local_free_bytes": 488909205504,
+    "rows": 18910484,
+    "shards": 2309,
+    "source_historical_apparent_bytes": 9638905995,
+    "G20T05_historical_apparent_bytes": 11967314064,
+    "dense_policy_float16_uncompressed_bytes_per_new_arm": 70271358544,
+    "expected_new_arm_order_of_magnitude": "~12-15GB each if compression resembles existing global mixture; not a measured H20/B100 size. Retain conservative32GiB per newly materialized arm plus150GiB free reserve; actual copy footprint and compression must be checked by preparation supervisor.",
+    "H20_new_storage": "one new full corpus copied from C; C and all source/sidecars retained",
+    "B100_new_storage": "one new full corpus with normalized sharpened raw BT4 target; other arrays copied from originalSF",
+    "G50_storage": "already published; no rematerialization needed; future training output additional"
+  },
+  "limits": [
+    "No full corpus scan/hash/materialization, audit_set iteration, GPU inference/probe, process action or code edit.",
+    "Only128 sampled rows rechecked; prior independent broader C/mixer lineage receipts retained, not repeated.",
+    "No actual CLI mix invoked: rejection established from exact source checks and actual metadata; pure helper AST only executed."
+  ]
+}

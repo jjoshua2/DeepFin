@@ -1,0 +1,565 @@
+{
+  "status": "SUPERSEDED_DERIVED_PARTIAL_DISCARDED_METADATA_AND_LINEAGE_RETAINED",
+  "completed_unix": 1788736379.4373648,
+  "original_path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1.interrupted_reboot_20260905",
+  "payload_archive": null,
+  "metadata_archive": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_inventory_v1/metadata.tar.gz",
+  "lineage_snapshots": {
+    "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/00_bt4_policy_sidecar_summary.json",
+      "sha256": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3"
+    },
+    "/home/josh/projects/chess/data/lc0/sf_d9_rank_sidecars/armB_qtemp0005_hist20m_top8/sf_d9_rank_sidecar_summary.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/01_sf_d9_rank_sidecar_summary.json",
+      "sha256": "165c43e5180146a37e308b9d2dc204190f9cbc5e8a971e0daf5ec8acfa7542fa"
+    },
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/02_derive_targets_summary.json",
+      "sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef"
+    },
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1.interrupted_reboot_20260905/derive_targets_summary.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/03_derive_targets_summary.json",
+      "sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef"
+    },
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1/bt4_policy_mix_summary.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/04_bt4_policy_mix_summary.json",
+      "sha256": "d0848a2357f8d1f8cd22850c6ba71cfe58ae57bf2a99ac63b1f91de4f1544fcb"
+    },
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1/derive_targets_summary.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/05_derive_targets_summary.json",
+      "sha256": "dce36703e851d30437399f3c6f5b6d271238b4acc9b4334bce82c04d5565d58d"
+    },
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1_epoch_v2/summary.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/06_summary.json",
+      "sha256": "ef68d18a6cd2b3f4d8446cd0277271a8aaae6a01fbfa018317915a918290fe36"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/af_run01/A.mix.launch.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/07_A.mix.launch.json",
+      "sha256": "359a551adf82149ea3310ab8d39baeb0ab7328bbbe56f2bb670032a33a16ab58"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/af_run01/A.mix.superseded.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/08_A.mix.superseded.json",
+      "sha256": "e5eee53362cc8ab2848376db79aa796a4c6e97842621979ebb97bd043beac3a8"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/audit_A_k2_g10_a100_t050_v2.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/09_audit_A_k2_g10_a100_t050_v2.json",
+      "sha256": "4a6387a294358fb0caa9c2a4f9802cb39eadb7899d3cc5226bc225f00053aaa5"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/G20T1.external-mix.launch.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/10_G20T1.external-mix.launch.json",
+      "sha256": "72ea4bd6197cdcb3b2f0ed8afc34ef086286f63d9e9e13917badbe40c84d7c6b"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/treatments/G20T1.mix.status.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/11_G20T1.mix.status.json",
+      "sha256": "7ef2f1d15986b2544d07bbc7a9089073c6033f3394b013d5c17ac85346e112d4"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/treatments/G20T1.train.complete.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/12_G20T1.train.complete.json",
+      "sha256": "17200de5c287eaadf9ca9ce4b3033ad402b965b230adad5d59c52b4ea222463d"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T1.train.adopted.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/13_G20T1.train.adopted.json",
+      "sha256": "309d05c05f5d0a440382ad2dc1cbc747527d792cc788fa7455a353661a0a42f8"
+    },
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_derived_host_observation.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/14_abandoned_derived_host_observation.json",
+      "sha256": "a980cc9e846879a3c05f33645dd52e2ebb8ab9c2a4f34fde8c40fb3ae303c05f"
+    },
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/triage.json": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/15_triage.json",
+      "sha256": "d13ef5c26132429f73c5254d7649c40fb45c8d3f1fb849ecceadfbf42a0213f6"
+    },
+    "/tmp/deepfin-bt4-toolchain/scripts/bt4_policy_mix.py": {
+      "copy": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/16_bt4_policy_mix.py",
+      "sha256": "5fe8202f1e9681b042caeea06614cdbe3b55cf41ec2100182ce3e58e95e377c7"
+    }
+  },
+  "plan_sha256": "6ba5c7b3d3e053464ee00dec627a023c22dbee94419e769aeddee40c75e7d3a6",
+  "script_sha256": "99022384807f26538da1d5ec128c120fc5c48012f2df65c4f91be62fbfeb312d",
+  "preserved_pins": {
+    "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/00_bt4_policy_sidecar_summary.json": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3",
+    "/home/josh/projects/chess/data/lc0/sf_d9_rank_sidecars/armB_qtemp0005_hist20m_top8/sf_d9_rank_sidecar_summary.json": "165c43e5180146a37e308b9d2dc204190f9cbc5e8a971e0daf5ec8acfa7542fa",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/01_sf_d9_rank_sidecar_summary.json": "165c43e5180146a37e308b9d2dc204190f9cbc5e8a971e0daf5ec8acfa7542fa",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/02_derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/03_derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1/bt4_policy_mix_summary.json": "d0848a2357f8d1f8cd22850c6ba71cfe58ae57bf2a99ac63b1f91de4f1544fcb",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/04_bt4_policy_mix_summary.json": "d0848a2357f8d1f8cd22850c6ba71cfe58ae57bf2a99ac63b1f91de4f1544fcb",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1/derive_targets_summary.json": "dce36703e851d30437399f3c6f5b6d271238b4acc9b4334bce82c04d5565d58d",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/05_derive_targets_summary.json": "dce36703e851d30437399f3c6f5b6d271238b4acc9b4334bce82c04d5565d58d",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1_epoch_v2/summary.json": "ef68d18a6cd2b3f4d8446cd0277271a8aaae6a01fbfa018317915a918290fe36",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/06_summary.json": "ef68d18a6cd2b3f4d8446cd0277271a8aaae6a01fbfa018317915a918290fe36",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/af_run01/A.mix.launch.json": "359a551adf82149ea3310ab8d39baeb0ab7328bbbe56f2bb670032a33a16ab58",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/07_A.mix.launch.json": "359a551adf82149ea3310ab8d39baeb0ab7328bbbe56f2bb670032a33a16ab58",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/af_run01/A.mix.superseded.json": "e5eee53362cc8ab2848376db79aa796a4c6e97842621979ebb97bd043beac3a8",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/08_A.mix.superseded.json": "e5eee53362cc8ab2848376db79aa796a4c6e97842621979ebb97bd043beac3a8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/audit_A_k2_g10_a100_t050_v2.json": "4a6387a294358fb0caa9c2a4f9802cb39eadb7899d3cc5226bc225f00053aaa5",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/09_audit_A_k2_g10_a100_t050_v2.json": "4a6387a294358fb0caa9c2a4f9802cb39eadb7899d3cc5226bc225f00053aaa5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/G20T1.external-mix.launch.json": "72ea4bd6197cdcb3b2f0ed8afc34ef086286f63d9e9e13917badbe40c84d7c6b",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/10_G20T1.external-mix.launch.json": "72ea4bd6197cdcb3b2f0ed8afc34ef086286f63d9e9e13917badbe40c84d7c6b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/treatments/G20T1.mix.status.json": "7ef2f1d15986b2544d07bbc7a9089073c6033f3394b013d5c17ac85346e112d4",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/11_G20T1.mix.status.json": "7ef2f1d15986b2544d07bbc7a9089073c6033f3394b013d5c17ac85346e112d4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/treatments/G20T1.train.complete.json": "17200de5c287eaadf9ca9ce4b3033ad402b965b230adad5d59c52b4ea222463d",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/12_G20T1.train.complete.json": "17200de5c287eaadf9ca9ce4b3033ad402b965b230adad5d59c52b4ea222463d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T1.train.adopted.json": "309d05c05f5d0a440382ad2dc1cbc747527d792cc788fa7455a353661a0a42f8",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/13_G20T1.train.adopted.json": "309d05c05f5d0a440382ad2dc1cbc747527d792cc788fa7455a353661a0a42f8",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_derived_host_observation.json": "a980cc9e846879a3c05f33645dd52e2ebb8ab9c2a4f34fde8c40fb3ae303c05f",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/14_abandoned_derived_host_observation.json": "a980cc9e846879a3c05f33645dd52e2ebb8ab9c2a4f34fde8c40fb3ae303c05f",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/triage.json": "d13ef5c26132429f73c5254d7649c40fb45c8d3f1fb849ecceadfbf42a0213f6",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/15_triage.json": "d13ef5c26132429f73c5254d7649c40fb45c8d3f1fb849ecceadfbf42a0213f6",
+    "/tmp/deepfin-bt4-toolchain/scripts/bt4_policy_mix.py": "5fe8202f1e9681b042caeea06614cdbe3b55cf41ec2100182ce3e58e95e377c7",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/lineage/16_bt4_policy_mix.py": "5fe8202f1e9681b042caeea06614cdbe3b55cf41ec2100182ce3e58e95e377c7",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_inventory_v1/receipt.json": "6b714988293d3972511127321f973cd7047ca468c3aab7880893074a0e2e0d58",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_derived_dependency_review.json": "924aa1437b8f24148f0edb672fef6ea9973a31dbff819b9883f3906c2456fd4d",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/inventory_abandoned_derived.py": "96cf508d0735d3202ea2b287a9612849269653654faf4a350df5d2ffe71e1a47",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/retire_zarr_pilot.py": "40cec48ff64c6b072471c5e837c1eeaf3536f74b4b20794e2afb77ee6c7e36b9",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/small_checkpoint_cleanup_v1/retire_three.py": "ba75e1a59156b22df400ad9bd31add4e4b9dfd08f68d04b8a61951cf0c5f4dc5",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/zarr_pilot/cleanup_visibility_identities.json": "a3f8e49f4c96f6cbf793ea0e488e5126d0b95cfe51725789eb1f66b3cb77a346",
+    "/home/josh/projects/chess/configs/pbt2_small.yaml": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/pbt2_small.yaml": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_inventory_v1/metadata.jsonl": "57347de70105a3128849b49c60887c3156573d0d519b96c8e7f99cdc6f48532a",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_inventory_v1/metadata.tar.gz": "163ec351c1c7a588295ac1a126593ed3b98145ffe1bf0288ad80ab5c83018b57"
+  },
+  "source_inventory_sha256": "9b81cc29bfa516ceb319ec068d4ea0ca2c52928b5a5c7b3af5908e056e6c5da6",
+  "counts": {
+    "entries": 713330,
+    "files": 671767,
+    "directories": 41563,
+    "candidate_logical_bytes": 9926607577,
+    "candidate_allocated_bytes": 12480327680
+  },
+  "reconstruction_claim": "No byte-identical reconstruction claim. This is redundant derived discard: original SF source, raw BT4, completed G20T1 corpus/checkpoint and exact historical metadata/lineage remain. Metadata tar does not contain array chunk payloads.",
+  "restore_pointer": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1.interrupted_reboot_20260905.DISCARDED.json",
+  "process_checks": [
+    {
+      "processes_observed": 65,
+      "inaccessible": [
+        {
+          "pid": 1,
+          "uid": 0,
+          "comm": "init(Ubuntu)",
+          "start_ticks": "133"
+        },
+        {
+          "pid": 9,
+          "uid": 0,
+          "comm": "init",
+          "start_ticks": "179"
+        },
+        {
+          "pid": 12,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 13,
+          "uid": 0,
+          "comm": "Relay(14)",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 68,
+          "uid": 1000,
+          "comm": "ssh-agent",
+          "start_ticks": "229"
+        },
+        {
+          "pid": 71,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 72,
+          "uid": 0,
+          "comm": "Relay(73)",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 87,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 88,
+          "uid": 0,
+          "comm": "Relay(89)",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 103,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "635"
+        },
+        {
+          "pid": 104,
+          "uid": 0,
+          "comm": "Relay(105)",
+          "start_ticks": "635"
+        }
+      ],
+      "terminal_zombies": [],
+      "limitation": "Host cwd/fd paths only. Exact reviewed inaccessible identities remain uncertified; no guarantee about future or mmap-only readers.",
+      "command_maps_inaccessible": [
+        {
+          "pid": 1,
+          "uid": 0,
+          "comm": "init(Ubuntu)",
+          "start_ticks": "133"
+        },
+        {
+          "pid": 9,
+          "uid": 0,
+          "comm": "init",
+          "start_ticks": "179"
+        },
+        {
+          "pid": 12,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 13,
+          "uid": 0,
+          "comm": "Relay(14)",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 68,
+          "uid": 1000,
+          "comm": "ssh-agent",
+          "start_ticks": "229"
+        },
+        {
+          "pid": 71,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 72,
+          "uid": 0,
+          "comm": "Relay(73)",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 87,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 88,
+          "uid": 0,
+          "comm": "Relay(89)",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 103,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "635"
+        },
+        {
+          "pid": 104,
+          "uid": 0,
+          "comm": "Relay(105)",
+          "start_ticks": "635"
+        }
+      ],
+      "shallow_link_paths_checked": 10
+    },
+    {
+      "processes_observed": 70,
+      "inaccessible": [
+        {
+          "pid": 1,
+          "uid": 0,
+          "comm": "init(Ubuntu)",
+          "start_ticks": "133"
+        },
+        {
+          "pid": 9,
+          "uid": 0,
+          "comm": "init",
+          "start_ticks": "179"
+        },
+        {
+          "pid": 12,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 13,
+          "uid": 0,
+          "comm": "Relay(14)",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 68,
+          "uid": 1000,
+          "comm": "ssh-agent",
+          "start_ticks": "229"
+        },
+        {
+          "pid": 71,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 72,
+          "uid": 0,
+          "comm": "Relay(73)",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 87,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 88,
+          "uid": 0,
+          "comm": "Relay(89)",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 103,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "635"
+        },
+        {
+          "pid": 104,
+          "uid": 0,
+          "comm": "Relay(105)",
+          "start_ticks": "635"
+        }
+      ],
+      "terminal_zombies": [],
+      "limitation": "Host cwd/fd paths only. Exact reviewed inaccessible identities remain uncertified; no guarantee about future or mmap-only readers.",
+      "command_maps_inaccessible": [
+        {
+          "pid": 1,
+          "uid": 0,
+          "comm": "init(Ubuntu)",
+          "start_ticks": "133"
+        },
+        {
+          "pid": 9,
+          "uid": 0,
+          "comm": "init",
+          "start_ticks": "179"
+        },
+        {
+          "pid": 12,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 13,
+          "uid": 0,
+          "comm": "Relay(14)",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 68,
+          "uid": 1000,
+          "comm": "ssh-agent",
+          "start_ticks": "229"
+        },
+        {
+          "pid": 71,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 72,
+          "uid": 0,
+          "comm": "Relay(73)",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 87,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 88,
+          "uid": 0,
+          "comm": "Relay(89)",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 103,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "635"
+        },
+        {
+          "pid": 104,
+          "uid": 0,
+          "comm": "Relay(105)",
+          "start_ticks": "635"
+        }
+      ],
+      "shallow_link_paths_checked": 10
+    },
+    {
+      "processes_observed": 70,
+      "inaccessible": [
+        {
+          "pid": 1,
+          "uid": 0,
+          "comm": "init(Ubuntu)",
+          "start_ticks": "133"
+        },
+        {
+          "pid": 9,
+          "uid": 0,
+          "comm": "init",
+          "start_ticks": "179"
+        },
+        {
+          "pid": 12,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 13,
+          "uid": 0,
+          "comm": "Relay(14)",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 68,
+          "uid": 1000,
+          "comm": "ssh-agent",
+          "start_ticks": "229"
+        },
+        {
+          "pid": 71,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 72,
+          "uid": 0,
+          "comm": "Relay(73)",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 87,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 88,
+          "uid": 0,
+          "comm": "Relay(89)",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 103,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "635"
+        },
+        {
+          "pid": 104,
+          "uid": 0,
+          "comm": "Relay(105)",
+          "start_ticks": "635"
+        }
+      ],
+      "terminal_zombies": [],
+      "limitation": "Host cwd/fd paths only. Exact reviewed inaccessible identities remain uncertified; no guarantee about future or mmap-only readers.",
+      "command_maps_inaccessible": [
+        {
+          "pid": 1,
+          "uid": 0,
+          "comm": "init(Ubuntu)",
+          "start_ticks": "133"
+        },
+        {
+          "pid": 9,
+          "uid": 0,
+          "comm": "init",
+          "start_ticks": "179"
+        },
+        {
+          "pid": 12,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 13,
+          "uid": 0,
+          "comm": "Relay(14)",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 68,
+          "uid": 1000,
+          "comm": "ssh-agent",
+          "start_ticks": "229"
+        },
+        {
+          "pid": 71,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 72,
+          "uid": 0,
+          "comm": "Relay(73)",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 87,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 88,
+          "uid": 0,
+          "comm": "Relay(89)",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 103,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "635"
+        },
+        {
+          "pid": 104,
+          "uid": 0,
+          "comm": "Relay(105)",
+          "start_ticks": "635"
+        }
+      ],
+      "shallow_link_paths_checked": 11
+    }
+  ],
+  "observed_free_bytes_change": 12457426944,
+  "max_rss_kib": 23880,
+  "limits": "No array chunk payload scan or external payload backup. Discarded interrupted state is not certified byte-reconstructible. Process and root-alias checks have disclosed visibility limits; free space includes concurrent jobs."
+}

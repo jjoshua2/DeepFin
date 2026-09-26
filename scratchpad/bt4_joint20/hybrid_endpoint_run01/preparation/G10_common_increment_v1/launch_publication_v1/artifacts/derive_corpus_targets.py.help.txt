@@ -1,0 +1,134 @@
+usage: derive_corpus_targets.py [-h] --corpus CORPUS
+                                [--source-shards SOURCE_SHARDS] --out OUT
+                                --scheme SCHEME [--temp TEMP] [--floor FLOOR]
+                                [--limit LIMIT]
+                                [--max-policy-support-misses MAX_POLICY_SUPPORT_MISSES]
+                                [--seed SEED]
+                                [--rows-per-shard ROWS_PER_SHARD]
+                                [--value-scheme VALUE_SCHEME]
+                                [--qz-r-boundary QZ_R_BOUNDARY]
+                                [--qz-u-scale QZ_U_SCALE]
+                                [--qz-w-const QZ_W_CONST] [--qz-no-boundary]
+                                [--workers WORKERS]
+                                [--spill-chunk-rows SPILL_CHUNK_ROWS]
+                                [--policy-observation {latest-phase,phase0}]
+                                [--value-observation {latest-phase,phase0}]
+                                [--row-provenance] [--value-depth VALUE_DEPTH]
+                                [--max-envelope-misses MAX_ENVELOPE_MISSES]
+
+Turn an NNUE-bootstrap corpus bank into training shards the control rig reads.
+
+options:
+  -h, --help            show this help message and exit
+  --corpus CORPUS
+  --source-shards SOURCE_SHARDS
+                        source-bound closed-shard JSON selection; --limit cuts
+                        the selected original-order stream
+  --out OUT
+  --scheme SCHEME       uniform-d<D> | top<K>-d<D2>-rest-d<D1> | nodes-<N>
+  --temp TEMP
+  --floor FLOOR         uniform exploration floor, as a probability PER LEGAL
+                        MOVE: the emitted policy is (1 - floor * n_legal) *
+                        softmax(q / temp) + floor. 0 (default) is off and
+                        emits the plain softmax. Refused at startup at or
+                        above 1 / 218 (the most legal moves a position can
+                        have), so which floors are legal never depends on
+                        which rows a corpus holds.
+  --limit LIMIT         stop after this many CORPUS ROWS READ (0 = the whole
+                        corpus). Rows dropped by a scheme or a missing result
+                        still count as read.
+  --max-policy-support-misses MAX_POLICY_SUPPORT_MISSES
+                        opt-in global exclusion budget for missing/duplicate
+                        legal moves in the selected complete phase0 uniform-
+                        policy block; validates history and records every
+                        exclusion. Default 0 is strict. Illegal moves,
+                        malformed ranks/scores and identity failures remain
+                        fatal.
+  --seed SEED
+  --rows-per-shard ROWS_PER_SHARD
+  --value-scheme VALUE_SCHEME
+                        which of the value round's four arms writes
+                        search_wdl. search (default, V0) is the searched root
+                        value unchanged; qz50 (A) is 0.5*Q + 0.5*Z; qzphase
+                        (B) ramps Z in by ply/terminal_ply; qzsegment (C)
+                        blends in the outcome of the row's CLEAN SEGMENT — the
+                        forward run of plies before the first blunder — at a
+                        weight set by the teacher's d9/d8/d7 instability. Only
+                        the last two assemble whole games.
+  --qz-r-boundary QZ_R_BOUNDARY
+                        --value-scheme qzsegment only: the played-move regret,
+                        in q units, above which a transition ends the clean
+                        segment. Default 0.27 — the half-credit point of the
+                        prereg's frozen soft gate (r_free 0.06 + tau_r 0.25 *
+                        sqrt(ln 2)), rounded as the ledger froze it.
+  --qz-u-scale, --qz-lambda-u-scale QZ_U_SCALE
+                        --value-scheme qzsegment only: the instability u at
+                        which the blend weight saturates. w = 0.5 + 0.45 *
+                        min(u / scale, 1). Default 0.05, about u's p90 on the
+                        prereg's calibration sample.
+  --qz-w-const QZ_W_CONST
+                        --value-scheme qzsegment ablation C-no-u: use this
+                        CONSTANT blend weight instead of the u map, leaving
+                        the segment logic untouched. Absent (default) uses the
+                        map. Diagnostic arm: it attributes a C result to the
+                        instability feature rather than to the segment.
+  --qz-no-boundary      --value-scheme qzsegment ablation C-no-segment: every
+                        row whose own played move can be priced takes the
+                        game's outcome as its future, blunder boundaries
+                        ignored; the u map still sets the weight. Diagnostic
+                        arm. Refused together with --qz-w-const, which would
+                        leave neither of C's mechanisms.
+  --workers WORKERS     derive with this many processes over contiguous ranges
+                        of the corpus's shard snapshot. 1 (default) is the
+                        sequential read, and is not the parallel driver with
+                        one lane -- it is the same code path it has always
+                        been. Above 1 the emitted CONTENT is identical to it:
+                        the same shards holding the same rows in the same
+                        permuted order, every array equal, the same summary
+                        but for started_utc. Not the compressed bytes --
+                        Blosc's threaded encoder is non-deterministic and
+                        --workers 1 does not reproduce its own either; see
+                        this file's --workers section. Intermediate rows are
+                        spilled under <out>/spill and removed on success: one
+                        output corpus of scratch disk in total (every
+                        surviving row is spilled once, whatever the lane
+                        count) and roughly 1 GB of RAM per lane. The lanes are
+                        CPU-bound next to whatever else the box is running.
+  --spill-chunk-rows SPILL_CHUNK_ROWS
+                        surviving rows per --workers spill file (default
+                        2048). Changes no output -- the output shard
+                        boundaries come from the survivor counts however the
+                        rows were chunked -- and exists so the multi-chunk
+                        spill and repack path is reachable at a size a test
+                        can drive. Lower it to trade memory for spill files --
+                        at 1 the per-chunk round-trip check writes and re-
+                        reads a zarr group per row, which is correct and
+                        pathological. REFUSED with --workers 1, which spills
+                        nothing.
+  --policy-observation {latest-phase,phase0}
+                        SF policy observation; phase0 reads the complete
+                        initial uniform-depth block.
+  --value-observation {latest-phase,phase0}
+                        SF value observation, independent of the policy
+                        selector; default preserves legacy values.
+  --row-provenance      bank compact source-qualified row references and
+                        original history input keys through shuffling
+  --value-depth VALUE_DEPTH
+                        read the VALUE target's q at the full-width rung at
+                        depth EXACTLY D, leaving the POLICY target on the
+                        --scheme's own depth. Absent (default) reads both off
+                        the scheme, which is deepest_phase_covering. Given,
+                        the summary stamps deepest_phase_covering_at_d<D> and
+                        the shards carry it as derive_value_source. BOTH
+                        DIRECTIONS: uniform-d9 --value-depth 7 shallows the
+                        value, uniform-d7 --value-depth 9 deepens it; D == the
+                        scheme's own depth is the byte-identical identity.
+                        Refused with a nodes-<N> scheme, which reads phase 0
+                        at the depth its budget bought, and refused above the
+                        corpus staircase's FULL-WIDTH rung (the value is a
+                        full-width read, so the narrowed deeper rungs are not
+                        its envelope).
+  --max-envelope-misses MAX_ENVELOPE_MISSES
+                        how many rows may be dropped for lacking the block the
+                        scheme asks for before the run refuses. 0 (default)
+                        refuses on the first.

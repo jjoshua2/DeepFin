@@ -1,0 +1,14 @@
+{
+  "status": "STOPPED_AT_REGISTERED_METADATA_TIME_LIMIT_NO_COMPLETE_SIZE_RESULT",
+  "observed_unix": 1788900365.799945,
+  "exit_code": 124,
+  "term_after_seconds": 55,
+  "kill_grace_seconds": 5,
+  "CPU_affinity": [
+    6
+  ],
+  "nice": 19,
+  "ionice_class": 3,
+  "scope": "Six fixed losing recipe directory trees, metadata only. Aggregate output was emitted only at completion and was not reached. No payload hashes, data mutations or external transfer.",
+  "consequence": "No complete per-candidate or total size claim. Do not repeat this traversal solely for planning; obtain progressive per-file inventories as part of any selected archive operation. Source-only checkpoint-retention conclusion is unaffected."
+}

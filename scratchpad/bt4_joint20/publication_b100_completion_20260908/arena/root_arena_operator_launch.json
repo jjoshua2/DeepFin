@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "pid": 368555,
+  "started_unix": 1788870362.7769506,
+  "cwd": "/tmp/deepfin-recipe-screen-tools-v3",
+  "argv": [
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/tmp/deepfin-recipe-screen-tools-v3/.venv/bin/python",
+    "scripts/bt4_recipe_screen.py",
+    "--manifest",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/B100_H20.launch_manifest.json",
+    "--expected-manifest-sha256",
+    "ad1a51514206dc7558564356a90e59ce98c8bcab2e5c5c0fc2848bfdfcfa891b",
+    "--execute"
+  ],
+  "environment_overrides": {
+    "CUDA_VISIBLE_DEVICES": "",
+    "PYTHONPATH": "/tmp/deepfin-recipe-screen-tools-v3",
+    "OMP_NUM_THREADS": "2",
+    "OPENBLAS_NUM_THREADS": "2",
+    "MKL_NUM_THREADS": "2",
+    "NUMEXPR_NUM_THREADS": "2",
+    "BLOSC_NTHREADS": "2"
+  },
+  "manifest_sha256": "ad1a51514206dc7558564356a90e59ce98c8bcab2e5c5c0fc2848bfdfcfa891b",
+  "independent_review_sha256": "9cf1d556be919bc6bcc8ab259b09c51a402ad2b210211f988e2c2c60f8317a67",
+  "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01"
+}

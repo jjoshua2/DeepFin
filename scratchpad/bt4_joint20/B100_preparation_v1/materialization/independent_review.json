@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "status": "PASS_INDEPENDENT_PREPARATION_REVIEW_NOT_LAUNCH",
+  "created_utc": "2026-09-08T03:35:48.325490+00:00",
+  "reviewed_files": {
+    "launch.json": "5830a332beeb57f50a21495fb318afebdd47ca64a9fc7b4621ded82b7363a37c",
+    "run_materialization.py": "239b6436055f6c5abca229ac3263640049a218e98bede1900f2bcd70443290b8",
+    "preparation_receipt.json": "5eff9f8847d3f47c53c4f3b86bdbd7bad774073a6c7fbfd89ad04d21a8a6e35c",
+    "author_validation.json": "c9c26ed7290ad7106eafbc8ac17408c5b7836da1f463a8bf8f45f98a69d0cdd1",
+    "qualify_supervisor.fixture.py": "bf3f8a6ac1b0368b49f3fec91d2e7bf2428afbe6739021db1bafe6aab64b8bbc",
+    "supervisor_qualification.json": "3d0ba88b6666858f07bd0def5923bc24054db08384728d0092a8f9ad9344598c",
+    "README.md": "998c677c2d3c33853b57ab1ca990201a6f621ef69ee9efd272d2bf76a19ff860"
+  },
+  "findings": [],
+  "checks": {
+    "actual_non_native_input_pins_verified": 112,
+    "native_binary_pins_reused": 4,
+    "frozen_checkout_HEAD": "44aafa625f7143008625b5ed26087279ef296577",
+    "fresh_final_and_partial_paths": true,
+    "all_author_artifact_hashes_match": true,
+    "five_fixture_results_verified_from_frozen_script_and_receipt": true,
+    "additional_runtime_or_payload_tests": "None; existing frozen mixer/recovery qualification and targeted supervisor fixtures are sufficient for this preparation review."
+  },
+  "data_semantics": [
+    "ExactmixCLI: originalSF source, rawhistoryBT4sidecar, globalalpha1, teacherT0.5,18910484rows/2309shards, expected originalsource summary391837e4\u2026; no Cparent/rank/recovery arguments.",
+    "Known frozen mixer arithmetic normalizes legal source/BT4, sharpens BT4 and computes(1-alpha)SF+alphaBT4;alpha1is pure sharpened BT4 policy. SF/history source validation remains active even though policy weightSFis zero.",
+    "Normal global path copies source tree into fresh .writing and only mutates policy_target; all SFvalue/nonpolicy fields retained by copy-and-no-write mechanism. No new claim of independently rehashed fullnonpolicy payload.",
+    "Existing per-shard source/history/BT4identity, finite/nonnegative/normalized legal input, policy write/read/legal support and final empirical float16 mean/max mass<=2^-10 gates remain. Successful childpublication plus finalrows/recipe summary check is process evidence; separate dataset/schedule qualification remains before any training.",
+    "Completed B100audit4f3f2044\u2026 and status2aa07749\u2026 are pinned, not borrowedH20audit. _load_audit_receipt checks exact treatment/admission/source/ruler/invariants. Descriptive SFagreement is not a strengthgate or trainingselection."
+  ],
+  "supervision": [
+    "Resolved fixed BASE is bt4_joint20/hybrid_endpoint_run01, matching pinned preparation_lock. flock is nonblocking and acquired before secondfresh-output and pin checks. LockFD inherited by start_new_session timeout child.",
+    "No final/.writing adoption and no priorstatus/log/resourceadoption; exclusive files and no retryloop. Originalinputs and otherjobs untouched.",
+    "GNUtimeout14370s with30s kill-afterbounds materializer; CUDAhidden,2numeric/Blosc threads,CPU0/1,nice19,ionice3. Time recorder inside timeout keeps job in ownedgroup.",
+    "STOP checks root/B100/materialization scopes and150GiB free reserve before launch and during run; outputallocatedbytes sampled via bounded20sdu every300s and at completion against32GiB. Sampling failure stops ownchild.",
+    "SIGTERM/SIGINT/STOP/reserve errors lead to ownedprocess-group TERM then KILL/reap; finalowned-group cleanup covers terminalleader descendants. Exceptions preserve status/partial; no source deletion."
+  ],
+  "limits": [
+    "Prepared only: no materialization, GPU, training, new payload scan or process mutation by this review.",
+    "Output32GiB and disk reserve are sampled guards, not filesystem quotas; short sampling overshoot possible.",
+    "If coordinator is SIGKILLed, inherited lock and GNUtimeout survive but disk/STOP polling ceases, as plan explicitly states.",
+    "The4-hour childcap excludes supervisor preflight/pin/du/finalization overhead; registered command itself includes30s termination allowance.",
+    "Do not infer zero H20interference from GPUhidden. Parent chooses arena-phase I/Owindow; this PASS does not launch or queue work.",
+    "Rawteacher/corpus/checkpoint bulk data remain external; author5fixtures use tinyfilesystem/processes and substitute publication metadata/free-space observations."
+  ],
+  "review_independence": "Reviewer authored earlier descriptive audit but did not author this bulk supervisor/launch plan; prior mixer semantics reused from independently reviewed frozen implementation."
+}

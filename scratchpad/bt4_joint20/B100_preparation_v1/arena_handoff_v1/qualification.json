@@ -1,0 +1,12 @@
+{
+  "checks": [
+    "synthetic registered live-arena gate accepted; real pinned command builder",
+    "still-live training PID blocks handoff",
+    "unrelated arena ancestry refused",
+    "wrong live arena command refused",
+    "reused coordinator PID refused",
+    "STOP refused"
+  ],
+  "runner_sha256": "26a87704c613231cfbc7152b9cd7061113b7eb82954dcbcddff964a56525e3a2",
+  "scope": "Synthetic receipts/process identities; actual command constructor; no main/exec or live launch"
+}

@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "status": "PREPARED_PENDING_PARENT_REVIEW_NO_PAYLOAD_EXECUTION",
+  "created_utc": "2026-09-08T11:35:21.316559+00:00",
+  "files": {
+    "prepare.py": {
+      "bytes": 4363,
+      "sha256": "2e655ad82a2f239249eee86c70fbbf4f8da71da5492a1600c28e7d3dba869a00"
+    },
+    "plan.json": {
+      "bytes": 713729,
+      "sha256": "8e7e4b3ca4af65c0e021eb0017003c45914e3bdc729a7d2a72e8837a18339bfc"
+    },
+    "collect.py": {
+      "bytes": 14234,
+      "sha256": "f9b029f8f664c232f3988edf1d2a9f076966c6a0051101533c4947a6451bb94a"
+    },
+    "preregistration.md": {
+      "bytes": 3335,
+      "sha256": "e3d0c9c8d5a370932380c8ca0a54813104f549d61f9827e30d2f4486f8f2e817"
+    },
+    "native_reuse.json": {
+      "bytes": 4308,
+      "sha256": "472ee9797ed4dc83873d09f888f45bb0fa56e035e8ff3809a82f046e0f50afec"
+    },
+    "import_probe.log": {
+      "bytes": 562,
+      "sha256": "6665249ff10d3e01a08f0a6142dae08759011cb5cdeca3d02ed05910d1a500bd"
+    },
+    "import_probe_v2.log": {
+      "bytes": 332,
+      "sha256": "ddcbdfa7fde0b430a892eb0f0f1a0fe1a8768a718446fb3d61edacee4405bd65"
+    }
+  },
+  "checks": {
+    "metadata_only_plan_creation_seconds": 1.969816673,
+    "derived_shards": 64,
+    "rows_fixed_before_targets": 4096,
+    "metadata_pins": 2700,
+    "bytecode_compilation": "PASS",
+    "import_only": "PASS after expected inactive native links; initial import failure preserved",
+    "native_build_sources_equal": 24,
+    "same_inode_libraries_reused": 4,
+    "cuda_initialized": false,
+    "affinity": [
+      6,
+      7
+    ]
+  },
+  "actual_join_cost": "Unknown until bounded selected-ID discovery; enforce192rawfiles/2GiB compressed then fail without replacement if exceeded. No targets or raw payloads read during preparation.",
+  "limits": [
+    "No bank exists; no inference, corpus materialization, gameplay or training selection.",
+    "Cluster design with inverse inclusion weights; not iid or independent heldout evidence.",
+    "Parent reviews/pins command+collector before one bounded execution."
+  ]
+}

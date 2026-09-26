@@ -1,0 +1,91 @@
+"""Prepared, nonqueued single probe. Reuses the existing owned-stage supervisor."""
+import argparse, fcntl, hashlib, importlib.util, json, os, shutil, signal, subprocess, sys, time
+from pathlib import Path
+STATE=Path(__file__).resolve().parent
+
+def require(ok,message):
+    if not ok:raise ValueError(message)
+
+def sha(path):
+    h=hashlib.sha256()
+    with Path(path).open('rb') as f:
+        for b in iter(lambda:f.read(1<<20),b''):h.update(b)
+    return h.hexdigest()
+
+def stamp(path):
+    s=Path(path).stat();return [s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns]
+
+def write(path,value):
+    with Path(path).open('x') as f:json.dump(value,f,indent=2,allow_nan=False);f.write('\n')
+
+def command(p,deadline):
+    return ['/usr/bin/nice','-n','19','/usr/bin/ionice','-c','3','/usr/bin/taskset','-c',','.join(map(str,p['cpu_affinity'])),p['python'],str(STATE/'collect.py'),'--plan',str(STATE/'plan.json'),'--plan-sha256',sha(STATE/'plan.json'),'--deadline',str(deadline)]
+
+def main():
+    ap=argparse.ArgumentParser();ap.add_argument('--expected-plan-sha256',required=True);ap.add_argument('--deadline',type=float);ap.add_argument('--execute',action='store_true');a=ap.parse_args()
+    require(sha(STATE/'plan.json')==a.expected_plan_sha256,'plan pin');p=json.loads((STATE/'plan.json').read_text());require(p['status']=='PREPARED_NOT_LAUNCHED','plan status')
+    if not a.execute:
+        print(json.dumps({'status':'PREPARED_NOT_LAUNCHED','command':command(p,'OUTER_START_PLUS_900'),'environment':p['environment']}));return
+    require(a.deadline is not None and 0<a.deadline-time.time()<=900,'shared absolute deadline')
+    out=Path(p['output']);out.mkdir(exist_ok=False);started=time.time();samples=[];lease=None
+    receipt={'status':'STARTED','started_unix':started,'deadline_unix':a.deadline,'pid':os.getpid(),'plan_sha256':a.expected_plan_sha256}
+    def guard(gpu=False):
+        require(time.time()<a.deadline-15,'whole invocation deadline')
+        require(not any(Path(s).exists() for s in p['stop_paths']),'STOP')
+        require(shutil.disk_usage(out).free>=150*2**30,'150 GiB reserve')
+        require(sum(q.stat().st_size for q in out.rglob('*') if q.is_file())<=p['output_limit_bytes'],'sampled output cap')
+        mem={x.split(':')[0]:int(x.split()[1])*1024 for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')}
+        require(mem['MemAvailable']>=16*2**30,'16 GiB host available RAM')
+        if gpu:
+            used=int(subprocess.check_output([p['nvidia_smi'],'-i','0','--query-gpu=memory.used','--format=csv,noheader,nounits'],text=True,timeout=3).strip())
+            sample={'unix':time.time(),'device0_memory_used_MiB':used}
+            record=out/'stage/process.json'
+            if record.exists():
+                pid=json.loads(record.read_text()).get('ceres_probe_pid')
+                status=Path(f'/proc/{pid}/status') if pid else None
+                if status and status.exists():
+                    try:
+                        lines=status.read_text().splitlines()
+                        rss=next(int(x.split()[1])*1024 for x in lines if x.startswith('VmRSS:'))
+                    except (FileNotFoundError,StopIteration):pass
+                    else:
+                        sample['child_rss_bytes']=rss;require(rss<=p['sampled_child_rss_limit_bytes'],'sampled child RSS cap')
+            samples.append(sample);require(used<=p['sampled_device_memory_limit_MiB'],'sampled GPU memory cap')
+    def alarm(sig,frame):
+        guard(gpu=True);signal.alarm(5)
+    def stopped(sig,frame):raise RuntimeError('operator signal '+str(sig))
+    try:
+        for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,stopped)
+        guard();require(str(Path(sys.executable).resolve())==p['python'],'interpreter')
+        write(out/'started.json',receipt)
+        for item in p['pins']:
+            require(stamp(item['path'])==item['stat'],'changed input stat: '+item['path'])
+            require(sha(item['path'])==item['sha256'],'input hash: '+item['path'])
+            require(stamp(item['path'])==item['stat'],'input changed while hashing')
+        require(subprocess.check_output(['git','-C',p['supervisor_runtime'],'rev-parse','HEAD'],text=True).strip()==p['supervisor_head'],'supervisor head')
+        lease=Path(p['gpu_lease']).open('a');fcntl.flock(lease,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        receipt['lease_acquired_unix']=time.time()
+        hardware=subprocess.check_output([p['nvidia_smi'],'--query-gpu=name,uuid,driver_version,memory.total','--format=csv,noheader,nounits'],text=True,timeout=3).strip()
+        require(hardware==p['gpu_identity'],'GPU/driver identity changed');receipt['gpu_identity']=hardware
+        write(out/'lease_acquired.json',receipt)
+        require(not subprocess.check_output([p['nvidia_smi'],'--query-compute-apps=pid','--format=csv,noheader'],text=True,timeout=3).strip(),'competing GPU owner; no queue')
+        guard(gpu=True)
+        spec=importlib.util.spec_from_file_location('owned_ceres_probe',p['supervisor']);owned=importlib.util.module_from_spec(spec);spec.loader.exec_module(owned)
+        env=dict(os.environ)
+        for key in ('PYTHONPATH','PYTHONHOME','LD_PRELOAD','CHESS_LIVE_PRODUCTION_CONFIG','TORCHDYNAMO_SUPPRESS_ERRORS'):env.pop(key,None)
+        env.update(p['environment']);signal.signal(signal.SIGALRM,alarm);signal.alarm(5)
+        seconds=int(a.deadline-time.time())-20;require(seconds>60,'insufficient stage budget')
+        process=owned.run_owned_stage(command(p,a.deadline),out/'stage',seconds,lease.fileno(),'ceres_probe',{'plan_sha256':a.expected_plan_sha256},manifest=p,stop_paths=tuple(Path(x) for x in p['stop_paths']),cwd=Path(p['supervisor_runtime']),env=env)
+        signal.alarm(0);guard(gpu=True)
+        child=json.loads((out/'child_completed.json').read_text());require(child['status']=='PASS_CERES_CUDA_SAVED_SAMPLE_PROBE' and child['plan_sha256']==a.expected_plan_sha256,'child qualification')
+        require(sha(STATE/'plan.json')==a.expected_plan_sha256,'plan changed')
+        for item in p['pins']:require(stamp(item['path'])==item['stat'],'source/runtime changed')
+        write(out/'resource_samples.json',samples)
+        write(out/'completed.json',{**receipt,'status':child['status'],'ended_unix':time.time(),'stage_seconds':process['stage_seconds'],'child_sha256':sha(out/'child_completed.json'),'provider_proof_sha256':sha(out/'provider_proof.json'),'resource_samples_sha256':sha(out/'resource_samples.json'),'limitations':p['limitations']})
+    except BaseException as error:
+        signal.alarm(0);write(out/'failed.json',{**receipt,'status':'FAILED_OR_STOPPED_NO_RETRY','ended_unix':time.time(),'error':repr(error),'resource_samples':samples});raise
+    finally:
+        signal.alarm(0)
+        if lease is not None:lease.close()
+
+if __name__=='__main__':main()

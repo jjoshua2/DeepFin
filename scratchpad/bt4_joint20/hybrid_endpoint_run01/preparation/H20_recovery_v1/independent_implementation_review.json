@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "status": "PASS_RECOVERY_IMPLEMENTATION_AND_OPERATIONAL_PROCEDURE_PENDING_FINAL_LAUNCH_BINDING",
+  "created_utc": "2026-09-08T02:16:09.007990+00:00",
+  "reviewer": "independent review_pr517_bootstrap",
+  "code_commit": "44aafa625f7143008625b5ed26087279ef296577",
+  "files": [
+    {
+      "path": "/tmp/deepfin-h20-recovery/scripts/bt4_policy_mix.py",
+      "sha256": "cd8059e408a539e4617e13b576890c353a95bd8b3835142c27a92c7ab5917ce3",
+      "bytes": 118940
+    },
+    {
+      "path": "/tmp/deepfin-h20-recovery/tests/test_bt4_policy_mix_recovery.py",
+      "sha256": "5af7aedd87b8ea0766aee3341c275a7e389ed47f1d0fda23ca2f2405c2aa3ce2",
+      "bytes": 9385
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/run_recovery.py",
+      "sha256": "e121a6745dc901176b2d784fe94e736277a55c9a992314b271735abd50467c4f",
+      "bytes": 4886
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/preregistration.json",
+      "sha256": "f61dfaf995c0dae7b6f55e47a0208a06c78be566a5e8b48372671453f23e30c3",
+      "bytes": 3261
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/qualify_H20_recovered_dataset.py",
+      "sha256": "42c7b0e30d894206909781c8bc68b424db0724edd295224321c6c981d99d5fdf",
+      "bytes": 16328
+    }
+  ],
+  "baseline_design": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_minimal_design_review.json",
+    "sha256": "12b2f43eb0cb6223637c6d78d1a390098762faf570203b84d2c78f1c2cde64b1",
+    "bytes": 6096
+  },
+  "author_evidence": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/author_validation/receipt.json",
+    "sha256": "1ace7bd84db934c079036d07050200846d7ff863d5723a64aa93c0996b03d56d",
+    "bytes": 4027
+  },
+  "blockers": [],
+  "independent_source_findings": [
+    "Normal mix without recovery receipt retains original refusal of .writing and full copy/validation path; new recovery requires paired receipt/hash and fixed H20 c20-global recipe.",
+    "Only exact qualified original producer c897fae3 is accepted. Receipt pins producer bytes, original failed124status and exact relevantargv; required original PIDs must be gone. Full original source,sidecar,rank,C-parent/audit lineage validation precedes recovery.",
+    "Completed prefix must be nonempty,proper contiguous sourceprefix with incomplete suffix. Metadata snapshot hashes source,parent,target,sidecar,rank metadata, rejects aliases and requires float16/1858layout plus complete recipe and all four identitydigest classes. Completed stamps outside declaredprefix refused.",
+    "Recovery uses source_paths[len(prefix):]; it neither copies sourceagain nor reads prefix array payloads. All original suffix identity,C reconstruction,nonpolicy,write/read,illegal/finite/normalization checks remain in the unchanged loop.",
+    "Original suffix empirical mass and non-inert guards run before finalization. Prefix metadata and recovery evidence pins are rechecked. Exact totalrow/shard counts and parent/audit final checks remain.",
+    "Recovered full descriptive statistics are null, suffix statistics explicit, normalized-f64-f32-f16 certificate exactly matches the independent analytic derivation. Uniform certified.000545bound implies both mean/max<2^-10; no empirical prefix/full values are fabricated.",
+    "Supervisor now inherits preparationlock into owned timeout via pass_fds, handlesbothSTOPpaths/disk/signals and finally removes owned group even if timeoutleaderalreadyexited. Surviving timeout caps coordinator-death case; singleattempt statusprevents blindretry.",
+    "Recovered qualifier preserves originalFAILED124identity, requires exact successful recoveryplan/argv/supervisor, bothSTOPabsence, elapsed<=1800,suffixnoninert+measuredmass, exactanalyticcertificate and all fifteen unmeasuredaggregatefieldsnull. Original audit,parent,full metadata/count and independent prospective schedule gates remain."
+  ],
+  "validation": {
+    "author_checks": "Read actual final8new-case,24normal-regression and scopedtype0/0/0 logs and verified all author log hashes. Ruff/diff authorPASS; independent gitdiffcheckPASS.",
+    "coverage": "Real tiny interruption/continuation refuses every prefix array getitem and proves all prefix filebytes unchanged; badstamp/layout/producer/livePID/recipe/suffixnonpolicy refusals; analytical bound regression. Test producer allowlist is explicitly replaced with actual tiny testproducer and synthetic timeoutreceipt; it does not claim an operational c897timeout was executed by these fixtures.",
+    "independent_execution": "No new tests repeated: actual focused cases cover reviewed boundary and no new behavior gap warranted duplication. Operational wrapper/qualifier delta reviewed statically, reusing already-qualified timeout/flock primitives.",
+    "static_limit": "Author scopedlint certified finalcode; parent whole gate/publication separate."
+  },
+  "remaining_conditions": [
+    "Final exact launch/runtime and recoveryreceipt/prefixmetadata bindings are not yet prepared; RECOVERY_PLAN_SHA is intentionallypending, so recoveredqualifier is not executablequalification yet.",
+    "After recovery, actual terminal receipts/final corpus metadata and canonical schedule must still qualify before training."
+  ],
+  "limits": [
+    "No operational payload scan,inference,teacher,corpus mutation,recoverylaunch or livejobinteraction performed.",
+    "Prefixqualification remains explicit executed-process proof with the same after-write-mutation limitation as normalqualification; no freshprefixpayloadchecksumclaim.",
+    "No documentation/evidencepublicationdiff reviewed here beyond operational preregistration."
+  ]
+}

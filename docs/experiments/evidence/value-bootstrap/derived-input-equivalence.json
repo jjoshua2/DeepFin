@@ -1,0 +1,71 @@
+{
+  "status": "PASS_BANKED_128_EXACT_BT4_INPUT_AND_FINITE_COUNTER_DOMAIN",
+  "rows": 128,
+  "original_shape": [
+    128,
+    175,
+    8,
+    8
+  ],
+  "saved_shape": [
+    128,
+    112,
+    8,
+    8
+  ],
+  "original_recomputed_vs_saved": {
+    "max_abs_diff": 0.0,
+    "changed_elements": 0,
+    "changed_rows": 0,
+    "affected_planes": []
+  },
+  "float16_direct_vs_saved": {
+    "max_abs_diff": 0.0,
+    "changed_elements": 0,
+    "changed_rows": 0,
+    "affected_planes": []
+  },
+  "float16_roundtrip_vs_saved": {
+    "max_abs_diff": 0.0,
+    "changed_elements": 0,
+    "changed_rows": 0,
+    "affected_planes": []
+  },
+  "full_x_float16_roundtrip": {
+    "max_abs_diff": 0.00023508071899414062,
+    "changed_elements": 7400,
+    "changed_rows": 128,
+    "affected_planes": [
+      109,
+      137,
+      138,
+      139,
+      173,
+      174
+    ]
+  },
+  "binary_consumed_history_castling_color": true,
+  "integer_counter_domain": {
+    "values": 101,
+    "range": [
+      0,
+      100
+    ],
+    "recovery_exact": true,
+    "max_pre_round_float16_rescale_error": 0.0234375,
+    "float16_values_unique": 101,
+    "clocks_above100": "Already clipped by original encoder; converted feed preserves clipped100, not true original unclipped clock."
+  },
+  "conclusion": "Existing x_to_lc0_planes already performs exact integer recovery. For valid pinned lc0_root_legacy_meta tensors produced by this writer, binary consumed planes survive float16; rule50 roundtrip recovers every clipped integer0..100; planes110/111 are overwritten and>=112 discarded. Thus LC0 feed equality follows from source algebra, conditional on actual stored data satisfying writer/encoding/identity contract.",
+  "limits": [
+    "128 samples do not certify every corpus row or its provenance.",
+    "Full175-plane original float32 input_key cannot generally be reconstructed from float16, despite exact112-plane LC0 feed.",
+    "No original history authenticity or source binding gate can be replaced with this numerical result.",
+    "No inference, fullcorpus scan, throughput benchmark or backfill; no new Ceres byte reconstruction guarantee."
+  ],
+  "converter": {
+    "repository_path": "chess_anti_engine/encoding/lc0.py",
+    "sha256": "a20b56a7c0666e134791855c0f124a66504013983f8f97948539a015dac9c3ee",
+    "function_sha256": "081f3d423f77d2b54aef1ab2a21d6a868be2cc2d16f48b4f2125a5877448b212"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "panel_rows": 1152,
+  "panel_unique_fens": 1152,
+  "full_history_plies": 16,
+  "measured_rows_per_model_per_cell": 1024,
+  "warmup_prefix_rows": 128,
+  "cells": 6,
+  "roots_per_cell": 2048,
+  "total_measured_roots": 12288,
+  "rates": {
+    "100sim_width32": 60.977858494366714,
+    "100sim_width128": 63.5272105948634,
+    "100sim_width64": 53.09813573290777,
+    "400sim_width128": 22.7598137090802,
+    "400sim_width32": 19.48555667639936,
+    "400sim_width64": 25.15194168475089
+  },
+  "relative_128_vs_64_100": 0.19641131874037088,
+  "relative_128_vs_64_400": -0.0951070897687788,
+  "relative_128_vs_32_100": 0.04180783260422638,
+  "relative_32_vs_64_400": -0.2252861858290227,
+  "measured_seconds_total": 380.90598418502486,
+  "warmup_seconds_total": 297.1178014340403,
+  "first_warmup_seconds": 269.88749767802074,
+  "owned_stage_seconds": 820.7403198910179,
+  "other_stage_seconds": 142.7165342719527,
+  "peak_allocated_GiB": 1.5620040893554688,
+  "peak_reserved_GiB": 5.427734375
+}

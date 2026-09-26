@@ -1,0 +1,15 @@
+{
+  "status": "PASS_CPU_PREFLIGHT",
+  "plan_sha256": "23ca10d872abc19507f21000966b80707bed0c00000857da1f7a36f6df77000f",
+  "torch": "2.11.0+cu128",
+  "cuda_initialized": false,
+  "resolved_search_matches": true,
+  "actual_consumer_imports": true,
+  "action_mapping_checked": true,
+  "largest_pool_floor_caps": {
+    "64": 2016,
+    "128": 2048,
+    "256": 4096
+  },
+  "limits": "No checkpoint loaded or GPU path executed; actual model dynamic-relations bound is checked at GPU launch."
+}

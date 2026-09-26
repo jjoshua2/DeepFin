@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "status": "PASS_EXACT_BOUNDED_H20_RECOVERY_LAUNCH",
+  "created_utc": "2026-09-08T02:23:19.426403+00:00",
+  "reviewer": "independent review_pr517_bootstrap",
+  "checkout": "/tmp/deepfin-h20-recovery-tools",
+  "commit": "44aafa625f7143008625b5ed26087279ef296577",
+  "files": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/launch.json",
+      "sha256": "77c2c3c60ec0f5e482030f417043dc0ba89cc88fa33d12d193959a68a7ed8b2e",
+      "bytes": 34713
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/recovery_receipt.json",
+      "sha256": "a0e681914f23fe5ef3fd327cc45da4b061b9bc1423f1a1f207567a54e3b97e6c",
+      "bytes": 1176
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/completed_prefix_metadata.jsonl",
+      "sha256": "678633f00cb06bc746f629dce490ac891a38ab1c5d5ae3cdca3bb0f35b2773f4",
+      "bytes": 13619064
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/runtime_qualification.json",
+      "sha256": "58d51f0962a1608bf2bcb02fabbde2a14e77275a8ca83953d4f7088ebfe20c70",
+      "bytes": 2923
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/runtime_import_receipt.json",
+      "sha256": "a674e00741f88034e4e2e085b4c3ee493740359c38f67aeaa64b1e92334b8c13",
+      "bytes": 642
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/run_recovery.py",
+      "sha256": "e121a6745dc901176b2d784fe94e736277a55c9a992314b271735abd50467c4f",
+      "bytes": 4886
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/preregistration.json",
+      "sha256": "f61dfaf995c0dae7b6f55e47a0208a06c78be566a5e8b48372671453f23e30c3",
+      "bytes": 3261
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/qualify_H20_recovered_dataset.py",
+      "sha256": "3148d28b9263e5988399338b9796c58d61fb3b8d72120f0e5b53dfed98aa4934",
+      "bytes": 16368
+    }
+  ],
+  "baseline_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/independent_implementation_review.json",
+    "sha256": "827db3d299ecfcfe176b71bc4a5d865148130b9fc7c2d991339077efb0297a66",
+    "bytes": 5902
+  },
+  "independent_binding_check": {
+    "status": "PASS_FINAL_BINDING",
+    "directly_checked_pins": 198,
+    "reused_qualified_pins": [
+      "/home/josh/projects/chess/data/audit_set_v1.jsonl",
+      "/home/josh/projects/chess/scratchpad/audit_d9_labels/audit_d9_labels.jsonl",
+      "/home/josh/projects/chess/data/lc0/bt4_audit_cache_topk256_20260817.jsonl",
+      "/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13",
+      "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so",
+      "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so",
+      "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so",
+      "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so",
+      "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so",
+      "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so",
+      "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so"
+    ],
+    "native_source_files_compared": 23,
+    "prefix_shards": 2292,
+    "prefix_rows": 18776064,
+    "suffix_shards": 17,
+    "suffix_rows": 134420,
+    "prior_timeout_attr_hashes_match_prefix": true,
+    "qualified_code_and_argv_match": true,
+    "qualifier_delta": "Only pending launch SHA replaced; all prior reviewed bytes unchanged otherwise.",
+    "free_bytes": 466132365312,
+    "limitations": "No recapture of live shard metadata or array reads; prefix receipt inspected/joined to prior timeoutmetadata only. Actual PIDs absence reused from parent terminal observation, not a new hostscan."
+  },
+  "check_artifact": {
+    "path": "/tmp/h20-recovery-independent-binding.json",
+    "sha256": "1bc8046c2fb9355492d9c4f82c9f05835ebd58dec5a92e5aaaeab6acbe2c1b7f",
+    "bytes": 1736
+  },
+  "findings": [
+    "Exact frozen commit and clean tracked checkout checked.198current small/code/evidence pins verified;11previously qualified audit/interpreter/native pins reused explicitly. Four newly placed native binaries are same device/inode as qualified v3 runtime, with23native source/build files unchanged.",
+    "Actual parent CPU-import receipt binds exact mixerpath/hash and runtime; Torch2/Blosc2 andpackageversions match qualified environment. No import probe repeated.",
+    "All original mix CLI option/value pairs are unchanged; only direct frozen script/environment/resource wrapper and paired recovery-receipt options added. Timeout1770seconds+30killgrace, CPU0/1,2threads,nice19,ionice3,noGPU and150GiBreserve match registration. Inherited shared lock/owned cleanup procedure is unchanged from independent implementationreview.",
+    "Pinned prefixmetadata contains exactly2292contiguousshards/18776064rows. All61metadatahash fields per shard structurally valid; partial attrs hashes match prior terminal-timeout record, and source/parent/partial array layout hashes agree. Remaining17shards/134420rows match registration; no prefixmetadata recapture or payload scan.",
+    "Finaloutputabsent and preservedpartialpresent; newstatus/log/resources and bothSTOPmarkers absent at review. Original process absence is reused from explicit parent hostterminal evidence; operation itself checks original PIDs again.",
+    "Recoveredqualifier changed only its pendingconstant to exact final launchSHA77c2c3c6; all other previouslyreviewedbytes reconstruct exactly. NewqualifierSHA3148d28b is pinned here, original normalqualifier remainsunchanged.",
+    "Historical author/runtime correction receipts remain separate; no priorfailedstatus or unavailablemeasuredprefixstatistics is rewritten."
+  ],
+  "blockers": [],
+  "exact_launch_argv": [
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/run_recovery.py",
+    "77c2c3c60ec0f5e482030f417043dc0ba89cc88fa33d12d193959a68a7ed8b2e"
+  ],
+  "limits": [
+    "No operational launch, currentcorpusqualification, payloadscan, prefixrecapture, test/census/inference/GPU work performed.",
+    "This qualifies the exact one continuation; actual completed publication and canonical schedule still must pass before training.",
+    "Prefixevidence remains the accepted executed-process proof, not fresh independent payload hashing."
+  ]
+}

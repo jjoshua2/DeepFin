@@ -1,0 +1,34 @@
+{
+  "status": "PASS_V50_PREPARATION_ONLY_BANK_INCOMPLETE_NOT_LAUNCHED",
+  "implementation_pr": "https://github.com/jjoshua2/DeepFin/pull/592",
+  "reviewed_head": "5afc1e2f0923704b2bb8f1aa7ffe45cc15141757",
+  "merge": "afa78fdbe8103a081d4547208e1a43c28f254023",
+  "files": {
+    "B100V50.dataset_qualification.draft.json": "0671d5e128ad242568903c0b88b8e4a86bc5e2ea85fcdef9908c9ea42b95129c",
+    "README.md": "8542418b28bc03f3af88c57f07a35af143d516563f1e7237d1ea3fcc250a25c7",
+    "check_runtime_command.py": "c9655f6d4e473acaeabaf984f7076a4dc788b55653c2bd4e9c355e54444a1a47",
+    "finalize_plan.py": "1ef72714746263d2a7188501551fe007f3d2488ef614b490c42287347dbb9aca",
+    "historical_plan_reference.json": "44b0cb6dd5b63f17790769b884cdec77b6ea4d471b37c09c06b3e10bc38860ae",
+    "plan.prepared.json": "8016040bb8585b3818078c444ac77970afd16102e1c65c0c0da3917c8db2e670",
+    "producer_argv.json": "cd7f7305796adbba6a77b19afe435ed94c3b9686ccc87429364db808fff4e25d",
+    "run_materialization.py": "3e71d42826d2e369cbfecbd53bcf031f3c6c8123c787d976ea7bb086719ba500",
+    "runtime_and_plan_binding.json": "0106d452ea322dac10c21df58eab2cd1743b7ef0398313e19383bb7c81a000c3",
+    "runtime_command_admission.json": "4d05448d92c23541e5737bdef51c66bfceaccbb6e70e8f4eec64334c759220a0",
+    "supervisor_delta.patch": "25b64d6192a2e07528ae8f27b6e06611ed947144b99e2bd8b4441e0df92d7227"
+  },
+  "checks": [
+    "Original four V10 reference files byte-identical",
+    "Fresh V50 output/partial; no launch receipt",
+    "Supervisor exact reversible profile-only substitution",
+    "Actual runtime parser, producer SHA, alpha0.5/identity/profile/out path agree; threads2 and CUDA uninitialized",
+    "Only two project source pins differ from prior qualified runtime; shared env/native reused",
+    "Six-hour producer-only scope explicitly retained; no total operator deadline claim"
+  ],
+  "runtime_check_command": "/usr/bin/timeout --kill-after=10s 50s /usr/bin/env CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2 BLOSC_NTHREADS=2 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/tmp/deepfin-b100v50-rewrite-tools /usr/bin/nice -n 19 /usr/bin/ionice -c 3 /usr/bin/taskset -c 2,3 /usr/bin/prlimit --as=12884901888 -- /tmp/deepfin-b100v50-rewrite-tools/.venv/bin/python /home/josh/projects/chess/scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/check_runtime_command.py",
+  "runtime_check_exit_code": 0,
+  "limitations": [
+    "No operational corpus payload/WDL payload/model reads, source rewrite or inference",
+    "Remainder completion hash deliberately pending; actual full-bank accounting not yet qualified",
+    "Plan requires independent review before execution; no queue or launch"
+  ]
+}

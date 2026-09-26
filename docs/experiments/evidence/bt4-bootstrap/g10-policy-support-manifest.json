@@ -1,0 +1,253 @@
+{
+  "schema": 1,
+  "captured_unix": 1788830986.8017435,
+  "scope": "Completed supplemental value-observation census and independent readout; bounded policy-support/rank implementation validation; prospective v3 common-preparation registration and runner, unlaunched and not runtime-frozen. Synthetic helper fixtures and original logs retained; raw operational source corpus stays external with frozen identities. Whole-lint timing overlapped final review edits; final changed-file static check is separately recorded.",
+  "entries": [
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/run07_g10_companion4.anomalies.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/run07_g10_companion4.anomalies.jsonl",
+      "bytes": 2619,
+      "sha256": "1046441464ef3ef888779263630144c3600bac41300ba3106231272b538f126f"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/readout.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/readout.json",
+      "bytes": 61995,
+      "sha256": "f2f642059fb9b79a2bfb92cb77b6e7969c2236bd104da5e16b331c15c4d970a4"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/fixture_checks.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/fixture_checks.json",
+      "bytes": 464,
+      "sha256": "efffc732d13775cb52ed7ce943e94217e44954648e9c1162af06b476826e7828"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/run06_g10.anomalies.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/run06_g10.anomalies.jsonl",
+      "bytes": 1775,
+      "sha256": "a346d5c2c79cfaa09d89f0bb95c486aa877a6794a494bd64fbecddf9b749d331"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/interpretation_receipt.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/interpretation_receipt.json",
+      "bytes": 3790,
+      "sha256": "eaeb7ffb0861313d619dcd211b76968a2e434d9a9837ffea0b046ddd195c03f0"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/census.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/census.py",
+      "bytes": 8720,
+      "sha256": "009bda300867c154098cfbcfe51131db9641178c1a42f1122fb2eac64a7b44e9"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/preregistration.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/preregistration.json",
+      "bytes": 5100,
+      "sha256": "4857d861848b3fffc88fad86318bf8f94a13245a84a5567e34bf3449c8b91bf0"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/census.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/census.log",
+      "bytes": 3350,
+      "sha256": "242f13f61e4c9efeed92ab511ef6c77ccc5762777640021294234cdf7856d2b8"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/time.txt",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/time.txt",
+      "bytes": 929,
+      "sha256": "de6aa66d4ebf60e5d8d24254bd7bfdbfcfacfe545c9f1def08f6485a1bcd8d0b"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/receipt.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/receipt.json",
+      "bytes": 4140,
+      "sha256": "76d0ad9bda06cddd5114c56f2c089788f0c8efdb1f04a7838da516834271263c"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/boundary_supplement.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/boundary_supplement.json",
+      "bytes": 1776,
+      "sha256": "ae5febc30f4d58f7122217e4fa22eb34533b9205eb827f757d66cfbca5db2b7b"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-types-host.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-types-host.log",
+      "bytes": 30,
+      "sha256": "56882e01cb80173ef053c4096e4ee43e3123a15f5c0a06715f96988d48fbd91c"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-types-path.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-types-path.log",
+      "bytes": 4435,
+      "sha256": "68b0744400ecf3a96e716dfae7e85594d0cd0e1521d3c73ea1887a61cbc381da"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-historical-tests.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-historical-tests.log",
+      "bytes": 187,
+      "sha256": "192590313658fde90c82ca350ad7fb706912c092e702284b9a368a4730ddf400"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-boundary-tests.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-boundary-tests.log",
+      "bytes": 187,
+      "sha256": "0ec04e88e381cd9728c69d6013d9e727036464927fdd01ee9103518b66674b4d"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-final-tests.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/rank_support_consumer_validation_v1/rank-support-final-tests.log",
+      "bytes": 187,
+      "sha256": "f1b0e06e99ef1bafc34cb622c1c039c7223f830197de5e9f7ad68132a3b168ca"
+    },
+    {
+      "source": "scratchpad/phase0_policy_support_v1/deriver_author_validation_final.json",
+      "published": "scratchpad/phase0_policy_support_v1/deriver_author_validation_final.json",
+      "bytes": 1678,
+      "sha256": "d58b9778b686f972bec2055fca637e6e10aa64ab66c0ec192b08d31803041890"
+    },
+    {
+      "source": "scratchpad/phase0_policy_support_v1/deriver_author_validation.json",
+      "published": "scratchpad/phase0_policy_support_v1/deriver_author_validation.json",
+      "bytes": 1971,
+      "sha256": "724b97286997ad1ee9a34aaac8b38c972bc7d4e1bda4785d1db69629662ff88b"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/independent_value_census_review.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/independent_value_census_review.json",
+      "bytes": 6774,
+      "sha256": "4eecc91a3592d030428923e7604dafc7769f9c33528acc6b6926433d220a4fd8"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/preregistration.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/preregistration.json",
+      "bytes": 23094,
+      "sha256": "8fa340beb2cedf0e8fcd3a2773dae28b24d7e2203b5fd2f475623daf67af9a34"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run_common.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run_common.py",
+      "bytes": 23544,
+      "sha256": "adfacfa83b853653e827ff9b235cb7a53b0eec470d4016cfad8db62ac58a8e55"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/python_bootstrap/sitecustomize.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/python_bootstrap/sitecustomize.py",
+      "bytes": 382,
+      "sha256": "e5f31f339fc737f98a9b256e7a280b7a681a90d929fc101faa057d661d91b7ad"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/root_static_validation.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/root_static_validation.json",
+      "bytes": 1722,
+      "sha256": "99fa4aac7f7d5b220e4b1cad148d6c87a2f861f4311acaf2e6b931390b2a5035"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/whole_lint.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/whole_lint.log",
+      "bytes": 508,
+      "sha256": "ffa2595c67d4002166e21291506dfc6faf21e7a830580736f504460388a85d91"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/final_scoped_lint.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/final_scoped_lint.log",
+      "bytes": 173,
+      "sha256": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/check_exclusion_contract.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/check_exclusion_contract.py",
+      "bytes": 2904,
+      "sha256": "b80afed28b6aeab5778df08c3316038cafed72a64b874e088132533b4878b27d"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/root_contract_checks_final.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/root_contract_checks_final.json",
+      "bytes": 575,
+      "sha256": "dd9d73fc265ebee538f952d1ad7f6613d00fa341ac4f90862a237a6d38f3adcb"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/expected_support.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/expected_support.jsonl",
+      "bytes": 1348,
+      "sha256": "846177f3dd7dfdc2d0a09b1bf8eb5438dab25c8ee9cccecdf9f8574f1ee6382f"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/expected_no_result.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/expected_no_result.jsonl",
+      "bytes": 146,
+      "sha256": "6ccc0bc4071861d6443ace020cdf8b9f641d6d09512c5a297ce7a1b94cf8e4e7"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/serial/policy_support_misses.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/serial/policy_support_misses.jsonl",
+      "bytes": 1288,
+      "sha256": "d0e26534053690e503e849d649ce81b1ae52ed99025a76e363fb593a1a9e4323"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/serial/derive_targets_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/serial/derive_targets_summary.json",
+      "bytes": 11254,
+      "sha256": "4ab6001daee18427f08eb6a69513fe872d1edc478c2b263cc4d577a497899af2"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/spawn/policy_support_misses.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/spawn/policy_support_misses.jsonl",
+      "bytes": 1288,
+      "sha256": "d0e26534053690e503e849d649ce81b1ae52ed99025a76e363fb593a1a9e4323"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/spawn/derive_targets_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/spawn/derive_targets_summary.json",
+      "bytes": 11254,
+      "sha256": "d88a0266c15114639f204346548799d525c6be541696f162be43e565fefdeaca"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/corpus/w00-00000.jsonl.zst",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/corpus/w00-00000.jsonl.zst",
+      "bytes": 883,
+      "sha256": "886c9b610f2f5aabbef066f0ea28ad92570dbdb9ad5ad6f73d6f43e65854f1c1"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/corpus/w00.progress.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/corpus/w00.progress.jsonl",
+      "bytes": 264,
+      "sha256": "bbc7435320f30c14ae85008d0c46d139f97fe35f4f206c7a1ab42819f794f930"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/corpus/w00-00001.jsonl.zst",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/corpus/w00-00001.jsonl.zst",
+      "bytes": 874,
+      "sha256": "353ebafec24799410d28c296973a9616ac678c5c27c7232bdd6470d285e84b81"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/corpus/manifest.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/validation/actual_small_fixture_final/corpus/manifest.json",
+      "bytes": 490,
+      "sha256": "cb88b2a82871b05edc517078a858277bae547e41e300bc55e2d443c3a1a748a4"
+    },
+    {
+      "source": "/tmp/phase0-support-boundary-tests.log",
+      "published": "scratchpad/phase0_policy_support_v1/phase0-support-boundary-tests.log",
+      "bytes": 187,
+      "sha256": "7609a40d800ea86e0793d4eb42cfeb955f540528b1944b3b4b7846fcf16b102d"
+    },
+    {
+      "source": "/tmp/phase0-support-tests.log",
+      "published": "scratchpad/phase0_policy_support_v1/phase0-support-tests.log",
+      "bytes": 187,
+      "sha256": "71f41538de40685372df98265238f0d5a6798aea9c1170ff9b625efec6168553"
+    },
+    {
+      "source": "scratchpad/phase0_policy_support_v1/independent_implementation_review.json",
+      "published": "scratchpad/phase0_policy_support_v1/independent_implementation_review.json",
+      "bytes": 6056,
+      "sha256": "ff2547dae92ef20ff944a87abc9aa5efe396d451c407b28eb2ebdfad5afca6d0"
+    },
+    {
+      "source": "scratchpad/phase0_policy_support_v1/independent_publication_review.json",
+      "published": "scratchpad/phase0_policy_support_v1/independent_publication_review.json",
+      "bytes": 4483,
+      "sha256": "605d14cbce432c22c0765abc8b642b27729b58ac6de49d0ee0db0f5b8c2bea33"
+    }
+  ]
+}

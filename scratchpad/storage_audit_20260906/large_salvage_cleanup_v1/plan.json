@@ -1,0 +1,262 @@
+{
+  "schema": 1,
+  "status": "FIXED_NINE_POOL_PREPARATION_REQUIRES_INDEPENDENT_REVIEW_BEFORE_EXECUTION",
+  "pools": [
+    {
+      "name": "bt4heads_iter112_20260817",
+      "source": "/home/josh/projects/chess/data/salvage/bt4heads_iter112_20260817",
+      "archive": "/mnt/e/chess_archive_20260906/salvage/bt4heads_iter112_20260817.tar",
+      "tar_sha256": "7d02d370c7b5e2a8520e8512241346bb2de213cbebb01ad129888408d87326a1",
+      "tar_bytes": 3181854720,
+      "external_mtime_ns": 1788730315337003600,
+      "verified_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/bt4heads_iter112_20260817/verified.json",
+      "source_manifest": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/bt4heads_iter112_20260817/source.jsonl",
+      "source_manifest_sha256": "457890c994c23b1ea20b0b8cf9c818fa057e0ce3cf0f68e10fa0a5a3bc6d1418",
+      "source_root_metadata": {
+        "st_dev": 2096,
+        "st_ino": 80357727,
+        "st_mode": 16877,
+        "st_uid": 1000,
+        "st_gid": 1000,
+        "st_size": 4096,
+        "st_mtime_ns": 1786949771789189084,
+        "st_ctime_ns": 1786949771789189084
+      },
+      "entries": 399345,
+      "logical_bytes": 2459894483
+    },
+    {
+      "name": "f_only_midpoint_20260818",
+      "source": "/home/josh/projects/chess/data/salvage/f_only_midpoint_20260818",
+      "archive": "/mnt/e/chess_archive_20260906/salvage/f_only_midpoint_20260818.tar",
+      "tar_sha256": "cb1152f8e592b215c0ca65ade729729b1fe72fc720e143cc1ee8ae87f40956a3",
+      "tar_bytes": 3152394240,
+      "external_mtime_ns": 1788731173025487900,
+      "verified_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/f_only_midpoint_20260818/verified.json",
+      "source_manifest": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/f_only_midpoint_20260818/source.jsonl",
+      "source_manifest_sha256": "be2782df33f1ad26961ee298ee669f29a5b2dbf417b4a15b2b8352e2477a9242",
+      "source_root_metadata": {
+        "st_dev": 2096,
+        "st_ino": 68321422,
+        "st_mode": 16877,
+        "st_uid": 1000,
+        "st_gid": 1000,
+        "st_size": 4096,
+        "st_mtime_ns": 1787097741721929183,
+        "st_ctime_ns": 1787097741721929183
+      },
+      "entries": 399105,
+      "logical_bytes": 2430398996
+    },
+    {
+      "name": "post_quarantine_20260801",
+      "source": "/home/josh/projects/chess/data/salvage/post_quarantine_20260801",
+      "archive": "/mnt/e/chess_archive_20260906/salvage/post_quarantine_20260801.tar",
+      "tar_sha256": "5943654f7ecb1bb7a3dd9f20741d08899265e13a1055ba3ae2a9924d5d20c10e",
+      "tar_bytes": 3083130880,
+      "external_mtime_ns": 1788732253616634600,
+      "verified_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/post_quarantine_20260801/verified.json",
+      "source_manifest": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/post_quarantine_20260801/source.jsonl",
+      "source_manifest_sha256": "02ba40816d6d9df9abbfe3295d5fbd9930e0f1830d357914cd58a919b30850ce",
+      "source_root_metadata": {
+        "st_dev": 2096,
+        "st_ino": 77388311,
+        "st_mode": 16877,
+        "st_uid": 1000,
+        "st_gid": 1000,
+        "st_size": 4096,
+        "st_mtime_ns": 1785630368313473089,
+        "st_ctime_ns": 1785630368313473089
+      },
+      "entries": 345151,
+      "logical_bytes": 2462703061
+    },
+    {
+      "name": "pre_abandonfix_20260724",
+      "source": "/home/josh/projects/chess/data/salvage/pre_abandonfix_20260724",
+      "archive": "/mnt/e/chess_archive_20260906/salvage/pre_abandonfix_20260724.tar",
+      "tar_sha256": "6aad6d51042b8106429b9b11d055491ba68d52b16c1c41a0144637e3648ab654",
+      "tar_bytes": 3315036160,
+      "external_mtime_ns": 1788733118313698800,
+      "verified_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_abandonfix_20260724/verified.json",
+      "source_manifest": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_abandonfix_20260724/source.jsonl",
+      "source_manifest_sha256": "cde193085199657daf553b9c7e8beebaf637bab422c19fb28cf5810be0241d56",
+      "source_root_metadata": {
+        "st_dev": 2096,
+        "st_ino": 70364451,
+        "st_mode": 16877,
+        "st_uid": 1000,
+        "st_gid": 1000,
+        "st_size": 4096,
+        "st_mtime_ns": 1784926398442053952,
+        "st_ctime_ns": 1784926398442053952
+      },
+      "entries": 370902,
+      "logical_bytes": 2642943639
+    },
+    {
+      "name": "pre_aot_deploy_20260714",
+      "source": "/home/josh/projects/chess/data/salvage/pre_aot_deploy_20260714",
+      "archive": "/mnt/e/chess_archive_20260906/salvage/pre_aot_deploy_20260714.tar",
+      "tar_sha256": "d64226038a64fa367ebaf1609625ec39d6f8e1a7623861a9abb561a766be244c",
+      "tar_bytes": 3044577280,
+      "external_mtime_ns": 1788733888911509700,
+      "verified_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_aot_deploy_20260714/verified.json",
+      "source_manifest": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_aot_deploy_20260714/source.jsonl",
+      "source_manifest_sha256": "8926ef970746f2d5dd63fce2cda3606f1b28335013e150835caddfbfe8e8b2b2",
+      "source_root_metadata": {
+        "st_dev": 2096,
+        "st_ino": 69173119,
+        "st_mode": 16877,
+        "st_uid": 1000,
+        "st_gid": 1000,
+        "st_size": 4096,
+        "st_mtime_ns": 1784081267649282733,
+        "st_ctime_ns": 1784081267649282733
+      },
+      "entries": 352438,
+      "logical_bytes": 2407080960
+    },
+    {
+      "name": "pre_audit_window_20260726",
+      "source": "/home/josh/projects/chess/data/salvage/pre_audit_window_20260726",
+      "archive": "/mnt/e/chess_archive_20260906/salvage/pre_audit_window_20260726.tar",
+      "tar_sha256": "ff85cd9b4b51214d8e386d335c34134507ae982b00a14708e99d83c108ccf741",
+      "tar_bytes": 3059056640,
+      "external_mtime_ns": 1788734663601114600,
+      "verified_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_audit_window_20260726/verified.json",
+      "source_manifest": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_audit_window_20260726/source.jsonl",
+      "source_manifest_sha256": "88654858a20c183e478627c26294a92d768cc38c0b3ecbce72e23dcecc1a85d5",
+      "source_root_metadata": {
+        "st_dev": 2096,
+        "st_ino": 67239780,
+        "st_mode": 16877,
+        "st_uid": 1000,
+        "st_gid": 1000,
+        "st_size": 4096,
+        "st_mtime_ns": 1785098332817633834,
+        "st_ctime_ns": 1785098332817633834
+      },
+      "entries": 367150,
+      "logical_bytes": 2393564642
+    },
+    {
+      "name": "pre_durable_deploy_20260726",
+      "source": "/home/josh/projects/chess/data/salvage/pre_durable_deploy_20260726",
+      "archive": "/mnt/e/chess_archive_20260906/salvage/pre_durable_deploy_20260726.tar",
+      "tar_sha256": "2c1518fd8f5ad4d611867605d7abe673b682f325737ae993be75a557cf63bdfb",
+      "tar_bytes": 3328204800,
+      "external_mtime_ns": 1788735878058539200,
+      "verified_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_durable_deploy_20260726/verified.json",
+      "source_manifest": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_durable_deploy_20260726/source.jsonl",
+      "source_manifest_sha256": "fbeaceb77626de6db45f0d964a0a5111d52d573c646567fcb6a19f2a4917e7e2",
+      "source_root_metadata": {
+        "st_dev": 2096,
+        "st_ino": 72334183,
+        "st_mode": 16877,
+        "st_uid": 1000,
+        "st_gid": 1000,
+        "st_size": 4096,
+        "st_mtime_ns": 1785033619565792061,
+        "st_ctime_ns": 1785033619565792061
+      },
+      "entries": 381246,
+      "logical_bytes": 2640719194
+    },
+    {
+      "name": "pre_lc0_control_20260819",
+      "source": "/home/josh/projects/chess/data/salvage/pre_lc0_control_20260819",
+      "archive": "/mnt/e/chess_archive_20260906/salvage/pre_lc0_control_20260819.tar",
+      "tar_sha256": "e50f4620efcffe2f6baa4f0665e01a69089e809fc9745cb552941cb6c4c121c0",
+      "tar_bytes": 3243970560,
+      "external_mtime_ns": 1788736720831180600,
+      "verified_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_lc0_control_20260819/verified.json",
+      "source_manifest": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_lc0_control_20260819/source.jsonl",
+      "source_manifest_sha256": "025e1c5935d65c2a48a73c34d80aff2dd26cda3ead4db12a9cf132f035775beb",
+      "source_root_metadata": {
+        "st_dev": 2096,
+        "st_ino": 81037651,
+        "st_mode": 16877,
+        "st_uid": 1000,
+        "st_gid": 1000,
+        "st_size": 4096,
+        "st_mtime_ns": 1787197162132699577,
+        "st_ctime_ns": 1787197162132699577
+      },
+      "entries": 396295,
+      "logical_bytes": 2526400423
+    },
+    {
+      "name": "pre_mainmerge_20260810",
+      "source": "/home/josh/projects/chess/data/salvage/pre_mainmerge_20260810",
+      "archive": "/mnt/e/chess_archive_20260906/salvage/pre_mainmerge_20260810.tar",
+      "tar_sha256": "8f3b1c8dc95afc7f5c6d02797c831067259f91ae2f9c2a26fb0c38ecfafb50ed",
+      "tar_bytes": 3265003520,
+      "external_mtime_ns": 1788737541121784600,
+      "verified_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_mainmerge_20260810/verified.json",
+      "source_manifest": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_mainmerge_20260810/source.jsonl",
+      "source_manifest_sha256": "e18bcaf08a7afcc13ffa0307431376660c7bc924a2748c30d4682216de33d8ad",
+      "source_root_metadata": {
+        "st_dev": 2096,
+        "st_ino": 102624377,
+        "st_mode": 16877,
+        "st_uid": 1000,
+        "st_gid": 1000,
+        "st_size": 4096,
+        "st_mtime_ns": 1786377787199486658,
+        "st_ctime_ns": 1786377787199486658
+      },
+      "entries": 401079,
+      "logical_bytes": 2540362042
+    }
+  ],
+  "pins": {
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_dependency_observation_v1.json": "c242e7b24e17d1086da3a10ae85be570295d57c94a0a35f2047b941adf8dc2ae",
+    "/home/josh/projects/chess/configs/pbt2_small.yaml": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/pbt2_small.yaml": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/zarr_pilot/cleanup_visibility_identities.json": "a3f8e49f4c96f6cbf793ea0e488e5126d0b95cfe51725789eb1f66b3cb77a346",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/retire_zarr_pilot.py": "40cec48ff64c6b072471c5e837c1eeaf3536f74b4b20794e2afb77ee6c7e36b9",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/small_checkpoint_cleanup_v1/retire_three.py": "ba75e1a59156b22df400ad9bd31add4e4b9dfd08f68d04b8a61951cf0c5f4dc5",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/linked_pool_dependencies.json": "1f9a7e5065562e30dd7cc3134dcc8830929fcb73a8d5ffb12704faeda9bda027",
+    "/home/josh/projects/chess/scripts/holdout_policy_screen.py": "6460fe5aa727fa082a5b20e0bb38c9a5a0ea5f41fc61e8a9a71cff5a3d82d3c5",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/holdout_policy_screen.py": "6460fe5aa727fa082a5b20e0bb38c9a5a0ea5f41fc61e8a9a71cff5a3d82d3c5",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/bt4heads_iter112_20260817/verified.json": "0a861bf575dea7689ab7f063adc78983ff4958ba991fe2a446ce14318e99e489",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/f_only_midpoint_20260818/verified.json": "31e04c73bab886623130c491df142f5308cbe59bfcc756ece6fd79debe1c9f56",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/post_quarantine_20260801/verified.json": "7bfa87d571df1e7c177eea1077a86a864f538ae4423a9c333415a2d965fa4a43",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_abandonfix_20260724/verified.json": "f7875a24b4a63f9d408a7be5ed26f81d3b9f6da646e618a40e5f17807f080339",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_aot_deploy_20260714/verified.json": "5644adaafd6396f0c150a4d5eb9e53c6603a74f0e579364f6f226bd8dbafd6d8",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_audit_window_20260726/verified.json": "f2139f6ac351c0bd9f9a494396d32c1eb4babd1f031d7d00ffcaa848ca811107",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_durable_deploy_20260726/verified.json": "62929db451d2e1df205e9e4207e25a92639922f84f7bfca896def83ca42bfb41",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_lc0_control_20260819/verified.json": "b4757f9620d5a3355b068b87bcfc344bdd30f6f9d47f32d628def4abc53a78a1",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_mainmerge_20260810/verified.json": "315305a224e353861d810c6a9a169737f61799547333299a01c0c30747a290e4"
+  },
+  "visibility": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/zarr_pilot/cleanup_visibility_identities.json",
+  "dependency_review": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_dependency_observation_v1.json",
+  "excluded": [
+    "ANCHOR_20260727_preC17_step65475_lr3e-5",
+    "bt4heads_iter100_20260815",
+    "rolling",
+    "armB_launch_base_20260814",
+    "pre_policy_adapter_20260812",
+    "pre_pairing_20260819"
+  ],
+  "contract": [
+    "Historical source bytes were SHA256-compared to every tar member by the completed archive driver, and the external tar was read back in full. This retirement does not repeat source payload hashes.",
+    "Retirement requires an unchanged exact source path set and mode/uid/gid/size/mtime/ctime/device/inode metadata, current regular nlink1, and before/after traversal stability. Rename changes only root ctime; descendants remain exact.",
+    "A fresh full external tar SHA256 readback at16MiB/s and stable mounted E identity qualify the surviving archive. No claim about undetectable storage bit rot in local source without metadata change, malicious metadata forgery, or ACL/xattr equality beyond the historical archive contract.",
+    "No certification of eleven pinned inaccessible process identities or future consumers/external aliases. Live checks reject new inaccessible identities and observed selected pool references.",
+    "External pre-removal restore receipts are durable exclusive JSON; completion is certified only by separate completed.json. Any failure stops the batch; never automatically resume/adopt partial state. The archive and all old evidence are never deleted."
+  ],
+  "limits": {
+    "sqlite_cache_mib": 8,
+    "max_manifest_line_bytes": 16384,
+    "max_entries_per_pool": 1000000,
+    "external_readback_bytes_per_second": 16777216,
+    "local_reserve_bytes": 161061273600
+  },
+  "totals": {
+    "entries": 3412711,
+    "logical_bytes": 22504067440,
+    "tar_bytes": 28673228800
+  }
+}

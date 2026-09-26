@@ -1,0 +1,287 @@
+{
+  "corpus": {
+    "banked_rows_min_piece_count": 7,
+    "config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+    "corpus_complete": false,
+    "corpus_record": "manifest+progress",
+    "corpus_record_detail": {
+      "corpus_complete": false,
+      "document": "manifest.json + 4 w*.progress.jsonl",
+      "facts_only_in_summary": {
+        "config_realized_by_worker": "the per-worker REALIZED cp map. summary mode cross-checks it against config_requested (cp_map.realized_workers_cross_checked says how many workers); a manifest is written before the first worker starts, so here that cross-check covers ZERO workers and the requested map is taken on trust",
+        "rows / games": "the corpus totals. The progress inventory's own per-shard row counts stand in (corpus_record_detail.rows_claimed_by_inventory), and they count CLOSED shards only",
+        "search / dedup / terminations / opening_sources": "per-run counters accumulated in memory and written once at the end. Not read by this tool, and not reconstructible from the shards"
+      },
+      "mode": "manifest+progress",
+      "progress_files_read": [
+        "w00.progress.jsonl",
+        "w01.progress.jsonl",
+        "w02.progress.jsonl",
+        "w03.progress.jsonl"
+      ],
+      "progress_torn_tail_files": [],
+      "rows_claimed_by_inventory": 6255563,
+      "run_finished": false,
+      "run_finished_claim": null,
+      "shards_adopted": 754,
+      "shards_on_disk_not_in_inventory": [
+        "w00-00190.jsonl.zst",
+        "w01-00187.jsonl.zst",
+        "w02-00189.jsonl.zst",
+        "w03-00188.jsonl.zst"
+      ]
+    },
+    "dir": "run07_g10_companion4",
+    "row_schema": 3,
+    "row_schema_realized": 3,
+    "run_id": "nnue_bootstrap_run07_g10_companion4",
+    "staircase_gate": {
+      "adaptive": true,
+      "decision_after_phase": 1,
+      "decision_depth": 10,
+      "extend_when": "margin_cp<=threshold_cp",
+      "extended_depth": 12,
+      "extended_phase": 2,
+      "extended_width": 4,
+      "metric": "effective_cp_rank1_minus_rank2",
+      "no_margin_action": "stop",
+      "policy": "g10",
+      "threshold_cp": 10.0
+    },
+    "staircase_parsed": [
+      {
+        "depth": 9,
+        "width": "all"
+      },
+      {
+        "depth": 10,
+        "width": "8"
+      },
+      {
+        "depth": 12,
+        "width": "4"
+      }
+    ],
+    "tt_carried_across_phases": [
+      true
+    ]
+  },
+  "cp_map": {
+    "cp_draw_width": 120.0,
+    "cp_slope": 0.006,
+    "q_function": "scripts.audit_label_candidates.q_from_effective_cp",
+    "realized_cross_check_available": false,
+    "realized_workers_cross_checked": 0,
+    "source": "the corpus's own config_requested",
+    "wdl_function": "chess_anti_engine.stockfish.wdl.cp_to_wdl_array"
+  },
+  "floor_requested": 0.0,
+  "input": {
+    "encoder": "encode_position",
+    "history_frames_total": 8,
+    "history_rep_fix": true,
+    "input_extra_features": "v2_threats",
+    "input_history_encoding": "lc0_root_legacy_meta",
+    "why_zero_history": "row schema 1: a row is a bare FEN, chess.Board(fen) has an empty move stack, and the encoder fills history slot 0 only -- slots 1..7 (planes 13..103) and every repetition plane stay ZERO. Row schema 2 banks history_root_fen + history_uci and board_from_row replays them, so the 8 frames are the frames live play encodes; see row_schema_counts and history_slots_filled_histogram for which this run derived",
+    "zero_history": false
+  },
+  "limit_requested": 8243,
+  "max_envelope_misses": 0,
+  "policy": {
+    "construction": "softmax(q / temp) over the scheme's values",
+    "encoding": "lc0_1858",
+    "floor": 0.0,
+    "floor_max_legal_moves_bound": 218,
+    "temp_recovery_estimator": "closed_form_two_move",
+    "width": 1858
+  },
+  "python": "3.13.15",
+  "realized": {
+    "base_tier_moves": 208068,
+    "deep_tier_moves": 0,
+    "envelope_miss_examples": [],
+    "floor_recovered_from_emitted_policy": {
+      "max": NaN,
+      "mean": NaN,
+      "min": NaN,
+      "n": 0
+    },
+    "floor_recovery_floor_tol": 1e-06,
+    "floor_recovery_min_distinct_values": 3,
+    "floor_recovery_min_rel_gap": 1e-09,
+    "floor_recovery_min_spread_per_tau": 0.0001,
+    "floor_recovery_skipped_few_values": 0,
+    "floor_recovery_skipped_ill_conditioned": 0,
+    "history_root_reason_counts": {
+      "irreversible": 8193
+    },
+    "history_slots_filled_histogram": {
+      "8": 8193
+    },
+    "history_slots_nonzero_max": 8,
+    "history_window_empty_rows": 0,
+    "input_key_verified": 8193,
+    "nodes_floor_hits": 0,
+    "phases_per_row": {
+      "2": 5916,
+      "3": 2277
+    },
+    "policy_min_legal_prob_stored": {
+      "max": 1.0,
+      "mean": 0.019019747215444666,
+      "min": 0.0,
+      "n": 8193
+    },
+    "policy_support_lost_to_float16": 117449,
+    "policy_support_max": 67,
+    "policy_support_min": 1,
+    "policy_width": 1858,
+    "realized_base_depth_histogram": {
+      "9": 8193
+    },
+    "realized_value_depth_histogram": {
+      "9": 8193
+    },
+    "repetition_planes_nonzero_rows": 157,
+    "row_schema_counts": {
+      "3": 8193
+    },
+    "rows_dropped_envelope": 0,
+    "rows_dropped_no_result": 50,
+    "rows_read": 8243,
+    "rows_written": 8193,
+    "support_checks": 8193,
+    "temp_recovered_from_emitted_policy": {
+      "max": 0.0005004396017000326,
+      "mean": 0.0005000002124801777,
+      "min": 0.0004997850311693164,
+      "n": 7393
+    },
+    "temp_recovery_saturation_q_spread_epsilon": 1e-09,
+    "temp_recovery_skipped_saturated": 3,
+    "value_depth_moved_rows": 8193,
+    "value_scheme_realized": {
+      "blend_weight_w": {
+        "max": NaN,
+        "mean": NaN,
+        "min": NaN,
+        "n": 0
+      },
+      "boundary_suppressed_by_flag": 0,
+      "game_rows_max": 0,
+      "game_rows_min": 0,
+      "games": 0,
+      "games_cut_by_limit": 0,
+      "games_with_dropped_tail": 0,
+      "instability_u": {
+        "max": 1.0247240327298641,
+        "mean": 0.014760490733978079,
+        "min": 0.0,
+        "n": 8193
+      },
+      "l1_delta_vs_search_value": {
+        "max": 0.0,
+        "mean": 0.0,
+        "min": 0.0,
+        "n": 8193
+      },
+      "played_regret": {
+        "max": 1.916899333242327,
+        "mean": 0.095651516255382,
+        "min": 0.0,
+        "n": 8193
+      },
+      "ply_gaps_nonunit": 0,
+      "rows_differing_from_c_full": 0,
+      "rows_differing_from_search_value": 0,
+      "rows_missing_depths": 0,
+      "rows_missing_played_move": 0,
+      "single_row_games": 0,
+      "stop_boundary_ahead": 0,
+      "stop_boundary_self": 0,
+      "stop_terminal": 0,
+      "w_const_differs_from_map": 0
+    },
+    "values_by_phase": {
+      "0": 208068
+    },
+    "x_planes": 175
+  },
+  "required_training_overrides": {
+    "search_wdl_frac": "the whole non-outcome share. These shards carry no sf_wdl, so losses.py would redirect any SF share onto the raw game outcome; the searched value is in search_wdl",
+    "sf_wdl_frac": 0.0,
+    "sf_wdl_frac_floor": 0.0
+  },
+  "row_flags": {
+    "is_network_turn": "true \u2014 no network played these plies; set so the rows are not dropped by the train-on-network-turns filter",
+    "is_selfplay": "true \u2014 Stockfish against itself, no curriculum arm",
+    "priority": "1.0 \u2014 no surprise weighting exists for a corpus row"
+  },
+  "row_provenance": {
+    "identity": "source directory/config, raw shard and physical row; original and stored history input keys",
+    "path_in_shard": "row_provenance.npz",
+    "schema": 1
+  },
+  "rows_per_shard": 8192,
+  "schema": 1,
+  "scheme": {
+    "canonical": "uniform-d9",
+    "deep_depth": null,
+    "depth": 9,
+    "kind": "uniform",
+    "nodes": null,
+    "policy_observation": "phase0",
+    "top_k": null,
+    "value_depth": null,
+    "value_observation": "latest-phase",
+    "value_source": "deepest_phase_covering"
+  },
+  "seed": 0,
+  "seed_effect": "permutes rows WITHIN each shard; changes no target value",
+  "shards": [
+    {
+      "path": "shard_000000.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "37eaa2b72b9bbe297997339d34615f54b04a69e7dbdbe5ba3ac494c02ae5c117"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000001.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 1,
+        "schema": 1,
+        "sha256": "fb8774a4833191052505bbed53ac50ca159cd44c017f648d6969fddc73828107"
+      },
+      "rows": 1
+    }
+  ],
+  "started_utc": "2026-09-07T23:44:43.764530+00:00",
+  "temp_requested": 0.0005,
+  "tool": "scripts/derive_corpus_targets.py",
+  "value_blend": {
+    "baked_into_rows": false,
+    "note": "the row carries the two components; the mixing weights are the trainer's, exactly as on data/lc0_rows"
+  },
+  "value_channels": {
+    "categorical_target": "ABSENT \u2014 outcome-derived, and wdl_target carries the outcome",
+    "moves_left": "ABSENT \u2014 a corpus row does not know its game's length",
+    "search_wdl": "cp_to_wdl_array of the best-move value from latest-phase observation at depth 9: Stockfish's searched root value, side-to-move POV. \u2691 NOT our MCTS's value, which is what this column means on production shards",
+    "sf_wdl": "ABSENT \u2014 deliberately. lc0_control_train.py's launch guard 1 (assert_pid_cannot_reassert_sf_wdl) refuses any config with sf_wdl_frac > 0 regardless of what the shards carry, so a value written here could never reach a loss on this rig",
+    "wdl_target": "the corpus row's exact game result, already stored from that row's own side-to-move seat (result_from_pov). 0=W/1=D/2=L"
+  },
+  "value_scheme": {
+    "construction": "Q_t \u2014 the searched root value, unchanged (V0)",
+    "frozen_by": "docs/experiment_ledger.md \u2014 2026-08-31 PREREG VALUE-TARGET ROUND and its two same-day amendments",
+    "grouped_by_game": false,
+    "name": "search",
+    "q_definition": "cp_to_wdl_array of the best-move latest-phase observation at depth 9; the policy observation is selected independently",
+    "z_definition": "one-hot of the row's own `result`, which result_from_pov already stored in that row's seat \u2014 never rotated again"
+  }
+}

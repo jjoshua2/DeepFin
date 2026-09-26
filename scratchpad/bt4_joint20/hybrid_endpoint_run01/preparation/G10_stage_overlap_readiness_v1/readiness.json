@@ -1,0 +1,144 @@
+{
+  "schema": 1,
+  "created_unix": 1788862560.084422,
+  "status": "DESCRIPTIVE_COMPLETED_TIMING_ANALYSIS_DESIGN_REVIEW_PENDING",
+  "lanes": [
+    {
+      "source": "run06_g10",
+      "stages": {
+        "derive": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derive.time.json",
+          "sha256": "7b62df63ff65cbe9a344698f5c21fb4fdb30283e855ba1b027c6415956cec64a",
+          "wall_seconds": 924.34,
+          "user_seconds": 1700.87,
+          "system_seconds": 111.92,
+          "max_rss_kib": 947880,
+          "filesystem_inputs": 5574856,
+          "filesystem_outputs": 1442896,
+          "exit_code": 0
+        },
+        "snapshot": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/snapshot.time.json",
+          "sha256": "ba875aeb960ecfb896adc992f8d5ec5f4af509af1fbd84f767556bfb7b69a72d",
+          "wall_seconds": 4.07,
+          "user_seconds": 3.56,
+          "system_seconds": 0.56,
+          "max_rss_kib": 325748,
+          "filesystem_inputs": 0,
+          "filesystem_outputs": 24,
+          "exit_code": 0
+        },
+        "adapt": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/adapt.time.json",
+          "sha256": "07a74481f4704e2cffd5c466e3494c236f77f1f06c341520e4ec15eddbc8e2fd",
+          "wall_seconds": 1000.3,
+          "user_seconds": 919.11,
+          "system_seconds": 89.97,
+          "max_rss_kib": 1386312,
+          "filesystem_inputs": 3948048,
+          "filesystem_outputs": 468352,
+          "exit_code": 0
+        },
+        "rank": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/rank.time.json",
+          "sha256": "b288ed35f1eaa992d512560e398529b8b6ab3bf4547a544813f55c41c085500e",
+          "wall_seconds": 679.01,
+          "user_seconds": 655.59,
+          "system_seconds": 23.1,
+          "max_rss_kib": 714380,
+          "filesystem_inputs": 2817448,
+          "filesystem_outputs": 87024,
+          "exit_code": 0
+        },
+        "qualify": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/qualify.time.json",
+          "sha256": "785e199f6045c6a6135adf54c63b56402107047ec6595fdff4c76959b9582caf",
+          "wall_seconds": 97.0,
+          "user_seconds": 79.18,
+          "system_seconds": 19.38,
+          "max_rss_kib": 989036,
+          "filesystem_inputs": 1135568,
+          "filesystem_outputs": 56,
+          "exit_code": 0
+        }
+      },
+      "serial_stage_sum_seconds": 2704.7200000000003,
+      "ideal_overlap_saved_seconds": 679.01,
+      "ideal_fraction_saved": 0.25104631902747787,
+      "adapt_average_cpu_cores": 1.008777366789963,
+      "rank_average_cpu_cores": 0.9995287256446886
+    },
+    {
+      "source": "run07_g10_companion4",
+      "stages": {
+        "derive": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derive.time.json",
+          "sha256": "d27ad05688031833d4c162c5d35f9eadad87254561549dd1f0cd5870c1f2c95a",
+          "wall_seconds": 919.02,
+          "user_seconds": 1692.19,
+          "system_seconds": 101.45,
+          "max_rss_kib": 954180,
+          "filesystem_inputs": 5597888,
+          "filesystem_outputs": 1441456,
+          "exit_code": 0
+        },
+        "snapshot": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/snapshot.time.json",
+          "sha256": "ae9dcc693a956918c32dde1165048d11cbfc3327a44414d82b54947183db930d",
+          "wall_seconds": 4.46,
+          "user_seconds": 3.53,
+          "system_seconds": 0.92,
+          "max_rss_kib": 326092,
+          "filesystem_inputs": 64336,
+          "filesystem_outputs": 32,
+          "exit_code": 0
+        },
+        "adapt": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/adapt.time.json",
+          "sha256": "64c15bb439abe5ce395dda723b66cc0133ca2c9ff6775f5c6d40c9d2fba5a99f",
+          "wall_seconds": 1003.46,
+          "user_seconds": 915.14,
+          "system_seconds": 97.7,
+          "max_rss_kib": 1365480,
+          "filesystem_inputs": 4010448,
+          "filesystem_outputs": 468904,
+          "exit_code": 0
+        },
+        "rank": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/rank.time.json",
+          "sha256": "e67a12b721ea85c824648bbce380539b717ff198c79750133e3e12d48565c04d",
+          "wall_seconds": 673.85,
+          "user_seconds": 653.55,
+          "system_seconds": 21.42,
+          "max_rss_kib": 715036,
+          "filesystem_inputs": 2759568,
+          "filesystem_outputs": 86896,
+          "exit_code": 0
+        },
+        "qualify": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/qualify.time.json",
+          "sha256": "7f39cbe1f75eecdb2d019ddc18949c93f282bee3b4a6c392286386cf6fb19121",
+          "wall_seconds": 95.44,
+          "user_seconds": 79.95,
+          "system_seconds": 19.29,
+          "max_rss_kib": 988832,
+          "filesystem_inputs": 1108792,
+          "filesystem_outputs": 64,
+          "exit_code": 0
+        }
+      },
+      "serial_stage_sum_seconds": 2696.23,
+      "ideal_overlap_saved_seconds": 673.85,
+      "ideal_fraction_saved": 0.24992304069014884,
+      "adapt_average_cpu_cores": 1.0093476571064117,
+      "rank_average_cpu_cores": 1.0016620909698002
+    }
+  ],
+  "hypothesis": "Run independent adapt and rank concurrently after immutable derived snapshot within existing two-core lane; qualify only after both successfully finish.",
+  "limitations": [
+    "Estimated critical-path reduction assumes no shared CPU or I/O slowdown; not a measured speedup.",
+    "Need actual dependency/write-path and process cleanup review before implementation.",
+    "No active runtime or input changes; current G10v2 remains serial."
+  ],
+  "next": "Bounded independent design review; if sound, focused implementation and one new-data operational comparison, preserving semantics and resource ceilings."
+}

@@ -1,0 +1,286 @@
+{
+  "status": "PASS_ALL_FILES_SHA256_AND_STABLE_METADATA",
+  "source": "/home/josh/projects/chess/data/salvage/DRIFT_20260728_postC17_iter192",
+  "archive": "/mnt/e/chess_backup_20260827/salvage/DRIFT_20260728_postC17_iter192",
+  "checked_unix": 1788725736.4687684,
+  "elapsed_seconds": 82.24408846099686,
+  "aggregate_bytes_read": 2749985930,
+  "sha256_by_relative_path": {
+    "README.md": "9265aa80429f1daf48e40af63eecbff8d58b5b5a06e770bcaa0676616c4b47da",
+    "checkpoint_000187/holdout.npz": "6eeb3381154340e5dfeeb7875dbe6aa55a6b70446f3ccab7a3f4367566a2043b",
+    "checkpoint_000187/pid_state.json": "5819627859f68c8bd3f12d6b4c13a025fe43c9beb1cc505fb9480a0bcec6e38a",
+    "checkpoint_000187/rng_state.json": "d2abd052d625a511923fbc96edd8571c41b72593416adb361ada62197b9b6add",
+    "checkpoint_000187/trainer.pt": "e611be243b095df76abe2ea3ec97560785ee72051958f94ec36c31a3650cea5f",
+    "checkpoint_000187/trial_meta.json": "2fbfd2f5486ff9b50e8309c6c29497f1cedf8817387a76a3cd582c421e64ab26",
+    "checkpoint_000192/holdout.npz": "6eeb3381154340e5dfeeb7875dbe6aa55a6b70446f3ccab7a3f4367566a2043b",
+    "checkpoint_000192/pid_state.json": "97f6ada790b347524f23dae01d5f04a38abd27f43cb2b8cfeeac4534a9649f77",
+    "checkpoint_000192/rng_state.json": "ca8c9997792c2ae9fb32063794ae2f08bd078a21259d39a143d003965956dfa9",
+    "checkpoint_000192/trainer.pt": "cfbcd8382aa7b134bb070c02b0db60fd4c38d075cc32aa0e4b18d062ed047a44",
+    "checkpoint_000192/trial_meta.json": "0f8ac5950cb96e76c7fe4981d5d10caf2ae60bba6cbcf1dfc0a37638045bca82"
+  },
+  "source_inventory": {
+    "README.md": {
+      "directory": false,
+      "size": 2691,
+      "device": 2096,
+      "inode": 75397986,
+      "mtime_ns": 1785225561294314977,
+      "ctime_ns": 1785225561361024777,
+      "nlink": 1,
+      "blocks": 8
+    },
+    "checkpoint_000187": {
+      "directory": true,
+      "size": 4096,
+      "device": 2096,
+      "inode": 74863981,
+      "mtime_ns": 1785225542769028672,
+      "ctime_ns": 1785225542769028672,
+      "nlink": 2,
+      "blocks": 8
+    },
+    "checkpoint_000187/holdout.npz": {
+      "directory": false,
+      "size": 2168268,
+      "device": 2096,
+      "inode": 74863983,
+      "mtime_ns": 1785225538081029695,
+      "ctime_ns": 1785225538081029695,
+      "nlink": 1,
+      "blocks": 4240
+    },
+    "checkpoint_000187/pid_state.json": {
+      "directory": false,
+      "size": 3759,
+      "device": 2096,
+      "inode": 74863984,
+      "mtime_ns": 1785225538085021426,
+      "ctime_ns": 1785225538085021426,
+      "nlink": 1,
+      "blocks": 8
+    },
+    "checkpoint_000187/rng_state.json": {
+      "directory": false,
+      "size": 176,
+      "device": 2096,
+      "inode": 71078688,
+      "mtime_ns": 1785225542770261891,
+      "ctime_ns": 1785225542770261891,
+      "nlink": 1,
+      "blocks": 8
+    },
+    "checkpoint_000187/trainer.pt": {
+      "directory": false,
+      "size": 685322306,
+      "device": 2096,
+      "inode": 74863985,
+      "mtime_ns": 1785225542769028672,
+      "ctime_ns": 1785225542769028672,
+      "nlink": 1,
+      "blocks": 1338536
+    },
+    "checkpoint_000187/trial_meta.json": {
+      "directory": false,
+      "size": 627,
+      "device": 2096,
+      "inode": 74863982,
+      "mtime_ns": 1785225538072145208,
+      "ctime_ns": 1785225538072145208,
+      "nlink": 1,
+      "blocks": 8
+    },
+    "checkpoint_000192": {
+      "directory": true,
+      "size": 4096,
+      "device": 2096,
+      "inode": 74863886,
+      "mtime_ns": 1785225538065029699,
+      "ctime_ns": 1785225538065029699,
+      "nlink": 2,
+      "blocks": 8
+    },
+    "checkpoint_000192/holdout.npz": {
+      "directory": false,
+      "size": 2168268,
+      "device": 2096,
+      "inode": 74863887,
+      "mtime_ns": 1785225535557030254,
+      "ctime_ns": 1785225535557030254,
+      "nlink": 1,
+      "blocks": 4240
+    },
+    "checkpoint_000192/pid_state.json": {
+      "directory": false,
+      "size": 3761,
+      "device": 2096,
+      "inode": 74863889,
+      "mtime_ns": 1785225535558594172,
+      "ctime_ns": 1785225535558594172,
+      "nlink": 1,
+      "blocks": 8
+    },
+    "checkpoint_000192/rng_state.json": {
+      "directory": false,
+      "size": 176,
+      "device": 2096,
+      "inode": 74863980,
+      "mtime_ns": 1785225538065728449,
+      "ctime_ns": 1785225538065728449,
+      "nlink": 1,
+      "blocks": 8
+    },
+    "checkpoint_000192/trainer.pt": {
+      "directory": false,
+      "size": 685322306,
+      "device": 2096,
+      "inode": 74863890,
+      "mtime_ns": 1785225538065029699,
+      "ctime_ns": 1785225538065029699,
+      "nlink": 1,
+      "blocks": 1338536
+    },
+    "checkpoint_000192/trial_meta.json": {
+      "directory": false,
+      "size": 627,
+      "device": 2096,
+      "inode": 74863888,
+      "mtime_ns": 1785225535558499293,
+      "ctime_ns": 1785225535558499293,
+      "nlink": 1,
+      "blocks": 8
+    }
+  },
+  "archive_inventory": {
+    "README.md": {
+      "directory": false,
+      "size": 2691,
+      "device": 75,
+      "inode": 281474977528024,
+      "mtime_ns": 1785225561000000000,
+      "ctime_ns": 1787863214723191700,
+      "nlink": 1,
+      "blocks": 8
+    },
+    "checkpoint_000187": {
+      "directory": true,
+      "size": 4096,
+      "device": 75,
+      "inode": 281474977526782,
+      "mtime_ns": 1785225542000000000,
+      "ctime_ns": 1787863224217711900,
+      "nlink": 1,
+      "blocks": 0
+    },
+    "checkpoint_000187/holdout.npz": {
+      "directory": false,
+      "size": 2168268,
+      "device": 75,
+      "inode": 281474977528025,
+      "mtime_ns": 1785225538000000000,
+      "ctime_ns": 1787863214835267700,
+      "nlink": 1,
+      "blocks": 4240
+    },
+    "checkpoint_000187/pid_state.json": {
+      "directory": false,
+      "size": 3759,
+      "device": 75,
+      "inode": 281474977528026,
+      "mtime_ns": 1785225538000000000,
+      "ctime_ns": 1787863214854794000,
+      "nlink": 1,
+      "blocks": 8
+    },
+    "checkpoint_000187/rng_state.json": {
+      "directory": false,
+      "size": 176,
+      "device": 75,
+      "inode": 281474977528027,
+      "mtime_ns": 1785225542000000000,
+      "ctime_ns": 1787863214952599800,
+      "nlink": 1,
+      "blocks": 0
+    },
+    "checkpoint_000187/trainer.pt": {
+      "directory": false,
+      "size": 685322306,
+      "device": 75,
+      "inode": 281474977528028,
+      "mtime_ns": 1785225542000000000,
+      "ctime_ns": 1787863223786690400,
+      "nlink": 1,
+      "blocks": 1338528
+    },
+    "checkpoint_000187/trial_meta.json": {
+      "directory": false,
+      "size": 627,
+      "device": 75,
+      "inode": 281474977528029,
+      "mtime_ns": 1785225538000000000,
+      "ctime_ns": 1787863224207568400,
+      "nlink": 1,
+      "blocks": 0
+    },
+    "checkpoint_000192": {
+      "directory": true,
+      "size": 4096,
+      "device": 75,
+      "inode": 281474977526783,
+      "mtime_ns": 1785225538000000000,
+      "ctime_ns": 1787863234311923700,
+      "nlink": 1,
+      "blocks": 0
+    },
+    "checkpoint_000192/holdout.npz": {
+      "directory": false,
+      "size": 2168268,
+      "device": 75,
+      "inode": 281474977528030,
+      "mtime_ns": 1785225535000000000,
+      "ctime_ns": 1787863224248810500,
+      "nlink": 1,
+      "blocks": 4240
+    },
+    "checkpoint_000192/pid_state.json": {
+      "directory": false,
+      "size": 3761,
+      "device": 75,
+      "inode": 281474977528031,
+      "mtime_ns": 1785225535000000000,
+      "ctime_ns": 1787863224267343100,
+      "nlink": 1,
+      "blocks": 8
+    },
+    "checkpoint_000192/rng_state.json": {
+      "directory": false,
+      "size": 176,
+      "device": 75,
+      "inode": 281474977528032,
+      "mtime_ns": 1785225538000000000,
+      "ctime_ns": 1787863224407737000,
+      "nlink": 1,
+      "blocks": 0
+    },
+    "checkpoint_000192/trainer.pt": {
+      "directory": false,
+      "size": 685322306,
+      "device": 75,
+      "inode": 281474977528033,
+      "mtime_ns": 1785225538000000000,
+      "ctime_ns": 1787863233553691700,
+      "nlink": 1,
+      "blocks": 1338528
+    },
+    "checkpoint_000192/trial_meta.json": {
+      "directory": false,
+      "size": 627,
+      "device": 75,
+      "inode": 281474977528034,
+      "mtime_ns": 1785225535000000000,
+      "ctime_ns": 1787863234087405100,
+      "nlink": 1,
+      "blocks": 0
+    }
+  },
+  "local_removal_performed": false
+}

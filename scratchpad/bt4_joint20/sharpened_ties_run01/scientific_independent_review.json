@@ -1,0 +1,20 @@
+{
+  "status": "PASS_SCIENTIFIC_PREREGISTRATION_REVIEW_CODE_PENDING",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "checked_unix": 1788737438.677634,
+  "preregistration_sha256": "bba0d5c47c2715714dcf37f871ff9923aade25e98e75d82fb17998aa6cad0279",
+  "prospective_schedule_sha256": "1aca8a7dfd7e2917927560c9eea285fe26e3db591ff8ebdd2cfa00dfba08cfd8",
+  "blockers": [],
+  "checks": [
+    "Direct E0T05 versus existing C20T05 at100 isolates stored top-tie versus wider SF-close redistribution at fixed BT4 T0.5; it is not an E0 sharpening-only ablation.",
+    "Fresh from-scratch seed0 game epoch uses actual prior C command/recipe: batch512,steps0,16 plan/load workers,88-step windows.",
+    "Prospective receipt has2309 ordered shard-column records totaling18910484rows and common source/C/E canonical plan. C is realized, E is prospective; actual E staged/realized verification remains required.",
+    "Fixed1000games500pairs and full qualified C100 search, priorT1 and originalseed42book. Nominal paired confidence interval signs decide screen; inconclusive is not equality and no optional games.",
+    "Training16200 plusarena5400 seconds include supervisor cleanup allowances; CPU verification separately bounded1800 seconds without GPU lease.",
+    "Limits preserve reused development openings, single-seed conditional evidence, no search-scaling/100M/RL confirmation and historical valid_control:false."
+  ],
+  "limits": [
+    "Receipt/schema and prior command/metadata review only; no corpus rescan, new inference, checkpoint hashes or experiment execution.",
+    "Final launch acceptance requires stable reviewed code/manifest, including STOP propagation and surviving CPU timeout fixes already requested."
+  ]
+}

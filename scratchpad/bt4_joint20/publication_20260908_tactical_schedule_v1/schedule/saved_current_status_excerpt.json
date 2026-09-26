@@ -1,0 +1,20 @@
+{
+  "source_sha256": "03b0c8afb82d8ed2fcd38e6eec5ba20d5cc82f0fe2b83ed3f7972752e022422a",
+  "snapshot": {
+    "precedence": "This snapshot and top-level selected_next supersede older stage-specific observations below; retain those as historical receipts.",
+    "main_merge": "ca7986e348614a91896cf6ea463b718beab3202b",
+    "latest_publication_pr": "https://github.com/jjoshua2/DeepFin/pull/597",
+    "results_pr": "https://github.com/jjoshua2/DeepFin/pull/593",
+    "value_implementation_pr": "https://github.com/jjoshua2/DeepFin/pull/592",
+    "softsf": "Completed and independently reviewed: low ordered H0 at128 canonical pairs; protected400 score0.28125, Elo-162.99 with paired95 interval[-205.52,-124.59]. No relative recovery established. B100 remains control.",
+    "value_bank": "Remainder invocation confirmed live: child477359, outer477355 at approximately90min elapsed. Directory snapshot1243 of2309 published; no actual outer completion. Counts are progress only, not full bank admission.",
+    "V50": "Prepared CPU rewrite and prospective original-epoch training/100SPRT/protected400 comparison; no rewrite or training launched. Preparation independently reviewed; actual complete bank, publication qualification and executable manifests pending.",
+    "policy": "Gap100/decay100/floor0.1 SF attenuation and categorical mates implemented in merged PR595; training admission merged PR596. Distinct runtime bbb4f6c passed bounded import/metadata checks; operational preparation remains unlaunched. B100 policy base and unchanged SF value.",
+    "storage": "G20T1 exact2309 archived shards removed; independent terminal review PASS, summaries/checkpoints/archive retained. Prior allocated13.719GiB, observed global free delta13.680GiB. G20T05 copy confirmed live outer487989 at approximately30min; source retained. Snapshot359GiB SSD/7.5TiB external. PR597 publishes records. Reclamation templates prepared but require actual completed verification and current source/consumer checks.",
+    "resource_sequence": "Prefer V50 rewrite after full WDL completion and shared preparation lock release. Raw-WDL driver423973 with child477385 is a confirmed live automatic GPU waiter; it can acquire immediately after remainder. Preserve its work. Ceres opportunity is a free boundary after a completed group (15s intergroup sleep), not guaranteed immediately after remainder; do not consume one-shot launch state while lease is busy. Tactical rewrite may overlap V50 GPU training after prospective CPU planning, subject current resource checks.",
+    "storage_actual_update": "https://github.com/jjoshua2/DeepFin/pull/594#issuecomment-5594802897",
+    "storage_requirement": "scratchpad/bt4_joint20/STORAGE_OBJECTIVE.md",
+    "later_work": "Ceres GPU qualification, search calibration, matched longer training, fresh seeds and larger-corpus transfer remain open; do not optimize only local target tweaks."
+  },
+  "limits": "Historical current_snapshot excerpt only. Its372GiB observation is superseded by parent host process/df observation around2026-09-09 02:55UTC:358GiB SSD/7.5TiB external. Retained as historical source evidence, not current schedule arithmetic."
+}

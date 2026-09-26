@@ -1,0 +1,936 @@
+{
+  "status": "complete",
+  "rows": 525414,
+  "physical_rows": 530624,
+  "derive_realized": {
+    "base_tier_moves": 13852156,
+    "deep_tier_moves": 0,
+    "envelope_miss_examples": [],
+    "floor_recovered_from_emitted_policy": {
+      "max": NaN,
+      "mean": NaN,
+      "min": NaN,
+      "n": 0
+    },
+    "floor_recovery_floor_tol": 1e-06,
+    "floor_recovery_min_distinct_values": 3,
+    "floor_recovery_min_rel_gap": 1e-09,
+    "floor_recovery_min_spread_per_tau": 0.0001,
+    "floor_recovery_skipped_few_values": 0,
+    "floor_recovery_skipped_ill_conditioned": 0,
+    "history_root_reason_counts": {
+      "irreversible": 525414
+    },
+    "history_slots_filled_histogram": {
+      "8": 525414
+    },
+    "history_slots_nonzero_max": 8,
+    "history_window_empty_rows": 0,
+    "input_key_verified": 525414,
+    "nodes_floor_hits": 0,
+    "phases_per_row": {
+      "2": 378892,
+      "3": 146534
+    },
+    "policy_min_legal_prob_stored": {
+      "max": 1.0,
+      "mean": 0.021545825704358815,
+      "min": 0.0,
+      "n": 525414
+    },
+    "policy_support_exclusions": [
+      {
+        "duplicate_moves": [
+          "d5a8",
+          "d5b3",
+          "d5c5",
+          "d5d6",
+          "e1b1",
+          "e1c1",
+          "e1e3",
+          "e1f1",
+          "e1g1",
+          "h8h6"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 21920,
+        "input_key": "0e3bbc3dcf63688d6e5dc23cc4341b9c",
+        "missing_moves": [
+          "c7c5",
+          "c7c6",
+          "c8d8",
+          "d3d2",
+          "d5a5",
+          "d5b5",
+          "d5b7",
+          "d5c4",
+          "d5e4",
+          "d5f3",
+          "d5f7",
+          "d5h1",
+          "e1e2",
+          "e1e5",
+          "e1e6",
+          "e1e8",
+          "e1h1",
+          "g7g5",
+          "g7g6",
+          "h8d8",
+          "h8e8",
+          "h8f8",
+          "h8g8",
+          "h8h7"
+        ],
+        "ply": 73,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 6550,
+        "source_shard": "w00-00128.jsonl.zst",
+        "stored_input_key": "ba6fcbe7563a65d5fdb25b976d118440",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "a5a4",
+          "e8d8"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 23796,
+        "input_key": "7283621a04744c27d5aa1e336695bdb1",
+        "missing_moves": [
+          "a2c4",
+          "a2f7",
+          "e8e1",
+          "e8e6",
+          "e8e7",
+          "e8f8"
+        ],
+        "ply": 205,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 7655,
+        "source_shard": "w00-00139.jsonl.zst",
+        "stored_input_key": "0bc718cc2a65921f3fd5596b98e6fe37",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "b3a4",
+          "b3d5"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 23796,
+        "input_key": "67aa23ff6b1a6e56bc5e8d0d177c33d6",
+        "missing_moves": [
+          "a5a4",
+          "b3a2",
+          "b3c2",
+          "b3c4",
+          "b8a6",
+          "b8d7",
+          "e8e1",
+          "e8e2",
+          "e8e3",
+          "e8e7",
+          "e8f8",
+          "g8g7",
+          "g8h8"
+        ],
+        "ply": 207,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 7657,
+        "source_shard": "w00-00139.jsonl.zst",
+        "stored_input_key": "c3620eb8361fdaf48a81f81ae87f18b4",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "d5f7",
+          "e8e4",
+          "g8f8",
+          "g8h8"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 23796,
+        "input_key": "f04156b405b6dceadb5249c117c37a41",
+        "missing_moves": [
+          "a5a4",
+          "b8a6",
+          "b8c6",
+          "b8d7",
+          "d5a2",
+          "d5a8",
+          "d5b3",
+          "d5b7",
+          "d5c4",
+          "d5c6",
+          "d5e4",
+          "d5e6",
+          "d5f3",
+          "d5g2",
+          "d5h1",
+          "e8c8",
+          "e8d8",
+          "e8e1",
+          "e8e3",
+          "e8e7",
+          "e8f8",
+          "g8g7",
+          "g8h7"
+        ],
+        "ply": 209,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 7659,
+        "source_shard": "w00-00139.jsonl.zst",
+        "stored_input_key": "d91a6c7618b679c347d6fac36bfa752c",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "b8c6",
+          "d5a8",
+          "d5c4",
+          "d5e4",
+          "e8d8",
+          "e8e5",
+          "f7f8",
+          "f7g6"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 23796,
+        "input_key": "26433a8fd8b799ac76a09ed2dc4a1255",
+        "missing_moves": [
+          "a5a4",
+          "d5c6",
+          "d5e6",
+          "d5f3",
+          "d5h1",
+          "e8c8",
+          "e8e1",
+          "e8e6",
+          "e8g8",
+          "f7f6"
+        ],
+        "ply": 211,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 7661,
+        "source_shard": "w00-00139.jsonl.zst",
+        "stored_input_key": "b82485a037c44619df7e0ba1eeb2e405",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "a6a5",
+          "c5d4",
+          "e6c8",
+          "e8f8",
+          "g7g6"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 24300,
+        "input_key": "b45ba9bda3f4cd1270305f47e16fdf0a",
+        "missing_moves": [
+          "a6b5",
+          "a8a7",
+          "a8b8",
+          "b7b6",
+          "d8d7",
+          "e6f5",
+          "e8e7",
+          "e8g8",
+          "f7f5",
+          "f7f6",
+          "g7g5",
+          "h7h6"
+        ],
+        "ply": 27,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 7077,
+        "source_shard": "w00-00142.jsonl.zst",
+        "stored_input_key": "b8550b71e9e54502328b516ba4a50cb7",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "h1e1",
+          "h2d6"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 25816,
+        "input_key": "bd85ee921f0d045ab4bd8c8c91592867",
+        "missing_moves": [
+          "d2d1",
+          "d3h3"
+        ],
+        "ply": 36,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 3885,
+        "source_shard": "w00-00151.jsonl.zst",
+        "stored_input_key": "1d911ea0d877f2a6423cbe95a989e9be",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "b7b1",
+          "b7c7",
+          "c1d3",
+          "c4b4",
+          "c4d3"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 29224,
+        "input_key": "56953caa544aa10843553e3152cf027c",
+        "missing_moves": [
+          "b7b4",
+          "b7b8",
+          "b7h7",
+          "c1a2",
+          "c1b3",
+          "c4c3",
+          "c4d4",
+          "d1a4",
+          "d1b3",
+          "d1h5",
+          "e5d3",
+          "e5d7",
+          "e5f3",
+          "e5g4"
+        ],
+        "ply": 303,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 4041,
+        "source_shard": "w00-00171.jsonl.zst",
+        "stored_input_key": "003543387346ef2057f9fa4f6e1f2bc2",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "a2b1"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 29968,
+        "input_key": "3b269a2d565224bfffedc6eb5172df8f",
+        "missing_moves": [
+          "a2a1",
+          "a2f7",
+          "h2g4",
+          "h7g8",
+          "h7h8"
+        ],
+        "ply": 247,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 6831,
+        "source_shard": "w00-00175.jsonl.zst",
+        "stored_input_key": "ae733299b7c358436e60cc01a72fa797",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "a3f8"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 29968,
+        "input_key": "9b2277ff4ffb0262c65424d87f36baff",
+        "missing_moves": [
+          "a3a2"
+        ],
+        "ply": 249,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 6833,
+        "source_shard": "w00-00175.jsonl.zst",
+        "stored_input_key": "5eb78675c1db9217fea2997d37c7dabd",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "d3e3",
+          "d3e4",
+          "h2f1",
+          "h7h8"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 29968,
+        "input_key": "63f355b0dcee964b44e5e583359a85e2",
+        "missing_moves": [
+          "d3a3",
+          "d3a6",
+          "d3d1",
+          "d3d4",
+          "d3d7",
+          "d3e2",
+          "d3f1",
+          "d3f5",
+          "d3g3",
+          "h7g7",
+          "h7g8"
+        ],
+        "ply": 251,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 6835,
+        "source_shard": "w00-00175.jsonl.zst",
+        "stored_input_key": "7b9664886828991d012cf5f1fffc4640",
+        "worker_id": 0
+      },
+      {
+        "duplicate_moves": [
+          "e1f1"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 31232,
+        "input_key": "9da7fc6e934337333e6857c4b35c5d78",
+        "missing_moves": [
+          "c2c3",
+          "g6f8"
+        ],
+        "ply": 28,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 463,
+        "source_shard": "w00-00183.jsonl.zst",
+        "stored_input_key": "5ff528090aa570f84dda5c038b23a2f7",
+        "worker_id": 0
+      }
+    ],
+    "policy_support_lost_to_float16": 7546891,
+    "policy_support_max": 86,
+    "policy_support_min": 1,
+    "policy_width": 1858,
+    "realized_base_depth_histogram": {
+      "9": 525414
+    },
+    "realized_value_depth_histogram": {
+      "9": 525414
+    },
+    "repetition_planes_nonzero_rows": 7429,
+    "row_schema_counts": {
+      "3": 525414
+    },
+    "rows_dropped_envelope": 0,
+    "rows_dropped_no_result": 5198,
+    "rows_dropped_policy_support": 12,
+    "rows_read": 530624,
+    "rows_written": 525414,
+    "support_checks": 525414,
+    "temp_recovered_from_emitted_policy": {
+      "max": 0.0005007299313561409,
+      "mean": 0.0005000004064897616,
+      "min": 0.00048809058961343224,
+      "n": 466933
+    },
+    "temp_recovery_saturation_q_spread_epsilon": 1e-09,
+    "temp_recovery_skipped_saturated": 50,
+    "value_depth_moved_rows": 525414,
+    "value_scheme_realized": {
+      "blend_weight_w": {
+        "max": NaN,
+        "mean": NaN,
+        "min": NaN,
+        "n": 0
+      },
+      "boundary_suppressed_by_flag": 0,
+      "game_rows_max": 0,
+      "game_rows_min": 0,
+      "games": 0,
+      "games_cut_by_limit": 0,
+      "games_with_dropped_tail": 0,
+      "instability_u": {
+        "max": 1.6970984190702438,
+        "mean": 0.015659440451062996,
+        "min": 0.0,
+        "n": 525414
+      },
+      "l1_delta_vs_search_value": {
+        "max": 0.0,
+        "mean": 0.0,
+        "min": 0.0,
+        "n": 525414
+      },
+      "played_regret": {
+        "max": 2.0,
+        "mean": 0.104304780341009,
+        "min": 0.0,
+        "n": 525414
+      },
+      "ply_gaps_nonunit": 0,
+      "rows_differing_from_c_full": 0,
+      "rows_differing_from_search_value": 0,
+      "rows_missing_depths": 0,
+      "rows_missing_played_move": 0,
+      "single_row_games": 0,
+      "stop_boundary_ahead": 0,
+      "stop_boundary_self": 0,
+      "stop_terminal": 0,
+      "w_const_differs_from_map": 0
+    },
+    "values_by_phase": {
+      "0": 13852156
+    },
+    "x_planes": 175
+  },
+  "source_selection": {
+    "order": "original corpus shard order; limit applies after selection",
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/source_shards.json",
+    "schema": 1,
+    "sha256": "97017b5423ae8f2b87f5f14f1c23d5d1f76c764b6230e3d6eefeed1dfac68c4b",
+    "shards": [
+      {
+        "rows": 8199,
+        "source_sha256": "4792ee7789258fa2230880ac9186fb3bc61bfe57270e2cc079957b3b4a61a43c",
+        "source_shard": "w00-00128.jsonl.zst"
+      },
+      {
+        "rows": 8314,
+        "source_sha256": "bd904b2736fdcec75d9d7db554d0ea9de6d59450af346ee79d183ec29f924031",
+        "source_shard": "w00-00129.jsonl.zst"
+      },
+      {
+        "rows": 8332,
+        "source_sha256": "d2c9ca381a68e130dc914caee6910ced18bb6777bc2131bd257e56efb48e5796",
+        "source_shard": "w00-00130.jsonl.zst"
+      },
+      {
+        "rows": 8320,
+        "source_sha256": "d394f0fb015e1a842058c51d5de872533ae7b816faf54575e4cae1e6ca01f5e1",
+        "source_shard": "w00-00131.jsonl.zst"
+      },
+      {
+        "rows": 8213,
+        "source_sha256": "7477f9783ecbea806e82b58ebf91a6974cdef37512ce0d020107bfef437682b1",
+        "source_shard": "w00-00132.jsonl.zst"
+      },
+      {
+        "rows": 8236,
+        "source_sha256": "39e404e77c4721bf7762b85c9d0dcff4f529e6f2edaca380fcabf20f36a15dba",
+        "source_shard": "w00-00133.jsonl.zst"
+      },
+      {
+        "rows": 8248,
+        "source_sha256": "a70b65d15e779c3f45b3ab86d971c49135fa35dd8a4b67316dd369feac2d7e9b",
+        "source_shard": "w00-00134.jsonl.zst"
+      },
+      {
+        "rows": 8235,
+        "source_sha256": "3118be8a6929fd0f2edfbfde7d36aeee24b8f06d693017800ee6adfe3c3d6f2b",
+        "source_shard": "w00-00135.jsonl.zst"
+      },
+      {
+        "rows": 8554,
+        "source_sha256": "84c81ca768960fab21de1033c44b3258d6ca95c6ebeb8c7c919af1915ebbfe37",
+        "source_shard": "w00-00136.jsonl.zst"
+      },
+      {
+        "rows": 8280,
+        "source_sha256": "fb3acabd961ee42f13a55e4900f1d5ace393dc6ef11da0f53c69cb83c2f0d15a",
+        "source_shard": "w00-00137.jsonl.zst"
+      },
+      {
+        "rows": 8253,
+        "source_sha256": "4d683c7956abc864a27d95cced7e253d5a97d98c7cf58da01c8c213e9ee8e595",
+        "source_shard": "w00-00138.jsonl.zst"
+      },
+      {
+        "rows": 8284,
+        "source_sha256": "5bbe6e482faed8e56272021189d402db6b7f7bb3c848b5c2bc16a2bd3d07574a",
+        "source_shard": "w00-00139.jsonl.zst"
+      },
+      {
+        "rows": 8378,
+        "source_sha256": "655ac993cd767b3c8096977737ab2c85104d2ca9143925995206dba46d8c8b59",
+        "source_shard": "w00-00140.jsonl.zst"
+      },
+      {
+        "rows": 8434,
+        "source_sha256": "d43a91ee9b6c715c9fc26ca9aa58237d843a10f43e4921fd0a084994835fada1",
+        "source_shard": "w00-00141.jsonl.zst"
+      },
+      {
+        "rows": 8386,
+        "source_sha256": "aa9691484bfcf2a593c1a826758ccf4aa73dc7a3a1ce8087b0585d0dffae0782",
+        "source_shard": "w00-00142.jsonl.zst"
+      },
+      {
+        "rows": 8325,
+        "source_sha256": "c5620afaa0482f0478ff1cbc4bf951614e40ebf37ed6db4bb88734d8eb0f6f5a",
+        "source_shard": "w00-00143.jsonl.zst"
+      },
+      {
+        "rows": 8318,
+        "source_sha256": "8685e03dfa89a6dcde5d57aa6b009b5106544bcc1854aef4e970260ccfbb6ce1",
+        "source_shard": "w00-00144.jsonl.zst"
+      },
+      {
+        "rows": 8367,
+        "source_sha256": "9dda4c132ea48881b080b8f8489e918cadf2525d8cd0ac4461c11016fe66372a",
+        "source_shard": "w00-00145.jsonl.zst"
+      },
+      {
+        "rows": 8243,
+        "source_sha256": "12f32e9882313be663ccead021ee4d6c4f7b604faee02f679084544265ef54a0",
+        "source_shard": "w00-00146.jsonl.zst"
+      },
+      {
+        "rows": 8448,
+        "source_sha256": "951e329cdcf340b692b65063177d344d00516643445a88b926e59ec5a6dd2e9c",
+        "source_shard": "w00-00147.jsonl.zst"
+      },
+      {
+        "rows": 8466,
+        "source_sha256": "809dfd731f041871fa894eb61c32645fc8be54af341a2cd3a5e61cca7d561935",
+        "source_shard": "w00-00148.jsonl.zst"
+      },
+      {
+        "rows": 8251,
+        "source_sha256": "b4432cfe2ff56cbb44cd7d50fc43dd42ecb78c20bc4450500dda19556619ffc4",
+        "source_shard": "w00-00149.jsonl.zst"
+      },
+      {
+        "rows": 8255,
+        "source_sha256": "dd1cb2ddfec43058cf262c52c007a9fb01d05c056980f9d6d7b2ed268369488f",
+        "source_shard": "w00-00150.jsonl.zst"
+      },
+      {
+        "rows": 8433,
+        "source_sha256": "69be7a80064bec465880601beee106b7b0ec1b1ed0c0973c16779195e2e5af4a",
+        "source_shard": "w00-00151.jsonl.zst"
+      },
+      {
+        "rows": 8411,
+        "source_sha256": "c9a585fd6c67119c8cb111ffc5382ec0025675cea770ef59c93a4ced71bbdd5a",
+        "source_shard": "w00-00152.jsonl.zst"
+      },
+      {
+        "rows": 8268,
+        "source_sha256": "8a5e1010174a52d25bfac9223a116481c68d7832a0ebb669edf3c9c85da179ee",
+        "source_shard": "w00-00153.jsonl.zst"
+      },
+      {
+        "rows": 8267,
+        "source_sha256": "af168e725e5d253f3d16472a09b85afc4c5b762ec7f1cfcacaf19df4e5381ae3",
+        "source_shard": "w00-00154.jsonl.zst"
+      },
+      {
+        "rows": 8406,
+        "source_sha256": "04564f695a80c665232a7a92c16ad92b5eed7ea85f57261ea4bb0a6f0036b306",
+        "source_shard": "w00-00155.jsonl.zst"
+      },
+      {
+        "rows": 8302,
+        "source_sha256": "57040529382ef4cc1c681703652e786c804733e44f59a7d0e77e821c384cc916",
+        "source_shard": "w00-00156.jsonl.zst"
+      },
+      {
+        "rows": 8238,
+        "source_sha256": "e3fd76dbcad78cf8610ab1e482c7dff8b48488f63ca2aa554fc1abab60b64f75",
+        "source_shard": "w00-00157.jsonl.zst"
+      },
+      {
+        "rows": 8405,
+        "source_sha256": "7233bf0c92b9ce03dd63886e8c68d071d24561a241065c60f395e30b5051a818",
+        "source_shard": "w00-00158.jsonl.zst"
+      },
+      {
+        "rows": 8218,
+        "source_sha256": "1de998ef31a556a7f9ff35525c22e781d1fa22d1a1022d26b07ecd000ba91d3f",
+        "source_shard": "w00-00159.jsonl.zst"
+      },
+      {
+        "rows": 8200,
+        "source_sha256": "80dbbc63705d463ab45838d0fc46a6a2c9f992082c30960efa96dd43f38a1194",
+        "source_shard": "w00-00160.jsonl.zst"
+      },
+      {
+        "rows": 8266,
+        "source_sha256": "51a0d687032c9f43b716da0b4d45a1ba4bae8246ef41140657d382e2052b46b2",
+        "source_shard": "w00-00161.jsonl.zst"
+      },
+      {
+        "rows": 8480,
+        "source_sha256": "9a25eb68e0f9132704f2d8a79dca4581c48404d5550733897c396bb20beb3f68",
+        "source_shard": "w00-00162.jsonl.zst"
+      },
+      {
+        "rows": 8203,
+        "source_sha256": "b35a73c1538cb819305cd4d4569c6fa5a1d5f3c894ed667bfd2bd55ae88a39f0",
+        "source_shard": "w00-00163.jsonl.zst"
+      },
+      {
+        "rows": 8290,
+        "source_sha256": "ea99501ad8dec271e3856d9c6dc516d8b8ac11335f02bd683755fb0cc9e87698",
+        "source_shard": "w00-00164.jsonl.zst"
+      },
+      {
+        "rows": 8330,
+        "source_sha256": "6b869e0404f86fe8697c9bb756de2ccb535de98d3e90ec628dc6085f2540693c",
+        "source_shard": "w00-00165.jsonl.zst"
+      },
+      {
+        "rows": 8335,
+        "source_sha256": "b1d42e97cb4a80679c848847d4225d35804f2a9940cd1a4af0380c973b1126ba",
+        "source_shard": "w00-00166.jsonl.zst"
+      },
+      {
+        "rows": 8242,
+        "source_sha256": "09fabdcf573571408dc19f0cd8c3adc6702873ef69187fba4785b92437c0bc67",
+        "source_shard": "w00-00167.jsonl.zst"
+      },
+      {
+        "rows": 8204,
+        "source_sha256": "d4a803e8c06103a5ad9822da2ff6dcabb8eccbc1dd1dee8b2c395e8e5ee60d25",
+        "source_shard": "w00-00168.jsonl.zst"
+      },
+      {
+        "rows": 8255,
+        "source_sha256": "a39032d550e938c9dadf4fcf687eabba711df3bd63722c9f737bd3d431f55d04",
+        "source_shard": "w00-00169.jsonl.zst"
+      },
+      {
+        "rows": 8224,
+        "source_sha256": "84a24fd3d464e39deb120f1bd1319448bb44ee3e8bb5a5ea50f8917ce898a7b8",
+        "source_shard": "w00-00170.jsonl.zst"
+      },
+      {
+        "rows": 8231,
+        "source_sha256": "76b73446708ff2e64433e12361946eabbd8a497da13e9a6eb67ca13f45818591",
+        "source_shard": "w00-00171.jsonl.zst"
+      },
+      {
+        "rows": 8315,
+        "source_sha256": "13265b13c04e97319028808fe21fb439237d0ee95b0f018c34c6c888088081b8",
+        "source_shard": "w00-00172.jsonl.zst"
+      },
+      {
+        "rows": 8209,
+        "source_sha256": "54f8f512fcd48d5eb7bbfb724945921d3fd50b6d3521f04f520ec350e04e41ec",
+        "source_shard": "w00-00173.jsonl.zst"
+      },
+      {
+        "rows": 8222,
+        "source_sha256": "d2fa0becd992e8931c3df48b32f42b22485f9beadfcd76ec235c26d38e5b183d",
+        "source_shard": "w00-00174.jsonl.zst"
+      },
+      {
+        "rows": 8226,
+        "source_sha256": "fd936ef1c070303e111df6dd99968bd8a9546c5ca8251880400ca56b86aa5a52",
+        "source_shard": "w00-00175.jsonl.zst"
+      },
+      {
+        "rows": 8198,
+        "source_sha256": "c82410023e4268a018e31e7a40653dd70f2472cb00fb26667b361106dd471d53",
+        "source_shard": "w00-00176.jsonl.zst"
+      },
+      {
+        "rows": 8289,
+        "source_sha256": "92b85ebc1f1ad7ce103b94c2724cadecac780dae028d09ba816682af7f432577",
+        "source_shard": "w00-00177.jsonl.zst"
+      },
+      {
+        "rows": 8291,
+        "source_sha256": "cf67513e621c8a7fbb111f4c36f89c59dd0487aa673a4b506c4c7d3d2d80b397",
+        "source_shard": "w00-00178.jsonl.zst"
+      },
+      {
+        "rows": 8210,
+        "source_sha256": "d7758777eaa5ab4080eedfcccafef421eb7bd4e1903f282ffc9bb3927f71007c",
+        "source_shard": "w00-00179.jsonl.zst"
+      },
+      {
+        "rows": 8195,
+        "source_sha256": "2e8b0e81b48396d0b0adbff2dd5670e2c7da910cbd56c3433e0cd1529f9aa5ce",
+        "source_shard": "w00-00180.jsonl.zst"
+      },
+      {
+        "rows": 8206,
+        "source_sha256": "85f52b63d299adc129ddb4594a71b47a2972c881b89a4fd4a6101b1203dde18d",
+        "source_shard": "w00-00181.jsonl.zst"
+      },
+      {
+        "rows": 8245,
+        "source_sha256": "ead0711a4039e2896bd552734a679d361500098bddee51f30b02acc5abda40fc",
+        "source_shard": "w00-00182.jsonl.zst"
+      },
+      {
+        "rows": 8361,
+        "source_sha256": "18ec2d18bf19afd3058219e16705702d80b81b30e904b6de0b380c1b095fd40b",
+        "source_shard": "w00-00183.jsonl.zst"
+      },
+      {
+        "rows": 8339,
+        "source_sha256": "9526e37d6d0b329011facfd540940e4297e7e7610480d70d7f5358966c93ae02",
+        "source_shard": "w00-00184.jsonl.zst"
+      },
+      {
+        "rows": 8277,
+        "source_sha256": "ab51d53acd51dbfd22b264197eab9216ebee4d6b64f43e1a2433cb62dcd76c57",
+        "source_shard": "w00-00185.jsonl.zst"
+      },
+      {
+        "rows": 8216,
+        "source_sha256": "21959ca1ab055f23ff03d075c03107c0651f73c70307f6b0fbc736ddb00352f0",
+        "source_shard": "w00-00186.jsonl.zst"
+      },
+      {
+        "rows": 8417,
+        "source_sha256": "b129037ab054b638f8d8234b76dc1c67b790efb7208eecf875fa9c7ca75ba1cb",
+        "source_shard": "w00-00187.jsonl.zst"
+      },
+      {
+        "rows": 8251,
+        "source_sha256": "849a0314353ab6f82bdacf6899eeb24d065ba6b5cc9c5e216d6a2c29729b5c8e",
+        "source_shard": "w00-00188.jsonl.zst"
+      },
+      {
+        "rows": 8210,
+        "source_sha256": "93e37a36883285eef7984ecc021cf99b5874a842a2ec407791dcaa140efceccc",
+        "source_shard": "w00-00189.jsonl.zst"
+      },
+      {
+        "rows": 8192,
+        "source_sha256": "29dccb468dab15726263913d1a8a28a78196f731a4ab30dd539d1562157892fb",
+        "source_shard": "w00-00190.jsonl.zst"
+      },
+      {
+        "rows": 8208,
+        "source_sha256": "05e3b1ad188318e2f784ff0037bdadda8e7240418164305ee3e8ebc3050d7f9f",
+        "source_shard": "w00-00191.jsonl.zst"
+      }
+    ],
+    "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+    "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+    "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+  },
+  "independent_rank_missing_result_rows": 5198,
+  "verified_support_exclusion_rows": 12,
+  "omitted_rows": 5210,
+  "complement_proof": "rank eligibility plus injective full-history physical joins and exact universe cardinality; omitted IDs reconstructible from selection universe minus emitted refs",
+  "per_raw_shard_survivors": {
+    "w00-00128.jsonl.zst": 8198,
+    "w00-00129.jsonl.zst": 8314,
+    "w00-00130.jsonl.zst": 8332,
+    "w00-00131.jsonl.zst": 8320,
+    "w00-00132.jsonl.zst": 8213,
+    "w00-00133.jsonl.zst": 8236,
+    "w00-00134.jsonl.zst": 8248,
+    "w00-00135.jsonl.zst": 8235,
+    "w00-00136.jsonl.zst": 8155,
+    "w00-00137.jsonl.zst": 7880,
+    "w00-00138.jsonl.zst": 7853,
+    "w00-00139.jsonl.zst": 8280,
+    "w00-00140.jsonl.zst": 8378,
+    "w00-00141.jsonl.zst": 8434,
+    "w00-00142.jsonl.zst": 8385,
+    "w00-00143.jsonl.zst": 8325,
+    "w00-00144.jsonl.zst": 8318,
+    "w00-00145.jsonl.zst": 8367,
+    "w00-00146.jsonl.zst": 8243,
+    "w00-00147.jsonl.zst": 8448,
+    "w00-00148.jsonl.zst": 8466,
+    "w00-00149.jsonl.zst": 8251,
+    "w00-00150.jsonl.zst": 7855,
+    "w00-00151.jsonl.zst": 8432,
+    "w00-00152.jsonl.zst": 8411,
+    "w00-00153.jsonl.zst": 7869,
+    "w00-00154.jsonl.zst": 8267,
+    "w00-00155.jsonl.zst": 8406,
+    "w00-00156.jsonl.zst": 8302,
+    "w00-00157.jsonl.zst": 8238,
+    "w00-00158.jsonl.zst": 8405,
+    "w00-00159.jsonl.zst": 8218,
+    "w00-00160.jsonl.zst": 8200,
+    "w00-00161.jsonl.zst": 7866,
+    "w00-00162.jsonl.zst": 8480,
+    "w00-00163.jsonl.zst": 8203,
+    "w00-00164.jsonl.zst": 8290,
+    "w00-00165.jsonl.zst": 8330,
+    "w00-00166.jsonl.zst": 8335,
+    "w00-00167.jsonl.zst": 8242,
+    "w00-00168.jsonl.zst": 8204,
+    "w00-00169.jsonl.zst": 8255,
+    "w00-00170.jsonl.zst": 7824,
+    "w00-00171.jsonl.zst": 8230,
+    "w00-00172.jsonl.zst": 8315,
+    "w00-00173.jsonl.zst": 8209,
+    "w00-00174.jsonl.zst": 7822,
+    "w00-00175.jsonl.zst": 8223,
+    "w00-00176.jsonl.zst": 7798,
+    "w00-00177.jsonl.zst": 8289,
+    "w00-00178.jsonl.zst": 8291,
+    "w00-00179.jsonl.zst": 8210,
+    "w00-00180.jsonl.zst": 8195,
+    "w00-00181.jsonl.zst": 7406,
+    "w00-00182.jsonl.zst": 8245,
+    "w00-00183.jsonl.zst": 8360,
+    "w00-00184.jsonl.zst": 7939,
+    "w00-00185.jsonl.zst": 7877,
+    "w00-00186.jsonl.zst": 8216,
+    "w00-00187.jsonl.zst": 8417,
+    "w00-00188.jsonl.zst": 8251,
+    "w00-00189.jsonl.zst": 8210,
+    "w00-00190.jsonl.zst": 8192,
+    "w00-00191.jsonl.zst": 8208
+  },
+  "source_qualified_input_sequence_sha256": "123c94cb0df991c51e803e0991b9ef1f8aa62899495a7e39e86ddfe62b752cd6",
+  "unchanged_derived_storage_identity": "aa049f2fab750a0032cc6465a14c560a4ef0a4cbe67f04594221826419b20671",
+  "summary_pins": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/derived/derive_targets_summary.json": "a65d576f386e0b64fda3c85f4f389164a2c444c5f11f7ddab1085806226d518f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/bt4/bt4_policy_sidecar_summary.json": "871a500f95c9d82bfd17f6c47995b4033bf166983f3e20adaa3f7200bb858405",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/rank/sf_d9_rank_sidecar_summary.json": "bd6a90031495c39e706b6d839d41f97e29330fcf1b7ea38e75ceaa67014f7248"
+  },
+  "scope": "All emitted rows admitted by source-bound BT4/rank consumers, unique source physical rows and immutable derived non-policy lineage; no training schedule execution."
+}

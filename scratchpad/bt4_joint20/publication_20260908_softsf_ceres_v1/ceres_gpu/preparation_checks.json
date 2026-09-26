@@ -1,0 +1,18 @@
+{
+  "status": "PASS_CPU_ONLY_PREPARATION_CHECKS_NO_SESSION",
+  "seconds": 0.16478685796028003,
+  "checks": [
+    "actual saved128 CPU references exactly self-match",
+    "material raw/policy perturbation refuses",
+    "nonfinite value refuses",
+    "CUDA compute plus integer shape accepts; CPU-only or CPU floating compute refuses",
+    "actual nonexecuting operator CLI has no output/lease/session side effects"
+  ],
+  "plan_sha256": "b43878b598ffe6fea94370d1a7e98ff98f668adf71905d5ba87d1bd6822e9809",
+  "source_sha256": "f1611d3284d0ecc0e1fafacdc86ab8384b97b74a746d6860244d2d068842699b",
+  "command": [
+    "/usr/bin/python3.10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/check_preparation.py"
+  ],
+  "scope": "Compiled own sources, pure numerical/provider event fixtures and actual --describe route. No ORT session, CUDA work or live process changes."
+}

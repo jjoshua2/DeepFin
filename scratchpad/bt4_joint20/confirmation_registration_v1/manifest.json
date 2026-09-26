@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "repository_root": "/home/josh/projects/chess",
+  "state": "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1",
+  "training_seed": 1,
+  "arena_seed": 20260907,
+  "sims": 100,
+  "gpu_budget_seconds": 37800,
+  "stage_caps_seconds": {
+    "reference_train": 16200,
+    "candidate_train": 16200,
+    "arena": 5400
+  },
+  "cpu_stage_caps_seconds": {
+    "schedule": 1800,
+    "readout": 120
+  },
+  "candidate": {
+    "role": "E0T05",
+    "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050",
+    "derive_sha256": "4354bafe8e1435bb030faaa161810bbfff667a2b83c647940ad371eb2ab1caf1",
+    "mix_sha256": "a85ba1403c2477018bdc59b622311094027ca17cf045dc78090f6c0ee9f5463d",
+    "run": "/home/josh/projects/chess/runs/armB/confirmation_seed1_E0T05_vs_C20T05_candidate_E0T05_v1"
+  },
+  "reference": {
+    "role": "C20T05",
+    "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05",
+    "derive_sha256": "fc6a33b4f75b154ae2945240d4169b40685618ff0082cc759914a0c4f5b6e8a5",
+    "mix_sha256": "5bf8502a12af0b9ce938a39ddfd9d95df4bfb2b1a0f80292d80d04109cce7100",
+    "run": "/home/josh/projects/chess/runs/armB/confirmation_seed1_E0T05_vs_C20T05_reference_C20T05_v1"
+  },
+  "runtime_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json",
+    "sha256": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df"
+  },
+  "preregistration": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/preregistration.md",
+    "sha256": "f89a5a719aeb6c189f1ecf1d85b73815bd0bfbc1be145c5ebe4e4d25113cf528"
+  },
+  "openings": "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_openings_v1/openings.fen",
+  "schedule_verifier": "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_tools/verify_matched_schedule.py",
+  "launcher_sha256": "07fea41523fbb8068cfd910d0ff5e629622ccb81a180e7160188106d4040c09c"
+}
