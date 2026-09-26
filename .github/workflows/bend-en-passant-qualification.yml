@@ -1,0 +1,200 @@
+name: Bend en-passant update qualification
+'on':
+  push:
+    branches: [feat/bend-en-passant-qualification-dev-20260925]
+    paths: [.github/workflows/bend-en-passant-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: dc69dfc4f44c1d0a1a6ad9615a98eb6e82327829
+      TARGET: feat/bend-en-passant-update-20260925
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dc69dfc4f44c1d0a1a6ad9615a98eb6e82327829
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact candidate and verify retained parent
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/en-passant-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          gh api repos/jjoshua2/DeepFin/git/blobs/9e20bacaba915817da77ab065725e8c6889007f9 --jq .content | base64 --decode > "$RUNNER_TEMP/payload.xz"
+          test "$(git hash-object "$RUNNER_TEMP/payload.xz")" = 9e20bacaba915817da77ab065725e8c6889007f9
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108186727899 > "$EVIDENCE/parent-job.json"
+          python3 - <<'PY'
+          import hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          t=Path(os.environ['RUNNER_TEMP']);e=Path(os.environ['EVIDENCE'])
+          def git(*a):return subprocess.check_output(['git',*a],text=True).strip()
+          def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+          assert git('rev-parse','HEAD')==os.environ['BASE']
+          assert git('rev-parse','HEAD^{tree}')=='aaf6eff479a7bd8d41d9c8d2ae671f1e388a6e3e'
+          parent=Path('docs/experiments/evidence/bend-move-promotion-publication')
+          q=json.loads((parent/'qualification.json').read_text())
+          assert q['qualification']=='PASS' and q['modular_laws']==150 and q['modular_controls']==436
+          for kind,laws,n in [('ordinary',5,18),('promotion',4,17)]:
+              r=json.loads((parent/('hosted-'+kind+'-focused.json')).read_text())
+              assert r['focused_gate']=='PASS' and r['consumer']=='PASS' and r['new_law_count']==laws
+              assert len(r['negative_controls'])==n and all(x['rejected'] for x in r['negative_controls'])
+          manifest=json.loads((parent/'hosted-source-identity.json').read_text())['candidate_source_sha256s']
+          assert len(manifest)==472
+          for f,h in manifest.items():assert digest(Path(f))==h,f
+          job=json.loads((e/'parent-job.json').read_text())
+          assert job['id']==108186727899 and job['run_id']==36169939079 and job['status']=='completed' and job['conclusion']=='success'
+          raw=lzma.decompress((t/'payload.xz').read_bytes(),memlimit=256*1024*1024)
+          assert len(raw)==40465 and hashlib.sha256(raw).hexdigest()=='cdcfc7b36445ea444440ee68245b758a4052c30e224547bf491874fd2b9e081e'
+          files=json.loads(raw);assert len(files)==11
+          for name,text in files.items():
+              p=Path(name)
+              assert not p.exists() and not p.is_absolute() and '..' not in p.parts,name
+              assert name.startswith('native/bend_engine/standalone/proofs/en_passant/') or name=='docs/experiments/2026-09-25-bend-en-passant-update.md',name
+              p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)
+          for name in ['Actual.bend','Mask.bend','probe.bend']:
+              assert Path('native/bend_engine/standalone/proofs/en_passant',name).read_bytes()==(parent/'en-passant-review'/(name+'.txt')).read_bytes()
+          subprocess.run(['git','add','--',*files],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='fc8b5572b1fda7979341e6213b380ca90bded58e'
+          hashes={f:digest(Path(f)) for f in git('ls-files','native/bend_engine').splitlines() if Path(f).is_file()}
+          assert len(hashes)==482
+          record={'base':os.environ['BASE'],'source_tree':git('write-tree'),'transport_sha256':hashlib.sha256(raw).hexdigest(),'changed_files':sorted(files),'candidate_source_sha256s':hashes,'retained_parent_laws':150,'retained_parent_controls':436,'parent_manifest_matches':472,'parent_qualification_sha256':digest(parent/'qualification.json'),'combined_wrapper_executed':False,'archived_producers_and_probe_unchanged':True}
+          (e/'source-identity.json').write_text(json.dumps(record,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: promote actual en-passant update and partition preservation contracts'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git log -1 --format='%H%n%T' > "$EVIDENCE/source-commit.txt"
+      - name: Run public en-passant laws and all seventeen controls
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/en_passant/focused.js "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Run four native modes and actual capture corruptions
+        env:
+          CC: /usr/bin/clang
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/en_passant/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Run original compiler source suite and pin tests
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development tools with normal build compiler
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify results and publish fresh feature branch
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-move-promotion-qualified-20260925 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import collections,hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(n):return json.loads((e/n).read_text())
+          def canon(r,exclude):return hashlib.sha256(json.dumps({k:v for k,v in r.items() if k not in exclude},sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          ident=read('source-identity.json');p=read('focused.json');n=read('native.json')
+          for f,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          assert p['focused_gate']=='PASS' and p['consumer']=='PASS' and p['controls_gate']=='PASS' and p['new_law_count']==2
+          assert len(p['negative_controls'])==17 and all(x['rejected'] for x in p['negative_controls'])
+          assert canon(p,{'consumer_seconds'})=='9100ce35f6327666f8e60ed0ec20db39706bb2a8322923d53e36e1f7a585f331'
+          assert n['native_gate']=='PASS' and n['board_rows_per_mode']==4316 and n['distinct_input_pairs']==4252 and n['board_fields_per_mode']==82004
+          assert n['consistent_input_cases']==4188 and len(n['modes'])==4 and all(x['invalid_rejections']==9 for x in n['modes'])
+          assert len(n['mutations'])==2 and all(x['rejected'] and x['compiled_and_executed'] for x in n['mutations'])
+          assert canon(n,{'cc'})=='80392561a3fd2bb77207c41542fa18849cad1dd866cf9b6678902e9b42c7457b'
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          d=Path('docs/experiments/evidence/bend-en-passant-update');d.mkdir(exist_ok=False)
+          for name in ['source-identity.json','focused.json','native.json','compiler-proofs.json','parent-job.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes();(d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          kinds=dict(collections.Counter(x['kind'] for x in p['negative_controls']))
+          result={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':ident['source_tree'],'newly_registered_laws':2,'new_controls':17,'control_categories':kinds,'retained_parent_laws':150,'retained_parent_controls':436,'modular_laws':152,'modular_controls':453,'combined_wrapper_executed':False,'candidate_source_entries':482,'archived_producers_and_probe_unchanged':True,'focused_matches_local_except_seconds':True,'native_matches_local_except_cc':True,'independent_review':False}
+          (d/'qualification.json').write_text(json.dumps(result,indent=2)+'\n')
+          headline=f"Hosted run **{os.environ['GITHUB_RUN_ID']}** passes both public en-passant laws and importing consumer, all17 controls, four native modes and both actual capture corruptions, original compiler source/pin checks and unchanged whole-repository lint on source `{os.environ['SOURCE']}`."
+          paragraphs=['## Completed hosted qualification',headline,
+            'Actual.bend, Mask.bend and the actual-update probe are byte-identical to the checked supplementary archive from PR #885. The two registered results promote that mathematics without narrowing raw U32 inputs or inventing legal-move assumptions. Exact full-Board equality and partition preservation are distinct contracts; preservation alone would permit a no-op.',
+            'The focused command executes its consumer and all17 controls. Eight are ordinary semantic/refinement failures at intended locations, eight enforce manifests/imports/no unsafe or holes, and one synthetic warning-output unit is not a compiler execution. The first local broad target-mask mutation hit an inherited flag0 proof; that rejected harness run was retained and the final mutation was scoped to flag1. No checker, producer, contract or expected behavior was weakened.',
+            'Exact-source150/436 parent evidence is retained on472 manifest entries and the successful parent job. Modular coverage is152 laws/453 controls, not a newly executed complete152-law wrapper. All482 candidate source hashes match. Full proof JSON matches local except consumer seconds; native JSON matches except the recorded C compiler.',
+            'Generic,forced-portable,native-target and UBSan each pass4,316 complete Board cases with4,252 distinct input tuples and82,004 U32 field comparisons. This covers all4,096 raw source/destination pairs plus28 pawn-coordinate examples,64 raw-metadata cases and128 inconsistent diagnostics;4,188 cases satisfy partition consistency. Nine malformed requests per mode are rejected. Both actual capture-square corruptions compile/execute and fail the independent square-set reference. Modes repeat fixtures,not exhaustive Boards or legal en-passant moves.',
+            'Native square inputs are0..63. Source contracts follow arbitrary U32 mask behavior without assuming modulo64 wrapping. The reference uses adjacent-rank coordinates for the extra captured square rather than receiving the candidate mask. Metadata follows existing raw helper behavior; no independent chess-metadata,source pawn,rank,previous double-push,EP-right or king-safety theorem is claimed.',
+            'Fresh unchanged Ruff/Basedpyright/Vulture passes in the locked Python3.13 CPU environment with uv0.12.10. C compiler selection is confined to native probes,not Python extension builds. The local missing-tools lint failure remains historical; hosted success resolves only that environment gap. Compiler16-laws/seven-controls and12 pin tests pass. Compiler pin and84-input fingerprint remain unchanged.',
+            'Only documentation,index and evidence follow source qualification. No production function,earlier accepted law,permanent workflow,routine perft,model/GPU,search,training or benchmark changes. Self-review only; checker/Base,native lowering/storage,ABI,toolchain,OS and hardware remain trust boundaries. Existing compiler,snapshot-lowering and closed-builder limitations remain. No application responsibility moved from Python; export/references,data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No merge,force push,deployment or live-process action.',
+            'Next substantive acceptance is castling update refinement under explicit representation conditions,then connection of raw updates to legal-move producers and king safety.'
+          ]
+          record=Path('docs/experiments/2026-09-25-bend-en-passant-update.md');record.write_text(record.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          index.write_text(text.replace(anchor,anchor+'| [Public en-passant updates](2026-09-25-bend-en-passant-update.md) | Two actual flag1 update/partition laws promoted unchanged,17 controls and four native modes; modular152/453,not move legality |\n',1))
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          note='## Latest P3 en-passant update qualification\n\n'+headline+'\n\nBoth public contracts retain the complete actual flag1/promotion0 Board update and partition preservation under input consistency. Removal includes source,destination and destination XOR8. These promote the earlier supplementary proofs unchanged; they do not certify source-pawn/rank/history,EP metadata or king safety. Qualification is modular152/453 with the exact150/436 parent retained,not a full aggregate run. See [the dated readout](experiments/2026-09-25-bend-en-passant-update.md). Castling and legal-producer connections remain next; no Python application responsibility moved into Bend.\n'
+          m.write_text(title+'\n\n'+note+rest)
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git switch -c "$TARGET"
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify public en-passant update and preserve evidence boundaries'
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$EVIDENCE" "$RUNNER_TEMP/final/reports"
+          git log -2 --format='%H %s' > "$RUNNER_TEMP/final/published-commits.txt"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-en-passant-qualification
+          path: |
+            ${{ runner.temp }}/final/
+            ${{ runner.temp }}/en-passant-evidence/
+          retention-days: 14
