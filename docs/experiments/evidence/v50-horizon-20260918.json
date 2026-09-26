@@ -1,0 +1,86 @@
+{
+  "checked_unix": 1789734725.1764753,
+  "banks": {
+    "epoch2_400": {
+      "games": 256,
+      "pairs": 128,
+      "score": 0.685546875,
+      "bank_sha256": "27eb5a8f4bae7eb75bc3c211fa8c018cebec9736ddb769e78d8e70b70ea64622",
+      "elo": 135.39,
+      "nominal95_elo_interval": [
+        101.96,
+        171.4
+      ]
+    },
+    "epoch3_400": {
+      "games": 256,
+      "pairs": 128,
+      "score": 0.73828125,
+      "bank_sha256": "110e256d8ce0d60c75bf66f469198e43e26cc01a951fcbc42993f545ab391190",
+      "elo": 180.15,
+      "nominal95_elo_interval": [
+        144.67,
+        219.49
+      ]
+    },
+    "epoch4_400": {
+      "games": 256,
+      "pairs": 128,
+      "score": 0.759765625,
+      "bank_sha256": "7e53a53feeead3a2b3bf29eb17886ec044fa8bca48d9bad94924c48dbc0b1fc7",
+      "elo": 200.02,
+      "nominal95_elo_interval": [
+        164.11,
+        240.26
+      ]
+    },
+    "epoch4_100": {
+      "games": 256,
+      "pairs": 128,
+      "score": 0.76953125,
+      "bank_sha256": "c9862b39ef09f31476ab236c1c3aaf2226cacff4fdd560a7ff2588c9c278e6cf",
+      "elo": 209.45,
+      "nominal95_elo_interval": [
+        170.34,
+        253.98
+      ]
+    }
+  },
+  "paired_anchor_score_differences": {
+    "epoch3_400 minus epoch2_400": {
+      "difference": 0.052734375,
+      "nominal95_normal_interval": [
+        0.0001370620503398992,
+        0.10533168794966011
+      ],
+      "pairs": 128
+    },
+    "epoch4_400 minus epoch3_400": {
+      "difference": 0.021484375,
+      "nominal95_normal_interval": [
+        -0.03149764685700333,
+        0.07446639685700332
+      ],
+      "pairs": 128
+    },
+    "epoch4_400 minus epoch2_400": {
+      "difference": 0.07421875,
+      "nominal95_normal_interval": [
+        0.011926392227968922,
+        0.13651110777203107
+      ],
+      "pairs": 128
+    },
+    "epoch4_400 minus epoch4_100": {
+      "difference": -0.009765625,
+      "nominal95_normal_interval": [
+        -0.06738810104765927,
+        0.047856851047659264
+      ],
+      "pairs": 128
+    }
+  },
+  "scope": "Opening-pair score differences against shared epoch1 anchor, not direct later-epoch Elo. Same training trajectory and developmental openings; no seedreplication or causaldata-scale claim.",
+  "artifact_root": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/v50_epoch_curve_arena_v1",
+  "anchor_checkpoint_sha256": "6d36f93d040c8babed040159419279af62a444f6466f42b720e12bb72d67ab02"
+}

@@ -1,0 +1,33 @@
+{
+  "status": "passed",
+  "workflow_run": 36249315140,
+  "tested_workflow_commit": "5e63a5fe1a47625307acd7a93b1a387a267b6410",
+  "base_commit": "e58c821db1be6e2d1afe288201c2e8e3c8a442f7",
+  "tested_source_sha256": {
+    "native/bend_engine/session_probe/CACHE.md": "2b6e8162d0644b3b86ab6591cc23c9d5b09d7e8c4aaea96414fb63a0e49d7e78",
+    "native/bend_engine/session_probe/CachedSearch.bend": "f8b712877852f02ce3948f84cd5c4492342b4faff616ed12bd7db1ff4b791f3a",
+    "native/bend_engine/session_probe/README.md": "a001eb243019a70b7eda562f0a1eaa378ed3b9f5543c635f3a3dbd5cf2798346",
+    "native/bend_engine/session_probe/cache_probe.py": "d793a561b0124da1802c42d4438a785c8bbbe4858aaca6d862c3c112ab49f729",
+    "native/bend_engine/session_probe/main.bend": "19fbb44172aa08c1ce31c1321a69003da3bdac9d355a0848feff0bcd9b737870",
+    "native/bend_engine/session_probe/run_probe.py": "ca469b1a731e9f10bbed082164560a7e803d10a702e77a1f818e37c35f2a5a5b",
+    "native/bend_engine/session_probe/transport.c": "42052570899116e37a9680a81a117a0f60b4fc3eb80204606f24e8c9078dcc49",
+    "tests/test_bend_session_move_cache.py": "f3ea0fdf5aceed62e6fb8a2ee88f95ab860eb03ab65a7cc3de6e4e081f6070ef"
+  },
+  "focused_python_cases": 139,
+  "new_python_cases": 30,
+  "modes": [
+    "generic",
+    "ubsan"
+  ],
+  "search_cases_per_mode_and_setting": 21,
+  "cache_settings": [
+    null,
+    "0",
+    "6",
+    "1"
+  ],
+  "full_history_suites": true,
+  "reset_each_epoch_rejected": true,
+  "report_sha256": "36885fa5b85564e51f157d411048723301b79faa401fd10d68a753105c0e59c2",
+  "scope": "Diagnostic persistent PUCT session frontend; disabled by default; no timing, model or production selfplay adoption."
+}
