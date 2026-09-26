@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Opt-in measured live gather policy](2026-09-26-measured-live-dispatch.md) | Exact-package gather recommendations, bounded runtime application and equal-work controls; speed validation separate |
 | [Native batch service-time profile](2026-09-25-native-service-profile.md) | CPU callback occupancy curves with retained warmups and fixed-package equal-work estimates; no runtime dispatch or GPU claim |
 | [Persistent live CPU-model composition](2026-09-25-live-model-composition.md) | Actual AOTI checkpoint across generation reuse and shared forwards; strict independent oracle, no GPU or strength claim |
 | [Persistent live-cohort recovery](2026-09-25-live-cohort-recovery.md) | PR5d: generation-safe lifecycle reconciled with FIFO, completion waits and configurable arenas; qualification recorded separately |

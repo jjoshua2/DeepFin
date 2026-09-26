@@ -8,6 +8,7 @@
 #include <openssl/evp.h>
 #include "model_contract.h"
 #include "batch_outputs.h"
+#include "dispatch_binding.h"
 #ifdef DEEPFIN_BEND_CUDA_MODEL
 #include "cuda_execution.h"
 #endif
@@ -122,6 +123,9 @@ static uint32_t open_model(bool batch_api) {
       throw std::runtime_error("standalone search requires batch one; use the explicit batch backend");
     static_assert(DEEPFIN_MODEL_BATCH == 1 || DEEPFIN_MODEL_BATCH == 2 || DEEPFIN_MODEL_BATCH == 4
                   || DEEPFIN_MODEL_BATCH == 8 || DEEPFIN_MODEL_BATCH == 16);
+    deepfin_native::check_dispatch_binding(std::getenv("DEEPFIN_COHORT_DISPATCH"),
+        std::getenv("DEEPFIN_COHORT_PROFILE_PACKAGE_SHA256"), DEEPFIN_MODEL_SHA256,
+        batch_api, DEEPFIN_MODEL_CUDA);
     state.batch_api = batch_api;
     if (std::string(TORCH_VERSION) != DEEPFIN_MODEL_TORCH_VERSION)
       throw std::runtime_error("bound package/LibTorch version mismatch");

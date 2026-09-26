@@ -1,0 +1,12 @@
+{
+  "base_commit": "19c9cc017be334e3330b8bf4a6c2e488db5845b6",
+  "qualified_patch_sha256": "8a724da71c993929f90baa24b86bf7dbd7f1dc670b27e1fb690becf5815fd14f",
+  "qualification_run": 36219555685,
+  "qualification_artifact": 10898666782,
+  "artifact_zip_sha256": "3bef768eefcf79124319abb4c1c9d95e67e64160d9537f5686516f0e3c82dc10",
+  "focused_tests": 574,
+  "new_python_cases": 36,
+  "self_review_only": true,
+  "performance_qualified": false,
+  "source_manifest_before_readout": "source.json"
+}

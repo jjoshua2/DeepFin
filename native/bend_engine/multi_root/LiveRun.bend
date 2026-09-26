@@ -1,6 +1,8 @@
 # A persistent owner around the qualified async search step. Lifecycle commits
 # occur only after every row of the current batch has physically retired.
 import Base
+import ./Dispatch.bend as Dispatch
+import ./DispatchRun.bend as DispatchRun
 import ../collections_probe/Queue.bend as Q
 import ./AsyncRun.bend as A
 import ./Cohort.bend as C
@@ -379,10 +381,10 @@ def finish(s: Session) -> IO(Unit):
   Session{engine,meta} = s
   finish_state(engine,meta)
 
-def step(+cfg: C.Config,s: Session) -> IO(Session):
+def step(policy: Dispatch.Policy,+cfg: C.Config,s: Session) -> IO(Session):
   Session{engine,meta} = s
   do IO<Session>:
-    engine : A.State <- A.progress(cfg,engine)
+    engine : A.State <- DispatchRun.progress(policy,cfg,engine)
     s : Session <- flush(cfg,Session{engine,meta})
     commit(cfg,s)
 
@@ -398,7 +400,7 @@ def classify(s: Session) -> Iteration:
   Session{A.State{mode,store,flags,counts,began,rounds},meta} = s
   classified(store,flags,counts,began,rounds,meta,done_mode(mode))
 
-def loop(fuel: Nat,+cfg: C.Config,it: Iteration) -> IO(Unit):
+def loop(fuel: Nat,+policy: Dispatch.Policy,+cfg: C.Config,it: Iteration) -> IO(Unit):
   match fuel:
     case 0n:
       do IO<Unit>:
@@ -414,15 +416,18 @@ def loop(fuel: Nat,+cfg: C.Config,it: Iteration) -> IO(Unit):
             s : Session <- service(cfg,s)
             s : Session <- flush(cfg,s)
             s : Session <- commit(cfg,s)
-            s : Session <- step(cfg,s)
-            loop(p,cfg,classify(s))
+            s : Session <- step(policy,cfg,s)
+            loop(p,policy,cfg,classify(s))
 
 def opened(+cfg: C.Config,+arena: U32,table: Array<U64>,+cap: B.Capabilities) -> IO(Unit):
   B.Capabilities{profile,batch,channels,ilog,olog} = cap
   do IO<Unit>:
+    +policy : Dispatch.Policy <- Dispatch.read()
+    +policy : Dispatch.Policy <- Dispatch.checked(Dispatch.valid(policy,batch),policy)
     now : Nat <- IO.now()
     IO.print("info string live_open deepfin.live-cohort.v1")
-    loop(1000000000n,cfg,classify(Session{A.State{A.Ready{Q.new(&1,C.Root)},C.Store{table,Policy.build(),Array.new(F32,14n,0.0),Array.new(F32,11n,0.0),
+    Dispatch.notice(policy)
+    loop(1000000000n,policy,cfg,classify(Session{A.State{A.Ready{Q.new(&1,C.Root)},C.Store{table,Policy.build(),Array.new(F32,14n,0.0),Array.new(F32,11n,0.0),
       Array.new(F32,U32.to_nat(ilog),0.0),Array.new(F32,U32.to_nat(olog),0.0),cap},Ctrl.Flags{0,16,False{},D.Timers{Nil{},0}},
       A.Counts{Array.new(U32,5n,0),Array.new(U32,5n,0),0,0,0,Array.new(U32,5n,0)},now,0},
       Meta{G.Book{Nil{},1},NoChange{},False{},0,R.Totals{0,0,0,0},arena}}))
