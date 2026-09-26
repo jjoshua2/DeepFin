@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [Native policy-map and buffer reuse](2026-09-22-native-buffer-reuse.md) | Linear Bend-owned reusable storage, packed transport and opt-in diagnostics; bounded CPU qualification |
+| [PFS-inspired frontier advancement](2026-09-14-pfs-frontier-advancement.md) | Proposed frozen-checkpoint search tests: diagnose admission, halving and interior bottlenecks; no runs or default changes |
 | [BT4 generation outcome policy](2026-09-22-bt4-outcome-policy.md) | Standalone six-man theoretical adjudication and unresolved-game discard contract; fake-tablebase CPU tests only, no generator wiring or real games |
 | [Full-width SF d8/d6 generation](2026-09-22-sf-shallow-generation.md) | Two equal-wall CPU generation arms; eligible rows, closed games, startup costs and limits; no strength or root-only generation claim |
 | [Bend subset successor and full ordinal proof](2026-09-21-bend-subset-successor.md) | Actual U64 borrow, compact successor, full Nat-indexed order/coverage/nonduplication and period; affine tables remain separate |
