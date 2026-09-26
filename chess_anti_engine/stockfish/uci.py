@@ -28,6 +28,12 @@ import numpy as np
 _DEFAULT_READ_TIMEOUT_S = 60.0
 
 
+def _retention_flag(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError("retain_syzygy_on_new_game must be a bool")
+    return value
+
+
 def _stockfish_child_nice(current_nice: int, configured_nice: int) -> int:
     """Return the absolute child nice value without raising process priority."""
     target_nice = min(19, max(0, int(configured_nice)))
@@ -409,7 +415,10 @@ class StockfishUCI:
         # value is unchanged either way; what changes is that the call site can
         # be written with named arguments.
         read_timeout_s: float | None = None,
+        retain_syzygy_on_new_game: bool = False,
     ):
+        self.retain_syzygy_on_new_game = _retention_flag(retain_syzygy_on_new_game)
+        self.retain_syzygy_option_sent = False
         self.path = path
         self.nodes = int(nodes)
         self.multipv = int(multipv)
@@ -496,7 +505,22 @@ class StockfishUCI:
 
         try:
             self._send("uci")
-            self._wait_for("uciok")
+            if self.retain_syzygy_on_new_game:
+                deadline = time.monotonic() + self.read_timeout_s
+                advertised = False
+                while True:
+                    line = self._readline_with_deadline(deadline).strip()
+                    if line == "uciok":
+                        break
+                    if re.fullmatch(
+                        r"option name SyzygyRetainOnNewGame type check default (?:true|false)",
+                        line,
+                    ):
+                        advertised = True
+                if not advertised:
+                    raise ValueError("engine does not advertise SyzygyRetainOnNewGame as a check option")
+            else:
+                self._wait_for("uciok")
             self._send("setoption name UCI_ShowWDL value true")
             self._send(f"setoption name Threads value {self.threads}")
             if self.hash_mb is not None:
@@ -505,6 +529,9 @@ class StockfishUCI:
                 self._send(f"setoption name SyzygyPath value {self.syzygy_path}")
             if self.multipv > 1:
                 self._send(f"setoption name MultiPV value {self.multipv}")
+            if self.retain_syzygy_on_new_game:
+                self._send("setoption name SyzygyRetainOnNewGame value true")
+                self.retain_syzygy_option_sent = True
             self._send("isready")
             self._wait_for("readyok")
         except BaseException:
