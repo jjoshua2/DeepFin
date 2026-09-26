@@ -268,3 +268,11 @@ This opt-in controlled-evaluator probe includes the original sessions and automa
 draw suite. It performs no model export, neural forward or perft. Ordinary tests
 only add cheap evidence/Actor/controller contracts. No permanent native test depth
 or default game/search policy changes.
+
+## Optional connection-lifetime legal-move cache
+
+The default session remains uncached. Set `DEEPFIN_SESSION_MOVE_CACHE_BITS=6`
+explicitly for a 32-position cache shared across search epochs. Idle `cache` and
+`clear_cache` commands expose and reset actual hit/fill/bypass counts without
+resetting the root or epoch. See [cache configuration, lifetime and qualification](CACHE.md).
+This reuses legal lists only, not evaluations, draw decisions, or search trees.
