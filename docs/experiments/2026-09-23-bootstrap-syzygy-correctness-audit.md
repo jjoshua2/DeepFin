@@ -244,7 +244,7 @@ Runtime is the immutable arena commit
 registered descriptor SHA256 is
 `5400361b4adeee9dd60178ea71191f9aff545b26b11df7353017c8594159ed03`.
 The operation directory is
-`/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D_rule50_20260923`.
+`~/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D_rule50_20260923`.
 The copied original D_C configuration is pinned via
 `CHESS_ANTI_ENGINE_LIVE_CONFIG` in both supervisor and arena environments;
 its complete realized search record is compared with the old D_C baseline.
