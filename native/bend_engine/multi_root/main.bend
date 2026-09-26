@@ -1,6 +1,7 @@
 # Opt-in bounded cohort runner: actual independent trees, actual gathered leaves.
 # CPU fixed-batch model only in the build script. This is not the UCI product.
 import Base
+import ./Dispatch.bend as Dispatch
 import ./ArenaConfig.bend as Arena
 import ../collections_probe/Queue.bend as Q
 import ./Cohort.bend as C
@@ -235,5 +236,7 @@ def args(xs: List<String>) -> IO(Unit):
 
 def main() -> IO(Unit):
   do IO<Unit>:
+    policy : Dispatch.Policy <- Dispatch.read()
+    Dispatch.reject_nonlive(policy)
     xs : List<String> <- IO.args()
     args(xs)
