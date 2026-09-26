@@ -2,9 +2,9 @@
   "id": "expanded58m_vs50m_seed2026092001_256games",
   "kind": "registered_command",
   "status": "queued",
-  "out": "/home/josh/chess-artifacts/operations/expanded58m-vs50m-20260920/scheduler_run",
+  "out": "/home/<user>/chess-artifacts/operations/expanded58m-vs50m-20260920/scheduler_run",
   "max_seconds": 2490,
   "estimated_active_seconds": 1200,
-  "command_file": "/home/josh/chess-artifacts/operations/expanded58m-vs50m-20260920/registered_command.json",
+  "command_file": "/home/<user>/chess-artifacts/operations/expanded58m-vs50m-20260920/registered_command.json",
   "command_sha256": "fb24c5b8c8bec6141b3721c36ee028827cc76b315a41cd5448a76b40a30a42ec"
 }
