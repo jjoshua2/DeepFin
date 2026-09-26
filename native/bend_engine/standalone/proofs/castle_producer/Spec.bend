@@ -18,10 +18,10 @@ def home(r: R.Route) -> U32:
     case R.BlackKing{}: 56
     case R.BlackQueen{}: 56
 
-def transit(r: R.Route) -> U32:
+def transit(+r: R.Route) -> U32:
   U32.add(home(r),Bool.pick(U32,king_side(r),5,3))
 
-def rook_source(r: R.Route) -> U32:
+def rook_source(+r: R.Route) -> U32:
   U32.add(home(r),Bool.pick(U32,king_side(r),7,0))
 
 def right(r: R.Route) -> U32:
@@ -31,5 +31,5 @@ def right(r: R.Route) -> U32:
     case R.BlackKing{}: 4
     case R.BlackQueen{}: 8
 
-def between(r: R.Route) -> U64:
+def between(+r: R.Route) -> U64:
   U64.shln(U64.from_u32(Bool.pick(U32,king_side(r),96,14)),U32.to_nat(home(r)))
