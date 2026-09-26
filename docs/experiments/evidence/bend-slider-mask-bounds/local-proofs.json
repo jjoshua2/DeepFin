@@ -1,0 +1,139 @@
+{
+  "proof_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "new_universal_laws": [
+    "mask_population",
+    "tight_population_bound",
+    "shift_in_range",
+    "size_positive",
+    "tight_size_bound",
+    "size_matches_capacity",
+    "full_index_bound",
+    "lookup_index_bound"
+  ],
+  "new_law_count": 8,
+  "finite_key_domain": [
+    0,
+    127
+  ],
+  "aggregate_law_count": 48,
+  "inherited_law_count": 40,
+  "inherited_negative_controls": 42,
+  "negative_controls": [
+    {
+      "name": "rook-limit-eleven",
+      "rejected": true,
+      "kind": "checker rejects affected lemma",
+      "entry": "Facts.bend"
+    },
+    {
+      "name": "bishop-limit-eight",
+      "rejected": true,
+      "kind": "checker rejects affected lemma",
+      "entry": "Facts.bend"
+    },
+    {
+      "name": "runtime-ray-includes-edges",
+      "rejected": true,
+      "kind": "checker rejects affected lemma",
+      "entry": "Cases.bend"
+    },
+    {
+      "name": "runtime-mask-always-empty",
+      "rejected": true,
+      "kind": "checker rejects affected lemma",
+      "entry": "Cases.bend"
+    },
+    {
+      "name": "inline-size-shift-32",
+      "rejected": true,
+      "kind": "checker rejects affected lemma",
+      "entry": "Consequences.bend"
+    },
+    {
+      "name": "lookup-index-64-exceeds-bishop-b2",
+      "rejected": true,
+      "kind": "checker rejects affected lemma",
+      "entry": "Consequences.bend"
+    },
+    {
+      "name": "geometric-count-includes-endpoint",
+      "rejected": true,
+      "kind": "checker rejects affected lemma",
+      "entry": "Cases.bend"
+    },
+    {
+      "name": "missing-law",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-proof-definition",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "proof-hole",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "foreign-proof-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-prior-ordinal-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe-low-projection",
+      "rejected": true,
+      "kind": "policy and exact checker-output guard",
+      "raw_cli_status": 0
+    }
+  ],
+  "consumer": "PASS",
+  "source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/proofs/LAWS.bend": "cea2bd21b74162d11647a70fb5ca103a7dc93063a366c5f76a361c1a0f9f4608",
+    "standalone/proofs/Mask.bend": "515bf96ec739bdfcbefb26bfd5b9d8f4049f5f85862093760e9ee2bff1b3e4ee",
+    "standalone/proofs/PROOF.bend": "dde73c6b6cc8371a0ff8628483b5fb72e74194414cd31f2e49125b0f3a14a249",
+    "standalone/proofs/index/Bits.bend": "1fe9e204243efe2e651e14ec3db15f2ea2141ee7febf639fb0a7a8e4b5bc8afb",
+    "standalone/proofs/index/Count.bend": "0c81284f470204a97aa6f06ae6afed62b06173f906f08281cbfa6740df19b602",
+    "standalone/proofs/index/LAWS.bend": "6dc623f1b89b0ede66dfb9441ae83a82289e8af474aaef57e663321880e49905",
+    "standalone/proofs/index/Nats.bend": "71da4b9b978f47cebf57b79352ee614f1aa6257c13c7dfc624b839c95ed38c5c",
+    "standalone/proofs/index/PROOF.bend": "694ae18e89a0c44d718d6fa6d4393957199c00839d760bbf596aa805557497b6",
+    "standalone/proofs/index/Words.bend": "6d08fbbc9e16d3194e2d1a7e224f17676eb81adea1ead37523e0c24cc0cccd81",
+    "standalone/proofs/layout/Cases.bend": "5840233d09bdfbfdf4c26bb4b778994684c70fe9cb1484b5796b53757f5d374d",
+    "standalone/proofs/layout/Consequences.bend": "bb8824edee790cccf79967d0ccb9427e5e552ebfa6ff4d02fbc3dcdc60fa4f2d",
+    "standalone/proofs/layout/Domain.bend": "5acad280e9df6975f63fa0fe51c18c08cb4f5ae9296c89a7e10673d5fa2e87b6",
+    "standalone/proofs/layout/Facts.bend": "cf95627947229b2d92ccb81dbee9af2839b5405b4f1d21ae41bf0d240ecc0911",
+    "standalone/proofs/layout/Geometry.bend": "efecbce0291cc623af31a0057aa7f1262d8d74dee0cb70759a99ac8558a3ce01",
+    "standalone/proofs/layout/LAWS.bend": "7b1f038fad89016cff8c8c799b98efb9f8abe9ff38643534c8334412532f59f2",
+    "standalone/proofs/layout/Low.bend": "edcaee366557d916ab2c331f671989891d45249d9dae72a93bd763a5d1a24c5c",
+    "standalone/proofs/layout/PROOF.bend": "67898fefe872c0349f2a16b0640e263d8c55ef5b2aa25e0640cc8e71431bf12c",
+    "standalone/proofs/layout/Spec.bend": "a08495ab3c27218154f6fd79091cd98b48e44d04d8f8b032e4f68f76531dcc89",
+    "standalone/proofs/layout/consumer.bend": "0fc891076ded4fb95b6efec5bd68fe82d64a821ba69b0e225d9d016cbfa1e90f",
+    "standalone/proofs/layout/verify.js": "84f616dfd887a3b422bf3cf883dcf6b4cc09f439ef9cdfc1ae07bdd0ba06fda6",
+    "standalone/proofs/successor/Borrow.bend": "55527289635c5191bb7857d123c67e6ccc4438d75bc16337e5318b2513302180",
+    "standalone/proofs/successor/LAWS.bend": "de79044401d84cc50aa075de10a9f2543860c7ecab8cfe430e7b5705aa855be8",
+    "standalone/proofs/successor/Ordinal.bend": "e5c62a24a88e8b76a5c3c54f3b1cb14c7cc97e32f30ad5d472ecab6cbece0784",
+    "standalone/proofs/successor/PROOF.bend": "96a7064ed04cc7705027e25dc88ff702c3f44cc3594037cac23073f1caff291e",
+    "standalone/proofs/successor/Spec.bend": "6179c0d02f97bdf6bf8d4ebea9b14dc0b48eba098a1af8c3c78ec977888e17c6",
+    "standalone/proofs/successor/Step.bend": "f41fd3776480069d9ef0e2b96a867254c71270c4100d048d664739fd040a2a6e",
+    "standalone/proofs/successor/Value.bend": "8e97a14a3659bda32dc061ae458338827d66b60dbb5749c71e2f3300140ceccf",
+    "standalone/proofs/u64/LAWS.bend": "e4b1f1b3bf993574e5daca56b3d729e7980232786ba4cf4438e61e95951adbaf",
+    "standalone/proofs/u64/PROOF.bend": "d4cd7e9934cd8f42bcea72da8f5d3035508ea47b5ec9ba34139808b5dffd3c71",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "proof_method": "Complete finite-domain checker reduction of actual mask counts; structural arbitrary-occupancy bound",
+  "scope": "Mask populations, exact positive U32 sizes and actual PEXT lookup index bounds; NOT prefix offsets, affine initialization, full ray geometry or end-to-end native correctness"
+}

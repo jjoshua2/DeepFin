@@ -1,0 +1,16 @@
+{
+  "target_repository": "jjoshua2/DeepFin",
+  "target_base_commit": "33c363ba6715956fd9323a6032b1a6c4a2b916fe",
+  "target_base_pr": 807,
+  "target_base_branch": "feat/bend-subset-ordinal-20260921",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "compiler_source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "remote_publication": "not performed: available GitHub actions are read-only",
+  "new_remote_branch": null,
+  "new_remote_commit": null,
+  "new_pull_request": null,
+  "verification_snapshot": "Archived 1654a945 sources plus byte-verified current successor dependencies. Required proof/runtime inputs match 7aad3d0; comparison to 33c363b changes only tests/test_derive_parallel.py. Not a full current repository checkout.",
+  "production_source_changes": false,
+  "prior_source_changes": false,
+  "self_review_only": true
+}

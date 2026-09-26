@@ -1,8 +1,10 @@
 # Bend migration and proof inventory
 
 Status snapshot: September 21, 2026. This inventory is specific to the standalone
-stack through PR #806 (`1654a945e946440885675b5bc1f7d0ee80f80708`) plus the
-[successor/ordinal increment](experiments/2026-09-21-bend-subset-successor.md).
+stack through refreshed PR #807 (`ef3ded0b652a09918abb1d79467b1ac56a8e1ce5`) plus the
+[slider-mask bounds increment](experiments/2026-09-21-bend-slider-mask-bounds.md),
+qualified by hosted run 35681951103. The current source/proof/native/lint status
+is recorded below; earlier local-only records are explicitly historical.
 The older `feat/bend-native-leaf-evaluation@975cc8f6...` continuation is preserved,
 not silently substituted for the validated PR #804 implementation. Prior probes
 and unpublished branches are references, not evidence of standalone integration.
@@ -64,6 +66,9 @@ under `proofs/u64/`, with source provenance and import enforcement.
 | `successor/step_successor` | PEXT value after actual `Subsets.next` is piecewise compact successor with wrap. | State is mask-contained; compact value bound/capacity equality are already proved. | **Law proved**; unmasked-state counterexample retained; actual step native checks. |
 | `successor/sequence_ordinal`, `successor/sequence_nonduplicating`, `successor/sequence_coverage` | Imported `at(i,mask)` reaches each masked state exactly once in its first mathematical capacity states, in PEXT-index order. | Nat indices strictly below mathematical capacity; coverage requires mask membership. | **Laws proved**; stuck actual recurrence and false inclusive bounds rejected; no enumeration-count assumption. |
 | `successor/cycle_endpoint`, `successor/sequence_periodic` | Imported recurrence returns to zero at capacity and repeats after capacity for every Nat index. | All U64 masks, including empty/full; no machine-power overflow. | **Laws proved**; derived from successor/ordinal and numeric-observation injectivity. |
+| `layout/mask_population`, `layout/tight_population_bound` | Actual Tables.slider mask and independent file/rank count. | Every U32 key with Nat value below 128; exhaustive source case split. | **Laws proved; hosted recheck passed**; rook <=12, bishop <=9; not complete geometric mask equality. |
+| `layout/shift_in_range`, `layout/size_positive`, `layout/tight_size_bound`, `layout/size_matches_capacity` | Exact inline U32 size expression observed through Spec; mathematical capacity from prior laws. | Same 128-key domain; source-link guard, unchanged checker/Base. | **Laws proved; hosted recheck passed**; nonzero exact size <=4096/512, shift <32; offsets/Array writes remain separate. |
+| `layout/full_index_bound`, `layout/lookup_index_bound` | Full PEXT and actual Sliders.pext_index. | Every valid key and arbitrary U64 occupancy. | **Laws proved; hosted recheck passed**; index below block size; low-projection equality and actual buffer refinement remain explicit work. |
 | 16 existing U64 obligations | Public U64 operations, full-width representation and Word lemmas from pinned fork. | Original assumptions unchanged; source checker/Base remain trusted. | **Inherited laws reused**, not 16 new engine laws; original files fingerprinted and all imports checked. |
 
 Both source gates require successful process plus exactly `All terms check.`. The
@@ -77,7 +82,7 @@ No proof holes, unsafe dependencies, foreign witnesses or new axioms are accepte
 
 | Target | Current evidence / partial progress | Still required; do not relabel as proved |
 | --- | --- | --- |
-| P1: subset enumeration / slider indices | **General ordinal, complete/nonduplicating coverage and period proved** for actual Subsets/at, including k=64. Seven new laws connect split-U32 borrow, compact successor and Nat recurrence; earlier 17 engine/index laws retained. | Tighter chess-mask population bounds justifying actual U32 size/offset arithmetic remain. Source recurrence is not yet a proof of affine table construction or lookup. |
+| P1: subset enumeration / slider indices | General ordinal/coverage/period and now tight actual chess-mask populations, exact safe U32 block sizes, and arbitrary-occupancy full/lookup index bounds are source-proved. | Prove exact low-projection/ordinal correspondence and actual prefix-offset arithmetic; connect the source recurrence to affine writes and reads. Individual size safety is not total Array-region safety. |
 | P2: table/lookup refinement | Native `Tables.build` matches all 108,160 C-reference logical entries; independent geometric rays check slider values. | Independent square/rank/file/ray specification, step boundaries, blockers, mask correctness, initialized regions, disjoint offsets/no overflow, affine writes and actual `Chess.bend` lookup refinement. |
 | P3: board / moves / perft | Existing legality/special-move/perft reference tests; no new perft budget or depth. | Named orthodox-chess specification and FIDE edition, board invariants, special moves and legal-move soundness/completeness/no duplicates; legal-tree recurrence separate from draw pruning and machine-counter overflow. |
 | P4: history / rules / parser / UCI | Native reconstructed paths and draw/parser/protocol checks, including transactional rejection. | Quantified history reconstruction, EP/repetition/windows/clocks/mate precedence, sufficient material-case soundness, claim witnesses, parsing bounds/replay and pure controller safety. Responsiveness also needs scheduling/progress assumptions. |
@@ -85,12 +90,13 @@ No proof holes, unsafe dependencies, foreign witnesses or new axioms are accepte
 | P6: search / replies / scheduling | Diagnostic PUCT and synchronous neural leaf tests; finite/shape/move-alignment rejection. | Arena/parent/ticket/reset safety, no partial mutation, exactly-once completion, sign/terminal conventions; batching/cancellation ownership and progress assumptions. F32 is not exact real arithmetic; no exact IEEE-softmax-sum theorem. |
 | P7: model / training / native trust | Transitional native CPU model fixture only. | Bend tensor/model/gradient/update/RNG/serialization/resume/data-provenance contracts as components migrate; justified numerical model and source-to-native refinement/translation validation. |
 
-The next decisive source acceptance is now the **P1 chess-mask bounds / P2 table
-refinement connection**: prove relevant mask populations fit actual U32 size/offset
-arithmetic, and connect the completed ordinal theorem to affine writes, initialized
-regions and actual lookup with independent ray geometry. Do not relabel native table
-comparisons as that proof. Representative trained-checkpoint and target-CUDA
-qualification remain separate inference acceptance targets.
+The next decisive source acceptance is the **P2 storage/lookup connection**:
+connect exact scalar indices and the ordinal law to prefix offsets, initialized
+and disjoint affine writes/reads, and independent blocker-ray geometry. Per-mask
+population and size bounds are now proved; do not relabel them as the complete
+Array or lookup theorem. Trained-checkpoint and target-CUDA qualification remain
+separate inference targets.
+
 
 The successor aggregate adds seven laws to the previous 33, checking **40 accepted
 laws** in total and retaining 26 prior negative controls plus 16 new controls. The
@@ -122,7 +128,7 @@ CUDA, neural-executable rebuild, new formal ordering theorem or performance
 improvement follows from these material-engine tests.
 
 
-## Compact-index representation increment after PR #805
+## Historical compact-index increment after PR #805
 
 [Compact-index bijection](experiments/2026-09-21-bend-compact-index-bijection.md)
 adds nine universal contracts under `standalone/proofs/index/`. It leaves all
@@ -155,3 +161,19 @@ are no longer listed as open; no table-buffer, whole-engine, model or performanc
 result is implied by that update. Earlier dated evidence below/above remains historical.
 
 Hosted successor/ordinal qualification run **35655691011** passed the additive source gate, four native modes, original source/pin checks, and whole-repository lint on the exact candidate. Reports and source identities are committed in the dated record. Full P1 recurrence order/coverage/period is source-proved; actual affine table initialization, offsets and lookup geometry still require P2 refinement. No runtime-engine/model/GPU/performance requalification is implied.
+
+## Historical local slider-mask qualification
+
+The layout gate checks 48 accepted laws and retains the unchanged prior gate.
+Its dated record distinguishes all 13 new rejection controls from 42 inherited
+controls, source proofs from four-mode native tests, and the observed diagnostic
+stack overflow from a proper proof rejection. Whole-repository lint is unavailable
+in this verification environment, and no new hosted CI or publication occurred.
+The patch preserves the newer CI/test repairs in the refreshed PR #807 head.
+
+
+## Slider-mask hosted publication
+
+Run **35681951103** qualifies the unchanged saved eight-law layout increment on #807 `ef3ded0b652a09918abb1d79467b1ac56a8e1ce5`: 48 total laws, 55 controls, four native modes, inherited source/pin checks and whole-repository lint pass. This resolves the local-only publication/lint gap. The dated slider-mask readout and committed hosted reports retain exact identities, failures and limits. No additional migration, offset/affine-table theorem, model/GPU result or benchmark is implied.
+
+Initial clean qualification commit: `9cbb49aba36af12c133bea430920ce454dff4d69`, branch `feat/bend-slider-mask-bounds-20260921`. The follow-up matrix clarification changes documentation only; all proof, native-test and production source identities remain those checked in run 35681951103.
