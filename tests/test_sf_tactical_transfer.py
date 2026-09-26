@@ -66,8 +66,15 @@ def test_winning_mates_receive_strong_categorical_transfer() -> None:
     legal = result[:4].astype(np.float64)
     assert diagnostic["category"] == "winning_mate_available"
     assert diagnostic["ordinary_gate"] is False
-    assert diagnostic["transferred_mate_mass"] == pytest.approx(0.675)
-    assert legal[:2].sum() == pytest.approx(0.775, abs=8e-4)
+    initial = base[:4].astype(np.float64)
+    initial /= initial.sum()
+    expected_mate_transfer = float(initial[2:].sum()) * tool.MATE_TRANSFER
+    assert diagnostic["transferred_mate_mass"] == pytest.approx(
+        expected_mate_transfer, rel=1e-12, abs=1e-12
+    )
+    assert legal[:2].sum() == pytest.approx(
+        float(initial[:2].sum()) + expected_mate_transfer, abs=8e-4
+    )
     assert legal[0] / legal[1] == pytest.approx(1 / 9, rel=0.01)
     assert legal[2:].sum() == pytest.approx(0.225, abs=8e-4)
 
@@ -82,8 +89,16 @@ def test_losing_mate_and_large_nonmate_gap_apply_disjoint_transfers() -> None:
     )
     assert diagnostic["category"] == "losing_mate_alternatives"
     assert diagnostic["ordinary_gate"] is True
-    assert diagnostic["transferred_mate_mass"] == pytest.approx(0.375)
-    assert diagnostic["transferred_ordinary_mass"] == pytest.approx(0.2)
+    initial = base[:3].astype(np.float64)
+    initial /= initial.sum()
+    expected_mate_transfer = float(initial[2]) * tool.MATE_TRANSFER
+    expected_ordinary_transfer = float(initial[1]) * tool.ORDINARY_TRANSFER
+    assert diagnostic["transferred_mate_mass"] == pytest.approx(
+        expected_mate_transfer, rel=1e-12, abs=1e-12
+    )
+    assert diagnostic["transferred_ordinary_mass"] == pytest.approx(
+        expected_ordinary_transfer, rel=1e-12, abs=1e-12
+    )
 
 
 def test_all_forced_losses_remain_byte_identical() -> None:
