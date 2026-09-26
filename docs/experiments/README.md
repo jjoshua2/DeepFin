@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Raw BT4 CPU prefetch](2026-09-21-bt4-cpu-prefetch.md) | Reviewed default-off one-batch CPU overlap; 73 tests and full-shard input parity, GPU throughput qualification pending |
 | [Raw BT4 JSON projection](2026-09-21-bt4-raw-json-projection.md) | Exact 8,236-row CPU input parity; guarded projected reader measures 1.67x whole CPU preparation speedup, no GPU or runtime adoption |
 | [Full-width SF d8/d6 generation](2026-09-22-sf-shallow-generation.md) | Two equal-wall CPU generation arms; eligible rows, closed games, startup costs and limits; no strength or root-only generation claim |
 | [Bend subset successor and full ordinal proof](2026-09-21-bend-subset-successor.md) | Actual U64 borrow, compact successor, full Nat-indexed order/coverage/nonduplication and period; affine tables remain separate |

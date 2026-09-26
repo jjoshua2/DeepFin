@@ -1,0 +1,57 @@
+{
+  "status": "PASS_REVIEWED_CPU_QUALIFICATION_GPU_PENDING",
+  "stack_base": "74a31a1d3ee18328d12c2e6cf3f519316eb61114",
+  "default_cpu_prefetch": false,
+  "gpu_tested": false,
+  "runtime_adopted": false,
+  "tests_passed": 73,
+  "lint": {
+    "ruff": "PASS",
+    "vulture": "PASS",
+    "focused_type": "PASS",
+    "whole_type_errors": 14,
+    "same_unchanged_baseline": true
+  },
+  "cpu_parity": {
+    "source": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00000.jsonl.zst",
+    "source_sha256": "3c93d2d127bc6d11db9eb31425e0c795c96b417106d737632ef4b689569ae17d",
+    "code_sha256": "edb0e04a3eb86281460442babee93a045ba6afec872874dbd760e99fc97ac2eb",
+    "rows": 8236,
+    "batch_rows": {
+      "full_batches": 64,
+      "full_batch_rows": 128,
+      "final_batch_rows": 44
+    },
+    "same_ordered_hashes": true,
+    "ordered_hashes": {
+      "source_keys": "116cf5b6b3c351f8df7958774895ae830d22a26e2378380d2d68053d59d873d7",
+      "input_keys": "1489e90f864d574139eb16ab043944e7793088e9573a9b551cf42d326c2a3e43",
+      "game_ids": "e7e17029cc1c05afcb053b18bf0a24069549dd8c6619cba99a9e9bf0512aa1c3",
+      "plies": "9226dc892d8cf8a6d6a4018006bb7ed4a0c2728dee4fc8f700dcf404065be841",
+      "feed": "490da49d3f1373a1b6e9de05e21c20821c0e555b52c238dfbf6f511775456fa1",
+      "legal_moves": "7fe1a07a55db1db4f81ec36fbdaf70e6e17c78e5da3009731eb7ebac7423eac8"
+    },
+    "max_ready_array_bytes": 3675648,
+    "serial_seconds": 5.067289454047568,
+    "prefetch_seconds": 6.076276330975816,
+    "scope": "CPU parity of serialized vs one-future preparation only. No inference, no output labels, no throughput claim. Warm source/cache and simultaneous lint confound timings."
+  },
+  "artifact_root": "/home/josh/chess-artifacts/operations/bt4-cpu-prefetch-20260921",
+  "evidence": {
+    "bt4-cpu-prefetch-independent-review-20260921.json": "6ccb3f4b848a6e3823516e602fb9680fd45d7c861860da99379c10ca23e5dd41",
+    "bt4-prefetch-full-shard-cpu-20260921.json": "9ee1adb7b08b0bbf6f3b0bf56f1ced6a6ebd88974736e6735d93918dfeec729b",
+    "bt4-prefetch-full-shard-cpu-20260921.log": "d2f34294bb463332c411715713c80f4d96597b5be1bc8db3d38167ea8ef574c0",
+    "bt4-prefetch-full-shard-cpu-20260921.py": "22c9815c97f9b1723fbdaff675eeebb0b6320151256fe9fcd3beb1d22e9fa82f",
+    "bt4-prefetch-lint-comparison.json": "a0da9fddd0754653e50ac281394615b4fc9078204d67b8bb869856472ef7447a",
+    "bt4-prefetch-tests.log": "ad50b0e0cad3127e7f368a32611a9fdefc763271b52d0815bc6271918d414641",
+    "bt4-prefetch-whole-lint.log": "220edb5525210efe27083425f3b3e8b3270a7e0fa653c8b75964d3fd6cd4ce3a",
+    "bt4_raw_corpus_sidecar.py": "edb0e04a3eb86281460442babee93a045ba6afec872874dbd760e99fc97ac2eb",
+    "readout.md": "df135d7238bb6f855c171f74a61b5f8ec8ecec53fccc8d77885f09647f029661",
+    "test_bt4_cpu_prefetch.py": "7f32237a7edfbc318bea024eaac0ed3953504d92758e06c4b326a88e1a3dc12b"
+  },
+  "independent_review": {
+    "path": "/home/josh/chess-artifacts/operations/bt4-cpu-prefetch-20260921/bt4-cpu-prefetch-independent-review-20260921.json",
+    "verdict": "APPROVE_CPU_PREFETCH_CODE_NO_GPU_LAUNCH",
+    "sha256": "6ccb3f4b848a6e3823516e602fb9680fd45d7c861860da99379c10ca23e5dd41"
+  }
+}
