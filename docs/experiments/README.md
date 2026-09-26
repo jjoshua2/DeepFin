@@ -11,6 +11,9 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Saved G10 value pilot and coverage](2026-09-11-g10-value-pilot-and-coverage.md) | 1,574,952 matched saved-SF rows; real 262,079-row fixed-policy SF/BT4 value pair materialized in 4m32s; no training/strength result |
+| [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | 11.54M/18.91M Ceres labels qualified at September 11 16:30 UTC; collection continues, policy/value screens prepared, no Ceres playing result |
+| [Tactical300 SF policy mass transfer](2026-09-11-b100-tactical300-transfer.md) | Strong >300cp/mate-gated B100 mass-transfer tooling; real materialization/training blocked pending retrospective G10 BT4-vs-deeper-SF calibration |
 | [PFS-inspired frontier advancement](2026-09-14-pfs-frontier-advancement.md) | Proposed frozen-checkpoint search tests: diagnose admission, halving and interior bottlenecks; no runs or default changes |
 | [BT4 generation outcome policy](2026-09-22-bt4-outcome-policy.md) | Standalone six-man theoretical adjudication and unresolved-game discard contract; fake-tablebase CPU tests only, no generator wiring or real games |
 | [Full-width SF d8/d6 generation](2026-09-22-sf-shallow-generation.md) | Two equal-wall CPU generation arms; eligible rows, closed games, startup costs and limits; no strength or root-only generation claim |
