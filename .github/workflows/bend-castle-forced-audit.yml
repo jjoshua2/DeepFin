@@ -1,0 +1,159 @@
+name: Qualify final castling forced-check audit
+'on':
+  push:
+    branches: [feat/bend-castle-forced-audit-dev-20260926]
+    paths: [.github/workflows/bend-castle-forced-audit.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      BASE: e8e4ab3fc02c3e0d207172c04bea620299f3ecf8
+      BASE_TREE: 6d09551c50adb5ccf64cc1aeaeda5925a5238a3a
+      SOURCE_TREE: 1624996396db45b5df6f2102315fba4b13b9dea7
+      TARGET: feat/bend-castle-forced-audit-20260926
+      PATCH_BLOB: 74af58d957be12f1ead833f07b0d928b649d2385
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e8e4ab3fc02c3e0d207172c04bea620299f3ecf8
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact supplemental patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/forced-audit"
+          echo "EVIDENCE=$RUNNER_TEMP/forced-audit" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = "$BASE_TREE"
+          gh api "repos/jjoshua2/DeepFin/git/blobs/$PATCH_BLOB" --jq .content | base64 --decode > "$RUNNER_TEMP/payload.b64"
+          base64 --decode "$RUNNER_TEMP/payload.b64" > "$RUNNER_TEMP/audit.patch.xz"
+          test "$(sha256sum "$RUNNER_TEMP/audit.patch.xz" | cut -d' ' -f1)" = 5b4c09bd1c75be380ac27233e2f9547efb099c37b42f14acf4a542d41cbc0b42
+          xz -dc "$RUNNER_TEMP/audit.patch.xz" > "$RUNNER_TEMP/audit.patch"
+          test "$(wc -c < "$RUNNER_TEMP/audit.patch")" = 41524
+          test "$(sha256sum "$RUNNER_TEMP/audit.patch" | cut -d' ' -f1)" = 2eea93155e0512c16df343e94017892d1916cd86e0bb4bdc1c16cb0a3c36fb9a
+          git apply --check "$RUNNER_TEMP/audit.patch"
+          git apply --index "$RUNNER_TEMP/audit.patch"
+          git diff --cached --check
+          test "$(git write-tree)" = "$SOURCE_TREE"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: complete forced castling check audit'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git log -1 --format='%H%n%T' > "$EVIDENCE/source-commit.txt"
+      - name: Run preserved chain and completed six-law safety gates
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          bun native/bend_engine/standalone/proofs/castle_chain/focused.js "$PWD/.compiler" --report "$EVIDENCE/chain-focused.json" 2>&1 | tee "$EVIDENCE/chain-focused.log"
+          bun native/bend_engine/standalone/proofs/castle_safety/focused.js "$PWD/.compiler" --report "$EVIDENCE/safety-focused.json" 2>&1 | tee "$EVIDENCE/safety-focused.log"
+      - name: Run direct and forced-generator native verifiers
+        env:
+          CC: /usr/bin/clang
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/castle_safety/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/safety-native.json" 2>&1 | tee "$EVIDENCE/safety-native.log"
+          bun native/bend_engine/standalone/proofs/castle_safety/verify_forced.js "$PWD/.compiler" --report "$EVIDENCE/forced-native.json" 2>&1 | tee "$EVIDENCE/forced-native.log"
+      - name: Recheck original compiler gates
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Run unchanged repository lint
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Validate all receipts and publish source branch
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = "$SOURCE_TREE"
+          git diff --exit-code
+          test "$(git ls-remote origin refs/heads/feat/bend-castle-safety-qualified-20260926 | cut -f1)" = "$BASE"
+          python3 - <<'PY'
+          import json, pathlib
+          e=pathlib.Path(__import__('os').environ['EVIDENCE'])
+          chain=json.loads((e/'chain-focused.json').read_text())
+          focus=json.loads((e/'safety-focused.json').read_text())
+          native=json.loads((e/'safety-native.json').read_text())
+          forced=json.loads((e/'forced-native.json').read_text())
+          assert chain['focused_gate']=='PASS' and chain['new_law_count']==5 and len(chain['negative_controls'])==18
+          assert focus['focused_gate']=='PASS' and focus['new_law_count']==6 and len(focus['negative_controls'])==17
+          assert focus['new_laws'][-2:]==['positive_check_rejects_current_move','complete_generator_equals_forced_castle_checks']
+          assert all(x['rejected'] for x in focus['negative_controls'])
+          assert native['native_gate']=='PASS' and native['fixture_count']==1080 and len(native['modes'])==4
+          assert native['complete_child_boards_per_mode']==2272 and len(native['mutations'])==3
+          assert forced['native_audit_gate']=='PASS' and forced['fixture_count']==1062 and len(forced['modes'])==4
+          assert forced['complete_child_boards_per_program_per_mode']==9241
+          assert all(x['actual_equals_forced'] for x in forced['modes'])
+          assert forced['audit_mutation']['rejected'] and forced['audit_mutation']['compiled_and_executed']
+          cp=json.loads((e/'compiler-proofs.json').read_text())
+          assert cp['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          summary={
+            'qualification':'PASS',
+            'run':__import__('os').environ['GITHUB_RUN_ID'],
+            'source':__import__('os').environ['SOURCE'],
+            'source_tree':__import__('os').environ['SOURCE_TREE'],
+            'new_laws':2,
+            'new_controls':2,
+            'fresh_safety_laws':6,
+            'fresh_safety_controls':17,
+            'retained_parent_laws':175,
+            'retained_parent_controls':520,
+            'modular_laws':177,
+            'modular_controls':522,
+            'combined_wrapper_executed':False,
+            'complete_generator_formal_pair_equality':True,
+            'paired_generator_native_parity':True
+          }
+          (e/'qualification.json').write_text(json.dumps(summary,indent=2)+'\n')
+          PY
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" >/dev/null
+          found=$?
+          set -e
+          test "$found" = 2
+          git switch -c "$TARGET"
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$EVIDENCE" "$RUNNER_TEMP/final/reports"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/source-commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz source-commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-castle-forced-audit-qualification
+          path: |
+            ${{ runner.temp }}/final/
+            ${{ runner.temp }}/forced-audit/
+          retention-days: 14
