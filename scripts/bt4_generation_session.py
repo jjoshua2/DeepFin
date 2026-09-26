@@ -190,7 +190,7 @@ def open_verified_bt4_session(
     )
     try:
         sess.disable_fallback()
-    except (AttributeError, RuntimeError) as exc:
+    except (AttributeError, RuntimeError, TypeError) as exc:
         raise ValueError("BT4 session cannot disable execution-provider fallback") from exc
     after_sha = file_sha256(path)
     if after_sha != before_sha:
