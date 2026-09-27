@@ -16,6 +16,7 @@ import random
 import resource
 import sys
 import time
+from typing import cast
 import zlib
 
 import chess
@@ -37,7 +38,7 @@ class CompressedFeedMap(Mapping[_KEY, bytes]):
         self._max_payload_bytes = max_payload_bytes
         self.payload_bytes = 0
 
-    def add(self, key: _KEY, raw: bytes, expected_sha256: str) -> None:
+    def add(self, key: object, raw: object, expected_sha256: str) -> None:
         if (not isinstance(key, tuple) or len(key) != 2
                 or any(type(part) is not int or part < 0 for part in key)
                 or not isinstance(raw, bytes) or len(raw) != FEED_BYTES
@@ -56,7 +57,7 @@ class CompressedFeedMap(Mapping[_KEY, bytes]):
         charge = len(encoded) + len(digest) + 1
         if self.payload_bytes + charge > self._max_payload_bytes:
             raise ValueError("physical feed payload budget exceeded")
-        self._entries[key] = encoded, digest, is_compressed
+        self._entries[cast(_KEY, key)] = encoded, digest, is_compressed
         self.payload_bytes += charge
 
     def __getitem__(self, key: _KEY) -> bytes:
