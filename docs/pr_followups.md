@@ -16,6 +16,8 @@ is fixed.
 | #852 | Verified-session open and the fallback guard. Squash-merged as `765f5e35d`. | `getattr(sess, "_enable_fallback", False)` treats a missing private flag as disabled. On ORT 1.17.3, this host's 1.23.2, and 1.29.0 the flag is present and is what `run` reads. |
 | #868 | Publication re-runs the pinned verifier inside `inspect_bank`. Squash-merged as `e9c7e8084`. | `write_source` only re-hashes the audit file. A direct caller, and `isolate_source_adapter_from_strict_audit`, skips the replay. The publication test never calls `write_source`. |
 | #842 | Host overlap. Squash-merged as `f9fcb4b4e`. The ON arm prepares the next host batch during the optimizer step, and a failed run stays `INCOMPLETE`. | The qualification receipt does not embed `runtime_files` or `cpu_producer_sha256`, so a dirty tree with the same HEAD is tied across CPU and GPU by `runtime_commit` plus each plan's inventory. `make_host_trainer` does not call `Trainer.__init__`. |
+| #855 | Explicit `rule50_match_v1` on the BT4 root-policy stepper. Merge-committed as `d5238784d`. #857 is retargeted to main. | `board.outcome(claim_draw=True)` can still complete a fifty-move or threefold draw without probing when a zeroing move would win. Provenance stores the caller path and `len(wdl)` / `len(dtz)`, which double-counts python-chess mirrored keys. |
+| #908 | The Selected-E complete-game selector builds its own index and returns `NO-LAUNCH`. Squash-merged as `9d5d1829a`. | A resealed closure can still split one numeric game id across shards by changing `resolved_base_parent`. Malformed shard or column `.zattrs` are allowlisted and are not covered by `sample_sha256`. |
 
 ## Open, not merged
 
