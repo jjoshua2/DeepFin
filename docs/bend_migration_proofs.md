@@ -2,6 +2,10 @@
 
 ## P3 non-slider initialization and coordinate geometry
 
+Hosted run **36284142030** passes all three public laws, importing consumer, nineteen controls, four native initialization/query modes, three compiled/executed actual-code corruptions, original compiler checks and unchanged repository lint on source `6fd072fe09f3e507940f3723719588e54b06c062`.
+
+Completed qualification is modular183/562 with exact180/543 parent evidence retained; the full aggregate did not run. See the dated record for scope and executed receipts.
+
 The new `proofs/attack_geometry` suite targets the missing initialized pawn, knight
 and king mask connection: actual mask computation, persistence through the complete
 extras loop, and complete returned-pair correctness for typed `Chess.attack` after
