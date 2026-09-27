@@ -1,5 +1,11 @@
 # Bend migration and proof inventory
 
+## Blocker-aware slider reciprocity
+
+Run **36343736223** passes both complete slider-reversal laws, the importing consumer and all17 controls, reproducible finite certificates,24 host methods in three optimization modes, four native builds under optimized Python, original compiler/pin checks and configured locked-environment lint on source `053f3d490d0fd774169e4b7fa38faea7519aafc0`.
+
+The strict-interior reversal proof allows occupied endpoints and includes the first blocker. All679 inherited source files remain unchanged; active modular totals207/706 retain205/689 and add2/17, without a full aggregate run. Complete initialized forward-witness composition, full-generator starting/transit safety and historical rights remain separate. See [the readout](experiments/2026-09-27-bend-slider-reversal.md).
+
 ## Qualified non-slider reversal publication
 
 Run **36340014190** passed both complete public reversal laws, their importing consumer and all17 controls, certificate reproducibility,15 host methods in three optimization modes, four native builds under optimized Python, original compiler/pin checks and configured locked-environment lint on source `9381124bb2866e2e0a429f0c7806d80256b69721`.

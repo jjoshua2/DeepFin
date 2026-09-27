@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Blocker-aware slider reversal](2026-09-27-bend-slider-reversal.md) | Arbitrary shared-occupancy geometric/computed rook,bishop,queen-union reciprocity; complete-mask native oracle; modular207/706 |
 | [Leaper reversal publication](2026-09-27-bend-leaper-reversal-publication.md) | Two saved reversal laws and17 controls freshly hosted-qualified with current destination proofs retained; modular205/689 |
 | [Accepted castling destination](2026-09-27-bend-accepted-castle-destination.md) | Three actual retained/full-generator destination-check and initialized geometric-safety laws; full consumer,17 controls and four native modes qualified; modular203/672 |
 | [Optimization-safe table verifier](2026-09-27-bend-table-verifier-publication.md) | Mandatory result validation, stale-report protection and follow-up import compatibility; both active suites freshly requalified; no new formal-law count |
