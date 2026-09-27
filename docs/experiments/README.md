@@ -5,6 +5,7 @@
 Start here for experiment planning and readouts. [Project guidance](../../CLAUDE.md)
 holds durable constraints; [evaluation](../eval_protocol.md) explains which
 measurements support which claims.
+Gaps that remain after a pull request merges are listed in [pull-request follow-ups](../pr_followups.md).
 For future bootstrap choices, see the [adaptive decision policy](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#september-13-adaptive-decisions-for-the-remaining-bootstrap-research): registered result classification and the next research decision are separate.
 
 ## Records
@@ -12,6 +13,10 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [58M policy/value teacher factorial](2026-09-19-58m-policy-value-factorial.md) | Reviewed pipeline queued:22.78M missing Ceres labels, target overlays, four fresh58M arms and four direct matches; active continuation preserved; no factorial results |
+| [BT4 own-game teacher source](2026-09-23-bt4-own-game-source.md) | Full strict ordinary-bank replay and 752-row reusable policy/native-WDL source; no training admission |
+| [SF-rooted rule-aware corpus outcome mode](2026-09-23-sf-rule50-corpus-mode.md) | Explicit theoretical versus strict six-man rule-aware labels, UCI request guard and derived provenance; synthetic tests plus one bounded real-Stockfish search fixture |
+| [BT4 verified-session foundation](2026-09-23-bt4-verified-session-foundation.md) | CPU fake-session artifact, head, provider and exact-feed checks; no writer, real model run or throughput claim |
+| [Bend slider-mask populations and sizes](2026-09-21-bend-slider-mask-bounds.md) | Eight scalar laws: all 128 actual masks, safe U32 block sizes, arbitrary-occupancy lookup-index bounds; offsets/affine table refinement remain separate |
 | [BT4 CPU prefetch](2026-09-21-bt4-cpu-prefetch.md) | Opt-in one-batch CPU preparation overlap with bounded cleanup and exact feed/output parity; no GPU throughput or live-adoption claim |
 | [NumPy THP hot-load screen](2026-09-23-numpy-thp-hotload.md) | Bounded ABBA loader screen found no benefit from disabling current madvise huge-page advice; no production default change |
 | [BT4 raw JSON projection](2026-09-21-bt4-raw-json-projection.md) | Guarded projected decoding preserves consumed values and hashes; 1.67x CPU preparation on one banked shard, no GPU/live adoption claim |
@@ -140,7 +145,6 @@ For durable knowledge, use [model heads](../model_heads.md),
 links to supporting experiments. The `experiment-readout` Skill covers the reusable
 analysis workflow.
 
-- [Ceres audited 58M collection](2026-09-19-ceres-audited-58m.md) — exact coverage and collector lineage.
 - [Ceres CPU history reductions](2026-09-21-ceres-history-reductions.md) — exact-byte CPU encoder comparison.
 Current evidence correction and scale plan: [September 16 bootstrap audit](2026-09-16-bootstrap-status-audit.md).
 - [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
