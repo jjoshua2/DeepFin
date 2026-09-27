@@ -41,7 +41,7 @@ def main() -> None:
     cmd=[bun,str(ENGINE/'standalone/verify_compiler.js'),str(compiler)]
     identity=subprocess.run(cmd,capture_output=True,text=True,check=True);assert not identity.stderr
     manifest(SUITE);graph=storage.closure(SUITE/'consumer.bend',ENGINE)
-    paths={ENGINE/p for p in graph}|{p for p in SUITE.iterdir() if p.is_file()}|{SUITE.parent/'table_preservation/focused.py',ENGINE/'standalone/verify_compiler.js',ENGINE/'standalone/toolchain.json'}
+    paths={ENGINE/p for p in graph}|{p for p in SUITE.iterdir() if p.is_file()}|{SUITE.parent/'table_preservation/focused.py',SUITE.parent/'table_preservation/_validation.py',ENGINE/'standalone/verify_compiler.js',ENGINE/'standalone/toolchain.json'}
     before={str(p.relative_to(ENGINE)):storage.digest(p.read_bytes()) for p in sorted(paths)}
     consumer={'status':'NOT_RUN'}
     if not args.controls_only:

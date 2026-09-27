@@ -83,7 +83,7 @@ def main()->None:
     args=ap.parse_args();compiler=args.compiler.resolve();bun=os.environ.get('BUN','bun');cc=os.environ.get('CC','clang')
     identity=run([bun,str(ENGINE/'standalone/verify_compiler.js'),str(compiler)]).stdout
     cases=fixtures();modes=[];mutations=[]
-    files=[SUITE/'Runtime.bend',SUITE/'probe.bend',Path(__file__),SUITE.parent/'attack_witness/verify_native.py',SUITE.parent/'table_preservation/verify_native.py',ENGINE/'legal_probe/Chess.bend',ENGINE/'standalone/Tables.bend',ENGINE/'standalone/Text.bend',ENGINE/'bitboard_probe/Sliders.bend']
+    files=[SUITE/'Runtime.bend',SUITE/'probe.bend',Path(__file__),SUITE.parent/'attack_witness/verify_native.py',SUITE.parent/'table_preservation/verify_native.py',SUITE.parent/'table_preservation/_validation.py',ENGINE/'legal_probe/Chess.bend',ENGINE/'standalone/Tables.bend',ENGINE/'standalone/Text.bend',ENGINE/'bitboard_probe/Sliders.bend']
     before={str(p.relative_to(ENGINE)):digest(p.read_bytes()) for p in files}
     with tempfile.TemporaryDirectory(prefix='generator-followup-native-') as td:
         tmp=Path(td)
