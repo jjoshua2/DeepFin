@@ -1,0 +1,139 @@
+{
+  "status": "PASS_PAYLOAD_PARENT_SYMLINK_FIXTURES",
+  "created_unix": 1789843027.0378482,
+  "production_mutations": false,
+  "fixture_sha256": "9d339ab7a098b9f5b4ffba63b80eb98dcfcc07be437bfa5f3df8dc0e086ad25d",
+  "log_sha256": "4ffdddd50e4891677d45af889e65d30f0abb2df3b6a2c089c2d209594045810c",
+  "collector_bank_parents": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/extra184_run06_g10/bank",
+      "exists": true,
+      "is_symlink": false,
+      "entries": 0,
+      "chunks": 31,
+      "driver_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/extra184_run06_g10/driver.plan.json",
+      "driver_plan_sha256": "150905fe0a834c1c6afc0c4787a9123c52487f3c57d94036d06d164eaf287222"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/extra184_run07_g10_companion4/bank",
+      "exists": true,
+      "is_symlink": false,
+      "entries": 0,
+      "chunks": 16,
+      "driver_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/extra184_run07_g10_companion4/driver.plan.json",
+      "driver_plan_sha256": "75cf14074ce1bf4527cc5cb7bcd756faf3722506ae0fcb21f88472e0bded3377"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/extra512_run06_g10/bank",
+      "exists": true,
+      "is_symlink": false,
+      "entries": 0,
+      "chunks": 97,
+      "driver_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/extra512_run06_g10/driver.plan.json",
+      "driver_plan_sha256": "5482ff6abbd751e18253aa434ce6b6fa54c87aaaf5726ea2f3eea66fc4e72281"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/extra512_run07_g10_companion4/bank",
+      "exists": true,
+      "is_symlink": false,
+      "entries": 0,
+      "chunks": 33,
+      "driver_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/extra512_run07_g10_companion4/driver.plan.json",
+      "driver_plan_sha256": "b6f65bb8bd36720e2fa2cd99b0dc04cef5cbb76962b530a1f4000f0a9a78679a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block00_run06_g10/bank",
+      "exists": true,
+      "is_symlink": false,
+      "entries": 0,
+      "chunks": 97,
+      "driver_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block00_run06_g10/driver.plan.json",
+      "driver_plan_sha256": "d9dbe68aa0324a9f0e845b21f3a8d53556a39231fca3859984d9d271d9b42143"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block00_run07_g10_companion4/bank",
+      "exists": true,
+      "is_symlink": false,
+      "entries": 0,
+      "chunks": 33,
+      "driver_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block00_run07_g10_companion4/driver.plan.json",
+      "driver_plan_sha256": "b05a2a903891c2b7161580f1faa256772890049ec2a235d982817017fafc378c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block01_run06_g10/bank",
+      "exists": true,
+      "is_symlink": false,
+      "entries": 0,
+      "chunks": 97,
+      "driver_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block01_run06_g10/driver.plan.json",
+      "driver_plan_sha256": "23523150716e4e0537389510524789d22fe30f5924d093534e04f9bfa36230b3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block01_run07_g10_companion4/bank",
+      "exists": true,
+      "is_symlink": false,
+      "entries": 0,
+      "chunks": 33,
+      "driver_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block01_run07_g10_companion4/driver.plan.json",
+      "driver_plan_sha256": "1d336316e528500570985421a1a1a256495735e467cd4026a80137c75c6ed244"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block02_run06_g10/bank",
+      "exists": true,
+      "is_symlink": false,
+      "entries": 0,
+      "chunks": 25,
+      "driver_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block02_run06_g10/driver.plan.json",
+      "driver_plan_sha256": "36284be2e171afdd2c7eeccf519bcc43f2a3a1e227747508a9d9f7c6ef14435b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block02_run07_g10_companion4/bank",
+      "exists": true,
+      "is_symlink": false,
+      "entries": 0,
+      "chunks": 9,
+      "driver_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block02_run07_g10_companion4/driver.plan.json",
+      "driver_plan_sha256": "584d0d788ad5831a7464a258b71654f212a5454f2ec775675e60d48f66307474"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/remainder_block00_run06_g10/bank",
+      "exists": true,
+      "is_symlink": false,
+      "entries": 0,
+      "chunks": 97,
+      "driver_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/remainder_block00_run06_g10/driver.plan.json",
+      "driver_plan_sha256": "29d8a1d2ea69eb5bd331165d74afe18db01304d5cd709a361ff86f816d4befba"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/remainder_block00_run07_g10_companion4/bank",
+      "exists": true,
+      "is_symlink": false,
+      "entries": 0,
+      "chunks": 33,
+      "driver_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/remainder_block00_run07_g10_companion4/driver.plan.json",
+      "driver_plan_sha256": "f83c8d94635e03a7761ce3162858f7bc8d28da96c481795e700a4aa3f5e95899"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/remainder_block01_run06_g10/bank",
+      "exists": true,
+      "is_symlink": false,
+      "entries": 0,
+      "chunks": 97,
+      "driver_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/remainder_block01_run06_g10/driver.plan.json",
+      "driver_plan_sha256": "e1982de014473a4e668ecf99c00a15ce732f4c1b5cd71240219991b77e722662"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/remainder_block01_run07_g10_companion4/bank",
+      "exists": true,
+      "is_symlink": false,
+      "entries": 0,
+      "chunks": 5,
+      "driver_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/remainder_block01_run07_g10_companion4/driver.plan.json",
+      "driver_plan_sha256": "0f99fd1a53c8c79924192833c32e018b3a91a0a6cbda640405200d11ed99702a"
+    }
+  ],
+  "source_sha256": {
+    "/tmp/deepfin-factorial58-runtime/scripts/ceres_collection_batches.py": "7513c7ccd1323302fb21faa4b2631978dee072f60729c2a251e7ac9add4c8947",
+    "/tmp/deepfin-factorial58-runtime/scripts/ceres_derived_sidecar.py": "65ec5b3c443d198aeb9d65915b820ee829154cdb35c7b54a987f3dda64842056"
+  }
+}

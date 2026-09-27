@@ -364,3 +364,74 @@ def test_boolean_identity_refused_before_inference(tmp_path, monkeypatch, column
         tool.produce(args)
     assert session.requests == []
     assert not (Path(args.out) / "shard_000000.zarr").exists()
+
+
+@pytest.mark.parametrize(("chunk", "batch", "rows", "reads"), [
+    (512, 128, 1100, 3), (512, 96, 1700, 2), (4096, 128, 1100, 9),
+])
+def test_buffered_source_batches_preserve_boundaries_and_bound_reads(chunk, batch, rows, reads):
+    class Column:
+        chunks = (chunk,)
+
+        def __init__(self):
+            self.values = np.arange(rows)
+            self.reads = []
+
+        def __getitem__(self, key):
+            self.reads.append((key.start, key.stop))
+            return self.values[key].copy()
+
+    group = {name: Column() for name in tool.COLUMNS}
+    guarded = []
+    batches = list(tool.source_batches(group, rows, batch, lambda: guarded.append(True)))
+    assert [(start, end) for start, end, _ in batches] == [
+        (start, min(rows, start + batch)) for start in range(0, rows, batch)]
+    assert len(guarded) == len(batches)
+    for name in tool.COLUMNS:
+        np.testing.assert_array_equal(np.concatenate([part[name] for _, _, part in batches]),
+                                      np.arange(rows))
+        assert len(group[name].reads) == reads
+        assert max(end - start for start, end in group[name].reads) <= max(2048, batch)
+
+
+def test_buffered_reader_honors_stop_before_source_read():
+    class Forbidden:
+        chunks = (512,)
+
+        def __getitem__(self, _key):
+            pytest.fail("source must not be read after STOP")
+
+    def stopped():
+        raise RuntimeError("STOP")
+
+    with pytest.raises(RuntimeError, match="STOP"):
+        next(tool.source_batches({name: Forbidden() for name in tool.COLUMNS}, 512, 128, stopped))
+
+
+def test_buffered_labeler_matches_original_reads(tmp_path, monkeypatch):
+    args, _ = setup(tmp_path)
+    original_out = args.out
+    cached_session = Session()
+    install(monkeypatch, cached_session)
+    tool.produce(args)
+
+    def original_batches(group, rows, batch_size, guard):
+        for start in range(0, rows, batch_size):
+            guard()
+            end = min(rows, start + batch_size)
+            yield start, end, {name: np.asarray(group[name][start:end]) for name in tool.COLUMNS}
+
+    monkeypatch.setattr(tool, "source_batches", original_batches)
+    args.out = str(tmp_path / "original_reads")
+    Path(args.out).mkdir()
+    original_session = Session()
+    install(monkeypatch, original_session)
+    tool.produce(args)
+    assert cached_session.requests == original_session.requests
+    for actual, expected in zip(cached_session.inputs, original_session.inputs, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+    cached: Any = zarr.open_group(str(Path(original_out) / "shard_000000.zarr"), mode="r")
+    original: Any = zarr.open_group(str(Path(args.out) / "shard_000000.zarr"), mode="r")
+    assert dict(cached.attrs) == dict(original.attrs)
+    for name in original.array_keys():
+        np.testing.assert_array_equal(cached[name][:], original[name][:])
