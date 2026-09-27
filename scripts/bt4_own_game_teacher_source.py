@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -42,72 +44,101 @@ def sha_file(path: Path) -> str:
 
 def verify_audit(bank: Path, summary_sha256: str, rows: int,
                  audit_path: Path, audit_sha256: str) -> dict[str, str]:
+    """Re-run the pinned strict verifier before authorizing publication."""
+    require(os.environ.get("CUDA_VISIBLE_DEVICES") == "",
+            "hide CUDA while replaying the full-bank verifier")
     audit_path = audit_path.resolve(strict=True)
     require(sha_file(audit_path) == audit_sha256, "full-bank audit pin differs")
     audit = json.loads(audit_path.read_text())
     status = audit.get("status")
-    if status == "PASS_SAVED_BT4_TWO_GAME_BANK_AUDIT":
-        require(audit.get("bank") == str(bank) and audit.get("facts", {}).get("summary_sha256") == summary_sha256
-                and audit.get("facts", {}).get("accepted_rows") == rows,
-                "saved-bank independent audit does not bind this bank")
-    elif status == "PASS_INDEPENDENT_BT4_V4_READBACK":
-        require(audit.get("new_summary_sha256") == summary_sha256
-                and audit.get("new_accepted_rows") == rows
-                and audit.get("overall_status") == "PASS_BT4_ROOT_CUDA_7_TO_6_CONSERVATIVE_CONTINUATION"
-                and bool(audit.get("source_origins_verified")),
-                "v4 independent audit does not bind this bank")
-    elif status == "PASS_INDEPENDENT_BT4_ORDINARY_BANK_AUDIT":
-        summary = json.loads((bank / "summary.json").read_text())
-        proof_sha256 = sha_file(bank / "provider_proof.json")
-        require(audit.get("bank") == str(bank)
-                and audit.get("summary_sha256") == summary_sha256
-                and audit.get("provider_proof_sha256") == summary.get("provider_proof_sha256")
-                == proof_sha256
-                and audit.get("accepted_rows") == rows
-                and audit.get("facts", {}).get("accepted_rows") == rows
-                and audit.get("facts", {}).get("summary_sha256") == summary_sha256
-                and bool(audit.get("facts", {}).get("pinned_source_origins"))
-                and audit.get("bank_identity") == bank_identity(bank),
-                "ordinary audit does not bind the current complete bank")
-        auditor = audit.get("auditor", {})
-        verifier = audit.get("verifier", {})
-        plan_pin = audit.get("plan", {})
-        terminal_pin = audit.get("terminal", {})
-        require(auditor.get("function") == "audit_bank"
-                and verifier.get("function") == "verify_bank"
-                and verifier.get("sha256") in REVIEWED_FULL_STRICT_VERIFIERS,
-                "ordinary audit function differs")
-        expected_auditor = Path(__file__).with_name("bt4_ordinary_bank_audit.py")
-        require(sha_file(expected_auditor) == auditor.get("sha256")
-                and sha_file(Path(auditor["path"]).resolve(strict=True)) == auditor["sha256"],
-                "ordinary audit producer source differs")
-        for pin in (verifier, plan_pin, terminal_pin):
-            require(sha_file(Path(pin["path"]).resolve(strict=True)) == pin["sha256"],
-                    "ordinary audit input pin differs")
-        plan = json.loads(Path(plan_pin["path"]).read_text())
-        terminal = json.loads(Path(terminal_pin["path"]).read_text())
-        stage = audit.get("stage")
-        facts = audit["facts"]
-        strict_fact_keys = ("accepted_rows", "attempted_plies", "completed_games",
-                            "discarded_games", "sixman_games", "natural_games",
-                            "summary_sha256", "provider_proof_sha256", "pinned_source_origins")
-        require(plan.get("supervisor_sha256") == verifier["sha256"]
-                and [item.get("name") for item in plan.get("stages", [])].count(stage) == 1
-                and bank == Path(plan["output_root"]).resolve() / stage / "bank"
-                and Path(terminal_pin["path"]).resolve() == bank.parent / "terminal.json"
-                and terminal.get("plan_sha256") == plan_pin["sha256"]
-                and terminal.get("status", "").startswith("PASS_")
-                and terminal.get("returncode") == 0
-                and terminal.get("summary_sha256") == summary_sha256
-                and terminal.get("provider_proof_sha256") == proof_sha256
-                and terminal.get("accepted_rows") == rows
-                and all(key in facts for key in strict_fact_keys)
-                and all(key in terminal and terminal[key] == value
-                        for key, value in facts.items()),
-                "ordinary plan or successful terminal does not bind this bank")
-    else:
-        raise ValueError("unsupported full-bank audit receipt; source cannot be qualified")
-    return {"path": str(audit_path), "sha256": audit_sha256, "status": status}
+    require(status == "PASS_INDEPENDENT_BT4_ORDINARY_BANK_AUDIT",
+            "unsupported full-bank audit receipt; source cannot be qualified")
+
+    summary = json.loads((bank / "summary.json").read_text())
+    proof_sha256 = sha_file(bank / "provider_proof.json")
+    require(audit.get("bank") == str(bank)
+            and audit.get("summary_sha256") == summary_sha256
+            and audit.get("provider_proof_sha256") == summary.get("provider_proof_sha256")
+            == proof_sha256
+            and audit.get("accepted_rows") == rows
+            and audit.get("facts", {}).get("accepted_rows") == rows
+            and audit.get("facts", {}).get("summary_sha256") == summary_sha256
+            and bool(audit.get("facts", {}).get("pinned_source_origins"))
+            and audit.get("bank_identity") == bank_identity(bank),
+            "ordinary audit does not bind the current complete bank")
+
+    auditor = audit.get("auditor", {})
+    verifier = audit.get("verifier", {})
+    plan_pin = audit.get("plan", {})
+    terminal_pin = audit.get("terminal", {})
+    require(auditor.get("function") == "audit_bank"
+            and verifier.get("function") == "verify_bank"
+            and verifier.get("sha256") in REVIEWED_FULL_STRICT_VERIFIERS,
+            "ordinary audit function differs")
+    expected_auditor = Path(__file__).with_name("bt4_ordinary_bank_audit.py")
+    require(sha_file(expected_auditor) == auditor.get("sha256")
+            and sha_file(Path(auditor["path"]).resolve(strict=True)) == auditor["sha256"],
+            "ordinary audit producer source differs")
+    for pin in (verifier, plan_pin, terminal_pin):
+        require(sha_file(Path(pin["path"]).resolve(strict=True)) == pin["sha256"],
+                "ordinary audit input pin differs")
+
+    plan = json.loads(Path(plan_pin["path"]).read_text())
+    terminal = json.loads(Path(terminal_pin["path"]).read_text())
+    stage_name = audit.get("stage")
+    stages = [item for item in plan.get("stages", []) if item.get("name") == stage_name]
+    require(len(stages) == 1, "ordinary audit stage absent or ambiguous")
+    stage = stages[0]
+    facts = audit["facts"]
+    strict_fact_keys = ("accepted_rows", "attempted_plies", "completed_games",
+                        "discarded_games", "sixman_games", "natural_games",
+                        "summary_sha256", "provider_proof_sha256", "pinned_source_origins")
+    require(plan.get("supervisor_sha256") == verifier["sha256"]
+            and bank == Path(plan["output_root"]).resolve() / str(stage_name) / "bank"
+            and Path(terminal_pin["path"]).resolve() == bank.parent / "terminal.json"
+            and terminal.get("plan_sha256") == plan_pin["sha256"]
+            and terminal.get("stage") == stage_name
+            and terminal.get("status", "").startswith("PASS_")
+            and terminal.get("returncode") == 0
+            and terminal.get("summary_sha256") == summary_sha256
+            and terminal.get("provider_proof_sha256") == proof_sha256
+            and terminal.get("accepted_rows") == rows
+            and all(key in facts for key in strict_fact_keys)
+            and all(key in terminal and terminal[key] == value
+                    for key, value in facts.items()),
+            "ordinary plan or successful terminal does not bind this bank")
+
+    # A receipt records that verification once happened. Publication requires
+    # it to happen again against the current bytes, so a forged PASS terminal
+    # or stale receipt cannot authorize rows that the strict verifier rejects.
+    verifier_path = Path(verifier["path"]).resolve(strict=True)
+    spec = importlib.util.spec_from_file_location(
+        f"bt4_source_fullstrict_{verifier['sha256'][:12]}", verifier_path,
+    )
+    require(spec is not None and spec.loader is not None, "cannot load pinned verifier")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    require(module.__file__ is not None
+            and Path(module.__file__).resolve() == verifier_path
+            and callable(getattr(module, "verify_bank", None)),
+            "verifier origin/function differs")
+    replay_facts = module.verify_bank(plan, stage, bank)
+    require(isinstance(replay_facts, dict), "verifier did not return facts")
+    require(replay_facts == facts
+            and all(key in terminal and terminal[key] == value
+                    for key, value in replay_facts.items()),
+            "strict verifier replay differs from audit receipt")
+    require(bank_identity(bank) == audit["bank_identity"]
+            and sha_file(audit_path) == audit_sha256
+            and sha_file(Path(plan_pin["path"])) == plan_pin["sha256"]
+            and sha_file(verifier_path) == verifier["sha256"]
+            and sha_file(Path(terminal_pin["path"])) == terminal_pin["sha256"]
+            and sha_file(bank / "summary.json") == summary_sha256
+            and sha_file(bank / "provider_proof.json") == proof_sha256,
+            "publication audit inputs changed during strict replay")
+    return {"path": str(audit_path), "sha256": audit_sha256, "status": str(status)}
 
 
 def inspect_bank(bank: Path, expected_summary_sha256: str,
