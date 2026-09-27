@@ -1,0 +1,98 @@
+{
+  "native/bend_engine/bitboard_probe/Sliders.bend": {
+    "git_blob": "bd34b2c9e4d87e1ca5dab7c7eabf60efad017298",
+    "sha256": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20"
+  },
+  "native/bend_engine/standalone/Subsets.bend": {
+    "git_blob": "7ed52ce5b91058ec63681ad1317942afde0bacb5",
+    "sha256": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189"
+  },
+  "native/bend_engine/standalone/Tables.bend": {
+    "git_blob": "1bf430a4e998e05181fa6612c17527825c3123c3",
+    "sha256": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e"
+  },
+  "native/bend_engine/standalone/proofs/LAWS.bend": {
+    "git_blob": "40fb1376f08628c230d72ca0cc9880a6ddb67211",
+    "sha256": "cea2bd21b74162d11647a70fb5ca103a7dc93063a366c5f76a361c1a0f9f4608"
+  },
+  "native/bend_engine/standalone/proofs/Mask.bend": {
+    "git_blob": "31b7d972d42606603ff8a795c353fc255a22ca2b",
+    "sha256": "515bf96ec739bdfcbefb26bfd5b9d8f4049f5f85862093760e9ee2bff1b3e4ee"
+  },
+  "native/bend_engine/standalone/proofs/PROOF.bend": {
+    "git_blob": "2140fde7be11e53ef6aeb9f21f70642d4f2c34cf",
+    "sha256": "dde73c6b6cc8371a0ff8628483b5fb72e74194414cd31f2e49125b0f3a14a249"
+  },
+  "native/bend_engine/standalone/proofs/index/Bits.bend": {
+    "git_blob": "750f40c5c46c250773655739353c3a0c723bbb69",
+    "sha256": "1fe9e204243efe2e651e14ec3db15f2ea2141ee7febf639fb0a7a8e4b5bc8afb"
+  },
+  "native/bend_engine/standalone/proofs/index/Count.bend": {
+    "git_blob": "f08a3e154a302d693474c86f480942385dbe4f19",
+    "sha256": "0c81284f470204a97aa6f06ae6afed62b06173f906f08281cbfa6740df19b602"
+  },
+  "native/bend_engine/standalone/proofs/index/LAWS.bend": {
+    "git_blob": "a696d9b4bfba0ced41b3e8630f06fb7143bf41d8",
+    "sha256": "6dc623f1b89b0ede66dfb9441ae83a82289e8af474aaef57e663321880e49905"
+  },
+  "native/bend_engine/standalone/proofs/index/Nats.bend": {
+    "git_blob": "0cae29b4792c71902e7ebaccab02a529294fa8cb",
+    "sha256": "71da4b9b978f47cebf57b79352ee614f1aa6257c13c7dfc624b839c95ed38c5c"
+  },
+  "native/bend_engine/standalone/proofs/index/PROOF.bend": {
+    "git_blob": "1c106c94079f3b626c649c076c2dca51fc5ccff3",
+    "sha256": "694ae18e89a0c44d718d6fa6d4393957199c00839d760bbf596aa805557497b6"
+  },
+  "native/bend_engine/standalone/proofs/index/Words.bend": {
+    "git_blob": "9335830a2ea3ab8451322a773431e3bb66a97563",
+    "sha256": "6d08fbbc9e16d3194e2d1a7e224f17676eb81adea1ead37523e0c24cc0cccd81"
+  },
+  "native/bend_engine/standalone/proofs/successor/Borrow.bend": {
+    "git_blob": "5b9e6a5ed162d5ef72fccad8120cfa6b3a41df30",
+    "sha256": "55527289635c5191bb7857d123c67e6ccc4438d75bc16337e5318b2513302180"
+  },
+  "native/bend_engine/standalone/proofs/successor/LAWS.bend": {
+    "git_blob": "97d4d7639494799126b679449ffbbf9de00560e1",
+    "sha256": "de79044401d84cc50aa075de10a9f2543860c7ecab8cfe430e7b5705aa855be8"
+  },
+  "native/bend_engine/standalone/proofs/successor/Ordinal.bend": {
+    "git_blob": "f0d9506dc0f386d1e4a290d64f346292f4376864",
+    "sha256": "e5c62a24a88e8b76a5c3c54f3b1cb14c7cc97e32f30ad5d472ecab6cbece0784"
+  },
+  "native/bend_engine/standalone/proofs/successor/PROOF.bend": {
+    "git_blob": "a8e66faceb11706bcdfbb5b781624d0ae0d0e9ca",
+    "sha256": "96a7064ed04cc7705027e25dc88ff702c3f44cc3594037cac23073f1caff291e"
+  },
+  "native/bend_engine/standalone/proofs/successor/Spec.bend": {
+    "git_blob": "53aab8e8859516842698a6cf8ff726ae877c031a",
+    "sha256": "6179c0d02f97bdf6bf8d4ebea9b14dc0b48eba098a1af8c3c78ec977888e17c6"
+  },
+  "native/bend_engine/standalone/proofs/successor/Step.bend": {
+    "git_blob": "2186c8757b5fa6b47a19214493abd64fb84fa9e4",
+    "sha256": "f41fd3776480069d9ef0e2b96a867254c71270c4100d048d664739fd040a2a6e"
+  },
+  "native/bend_engine/standalone/proofs/successor/Value.bend": {
+    "git_blob": "32fdccb735896a673693f329c8b35540f29ad11a",
+    "sha256": "8e97a14a3659bda32dc061ae458338827d66b60dbb5749c71e2f3300140ceccf"
+  },
+  "native/bend_engine/standalone/proofs/u64/LAWS.bend": {
+    "git_blob": "158f45a68c7f24bc79c8cb7e557424a317d315de",
+    "sha256": "e4b1f1b3bf993574e5daca56b3d729e7980232786ba4cf4438e61e95951adbaf"
+  },
+  "native/bend_engine/standalone/proofs/u64/PROOF.bend": {
+    "git_blob": "e08dad20df90b9e542aee34b7e775e4402339b9c",
+    "sha256": "d4cd7e9934cd8f42bcea72da8f5d3035508ea47b5ec9ba34139808b5dffd3c71"
+  },
+  "native/bend_engine/standalone/proofs/u64/Words.bend": {
+    "git_blob": "503f1e5f49c4ef01ca45a1a3a010d5b52551a3df",
+    "sha256": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba"
+  },
+  "native/bend_engine/standalone/toolchain.json": {
+    "git_blob": "86210ddde68b96c17903e06941442c57ba0e93ff",
+    "sha256": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55"
+  },
+  "native/bend_engine/standalone/verify_compiler.js": {
+    "git_blob": "60052f2d997b58f988eff69cffa72a0154ce30e6",
+    "sha256": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  }
+}

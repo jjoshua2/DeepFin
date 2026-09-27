@@ -1,0 +1,105 @@
+name: Bend session move cache
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/bend-session-cache.yml'
+      - 'native/bend_engine/session_probe/**'
+      - 'native/bend_engine/u64_map_probe/**'
+      - 'native/bend_engine/legal_probe/**'
+      - 'native/bend_engine/bitboard_probe/**'
+      - 'native/bend_engine/standalone/**'
+      - 'native/bend_engine/install_ci_bend.sh'
+      - 'chess_anti_engine/encoding/**'
+      - 'tests/test_bend_session_move_cache.py'
+      - 'tests/test_bend_search_sessions.py'
+      - 'tests/test_bend_root_advance.py'
+      - 'tests/test_bend_search_draws.py'
+      - 'tests/test_bend_claim_options.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bend-session-cache.yml'
+      - 'native/bend_engine/session_probe/**'
+      - 'native/bend_engine/u64_map_probe/**'
+      - 'native/bend_engine/legal_probe/**'
+      - 'native/bend_engine/bitboard_probe/**'
+      - 'native/bend_engine/standalone/**'
+      - 'native/bend_engine/install_ci_bend.sh'
+      - 'chess_anti_engine/encoding/**'
+      - 'tests/test_bend_session_move_cache.py'
+      - 'tests/test_bend_search_sessions.py'
+      - 'tests/test_bend_root_advance.py'
+      - 'tests/test_bend_search_draws.py'
+      - 'tests/test_bend_claim_options.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bend-session-cache-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      BASELINE: e58c821db1be6e2d1afe288201c2e8e3c8a442f7
+      BEND_NO_TELEMETRY: '1'
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Unchanged parent control, locked CPU environment and pinned compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin "$BASELINE"
+          mkdir "$RUNNER_TEMP/session-cache-baseline"
+          git archive "$BASELINE" | tar -x -C "$RUNNER_TEMP/session-cache-baseline"
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+      - name: Session configuration and existing protocol contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          ruff check native/bend_engine/session_probe/cache_probe.py native/bend_engine/session_probe/run_probe.py tests/test_bend_session_move_cache.py
+          basedpyright native/bend_engine/session_probe/cache_probe.py native/bend_engine/session_probe/run_probe.py tests/test_bend_session_move_cache.py
+          python -m pytest -q tests/test_bend_session_move_cache.py tests/test_bend_search_sessions.py tests/test_bend_root_advance.py tests/test_bend_search_draws.py tests/test_bend_claim_options.py --junitxml=artifacts/session-cache-python.xml
+      - name: Actual cached PUCT sessions, unchanged parent, draws and optional claims
+        shell: bash
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          python -m native.bend_engine.session_probe.cache_probe --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --baseline-root "$RUNNER_TEMP/session-cache-baseline" --bun bun --cc clang-18 --output artifacts/session-cache --python-chess
+      - name: Whole-repository static gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          ./scripts/lint.sh
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-session-cache
+          path: |
+            artifacts/session-cache-python.xml
+            artifacts/session-cache/*.json
+            artifacts/session-cache/*.stdout
+            artifacts/session-cache/*.stderr
+          retention-days: 30
