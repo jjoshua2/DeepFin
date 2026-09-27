@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [SF-free D/E phase-start arena](2026-09-27-factorial58-d-e-phase-arena.md) | Complete strict six-man 384-pair/768-game phase test: primary late-minus-early +1.758 points [−2.734, +6.445], inconclusive; secondary overall GSPRT H0 applies only to its declared hypotheses |
 | [BT4 root worker CUDA qualification](2026-09-23-bt4-root-worker-gpu-qualification.md) | Preregistered tiny real-model 7-to-6 correctness and accepted-row writer-cost pilots under shared GPU lease; no GPU run yet |
 | [BT4 opt-in root-policy worker](2026-09-23-bt4-root-policy-worker.md) | Experimental CPU-capable ONNX generator and atomic whole-game writer with strict rule50 six-man outcomes, raw teacher retention and >=7-piece rows; fake CPU checks only, no searched actor or replay consumer |
 | [BT4 in-memory root-policy stepper](2026-09-23-bt4-root-policy-stepper.md) | Batch-friendly root-policy game state with explicit historical or rule50-aware six-man outcome mode, exact float32 source retention, outcome backfill and whole-game discard; CPU fakes only, no generator wiring |
