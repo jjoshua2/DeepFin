@@ -1,5 +1,15 @@
 # Bend migration and proof inventory
 
+## Post-generation query composition candidate
+
+The proposed generator_followup suite joins actual full generation to a subsequent
+initialized geometric king check, retaining the complete move list and returned table.
+The generation and query Boards are independent. Acceptance requires its full source
+and native gates; this is not yet credited as a completed result here. Existing
+table-preservation and initialized-geometry results remain unchanged. The saved
+three-law alternative is archived without adding duplicate active laws. See
+[the continuation record](experiments/2026-09-27-bend-generator-followup.md).
+
 ## Whole-table preservation through complete move generation
 
 Hosted run **36328129634** passed all five public laws, the complete consumer and17 controls, four native full-buffer modes and three compiled/executed mutations, original compiler/pin tests and unchanged locked-environment lint on source `be2f8f1cf671780b6d8b2416d4c031648ce787bb`.
