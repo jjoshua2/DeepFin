@@ -1,0 +1,12 @@
+{
+  "id": "factorial58_sffree_20260922_E_D",
+  "kind": "registered_command",
+  "status": "queued",
+  "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/scheduler_run",
+  "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/registered_command.json",
+  "command_sha256": "7551fa839591910903bfade62e9fcdc057835c68c125e4a9369965c533850596",
+  "max_seconds": 3660,
+  "estimated_seconds": 1800,
+  "description": "Full registered256game128pair400sim match; incomplete bank invalid",
+  "requires_previous_id": "factorial58_sffree_20260922_E"
+}

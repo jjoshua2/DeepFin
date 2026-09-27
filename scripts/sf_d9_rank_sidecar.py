@@ -426,6 +426,7 @@ def _bank_provenance(
     cache = writing / "._rank_identity_cache"
     cache.mkdir()
     raw_config = str(record.facts["config_sha256"])
+    raw_outcome_mode = derive.corpus_outcome_mode(record.facts)
     raw_rows = dropped = 0
     index: dict[str, tuple[Path, Path, str, int]] = {}
     identities: dict[Path, tuple[int, int, int, int, int]] = {}
@@ -447,7 +448,7 @@ def _bank_provenance(
                 break
             seen += 1
             raw_rows += 1
-            derive._check_row_identity(row, raw_config)
+            derive._check_row_identity(row, raw_config, raw_outcome_mode)
             key = (raw_path.name, offset)
             if key in exclusions:
                 _verify_policy_support_exclusion(
@@ -503,6 +504,10 @@ def _bank_provenance(
     for path in source_paths:
         derived_stable[path] = _storage_identity(path)
         source: Any = zarr.open_group(str(path), mode="r")
+        if dict(source.attrs).get(
+            "derive_outcome_mode", derive.corpus.OUTCOME_MODE_THEORETICAL,
+        ) != raw_outcome_mode:
+            raise ValueError("derived shard outcome mode differs from raw record")
         x = np.asarray(source["x"][:])
         rows = len(x)
         stamp = dict(source.attrs).get("derive_row_provenance")
@@ -642,6 +647,10 @@ def bank(args: argparse.Namespace) -> int:
         "config_sha256"
     ) != raw_config_sha:
         raise SystemExit("raw and derived source config identities differ")
+    if derive.corpus.outcome_mode_of(source_corpus.get(
+        "outcome_mode", derive.corpus.OUTCOME_MODE_THEORETICAL,
+    )) != derive.corpus_outcome_mode(record.facts):
+        raise SystemExit("raw and derived source outcome modes differ")
 
     exclusions, exclusion_path, exclusion_sha = _policy_support_exclusions(
         source_summary, source_dir=source_dir, raw_dir=raw_dir, raw_config=raw_config_sha,
@@ -672,6 +681,9 @@ def bank(args: argparse.Namespace) -> int:
                     if raw_rows >= limit:
                         break
                     raw_rows += 1
+                    derive._check_row_identity(
+                        row, raw_config_sha, derive.corpus_outcome_mode(record.facts),
+                    )
                     if row.get("result") is None:
                         dropped_no_result += 1
                         continue

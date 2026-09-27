@@ -1,0 +1,64 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "source_sha256s": {
+    "Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "proofs/successor/probe.bend": "71c9f7767dcc1a8f343d121c8af3c8c1482eaaadccfc2c1016f1d8445d59a031",
+    "proofs/successor/verify_native.js": "6a04d6fae087b77520d381ac14cbec67182e05d53df75ba3dd34b8aca4b85c7a"
+  },
+  "population_range": [
+    0,
+    64
+  ],
+  "distinct_operand_pairs": 1605,
+  "arbitrary_masks": "bounded seeded cases, not exhaustive U64 pairs",
+  "oracle": "BigInt full-width subtraction and independently scattered compact successor modulo exact 2^k",
+  "modes": [
+    {
+      "mode": "generic",
+      "operand_pairs": 1605,
+      "low_half_borrows": 815,
+      "low_half_no_borrows": 790,
+      "successor_wraps": 234,
+      "successor_advances": 1371,
+      "malformed_or_budget_rejections": 4,
+      "output_sha256": "55a842ac6c1f3fb3197dadc94eac304e11b262029e15b78f96bb352c345d1af2"
+    },
+    {
+      "mode": "portable",
+      "operand_pairs": 1605,
+      "low_half_borrows": 815,
+      "low_half_no_borrows": 790,
+      "successor_wraps": 234,
+      "successor_advances": 1371,
+      "malformed_or_budget_rejections": 4,
+      "output_sha256": "55a842ac6c1f3fb3197dadc94eac304e11b262029e15b78f96bb352c345d1af2"
+    },
+    {
+      "mode": "native",
+      "operand_pairs": 1605,
+      "low_half_borrows": 815,
+      "low_half_no_borrows": 790,
+      "successor_wraps": 234,
+      "successor_advances": 1371,
+      "malformed_or_budget_rejections": 4,
+      "output_sha256": "55a842ac6c1f3fb3197dadc94eac304e11b262029e15b78f96bb352c345d1af2"
+    },
+    {
+      "mode": "ubsan",
+      "operand_pairs": 1605,
+      "low_half_borrows": 815,
+      "low_half_no_borrows": 790,
+      "successor_wraps": 234,
+      "successor_advances": 1371,
+      "malformed_or_budget_rejections": 4,
+      "output_sha256": "55a842ac6c1f3fb3197dadc94eac304e11b262029e15b78f96bb352c345d1af2"
+    }
+  ],
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "bun": "1.4.2",
+  "scope": "Native public U64.sub and actual Subsets.next/PEXT across full-width masks; NOT affine-table or engine/model qualification"
+}

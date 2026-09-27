@@ -1,0 +1,225 @@
+{
+  "status": "PARTIAL_FACTORIAL_D_PENDING",
+  "training": {
+    "A": {
+      "receipt": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/complete.json",
+        "sha256": "483414a47d5e7c6be85bad629bda9ff443bd7913d4bc8d2b524f795f9a5055ed"
+      },
+      "rows": 58090688,
+      "steps_realized": 113459,
+      "tensor_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf",
+      "wall_elapsed_seconds": 26910.605924617033,
+      "checkpoint": {
+        "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/checkpoint.pt",
+        "sha256": "50f2471992c957f76dac1455f35ba2a89e011bbd7543bcd3578097deae1ec925"
+      },
+      "sampling_complete": true,
+      "plan_equals_realized": true
+    },
+    "B": {
+      "receipt": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/complete.json",
+        "sha256": "14423ff7129f3365e5ee178efe83aee68071bd6de00019c56cec50a4b9440e44"
+      },
+      "rows": 58090688,
+      "steps_realized": 113459,
+      "tensor_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf",
+      "wall_elapsed_seconds": 41501.425988951,
+      "checkpoint": {
+        "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_B/checkpoint.pt",
+        "sha256": "92292627d6263f2dd383f6f2b43600888a1d6bd42330ec988fead69ecd520f92"
+      },
+      "sampling_complete": true,
+      "plan_equals_realized": true
+    },
+    "C": {
+      "receipt": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/complete.json",
+        "sha256": "672182f4f2877067f00663c8486fde22ffbc519e60fe8e08e9f339c9d2397688"
+      },
+      "rows": 58090688,
+      "steps_realized": 113459,
+      "tensor_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf",
+      "wall_elapsed_seconds": 29878.346565757005,
+      "checkpoint": {
+        "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_C/checkpoint.pt",
+        "sha256": "cdac8e59bd29ec45ac670317260ee643c0264502036d2785a2752e26e9735c67"
+      },
+      "sampling_complete": true,
+      "plan_equals_realized": true
+    }
+  },
+  "arenas": {
+    "B_A": {
+      "receipt": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/arenas/B_A/complete.json",
+        "sha256": "d6248daad78f7c2a6950f74c9dcd8b8e24b21761f6abb11ae430aeb7c9259490"
+      },
+      "result": {
+        "elo": 6.79,
+        "elo_ci95": [
+          -24.95,
+          38.63
+        ],
+        "score": 0.50977,
+        "pentanomial": {
+          "WW": 11,
+          "WD_DW": 31,
+          "DD_WL": 47,
+          "LD_DL": 30,
+          "LL": 9
+        },
+        "pairs": 128,
+        "games": 256,
+        "duration_s": 1025.4,
+        "truncated": false,
+        "seed": 20260920
+      },
+      "bank_sha256": "d09d23ca1cdd301923dbcccc5295b62fa3881c5a1fbe9d6894642c32f0413f93",
+      "bound": {
+        "candidate": {
+          "arm": "B",
+          "checkpoint": {
+            "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_B/checkpoint.pt",
+            "sha256": "92292627d6263f2dd383f6f2b43600888a1d6bd42330ec988fead69ecd520f92"
+          },
+          "summary": {
+            "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_B/summary.json",
+            "sha256": "0531a43118ad9a51057e4520de86ae4683d2d90b0ecaa7c20594a711936d20cf"
+          },
+          "initial_state": {
+            "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_B/initial_state.json",
+            "sha256": "4a580089ea387b58c3281862cc9aee79219ed33eec1ccf373ea3b67f71af3c59"
+          },
+          "tensor_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf",
+          "receipt": {
+            "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/complete.json",
+            "sha256": "14423ff7129f3365e5ee178efe83aee68071bd6de00019c56cec50a4b9440e44"
+          },
+          "terminal": {
+            "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/scheduler_run/parent_outer_terminal.json",
+            "sha256": "d55a5e09cd9739a52ae1b93f3df3bcef8beb44ae983cebfa200d935f8e059923"
+          },
+          "plan": {
+            "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/plan.json",
+            "sha256": "004a41af56316e3b51c3f5ac3f0553b524d8b3ad5b763f0a795b1dfa481956e3"
+          }
+        },
+        "reference": {
+          "arm": "A",
+          "checkpoint": {
+            "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/checkpoint.pt",
+            "sha256": "50f2471992c957f76dac1455f35ba2a89e011bbd7543bcd3578097deae1ec925"
+          },
+          "summary": {
+            "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/summary.json",
+            "sha256": "4f7f5596757a6f2d14ad57e14956dd56da3bb564e7f0f71c3f3840a97f358a40"
+          },
+          "initial_state": {
+            "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/initial_state.json",
+            "sha256": "4a580089ea387b58c3281862cc9aee79219ed33eec1ccf373ea3b67f71af3c59"
+          },
+          "tensor_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf",
+          "receipt": {
+            "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/complete.json",
+            "sha256": "483414a47d5e7c6be85bad629bda9ff443bd7913d4bc8d2b524f795f9a5055ed"
+          },
+          "terminal": {
+            "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/A/terminal.json",
+            "sha256": "c17cf0d8a1a6ccca2463a04e0fec2f6bb5640252d177a15cb777d68ecf9a89e0"
+          },
+          "plan": {
+            "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/A/plan.json",
+            "sha256": "3cd309890b9c9bbfeab46b2249ca59956bc98788f4512dad9b59d73594a8aed1"
+          }
+        }
+      }
+    },
+    "C_A": {
+      "receipt": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/arenas/C_A/complete.json",
+        "sha256": "c1275f7c34aaf737e7ed56d6ae4cb8f675da9193fd51ec9f489027527981c34c"
+      },
+      "result": {
+        "elo": 21.74,
+        "elo_ci95": [
+          -12.49,
+          56.4
+        ],
+        "score": 0.53125,
+        "pentanomial": {
+          "WW": 17,
+          "WD_DW": 30,
+          "DD_WL": 43,
+          "LD_DL": 28,
+          "LL": 10
+        },
+        "pairs": 128,
+        "games": 256,
+        "duration_s": 991.2,
+        "truncated": false,
+        "seed": 20260920
+      },
+      "bank_sha256": "9454446d59b8d3b92d463a51fb2199cb94b2dd18641aeb525489fd345e0bf601",
+      "bound": {
+        "candidate": {
+          "arm": "C",
+          "checkpoint": {
+            "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_C/checkpoint.pt",
+            "sha256": "cdac8e59bd29ec45ac670317260ee643c0264502036d2785a2752e26e9735c67"
+          },
+          "summary": {
+            "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_C/summary.json",
+            "sha256": "1805fb3b687d503c121fdcec8a223c72c9b18b998583d66e6b523d6b09e089ed"
+          },
+          "initial_state": {
+            "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_C/initial_state.json",
+            "sha256": "4a580089ea387b58c3281862cc9aee79219ed33eec1ccf373ea3b67f71af3c59"
+          },
+          "tensor_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf",
+          "receipt": {
+            "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/complete.json",
+            "sha256": "672182f4f2877067f00663c8486fde22ffbc519e60fe8e08e9f339c9d2397688"
+          },
+          "terminal": {
+            "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/scheduler_run/parent_outer_terminal.json",
+            "sha256": "51f6542896076edf3e6f4b25f70958cef45ab549c5d40556baffe363c63c9dab"
+          },
+          "plan": {
+            "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/plan.json",
+            "sha256": "b3b81a70f48f5eb4ba45ef419bf2e3b83d1b960e8433dfcfe52d420acc6240b4"
+          }
+        },
+        "reference": {
+          "arm": "A",
+          "checkpoint": {
+            "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/checkpoint.pt",
+            "sha256": "50f2471992c957f76dac1455f35ba2a89e011bbd7543bcd3578097deae1ec925"
+          },
+          "summary": {
+            "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/summary.json",
+            "sha256": "4f7f5596757a6f2d14ad57e14956dd56da3bb564e7f0f71c3f3840a97f358a40"
+          },
+          "initial_state": {
+            "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/initial_state.json",
+            "sha256": "4a580089ea387b58c3281862cc9aee79219ed33eec1ccf373ea3b67f71af3c59"
+          },
+          "tensor_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf",
+          "receipt": {
+            "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/complete.json",
+            "sha256": "483414a47d5e7c6be85bad629bda9ff443bd7913d4bc8d2b524f795f9a5055ed"
+          },
+          "terminal": {
+            "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/A/terminal.json",
+            "sha256": "c17cf0d8a1a6ccca2463a04e0fec2f6bb5640252d177a15cb777d68ecf9a89e0"
+          },
+          "plan": {
+            "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/A/plan.json",
+            "sha256": "3cd309890b9c9bbfeab46b2249ca59956bc98788f4512dad9b59d73594a8aed1"
+          }
+        }
+      }
+    }
+  }
+}

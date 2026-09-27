@@ -1,0 +1,35 @@
+{
+  "status": "PASS_BOUND_256_GAME_ARENA",
+  "result": {
+    "elo": 21.74,
+    "elo_ci95": [
+      -9.66,
+      53.51
+    ],
+    "score": 0.53125,
+    "pentanomial": {
+      "WW": 14,
+      "WD_DW": 28,
+      "DD_WL": 54,
+      "LD_DL": 24,
+      "LL": 8
+    },
+    "pairs": 128,
+    "games": 256,
+    "duration_s": 1034.2,
+    "truncated": false,
+    "seed": 20260918
+  },
+  "bound": {
+    "candidate": {
+      "path": "/home/josh/projects/chess/runs/expanded50548069_v50_from35m_epoch4_seed105_recovery_v3/checkpoint.pt",
+      "sha256": "43786945252e746a6e646a21663f798e1dff224e8c48c6dac757d8398a4ee015"
+    },
+    "reference_sha256": "e579bd08f90009924941bb5c773d01af836f6500f95a0250eca2918d7b58679c",
+    "donor_receipt_sha256": "6376b86e73dd069528320bead6d24e86d8b1cf8cb6501be36bbc4cea3043b748"
+  },
+  "bank_sha256": "2c1f13d71a2730b31c0e467613824e547f10f065603cab48fa7cfc8825e5adde",
+  "elapsed_seconds": 1098.3590660259943,
+  "artifact_root": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/epoch1",
+  "verification": "Independent complete-bank validation:256 games/128 color-swapped pairs, score and exactbankSHA, successful outerterminal."
+}
