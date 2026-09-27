@@ -1,5 +1,11 @@
 # Bend migration and proof inventory
 
+## Accepted full-generator castling destination safety
+
+Run **36336288019** passed all three public laws and their complete importing consumer, all17 classified controls, four native build modes and three compiled/executed actual-code corruptions, original compiler/pin gates, and unchanged configured locked-environment repository lint on source `3bb477d4c243b6235a2c7ff5730fae97dd51e96a`.
+
+A returned flag2 move now has a proved False destination check on the original table, not merely proof that a check is executed. The initialized composition derives its guard and final king certificate from actual membership and establishes independent target-centred destination geometry is unattacked. Initial consistency,singleton and valid-side conditions remain explicit. All-stage/full-game soundness and universal attack-direction correspondence remain separate. Modular203/672 with exact200/655 parent retained; no aggregate run or independent review. See [the readout](experiments/2026-09-27-bend-accepted-castle-destination.md).
+
 ## Table-verifier hardening and integrated requalification
 
 The active table-preservation verifier now rejects incomplete results even under optimized Python and invalidates stale PASS receipts. Its exact sibling helper also supports generator_followup file loaders, with transitive dependency hashing. Both full active source gates, both four-mode native suites,59 host tests in three modes,compiler gates and configured locked lint passed in run36332433712. No Bend proof changed and modular counts remain200/655; no aggregate run or independent review. See [the publication record](experiments/2026-09-27-bend-table-verifier-publication.md).

@@ -9,7 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
-| [Accepted castling destination](2026-09-27-bend-accepted-castle-destination.md) | Actual retained/full-generator destination-check and initialized geometric safety; qualification in progress, no new accepted count yet |
+| [Accepted castling destination](2026-09-27-bend-accepted-castle-destination.md) | Three actual retained/full-generator destination-check and initialized geometric-safety laws; full consumer,17 controls and four native modes qualified; modular203/672 |
 | [Optimization-safe table verifier](2026-09-27-bend-table-verifier-publication.md) | Mandatory result validation, stale-report protection and follow-up import compatibility; both active suites freshly requalified; no new formal-law count |
 | [Post-generation geometric check](2026-09-27-bend-generator-followup.md) | Query composition preserving exact generated lists and table; saved three-law alternative archived; qualification recorded separately |
 | [Generator table preservation](2026-09-27-bend-generator-table-preservation.md) | Five arbitrary-array storage contracts through actual queries, scan, castling and full optimized generator; full-buffer native tests and hosted qualification passed; modular198/640 |
