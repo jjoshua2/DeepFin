@@ -80,6 +80,14 @@ class VerifiedBT4Session:
     provenance: BT4SessionProvenance
 
 
+def _field_is_repeated(field: Any) -> bool:
+    """Support protobuf descriptors before and after the v6 API change."""
+    repeated = getattr(field, "is_repeated", None)
+    if repeated is not None:
+        return bool(repeated)
+    return getattr(field, "label", None) == getattr(field, "LABEL_REPEATED", 3)
+
+
 def _reject_external_data(path: Path) -> None:
     # Parsing does not load external tensor files; those require a separate
     # artifact-bundle hash contract before this factory can accept them.
@@ -90,7 +98,7 @@ def _reject_external_data(path: Path) -> None:
         for field, value in message.ListFields():
             if field.type != field.TYPE_MESSAGE:
                 continue
-            if field.label == field.LABEL_REPEATED:
+            if _field_is_repeated(field):
                 for child in value:
                     yield from tensors(child)
             else:
@@ -192,6 +200,12 @@ def open_verified_bt4_session(
         sess.disable_fallback()
     except (AttributeError, RuntimeError, TypeError) as exc:
         raise ValueError("BT4 session cannot disable execution-provider fallback") from exc
+    # ONNX Runtime's public disable_fallback() controls run-time EPFail retry.
+    # Current ORT exposes the backing state as _enable_fallback; when that
+    # state is available, fail closed unless the call actually disabled it.
+    fallback_state = getattr(sess, "_enable_fallback", False)
+    if fallback_state is not False:
+        raise ValueError("BT4 session execution-provider fallback remained enabled")
     after_sha = file_sha256(path)
     if after_sha != before_sha:
         raise ValueError("BT4 ONNX artifact changed while session opened")
