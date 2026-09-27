@@ -99,10 +99,10 @@ def test_worker_factory_forwards_retention_on_initial_and_replacement_engine(
 
 def test_retention_config_changes_identity_only_when_opted_in() -> None:
     parser = corpus.build_parser()
-    args = parser.parse_args(['--out-dir', '/tmp/unused'])
+    args = parser.parse_args(['--out-dir', '/tmp/unused', '--outcome-mode', 'theoretical_v1'])
     before = corpus.config_stamp(args, sf_binary='stockfish')
     assert 'sf_retain_syzygy_on_new_game' not in before
-    args = parser.parse_args(['--out-dir', '/tmp/unused', '--sf-retain-syzygy-on-new-game'])
+    args = parser.parse_args(['--out-dir', '/tmp/unused', '--outcome-mode', 'theoretical_v1', '--sf-retain-syzygy-on-new-game'])
     after = corpus.config_stamp(args, sf_binary='stockfish')
     assert after.pop('sf_retain_syzygy_on_new_game') is True
     assert after == before
@@ -134,7 +134,8 @@ def test_cli_retention_reaches_frozen_worker_spec(tmp_path: Path, monkeypatch: p
     monkeypatch.setattr(corpus.audit_targets, 'engine_identity', lambda path: 'test')
     args = corpus.build_parser().parse_args([
         '--out-dir', str(tmp_path/'corpus'), '--games', '1', '--workers', '1',
-        '--stockfish', '/bin/true', '--sf-retain-syzygy-on-new-game',
+        '--stockfish', '/bin/true', '--outcome-mode', 'theoretical_v1',
+        '--sf-retain-syzygy-on-new-game',
     ])
     with pytest.raises(Captured):
         corpus.run(args)
