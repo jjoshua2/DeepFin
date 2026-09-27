@@ -1,6 +1,10 @@
 # Bend migration and proof inventory
 
-## Post-generation query composition candidate
+## Qualified post-generation query composition
+
+Hosted run **36330825632** passed the complete two-law consumer and15 controls, separately restored saved3-law/17-control gate, four native modes and four executable adapter corruptions, original compiler/pin gates and unchanged configured repository lint on source `7007d4dade5d4c02fd0068598052bd125ca63be7`.
+
+Active modular coverage is200/655; no full aggregate execution or duplicate alternative-suite count.
 
 The proposed generator_followup suite joins actual full generation to a subsequent
 initialized geometric king check, retaining the complete move list and returned table.
