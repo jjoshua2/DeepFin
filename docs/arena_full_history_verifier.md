@@ -70,7 +70,7 @@ Source basis: prospective contract
 (SHA-256 `f7be05a7a4e0a21041e92d2229113693bc45b4cc669d458733cb6ea3c0489d3f`)
 and reviewed arena opening-stack commit
 `e9a66f57bf665e491461b328df3ff167188a1c46`. This verifier branch is
-based separately on `origin/main` `38bcfa49a6ce2fab583fffc020ca8610c082794a`;
+based separately on `origin/main` `58d75d948256614da9c200de8f39560f63976914`;
 it does not contain the arena writer patch.
 The PR #903 writer head inspected for this correction is
 `8f601edfba8724c619074e755e88edb6176e479e` (tree
