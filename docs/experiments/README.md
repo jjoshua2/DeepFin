@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Generator table preservation](2026-09-27-bend-generator-table-preservation.md) | Five arbitrary-array storage contracts through actual queries, scan, castling and full optimized generator; full-buffer native tests; fresh hosted qualification pending |
 | [Castling sequence publication](2026-09-27-bend-castle-sequence-publication.md) | Exact saved two-law sequence published and freshly hosted-qualified, including lint; modular193/623, not full optimized legal_moves |
 | [Initialized castling sequence](2026-09-27-bend-castle-sequence.md) | Two source laws for actual producer/checked-filter table threading and exact geometric decisions; local193/623, lint unqualified, not yet published |
 | [Initialized castling-stage geometry](2026-09-27-bend-castle-stage-geometry.md) | One complete initialized check composition at all three king stages; six classified controls; saved singleton variant preserved; modular191/606,not a safe-castling verdict |

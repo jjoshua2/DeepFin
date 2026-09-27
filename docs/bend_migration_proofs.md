@@ -1,5 +1,9 @@
 # Bend migration and proof inventory
 
+## Whole-table preservation through complete move generation
+
+New table_preservation contracts prove whole source-array identity through attack queries, ordinary scan, both castling sides and prepared filtering, culminating in actual Chess.legal_moves. They require no initialized-content or Board-validity assumptions. Local source/control and four-mode whole-buffer tests pass; hosted status is recorded in [the readout](experiments/2026-09-27-bend-generator-table-preservation.md). This closes the generic state-preservation link, not full semantic legality, move completeness, pointer identity or lifetime.
+
 ## Published sequential castling-check qualification
 
 Run **36324699695** passed both public laws, the complete importing consumer and all17 controls, all four native modes and three actual-code mutations, original compiler/pin gates, and unchanged locked-environment repository lint on published source `95049dd691032210a759052b4f04f26838c8e05d`.
