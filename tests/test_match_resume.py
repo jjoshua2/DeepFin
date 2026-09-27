@@ -276,7 +276,7 @@ def test_resume_refuses_partial_opening_history(tmp_path: Path, present: str) ->
     opening = _knight_cycle("g")
     path = tmp_path / f"partial-{present}.games.jsonl"
     settings = {"seed": 7}
-    row = {
+    row: dict[str, Any] = {
         "pair_id": 0, "half": 0, "a_is_white": True,
         "opening_fen": opening.fen(), "start_fen": opening.fen(),
         "result": "1/2-1/2",

@@ -94,6 +94,11 @@ def _opening_history(board: chess.Board) -> tuple[str, tuple[str, ...]]:
     return board.root().fen(), tuple(move.uci() for move in board.move_stack)
 
 
+def _is_runtime_str(value: object) -> bool:
+    """Validate dynamic sink/log values even when the caller has a str annotation."""
+    return isinstance(value, str)
+
+
 def _check_opening_history(
     root_fen: str, opening_uci: Sequence[str], start_fen: str,
 ) -> None:
@@ -101,7 +106,7 @@ def _check_opening_history(
     try:
         board = chess.Board(root_fen)
         for uci in opening_uci:
-            if not isinstance(uci, str):
+            if not _is_runtime_str(uci):
                 raise ValueError("opening UCI is not a string")
             move = chess.Move.from_uci(uci)
             if move not in board.legal_moves:
@@ -3273,9 +3278,9 @@ def run_arena(
         if mode == "matched_time" and has_history:
             raise ValueError("matched_time opening stack was not preserved by UCI play")
         if has_history:
-            if (not isinstance(opening_root_fen, str)
+            if (not _is_runtime_str(opening_root_fen)
                     or not isinstance(opening_uci, (tuple, list))
-                    or not all(isinstance(uci, str) for uci in opening_uci)):
+                    or not all(_is_runtime_str(uci) for uci in opening_uci)):
                 raise ValueError("opening history has invalid types")
             want_root, want_stack = _opening_history(openings[int(pair_id)])
             if (opening_root_fen != want_root or tuple(opening_uci) != want_stack
@@ -3313,7 +3318,7 @@ def run_arena(
                 # game-log row's `eval_hoist` relies on.
                 "EvaluatorHoist": this_hoist,
             }
-            if has_history:
+            if opening_root_fen is not None and opening_uci is not None:
                 extra["OpeningRootFEN"] = opening_root_fen
                 extra["OpeningUCI"] = json.dumps(list(opening_uci), separators=(",", ":"))
             if int(pair_id) in orphan_pair_ids:
@@ -3334,7 +3339,7 @@ def run_arena(
                 pair_half=half,
                 extra=extra,
             ))
-        row = {
+        row: dict[str, Any] = {
             "pair_id": int(pair_id),
             "half": int(half),
             "opening_index": int(pair_id),
@@ -3357,7 +3362,7 @@ def run_arena(
             "loop": loop,
             "duration_s": round(float(duration_s), 2),
         }
-        if has_history:
+        if opening_root_fen is not None and opening_uci is not None:
             row["opening_root_fen"] = opening_root_fen
             row["opening_uci"] = list(opening_uci)
         game_log.write_game(row)
