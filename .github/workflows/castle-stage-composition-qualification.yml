@@ -1,0 +1,126 @@
+name: Castling stage geometry qualification
+'on':
+  push:
+    branches: [dev/bend-castle-stage-qualification-20260927]
+    paths: [.github/workflows/castle-stage-composition-qualification.yml]
+permissions:
+  contents: read
+  actions: read
+defaults:
+  run:
+    shell: bash
+env:
+  BEND_NO_TELEMETRY: '1'
+  TERM: dumb
+  OMP_NUM_THREADS: '2'
+  MKL_NUM_THREADS: '2'
+  OPENBLAS_NUM_THREADS: '2'
+  SOURCE: 017fadcd25ccda6973b88e240ab50aaae38cf1bd
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 017fadcd25ccda6973b88e240ab50aaae38cf1bd
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Verify retained source and record candidate identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stage-evidence"
+          echo "EVIDENCE=$RUNNER_TEMP/stage-evidence" >> "$GITHUB_ENV"
+          export EVIDENCE="$RUNNER_TEMP/stage-evidence"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108541739341 > "$EVIDENCE/parent-job.json"
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          old=Path('docs/experiments/evidence/bend-castle-king-invariants')
+          p=json.loads((old/'hosted-source-identity.json').read_text())
+          h=p['candidate_source_sha256s'];assert len(h)==601
+          for f,d in h.items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==d,f
+          j=json.loads((e/'parent-job.json').read_text());assert j['status']=='completed' and j['conclusion']=='success' and j['id']==108541739341
+          paths=subprocess.check_output(['git','ls-files','native/bend_engine'],text=True).splitlines()
+          hashes={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in paths if Path(f).is_file()}
+          assert len(hashes)==607
+          r={'source':os.environ['SOURCE'],'source_tree':subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),'retained_parent_entries':601,'candidate_source_sha256s':hashes}
+          (e/'source-identity.json').write_text(json.dumps(r,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Check complete new composition and five premise controls
+        run: |
+          set -euo pipefail
+          python3 native/bend_engine/standalone/proofs/castle_stage_geometry/focused.py "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Recheck actual castling-stage Boards and checks in four native modes
+        env:
+          CC: /usr/bin/clang
+        run: |
+          set -euo pipefail
+          python3 native/bend_engine/standalone/proofs/castle_kings/verify_native.py "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Recheck compiler source and pin gates
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Locked CPU tools and unchanged repository lint
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify reports and unchanged sources
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(n):return json.loads((e/n).read_text())
+          ident=read('source-identity.json');f=read('focused.json');n=read('native.json')
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          assert f['focused_gate']=='PASS' and f['new_laws']==1 and f['new_controls']==6
+          assert f['consumer']['exit_code']==0 and f['consumer']['raw_text'].strip()=='All terms check.'
+          assert len(f['negative_controls'])==6 and all(x['rejected'] for x in f['negative_controls'])
+          assert n['native_gate']=='PASS' and len(n['modes'])==4
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          q={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'new_laws':1,'new_controls':6,'semantic_controls':5,'synthetic_controls':1,'retained_parent_laws':190,'retained_parent_controls':600,'modular_laws':191,'modular_controls':606,'combined_wrapper_executed':False,'fresh_native_modes':4,'independent_review':False,'all_castling_stages_safe_claimed':False,'forward_reverse_attack_equivalence_claimed':False}
+          (e/'qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          PY
+      - name: Archive exact qualified source and original commit
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stage-final"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/stage-final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/stage-final/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/stage-final/tree.txt"
+          cp -r "$RUNNER_TEMP/stage-evidence" "$RUNNER_TEMP/stage-final/reports"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: castle-stage-geometry-qualification
+          path: ${{ runner.temp }}/stage-final/
+          retention-days: 14
