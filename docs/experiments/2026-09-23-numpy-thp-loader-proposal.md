@@ -30,7 +30,7 @@ Recheck those and the clean source HEAD at admission and inside each child.
 Reuse the immutable 65,536-row first-eight-B-shard roster, qualification
 receipt SHA, per-shard content digests, eight-path order, and existing
 measurement steps from
-`/home/josh/projects/chess-worktrees/overlay-hotload-diagnostic-main-20260923/docs/experiments/evidence/loader-profile-20260923/prepared-hotload-plan.json`
+`~/projects/chess-worktrees/overlay-hotload-diagnostic-main-20260923/docs/experiments/evidence/loader-profile-20260923/prepared-hotload-plan.json`
 (current SHA-256
 `a7d406a794e366729c2c1d4f1ca2be330fc361472153a8cabebb05127f406d56`).
 The prior qualified run's four-arm summary is at
