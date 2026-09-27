@@ -1,5 +1,9 @@
 # Bend migration and proof inventory
 
+## Table-verifier hardening and integrated requalification
+
+The active table-preservation verifier now rejects incomplete results even under optimized Python and invalidates stale PASS receipts. Its exact sibling helper also supports generator_followup file loaders, with transitive dependency hashing. Both full active source gates, both four-mode native suites,59 host tests in three modes,compiler gates and configured locked lint passed in run36332433712. No Bend proof changed and modular counts remain200/655; no aggregate run or independent review. See [the publication record](experiments/2026-09-27-bend-table-verifier-publication.md).
+
 ## Qualified post-generation query composition
 
 Hosted run **36330825632** passed the complete two-law consumer and15 controls, separately restored saved3-law/17-control gate, four native modes and four executable adapter corruptions, original compiler/pin gates and unchanged configured repository lint on source `7007d4dade5d4c02fd0068598052bd125ca63be7`.
