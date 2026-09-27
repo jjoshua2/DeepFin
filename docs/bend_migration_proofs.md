@@ -1,5 +1,11 @@
 # Bend migration and proof inventory
 
+## Hosted attack-witness qualification
+
+Hosted run **36281112782** passes all three public laws and the importing consumer, nineteen classified controls, four native coordinate-reference modes, three actual-code corruption checks, original compiler source/pin tests and unchanged repository lint on source `9213c3458023f75e814b566d593f3364b6070464`.
+
+Modular180/543 retains exact177/524 parent evidence; no complete aggregate run. The actual reduction and singleton-king selection are now connected to independent per-square witnesses over actual retrieved masks. Universal initialized-mask coordinate geometry and legal king safety remain separate obligations. See [the current readout](experiments/2026-09-26-bend-attack-witness.md). Historical local status below is superseded only by these exact-source hosted receipts.
+
 ## Latest P3 attack witnesses and singleton king selection
 
 Three new public contracts connect the actual attack-query callbacks to a per-square owned-piece witness scan and connect actual in_check to the specified square under an explicit singleton-owned-king premise. Complete result pairs are retained. The masks still come from actual Chess.attack; universal coordinate correctness of those masks is not silently assumed or claimed. See [the readout](experiments/2026-09-26-bend-attack-witness.md).
