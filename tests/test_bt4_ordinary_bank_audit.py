@@ -35,13 +35,19 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
              "summary_sha256": summary_sha,
              "provider_proof_sha256": audit.sha_file(proof),
              "pinned_source_origins": {"synthetic_test_only": "fixture"}}
+    mode = tmp_path / "verifier-mode.txt"
+    mode.write_text("fail" if fails else "pass")
     verifier = tmp_path / "full_strict_fixture.py"
-    if fails:
-        verifier.write_text("def verify_bank(plan, stage, bank):\n"
-                            "    raise ValueError('fixture verifier refused')\n")
-    else:
-        verifier.write_text("def verify_bank(plan, stage, bank):\n"
-                            f"    return {facts!r}\n")
+    verifier.write_text(
+        "from pathlib import Path\n"
+        f"MODE = Path({str(tmp_path / 'verifier-mode.txt')!r})\n"
+        f"FACTS = {facts!r}\n"
+        "def verify_bank(plan, stage, bank):\n"
+        "    del plan, stage, bank\n"
+        "    if MODE.read_text().strip() != 'pass':\n"
+        "        raise ValueError('fixture verifier refused')\n"
+        "    return FACTS\n"
+    )
     verifier_sha = audit.sha_file(verifier)
     reviewed = frozenset((*audit.REVIEWED_FULL_STRICT_VERIFIERS, verifier_sha))
     monkeypatch.setattr(audit, "REVIEWED_FULL_STRICT_VERIFIERS", reviewed)
@@ -60,7 +66,7 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     return {"bank": bank, "summary_sha": summary_sha, "plan": plan,
             "plan_sha": plan_sha, "verifier": verifier, "verifier_sha": verifier_sha,
             "terminal": terminal, "terminal_sha": audit.sha_file(terminal),
-            "out": tmp_path / "independent-audit.json"}
+            "mode": mode, "out": tmp_path / "independent-audit.json"}
 
 
 def run_fixture(values: dict) -> dict:
@@ -83,6 +89,28 @@ def test_new_profile_binds_bank_plan_verifier_and_adapter(tmp_path: Path,
     assert source.inspect_bank(values["bank"], values["summary_sha"], values["out"],
                                audit.sha_file(values["out"]))["completed_rows"] == 1
 
+
+
+def test_source_publication_replays_pinned_strict_verifier(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    values = fixture(tmp_path, monkeypatch)
+    run_fixture(values)
+    # Keep every pinned receipt/input byte unchanged but make the verifier's
+    # external test oracle reject. inspect_bank must invoke verify_bank again.
+    values["mode"].write_text("fail")
+    with pytest.raises(ValueError, match="fixture verifier refused"):
+        source.inspect_bank(values["bank"], values["summary_sha"], values["out"],
+                            audit.sha_file(values["out"]))
+
+
+def test_legacy_readback_receipt_cannot_authorize_publication(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    bank, summary_sha, legacy, legacy_sha = _bank(
+        tmp_path / "legacy", model="a" * 64, value=1.0,
+    )
+    with pytest.raises(ValueError, match="unsupported full-bank audit receipt"):
+        source.inspect_bank(bank, summary_sha, legacy, legacy_sha)
 
 def test_changed_bank_is_refused(tmp_path: Path,
                                  monkeypatch: pytest.MonkeyPatch) -> None:
