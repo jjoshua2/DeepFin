@@ -7,6 +7,7 @@
 #include <torch/version.h>
 #include <openssl/evp.h>
 #include "model_contract.h"
+#include "batch_outputs.h"
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -36,6 +37,7 @@ struct Runtime {
   int trace = -1;
   uint32_t calls = 0;
   bool audit = false;
+  bool batch_api = false;
   const void* first_input = nullptr;
   const void* first_output = nullptr;
   uint32_t input_changes = 0, output_changes = 0, input_tensor_allocations = 0;
@@ -102,9 +104,14 @@ void copy_output(const at::Tensor& x, int64_t width, void* destination) {
   std::memcpy(destination, dense.const_data_ptr(), static_cast<size_t>(width) * sizeof(float));
 }
 }
-extern "C" uint32_t deepfin_model_open() {
+static uint32_t open_model(bool batch_api) {
   try {
     if (state.loader) throw std::runtime_error("model is already open");
+    if (!batch_api && DEEPFIN_MODEL_BATCH != 1)
+      throw std::runtime_error("standalone search requires batch one; use the explicit batch backend");
+    static_assert(DEEPFIN_MODEL_BATCH == 1 || DEEPFIN_MODEL_BATCH == 2 || DEEPFIN_MODEL_BATCH == 4
+                  || DEEPFIN_MODEL_BATCH == 8 || DEEPFIN_MODEL_BATCH == 16);
+    state.batch_api = batch_api;
     if (std::string(TORCH_VERSION) != DEEPFIN_MODEL_TORCH_VERSION)
       throw std::runtime_error("bound package/LibTorch version mismatch");
     const char* source = std::getenv("DEEPFIN_BEND_MODEL_PACKAGE");
@@ -113,7 +120,7 @@ extern "C" uint32_t deepfin_model_open() {
     at::set_num_threads(2);
     at::set_num_interop_threads(1);
     state.loader = std::make_unique<torch::inductor::AOTIModelPackageLoader>(path);
-    state.input = at::empty({1, DEEPFIN_MODEL_CHANNELS, 8, 8},
+    state.input = at::empty({DEEPFIN_MODEL_BATCH, DEEPFIN_MODEL_CHANNELS, 8, 8},
                            at::TensorOptions().dtype(at::kFloat).device(at::kCPU));
     ++state.input_tensor_allocations;
     state.inputs = {state.input};
@@ -131,9 +138,11 @@ extern "C" uint32_t deepfin_model_open() {
     std::cerr << "native model startup: " << error.what() << '\n'; return 0;
   }
 }
+extern "C" uint32_t deepfin_model_open() { return open_model(false); }
+extern "C" uint32_t deepfin_model_open_batch() { return open_model(true); }
 extern "C" int deepfin_model_run(const float* input, uint32_t count, float* output, uint32_t capacity) {
   try {
-    if (!state.loader || !input || !output || count != DEEPFIN_MODEL_CHANNELS * 64 || capacity != 1861
+    if (!state.loader || state.batch_api || !input || !output || count != DEEPFIN_MODEL_CHANNELS * 64 || capacity != 1861
         || state.calls >= 65536) throw std::runtime_error("native model input/call bound violated");
     if (state.audit) {
       if (!state.calls) { state.first_input = input; state.first_output = output; }
@@ -156,5 +165,47 @@ extern "C" int deepfin_model_run(const float* input, uint32_t count, float* outp
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "native model execution: " << error.what() << '\n'; return 1;
+  }
+}
+
+// Diagnostic/native-batching boundary only; never silently pad a UCI search.
+// The single owner submits logical rows; the bound package always executes its
+// fixed physical batch. Padding is zeroed on EVERY call, including after a full
+// batch. Only logical outputs are published and the caller retains acceptance.
+extern "C" int deepfin_model_run_batch(const float* input, uint32_t rows,
+                                      float* output, uint32_t output_count) {
+  try {
+    constexpr uint32_t stride = DEEPFIN_MODEL_CHANNELS * 64;
+    if (!state.loader || !state.batch_api || !input || !output || !rows
+        || rows > DEEPFIN_MODEL_BATCH || output_count != rows * 1861 || state.calls >= 65536)
+      throw std::runtime_error("native batch row/output/call bound violated");
+    const auto a = reinterpret_cast<uintptr_t>(input), b = reinterpret_cast<uintptr_t>(output);
+    const size_t input_bytes = size_t(rows) * stride * sizeof(float);
+    const size_t output_bytes = size_t(output_count) * sizeof(float);
+    if (a > UINTPTR_MAX - input_bytes || b > UINTPTR_MAX - output_bytes
+        || (a < b + output_bytes && b < a + input_bytes))
+      throw std::runtime_error("native batch buffers overlap");
+    c10::InferenceMode inference;
+    state.input.zero_();
+    std::memcpy(state.input.mutable_data_ptr(), input, input_bytes);
+    auto outputs = state.loader->run(state.inputs);
+    deepfin_native::copy_batch_outputs(outputs, DEEPFIN_MODEL_BATCH, rows, output);
+    if (state.audit) {
+      if (!state.calls) { state.first_input = input; state.first_output = output; }
+      state.input_changes += state.first_input != input;
+      state.output_changes += state.first_output != output;
+    }
+    ++state.calls;
+    if (state.trace >= 0) {
+      // v2: sequence, physical batch, real rows, channels, per-row output width.
+      // Capture the actual padded tensor passed to AOTI, not unconsumed host tail.
+      const uint32_t header[] = {0x44464232, state.calls, DEEPFIN_MODEL_BATCH, rows, DEEPFIN_MODEL_CHANNELS, 1861};
+      write_all(state.trace, header, sizeof header);
+      write_all(state.trace, state.input.const_data_ptr(), size_t(DEEPFIN_MODEL_BATCH) * stride * sizeof(float));
+      write_all(state.trace, output, output_bytes);
+    }
+    return 0;
+  } catch (const std::exception& error) {
+    std::cerr << "native batch execution: " << error.what() << '\n'; return 1;
   }
 }
