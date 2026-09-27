@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest P3 castling mover-king propagation
+
+Hosted run **36291285103** passes four public laws, the importing consumer, all nineteen controls, all four native modes and three compiled/executed corruptions, original compiler tests and unchanged repository lint on source `bc8d5f83dbd9f3e77492763644ffe92478be1a16`.
+
+Starting with a consistent Board, exactly one selected-side home king and valid raw side metadata, actual transit preserves the king singleton. Actual castling does so under the producer guard, which supplies rook-landing freshness. Raw make_move flips valid side metadata. At start/transit/final stages actual in_check equals actual attacked at the intended moving-king square against the opposite side, including the whole pair. These are not caller-assumed output king counts.
+
+Modular190/600 retains parent186/581 without a full aggregate run. Initial king/side validity still needs its own global origin; opposing king invariants, universal forward/reverse attacks, legal-rights history and complete castling safety composition remain separate. See [the dated record](experiments/2026-09-26-bend-castle-king-invariants.md). No production responsibility moved.
+
 ## Initialized attack state reconciliation
 
 The saved local composition is preserved alongside the existing #897 implementation, not silently substituted or counted again. A new native state regression detects returned-table loss after a correct current answer, and unused-slot corruption even when every query answer remains correct. Fresh four-mode native and configured repository lint evidence is in [the reconciliation record](experiments/2026-09-26-bend-attack-state-reconciliation.md). Exact existing three-law/source-control evidence is retained; totals remain modular186/581, not a full aggregate execution. Forward/reverse geometry and castling singleton propagation remain next.

@@ -138,3 +138,20 @@ are the source-control harness and scope README, not changes to native executabl
 source or its expected outputs. Hosted qualification will rerun both complete gates
 on the final published source snapshot. Original compiler16-law/seven-control and
 12 pin tests passed. Local configured lint failed for missing tools, retained as such.
+
+
+## Completed hosted qualification
+
+Hosted run **36291285103** passes four public laws, the importing consumer, all nineteen controls, all four native modes and three compiled/executed corruptions, original compiler tests and unchanged repository lint on source `bc8d5f83dbd9f3e77492763644ffe92478be1a16`.
+
+All586 inherited native-source entries remain unchanged and all601 candidate hashes match. Exact parent186/581 plus the new4/19 gives modular190 laws/600 controls; no full190-law aggregate was run. The complete new consumer checks all imported proof producers with the unchanged pinned CLI.
+
+Native modes each pass1,148 distinct requests,3,444 complete stage Boards and82,656 observed fields. The451 transit-premise and437 final-premise cases satisfy their claimed singletons and check targets. Eight malformed batches are rejected per mode. Three actual mutations retain the old king, add a rook to the king plane or omit side flipping; all compile/run and fail independent values. Modes repeat fixtures, not exhaustive legal games.
+
+Ten source controls require intended semantic/refinement failures; four actual-code mutations deliberately reuse accepted imported implementation bridges. Eight enforce manifests/import policy. One synthetic output-wrapper unit is not a compiler execution. Syntax, ownership, missing imports, crashes and timeouts receive no semantic-pass credit.
+
+The original missing-tools local lint remains a separate failed receipt. Fresh locked CPU tools pass the unchanged repository lint command at its configured scope, not a claim of additional all-native-Python type checking. C compiler selection is scoped only to native probes. Original compiler16-laws/seven-controls and12 pin tests pass.
+
+The initial selected-side singleton and valid Boolean raw turn remain public input conditions. Their transit/final consequences are now proved rather than assumed. The final stage requires the actual producer guard; the blocked enemy-king example shows why its absence can recolor a second king. No opposing-side singleton, rights-history, legal-reachability or attack-reversal result is inferred.
+
+The stage theorem compares complete actual in_check and attacked pairs on an arbitrary affine array. Combining this routing with initialized independent attack semantics and accepted legal_moves membership remains a later composition step, not a newly executed full-chain theorem here. No production code, prior law, compiler source, permanent workflow, model/GPU, search, training, perft or Python responsibility changed. Self-review only; no merge or deployment.

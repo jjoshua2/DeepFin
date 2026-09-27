@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Castling mover-king invariants](2026-09-26-bend-castle-king-invariants.md) | Four public singleton/side/stage-check contracts; derived transit and final premises; modular190/600; attack reversal and full legality composition remain separate |
 | [Attack state reconciliation](2026-09-26-bend-attack-state-reconciliation.md) | Preserves all15 saved alternative files; catches delayed and unused-slot table loss; no duplicate public-law counts |
 | [Initialized attack composition](2026-09-26-bend-initialized-attacked.md) | Three source contracts composing initialized six-piece masks, attacked and singleton in_check; complete-array results; target-centred geometry, not complete castling legality |
 | [Initialized non-slider geometry](2026-09-26-bend-initialized-leaper-geometry.md) | Three source contracts connect coordinate masks to actual extras storage and initialized pawn/knight/king queries; full attacked composition remains separate |
