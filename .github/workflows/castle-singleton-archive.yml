@@ -1,0 +1,129 @@
+name: Preserve saved castling singleton sources
+'on':
+  push:
+    branches: [dev/bend-castle-stage-qualification-20260927]
+    paths: [.github/workflows/castle-singleton-archive.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SOURCE: 017fadcd25ccda6973b88e240ab50aaae38cf1bd
+      TARGET: feat/bend-castle-stage-geometry-20260927
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 017fadcd25ccda6973b88e240ab50aaae38cf1bd
+      - name: Restore exact saved source archive and verify dependency identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          mkdir -p "$RUNNER_TEMP/archived"
+          : > "$RUNNER_TEMP/archive.xz"
+          for sha in 98e8428f06f3831864b0431406603e9506fb1062 651a4ec00abc9df41506c75903accecdb955ebab 620c78ef8964b74c0bc54bfd55b34d30f2d93203 cb58ae69e54ce979d9239397de0fe187d95af96c 90a02d8c97e350bb24f942a0b2be3efa2d23e913; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$sha" --jq .content | base64 --decode > "$RUNNER_TEMP/$sha"
+            test "$(git hash-object "$RUNNER_TEMP/$sha")" = "$sha"
+            cat "$RUNNER_TEMP/$sha" >> "$RUNNER_TEMP/archive.xz"
+          done
+          test "$(git hash-object "$RUNNER_TEMP/archive.xz")" = 0cb1113db69c6774c5ea1b8bbe6ff9ce16fd15fd
+          python3 - <<'PY'
+          import hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          raw=lzma.decompress((Path(os.environ['RUNNER_TEMP'])/'archive.xz').read_bytes(),memlimit=256*1024*1024)
+          assert len(raw)==175476 and hashlib.sha256(raw).hexdigest()=='c13fd38964a435a18bb7123bd2b0e22d3ff5b393734b291a7d9bf14cb10658e0'
+          payload=json.loads(raw);assert len(payload)==20
+          root=Path('docs/experiments/evidence/bend-castle-stage-geometry/saved-singleton-7df89c34')
+          root.mkdir(parents=True,exist_ok=False)
+          before={p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in subprocess.check_output(['git','ls-files','native/bend_engine'],text=True).splitlines() if Path(p).is_file()}
+          assert len(before)==607
+          entries={}
+          for name,text in payload.items():
+              rel=Path(name)
+              assert not rel.is_absolute() and '..' not in rel.parts
+              assert name.startswith('source/') or name.startswith('original-')
+              path=root/rel;assert not path.exists()
+              path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(text.encode())
+              entries[name]={'bytes':len(text.encode()),'sha256':hashlib.sha256(text.encode()).hexdigest()}
+          primary=[name for name in entries if name.startswith('source/')];assert len(primary)==14
+          focused=json.loads(payload['original-focused.json'])
+          assert focused['focused_gate']=='PASS' and focused['new_law_count']==5 and len(focused['negative_controls'])==18
+          archived=0;inherited=0
+          for name,wanted in focused['source_sha256s'].items():
+              if name.startswith('standalone/proofs/castle_singleton/'):
+                  path=root/'source'/(Path(name).name+'.txt');archived+=1
+              else:
+                  path=Path('native/bend_engine')/name;inherited+=1
+              assert hashlib.sha256(path.read_bytes()).hexdigest()==wanted,name
+          assert archived==13 and inherited==38
+          manifest={'archive_status':'SAVED_LOCAL_SOURCES_PRESERVED','archive_run':os.environ['GITHUB_RUN_ID'],'saved_commit':'7df89c34d03149b6ff00ebd5456ef96be2d901ee','saved_tree':'19cbeffbf4e051c1a2a02c236e6259f9d0133a42','saved_base':'1b27a4d75744167fc0e365f7f331d2cd80881b21','active_parent_pr':898,'active_parent':'e8430e5cf9c33bcc2856f3a61bf19b44ec46c388','primary_files':14,'archived_focused_source_entries':13,'inherited_dependency_matches':38,'payload_sha256':hashlib.sha256(raw).hexdigest(),'entries':entries,'fresh_alternative_source_execution':False,'fresh_alternative_native_execution':False,'duplicate_registered_laws_added':0,'new_source_composition_qualification':'separate workflow; do not infer from archive verification'}
+          (root/'archive-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          (root/'README.md').write_text('''# Saved singleton proof implementation
+
+All 14 primary files from the saved local `castle_singleton` suite at
+`7df89c34d03149b6ff00ebd5456ef96be2d901ee` are retained as UTF-8 bytes with a
+`.txt` suffix, alongside the original readout, publication metadata and selected
+execution receipts. This is an archive, not an additional active five-law suite.
+
+The currently published implementation in PR #898 is `castle_kings`: four laws and
+19 controls with explicit Boolean side/valid-turn conditions. The saved version
+has five laws and 18 controls and also follows raw U32 side behavior. The statement
+domains and implementations are not identical. Neither is silently replaced or
+counted twice. No formal equivalence theorem between the implementations is claimed.
+
+The saved guard-supplied singleton law is explicit rather than folded into a final
+stage theorem. The saved guarded check-routing theorem uses the original raw turn,
+not the child turn. Both versions retain input consistency and singleton premises;
+neither derives legal king counts from an arbitrary accepted FEN.
+
+## Restore the saved proof/test suite
+
+In a disposable checkout of exact #897 head
+`1b27a4d75744167fc0e365f7f331d2cd80881b21`, copy files from `source/` into
+`native/bend_engine/standalone/proofs/castle_singleton/`, removing only the final
+`.txt` suffix. Use the original source README and pinned compiler for execution.
+The archive manifest records every file hash; the saved focused report records
+13 suite dependencies and 38 inherited files, all checked by this archive job.
+README is the fourteenth preserved primary file, outside that focused manifest.
+
+This archive job does not rerun the saved consumer or native tests. The original
+local lint failure remains a failure, and the preserved local 191/599 total is a
+historical total for that alternate stack, not the active published total. Original
+JSON objects are retained semantically; archive JSON formatting is not claimed to
+match every external log byte. All 14 primary source/test files are byte-identical.
+
+The original complete review ZIP, patch and Git bundle remain in the conversation
+attachments. The original publication metadata records their identities and the
+original 31-file commit. This 20-entry selected archive does not pretend to reproduce
+that complete saved commit tree. The active initialized-stage composition is a
+separate source change with its own qualification; no proof pass follows merely
+from the integrity checks in this archive workflow.
+''')
+          for p,h in before.items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          (Path(os.environ['RUNNER_TEMP'])/'archived'/'archive-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git add docs/experiments/evidence/bend-castle-stage-geometry/saved-singleton-7df89c34
+          test "$(git diff --cached --name-only | wc -l)" = 22
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: preserve exact saved singleton proofs and distinguish active domains'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git cat-file commit HEAD > "$RUNNER_TEMP/archived/commit.raw"
+          git rev-parse HEAD > "$RUNNER_TEMP/archived/commit.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/archived/tree.txt"
+          tar -czf "$RUNNER_TEMP/archived/archive-files.tar.gz" docs/experiments/evidence/bend-castle-stage-geometry/saved-singleton-7df89c34
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: saved-singleton-archive
+          path: ${{ runner.temp }}/archived/
+          retention-days: 14
