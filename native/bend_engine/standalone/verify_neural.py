@@ -106,7 +106,8 @@ def verify(command: list[str], package: Path, checkpoint: Path, oracle_binary: P
     encoding = loaded.encoding
     oracle = sessions.Oracle(oracle_binary, with_python_chess=True)
     environment = {'DEEPFIN_BEND_MODEL_PACKAGE': runtime_package or str(package),
-                   'DEEPFIN_BEND_MODEL_TRACE': runtime_trace or str(trace_path)}
+                   'DEEPFIN_BEND_MODEL_TRACE': runtime_trace or str(trace_path),
+                   'DEEPFIN_BEND_NATIVE_DIAGNOSTICS': '1'}
     sequence = replies = searches = rule_draws = zeros = policy_values = 0
     max_logits = max_probabilities = 0.0
     root_tensors: list[np.ndarray] = []
