@@ -66,3 +66,28 @@ filtering, or queen-mask combination. All eight initialized full-generator outpu
 remain identical to the clean move lists; affected complete buffers are nevertheless
 rejected. Mutations compile/run with generic flags only. Complete cell reads do not
 prove native lifetime, pointer identity, or absence of unrelated memory corruption.
+
+
+## Host-gate robustness checks
+
+Run without a Bend installation:
+
+```sh
+python3 native/bend_engine/standalone/proofs/table_preservation/test_harness.py
+python3 -O native/bend_engine/standalone/proofs/table_preservation/test_harness.py
+PYTHONOPTIMIZE=2 python3 native/bend_engine/standalone/proofs/table_preservation/test_harness.py
+```
+
+These are 50 host-verifier tests per mode, not new Bend laws or native test runs.
+The gates enforce framing, field ranges, source identity and dispatch coverage
+regardless of Python optimization. Both gate CLIs write NOT_COMPLETED before
+external checks; PASS is published only on completion, via atomic replacement.
+Use a unique --report path for every concurrently running invocation.
+
+The original qualification above belongs to its original runner hashes. The
+hardened runner requires a fresh full source/native and locked-lint run before
+being described as hosted-qualified. See the dated verifier-review record for
+local checks and the preserved alternative proof implementation.
+
+Real subprocess receipt checks execute both CLIs with a deliberately absent compiler,
+including optimized Python; they verify NOT_COMPLETED and untouched historical receipts.

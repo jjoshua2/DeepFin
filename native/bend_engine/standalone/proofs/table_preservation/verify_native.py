@@ -10,10 +10,16 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+
+if __package__:
+    from ._validation import begin_report, require, write_report
+else:
+    from _validation import begin_report, require, write_report
 
 SUITE = Path(__file__).resolve().parent
 ENGINE = SUITE.parents[2]
@@ -66,7 +72,7 @@ def fixtures() -> list[dict]:
         out.append({'category':'initialized-full-generator', 'input':[2,8,*b]})
     for op in range(9):
         out.append({'category':'large-nonuniform-operation', 'input':[3,op,*boards[1]]})
-    assert len({tuple(c['input']) for c in out})==len(out)
+    require(len({tuple(c['input']) for c in out})==len(out), 'verify_native.py:69: validation failed')
     return out
 
 
@@ -74,39 +80,78 @@ class WrongValue(AssertionError):
     pass
 
 
-def observe(binary: Path, case: dict, permit_corruption: bool = False) -> dict:
-    lines=run([str(binary),*map(str,case['input'])]).stdout.splitlines()
-    context,op=case['input'][:2]
-    size=[64,1024,131072,131072][context]
-    assert lines[0]==f'before {size}' and lines[-1]==f'done {size}'
-    assert lines[size+1].split()[0] in {'word','bool','move','end'}
-    at=lines.index(f'after {size}',size+1)
-    assert len(lines)==at+size+2
-    before=lines[1:size+1];after=lines[at+1:at+1+size]
-    for cell in before+after:
-        fields=cell.split();assert len(fields)==3 and fields[0]=='cell'
-        assert all(0<=int(x)<=0xffffffff for x in fields[1:])
+def _u32_fields(line: str, tag: str, count: int) -> list[int]:
+    """Accept exactly the canonical unsigned-decimal output of probe.bend."""
+    fields = line.split(" ")
+    require(len(fields) == count + 1 and fields[0] == tag,
+            f"Invalid {tag} record: {line!r}")
+    require(all(re.fullmatch(r"0|[1-9][0-9]{0,9}", x) is not None for x in fields[1:]),
+            f"Noncanonical unsigned field: {line!r}")
+    values = [int(x) for x in fields[1:]]
+    require(all(x <= 0xffffffff for x in values), f"U32 overflow: {line!r}")
+    return values
+
+
+def parse_observation(stdout: str, case: dict, permit_corruption: bool = False) -> dict:
+    """Validate the entire transcript before counting any compared cells.
+
+    This checks framing, types, original synthetic contents and retained storage.
+    It deliberately does not infer move legality from syntactically valid U32s.
+    permit_corruption permits changed *values* for mutation diagnostics only;
+    malformed, incomplete or out-of-range output is always rejected.
+    """
+    context, op = case['input'][:2]
+    require(type(context) is int and 0 <= context <= 3, "Invalid context")
+    require(type(op) is int and 0 <= op <= 8, "Invalid operation")
+    size = [64, 1024, 131072, 131072][context]
+    lines = stdout.splitlines()
+    require(len(lines) >= 2 * size + 4, "Incomplete before/answer/after transcript")
+    require(lines[0] == f'before {size}' and lines[-1] == f'done {size}',
+            "Missing or incorrect buffer framing")
+    try:
+        at = lines.index(f'after {size}', size + 1)
+    except ValueError as exc:
+        raise AssertionError("Missing after-buffer header") from exc
+    require(len(lines) == at + size + 2, "After-buffer size does not match header")
+    before = lines[1:size + 1]
+    after = lines[at + 1:at + 1 + size]
+    require(len(before) == len(after) == size, "Incomplete logical buffer")
+    for cell in before + after:
+        _u32_fields(cell, 'cell', 2)
     if context != 2:
-        expected=[f'cell {i ^ 2779096485} {(i*2654435761+12345)&0xffffffff}' for i in range(size)]
-        assert before==expected,'Independent raw seed initialization mismatch'
-    outputs=lines[size+1:at]
-    if op<2:
-        assert len(outputs)==1 and len(outputs[0].split())==(3 if op==0 else 2)
+        expected = [f'cell {i ^ 2779096485} {(i*2654435761+12345)&0xffffffff}' for i in range(size)]
+        require(before == expected, "Independent raw seed initialization mismatch")
+    outputs = lines[size + 1:at]
+    if op == 0:
+        require(len(outputs) == 1, "Expected one word result")
+        _u32_fields(outputs[0], 'word', 2)
+    elif op == 1:
+        require(len(outputs) == 1, "Expected one Boolean result")
+        require(_u32_fields(outputs[0], 'bool', 1)[0] <= 1, "Non-Boolean result")
     else:
-        assert outputs[-1]=='end'
-        assert all(line.startswith('move ') and len(line.split())==5 for line in outputs[:-1])
-    wrong=[i for i,(a,b) in enumerate(zip(before,after)) if a!=b]
+        require(bool(outputs) and outputs[-1] == 'end', "Missing move-list terminator")
+        for move in outputs[:-1]:
+            _u32_fields(move, 'move', 4)
+    wrong = [i for i, (a, b) in enumerate(zip(before, after, strict=True)) if a != b]
     if wrong and not permit_corruption:
         raise WrongValue(f'op={op} context={context} changed cell {wrong[0]}: {before[wrong[0]]} -> {after[wrong[0]]}')
-    return {'cells':size,'changed_cells':wrong,'first_changed_before':before[wrong[0]] if wrong else None,
-            'first_changed_after':after[wrong[0]] if wrong else None,
-            'moves':len(outputs)-1 if op>=2 else 0,'answers_sha256':digest('\n'.join(outputs).encode()),
-            'before_sha256':digest('\n'.join(before).encode()),'after_sha256':digest('\n'.join(after).encode())}
+    return {'cells': len(before), 'changed_cells': wrong,
+            'first_changed_before': before[wrong[0]] if wrong else None,
+            'first_changed_after': after[wrong[0]] if wrong else None,
+            'moves': len(outputs)-1 if op >= 2 else 0,
+            'answers_sha256': digest('\n'.join(outputs).encode()),
+            'before_sha256': digest('\n'.join(before).encode()),
+            'after_sha256': digest('\n'.join(after).encode())}
+
+
+def observe(binary: Path, case: dict, permit_corruption: bool = False) -> dict:
+    stdout = run([str(binary), *map(str, case['input'])]).stdout
+    return parse_observation(stdout, case, permit_corruption)
 
 
 def main() -> None:
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('compiler',type=Path);ap.add_argument('--report',type=Path,required=True)
-    args=ap.parse_args();compiler=args.compiler.resolve();bun=os.environ.get('BUN','bun');cc=os.environ.get('CC','clang')
+    args=ap.parse_args();begin_report(args.report, 'native_gate');compiler=args.compiler.resolve();bun=os.environ.get('BUN','bun');cc=os.environ.get('CC','clang')
     identity=run([bun,str(ENGINE/'standalone/verify_compiler.js'),str(compiler)]).stdout
     inputs=[p for p in SUITE.iterdir() if p.is_file()]+[ENGINE/p for p in ['legal_probe/Chess.bend','bitboard_probe/Sliders.bend','standalone/Tables.bend','standalone/Text.bend','standalone/toolchain.json','standalone/verify_compiler.js']]
     hashes={str(p.relative_to(ENGINE)):digest(p.read_bytes()) for p in inputs}
@@ -119,7 +164,7 @@ def main() -> None:
             binary=tmp/mode
             run([cc,'-std=c11','-O1','-ffp-contract=off','-Werror=shift-count-overflow',*flags,str(generated),'-pthread','-lm','-o',str(binary)])
             results=[observe(binary,c) for c in cases]
-            if baseline: assert results==baseline
+            if baseline: require(results==baseline, 'verify_native.py:122: validation failed')
             else: baseline=results
             row=list(map(str,cases[0]['input']));invalids=[]
             for index,value in [(0,'4'),(1,'9'),(2,'-1'),(2,'4294967296'),(2,'x')]:
@@ -127,7 +172,7 @@ def main() -> None:
             invalids += [row[:-1],row+['0']]
             for bad in invalids:
                 proc=subprocess.run([str(binary),*bad],capture_output=True,text=True,timeout=30,check=False)
-                assert proc.returncode==2 and 'invalid table preservation' in proc.stderr
+                require(proc.returncode==2 and 'invalid table preservation' in proc.stderr, 'verify_native.py:130: validation failed')
             modes.append({'mode':mode,'requests':len(cases),'complete_buffers':len(cases),'compared_cells':sum(r['cells'] for r in results),
                           'compared_u32_fields':2*sum(r['cells'] for r in results),'moves_observed':sum(r['moves'] for r in results),
                           'invalid_rejections':len(invalids),'observations_sha256':digest(json.dumps(results,sort_keys=True).encode())})
@@ -139,7 +184,7 @@ def main() -> None:
                ('queen-combination-corrupts-unused-cell','(table, U64.or(a, b))',f'({scribble}, U64.or(a, b))')]
         for name,old,new in edits:
             copied=tmp/name;shutil.copytree(ENGINE,copied,symlinks=True)
-            chess=copied/'legal_probe/Chess.bend';source=chess.read_text();assert source.count(old)==1;chess.write_text(source.replace(old,new))
+            chess=copied/'legal_probe/Chess.bend';source=chess.read_text();require(source.count(old)==1, 'verify_native.py:142: validation failed');chess.write_text(source.replace(old,new))
             code=tmp/(name+'.c');binary=tmp/(name+'.bin')
             run([bun,str(compiler/'bend2/main.ts'),str(copied/'standalone/proofs/table_preservation/probe.bend'),'-o',str(code)])
             run([cc,'-std=c11','-O1','-ffp-contract=off','-Werror=shift-count-overflow',str(code),'-pthread','-lm','-o',str(binary)])
@@ -148,23 +193,23 @@ def main() -> None:
             for i,c in enumerate(cases):
                 if c['category']=='initialized-full-generator':
                     r=observe(binary,c,True)
-                    assert r['answers_sha256']==baseline[i]['answers_sha256'],'Mutation unexpectedly changed move list'
+                    require(r['answers_sha256']==baseline[i]['answers_sha256'], 'Mutation unexpectedly changed move list')
                     checked.append(r)
-            assert any(r['changed_cells'] for r in checked),'Mutant did not exhibit storage corruption'
+            require(any(r['changed_cells'] for r in checked), 'Mutant did not exhibit storage corruption')
             first=next(r for r in checked if r['changed_cells'])
             mutations.append({'name':name,'compiled_and_executed':True,'rejected':True,'build_mode':'generic',
                               'full_generator_cases':len(checked),'all_move_lists_match_clean':True,
                               'corrupt_buffers':sum(bool(r['changed_cells']) for r in checked),
                               'first_changed_cell':first['changed_cells'][0],'before':first['first_changed_before'],'after':first['first_changed_after']})
             print('PASS mutation '+name,flush=True)
-    assert hashes=={str(p.relative_to(ENGINE)):digest(p.read_bytes()) for p in inputs}
-    assert run([bun,str(ENGINE/'standalone/verify_compiler.js'),str(compiler)]).stdout==identity
+    require(hashes=={str(p.relative_to(ENGINE)):digest(p.read_bytes()) for p in inputs}, 'verify_native.py:160: validation failed')
+    require(run([bun,str(ENGINE/'standalone/verify_compiler.js'),str(compiler)]).stdout==identity, 'verify_native.py:161: validation failed')
     report={'native_gate':'PASS','requests_per_mode':len(cases),'complete_cells_per_mode':modes[0]['compared_cells'],
             'complete_fields_per_mode':modes[0]['compared_u32_fields'],'full_131072_cell_buffers_per_mode':17,
             'input_sha256':digest(json.dumps(cases,sort_keys=True).encode()),'modes':modes,'mutations':mutations,
             'source_sha256s':hashes,'cc':run([cc,'--version']).stdout.splitlines()[0],
             'scope':'Whole logical array values before/after actual operations. No native allocation/lifetime theorem or move-set correctness/completeness claim.'}
-    args.report.parent.mkdir(parents=True,exist_ok=True);args.report.write_text(json.dumps(report,indent=2)+'\n')
+    write_report(args.report, report)
 
 
 if __name__=='__main__': main()

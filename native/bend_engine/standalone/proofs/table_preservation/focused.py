@@ -12,6 +12,11 @@ import subprocess
 import tempfile
 import time
 
+if __package__:
+    from ._validation import begin_report, require, write_report
+else:
+    from _validation import begin_report, require, write_report
+
 SUITE=Path(__file__).resolve().parent
 ENGINE=SUITE.parents[2]
 LAWS=['attack_query_preserves_table','ordinary_scan_preserves_table','castling_side_preserves_table',
@@ -58,13 +63,13 @@ def dispatch_audit() -> dict:
     cases=re.findall(r'^    case (.*):$',text,re.MULTILINE)
     cubes=[]
     for case in cases:
-        bits=case.split();assert len(bits)==32
+        bits=case.split();require(len(bits)==32, 'focused.py:61: validation failed')
         fixed={i:(v=='True{}') for i,v in enumerate(bits) if v!='_'}
-        assert all(v in {'False{}','True{}','_'} for v in bits)
+        require(all(v in {'False{}','True{}','_'} for v in bits), 'focused.py:63: validation failed')
         cubes.append(fixed)
     for i,a in enumerate(cubes):
-        for b in cubes[i+1:]: assert any(a[k]!=b[k] for k in a.keys() & b.keys()),'overlapping dispatch clauses'
-    count=sum(1 << (32-len(c)) for c in cubes);assert count==1<<32
+        for b in cubes[i+1:]: require(any(a[k]!=b[k] for k in a.keys() & b.keys()), 'overlapping dispatch clauses')
+    count=sum(1 << (32-len(c)) for c in cubes);require(count==1<<32, 'focused.py:67: validation failed')
     return {'disjoint_boolean_clauses':len(cubes),'raw_u32_values_covered':count,'not_expected_attack_masks':True}
 
 
@@ -88,7 +93,7 @@ def replace(path: Path,old: str,new: str) -> None:
 
 def main() -> None:
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('compiler',type=Path);ap.add_argument('--report',type=Path,required=True)
-    args=ap.parse_args();compiler=args.compiler.resolve();bun=os.environ.get('BUN','bun')
+    args=ap.parse_args();begin_report(args.report, 'focused_gate');compiler=args.compiler.resolve();bun=os.environ.get('BUN','bun')
     check=[bun,str(ENGINE/'standalone/verify_compiler.js'),str(compiler)]
     initial=subprocess.run(check,capture_output=True,text=True,check=True)
     if initial.stderr: raise AssertionError(initial.stderr)
@@ -146,13 +151,13 @@ def main() -> None:
     try: safe({'exit_code':0,'raw_text':'All terms check.\nWARNING: unsafe dependency'})
     except AssertionError: controls.append({'name':'warning-on-zero-exit','kind':'synthetic output-wrapper unit','rejected':True})
     else: raise AssertionError('warning accepted')
-    assert before=={str(p.relative_to(ENGINE)):digest(p.read_bytes()) for p in paths}
-    final=subprocess.run(check,capture_output=True,text=True,check=True);assert final.stdout==initial.stdout and not final.stderr
+    require(before=={str(p.relative_to(ENGINE)):digest(p.read_bytes()) for p in paths}, 'focused.py:149: validation failed')
+    final=subprocess.run(check,capture_output=True,text=True,check=True);require(final.stdout==initial.stdout and not final.stderr, 'focused.py:150: validation failed')
     report={'focused_gate':'PASS','consumer':consumer,'new_law_count':len(LAWS),'new_laws':LAWS,'new_control_count':len(controls),
             'negative_controls':controls,'control_categories':dict(Counter(c['kind'] for c in controls)),
             'raw_dispatch_partition':partition,'source_sha256s':before,'compiler_identity':initial.stdout,
             'scope':'Whole source-array identity under actual query/scan/castling/prepared-filter/full-generator operations; arbitrary array shape/contents, Boards and raw scalar metadata. Not move or attack correctness.'}
-    args.report.parent.mkdir(parents=True,exist_ok=True);args.report.write_text(json.dumps(report,indent=2)+'\n')
+    write_report(args.report, report)
     print(json.dumps({k:v for k,v in report.items() if k not in {'source_sha256s','negative_controls','consumer'}},indent=2))
 
 
