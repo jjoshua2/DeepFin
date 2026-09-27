@@ -1,0 +1,128 @@
+[
+  {
+    "status": "ADOPTED_EMPTY_BANK_PARENT",
+    "legacy": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/extra184_run06_g10/bank",
+    "external": "/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/extra184_run06_g10",
+    "same_filesystem": true,
+    "queued_plan_edits": false,
+    "audit_sha256": "e6c4b0707a056c06a72bf11125c3f7b838e7af70aaf4fd661dbae4b8cdcc255b",
+    "time": 1789843094.1373894
+  },
+  {
+    "status": "ADOPTED_EMPTY_BANK_PARENT",
+    "legacy": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/extra184_run07_g10_companion4/bank",
+    "external": "/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/extra184_run07_g10_companion4",
+    "same_filesystem": true,
+    "queued_plan_edits": false,
+    "audit_sha256": "e6c4b0707a056c06a72bf11125c3f7b838e7af70aaf4fd661dbae4b8cdcc255b",
+    "time": 1789843094.1395497
+  },
+  {
+    "status": "ADOPTED_EMPTY_BANK_PARENT",
+    "legacy": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/extra512_run06_g10/bank",
+    "external": "/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/extra512_run06_g10",
+    "same_filesystem": true,
+    "queued_plan_edits": false,
+    "audit_sha256": "e6c4b0707a056c06a72bf11125c3f7b838e7af70aaf4fd661dbae4b8cdcc255b",
+    "time": 1789843094.1408901
+  },
+  {
+    "status": "ADOPTED_EMPTY_BANK_PARENT",
+    "legacy": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/extra512_run07_g10_companion4/bank",
+    "external": "/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/extra512_run07_g10_companion4",
+    "same_filesystem": true,
+    "queued_plan_edits": false,
+    "audit_sha256": "e6c4b0707a056c06a72bf11125c3f7b838e7af70aaf4fd661dbae4b8cdcc255b",
+    "time": 1789843094.1424155
+  },
+  {
+    "status": "ADOPTED_EMPTY_BANK_PARENT",
+    "legacy": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block00_run06_g10/bank",
+    "external": "/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/block00_run06_g10",
+    "same_filesystem": true,
+    "queued_plan_edits": false,
+    "audit_sha256": "e6c4b0707a056c06a72bf11125c3f7b838e7af70aaf4fd661dbae4b8cdcc255b",
+    "time": 1789843094.1440668
+  },
+  {
+    "status": "ADOPTED_EMPTY_BANK_PARENT",
+    "legacy": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block00_run07_g10_companion4/bank",
+    "external": "/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/block00_run07_g10_companion4",
+    "same_filesystem": true,
+    "queued_plan_edits": false,
+    "audit_sha256": "e6c4b0707a056c06a72bf11125c3f7b838e7af70aaf4fd661dbae4b8cdcc255b",
+    "time": 1789843094.1451354
+  },
+  {
+    "status": "ADOPTED_EMPTY_BANK_PARENT",
+    "legacy": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block01_run06_g10/bank",
+    "external": "/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/block01_run06_g10",
+    "same_filesystem": true,
+    "queued_plan_edits": false,
+    "audit_sha256": "e6c4b0707a056c06a72bf11125c3f7b838e7af70aaf4fd661dbae4b8cdcc255b",
+    "time": 1789843094.148602
+  },
+  {
+    "status": "ADOPTED_EMPTY_BANK_PARENT",
+    "legacy": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block01_run07_g10_companion4/bank",
+    "external": "/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/block01_run07_g10_companion4",
+    "same_filesystem": true,
+    "queued_plan_edits": false,
+    "audit_sha256": "e6c4b0707a056c06a72bf11125c3f7b838e7af70aaf4fd661dbae4b8cdcc255b",
+    "time": 1789843094.1505003
+  },
+  {
+    "status": "ADOPTED_EMPTY_BANK_PARENT",
+    "legacy": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block02_run06_g10/bank",
+    "external": "/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/block02_run06_g10",
+    "same_filesystem": true,
+    "queued_plan_edits": false,
+    "audit_sha256": "e6c4b0707a056c06a72bf11125c3f7b838e7af70aaf4fd661dbae4b8cdcc255b",
+    "time": 1789843094.1529238
+  },
+  {
+    "status": "ADOPTED_EMPTY_BANK_PARENT",
+    "legacy": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/block02_run07_g10_companion4/bank",
+    "external": "/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/block02_run07_g10_companion4",
+    "same_filesystem": true,
+    "queued_plan_edits": false,
+    "audit_sha256": "e6c4b0707a056c06a72bf11125c3f7b838e7af70aaf4fd661dbae4b8cdcc255b",
+    "time": 1789843094.1542113
+  },
+  {
+    "status": "ADOPTED_EMPTY_BANK_PARENT",
+    "legacy": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/remainder_block00_run06_g10/bank",
+    "external": "/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/remainder_block00_run06_g10",
+    "same_filesystem": true,
+    "queued_plan_edits": false,
+    "audit_sha256": "e6c4b0707a056c06a72bf11125c3f7b838e7af70aaf4fd661dbae4b8cdcc255b",
+    "time": 1789843094.1551874
+  },
+  {
+    "status": "ADOPTED_EMPTY_BANK_PARENT",
+    "legacy": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/remainder_block00_run07_g10_companion4/bank",
+    "external": "/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/remainder_block00_run07_g10_companion4",
+    "same_filesystem": true,
+    "queued_plan_edits": false,
+    "audit_sha256": "e6c4b0707a056c06a72bf11125c3f7b838e7af70aaf4fd661dbae4b8cdcc255b",
+    "time": 1789843094.1562803
+  },
+  {
+    "status": "ADOPTED_EMPTY_BANK_PARENT",
+    "legacy": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/remainder_block01_run06_g10/bank",
+    "external": "/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/remainder_block01_run06_g10",
+    "same_filesystem": true,
+    "queued_plan_edits": false,
+    "audit_sha256": "e6c4b0707a056c06a72bf11125c3f7b838e7af70aaf4fd661dbae4b8cdcc255b",
+    "time": 1789843094.1591542
+  },
+  {
+    "status": "ADOPTED_EMPTY_BANK_PARENT",
+    "legacy": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/collection/remainder_block01_run07_g10_companion4/bank",
+    "external": "/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/remainder_block01_run07_g10_companion4",
+    "same_filesystem": true,
+    "queued_plan_edits": false,
+    "audit_sha256": "e6c4b0707a056c06a72bf11125c3f7b838e7af70aaf4fd661dbae4b8cdcc255b",
+    "time": 1789843094.1604064
+  }
+]

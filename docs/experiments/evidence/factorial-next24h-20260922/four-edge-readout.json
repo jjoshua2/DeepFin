@@ -1,0 +1,305 @@
+{
+  "status": "PASS_FOUR_ELIGIBLE_PAIRED_ARENAS",
+  "scope": "400 simulations per side,4fixed seed121trained checkpoints,128identicaluniqueopenings withtwo colors each",
+  "validation": "All4bank digests/result integrity/outer0 and training receipt checkpoint summary initial-state lineage verified via original bind helper; commonarena settings andexactopening identities verified.",
+  "edges": {
+    "B_A": {
+      "score": 0.509765625,
+      "elo": 6.786714342897122,
+      "paired_bootstrap_elo_ci95": [
+        -24.469442305550395,
+        38.153397218633565
+      ]
+    },
+    "C_A": {
+      "score": 0.53125,
+      "elo": 21.74306492903707,
+      "paired_bootstrap_elo_ci95": [
+        -12.219568270856845,
+        56.1271957606428
+      ]
+    },
+    "D_C": {
+      "score": 0.4765625,
+      "elo": -16.297987076023766,
+      "paired_bootstrap_elo_ci95": [
+        -46.41800937932699,
+        13.578611811075142
+      ]
+    },
+    "D_B": {
+      "score": 0.525390625,
+      "elo": 17.658402561638308,
+      "paired_bootstrap_elo_ci95": [
+        -13.578611811075142,
+        49.18406825048483
+      ]
+    }
+  },
+  "contrasts": {
+    "policy_average": {
+      "score_percentage_points": -0.68359375,
+      "paired_bootstrap_score_pp_ci95": [
+        -3.90625,
+        2.5390625
+      ],
+      "elo_edge_contrast": -4.755636366563322,
+      "paired_bootstrap_elo_edge_ci95": [
+        -27.219391917699603,
+        17.685505030602506
+      ]
+    },
+    "value_average": {
+      "score_percentage_points": 2.83203125,
+      "paired_bootstrap_score_pp_ci95": [
+        -0.48828125,
+        6.25
+      ],
+      "elo_edge_contrast": 19.70073374533769,
+      "paired_bootstrap_elo_edge_ci95": [
+        -3.4024970645099906,
+        43.6605234859919
+      ]
+    },
+    "policy_effect_difference": {
+      "score_percentage_points": -3.3203125,
+      "paired_bootstrap_score_pp_ci95": [
+        -9.375,
+        2.734375
+      ],
+      "elo_edge_contrast": -23.084701418920886,
+      "paired_bootstrap_elo_edge_ci95": [
+        -65.4379016515296,
+        19.070676985727467
+      ]
+    },
+    "value_effect_difference": {
+      "score_percentage_points": -0.5859375,
+      "paired_bootstrap_score_pp_ci95": [
+        -7.2265625,
+        5.859375
+      ],
+      "elo_edge_contrast": -4.084662367398764,
+      "paired_bootstrap_elo_edge_ci95": [
+        -50.32642114216611,
+        40.988886503617415
+      ]
+    },
+    "interaction_average_edge_differences": {
+      "score_percentage_points": -1.953125,
+      "paired_bootstrap_score_pp_ci95": [
+        -6.25,
+        2.34375
+      ],
+      "elo_edge_contrast": -13.584681893159827,
+      "paired_bootstrap_elo_edge_ci95": [
+        -43.61506900242789,
+        16.21512753748724
+      ]
+    },
+    "cycle_disagreement": {
+      "score_percentage_points": -2.734375,
+      "paired_bootstrap_score_pp_ci95": [
+        -12.109375,
+        6.640625
+      ],
+      "elo_edge_contrast": -19.000039051522123,
+      "paired_bootstrap_elo_edge_ci95": [
+        -84.53216785777886,
+        46.423052359575635
+      ]
+    }
+  },
+  "uncertainty": "Retrospective percentile bootstrap50000 replicates, seed20260922; resample128opening pairs jointlyacrossallfourbanks, preserving bothcolors and crosscomparison openingcovariance. Conditional on these4trainedcheckpoints, nottrainingseed/generalpopulation uncertainty. Eloedge averages are descriptive, notexactmultiplayer ratingfit. Interaction estimatedseparately alongpolicy/valueaxes; theiraverage is equalweightleast-squares interaction, withcycle residual explicitlybanked.",
+  "evidence": {
+    "B_A": {
+      "bank": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/arena/arena.games.jsonl",
+      "bank_sha256": "d09d23ca1cdd301923dbcccc5295b62fa3881c5a1fbe9d6894642c32f0413f93",
+      "receipt": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/arenas/B_A/complete.json",
+      "receipt_sha256": "d6248daad78f7c2a6950f74c9dcd8b8e24b21761f6abb11ae430aeb7c9259490",
+      "plan_sha256": "b53a162f844a758be9562005973ee778dd8ab92ca87630069ad4b7c6dc8313de",
+      "outer_returncode": 0,
+      "reported_result": {
+        "elo": 6.79,
+        "elo_ci95": [
+          -24.95,
+          38.63
+        ],
+        "score": 0.50977,
+        "pentanomial": {
+          "WW": 11,
+          "WD_DW": 31,
+          "DD_WL": 47,
+          "LD_DL": 30,
+          "LL": 9
+        },
+        "pairs": 128,
+        "games": 256,
+        "duration_s": 1025.4,
+        "truncated": false,
+        "seed": 20260920
+      },
+      "training_initial_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf"
+    },
+    "C_A": {
+      "bank": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/arena/arena.games.jsonl",
+      "bank_sha256": "9454446d59b8d3b92d463a51fb2199cb94b2dd18641aeb525489fd345e0bf601",
+      "receipt": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/arenas/C_A/complete.json",
+      "receipt_sha256": "c1275f7c34aaf737e7ed56d6ae4cb8f675da9193fd51ec9f489027527981c34c",
+      "plan_sha256": "e373a778b8d2a5add5b1911a546a8bd496439344863b53778bbd2d0e58dc7885",
+      "outer_returncode": 0,
+      "reported_result": {
+        "elo": 21.74,
+        "elo_ci95": [
+          -12.49,
+          56.4
+        ],
+        "score": 0.53125,
+        "pentanomial": {
+          "WW": 17,
+          "WD_DW": 30,
+          "DD_WL": 43,
+          "LD_DL": 28,
+          "LL": 10
+        },
+        "pairs": 128,
+        "games": 256,
+        "duration_s": 991.2,
+        "truncated": false,
+        "seed": 20260920
+      },
+      "training_initial_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf"
+    },
+    "D_C": {
+      "bank": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/arena/arena.games.jsonl",
+      "bank_sha256": "94c3367da615ea63382522bd740d8c2301c9eed6afe13b924f48f7d5024de043",
+      "receipt": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/complete.json",
+      "receipt_sha256": "cfeb11ca9db2c2b0a0189b663283a625e221999ed947633ab379febebdeab340",
+      "plan_sha256": "84104dc59aa39310d70a25e4544ae9af7180c1eeae7dc3c9faf58351fbd3b891",
+      "outer_returncode": 0,
+      "reported_result": {
+        "elo": -16.3,
+        "elo_ci95": [
+          -46.88,
+          14.04
+        ],
+        "score": 0.47656,
+        "pentanomial": {
+          "WW": 7,
+          "WD_DW": 29,
+          "DD_WL": 46,
+          "LD_DL": 37,
+          "LL": 9
+        },
+        "pairs": 128,
+        "games": 256,
+        "duration_s": 1022.4,
+        "truncated": false,
+        "seed": 20260920
+      },
+      "training_initial_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf"
+    },
+    "D_B": {
+      "bank": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/arena/arena.games.jsonl",
+      "bank_sha256": "5a7b38644b70535bdb8ae51a6e021f3f348ad45dd12d177e22ab6a8990e52834",
+      "receipt": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/complete.json",
+      "receipt_sha256": "23f921f75e86a7ec484f5f408ac7d005b1cce9cfe1eef87279fe2628282a5565",
+      "plan_sha256": "172ae0e5fd59de3ea48b4ef34aced15dce289ab3104472987f46bb699910a5dc",
+      "outer_returncode": 0,
+      "reported_result": {
+        "elo": 17.66,
+        "elo_ci95": [
+          -13.93,
+          49.54
+        ],
+        "score": 0.52539,
+        "pentanomial": {
+          "WW": 10,
+          "WD_DW": 39,
+          "DD_WL": 41,
+          "LD_DL": 30,
+          "LL": 8
+        },
+        "pairs": 128,
+        "games": 256,
+        "duration_s": 1018.1,
+        "truncated": false,
+        "seed": 20260920
+      },
+      "training_initial_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf"
+    }
+  },
+  "common_arena_settings": {
+    "mode": "matched_sims",
+    "games": 256,
+    "seed": 20260920,
+    "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+    "openings_kind": "book",
+    "opening_plies": 16,
+    "sims_candidate": 400,
+    "sims_reference": 400,
+    "ms_per_move": null,
+    "max_plies": 300,
+    "temperature": 0.1,
+    "gumbel_add_noise": true,
+    "search_candidate": {
+      "shape": "training",
+      "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+      "gumbel": {
+        "c_scale": 0.1,
+        "c_scale_root": -1.0,
+        "c_visit": 50.0,
+        "c_visit_root": -1.0,
+        "full_tree": true,
+        "halving_div": 2,
+        "policy_temp": 1.0,
+        "q_visit_exp_root": 99.0,
+        "target_max_visit_cap": 5,
+        "target_q_rescale": true,
+        "target_untempered_prior": true,
+        "topk": 16,
+        "volatility_anchor": 0.05,
+        "volatility_factor_clip": 4.0,
+        "volatility_fpu": 0.0,
+        "volatility_q_scale": 0.0
+      },
+      "vloss_weight": 1,
+      "target_batch": 0,
+      "tree_reuse": "cold"
+    },
+    "search_reference": {
+      "shape": "training",
+      "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+      "gumbel": {
+        "c_scale": 0.1,
+        "c_scale_root": -1.0,
+        "c_visit": 50.0,
+        "c_visit_root": -1.0,
+        "full_tree": true,
+        "halving_div": 2,
+        "policy_temp": 1.0,
+        "q_visit_exp_root": 99.0,
+        "target_max_visit_cap": 5,
+        "target_q_rescale": true,
+        "target_untempered_prior": true,
+        "topk": 16,
+        "volatility_anchor": 0.05,
+        "volatility_factor_clip": 4.0,
+        "volatility_fpu": 0.0,
+        "volatility_q_scale": 0.0
+      },
+      "vloss_weight": 1,
+      "target_batch": 0,
+      "tree_reuse": "cold"
+    },
+    "volatility_candidate": null,
+    "uci_args": "",
+    "syzygy": "",
+    "syzygy_max_pieces": 0
+  },
+  "recommendation": {
+    "provisional_readout": "The equal-thirds value mixture is more consistently promising than the Ceres policy addition; C is the strongest point-estimate candidate but no contrast settles a winner.",
+    "next": "E121 versus D121 with policy fixed, followed preregistered matched D122/E122 replication, tests replacing retained SF value mass with native BT4/calibrated Ceres.",
+    "limits": "C versus A and D versus B jointly change SF fraction and add Ceres: they do not isolate whether SF should be retained. Opening bootstrap intervals are conditional on one training seed, not training-seed generalization."
+  }
+}

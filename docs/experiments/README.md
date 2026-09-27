@@ -1,5 +1,7 @@
 # Experiment records
 
+- [2026-09-19: Workspace storage migration and queued-job adoption](2026-09-19-workspace-storage.md)
+
 Start here for experiment planning and readouts. [Project guidance](../../CLAUDE.md)
 holds durable constraints; [evaluation](../eval_protocol.md) explains which
 measurements support which claims.
@@ -10,6 +12,17 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [58M policy/value teacher factorial](2026-09-19-58m-policy-value-factorial.md) | Reviewed pipeline queued:22.78M missing Ceres labels, target overlays, four fresh58M arms and four direct matches; active continuation preserved; no factorial results |
+| [BT4 CPU prefetch](2026-09-21-bt4-cpu-prefetch.md) | Opt-in one-batch CPU preparation overlap with bounded cleanup and exact feed/output parity; no GPU throughput or live-adoption claim |
+| [NumPy THP hot-load screen](2026-09-23-numpy-thp-hotload.md) | Bounded ABBA loader screen found no benefit from disabling current madvise huge-page advice; no production default change |
+| [BT4 raw JSON projection](2026-09-21-bt4-raw-json-projection.md) | Guarded projected decoding preserves consumed values and hashes; 1.67x CPU preparation on one banked shard, no GPU/live adoption claim |
+| [BT4 source read-ahead](2026-09-21-bt4-source-read.md) | Exact CPU input parity; chunk-aligned reads3.9–4.1x faster, measured CPU preparation1.31x; no end-to-end inference claim |
+| [Downside policy/value combination](2026-09-14-downside-value-combination.md) | Prospective draft: prefer a single-copy matched 35M policy correction; value choice awaits active arena, integration and launch not yet qualified |
+| [BT4 root-output reuse foundation](2026-09-23-bt4-root-output-reuse-foundation.md) | CPU-tested batched roots, explicit repetition-mode guard and optional C-search leaves; no game generator or throughput claim |
+| [BT4 output-adapter foundation](2026-09-23-bt4-output-adapter-foundation.md) | Shared legal BT4-to-compact float32 conversion with caller-owned buffer parity; CPU contract only, no generator or speedup claim |
+| [35M V50 training horizon](2026-09-18-v50-training-horizon.md) | Four complete 256-game matches: epochs 2/3/4 improve over epoch 1; latest increment and search-scaling interaction unresolved; first 50.55M pass +21.74 Elo [−9.66,+53.51] against 35M epoch 4; later expanded passes pending |
+| [BT4 labeling throughput and scale costs](2026-09-17-bt4-label-throughput.md) | Verified1.527M fresh joint rows at578.76 outer rows/s;48h/100M and20days/1B linear estimates; bounded batch-tuning and metadata-cost priorities |
+| [PFS-inspired frontier advancement](2026-09-14-pfs-frontier-advancement.md) | Proposed frozen-checkpoint search tests: diagnose admission, halving and interior bottlenecks; no runs or default changes |
+| [BT4 generation outcome policy](2026-09-22-bt4-outcome-policy.md) | Standalone six-man theoretical adjudication and unresolved-game discard contract; fake-tablebase CPU tests only, no generator wiring or real games |
 | [Full-width SF d8/d6 generation](2026-09-22-sf-shallow-generation.md) | Two equal-wall CPU generation arms; eligible rows, closed games, startup costs and limits; no strength or root-only generation claim |
 | [Bend subset successor and full ordinal proof](2026-09-21-bend-subset-successor.md) | Actual U64 borrow, compact successor, full Nat-indexed order/coverage/nonduplication and period; affine tables remain separate |
 | [Bend compact-index bijection](2026-09-21-bend-compact-index-bijection.md) | Nine new universal PEXT/PDEP range/inverse/bijection laws; carry-rippler ordering remains separate |
@@ -81,6 +94,9 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Varying-horizon online controller](varying_horizon_online_controller.md) | Preregistration and staged evaluation of online search continuation |
 | [Value head architecture](value_head_arch.md) | Historical April 2026 experiments |
 | [Historical ledger](../experiment_ledger.md) | Frozen July–September 2026 record, including yardsticks, gotchas and recovery snapshots |
+| [Completed factorial and next-day queue](2026-09-22-factorial-readout-next24h.md) | Four conditional contrasts; SF-free value and matched second-seed preregistration; BT4 GPU optimization result and storage recovery |
+| [Retained Syzygy option](2026-09-22-retained-syzygy-option.md) | Opt-in Stockfish SyzygyRetainOnNewGame forwarding with resume/provenance guards; no retention-performance claim |
+| [500M continuation and partial factorial readout](2026-09-21-500m-continuation.md) | A/B/C exact epochs complete; policy +6.79 and value +21.74 Elo with intervals crossing zero; recovered arena bookkeeping, D ongoing; packed storage and bounded SF reset optimization |
 | [BT4 complete pipeline screen](2026-09-21-bt4-pipeline-benchmark.md) | Fixed ABCCBA batch128 projected-decoder/prefetch comparison; exact inputs and outputs, complete labeling plus verification, reviewed and queued after factorial matches |
 
 These descriptions identify the records, not the state of a running experiment.
@@ -125,6 +141,13 @@ links to supporting experiments. The `experiment-readout` Skill covers the reusa
 analysis workflow.
 
 - [Ceres audited 58M collection](2026-09-19-ceres-audited-58m.md) — exact coverage and collector lineage.
+- [Ceres CPU history reductions](2026-09-21-ceres-history-reductions.md) — exact-byte CPU encoder comparison.
+Current evidence correction and scale plan: [September 16 bootstrap audit](2026-09-16-bootstrap-status-audit.md).
 - [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
 
 - [Bounded owning ring and calibrated collection comparison](2026-09-23-bend-owning-collections.md): Search.Tree payloads, layout failure/workaround, and matched-work timings; no scheduler adoption.
+
+- [Numeric-map shared-slot performance screen](2026-09-24-numeric-map-screen.md): hash versus dense scan, exact dictionary controls and matched hit/miss/churn loops; no engine/cache adoption.
+- [CBoard-key map replay](2026-09-24-chess-key-map-replay.md): actual source-derived position keys, exact dictionary replay and explicit history/EP cache-identity limits; no performance or cache-adoption claim.
+- [Matched CBoard-key map timing](2026-09-24-chess-map-timing.md): unchanged chess-derived key fixtures and explicit CPU target; paired hash-versus-scan operation timings, not production search/cache throughput.
+- [Legal-move cache cost screen](2026-09-26-move-cache-cost-screen.md): matched cached/direct work at controlled reuse, cold lifetimes and oversized allocation; local measurements, not engine speedups.
