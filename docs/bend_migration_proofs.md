@@ -1,5 +1,21 @@
 # Bend migration and proof inventory
 
+## P3 non-slider initialization and coordinate geometry
+
+The new `proofs/attack_geometry` suite targets the missing initialized pawn, knight
+and king mask connection: actual mask computation, persistence through the complete
+extras loop, and complete returned-pair correctness for typed `Chess.attack` after
+actual allocation and a preceding table loop. Independent natural file/rank targets
+and structural accumulation supply geometry; initial masks are not assumed correct.
+
+The three public statements retain explicit depth17/full64/square bounds. Earlier
+initialized-slider, attack-witness reduction and mandatory-check-path results remain
+unchanged. Complete initialized `attacked` composition, forward/reverse attack
+membership and singleton conditions through castling remain next. See [the dated
+record](experiments/2026-09-26-bend-initialized-leaper-geometry.md) for completed
+qualification and its limits. No production application responsibility changed.
+
+
 ## Hosted attack-witness qualification
 
 Hosted run **36281112782** passes all three public laws and the importing consumer, nineteen classified controls, four native coordinate-reference modes, three actual-code corruption checks, original compiler source/pin tests and unchanged repository lint on source `9213c3458023f75e814b566d593f3364b6070464`.
