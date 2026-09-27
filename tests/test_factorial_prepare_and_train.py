@@ -87,27 +87,20 @@ def test_publish_never_overwrites_existing_receipt(tmp_path):
 
 
 def test_real_base_a_runner_executes_and_binds_honest_receipt(tmp_path, monkeypatch):
-    # Original training runner dependencies are injected; the real child and
-    # file/target/summary admission path remain active.
+    # The disk-pause dependency must be loaded from the exact pinned helper
+    # file, not injected into sys.modules or assumed to live in operator_runtime.
     import types
 
-    disk = types.ModuleType("disk_pause")
-
-    class DiskGuard:
-        used = 0
-
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def check(self, _child):
-            return 0
-
-        @staticmethod
-        def resume_owned_group(_child):
-            pass
-
-    setattr(disk, "DiskPauseGuard", DiskGuard)
-    monkeypatch.setitem(sys.modules, "disk_pause", disk)
+    disk_pause = tmp_path / "training" / "A" / "disk_pause.py"
+    disk_pause.parent.mkdir(parents=True)
+    disk_pause.write_text(
+        "class DiskPauseGuard:\n"
+        "    used = 0\n"
+        "    def __init__(self, *args, **kwargs): pass\n"
+        "    def check(self, _child): return 0\n"
+        "    @staticmethod\n"
+        "    def resume_owned_group(_child): pass\n"
+    )
     operator = types.ModuleType("bootstrap_experiment_operator")
     setattr(
         operator,
@@ -152,7 +145,7 @@ def test_real_base_a_runner_executes_and_binds_honest_receipt(tmp_path, monkeypa
         "arm": "A",
         "runtime": str(tmp_path),
         "runtime_head": "test",
-        "pins": [],
+        "pins": [module.ref(disk_pause)],
         "out": str(out),
         "dataset_complete": str(targets),
         "base_roots": roots,
