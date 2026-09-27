@@ -177,8 +177,17 @@ def main():
         p["operator_runtime"], "disk_pause", path=disk_pause_pins[0]
     )
     disk_pause_guard: Any = getattr(disk_pause_module, "DiskPauseGuard")
+    operator_pins = [
+        item["path"]
+        for item in p["pins"]
+        if Path(item["path"]).name == "bootstrap_experiment_operator.py"
+    ]
+    require(
+        len(operator_pins) == 1,
+        "exactly one pinned bootstrap_experiment_operator.py helper required",
+    )
     operator_module = load_runtime_module(
-        p["operator_runtime"], "bootstrap_experiment_operator"
+        p["operator_runtime"], "bootstrap_experiment_operator", path=operator_pins[0]
     )
     terminate_owned_group: Any = getattr(operator_module, "terminate_owned_group")
 
