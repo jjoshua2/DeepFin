@@ -1465,6 +1465,40 @@ def test_the_search_key_is_the_dedup_key_plus_the_reversible_segments_repeats() 
     assert corpus.search_key(cut) == f"{corpus.dedup_key(cut)}|"
 
 
+def test_search_key_copies_only_the_reversible_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A long game does not copy history older than the reversible segment."""
+    route = (
+        "g1f3 g8f6 f3g1 f6g8 e2e4 e7e5 "
+        "g1f3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1 f6g8"
+    )
+    boards = [
+        board_after(""),
+        board_after(T2_ROUTE_REPEATED),
+        board_after(route),
+        board_after(route + " d2d4"),
+    ]
+    # A FEN may carry a halfmove clock longer than the available move stack.
+    fen_only = chess.Board(board_after(route).fen())
+    boards.append(fen_only)
+
+    original_copy = chess.Board.copy
+    copied_stacks: list[int | bool] = []
+
+    def record_copy(self: chess.Board, *, stack: int | bool = True) -> chess.Board:
+        copied_stacks.append(stack)
+        return original_copy(self, stack=stack)
+
+    monkeypatch.setattr(chess.Board, "copy", record_copy)
+    assert all(corpus.search_key(board).startswith(corpus.dedup_key(board) + "|")
+               for board in boards)
+    assert copied_stacks == [
+        min(int(board.halfmove_clock), len(board.move_stack))
+        for board in boards
+    ]
+
+
 #: ⚑ THE ROUTE WHERE THE TWO REGIMES DISAGREE: two knight cycles (every position
 #: a repeat) then ``e2e4 e7e5``.  The irreversible move clears the hash stack
 #: the UNFIXED encoder rebuilds repetition planes from, so at plies 9-10 the
