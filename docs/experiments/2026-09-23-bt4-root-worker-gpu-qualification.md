@@ -41,6 +41,7 @@ lock as failed admission rather than waiting on the GPU slot.
 
 The strict six-man pair is
 `~/projects/chess/data/syzygy_3-4-5:~/projects/chess/data/syzygy_6`.
+Expand both home-directory prefixes before passing this pair to an engine.
 The earlier real-file smoke opened 1,000 WDL and 1,000 DTZ material entries;
 the pilot must recheck capacity and file-stat inventory itself. The fixed
 seven-piece FEN is `4Q3/8/8/8/1BR4r/8/2p2k1K/8 w - - 0 1`.
