@@ -222,8 +222,9 @@ def test_cuda_requires_realized_device_zero_and_bounded_arena(tmp_path: Path) ->
         provider_options={"device_id": "0", "gpu_mem_limit": str(1024 ** 3)},
     )
     cuda.validate()
-    assert worker.GPU_LOCK == (
+    assert (
         Path(__file__).resolve().parents[1] / "scratchpad" / "gpu0_experiment.lock"
+        == worker.GPU_LOCK
     )
     with pytest.raises(ValueError, match="realized CUDA"):
         replace(cuda, providers=("CPUExecutionProvider",)).validate()
