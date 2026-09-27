@@ -13,6 +13,22 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [Native policy-map and buffer reuse](2026-09-22-native-buffer-reuse.md) | Linear Bend-owned reusable storage, packed transport and opt-in diagnostics; bounded CPU qualification |
+| [BT4 root worker CUDA qualification](2026-09-23-bt4-root-worker-gpu-qualification.md) | Preregistered tiny real-model 7-to-6 correctness and accepted-row writer-cost pilots under shared GPU lease; no GPU run yet |
+| [BT4 opt-in root-policy worker](2026-09-23-bt4-root-policy-worker.md) | Experimental CPU-capable ONNX generator and atomic whole-game writer with strict rule50 six-man outcomes, raw teacher retention and >=7-piece rows; fake CPU checks only, no searched actor or replay consumer |
+| [BT4 in-memory root-policy stepper](2026-09-23-bt4-root-policy-stepper.md) | Batch-friendly root-policy game state with explicit historical or rule50-aware six-man outcome mode, exact float32 source retention, outcome backfill and whole-game discard; CPU fakes only, no generator wiring |
+| [AVI-style one-ply value backup](2026-09-11-avi-value-backup.md) | One-ply evaluator, provenance-gated sidecar and value-only rewrite implemented; no executed AVI corpus, training or strength result |
+| [Exact gather CPU screen](2026-09-22-exact-gather-cpu-screen.md) | Exact preallocated gather CPU prototype/profile; isolated speedup measured, runtime adoption deferred pending end-to-end qualification |
+| [Bound packed output accounting](2026-09-22-packed-output-accounting.md) | Removes repeated output walks during input verification; existing caps retained, no new GPU launch |
+| [Storage observer retry and BT4 results](2026-09-22-packed-observer-retry.md) | First-batch observer schema failure preserved; corrected real-sampler regression and fresh retry; BT4 exact pipeline screen passed |
+| [Host-overlap runner preparation](2026-09-22-host-overlap-runner.md) | Frozen-runtime CPU qualification and bounded OFF/ON GPU pair tooling; no full-stream or GPU launch yet |
+| [Selected-E sparse source audit](2026-09-27-selected-e-sparse-source-audit.md) | NO-LAUNCH receipt map and game-cluster sample blocker; no authenticated sparse adapter or throughput result |
+| [Selected-E complete-game index seam](2026-09-27-selected-e-game-index-seam.md) | CPU-only closed small-fixture identity reader and exact whole-game sampling; no registered E scan or row admission |
+| [Selected-E one-teacher label-cost kernel](2026-09-27-selected-e-label-cost-kernel.md) | NO-LAUNCH CPU S/D kernel with exact selected and original-E blend byte pins; authenticated sparse-E adapter, postarena gate and full-wall screen remain |
+| [SF-free E admission and paired seed replication](2026-09-22-sffree-E-admission.md) | Frozen five-job source and independent CPU admission review; no result claim. |
+| [Bootstrap research toward RL restart](2026-09-06-bootstrap-research-roadmap.md) | Overall data, mixing, objective and search decisions toward a larger bootstrap and RL restart |
+| [Graded TailRL bootstrap screen](2026-09-06-tailrl-bootstrap.md) | Exact finite-action objective and bounded CPU mechanism comparison; no training or strength result |
+| [TailRL-inspired policy coverage](2026-09-05-tailrl-policy-coverage.md) | Frozen-cohort checkpoint diagnostic and isolated upper-tail loss prototype; no training readout |
+| [Overlay hot-load diagnostic](2026-09-23-overlay-hotload-diagnostic.md) | Exact-parity ABBA on 65,536 B rows: 62.38% less measured loading time; trainer benefit remains unmeasured |
 | [BT4 own-game teacher source](2026-09-23-bt4-own-game-source.md) | Full strict ordinary-bank replay and 752-row reusable policy/native-WDL source; no training admission |
 | [SF-rooted rule-aware corpus outcome mode](2026-09-23-sf-rule50-corpus-mode.md) | Explicit theoretical versus strict six-man rule-aware labels, UCI request guard and derived provenance; synthetic tests plus one bounded real-Stockfish search fixture |
 | [BT4 verified-session foundation](2026-09-23-bt4-verified-session-foundation.md) | CPU fake-session artifact, head, provider and exact-feed checks; no writer, real model run or throughput claim |
