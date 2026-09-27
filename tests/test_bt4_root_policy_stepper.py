@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
-from typing import cast
+from typing import Any, cast
 
 import chess
+import chess.syzygy
 import numpy as np
 import pytest
 
@@ -84,7 +85,28 @@ class FakeBatchEvaluator:
         return outputs
 
 
-def make_stepper(
+class FakeMatchTablebase:
+    def __init__(self, wdl: int | None, dtz: int | None) -> None:
+        self.raw_wdl = wdl
+        self.raw_dtz = dtz
+        self.wdl = {"KQBNRvK": object()}
+        self.dtz = {"KQBNRvK": object()}
+        self.probes: list[str] = []
+
+    def probe_wdl(self, board: chess.Board) -> int:
+        self.probes.append("wdl")
+        if self.raw_wdl is None:
+            raise chess.syzygy.MissingTableError(board.fen())
+        return self.raw_wdl
+
+    def probe_dtz(self, board: chess.Board) -> int:
+        self.probes.append("dtz")
+        if self.raw_dtz is None:
+            raise chess.syzygy.MissingTableError(board.fen())
+        return self.raw_dtz
+
+
+def make_theoretical_stepper(
     boards: dict[int, chess.Board], *, max_plies: int,
 ) -> tuple[policy.BT4RootPolicyStepper, dict[int, np.random.Generator]]:
     rngs = {slot: np.random.default_rng(100 + slot) for slot in boards}
@@ -93,6 +115,7 @@ def make_stepper(
         input_history_encoding=HISTORY, input_extra_features=FEATURES,
         history_rep_fix=False,
         model_sha256=MODEL_SHA,
+        outcome_mode="theoretical_wdl",
     )
     return stepper, rngs
 
@@ -125,7 +148,7 @@ def test_seven_to_six_capture_adjudicates_before_next_inference(
 
     tb = FakeTablebase()
     monkeypatch.setattr(tablebase, "get_tablebase", lambda _path: tb)
-    stepper, _rngs = make_stepper({0: chess.Board(SEVEN_MAN)}, max_plies=8)
+    stepper, _rngs = make_theoretical_stepper({0: chess.Board(SEVEN_MAN)}, max_plies=8)
     evaluator = FakeBatchEvaluator(preferred_uci="b1c2")
 
     batch, choices = run_fake_batch(stepper, evaluator, temperature=0.0)
@@ -158,7 +181,7 @@ def test_seven_to_six_capture_adjudicates_before_next_inference(
 
 
 def test_capped_game_drops_every_buffered_row() -> None:
-    stepper, _rngs = make_stepper({0: chess.Board()}, max_plies=1)
+    stepper, _rngs = make_theoretical_stepper({0: chess.Board()}, max_plies=1)
     evaluator = FakeBatchEvaluator(preferred_uci="e2e4")
     _batch, choices = run_fake_batch(stepper, evaluator, temperature=0.0)
     assert choices[0].move.uci() == "e2e4"
@@ -168,6 +191,7 @@ def test_capped_game_drops_every_buffered_row() -> None:
     assert finalized == (
         policy.BT4DiscardedGame(
             0, "max_plies_unresolved", "above_six_man", 1, 1,
+            stepper.outcome_provenance,
         ),
     )
     assert stepper.counts.games_discarded == 1
@@ -179,7 +203,7 @@ def test_capped_game_drops_every_buffered_row() -> None:
 def test_natural_claim_backfills_draw_separately_from_teacher() -> None:
     board = chess.Board()
     board.halfmove_clock = 98
-    stepper, _rngs = make_stepper({0: board}, max_plies=5)
+    stepper, _rngs = make_theoretical_stepper({0: board}, max_plies=5)
     evaluator = FakeBatchEvaluator(preferred_uci="g1f3")
     _batch, choices = run_fake_batch(stepper, evaluator, temperature=0.0)
     assert choices[0].move.uci() == "g1f3"
@@ -201,16 +225,20 @@ def test_both_colors_receive_their_own_outcome_sign(
 ) -> None:
     def two_ply_result(
         _board: chess.Board, *, plies: int, max_plies: int, syzygy_path: str,
+        outcome_mode: policy.BT4OutcomeMode,
+        match_tablebase: chess.syzygy.Tablebase | None,
     ) -> BT4OutcomeDecision | None:
         assert max_plies == 4
         assert syzygy_path == "fake:pair"
+        assert outcome_mode == "theoretical_wdl"
+        assert match_tablebase is None
         return (
             BT4OutcomeDecision("1-0", "syzygy", "fake_two_ply")
             if plies == 2 else None
         )
 
     monkeypatch.setattr(policy, "decide_bt4_outcome", two_ply_result)
-    stepper, _rngs = make_stepper({0: chess.Board()}, max_plies=4)
+    stepper, _rngs = make_theoretical_stepper({0: chess.Board()}, max_plies=4)
     for uci in ("e2e4", "e7e5"):
         _batch, choices = run_fake_batch(
             stepper, FakeBatchEvaluator(preferred_uci=uci), temperature=0.0,
@@ -227,12 +255,13 @@ def test_both_colors_receive_their_own_outcome_sign(
 
 def test_claimable_six_man_natural_terminal_skips_inference() -> None:
     board = chess.Board("7k/8/8/8/8/8/8/KQBNR3 w - - 99 1")
-    stepper, _rngs = make_stepper({0: board}, max_plies=8)
+    stepper, _rngs = make_theoretical_stepper({0: board}, max_plies=8)
     batch, finalized = stepper.prepare_roots()
     assert batch is None
     assert finalized == (
         policy.BT4CompletedGame(
             0, "1/2-1/2", "natural", "fifty_moves", (),
+            stepper.outcome_provenance,
         ),
     )
     assert stepper.counts.games_completed == 1
@@ -242,7 +271,7 @@ def test_claimable_six_man_natural_terminal_skips_inference() -> None:
 def test_wrong_order_rejects_entire_batch_before_rng_or_board_mutation() -> None:
     other = chess.Board()
     other.push_uci("d2d4")
-    stepper, rngs = make_stepper({0: chess.Board(), 1: other}, max_plies=3)
+    stepper, rngs = make_theoretical_stepper({0: chess.Board(), 1: other}, max_plies=3)
     evaluator = FakeBatchEvaluator()
     batch, finalized = stepper.prepare_roots()
     assert batch is not None
@@ -284,7 +313,7 @@ def test_wrong_order_rejects_entire_batch_before_rng_or_board_mutation() -> None
 
 
 def test_returned_root_copies_cannot_mutate_owned_game() -> None:
-    stepper, rngs = make_stepper({0: chess.Board()}, max_plies=1)
+    stepper, rngs = make_theoretical_stepper({0: chess.Board()}, max_plies=1)
     evaluator = FakeBatchEvaluator(preferred_uci="e2e4")
     batch, _finalized = stepper.prepare_roots()
     assert batch is not None
@@ -299,7 +328,7 @@ def test_returned_root_copies_cannot_mutate_owned_game() -> None:
 
 
 def test_returned_input_copies_cannot_mutate_owned_game() -> None:
-    stepper, rngs = make_stepper({0: chess.Board()}, max_plies=1)
+    stepper, rngs = make_theoretical_stepper({0: chess.Board()}, max_plies=1)
     evaluator = FakeBatchEvaluator(preferred_uci="e2e4")
     batch, finalized = stepper.prepare_roots()
     assert batch is not None
@@ -327,6 +356,7 @@ def test_history_mode_is_bound_before_prepare_and_apply(
                 boards, rngs, max_plies=1, syzygy_path="fake:pair",
                 input_history_encoding=HISTORY, input_extra_features=FEATURES,
                 history_rep_fix=cast(bool, invalid), model_sha256=MODEL_SHA,
+                outcome_mode="theoretical_wdl",
             )
     for observed in (None, True):
         monkeypatch.setattr(policy.rep_fix, "current", lambda observed=observed: observed)
@@ -335,10 +365,11 @@ def test_history_mode_is_bound_before_prepare_and_apply(
                 boards, rngs, max_plies=1, syzygy_path="fake:pair",
                 input_history_encoding=HISTORY, input_extra_features=FEATURES,
                 history_rep_fix=False, model_sha256=MODEL_SHA,
+                outcome_mode="theoretical_wdl",
             )
 
     monkeypatch.setattr(policy.rep_fix, "current", lambda: False)
-    stepper, rngs = make_stepper(boards, max_plies=1)
+    stepper, rngs = make_theoretical_stepper(boards, max_plies=1)
     monkeypatch.setattr(policy.rep_fix, "current", lambda: True)
     with pytest.raises(RuntimeError, match="history_rep_fix"):
         stepper.prepare_roots()
@@ -368,7 +399,7 @@ def test_history_mode_is_bound_before_prepare_and_apply(
 
 
 def test_native_teacher_head_contract_cannot_change_between_plies() -> None:
-    stepper, rngs = make_stepper({0: chess.Board()}, max_plies=2)
+    stepper, rngs = make_theoretical_stepper({0: chess.Board()}, max_plies=2)
     evaluator = FakeBatchEvaluator(preferred_uci="e2e4")
     run_fake_batch(stepper, evaluator, temperature=0.0)
     batch, finalized = stepper.prepare_roots()
@@ -390,7 +421,7 @@ def test_prepare_failure_retains_earlier_terminal_event_for_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     checkmated = chess.Board("7k/6Q1/5K2/8/8/8/8/8 b - - 0 1")
-    stepper, _rngs = make_stepper({0: checkmated, 1: chess.Board()}, max_plies=1)
+    stepper, _rngs = make_theoretical_stepper({0: checkmated, 1: chess.Board()}, max_plies=1)
     original_encode = policy.encode_cboard
     calls = 0
 
@@ -417,7 +448,9 @@ def test_prepare_failure_retains_earlier_terminal_event_for_retry(
     assert batch is not None
     assert [root.slot_id for root in batch.roots] == [1]
     assert finalized == (
-        policy.BT4CompletedGame(0, "1-0", "natural", "checkmate", ()),
+        policy.BT4CompletedGame(
+            0, "1-0", "natural", "checkmate", (), stepper.outcome_provenance,
+        ),
     )
     assert stepper.counts.games_completed == 1
     boards, x_batch = batch.inference_inputs()
@@ -430,7 +463,139 @@ def test_prepare_failure_retains_earlier_terminal_event_for_retry(
 
 
 def test_equal_policy_probabilities_remain_valid() -> None:
-    stepper, _rngs = make_stepper({0: chess.Board()}, max_plies=1)
+    stepper, _rngs = make_theoretical_stepper({0: chess.Board()}, max_plies=1)
     evaluator = FakeBatchEvaluator()  # uniform legal policy with many equal weights
     _batch, selected = run_fake_batch(stepper, evaluator, temperature=0.0)
     assert selected[0].move in chess.Board().legal_moves
+
+
+def _match_stepper(
+    boards: dict[int, chess.Board], fake: FakeMatchTablebase, *, max_plies: int,
+) -> policy.BT4RootPolicyStepper:
+    return policy.BT4RootPolicyStepper(
+        boards, {slot: np.random.default_rng(100 + slot) for slot in boards},
+        max_plies=max_plies, syzygy_path="fake:pair",
+        input_history_encoding=HISTORY, input_extra_features=FEATURES,
+        history_rep_fix=False, model_sha256=MODEL_SHA,
+        outcome_mode="rule50_match_v1",
+        match_tablebase=cast(chess.syzygy.Tablebase, cast(object, fake)),
+    )
+
+
+def test_match_capture_resolves_before_second_inference_and_stamps_mode() -> None:
+    fake = FakeMatchTablebase(-2, -1)
+    stepper = _match_stepper({0: chess.Board(SEVEN_MAN)}, fake, max_plies=8)
+    evaluator = FakeBatchEvaluator(preferred_uci="b1c2")
+    _batch, choices = run_fake_batch(stepper, evaluator, temperature=0.0)
+    assert choices[0].move.uci() == "b1c2"
+
+    next_batch, finalized = stepper.prepare_roots()
+    assert next_batch is None
+    assert len(finalized) == 1
+    game = finalized[0]
+    assert isinstance(game, policy.BT4CompletedGame)
+    assert (game.result, game.termination, game.detail) == (
+        "1-0", "syzygy", "rule50_match_wdl_dtz",
+    )
+    assert game.outcome_provenance == stepper.outcome_provenance
+    assert game.outcome_provenance.mode == "rule50_match_v1"
+    assert game.outcome_provenance.max_pieces == 6
+    assert game.outcome_provenance.wdl_table_count == 1
+    assert game.outcome_provenance.dtz_table_count == 1
+    assert game.records[0].played.teacher.wdl_raw.tolist() == [0.05, 0.10, 0.85]
+    assert game.records[0].wdl_target == 0
+    assert evaluator.calls == evaluator.rows == 1
+    assert fake.probes == ["wdl", "dtz"]
+
+
+def test_match_positive_clock_decisive_discard_is_not_draw_or_inferred() -> None:
+    board = chess.Board("7k/8/8/8/8/8/8/KQBNR3 w - - 1 1")
+    fake = FakeMatchTablebase(2, 1)
+    stepper = _match_stepper({0: board}, fake, max_plies=8)
+    batch, finalized = stepper.prepare_roots()
+    assert batch is None
+    assert finalized == (
+        policy.BT4DiscardedGame(
+            0, "rule50_unresolved", "positive_clock_decisive_wdl", 0, 0,
+            stepper.outcome_provenance,
+        ),
+    )
+    assert stepper.counts.discarded_by_termination == {"rule50_unresolved": 1}
+    assert stepper.counts.rows_emitted == 0
+    assert fake.probes == ["wdl", "dtz"]
+
+
+def test_match_missing_probe_fails_before_other_slot_finalizes_and_can_retry() -> None:
+    checkmated = chess.Board("7k/6Q1/5K2/8/8/8/8/8 b - - 0 1")
+    six_man = chess.Board("7k/8/8/8/8/8/8/KQBNR3 w - - 0 1")
+    fake = FakeMatchTablebase(None, 1)
+    stepper = _match_stepper({0: checkmated, 1: six_man}, fake, max_plies=8)
+    with pytest.raises(tablebase.MatchTablebaseError, match="missing eligible"):
+        stepper.prepare_roots()
+    assert stepper.counts.games_completed == 0
+    assert stepper.counts.games_discarded == 0
+    assert stepper.counts.rows_emitted == stepper.counts.rows_discarded == 0
+    fake.raw_wdl = 2
+    batch, finalized = stepper.prepare_roots()
+    assert batch is None
+    assert len(finalized) == 2
+    assert all(isinstance(event, policy.BT4CompletedGame) for event in finalized)
+    assert [
+        event.result for event in finalized
+        if isinstance(event, policy.BT4CompletedGame)
+    ] == ["1-0", "1-0"]
+    assert stepper.counts.games_completed == 2
+    assert stepper.counts.games_discarded == 0
+
+
+def test_match_requires_explicit_mode_and_covered_six_man_capacity() -> None:
+    fake = FakeMatchTablebase(2, 1)
+    with pytest.raises(TypeError, match="outcome_mode"):
+        cast(Any, policy.BT4RootPolicyStepper)(
+            {0: chess.Board()}, {0: np.random.default_rng(100)},
+            max_plies=8, syzygy_path="fake:pair",
+            input_history_encoding=HISTORY, input_extra_features=FEATURES,
+            history_rep_fix=False, model_sha256=MODEL_SHA,
+        )
+    with pytest.raises(ValueError, match="opened strict tablebase"):
+        policy.BT4RootPolicyStepper(
+            {0: chess.Board()}, {0: np.random.default_rng(100)},
+            max_plies=8, syzygy_path="fake:pair",
+            input_history_encoding=HISTORY, input_extra_features=FEATURES,
+            history_rep_fix=False, model_sha256=MODEL_SHA,
+            outcome_mode="rule50_match_v1",
+        )
+    fake.dtz = {"KQvK": object()}
+    with pytest.raises(tablebase.MatchTablebaseError, match="capacity"):
+        _match_stepper({0: chess.Board()}, fake, max_plies=8)
+
+
+def test_mixed_outcome_mode_rejects_all_staged_events_before_state_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkmated = chess.Board("7k/6Q1/5K2/8/8/8/8/8 b - - 0 1")
+    six_man = chess.Board("7k/8/8/8/8/8/8/KQBNR3 w - - 0 1")
+    stepper = _match_stepper(
+        {0: checkmated, 1: six_man}, FakeMatchTablebase(2, 1), max_plies=8,
+    )
+    original = policy.decide_bt4_outcome
+
+    def wrong_second(
+        board: chess.Board, *, plies: int, max_plies: int,
+        syzygy_path: str, outcome_mode: policy.BT4OutcomeMode,
+        match_tablebase: chess.syzygy.Tablebase | None,
+    ) -> BT4OutcomeDecision | None:
+        if board.turn == chess.WHITE:
+            return BT4OutcomeDecision("1-0", "syzygy", "wrong_mode")
+        return original(
+            board, plies=plies, max_plies=max_plies,
+            syzygy_path=syzygy_path, outcome_mode=outcome_mode,
+            match_tablebase=match_tablebase,
+        )
+
+    monkeypatch.setattr(policy, "decide_bt4_outcome", wrong_second)
+    with pytest.raises(ValueError, match="outcome mode differs"):
+        stepper.prepare_roots()
+    assert stepper.counts.games_completed == 0
+    assert stepper.counts.games_discarded == 0
+    assert stepper.counts.rows_emitted == stepper.counts.rows_discarded == 0

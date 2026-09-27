@@ -1,34 +1,38 @@
 """Opt-in outcome decisions for future BT4 selfplay generation.
 
-This is a root-boundary policy, not a search or shard-writer hook. Call
-``preflight_six_man_tablebases`` once in each worker before its first game,
-then call ``decide_bt4_outcome`` before evaluating each root. ``None`` means
-play on. A decision with ``result is None`` means discard the whole unfinished
-game: replay rows require a known game outcome, and ``"*"`` must not become a
-draw label.
+This is a root-boundary policy, not a search or shard-writer hook. Historical
+``theoretical_wdl`` callers use ``preflight_six_man_tablebases`` once per
+worker. ``rule50_match_v1`` callers instead own a handle returned by
+``tablebase.open_strict_match_tablebase`` and pass it to each decision. Call
+``decide_bt4_outcome`` before evaluating each root. ``None`` means play on.
+A decision with ``result is None`` means discard the whole unfinished game:
+replay rows require a known game outcome, and ``"*"`` must not become a draw.
 
-Natural results follow the SF-rooted generator's claim-aware python-chess
-rule. Syzygy results follow the existing *training-label* convention in
-``tablebase.tb_adjudicate_result``: cursed wins and blessed losses are decisive
-theoretical outcomes. Syzygy WDL assumes the fifty-move clock was just reset;
-this adjudication is not a claim-aware verdict for the current clock.
+The caller must choose an outcome mode. ``theoretical_wdl`` retains the
+historical training-label convention. ``rule50_match_v1`` uses the separately
+opened strict WDL/DTZ match tablebase, refuses missing eligible probes, and
+discards an unresolved positive-clock decisive position. Native teacher
+outputs are independent of either game-result convention.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import chess
+import chess.syzygy
 
 from chess_anti_engine import tablebase
 from chess_anti_engine.utils.syzygy import SEPARATOR, require_tablebases
 
 SIX_MAN_MAX_PIECES = 6
+BT4OutcomeMode = Literal["theoretical_wdl", "rule50_match_v1"]
 
 BT4Termination = Literal[
-    "natural", "syzygy", "tablebase_unavailable", "max_plies_unresolved"
+    "natural", "syzygy", "tablebase_unavailable", "rule50_unresolved",
+    "max_plies_unresolved",
 ]
 
 
@@ -39,10 +43,11 @@ class BT4OutcomeDecision:
     result: str | None
     termination: BT4Termination
     detail: str
+    outcome_mode: BT4OutcomeMode = "theoretical_wdl"
 
 
 def preflight_six_man_tablebases(syzygy_path: str) -> tuple[str, str]:
-    """Refuse a missing half of the production pair before worker generation.
+    """Preflight the historical training-label pair before worker generation.
 
     This checks directory presence, opens each component, and verifies the
     combined handle has both WDL and DTZ files. It cannot prove every material
@@ -71,38 +76,61 @@ def decide_bt4_outcome(
     plies: int,
     max_plies: int,
     syzygy_path: str,
+    outcome_mode: BT4OutcomeMode,
+    match_tablebase: chess.syzygy.Tablebase | None = None,
 ) -> BT4OutcomeDecision | None:
     """Decide at a BT4 root, before its model inference or search.
 
     Natural/claimable outcomes take precedence. At six pieces or fewer, a
-    failed probe (including castling rights or missing material coverage)
-    discards the game immediately instead of playing on or labelling it draw.
-    A covered Syzygy position is adjudicated even if the ply cap was reached
-    on the same root. Above six pieces the cap discards an unresolved game.
+    historical-mode failed probe discards the game. Match mode requires a
+    separately opened strict tablebase; missing covered material raises and
+    must fail the run, while an undecidable positive-clock position discards
+    the game with its own counter. A covered result precedes the ply cap.
     """
     if plies < 0 or max_plies <= 0:
         raise ValueError("BT4 plies must be nonnegative and max_plies positive")
     if not syzygy_path:
         raise ValueError("BT4 six-man adjudication needs a Syzygy path")
+    if cast(str, outcome_mode) not in ("theoretical_wdl", "rule50_match_v1"):
+        raise ValueError("BT4 outcome mode is unsupported")
+    if outcome_mode == "rule50_match_v1" and match_tablebase is None:
+        raise ValueError("BT4 rule50 match mode requires a strict tablebase handle")
+    if outcome_mode == "theoretical_wdl" and match_tablebase is not None:
+        raise ValueError("BT4 theoretical mode cannot silently ignore a match tablebase")
 
     natural = board.outcome(claim_draw=True)
     if natural is not None:
         return BT4OutcomeDecision(
-            natural.result(), "natural", natural.termination.name.lower()
+            natural.result(), "natural", natural.termination.name.lower(), outcome_mode,
         )
 
     if chess.popcount(board.occupied) <= SIX_MAN_MAX_PIECES:
         if not tablebase.is_tb_eligible(board):
             return BT4OutcomeDecision(
-                None, "tablebase_unavailable", "castling_rights"
+                None, "tablebase_unavailable", "castling_rights", outcome_mode,
+            )
+        if outcome_mode == "rule50_match_v1":
+            assert match_tablebase is not None
+            result = tablebase.rule50_match_result(
+                board, match_tablebase, max_pieces=SIX_MAN_MAX_PIECES,
+            )
+            if result is None:
+                return BT4OutcomeDecision(
+                    None, "rule50_unresolved", "positive_clock_decisive_wdl",
+                    outcome_mode,
+                )
+            return BT4OutcomeDecision(
+                result, "syzygy", "rule50_match_wdl_dtz", outcome_mode,
             )
         result = tablebase.tb_adjudicate_result(board, syzygy_path)
         if result is None:
             return BT4OutcomeDecision(
-                None, "tablebase_unavailable", "missing_material"
+                None, "tablebase_unavailable", "missing_material", outcome_mode,
             )
-        return BT4OutcomeDecision(result, "syzygy", "theoretical_wdl")
+        return BT4OutcomeDecision(result, "syzygy", "theoretical_wdl", outcome_mode)
 
     if plies >= max_plies:
-        return BT4OutcomeDecision(None, "max_plies_unresolved", "above_six_man")
+        return BT4OutcomeDecision(
+            None, "max_plies_unresolved", "above_six_man", outcome_mode,
+        )
     return None

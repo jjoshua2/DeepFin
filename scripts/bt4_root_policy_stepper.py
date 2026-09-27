@@ -12,10 +12,13 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from typing import cast
 
 import chess
+import chess.syzygy
 import numpy as np
 
+from chess_anti_engine import tablebase
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
@@ -27,6 +30,8 @@ from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
 from chess_anti_engine.moves.leela_index import compact_index_for_move
 from chess_anti_engine.selfplay.bt4_outcome import (
     BT4OutcomeDecision,
+    BT4OutcomeMode,
+    SIX_MAN_MAX_PIECES,
     decide_bt4_outcome,
 )
 from chess_anti_engine.selfplay.game import _result_to_wdl
@@ -78,12 +83,25 @@ class BT4LabeledPly:
 
 
 @dataclass(frozen=True)
+class BT4OutcomeProvenance:
+    """In-memory outcome contract; a writer must separately pin actual TB files."""
+
+    mode: BT4OutcomeMode
+    syzygy_path: str
+    max_pieces: int
+    wdl_table_count: int | None
+    dtz_table_count: int | None
+    handle_contract: str
+
+
+@dataclass(frozen=True)
 class BT4CompletedGame:
     slot_id: int
     result: str
     termination: str
     detail: str
     records: tuple[BT4LabeledPly, ...]
+    outcome_provenance: BT4OutcomeProvenance
 
 
 @dataclass(frozen=True)
@@ -93,6 +111,7 @@ class BT4DiscardedGame:
     detail: str
     attempted_plies: int
     discarded_rows: int
+    outcome_provenance: BT4OutcomeProvenance
 
 
 BT4FinalizedGame = BT4CompletedGame | BT4DiscardedGame
@@ -152,7 +171,10 @@ def _immutable_teacher(root: BT4RootOutput) -> BT4RootOutput:
 class BT4RootPolicyStepper:
     """Own several board histories until each resolves or is discarded.
 
-    The caller must preflight the Syzygy pair once per worker. This class does
+    The caller must explicitly select the outcome mode. Match mode requires a
+    caller-owned handle from ``open_strict_match_tablebase``; this class checks
+    WDL/DTZ capacity but does not independently attest file identity. A future
+    writer must retain that separate strict-open provenance. This class does
     not invoke a model, choose a hidden temperature, or write replay shards.
     """
 
@@ -167,6 +189,8 @@ class BT4RootPolicyStepper:
         input_extra_features: str,
         history_rep_fix: bool,
         model_sha256: str,
+        outcome_mode: BT4OutcomeMode,
+        match_tablebase: chess.syzygy.Tablebase | None = None,
     ) -> None:
         if not boards or set(boards) != set(rngs):
             raise ValueError("BT4 games need matching nonempty board/RNG slots")
@@ -174,6 +198,30 @@ class BT4RootPolicyStepper:
             raise ValueError("BT4 games need positive max_plies and a Syzygy path")
         if len(model_sha256) != 64 or any(c not in "0123456789abcdef" for c in model_sha256):
             raise ValueError("BT4 games need a lowercase model SHA-256")
+        if cast(str, outcome_mode) not in ("theoretical_wdl", "rule50_match_v1"):
+            raise ValueError("BT4 games need an explicit supported outcome mode")
+        if outcome_mode == "rule50_match_v1":
+            if match_tablebase is None:
+                raise ValueError("BT4 rule50 match mode needs an opened strict tablebase")
+            tablebase.SyzygyProbe(
+                syzygy_path, max_pieces=SIX_MAN_MAX_PIECES,
+                rule50_aware=True, tablebase=match_tablebase,
+            )
+            wdl_tables, dtz_tables = len(match_tablebase.wdl), len(match_tablebase.dtz)
+            handle_contract = "caller_owned_capacity_checked"
+        else:
+            if match_tablebase is not None:
+                raise ValueError("BT4 theoretical mode cannot ignore a match tablebase")
+            wdl_tables = dtz_tables = None
+            handle_contract = "historical_cached_path"
+        self.outcome_mode: BT4OutcomeMode = outcome_mode
+        self._match_tablebase = match_tablebase
+        self.outcome_provenance = BT4OutcomeProvenance(
+            mode=outcome_mode, syzygy_path=syzygy_path,
+            max_pieces=SIX_MAN_MAX_PIECES,
+            wdl_table_count=wdl_tables, dtz_table_count=dtz_tables,
+            handle_contract=handle_contract,
+        )
         self.input_history_encoding = normalize_lc0_history_encoding(input_history_encoding)
         self.input_extra_features = input_extra_features
         input_plane_count(input_extra_features)
@@ -220,6 +268,8 @@ class BT4RootPolicyStepper:
     def _finalize(self, slot_id: int, decision: BT4OutcomeDecision) -> BT4FinalizedGame:
         if decision.result not in (None, "1-0", "0-1", "1/2-1/2"):
             raise ValueError(f"BT4 outcome has unsupported result {decision.result!r}")
+        if decision.outcome_mode != self.outcome_mode:
+            raise ValueError("BT4 outcome mode differs from the stepper contract")
         game = self._games[slot_id]
         game.done = True
         attempted = len(game.records)
@@ -232,6 +282,7 @@ class BT4RootPolicyStepper:
             game.records.clear()
             return BT4DiscardedGame(
                 slot_id, decision.termination, decision.detail, attempted, attempted,
+                self.outcome_provenance,
             )
         labeled = tuple(
             BT4LabeledPly(
@@ -244,6 +295,7 @@ class BT4RootPolicyStepper:
         self._rows_emitted += len(labeled)
         return BT4CompletedGame(
             slot_id, decision.result, decision.termination, decision.detail, labeled,
+            self.outcome_provenance,
         )
 
     def prepare_roots(self) -> tuple[PreparedBatch | None, tuple[BT4FinalizedGame, ...]]:
@@ -260,11 +312,14 @@ class BT4RootPolicyStepper:
                 continue
             decision = decide_bt4_outcome(
                 game.board, plies=len(game.records), max_plies=self.max_plies,
-                syzygy_path=self.syzygy_path,
+                syzygy_path=self.syzygy_path, outcome_mode=self.outcome_mode,
+                match_tablebase=self._match_tablebase,
             )
             if decision is not None:
                 if decision.result not in (None, "1-0", "0-1", "1/2-1/2"):
                     raise ValueError(f"BT4 outcome has unsupported result {decision.result!r}")
+                if decision.outcome_mode != self.outcome_mode:
+                    raise ValueError("BT4 outcome mode differs from the stepper contract")
                 decisions.append((slot_id, decision))
                 continue
             x = np.asarray(encode_cboard(
