@@ -1,5 +1,11 @@
 # Bend migration and proof inventory
 
+## Initialized attack composition (current increment)
+
+Three new public contracts connect actual initialized six-piece attack queries, attacked, and singleton in_check to independent target-centred geometric masks and a per-square witness scan. Every result retains the complete same initialized array; input mask/read certificates are derived from existing producers. Explicit depth17/full128 blocks/full64 extras/bounded-square conditions remain. Singleton kings are an additional check-law premise, not implied by representation consistency.
+
+Source qualification for this increment is recorded in [the readout](experiments/2026-09-26-bend-initialized-attacked.md); no complete aggregate execution is implied. Universal forward/reverse ray membership and singleton propagation through castling remain separate. Existing proofs and production code are unchanged.
+
 ## P3 non-slider initialization and coordinate geometry
 
 Hosted run **36284142030** passes all three public laws, importing consumer, nineteen controls, four native initialization/query modes, three compiled/executed actual-code corruptions, original compiler checks and unchanged repository lint on source `6fd072fe09f3e507940f3723719588e54b06c062`.

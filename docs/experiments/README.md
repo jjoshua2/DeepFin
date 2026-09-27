@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Initialized attack composition](2026-09-26-bend-initialized-attacked.md) | Three source contracts composing initialized six-piece masks, attacked and singleton in_check; complete-array results; target-centred geometry, not complete castling legality |
 | [Initialized non-slider geometry](2026-09-26-bend-initialized-leaper-geometry.md) | Three source contracts connect coordinate masks to actual extras storage and initialized pawn/knight/king queries; full attacked composition remains separate |
 | [Attack witnesses and king selection](2026-09-26-bend-attack-witness.md) | Actual attack aggregation equals per-square witnesses; explicit singleton-king in_check bridge; mask geometry remains separate; modular180/543 |
 | [Generated castling mandatory checks](2026-09-26-bend-castle-safety.md) | Six source laws prove required child-check execution and complete generator equivalence to explicit forced castling checks; four-mode native qualification; modular177/524, lint unqualified |
