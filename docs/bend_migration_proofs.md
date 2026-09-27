@@ -1,5 +1,11 @@
 # Bend migration and proof inventory
 
+## Published sequential castling-check qualification
+
+Run **36324699695** passed both public laws, the complete importing consumer and all17 controls, all four native modes and three actual-code mutations, original compiler/pin gates, and unchanged locked-environment repository lint on published source `95049dd691032210a759052b4f04f26838c8e05d`.
+
+The saved two-law actual producer/full-filter sequence is now published with exact source identity and fresh qualification. Modular193/623; no full aggregate run or extra discovery count. All prior local failure receipts remain historical. See [the publication record](experiments/2026-09-27-bend-castle-sequence-publication.md). Full optimized generator/table-preservation composition and universal attack-direction correspondence remain separate.
+
 ## Initialized single-side castling sequence — locally qualified
 
 Two new public source laws now connect actual castle_side and its subsequent actual
