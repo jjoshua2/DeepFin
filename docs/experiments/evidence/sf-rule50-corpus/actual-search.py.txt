@@ -1,0 +1,28 @@
+import hashlib,json,re,time
+from pathlib import Path
+import chess
+from chess_anti_engine.stockfish.uci import StockfishUCI
+class RecordingStockfish(StockfishUCI):
+ def __init__(self,*args,**kwargs):
+  self.sent=[];self.received=[]
+  super().__init__(*args,**kwargs)
+ def _send(self,line):
+  self.sent.append(line);return super()._send(line)
+ def _readline_with_deadline(self,deadline):
+  line=super()._readline_with_deadline(deadline);self.received.append(line);return line
+start=time.monotonic()
+binary='/home/josh/projects/chess/e2e_server/publish/stockfish'
+path='/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6'
+fen='7k/8/8/8/8/p1b5/PP6/KQ6 w - - 70 1'
+engine=RecordingStockfish(binary,nodes=1024,hash_mb=16,threads=1,nice=19,syzygy_path=path,syzygy_50_move_rule=True,syzygy_probe_limit=6,read_timeout_s=15)
+try:
+ r=engine.search(fen,nodes=1024,fresh=True,searchmoves=['b2c3','b1c1'])
+ hits=[int(m.group(1)) for line in engine.received if (m:=re.search(r'\btbhits (\d+)',line))]
+ receipt={'binary':binary,'binary_sha256':hashlib.sha256(Path(binary).read_bytes()).hexdigest(),'source_sha256':hashlib.sha256(Path('chess_anti_engine/stockfish/uci.py').read_bytes()).hexdigest(),'fen':fen,'node_budget':1024,'nodes':r.nodes,'bestmove':r.bestmove_uci,'depth':r.depth,'cp':r.cp,'wdl':None if r.wdl is None else r.wdl.tolist(),'advertised':engine.syzygy_option_capabilities,'ready_after_requests':engine.syzygy_ready_after_requests,'commands':engine.sent,'tbhits_seen':hits,'scope':'Single strict UCI search fixture; not a generation throughput or corpus qualification'}
+ assert r.bestmove_uci in ['b2c3','b1c1']
+ assert hits and max(hits)>0, 'No realized tablebase hit'
+finally:engine.close()
+receipt.update(elapsed_s=time.monotonic()-start,engine_returncode=engine.proc.poll())
+assert engine.proc.poll() is not None
+Path('/tmp/sf-rule50-actual-search-20260923.json').write_text(json.dumps(receipt,indent=2)+'\n')
+print(json.dumps(receipt,indent=2))

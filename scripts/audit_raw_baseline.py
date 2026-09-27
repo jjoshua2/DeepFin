@@ -52,13 +52,14 @@ def inspector() -> derive.TargetDeriver:
     return derive.TargetDeriver(options)
 
 
-def inspect_row(row: dict[str, Any], config: str, worker: int, tool: derive.TargetDeriver) -> dict[str, Any]:
+def inspect_row(row: dict[str, Any], config: str, worker: int, tool: derive.TargetDeriver,
+                outcome_mode: str = derive.corpus.OUTCOME_MODE_THEORETICAL) -> dict[str, Any]:
     """Identity faults are fatal even for otherwise excluded/no-result rows."""
     require(type(row.get('schema')) is int and row['schema'] == derive.ROW_SCHEMA_HISTORY, 'history schema required')
     for key in ('worker_id', 'game_id', 'ply'):
         require(type(row.get(key)) is int and row[key] >= 0, 'invalid row identity ' + key)
     require(row['worker_id'] == worker, 'row worker/shard mismatch')
-    derive._check_row_identity(row, config)
+    derive._check_row_identity(row, config, outcome_mode)
     board = tool._board_for(row)
     require(board.is_valid(), 'invalid row board')
     require(row.get('search_key') == derive.corpus.search_key(board), 'search identity mismatch')
@@ -181,7 +182,9 @@ def selection(manifest: dict[str, Any], guard: Callable[[], None], *, max_shards
         require(receipt['onnx_sha256'] == manifest['teacher_sha256'], 'teacher mismatch')
         result.append({'source_id': sid, 'source_dir': str(root), 'source_shard': name,
                        'source_namespace': hashlib.sha256(json.dumps([str(root), launch['config_sha256']], separators=(',', ':')).encode()).hexdigest(),
-                       'config_sha256': launch['config_sha256'], 'source_sha256': receipt['source_sha256'],
+                       'config_sha256': launch['config_sha256'],
+                       'outcome_mode': derive.corpus_outcome_mode(launch),
+                       'source_sha256': receipt['source_sha256'],
                        'rows': receipt['positions'], 'worker': int(match.group(1))})
     return result
 
@@ -210,7 +213,8 @@ def audit(manifest: dict[str, Any], out: Path, guard: Callable[[], None], *, dia
                     guard()
                     current = {**entry, 'source_row': index, 'game_id': row.get('game_id'), 'ply': row.get('ply')}
                     require(index < entry['rows'], 'raw rows exceed receipt')
-                    item = inspect_row(row, entry['config_sha256'], entry['worker'], tool)
+                    item = inspect_row(row, entry['config_sha256'], entry['worker'], tool,
+                                       entry['outcome_mode'])
                     counts['physical_rows'] += 1
                     counts['eligible_rows'] += int(item['eligible'])
                     counts['no_result_rows'] += int(item['no_result'])
