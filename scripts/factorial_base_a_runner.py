@@ -61,14 +61,14 @@ def read(path):
 
 
 
-def load_runtime_module(runtime: str, name: str) -> ModuleType:
-    """Load one helper from the frozen runtime, with explicit test injection support."""
+def load_runtime_module(runtime: str, name: str, *, path: str | None = None) -> ModuleType:
+    """Load one helper from its pinned file or the frozen operator runtime."""
     existing = sys.modules.get(name)
     if existing is not None:
         return existing
-    path = Path(runtime) / f"{name}.py"
-    require(path.is_file(), f"runtime helper missing: {name}")
-    spec = importlib.util.spec_from_file_location(f"_factorial_{name}", path)
+    helper = Path(path) if path is not None else Path(runtime) / f"{name}.py"
+    require(helper.is_file(), f"runtime helper missing: {name}")
+    spec = importlib.util.spec_from_file_location(f"_factorial_{name}", helper)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load runtime helper: {name}")
     module = importlib.util.module_from_spec(spec)
@@ -168,7 +168,13 @@ def main():
     if not args.execute:
         print("PASS_BOUND_CPU_PREFLIGHT_NOT_EXECUTED")
         return 0
-    disk_pause_module = load_runtime_module(p["operator_runtime"], "disk_pause")
+    disk_pause_pins = [
+        item["path"] for item in p["pins"] if Path(item["path"]).name == "disk_pause.py"
+    ]
+    require(len(disk_pause_pins) == 1, "exactly one pinned disk_pause.py helper required")
+    disk_pause_module = load_runtime_module(
+        p["operator_runtime"], "disk_pause", path=disk_pause_pins[0]
+    )
     disk_pause_guard: Any = getattr(disk_pause_module, "DiskPauseGuard")
     operator_module = load_runtime_module(
         p["operator_runtime"], "bootstrap_experiment_operator"
