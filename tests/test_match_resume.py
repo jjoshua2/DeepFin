@@ -289,6 +289,41 @@ def test_resume_refuses_partial_opening_history(tmp_path: Path, present: str) ->
         arena.load_arena_resume(path, settings=settings, openings=[opening])
 
 
+@pytest.mark.parametrize("fields", ["both", "root", "stack"])
+def test_matched_time_resume_and_readback_refuse_claimed_history(
+    tmp_path: Path, fields: str,
+) -> None:
+    import scripts.arena_standard as arena
+
+    opening = _knight_cycle("g")
+    settings = {"seed": 7, "mode": "matched_time"}
+    path = tmp_path / f"matched-time-{fields}.games.jsonl"
+    history = {
+        "opening_root_fen": opening.root().fen(),
+        "opening_uci": [move.uci() for move in opening.move_stack],
+    }
+    if fields == "root":
+        history.pop("opening_uci")
+    elif fields == "stack":
+        history.pop("opening_root_fen")
+    with GameLogWriter(path, driver="arena_standard", settings=settings) as log:
+        for half in (0, 1):
+            log.write_game({
+                "pair_id": 0, "half": half, "a_is_white": half == 0,
+                "opening_fen": opening.fen(), "start_fen": opening.fen(),
+                "result": "1/2-1/2", "loop": "matched_sims",
+                **history,
+            })
+    with pytest.raises(SystemExit, match="claims opening history in matched_time"):
+        arena.load_arena_resume(path, settings=settings, openings=[opening])
+    agrees, reason = arena.verify_game_log_on_disk(
+        path, settings=settings, openings=[opening],
+        expected_pair_scores=[1.0], expected_pair_ids=[0],
+    )
+    assert agrees is False
+    assert "claims opening history in matched_time" in reason
+
+
 def test_real_matched_time_loop_leaves_unpreserved_history_unclaimed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
@@ -331,8 +366,9 @@ def test_real_matched_time_loop_leaves_unpreserved_history_unclaimed(
         assert game.board().fen() == opening.fen()
 
 
+@pytest.mark.parametrize("loop_label", ["matched_time", "matched_sims", "rolling", None])
 def test_matched_time_sink_refuses_an_invented_opening_history(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, loop_label: str | None,
 ) -> None:
     import scripts.arena_standard as arena
 
@@ -341,13 +377,14 @@ def test_matched_time_sink_refuses_an_invented_opening_history(
         pgn_sink: Any, pair_ids: list[int], **_kwargs: Any,
     ) -> list[float]:
         opening = openings[0]
+        loop_kw = {} if loop_label is None else {"loop": loop_label}
         pgn_sink(
             pair_id=pair_ids[0], half=0, a_is_white=True,
             start_fen=opening.fen(),
             opening_root_fen=opening.root().fen(),
             opening_uci=[move.uci() for move in opening.move_stack],
             moves=(), result="1/2-1/2", termination="rules",
-            plies=0, duration_s=0.0, chunk=None, loop="matched_time",
+            plies=0, duration_s=0.0, chunk=None, **loop_kw,
         )
         return [1.0]
 

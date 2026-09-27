@@ -1306,6 +1306,12 @@ def load_arena_resume(
             )
         has_root = "opening_root_fen" in row
         has_stack = "opening_uci" in row
+        if settings.get("mode") == "matched_time" and (has_root or has_stack):
+            raise SystemExit(
+                f"--resume: {path} pair {pair_id} half {half} claims opening "
+                "history in matched_time, but UCI play did not preserve the "
+                "pre-play move stack. Refusing."
+            )
         if has_root != has_stack:
             raise SystemExit(
                 f"--resume: {path} pair {pair_id} half {half} has incomplete "
@@ -3264,7 +3270,7 @@ def run_arena(
         if (opening_root_fen is None) != (opening_uci is None):
             raise ValueError("opening root FEN and UCI stack must occur together")
         has_history = opening_root_fen is not None
-        if loop == "matched_time" and has_history:
+        if mode == "matched_time" and has_history:
             raise ValueError("matched_time opening stack was not preserved by UCI play")
         if has_history:
             if (not isinstance(opening_root_fen, str)
