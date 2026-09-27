@@ -1,0 +1,127 @@
+name: Publish castling stage geometry evidence
+'on':
+  push:
+    branches: [dev/bend-castle-stage-qualification-20260927]
+    paths: [.github/workflows/castle-stage-evidence-publication.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    env:
+      HEAD: 9347be02ae28f16698318be7ba571d54f29e4377
+      SOURCE: 017fadcd25ccda6973b88e240ab50aaae38cf1bd
+      TARGET: feat/bend-castle-stage-geometry-20260927
+      BASE: e8430e5cf9c33bcc2856f3a61bf19b44ec46c388
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 9347be02ae28f16698318be7ba571d54f29e4377
+          fetch-depth: 6
+      - name: Verify completed qualification and preserve exact receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$HEAD"
+          test "$(git ls-remote origin refs/heads/feat/bend-castle-king-invariants-20260926 | cut -f1)" = "$BASE"
+          test "$(gh api repos/jjoshua2/DeepFin/actions/runs/36295872282 --jq .conclusion)" = success
+          mkdir -p "$RUNNER_TEMP/qualification"
+          gh run download 36295872282 --repo jjoshua2/DeepFin --name castle-stage-geometry-qualification --dir "$RUNNER_TEMP/qualification"
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108554494045 > "$RUNNER_TEMP/qualification-job.json"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil,subprocess
+          from pathlib import Path
+          e=Path(os.environ['RUNNER_TEMP'])/'qualification'/'reports'
+          def read(name):return json.loads((e/name).read_text())
+          ident=read('source-identity.json');focused=read('focused.json');native=read('native.json');q=read('qualification.json')
+          assert ident['source']==os.environ['SOURCE'] and len(ident['candidate_source_sha256s'])==607
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          assert focused['focused_gate']=='PASS' and focused['new_laws']==1 and focused['new_controls']==6
+          assert focused['consumer']['exit_code']==0 and focused['consumer']['raw_text'].strip()=='All terms check.'
+          assert len(focused['source_sha256s'])==206
+          assert len(focused['negative_controls'])==6 and all(c['rejected'] for c in focused['negative_controls'])
+          assert sum(c['kind']=='source semantic/refinement' for c in focused['negative_controls'])==5
+          assert native['native_gate']=='PASS' and native['cases']==1148 and native['stage_boards_per_mode']==3444 and native['fields_per_mode']==82656
+          assert len(native['modes'])==4 and all(m['invalid_rejections']==8 for m in native['modes'])
+          assert len(native['mutations'])==3 and all(m['compiled_and_executed'] and m['rejected'] for m in native['mutations'])
+          old=json.loads(Path('docs/experiments/evidence/bend-castle-king-invariants/hosted-native.json').read_text())
+          assert {k:v for k,v in native.items() if k!='cc'}=={k:v for k,v in old.items() if k!='cc'}
+          assert q['qualification']=='PASS' and q['source']==os.environ['SOURCE'] and q['modular_laws']==191 and q['modular_controls']==606
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          assert hashlib.sha256((e/'focused.json').read_bytes()).hexdigest()=='a80df62de310ffc3f2a83ef4517b2cab095809bb2b140939916f1b09bb76044e'
+          assert hashlib.sha256((e/'native.json').read_bytes()).hexdigest()=='5617dcedec6f2b4dc3999c14768c297f139fcc614d8c2ebc25f38fa692af37e2'
+          job=json.loads((Path(os.environ['RUNNER_TEMP'])/'qualification-job.json').read_text())
+          assert job['status']=='completed' and job['conclusion']=='success' and job['id']==108554494045
+          d=Path('docs/experiments/evidence/bend-castle-stage-geometry')
+          for name in ['focused.json','native.json','source-identity.json','compiler-proofs.json','parent-job.json']:
+              dst=d/('hosted-'+name);assert not dst.exists();shutil.copyfile(e/name,dst)
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes();(d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          (d/'qualification-job.json').write_text(json.dumps(job,indent=2)+'\n')
+          q.update({'qualified_source_tree':ident['source_tree'],'publication_run':os.environ['GITHUB_RUN_ID'],'qualified_artifact_id':10924002177,'qualified_artifact_sha256':'85abab215d7a7a0e7b2eb15e0e3b0b4b2ff90d6a1a43ac46c4b4f6e56f1a4d55','archive_run':36296376219,'saved_primary_files':14,'archive_artifact_id':10924076476,'archive_artifact_sha256':'1ff94d57dbf93617e7a74c7f71b806ff7fc0db31546ba76a41e6b51a45527f9e','saved_alternative_rerun':False,'native_test_is_existing_parent_oracle_rerun':True,'complete_source_dependency_entries':206})
+          (d/'qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          archive=d/'saved-singleton-7df89c34';am=json.loads((archive/'archive-manifest.json').read_text())
+          assert am['primary_files']==14 and am['duplicate_registered_laws_added']==0
+          for name,item in am['entries'].items():assert hashlib.sha256((archive/name).read_bytes()).hexdigest()==item['sha256'],name
+          record=[
+              '# Initialized geometric checks through castling stages',
+              '## Result and exact source',
+              'PR #899 stacks on #898 at `e8430e5cf9c33bcc2856f3a61bf19b44ec46c388`. The new one-law composition and focused runner were checked at `017fadcd25ccda6973b88e240ab50aaae38cf1bd`, tree `ae0491d6a0da6a704d633e56337689af9116a25d`. Archive successor `9347be02ae28f16698318be7ba571d54f29e4377` changes documentation only. No production function or previously accepted law changed.',
+              'The public initialized_castling_stage_check_matches_geometry law connects actual in_check at each starting/transit/completed Board to the independent target-centred coordinate/ray witness and the complete initialized array. This closes the per-stage composition of the previously separate king-location and initialized-query results. It does not assert that the returned Boolean is false.',
+              'Input conditions are explicit: initial partition consistency, exactly one moving-side king at its home square, raw turn equal to a Boolean side, and the actual producer guard. Initialization has depth17,128 slider blocks and64 extras with arbitrary seed. Inputs.singleton derives the stage singleton; Check.bounded derives its square bound. The caller supplies no output singleton, stored mask, correct query answer or empty rook target.',
+              'Both children are computed from the original Board: ordinary source-to-transit and flag2 source-to-destination, not transit followed by castling. All queries continue to use the original moving side even though the child turn flips. Each stage starts from the same initialized table expression. A sequential three-check table-threading theorem and full legal_moves safe-acceptance theorem remain separate.',
+              '## Fresh hosted qualification',
+              'Run36295872282/job108554494045 passed every stage on its first attempt. The complete importing consumer returned exactly All terms check. in659.488 seconds. Its206-file source closure includes the actual initialized attack and castling-stage producer bodies; this is not merely a statement with assumed query certificates.',
+              'All six controls passed: five expected/observed refinement rejections at the new Inputs.singleton certificate (omitted consistency, omitted valid side, omitted input singleton, omitted producer guard, wrong selected color), plus one synthetic warning-output unit. The five fast rejection checks intentionally target certificate wiring rather than claiming to mutate every outer initialized proof. The synthetic unit is not a compiler execution. Crashes, missing files, syntax/ownership failures and timeouts do not count as semantic rejection.',
+              'The unchanged castle_kings native verifier reran in generic,forced-portable,native-target and UBSan modes:1,148 distinct requests,3,444 complete stage Boards and82,656 observed fields per mode; eight malformed batches per mode and three compiled/executed actual-code corruptions were rejected.451 inputs satisfy transit premises and437 satisfy final-stage premises. Its complete report matches the parent report except the allowed recorded compiler field. These are repeated fixture modes, not disjoint datasets or new independent proof functions executing natively.',
+              'Original compiler16-law/seven-control checks and12 pin tests passed. Unchanged locked CPU repository Ruff/Basedpyright/Vulture lint passed at its configured scope. The new focused Python script was executed but this is not represented as an added all-native-Python type-check. Compiler pin aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae remains unchanged.',
+              'All601 inherited source hashes and all607 candidate source hashes match. Active evidence is modular191 laws/606 controls:190/600 retained from #898 and newly executed1/6. The full aggregate wrapper was not run. Complete source array equality is not native allocation,ownership,lifetime or full-buffer correctness.',
+              '## Saved local variant preserved without replacement',
+              'All14 primary files from saved local commit7df89c34d03149b6ff00ebd5456ef96be2d901ee are committed byte-for-byte under saved-singleton-7df89c34/source/ with a .txt suffix. Original readout,publication metadata and selected source/native receipts accompany them. Archive-only run36296376219 verified all20 payload entries,13 focused suite dependencies and38 inherited dependencies. It did not rerun the saved proof or native suite.',
+              'The saved five-law/18-control castle_singleton suite and active four-law/19-control castle_kings suite have different domains. The saved version follows raw U32 side behavior in several statements; the active version takes Boolean/valid-turn premises. Neither is silently replaced or counted twice, and no formal equivalence is claimed. The saved191/599 historical total is not the active191/606 total. The saved local missing-tools lint failure remains a failure.',
+              'An initial archive-only workflow had an indentation error before any archive job ran; the corrected archive job succeeded without changing payload or proof bytes. Local parent-tree reconstruction initially omitted178 already-tracked ignored files; restoring the exact archive path list recovered the full4,050-file parent tree. Neither metadata recovery issue changed proof sources.',
+              '## Remaining scope',
+              'This is independent target-centred geometric check correctness for the certified stage Boards, not a claim that arbitrary guarded castling is safe. Universal attacker-origin/target-centred reversal, actual accepted-path/table-threading composition, opposing-side invariants,historical rights and whole-generator soundness/completeness remain separate.',
+              'Self-review only. No independent reviewer is claimed. Pinned checker/Base,native lowering/storage,ABI,toolchain,libraries,OS and hardware remain trust boundaries. Existing compiler,snapshot-lowering and literal closed-builder limitations remain unchanged. No permanent workflow,production code,Python application responsibility,model/GPU,training,search,benchmark,perft increase,merge,force push or deployment.'
+          ]
+          Path('docs/experiments/2026-09-27-bend-castle-stage-geometry.md').write_text('\n\n'.join(record)+'\n')
+          idx=Path('docs/experiments/README.md');text=idx.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          idx.write_text(text.replace(anchor,anchor+'| [Initialized castling-stage geometry](2026-09-27-bend-castle-stage-geometry.md) | One complete initialized check composition at all three king stages; six classified controls; saved singleton variant preserved; modular191/606,not a safe-castling verdict |\n',1))
+          matrix=Path('docs/bend_migration_proofs.md');title,rest=matrix.read_text().split('\n',1)
+          note='## Initialized geometric checks at derived castling stages\n\nHosted run36295872282/job108554494045 passes the new complete composition consumer, five certificate-level semantic rejections plus one synthetic output check, four-mode actual stage oracle, original compiler/pin tests and unchanged repository lint. For the actual initial,transit and completed Boards, in_check now equals independent target-centred geometry plus the complete initialized array, with stage singleton/bounds derived from the initial invariants and producer guard.\n\nThis is modular191/606, not a full aggregate run or a claim that all checks return safe. The original moving side is retained despite the child turn flip. Sequential table threading, accepted-generator safe results, forward/reverse attack equivalence and historical rights remain separate. All14 files of the saved raw-side singleton variant are archived without replacing the active Boolean-side suite or duplicating counts. See [the readout](experiments/2026-09-27-bend-castle-stage-geometry.md).\n'
+          matrix.write_text(title+'\n\n'+note+rest)
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git add docs/experiments docs/bend_migration_proofs.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: qualify initialized castling-stage geometry and preserve alternate singleton evidence'
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/published"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/published/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/published/commit.raw"
+          git rev-parse HEAD > "$RUNNER_TEMP/published/commit.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/published/tree.txt"
+          git diff --binary "$BASE" HEAD > "$RUNNER_TEMP/published/castle-stage-geometry.patch"
+          git update-ref refs/heads/published HEAD
+          git bundle create "$RUNNER_TEMP/published/castle-stage-geometry.bundle" refs/heads/published "^$BASE"
+          cp -r "$RUNNER_TEMP/qualification/reports" "$RUNNER_TEMP/published/reports"
+          cd "$RUNNER_TEMP/published"
+          sha256sum source.tar.gz commit.raw castle-stage-geometry.patch castle-stage-geometry.bundle > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: castle-stage-geometry-published
+          path: ${{ runner.temp }}/published/
+          retention-days: 14
