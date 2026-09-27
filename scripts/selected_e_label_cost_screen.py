@@ -66,13 +66,16 @@ class Row:
     selected_teacher: str
     policy_target_sha256: str
     search_wdl_sha256: str
+    dual_policy_target_sha256: str
+    dual_search_wdl_sha256: str
     x: np.ndarray
     legal: np.ndarray
 
     def __post_init__(self) -> None:
         for value in (self.cohort_manifest_sha256, self.input_sha256,
                       self.legal_sha256, self.policy_target_sha256,
-                      self.search_wdl_sha256):
+                      self.search_wdl_sha256, self.dual_policy_target_sha256,
+                      self.dual_search_wdl_sha256):
             _require_sha(value)
         if self.selected_teacher not in ("BT4", "Ceres"):
             raise ValueError("selected teacher roster differs")
@@ -163,6 +166,9 @@ class Observation:
     search_wdl: np.ndarray
     feed_sha256: str
     head_sha256: str
+    blend_policy_input: np.ndarray
+    blend_value_input: np.ndarray
+    blend_value2_input: np.ndarray | None
 
 
 def _bt4_batches(rows: Sequence[Row], indices: Sequence[int], binding: BT4Session,
@@ -201,14 +207,19 @@ def _bt4_batches(rows: Sequence[Row], indices: Sequence[int], binding: BT4Sessio
             board = bt4_policy.board_from_stored_x(
                 rows[index].x, planes[local], input_history_encoding=HISTORY)
             _, _, dense = bt4_policy.compact_legal_policy(board, policy[local])
+            # E's base policy was stored as FP16 at T=.5 before its T=1
+            # normalization and dual blend. Keep that rounding boundary.
+            stored_t05 = bt4_target._tempered_bt4_policy(
+                dense[None], rows[index].legal[None], temperature=.5)[0].astype(np.float16)
             selected = bt4_target._tempered_bt4_policy(
-                dense[None], rows[index].legal[None], temperature=.5)[0]
+                stored_t05[None], rows[index].legal[None], temperature=1.)[0]
             native = np.asarray(wdl[local], dtype=np.float64)
             native /= native.sum()
             result[index] = Observation(
                 selected.astype(np.float16), native.astype(np.float16),
                 _digest(feed[local].tobytes()),
-                _digest(policy[local].tobytes() + wdl[local].tobytes()))
+                _digest(policy[local].tobytes() + wdl[local].tobytes()),
+                stored_t05, wdl[local].copy(), None)
     return result
 
 
@@ -255,8 +266,43 @@ def _ceres_batches(rows: Sequence[Row], indices: Sequence[int], binding: CeresSe
             result[index] = Observation(
                 policy.astype(np.float16), value.astype(np.float16),
                 _digest(feed[local].tobytes()),
-                _digest(b"".join(h[local].tobytes() for h in fetched)))
+                _digest(b"".join(h[local].tobytes() for h in fetched)),
+                dense_logits[0].copy(), fetched[1][local].copy(),
+                fetched[2][local].copy())
     return result
+
+
+def _original_e_blend(bt4: Observation, ceres: Observation,
+                      legal: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Frozen E mixed_targets formula on native, pre-blend inputs.
+
+    The frozen wrapper is not in this repository. These are the same underlying
+    producer calls and arguments from bootstrap_sffree_targets.mixed_targets:
+    BT4 T=1 on *stored* T=.5 FP16, Ceres T=.5, and half native WDL plus
+    half calibrated dual Ceres. Both heads round once to FP16 after blending.
+    """
+    if (bt4.blend_policy_input.dtype != np.float16
+            or bt4.blend_policy_input.shape != (1858,)
+            or bt4.blend_value_input.dtype != np.float32
+            or bt4.blend_value_input.shape != (3,)
+            or bt4.blend_value2_input is not None
+            or ceres.blend_policy_input.dtype != np.float16
+            or ceres.blend_policy_input.shape != (1858,)
+            or ceres.blend_value_input.dtype != np.float16
+            or ceres.blend_value_input.shape != (3,)
+            or ceres.blend_value2_input is None
+            or ceres.blend_value2_input.dtype != np.float16
+            or ceres.blend_value2_input.shape != (3,)):
+        raise ValueError("original-E native blend inputs differ")
+    policy = ceres_policy.policy_target(
+        bt4.blend_policy_input[None], ceres.blend_policy_input[None],
+        legal[None], bt4_weight=.5, bt4_temperature=1., ceres_temperature=.5)
+    wdl = (.5 * ceres_value.copies.normalized(bt4.blend_value_input[None])
+           + .5 * (.6 * ceres_value.softmax(ceres.blend_value_input[None], .55)
+                    + .4 * ceres_value.softmax(ceres.blend_value2_input[None], 1.5)))
+    if wdl.shape != (1, 3):
+        raise ValueError("original-E WDL blend row count differs")
+    return policy[0].astype(np.float16), wdl[0].astype(np.float16)
 
 
 def _collect(rows: Sequence[Row], bt4_indices: Sequence[int],
@@ -310,14 +356,34 @@ def matched_cpu_kernel(rows: Sequence[Row], routing_seed_sha256: str,
         if [(c["rows"], c["feed_sha256"], c["head_sha256"]) for c in s] != [
                 (c["rows"], c["feed_sha256"], c["head_sha256"]) for c in d]:
             raise ValueError(f"{teacher} selected physical call roster differs")
+    dual_policy_rows = []
+    dual_wdl_rows = []
+    for index, row in enumerate(rows):
+        policy, wdl = _original_e_blend(
+            dual["BT4"][index], dual["Ceres"][index], row.legal)
+        if (_digest(policy.tobytes()) != row.dual_policy_target_sha256
+                or _digest(wdl.tobytes()) != row.dual_search_wdl_sha256):
+            raise ValueError(f"independently pinned original-E dual blend byte mismatch at row {index}")
+        dual_policy_rows.append(policy)
+        dual_wdl_rows.append(wdl)
+    selected_policy = np.stack([chosen[i].policy_target for i in range(len(rows))])
+    selected_wdl = np.stack([chosen[i].search_wdl for i in range(len(rows))])
+    dual_policy = np.stack(dual_policy_rows)
+    dual_wdl = np.stack(dual_wdl_rows)
+    for value in (selected_policy, selected_wdl, dual_policy, dual_wdl):
+        value.flags.writeable = False
     return {"schema": 1, "qualification": "cpu-kernel-only-no-launch",
             "rows": len(rows), "selected_counts": {"BT4": len(bt4_rows),
                                                "Ceres": len(ceres_rows)},
             "selected_calls": s_calls, "dual_calls": d_calls,
-            "selected_policy_sha256": _digest(b"".join(
-                chosen[i].policy_target.tobytes() for i in range(len(rows)))),
-            "selected_wdl_sha256": _digest(b"".join(
-                chosen[i].search_wdl.tobytes() for i in range(len(rows))))}
+            "selected_policy_target": selected_policy,
+            "selected_search_wdl": selected_wdl,
+            "dual_policy_target": dual_policy,
+            "dual_search_wdl": dual_wdl,
+            "selected_policy_sha256": _digest(selected_policy.tobytes()),
+            "selected_wdl_sha256": _digest(selected_wdl.tobytes()),
+            "dual_policy_sha256": _digest(dual_policy.tobytes()),
+            "dual_wdl_sha256": _digest(dual_wdl.tobytes())}
 
 
 def main(argv: Sequence[str] | None = None) -> None:
