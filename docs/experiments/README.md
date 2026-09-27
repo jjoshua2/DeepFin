@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Initialized castling sequence](2026-09-27-bend-castle-sequence.md) | Two source laws for actual producer/checked-filter table threading and exact geometric decisions; local193/623, lint unqualified, not yet published |
 | [Initialized castling-stage geometry](2026-09-27-bend-castle-stage-geometry.md) | One complete initialized check composition at all three king stages; six classified controls; saved singleton variant preserved; modular191/606,not a safe-castling verdict |
 | [Castling mover-king invariants](2026-09-26-bend-castle-king-invariants.md) | Four public singleton/side/stage-check contracts; derived transit and final premises; modular190/600; attack reversal and full legality composition remain separate |
 | [Attack state reconciliation](2026-09-26-bend-attack-state-reconciliation.md) | Preserves all15 saved alternative files; catches delayed and unused-slot table loss; no duplicate public-law counts |

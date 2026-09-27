@@ -1,5 +1,22 @@
 # Bend migration and proof inventory
 
+## Initialized single-side castling sequence — locally qualified
+
+Two new public source laws now connect actual castle_side and its subsequent actual
+filter_legal pass to independent target-centred stage-check Booleans, preserving
+the complete initialized array and exact ordered lists. Starting/transit checks
+are state-threaded, and the destination check governs the retained singleton.
+Public callers supply the initial Board/king/side/guard and initialization conditions,
+not query certificates or desired outputs. This adapter does not replace or prove
+the whole optimized legal_moves pipeline.
+
+The complete consumer and17 classified controls passed; the new four-mode native
+sequence oracle and actual-code mutations passed. Original compiler/pin gates passed.
+Repository lint is unqualified for missing tools and no hosted run/publication or
+independent review occurred. Modular193/623 retains191/606 from #899; the full
+aggregate did not run. See [the readout](experiments/2026-09-27-bend-castle-sequence.md).
+
+
 ## Initialized geometric checks at derived castling stages
 
 Hosted run36295872282/job108554494045 passes the new complete composition consumer, five certificate-level semantic rejections plus one synthetic output check, four-mode actual stage oracle, original compiler/pin tests and unchanged repository lint. For the actual initial,transit and completed Boards, in_check now equals independent target-centred geometry plus the complete initialized array, with stage singleton/bounds derived from the initial invariants and producer guard.
