@@ -64,3 +64,26 @@ lowering/storage,ABI,toolchain,OS and hardware remain trust boundaries. Whole-ce
 observations do not establish native allocation/lifetime or pointer identity. No
 production function,previous accepted proof,compiler input,permanent workflow,Python
 application responsibility,model/GPU,training,search or perft budget changed.
+
+
+## Completed hosted qualification
+
+Hosted run **36328129634** passed all five public laws, the complete consumer and17 controls, four native full-buffer modes and three compiled/executed mutations, original compiler/pin tests and unchanged locked-environment lint on source `be2f8f1cf671780b6d8b2416d4c031648ce787bb`.
+
+All14 new proof/test files are the exact local candidate. All620 inherited native-source files and634 total candidate entries match before and after execution. This new five-contract composition closes whole-array value preservation through actual complete legal_moves, including ordinary scan, both castling sides and optimized filtering. It is not another initialized geometry proof or a move-legality theorem.
+
+The public source domain permits arbitrary array shape and contents, arbitrary Boards, raw U32 kind/square/side/metadata, and arbitrary lists where present. Existing storage.Read and affine reification establish every read dependency. No public premise assumes initialized masks, correct answers, query preservation, a singleton king or a consistent Board. The 153-clause scalar partition covers all2^32 raw kind values; it is control-flow coverage rather than an external oracle of mask values.
+
+Each native mode compares173 complete before/after logical buffers totaling2,313,088 U64 cells and4,626,176 U32 limbs, including17 full131,072-cell buffers and156 smaller arrays. All raw index-distinct starting values are independently checked. Real Tables.build buffers are compared with their actual before snapshots; this is not a new independent validation of initial mask values. Candidate operations include all query/scan/castling/full/fast/prepared-filter/full-generator paths. Returned moves are observed, not newly proved legal.
+
+All three actual-code corruptions compile/run with generic flags. Across eight actual-builder full-generator cases per mutant, every move list remains equal to the clean result, while the corrupted unused cell is rejected by whole-buffer comparisons. Clean modes repeat fixtures; complete snapshots do not establish pointer identity,allocation or native lifetime.
+
+Eight actual-code/refinement controls fail at the intended new proof bodies. Eight import/manifest controls and one synthetic warning-output check also pass. Missing imports, parse/ownership errors, crashes and timeouts are not semantic successes; the synthetic check is not a compiler execution. Complete source and native manifests remain unchanged. The original compiler16-law/seven-control suite and12 pin tests pass.
+
+Fresh configured Ruff/Basedpyright/Vulture lint passes using locked CPU tools. The original local missing-tools failure and interrupted native invocation remain historical failures; the final local native rerun and this independent hosted execution are successful. Source projection, ownership and raw-dispatch draft failures were corrected without changing production functions or narrowing the public domain. The original logs are retained in local-failures.json.
+
+Coverage is modular198 laws/640 controls, retaining193/623 from exact #904. The full aggregate wrapper was not run. The five new laws are related stage properties and their whole-generator composition, not five independent discoveries. Evidence publication changes docs only.
+
+Self-review only. Source checker/Base,native lowering/storage,ABI,toolchain,OS and hardware remain trust boundaries. No production code, previous proof, compiler input, permanent workflow, application responsibility, model/GPU,training,search,benchmark,perft-budget,merge,force-push or deployment change.
+
+Next acceptance can transport the initialized-table certificate through complete generation and then connect the existing castling provenance and mandatory checks to the sequential geometric acceptance result. That final semantic composition, universal forward/reverse attack equivalence and historical rights remain separate; generic state preservation is no longer an open prerequisite.
