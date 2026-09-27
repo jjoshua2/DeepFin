@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Sequential castling checks](2026-09-27-bend-castle-checked-pipeline.md) | Three initialized producer/full-filter contracts with threaded arrays and geometric retained-move safety; modular194/622; full optimized generator remains separate |
 | [Initialized castling-stage geometry](2026-09-27-bend-castle-stage-geometry.md) | One complete initialized check composition at all three king stages; six classified controls; saved singleton variant preserved; modular191/606,not a safe-castling verdict |
 | [Castling mover-king invariants](2026-09-26-bend-castle-king-invariants.md) | Four public singleton/side/stage-check contracts; derived transit and final premises; modular190/600; attack reversal and full legality composition remain separate |
 | [Attack state reconciliation](2026-09-26-bend-attack-state-reconciliation.md) | Preserves all15 saved alternative files; catches delayed and unused-slot table loss; no duplicate public-law counts |
