@@ -19,6 +19,7 @@ is fixed.
 | #855 | Explicit `rule50_match_v1` on the BT4 root-policy stepper. Merge-committed as `d5238784d`. #857 is retargeted to main. | `board.outcome(claim_draw=True)` can still complete a fifty-move or threefold draw without probing when a zeroing move would win. Provenance stores the caller path and `len(wdl)` / `len(dtz)`, which double-counts python-chess mirrored keys. |
 | #908 | The Selected-E complete-game selector builds its own index and returns `NO-LAUNCH`. Squash-merged as `9d5d1829a`. | A resealed closure can still split one numeric game id across shards by changing `resolved_base_parent`. Malformed shard or column `.zattrs` are allowlisted and are not covered by `sample_sha256`. |
 | #857 | Opt-in strict BT4 root-policy worker. Merge-committed as `f90690e66`. #859 is retargeted to main. | A later batch's probe error can leave earlier `games/game_*.npz` files marked completed, with no `summary.json` and no success line. `run_worker` does not prove the passed handle was opened from `spec.syzygy_path`. `onnx_feed_sha256` is not copied into row metadata. |
+| #914 | Schema-2 policy and WDL overlays reach exact-epoch training. Squash-merged as `1acda74bc`. | Storage qualification still does not admit the recipe. The overlay keeps the base `.zattrs`, so `read_value_stamps` still sees the base derivation. The digest kind string inside `overlay_content_sha256` remains `immutable-policy-overlay-v1` for schema 2; the local byte hash includes the schema-2 manifest. |
 
 ## Open, not merged
 
