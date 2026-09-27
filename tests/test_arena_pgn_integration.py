@@ -12,6 +12,7 @@ import io
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import chess
 import chess.pgn
@@ -23,6 +24,7 @@ from scripts.arena_standard import (
     SideSearch,
     play_paired_games_matched_sims,
     play_paired_games_matched_sims_rolling,
+    play_paired_games_matched_time,
 )
 
 # 1. f3 e5 2. g4 Qh4# -- four plies to a decisive, rules-terminated game.
@@ -72,6 +74,8 @@ class Emitted:
     half: int
     a_is_white: bool
     start_fen: str
+    opening_root_fen: str
+    opening_uci: tuple[str, ...]
     moves: tuple[chess.Move, ...]
     result: str
     termination: str
@@ -88,6 +92,8 @@ def _collect_sink(store: list[Emitted]) -> Callable[..., None]:
         half: int,
         a_is_white: bool,
         start_fen: str,
+        opening_root_fen: str,
+        opening_uci: tuple[str, ...],
         moves: tuple[chess.Move, ...],
         result: str,
         termination: str,
@@ -98,7 +104,8 @@ def _collect_sink(store: list[Emitted]) -> Callable[..., None]:
     ) -> None:
         store.append(Emitted(
             pair_id=pair_id, half=half, a_is_white=a_is_white,
-            start_fen=start_fen, moves=moves, result=result,
+            start_fen=start_fen, opening_root_fen=opening_root_fen,
+            opening_uci=opening_uci, moves=moves, result=result,
             termination=termination, plies=plies, duration_s=duration_s,
             chunk=chunk, loop=loop,
         ))
@@ -155,6 +162,8 @@ def test_sink_receives_every_game_with_pair_identity(rolling: bool) -> None:
         assert [m.uci() for m in g.moves] == list(FOOLS_MATE)
         assert g.duration_s >= 0.0
         assert g.start_fen == chess.STARTING_FEN
+        assert g.opening_root_fen == chess.STARTING_FEN
+        assert g.opening_uci == ()
 
 
 @pytest.mark.usefixtures("scripted_moves")
@@ -195,6 +204,12 @@ def test_book_opening_records_book_position_and_excludes_book_moves(
     for g in got:
         assert g.start_fen == book_fen
         assert g.start_fen != chess.STARTING_FEN
+        assert g.opening_root_fen == chess.STARTING_FEN
+        assert g.opening_uci == ("f2f3", "e7e5")
+        from_root = chess.Board(g.opening_root_fen)
+        for uci in g.opening_uci:
+            from_root.push_uci(uci)
+        assert from_root.fen() == g.start_fen
         # Play resumes at ply 2, so only the remaining two mate moves are ours.
         assert [m.uci() for m in g.moves] == ["g2g4", "d8h4"]
         assert g.plies == 2
@@ -203,6 +218,41 @@ def test_book_opening_records_book_position_and_excludes_book_moves(
             assert m in replay.legal_moves
             replay.push(m)
         assert replay.is_checkmate()
+
+
+def test_matched_time_sink_retains_history_lost_by_uci_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.match_vs_uci as uci_mod
+
+    opening = chess.Board()
+    for uci in ("g1f3", "g8f6", "f3g1", "f6g8"):
+        opening.push_uci(uci)
+
+    monkeypatch.setattr(
+        uci_mod, "_open_engine",
+        lambda *_args, **_kwargs: SimpleNamespace(quit=lambda: None),
+    )
+
+    def fake_game(*_args: object, start_board: chess.Board, **_kwargs: object) -> SimpleNamespace:
+        # The real UCI helper strips move_stack from its returned start_board.
+        return SimpleNamespace(
+            start_board=start_board.copy(stack=False), moves=(),
+            result="1/2-1/2", termination="max_plies", plies=0,
+        )
+
+    monkeypatch.setattr(uci_mod, "play_one_game", fake_game)
+    got: list[Emitted] = []
+    scores = play_paired_games_matched_time(
+        "cand.pt", "ref.pt", [opening], device="cpu", ms_per_move=1,
+        max_plies=1, uci_args="", pgn_sink=_collect_sink(got),
+    )
+    assert scores == [1.0]
+    assert len(got) == 2
+    for game in got:
+        assert game.start_fen == opening.fen()
+        assert game.opening_root_fen == chess.STARTING_FEN
+        assert game.opening_uci == ("g1f3", "g8f6", "f3g1", "f6g8")
 
 
 @pytest.mark.usefixtures("scripted_moves")

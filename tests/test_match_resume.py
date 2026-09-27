@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import chess
+import chess.pgn
 import pytest
 
 from chess_anti_engine.utils.game_log import (
@@ -213,13 +215,15 @@ def _run_arena(
     candidate: str = "cand.pt",
     pgn_out: Path | None = None,
     openings_file: Path | None = None,
+    stub_play: bool = True,
 ) -> dict:
     import scripts.arena_standard as arena
 
-    monkeypatch.setattr(
-        arena, "play_paired_games_matched_time",
-        _fake_matched_time(crash_after=crash_after, on_crash=on_crash),
-    )
+    if stub_play:
+        monkeypatch.setattr(
+            arena, "play_paired_games_matched_time",
+            _fake_matched_time(crash_after=crash_after, on_crash=on_crash),
+        )
     fen_file = (
         openings_file if openings_file is not None
         else _openings_file(tmp_path, n_openings)
@@ -234,6 +238,101 @@ def _run_arena(
         gumbel_add_noise=True, device="cpu", seed=seed, out_path=None,
         game_log_path=log_path, resume=resume, pgn_out=pgn_out,
     )
+
+
+def _knight_cycle(first: str) -> chess.Board:
+    board = chess.Board()
+    ucis = (("g1f3", "g8f6", "f3g1", "f6g8") if first == "g"
+            else ("b1c3", "b8c6", "c3b1", "c6b8"))
+    for uci in ucis:
+        board.push_uci(uci)
+    return board
+
+
+def test_resume_rejects_same_fen_different_opening_stack(tmp_path: Path) -> None:
+    import scripts.arena_standard as arena
+
+    scheduled = _knight_cycle("g")
+    other = _knight_cycle("b")
+    assert scheduled.fen() == other.fen()
+    path = tmp_path / "transposition.games.jsonl"
+    settings = {"seed": 7}
+    with GameLogWriter(path, driver="arena_standard", settings=settings) as log:
+        log.write_game({
+            "pair_id": 0, "half": 0, "a_is_white": True,
+            "opening_fen": scheduled.fen(), "start_fen": scheduled.fen(),
+            "opening_root_fen": other.root().fen(),
+            "opening_uci": [move.uci() for move in other.move_stack],
+            "result": "1/2-1/2",
+        })
+    with pytest.raises(SystemExit, match="opening root/stack differs"):
+        arena.load_arena_resume(path, settings=settings, openings=[scheduled])
+
+
+@pytest.mark.parametrize("present", ["opening_root_fen", "opening_uci"])
+def test_resume_refuses_partial_opening_history(tmp_path: Path, present: str) -> None:
+    import scripts.arena_standard as arena
+
+    opening = _knight_cycle("g")
+    path = tmp_path / f"partial-{present}.games.jsonl"
+    settings = {"seed": 7}
+    row = {
+        "pair_id": 0, "half": 0, "a_is_white": True,
+        "opening_fen": opening.fen(), "start_fen": opening.fen(),
+        "result": "1/2-1/2",
+    }
+    row[present] = (opening.root().fen() if present == "opening_root_fen"
+                    else [move.uci() for move in opening.move_stack])
+    with GameLogWriter(path, driver="arena_standard", settings=settings) as log:
+        log.write_game(row)
+    with pytest.raises(SystemExit, match="incomplete opening history"):
+        arena.load_arena_resume(path, settings=settings, openings=[opening])
+
+
+def test_real_matched_time_loop_banks_opening_stack_in_log_and_pgn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    import scripts.arena_standard as arena
+    import scripts.match_vs_uci as uci_mod
+
+    opening = _knight_cycle("g")
+    monkeypatch.setattr(arena, "load_fen_openings", lambda *_a, **_kw: [opening.copy()])
+    monkeypatch.setattr(
+        uci_mod, "_open_engine",
+        lambda *_a, **_kw: SimpleNamespace(quit=lambda: None),
+    )
+
+    def fake_game(*_a: Any, start_board: chess.Board, **_kw: Any) -> SimpleNamespace:
+        return SimpleNamespace(
+            start_board=start_board.copy(stack=False), moves=(),
+            result="1/2-1/2", termination="max_plies", plies=0,
+        )
+
+    monkeypatch.setattr(uci_mod, "play_one_game", fake_game)
+    log_path = tmp_path / "history.games.jsonl"
+    pgn_path = tmp_path / "history.pgn"
+    _run_arena(
+        monkeypatch, tmp_path, log_path=log_path, n_openings=1,
+        pgn_out=pgn_path, stub_play=False,
+    )
+    rows = read_game_log(log_path).games
+    assert len(rows) == 2
+    expected = [move.uci() for move in opening.move_stack]
+    for row in rows:
+        assert row["opening_root_fen"] == chess.STARTING_FEN
+        assert row["opening_uci"] == expected
+        assert row["start_fen"] == opening.fen()
+    with pgn_path.open() as stream:
+        games = [chess.pgn.read_game(stream) for _ in range(2)]
+        assert chess.pgn.read_game(stream) is None
+    for game in games:
+        assert game is not None
+        assert game.headers["OpeningRootFEN"] == chess.STARTING_FEN
+        assert json.loads(game.headers["OpeningUCI"]) == expected
+        replay = chess.Board(game.headers["OpeningRootFEN"])
+        for uci in json.loads(game.headers["OpeningUCI"]):
+            replay.push_uci(uci)
+        assert replay.fen() == game.board().fen()
 
 
 def test_every_finished_game_is_on_disk_when_the_run_dies(

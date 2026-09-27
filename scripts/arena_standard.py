@@ -88,6 +88,30 @@ from chess_anti_engine.utils.game_log import (
 # rides the same hook.
 PgnSink = Callable[..., None]
 
+
+def _opening_history(board: chess.Board) -> tuple[str, tuple[str, ...]]:
+    """Record the pre-play root and ordered book moves, not just their final FEN."""
+    return board.root().fen(), tuple(move.uci() for move in board.move_stack)
+
+
+def _check_opening_history(
+    root_fen: str, opening_uci: Sequence[str], start_fen: str,
+) -> None:
+    """Require the recorded book to reconstruct the actual play position."""
+    try:
+        board = chess.Board(root_fen)
+        for uci in opening_uci:
+            if not isinstance(uci, str):
+                raise ValueError("opening UCI is not a string")
+            move = chess.Move.from_uci(uci)
+            if move not in board.legal_moves:
+                raise ValueError("opening UCI is illegal")
+            board.push(move)
+    except (ValueError, AssertionError) as exc:
+        raise ValueError("opening history cannot be replayed") from exc
+    if board.fen() != start_fen:
+        raise ValueError("opening history does not reach start FEN")
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -1280,6 +1304,32 @@ def load_arena_resume(
                 "the recorded settings, so resumed and replayed pairs would be "
                 "different openings. Refusing."
             )
+        has_root = "opening_root_fen" in row
+        has_stack = "opening_uci" in row
+        if has_root != has_stack:
+            raise SystemExit(
+                f"--resume: {path} pair {pair_id} half {half} has incomplete "
+                "opening history; root FEN and UCI stack must occur together"
+            )
+        if has_root:
+            root_fen, stack = _opening_history(openings[pair_id])
+            recorded_stack = row["opening_uci"]
+            if (row["opening_root_fen"] != root_fen
+                    or not isinstance(recorded_stack, list)
+                    or not all(isinstance(uci, str) for uci in recorded_stack)
+                    or recorded_stack != list(stack)
+                    or row.get("start_fen") != want):
+                raise SystemExit(
+                    f"--resume: {path} pair {pair_id} half {half} opening "
+                    "root/stack differs from regenerated schedule. Refusing."
+                )
+            try:
+                _check_opening_history(root_fen, recorded_stack, want)
+            except ValueError as exc:
+                raise SystemExit(
+                    f"--resume: {path} pair {pair_id} half {half} has invalid "
+                    "opening history. Refusing."
+                ) from exc
         halves.setdefault(pair_id, {})[half] = score_from_result(
             str(row["result"]), a_is_white=a_is_white,
         )
@@ -1925,6 +1975,8 @@ def play_paired_games_matched_sims(
     boards: list[chess.Board] = []
     a_plays_white: list[bool] = []
     start_fens: list[str] = []
+    opening_roots: list[str] = []
+    opening_stacks: list[tuple[str, ...]] = []
     start_offsets: list[int] = []
     for opening in openings:
         for a_white in (True, False):
@@ -1934,6 +1986,9 @@ def play_paired_games_matched_sims(
             # rather than from the standard start: move_stack carries the book's
             # own moves too, and slicing at this offset is what separates them.
             start_fens.append(opening.fen())
+            root_fen, opening_uci = _opening_history(boards[-1])
+            opening_roots.append(root_fen)
+            opening_stacks.append(opening_uci)
             start_offsets.append(len(opening.move_stack))
 
     g = len(boards)
@@ -1953,6 +2008,8 @@ def play_paired_games_matched_sims(
             half=i % 2,
             a_is_white=bool(a_plays_white[i]),
             start_fen=start_fens[i],
+            opening_root_fen=opening_roots[i],
+            opening_uci=opening_stacks[i],
             moves=mv,
             result=res,
             termination=termination,
@@ -2192,6 +2249,8 @@ def play_paired_games_matched_sims_rolling(
     awhite: list[bool] = []
     gplies: list[int] = []
     gfens: list[str] = []
+    groots: list[str] = []
+    gstacks: list[tuple[str, ...]] = []
     goffs: list[int] = []
     gt0: list[float] = []
 
@@ -2215,6 +2274,9 @@ def play_paired_games_matched_sims_rolling(
             # Book position + how many of move_stack belongs to the book, so the
             # PGN starts where PLAY started rather than replaying the opening.
             gfens.append(opening.fen())
+            root_fen, opening_uci = _opening_history(boards[-1])
+            groots.append(root_fen)
+            gstacks.append(opening_uci)
             goffs.append(len(opening.move_stack))
             gt0.append(time.time())
 
@@ -2235,6 +2297,8 @@ def play_paired_games_matched_sims_rolling(
                 half=gids[j] % 2,
                 a_is_white=bool(awhite[j]),
                 start_fen=gfens[j],
+                opening_root_fen=groots[j],
+                opening_uci=gstacks[j],
                 moves=mv,
                 result="1/2-1/2" if res == "*" else res,
                 termination=termination,
@@ -2261,6 +2325,8 @@ def play_paired_games_matched_sims_rolling(
         ka: list[bool] = []
         kp: list[int] = []
         kf: list[str] = []
+        kr: list[str] = []
+        ks: list[tuple[str, ...]] = []
         ko: list[int] = []
         kt: list[float] = []
         for j in range(len(boards)):
@@ -2295,10 +2361,13 @@ def play_paired_games_matched_sims_rolling(
                 ka.append(awhite[j])
                 kp.append(gplies[j])
                 kf.append(gfens[j])
+                kr.append(groots[j])
+                ks.append(gstacks[j])
                 ko.append(goffs[j])
                 kt.append(gt0[j])
         boards[:], gids[:], awhite[:], gplies[:] = kb, kg, ka, kp
         gfens[:], goffs[:], gt0[:] = kf, ko, kt
+        groots[:], gstacks[:] = kr, ks
         # Submit full pair IDs after reap. The monitor buffers faster suffix
         # completions until all earlier pairs are complete; no missing-pair
         # imputation or completion-order selection enters the LLR.
@@ -2461,6 +2530,7 @@ def play_paired_games_matched_time(
             for a_is_white in (True, False):
                 eng_w, eng_b_side = (eng_a, eng_b) if a_is_white else (eng_b, eng_a)
                 _g_t0 = time.time()
+                opening_root_fen, opening_uci = _opening_history(opening)
                 record = play_one_game(
                     eng_w, eng_b_side,
                     limit_w=limit, limit_b=limit,
@@ -2476,6 +2546,8 @@ def play_paired_games_matched_time(
                         half=0 if a_is_white else 1,
                         a_is_white=a_is_white,
                         start_fen=record.start_board.fen(),
+                        opening_root_fen=opening_root_fen,
+                        opening_uci=opening_uci,
                         moves=tuple(record.moves),
                         result=record.result,
                         termination=record.termination,
@@ -3171,6 +3243,8 @@ def run_arena(
         half: int,
         a_is_white: bool,
         start_fen: str,
+        opening_root_fen: str | None = None,
+        opening_uci: Sequence[str] | None = None,
         moves: tuple[chess.Move, ...],
         result: str,
         termination: str,
@@ -3190,6 +3264,19 @@ def run_arena(
         JSONL and never replays it. match_vs_uci.py orders its writes the same
         way.
         """
+        if (opening_root_fen is None) != (opening_uci is None):
+            raise ValueError("opening root FEN and UCI stack must occur together")
+        has_history = opening_root_fen is not None
+        if has_history:
+            if (not isinstance(opening_root_fen, str)
+                    or not isinstance(opening_uci, (tuple, list))
+                    or not all(isinstance(uci, str) for uci in opening_uci)):
+                raise ValueError("opening history has invalid types")
+            want_root, want_stack = _opening_history(openings[int(pair_id)])
+            if (opening_root_fen != want_root or tuple(opening_uci) != want_stack
+                    or start_fen != openings[int(pair_id)].fen()):
+                raise ValueError("opening history differs from scheduled board")
+            _check_opening_history(opening_root_fen, opening_uci, start_fen)
         score = score_from_result(result, a_is_white=a_is_white)
         if pgn_writer is not None:
             extra = {
@@ -3221,6 +3308,9 @@ def run_arena(
                 # game-log row's `eval_hoist` relies on.
                 "EvaluatorHoist": this_hoist,
             }
+            if has_history:
+                extra["OpeningRootFEN"] = opening_root_fen
+                extra["OpeningUCI"] = json.dumps(list(opening_uci), separators=(",", ":"))
             if int(pair_id) in orphan_pair_ids:
                 # This pair is being REPLAYED because the crash left it half
                 # played, and the PGN already holds that orphan game
@@ -3239,7 +3329,7 @@ def run_arena(
                 pair_half=half,
                 extra=extra,
             ))
-        game_log.write_game({
+        row = {
             "pair_id": int(pair_id),
             "half": int(half),
             "opening_index": int(pair_id),
@@ -3261,7 +3351,11 @@ def run_arena(
             "chunk": None if chunk is None else int(chunk),
             "loop": loop,
             "duration_s": round(float(duration_s), 2),
-        })
+        }
+        if has_history:
+            row["opening_root_fen"] = opening_root_fen
+            row["opening_uci"] = list(opening_uci)
+        game_log.write_game(row)
 
     pgn_sink = _on_game
 
