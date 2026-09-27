@@ -109,7 +109,9 @@ def test_retention_config_changes_identity_only_when_opted_in() -> None:
 
 
 def test_retention_cannot_change_on_resume_and_legacy_namespace_stays_off() -> None:
-    args = corpus.build_parser().parse_args(['--out-dir', '/tmp/unused'])
+    args = corpus.build_parser().parse_args([
+        '--out-dir', '/tmp/unused', '--outcome-mode', 'theoretical_v1',
+    ])
     off = corpus.config_stamp(args, sf_binary='stockfish')
     vars(args).pop('sf_retain_syzygy_on_new_game')
     assert corpus.config_stamp(args, sf_binary='stockfish') == off
