@@ -1,0 +1,203 @@
+name: Castling king invariant qualification
+'on':
+  push:
+    branches: [feat/bend-castle-king-invariants-dev-20260926]
+    paths: [.github/workflows/bend-castle-king-invariants.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: 1b27a4d75744167fc0e365f7f331d2cd80881b21
+      TARGET: feat/bend-castle-king-invariants-20260926
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 1b27a4d75744167fc0e365f7f331d2cd80881b21
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact candidate and retain verified parent evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/king-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/source.xz"
+          for blob in fb947b06a5bba7d5a4753133d5ca2ec51c56853c a73fe770d62912c373f3ec5d4655f8ba95c7ec81 bdff8e29a54e4cae41d299a1c71b036437d03818; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/$blob" >> "$RUNNER_TEMP/source.xz"
+          done
+          test "$(git hash-object "$RUNNER_TEMP/source.xz")" = e5dafc32a5947e672ced486db2ae53dfea7e6b97
+          for job in 108527941137 108535411472; do
+            gh api "repos/jjoshua2/DeepFin/actions/jobs/$job" > "$EVIDENCE/parent-job-$job.json"
+          done
+          python3 - <<'PY'
+          import hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);t=Path(os.environ['RUNNER_TEMP'])
+          def git(*args):return subprocess.check_output(['git',*args],text=True).strip()
+          def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+          assert git('rev-parse','HEAD')==os.environ['BASE']
+          assert git('rev-parse','HEAD^{tree}')=='c7afa4b4f843a3f7dc6c1b6619541160967e5cf4'
+          old=Path('docs/experiments/evidence/bend-initialized-attacked')
+          q=json.loads((old/'state-reconciliation/qualification.json').read_text())
+          assert q['modular_laws']==186 and q['modular_controls']==581
+          retained=json.loads((old/'hosted-source-identity.json').read_text())['candidate_source_sha256s']
+          assert len(retained)==585
+          for path,h in retained.items():assert digest(Path(path))==h,path
+          for job,run in [(108527941137,36286418567),(108535411472,36289048263)]:
+              j=json.loads((e/f'parent-job-{job}.json').read_text())
+              assert j['id']==job and j['run_id']==run and j['status']=='completed' and j['conclusion']=='success'
+          inherited={p:digest(Path(p)) for p in git('ls-files','native/bend_engine').splitlines() if Path(p).is_file()}
+          assert len(inherited)==586
+          raw=(t/'source.xz').read_bytes()
+          assert len(raw)==22276 and hashlib.sha256(raw).hexdigest()=='b3a5fe02be720a59953d97e963c5d80f6405a2778911e5899c774abcad27d4f6'
+          patch=lzma.decompress(raw,memlimit=256*1024*1024)
+          assert len(patch)==187001 and hashlib.sha256(patch).hexdigest()=='a0e2b6902def4ef3c6f3e9de69b17699d8683cb81fabe6733081c20e1549dfe3'
+          (e/'source.patch').write_bytes(patch)
+          subprocess.run(['git','apply','--check',str(e/'source.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(e/'source.patch')],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='9c03405ef0cae1461ac5ef2aa4eace46f157d47a'
+          changed=git('diff','--cached','--name-only').splitlines()
+          assert len(changed)==16 and all(p.startswith('native/bend_engine/standalone/proofs/castle_kings/') or p=='docs/experiments/2026-09-26-bend-castle-king-invariants.md' for p in changed)
+          for p,h in inherited.items():assert digest(Path(p))==h,p
+          hashes={p:digest(Path(p)) for p in git('ls-files','native/bend_engine').splitlines() if Path(p).is_file()}
+          assert len(hashes)==601
+          ident={'base':os.environ['BASE'],'source_tree':git('write-tree'),'patch_sha256':hashlib.sha256(patch).hexdigest(),'changed_files':changed,'parent_source_sha256s':inherited,'candidate_source_sha256s':hashes,'retained_parent_laws':186,'retained_parent_controls':581,'parent_manifest_matches':586,'combined_wrapper_executed':False}
+          (e/'source-identity.json').write_text(json.dumps(ident,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove moving-king singleton through actual castling stages'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Execute four public laws and all nineteen controls
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/castle_kings/focused.js "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Check complete castling stages in four native modes
+        env:
+          CC: /usr/bin/clang
+        run: |
+          set -euo pipefail
+          BUN=bun python3 native/bend_engine/standalone/proofs/castle_kings/verify_native.py "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Recheck original compiler source suite and pin tests
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Run unchanged locked-environment repository lint
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify reports and publish new isolated feature branch
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          git diff --exit-code
+          test "$(git ls-remote origin refs/heads/feat/bend-initialized-attacked-20260926 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" >/dev/null
+          found=$?
+          set -e
+          test "$found" = 2
+          python3 - <<'PY'
+          import collections,hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(n):return json.loads((e/n).read_text())
+          ident=read('source-identity.json');f=read('focused.json');n=read('native.json')
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          assert f['focused_gate']=='PASS' and f['controls_gate']=='PASS' and f['consumer']=='PASS'
+          assert f['new_law_count']==4 and f['consumer_raw']=='All terms check.'
+          assert len(f['negative_controls'])==19 and all(c['rejected'] for c in f['negative_controls'])
+          kinds=collections.Counter(c['kind'] for c in f['negative_controls'])
+          assert kinds['source semantic/refinement']==10 and kinds['manifest/import policy']==8
+          for p,h in f['source_sha256s'].items():assert hashlib.sha256((Path('native/bend_engine')/p).read_bytes()).hexdigest()==h,p
+          assert n['native_gate']=='PASS' and n['cases']==1148 and n['distinct_inputs']==1148
+          assert n['stage_boards_per_mode']==3444 and n['fields_per_mode']==82656
+          assert n['transit_premise_cases']==451 and n['castle_premise_cases']==437
+          assert n['fixture_sha256']=='aff5652ed932adee344eda764464b687d747649f93584c61af0dd395b9e3ec65'
+          assert len(n['modes'])==4 and all(m['invalid_rejections']==8 and m['output_sha256']=='0f792ce599979a385d3b61ce8911a367eb9885bd35678a2cf3f2d9af0d61da95' for m in n['modes'])
+          assert len(n['mutations'])==3 and all(m['compiled_and_executed'] and m['rejected'] for m in n['mutations'])
+          for p,h in n['source_sha256s'].items():assert hashlib.sha256((Path('native/bend_engine')/p).read_bytes()).hexdigest()==h,p
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          d=Path('docs/experiments/evidence/bend-castle-king-invariants');d.mkdir(parents=True,exist_ok=False)
+          for name in ['source-identity.json','focused.json','native.json','compiler-proofs.json','parent-job-108527941137.json','parent-job-108535411472.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes();(d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          q={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':ident['source_tree'],'new_laws':4,'new_controls':19,'control_categories':dict(kinds),'retained_parent_laws':186,'retained_parent_controls':581,'modular_laws':190,'modular_controls':600,'combined_wrapper_executed':False,'native_source_entries':601,'independent_review':False,'scope':'Mover singleton and valid-side propagation through actual castling stages; complete actual check-to-stage-query pair. Explicit initial consistency/singleton/side and final producer-guard premises, not full semantic legal castling.'}
+          (d/'qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          headline=f"Hosted run **{os.environ['GITHUB_RUN_ID']}** passes four public laws, the importing consumer, all nineteen controls, all four native modes and three compiled/executed corruptions, original compiler tests and unchanged repository lint on source `{os.environ['SOURCE']}`."
+          paragraphs=['## Completed hosted qualification',headline,
+            'All586 inherited native-source entries remain unchanged and all601 candidate hashes match. Exact parent186/581 plus the new4/19 gives modular190 laws/600 controls; no full190-law aggregate was run. The complete new consumer checks all imported proof producers with the unchanged pinned CLI.',
+            'Native modes each pass1,148 distinct requests,3,444 complete stage Boards and82,656 observed fields. The451 transit-premise and437 final-premise cases satisfy their claimed singletons and check targets. Eight malformed batches are rejected per mode. Three actual mutations retain the old king, add a rook to the king plane or omit side flipping; all compile/run and fail independent values. Modes repeat fixtures, not exhaustive legal games.',
+            'Ten source controls require intended semantic/refinement failures; four actual-code mutations deliberately reuse accepted imported implementation bridges. Eight enforce manifests/import policy. One synthetic output-wrapper unit is not a compiler execution. Syntax, ownership, missing imports, crashes and timeouts receive no semantic-pass credit.',
+            'The original missing-tools local lint remains a separate failed receipt. Fresh locked CPU tools pass the unchanged repository lint command at its configured scope, not a claim of additional all-native-Python type checking. C compiler selection is scoped only to native probes. Original compiler16-laws/seven-controls and12 pin tests pass.',
+            'The initial selected-side singleton and valid Boolean raw turn remain public input conditions. Their transit/final consequences are now proved rather than assumed. The final stage requires the actual producer guard; the blocked enemy-king example shows why its absence can recolor a second king. No opposing-side singleton, rights-history, legal-reachability or attack-reversal result is inferred.',
+            'The stage theorem compares complete actual in_check and attacked pairs on an arbitrary affine array. Combining this routing with initialized independent attack semantics and accepted legal_moves membership remains a later composition step, not a newly executed full-chain theorem here. No production code, prior law, compiler source, permanent workflow, model/GPU, search, training, perft or Python responsibility changed. Self-review only; no merge or deployment.'
+          ]
+          rec=Path('docs/experiments/2026-09-26-bend-castle-king-invariants.md');rec.write_text(rec.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          idx=Path('docs/experiments/README.md');s=idx.read_text();a='| Record | Scope |\n| --- | --- |\n';assert s.count(a)==1
+          idx.write_text(s.replace(a,a+'| [Castling mover-king invariants](2026-09-26-bend-castle-king-invariants.md) | Four public singleton/side/stage-check contracts; derived transit and final premises; modular190/600; attack reversal and full legality composition remain separate |\n',1))
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          note='## Latest P3 castling mover-king propagation\n\n'+headline+'\n\nStarting with a consistent Board, exactly one selected-side home king and valid raw side metadata, actual transit preserves the king singleton. Actual castling does so under the producer guard, which supplies rook-landing freshness. Raw make_move flips valid side metadata. At start/transit/final stages actual in_check equals actual attacked at the intended moving-king square against the opposite side, including the whole pair. These are not caller-assumed output king counts.\n\nModular190/600 retains parent186/581 without a full aggregate run. Initial king/side validity still needs its own global origin; opposing king invariants, universal forward/reverse attacks, legal-rights history and complete castling safety composition remain separate. See [the dated record](experiments/2026-09-26-bend-castle-king-invariants.md). No production responsibility moved.\n'
+          m.write_text(title+'\n\n'+note+rest)
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify castling mover-king and valid-side invariants'
+          git switch -c "$TARGET"
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$EVIDENCE" "$RUNNER_TEMP/final/reports"
+          git log -2 --format='%H %s' > "$RUNNER_TEMP/final/published-commits.txt"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/commit.raw"
+          git cat-file commit "$SOURCE" > "$RUNNER_TEMP/final/source-commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz commit.raw source-commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: castle-king-invariant-qualification
+          path: |
+            ${{ runner.temp }}/final/
+            ${{ runner.temp }}/king-evidence/
+          retention-days: 30
