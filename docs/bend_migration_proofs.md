@@ -1,5 +1,9 @@
 # Bend migration and proof inventory
 
+## Non-slider reversal publication candidate
+
+The saved two-law reversal suite is reconciled onto the accepted-castle destination baseline without replacing it. Fresh source/native/lint qualification remains pending; see [the publication record](experiments/2026-09-27-bend-leaper-reversal-publication.md). The earlier local evidence is historical, not a new hosted pass.
+
 ## Accepted full-generator castling destination safety
 
 Run **36336288019** passed all three public laws and their complete importing consumer, all17 classified controls, four native build modes and three compiled/executed actual-code corruptions, original compiler/pin gates, and unchanged configured locked-environment repository lint on source `3bb477d4c243b6235a2c7ff5730fae97dd51e96a`.
