@@ -289,7 +289,7 @@ def test_resume_refuses_partial_opening_history(tmp_path: Path, present: str) ->
         arena.load_arena_resume(path, settings=settings, openings=[opening])
 
 
-def test_real_matched_time_loop_banks_opening_stack_in_log_and_pgn(
+def test_real_matched_time_loop_leaves_unpreserved_history_unclaimed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     import scripts.arena_standard as arena
@@ -317,22 +317,46 @@ def test_real_matched_time_loop_banks_opening_stack_in_log_and_pgn(
     )
     rows = read_game_log(log_path).games
     assert len(rows) == 2
-    expected = [move.uci() for move in opening.move_stack]
     for row in rows:
-        assert row["opening_root_fen"] == chess.STARTING_FEN
-        assert row["opening_uci"] == expected
         assert row["start_fen"] == opening.fen()
+        assert "opening_root_fen" not in row
+        assert "opening_uci" not in row
     with pgn_path.open() as stream:
         games = [chess.pgn.read_game(stream) for _ in range(2)]
         assert chess.pgn.read_game(stream) is None
     for game in games:
         assert game is not None
-        assert game.headers["OpeningRootFEN"] == chess.STARTING_FEN
-        assert json.loads(game.headers["OpeningUCI"]) == expected
-        replay = chess.Board(game.headers["OpeningRootFEN"])
-        for uci in json.loads(game.headers["OpeningUCI"]):
-            replay.push_uci(uci)
-        assert replay.fen() == game.board().fen()
+        assert "OpeningRootFEN" not in game.headers
+        assert "OpeningUCI" not in game.headers
+        assert game.board().fen() == opening.fen()
+
+
+def test_matched_time_sink_refuses_an_invented_opening_history(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    import scripts.arena_standard as arena
+
+    def emit_false_history(
+        _candidate: str, _reference: str, openings: list[chess.Board], *,
+        pgn_sink: Any, pair_ids: list[int], **_kwargs: Any,
+    ) -> list[float]:
+        opening = openings[0]
+        pgn_sink(
+            pair_id=pair_ids[0], half=0, a_is_white=True,
+            start_fen=opening.fen(),
+            opening_root_fen=opening.root().fen(),
+            opening_uci=[move.uci() for move in opening.move_stack],
+            moves=(), result="1/2-1/2", termination="rules",
+            plies=0, duration_s=0.0, chunk=None, loop="matched_time",
+        )
+        return [1.0]
+
+    monkeypatch.setattr(arena, "play_paired_games_matched_time", emit_false_history)
+    with pytest.raises(ValueError, match="opening stack was not preserved"):
+        _run_arena(
+            monkeypatch, tmp_path, log_path=tmp_path / "false-history.games.jsonl",
+            n_openings=1, stub_play=False,
+        )
 
 
 def test_every_finished_game_is_on_disk_when_the_run_dies(

@@ -2530,7 +2530,6 @@ def play_paired_games_matched_time(
             for a_is_white in (True, False):
                 eng_w, eng_b_side = (eng_a, eng_b) if a_is_white else (eng_b, eng_a)
                 _g_t0 = time.time()
-                opening_root_fen, opening_uci = _opening_history(opening)
                 record = play_one_game(
                     eng_w, eng_b_side,
                     limit_w=limit, limit_b=limit,
@@ -2546,8 +2545,6 @@ def play_paired_games_matched_time(
                         half=0 if a_is_white else 1,
                         a_is_white=a_is_white,
                         start_fen=record.start_board.fen(),
-                        opening_root_fen=opening_root_fen,
-                        opening_uci=opening_uci,
                         moves=tuple(record.moves),
                         result=record.result,
                         termination=record.termination,
@@ -3267,6 +3264,8 @@ def run_arena(
         if (opening_root_fen is None) != (opening_uci is None):
             raise ValueError("opening root FEN and UCI stack must occur together")
         has_history = opening_root_fen is not None
+        if loop == "matched_time" and has_history:
+            raise ValueError("matched_time opening stack was not preserved by UCI play")
         if has_history:
             if (not isinstance(opening_root_fen, str)
                     or not isinstance(opening_uci, (tuple, list))

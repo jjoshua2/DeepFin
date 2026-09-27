@@ -220,7 +220,7 @@ def test_book_opening_records_book_position_and_excludes_book_moves(
         assert replay.is_checkmate()
 
 
-def test_matched_time_sink_retains_history_lost_by_uci_record(
+def test_matched_time_sink_does_not_claim_history_stripped_by_uci_record(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import scripts.match_vs_uci as uci_mod
@@ -242,17 +242,21 @@ def test_matched_time_sink_retains_history_lost_by_uci_record(
         )
 
     monkeypatch.setattr(uci_mod, "play_one_game", fake_game)
-    got: list[Emitted] = []
+    got: list[dict[str, object]] = []
+
+    def sink(**row: object) -> None:
+        got.append(row)
+
     scores = play_paired_games_matched_time(
         "cand.pt", "ref.pt", [opening], device="cpu", ms_per_move=1,
-        max_plies=1, uci_args="", pgn_sink=_collect_sink(got),
+        max_plies=1, uci_args="", pgn_sink=sink,
     )
     assert scores == [1.0]
     assert len(got) == 2
     for game in got:
-        assert game.start_fen == opening.fen()
-        assert game.opening_root_fen == chess.STARTING_FEN
-        assert game.opening_uci == ("g1f3", "g8f6", "f3g1", "f6g8")
+        assert game["start_fen"] == opening.fen()
+        assert "opening_root_fen" not in game
+        assert "opening_uci" not in game
 
 
 @pytest.mark.usefixtures("scripted_moves")
