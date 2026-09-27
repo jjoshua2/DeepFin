@@ -1,0 +1,277 @@
+name: Initialized attack state reconciliation
+'on':
+  push:
+    branches: [feat/bend-attack-state-reconciliation-dev-20260926]
+    paths: [.github/workflows/bend-attack-state-reconciliation.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      SOURCE: 3a3bdce49916aa52c56cad50f756f50eff694ed9
+      TARGET: feat/bend-initialized-attacked-20260926
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 3a3bdce49916aa52c56cad50f756f50eff694ed9
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Preserve exact saved alternative and validate retained proof evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/attack-state-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          : > "$RUNNER_TEMP/saved.xz"
+          for blob in fdb7a01e4790925cd410c8a3a1f4ca07458490eb 7da97b1c0b9ae9c372bba8430d0144ef7171e2e5 b1294fb9e6f7c72bc471619c5fada97f7e8cec20; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/$blob" >> "$RUNNER_TEMP/saved.xz"
+          done
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108527941137 > "$EVIDENCE/retained-proof-job.json"
+          python3 - <<'PY'
+          import hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          d=Path('docs/experiments/evidence/bend-initialized-attacked')
+          def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+          old=json.loads((d/'hosted-source-identity.json').read_text())['candidate_source_sha256s']
+          assert len(old)==585
+          for p,h in old.items(): assert digest(Path(p))==h,p
+          q=json.loads((d/'qualification.json').read_text())
+          assert q['qualification']=='PASS' and q['modular_laws']==186 and q['modular_controls']==581
+          job=json.loads((e/'retained-proof-job.json').read_text())
+          assert job['id']==108527941137 and job['run_id']==36286418567 and job['status']=='completed' and job['conclusion']=='success'
+          new=Path('native/bend_engine/standalone/proofs/initialized_attacks/verify_table_state.py')
+          assert digest(new)=='6997460100c77859fddbb6ae6ef934ce3b12fc2fa25c32bb60294eede4fc4ec3'
+          raw=lzma.decompress((Path(os.environ['RUNNER_TEMP'])/'saved.xz').read_bytes(),memlimit=256*1024*1024)
+          assert len(raw)==90158 and hashlib.sha256(raw).hexdigest()=='bcdff916fb8a0d42d0fd1fd4dab4442a4d68e62002306a51eb90dedd3823316c'
+          files=json.loads(raw); assert len(files)==21
+          manifest=json.loads(files['archive-manifest.json'])
+          assert set(manifest['files_sha256'])==set(files)-{'archive-manifest.json'}
+          archive=d/'saved-alternative-7d6f3b19'; archive.mkdir(exist_ok=False)
+          prefix='native/bend_engine/standalone/proofs/attack_composition/'
+          extras={'archive-manifest.json','readout.md','publication-core.json','local-native.json','qualified-focused-receipt.json','qualified-native-receipt.json'}
+          mapping={}
+          for name,text in files.items():
+              p=Path(name); assert not p.is_absolute() and '..' not in p.parts
+              assert name.startswith(prefix) or name in extras,name
+              data=text.encode()
+              if name!='archive-manifest.json': assert hashlib.sha256(data).hexdigest()==manifest['files_sha256'][name],name
+              out=archive/'source'/(p.name+'.txt') if name.startswith(prefix) else archive/p.name
+              assert not out.exists(); out.parent.mkdir(parents=True,exist_ok=True); out.write_bytes(data)
+              mapping[name]=str(out)
+          assert sum(name.startswith(prefix) for name in mapping)==15
+          core=json.loads(files['publication-core.json'])
+          assert '7d6f3b19c3cd5d377d058c0ee2af927f9df97a63' in files['publication-core.json']
+          (archive/'README.md').write_text('''# Preserved alternative initialized-attack proof
+
+          These are the exact 15 primary source/test files from saved local commit
+          7d6f3b19c3cd5d377d058c0ee2af927f9df97a63, with its original readout,
+          publication manifest and selected execution receipts. The source snapshot was
+          af9f7c6322fe724721b72b6203b86b59abe98c8c, based on PR #896.
+
+          The active initialized_attacks suite in PR #897 is a different implementation
+          of the same three contract domains. Neither implementation is overwritten.
+          The source/ files here have .txt appended to prevent duplicate gate discovery.
+          Mapping and SHA-256 identities are recorded in reconciliation.json. These are
+          archived local proofs, not three extra registered laws or an independent review.
+          No formal equivalence theorem between the two proof implementations is claimed.
+
+          To restore for review, copy each source/NAME.txt to
+          native/bend_engine/standalone/proofs/attack_composition/NAME in a disposable
+          checkout of exact base 68fee266244d7b6210d004a78c865a29266b76e3, then use
+          the commands in the archived source/README.md.txt. Verify archive-manifest.json.
+          Original full logs, patch and Git bundle remain in the conversation review ZIP,
+          SHA-256 d051d5b9f0e634958008009382b739effe801b421cdb22a2c95faf8f759b8ceb.
+          The unchanged local lint failure in the readout remains historical, not replaced
+          by this reconciliation's separate hosted result.
+          '''.replace('          ',''))
+          record={'source':os.environ['SOURCE'],'retained_source_run':36286418567,'retained_source_job':108527941137,'retained_native_source_entries':585,'candidate_native_source_entries':586,'retained_source_sha256s':old,'new_test_sha256':digest(new),'archive_mapping':mapping,'archive_payload_sha256':hashlib.sha256(raw).hexdigest(),'saved_laws_counted_again':False,'modular_laws':186,'modular_controls':581,'complete_source_consumer_rerun':False}
+          (e/'reconciliation.json').write_text(json.dumps(record,indent=2)+'\n')
+          PY
+      - name: Re-run unchanged initialized attack native reference
+        env:
+          CC: /usr/bin/clang
+          BUN: bun
+        run: |
+          set -euo pipefail
+          python3 native/bend_engine/standalone/proofs/initialized_attacks/verify_native.py "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Qualify retained table state and both delayed corruptions
+        env:
+          CC: /usr/bin/clang
+          BUN: bun
+        run: |
+          set -euo pipefail
+          python3 native/bend_engine/standalone/proofs/initialized_attacks/verify_table_state.py "$PWD/.compiler" --report "$EVIDENCE/table-state.json" 2>&1 | tee "$EVIDENCE/table-state.log"
+      - name: Recheck compiler source suite and pin tests
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU tools and run unchanged repository lint
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          export PATH="$PWD/.venv/bin:$PATH"
+          python -c 'import torch; assert torch.version.cuda is None'
+          python -m py_compile native/bend_engine/standalone/proofs/initialized_attacks/verify_table_state.py
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify exact evidence and publish reconciliation to existing PR
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          git diff --exit-code -- native
+          python3 - <<'PY'
+          import hashlib,json,os,shutil,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']); d=Path('docs/experiments/evidence/bend-initialized-attacked')
+          def read(p): return json.loads(p.read_text())
+          def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+          r=read(e/'reconciliation.json'); n=read(e/'native.json'); s=read(e/'table-state.json')
+          for p,h in r['retained_source_sha256s'].items(): assert digest(Path(p))==h,p
+          assert digest(Path('native/bend_engine/standalone/proofs/initialized_attacks/verify_table_state.py'))==r['new_test_sha256']
+          archived=read(d/'saved-alternative-7d6f3b19/archive-manifest.json')
+          for name,h in archived['files_sha256'].items(): assert digest(Path(r['archive_mapping'][name]))==h,name
+          assert n['native_gate']=='PASS' and n['rows_per_mode']==42270 and n['fields_per_mode']==634050
+          assert len(n['modes'])==4 and all(x['invalid_rejections']==9 for x in n['modes'])
+          assert len(n['mutations'])==4 and all(x['rejected'] and x['compiled_and_executed'] for x in n['mutations'])
+          old_native=read(d/'hosted-native.json')
+          assert {k:v for k,v in n.items() if k!='cc'}=={k:v for k,v in old_native.items() if k!='cc'}
+          assert s['table_state_gate']=='PASS' and s['base_queries']==128 and s['contexts']==3
+          assert s['fixture_sha256']=='a8ed7b5fef685c4d929687ffb213f093df4a3c558c1f05e13b483cb5822682e4'
+          assert s['generated_probe_sha256']=='1dbb85dc85cfad9e5fd7ea4673eca7b44eb22a0cca86dbc1164096bb5db8f5f9'
+          assert [x['mode'] for x in s['modes']]==['generic','portable','native','ubsan']
+          assert all(x['rows']==384 and x['query_fields']==5760 and x['sentinel_reads']==3 and x['all_query_values_match'] and x['all_sentinels_match'] for x in s['modes'])
+          assert len(s['mutations'])==2 and all(x['compiled_and_executed'] and x['rejected'] for x in s['mutations'])
+          lost,slack=s['mutations']
+          assert lost['name']=='lose-returned-table' and lost['first_masks_and_attack_boolean_match'] and lost['first_check_observed']==0 and lost['first_check_expected']==1
+          assert slack['name']=='erase-unused-slot-only' and slack['all_query_values_match'] and slack['sentinel_observed']==[0,0] and slack['sentinel_expected']==[826366246,1398314899]
+          for p,h in s['source_sha256s'].items(): assert digest(Path('native/bend_engine')/p)==h,p
+          assert read(e/'compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          out=d/'state-reconciliation'; out.mkdir(exist_ok=False)
+          for name in ['reconciliation.json','native.json','table-state.json','retained-proof-job.json','compiler-proofs.json','pin.log','lint.log','table-state.log']:
+              shutil.copyfile(e/name,out/name)
+          q={'qualification':'PASS_NATIVE_STATE_AND_CONFIGURED_REPOSITORY_LINT','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'retained_source_run':36286418567,'retained_source_job':108527941137,'retained_source_files_unchanged':585,'new_native_script_files':1,'saved_primary_files_archived':15,'new_registered_laws':0,'new_registered_source_controls':0,'modular_laws':186,'modular_controls':581,'full_source_consumer_rerun':False,'full_aggregate_rerun':False,'fresh_original_native_modes':4,'fresh_table_state_modes':4,'additional_native_mutations':2,'independent_review':False}
+          (out/'qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          rec=Path('docs/experiments/2026-09-26-bend-attack-state-reconciliation.md')
+          rec.write_text(f'''# Initialized attack reconciliation and retained table state
+
+          ## Decision and exact preservation
+
+          Update PR #897 instead of opening a duplicate composition PR. The supplied local
+          attack_composition variant and active initialized_attacks variant have different
+          implementations of the same three contract domains: typed piece queries, attacked,
+          and singleton in_check, with the same symbolic initialization and full-array results.
+          All 15 saved primary files are preserved byte-for-byte as .txt in
+          evidence/bend-initialized-attacked/saved-alternative-7d6f3b19/source, alongside the
+          original readout and selected original receipts. The archive manifest gives hashes
+          and restoration instructions. Neither implementation is overwritten. This is a
+          scope comparison, not a newly proved equivalence or an independent reviewer.
+
+          No additional public law is counted: totals remain modular186/581.
+
+          ## New executable state regression
+
+          Source `{os.environ['SOURCE']}` adds only verify_table_state.py to the active native
+          suite. It reuses the existing forward-coordinate reference and instruments a
+          disposable native probe to plant and read a nonzero sentinel at unused slot131071.
+          No production, compiler, inherited proof or existing test file changes.
+
+          Generic, portable, native-target and UBSan each pass384 sequential query requests
+          (128 base queries across three initializers),5760 query fields and three sentinel
+          reads. Modes repeat fixtures. Two actual-code mutants are compiled/executed using
+          generic C flags. Replacing the returned table preserves the first masks and attack
+          Boolean but changes the following in_check from1 to0. Erasing ONLY the unused slot
+          preserves EVERY query field; the sentinel alone rejects this state corruption.
+          These are deliberate regressions, not production bugs. One sentinel is not a
+          full-buffer comparison, pointer-identity guarantee or native lifetime proof.
+
+          ## Fresh versus retained qualification
+
+          Hosted run **{os.environ['GITHUB_RUN_ID']}** freshly executes both the unchanged
+          original native verifier (42270 requests/634050 fields per mode, four original
+          mutants, nine malformed requests per mode) and the new state verifier. Original
+          native reports agree with the prior qualified report except C compiler identity.
+          Compiler16-law/seven-control tests,12 pin tests and unchanged locked-CPU repository
+          lint pass. Repository lint retains its configured scope; it is not relabeled as
+          a new explicit all-native-Python type-check. The added file is syntax-compiled
+          and exercised by the native regression.
+
+          The expensive full three-law importing consumer and19 source controls are retained
+          from exact-source run36286418567/job108527941137, NOT rerun or counted twice here.
+          All585 qualified native-source entries are checked unchanged. The historical
+          alternate local lint failure remains in its archive; no fresh execution of those
+          archived alternative proofs is claimed. No complete186-law aggregate ran.
+
+          ## Next acceptance and trust
+
+          Universal forward/reverse attack correspondence, singleton/valid-side propagation
+          through castling and complete semantic legal-move correctness remain separate.
+          No new mathematics is claimed for this test/publication increment. Self-review
+          only. Existing checker/Base, native lowering/storage, ABI, toolchain, library, OS
+          and hardware boundaries remain. No merge, deployment, live process, Python
+          application responsibility, model/GPU, search, training or perft change.
+          '''.replace('          ',''))
+          index=Path('docs/experiments/README.md'); text=index.read_text(); anchor='| Record | Scope |\n| --- | --- |\n'; assert text.count(anchor)==1
+          index.write_text(text.replace(anchor,anchor+'| [Attack state reconciliation](2026-09-26-bend-attack-state-reconciliation.md) | Preserves all15 saved alternative files; catches delayed and unused-slot table loss; no duplicate public-law counts |\n',1))
+          matrix=Path('docs/bend_migration_proofs.md'); title,rest=matrix.read_text().split('\n',1)
+          matrix.write_text(title+'\n\n## Initialized attack state reconciliation\n\nThe saved local composition is preserved alongside the existing #897 implementation, not silently substituted or counted again. A new native state regression detects returned-table loss after a correct current answer, and unused-slot corruption even when every query answer remains correct. Fresh four-mode native and configured repository lint evidence is in [the reconciliation record](experiments/2026-09-26-bend-attack-state-reconciliation.md). Exact existing three-law/source-control evidence is retained; totals remain modular186/581, not a full aggregate execution. Forward/reverse geometry and castling singleton propagation remain next.\n'+rest)
+          for p,h in r['retained_source_sha256s'].items(): assert digest(Path(p))==h,p
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git add docs/experiments docs/bend_migration_proofs.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: preserve saved attack composition and qualify retained-table regressions'
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/attack-state-final"
+          cp -r "$EVIDENCE" "$RUNNER_TEMP/attack-state-final/reports"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/attack-state-final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/attack-state-final/commit.raw"
+          git rev-parse HEAD > "$RUNNER_TEMP/attack-state-final/commit.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/attack-state-final/tree.txt"
+          (cd "$RUNNER_TEMP/attack-state-final" && sha256sum source.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: initialized-attack-state-reconciliation
+          path: |
+            ${{ runner.temp }}/attack-state-final/
+            ${{ runner.temp }}/attack-state-evidence/
+          retention-days: 30
