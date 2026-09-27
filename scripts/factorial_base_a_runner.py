@@ -63,9 +63,10 @@ def read(path):
 
 def load_runtime_module(runtime: str, name: str, *, path: str | None = None) -> ModuleType:
     """Load one helper from its pinned file or the frozen operator runtime."""
-    existing = sys.modules.get(name)
-    if existing is not None:
-        return existing
+    if path is None:
+        existing = sys.modules.get(name)
+        if existing is not None:
+            return existing
     helper = Path(path) if path is not None else Path(runtime) / f"{name}.py"
     require(helper.is_file(), f"runtime helper missing: {name}")
     spec = importlib.util.spec_from_file_location(f"_factorial_{name}", helper)
