@@ -39,6 +39,7 @@ class FakeSession:
         self.options: dict[str, dict[str, str]] = {"CPUExecutionProvider": {"arena": "1"}}
         self.calls: list[tuple[list[str], np.ndarray]] = []
         self.fallback_disabled = False
+        self._enable_fallback = True
 
     def get_inputs(self) -> list[Meta]:
         return self.inputs
@@ -54,6 +55,7 @@ class FakeSession:
 
     def disable_fallback(self) -> None:
         self.fallback_disabled = True
+        self._enable_fallback = False
 
     def run(self, names: list[str], feed: dict[str, np.ndarray]) -> list[np.ndarray]:
         assert self.fallback_disabled, "verified sessions must disable ORT provider fallback"
@@ -294,6 +296,40 @@ def test_inline_model_traversal_handles_repeated_protobuf_fields(
     verified = build(model, sha)
     assert verified.provenance.onnx_sha256 == sha
     assert session.fallback_disabled
+
+
+def test_protobuf_repeated_field_compatibility() -> None:
+    class LegacyField:
+        label = 3
+        LABEL_REPEATED = 3
+
+    class ModernField:
+        is_repeated = True
+
+    class SingularModernField:
+        is_repeated = False
+
+    assert factory._field_is_repeated(LegacyField())
+    assert factory._field_is_repeated(ModernField())
+    assert not factory._field_is_repeated(SingularModernField())
+
+
+def test_session_that_keeps_runtime_fallback_enabled_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = tmp_path / "model.onnx"
+    sha = tiny_model(model)
+
+    class IneffectiveDisableSession(FakeSession):
+        def disable_fallback(self) -> None:
+            self.fallback_disabled = True
+            self._enable_fallback = True
+
+    session = IneffectiveDisableSession()
+    open_fake(monkeypatch, session)
+    with pytest.raises(ValueError, match="fallback remained enabled"):
+        build(model, sha)
+    assert session.calls == []
 
 
 def test_session_without_fallback_control_is_rejected(
