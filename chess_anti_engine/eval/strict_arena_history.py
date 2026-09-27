@@ -22,6 +22,7 @@ import chess.syzygy
 from chess_anti_engine.utils.game_log import settings_fingerprint
 
 SYZYGY_PROTOCOL = "rule50-aware-root-leaf-and-adjudication-v1"
+PLAYED_UCI_DOMAIN = b"arena-played-uci-v1\0"
 _RESULTS = frozenset({"1-0", "0-1", "1/2-1/2"})
 _MAX_INPUT_BYTES = 64 * 1024 * 1024
 
@@ -40,6 +41,8 @@ class WdlDtzProbe(Protocol):
 
 @dataclass(frozen=True)
 class HistoryReceipt:
+    """Local byte/game consistency only; never an arena or source-credit terminal."""
+
     jsonl_sha256: str
     pgn_sha256: str
     pairs: int
@@ -52,6 +55,7 @@ class HistoryReceipt:
     opening_plies: int
     compile_tags: tuple[str, ...]
     hoist_tags: tuple[str, ...]
+    admission_ready: bool = False
 
 
 def _refuse(message: str) -> NoReturn:
@@ -150,6 +154,7 @@ def _row_signature(row: Mapping[str, Any]) -> tuple[object, ...]:
         row.get("result"), row.get("termination"), row.get("plies"),
         row.get("start_fen"), row.get("opening_root_fen"),
         json.dumps(row.get("opening_uci"), sort_keys=True),
+        row.get("played_uci_sha256"),
     )
 
 
@@ -160,6 +165,13 @@ def _replay_marker(game: chess.pgn.Game) -> bool:
     return marker == "1"
 
 
+def _played_digest(game: chess.pgn.Game) -> str:
+    """Digest the exact ordered played UCI moves, excluding book history."""
+    ucis = [move.uci() for move in game.mainline_moves()]
+    payload = PLAYED_UCI_DOMAIN + json.dumps(ucis, separators=(",", ":")).encode("ascii")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _attempt_agrees(row: Mapping[str, Any], game: chess.pgn.Game) -> bool:
     """Bind each archived attempt's visible row fields to its PGN, even if stale."""
     headers = game.headers
@@ -168,6 +180,7 @@ def _attempt_agrees(row: Mapping[str, Any], game: chess.pgn.Game) -> bool:
         pgn_plies = int(headers["Plies"])
     except (KeyError, ValueError, json.JSONDecodeError):
         return False
+    move_digest = _played_digest(game)
     return (
         headers.get("OpeningRootFEN") == row.get("opening_root_fen")
         and pgn_opening == row.get("opening_uci")
@@ -176,6 +189,8 @@ def _attempt_agrees(row: Mapping[str, Any], game: chess.pgn.Game) -> bool:
         and headers.get("Termination") == row.get("termination")
         and pgn_plies == row.get("plies")
         and len(list(game.mainline_moves())) == pgn_plies
+        and row.get("played_uci_sha256") == move_digest
+        and headers.get("PlayedUCISHA256") == move_digest
     )
 
 
@@ -185,6 +200,7 @@ def _resolve_attempts(
     expected_openings: Mapping[int, chess.Board],
     expected_pgn_tags: Mapping[str, str],
     expected_seed: int,
+    max_plies: int,
     candidate_name: str,
     reference_name: str,
     candidate_search: str,
@@ -207,6 +223,13 @@ def _resolve_attempts(
         archives = pgn_groups[key]
         if len(candidates) != len(archives):
             _refuse(f"pair-half {key} has unmatched JSONL/PGN attempts")
+        for row, game in zip(candidates, archives):
+            digest = row.get("played_uci_sha256")
+            pgn_digest = game.headers.get("PlayedUCISHA256")
+            if (not isinstance(digest, str) or len(digest) != 64
+                    or any(ch not in "0123456789abcdef" for ch in digest)
+                    or pgn_digest is None):
+                _refuse(f"pair-half {key} lacks the future played-UCI digest schema")
         if any(not _attempt_agrees(row, game) for row, game in zip(candidates, archives)):
             _refuse(f"pair-half {key} has unmatched attempt contents")
         opening = expected_openings[key[0]]
@@ -222,6 +245,9 @@ def _resolve_attempts(
                     or row.get("seed") != expected_seed
                     or row.get("loop") not in ("chunked", "rolling")
                     or row.get("result") not in _RESULTS
+                    or type(row.get("plies")) is not int
+                    or not 0 <= row["plies"] <= max_plies
+                    or row.get("termination") not in ("rules", "syzygy")
                     or type(row.get("score_candidate")) is not float
                     or row.get("score_candidate") != _score(row["result"], candidate_white)
                     or not isinstance(row.get("compile"), str)
@@ -257,6 +283,8 @@ def _resolve_attempts(
         selected_rows[key] = candidates[-1]
         selected_games[key] = archives[-1]
     for pair in replayed:
+        if sum(len(row_groups[(pair, half)]) - 1 for half in (0, 1)) != 1:
+            _refuse(f"pair {pair} replayed a complete pair or lacks a committed orphan")
         if not any(len(row_groups[(pair, half)]) == 2 for half in (0, 1)):
             _refuse(f"pair {pair} has a replay marker but no replaced attempt")
         if not all(_replay_marker(selected_games[(pair, half)]) for half in (0, 1)):
@@ -330,6 +358,11 @@ def verify_strict_arena_history(
     if (type(scheduled_games) is not int or scheduled_games < 2
             or scheduled_games % 2 or max(expected_openings) >= scheduled_games // 2):
         _refuse("expected pair IDs exceed the arena's scheduled games")
+    if expected_settings.get("opening_plies") != expected_opening_plies:
+        _refuse("opening ply contract differs from recorded arena settings")
+    max_plies = _integer(expected_settings.get("max_plies"), "expected max_plies")
+    if max_plies < 1:
+        _refuse("expected max_plies is invalid")
     if type(expected_opening_plies) is not int or not 0 <= expected_opening_plies <= 256:
         _refuse("expected opening ply count is invalid")
     try:
@@ -361,6 +394,7 @@ def verify_strict_arena_history(
     selected_rows, selected_games, replayed = _resolve_attempts(
         rows, games, wanted, expected_openings, expected_pgn_tags,
         _integer(expected_settings.get("seed"), "expected seed"),
+        max_plies,
         candidate_name, reference_name, candidate_search, reference_search,
     )
     rules = syzygy = 0
