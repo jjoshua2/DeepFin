@@ -1,0 +1,48 @@
+{
+  "status": "READ_ONLY_SOURCE_DIAGNOSIS",
+  "sources": {
+    "scripts/lc0_control_train.py": {
+      "sha256": "9d3fd5cb695118d56b7cf2498db75764612cfb68d36576ca4f99597750b27f53",
+      "evidence_lines": [
+        2180,
+        2266
+      ]
+    },
+    "chess_anti_engine/replay/game_epoch.py": {
+      "sha256": "a84ad58fd68719e42513fa0411ca64f02ce848167cc1496a0a6add1ff4664b78",
+      "evidence_lines": [
+        396,
+        551,
+        1145
+      ]
+    },
+    "chess_anti_engine/replay/shard.py": {
+      "sha256": "2af196fdd669eb1fe050ce4fe7f5a68c479aa0b3736d7a86b902abc4cc141d8c",
+      "evidence_lines": [
+        1923,
+        1953
+      ]
+    },
+    "chess_anti_engine/replay/target_overlay.py": {
+      "sha256": "31ae70cceb684632a402be26ada1018fd05033fd9d8ff5a4ef5b4929f61010a4",
+      "evidence_lines": [
+        200,
+        215,
+        367,
+        409,
+        424
+      ]
+    }
+  },
+  "host_observation": {
+    "pid": 1516996,
+    "elapsed": "02:09:12",
+    "cpu_percent": 135,
+    "rchar": 305906839504,
+    "read_bytes": 6751331200,
+    "log_endpoint": "built-model architecture validated; no exact-epoch plan message"
+  },
+  "demonstrated": "Schema2 lazy overlay operations hash and densely validate target probabilities/legal masks repeatedly; nine _open_target_manifest validations per shard through post-initial-state constructor before plan, plus repeated compressed hashes and tree stamps.",
+  "inference": "Cached reads, decompression, hashing and metadata walks likely dominate observed startup; exact substage/timing not measured.",
+  "next": "Operation-local validated context with anchored dependency/membership/receipt rechecks, unchanged deterministic plan and objective counts, mutation tests and bounded stage instrumented comparison. No frozen runtime changes."
+}
