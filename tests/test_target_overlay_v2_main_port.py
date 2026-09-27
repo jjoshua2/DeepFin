@@ -524,12 +524,12 @@ def _synthetic_legacy_e(
         "base": str(Path(manifest["base"]).parent), "recipe": recipe,
         "rows": 2, "shards": 1,
     })
-    complete_ref = pinned("legacy-complete.json", {
+    complete_ref = pinned("complete.json", {
         "status": "COMPLETE_SFFREE_35_COHORTS", "qualified": qualified_ref,
         "plan": plan_ref, "cohorts": [cohort_ref], "rows": 2, "shards": 1,
     })
     monkeypatch.setattr(storage, "LEGACY_E_QUALIFIED_SHA256", qualified_ref["sha256"])
-    monkeypatch.setattr(storage, "LEGACY_E_COMPLETE_REF", complete_ref)
+    monkeypatch.setattr(storage, "LEGACY_E_COMPLETE_SHA256", complete_ref["sha256"])
     monkeypatch.setattr(storage, "LEGACY_E_MANIFESTS_SHA256", manifests_ref["sha256"])
     monkeypatch.setattr(storage, "LEGACY_E_COHORT_COUNT", 1)
     return target, qualified_ref

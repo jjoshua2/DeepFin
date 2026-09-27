@@ -31,10 +31,7 @@ TARGET_FIELDS = frozenset({'policy_target', 'search_wdl'})
 # preparation completion and exact storage receipt. New overlays require a
 # producer registration and intent roster; this is a frozen read-only adapter.
 LEGACY_E_QUALIFIED_SHA256 = '4325d6bb319d278d5c844b0e16a82a3211dab1224d9c6443d0bbc25b82af1f03'
-LEGACY_E_COMPLETE_REF = {
-    'path': '/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/execution_v1/complete.json',
-    'sha256': 'ed21767547f8fe0f83918e86e1e1aa899c2aab52f7800f6b949c24059a98916a',
-}
+LEGACY_E_COMPLETE_SHA256 = 'ed21767547f8fe0f83918e86e1e1aa899c2aab52f7800f6b949c24059a98916a'
 LEGACY_E_MANIFESTS_SHA256 = 'ca4e61bbae176ac0b6d1f32698aad9de299bc4f48de3035f2a430dac60ccf34c'
 LEGACY_E_COHORT_COUNT = 35
 
@@ -731,7 +728,12 @@ def _legacy_e_recipes(ref: dict[str, str], receipt: dict[str, Any]) -> dict[str,
     """Reconstruct only the historical E scopes from pinned JSON metadata."""
     require(ref['sha256'] == LEGACY_E_QUALIFIED_SHA256,
             'unrecognized pre-roster target qualification')
-    complete = _read_pin(LEGACY_E_COMPLETE_REF)
+    # The frozen completion is the sibling of its pinned qualification receipt.
+    # Its exact bytes remain independently fixed by this SHA.
+    complete = _read_pin({
+        'path': str(Path(ref['path']).with_name('complete.json')),
+        'sha256': LEGACY_E_COMPLETE_SHA256,
+    })
     require(complete.get('status') == 'COMPLETE_SFFREE_35_COHORTS'
             and complete.get('qualified') == ref
             and complete.get('rows') == receipt.get('rows')
