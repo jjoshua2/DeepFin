@@ -256,7 +256,11 @@ def index_fixture(root: Path, closure: FixtureClosure) -> dict[tuple[str, int], 
             try:
                 _check_members(shard_fd, files={".zgroup", ".zattrs"},
                                dirs={"game_id", "has_game_id"},
-                               required={"game_id", "has_game_id"}, cap=4)
+                               required={".zgroup", "game_id", "has_game_id"}, cap=4)
+                group_meta = json.loads(_read_file(shard_fd, ".zgroup",
+                                                  MAX_METADATA_BYTES, budget))
+                require(group_meta == {"zarr_format": 2},
+                        "fixture shard requires Zarr v2 group metadata")
                 ids = _read_column(shard_fd, "game_id", shard.shard_rows, "<i8",
                                    shard.game_id_sha256, budget)
                 flags = _read_column(shard_fd, "has_game_id", shard.shard_rows, "|b1",
@@ -275,15 +279,17 @@ def index_fixture(root: Path, closure: FixtureClosure) -> dict[tuple[str, int], 
         os.close(root_fd)
 
 
-def select_complete_games(closure: FixtureClosure,
-                          groups: dict[tuple[str, int], list[tuple[int, int]]],
-                          *, seed_sha256: str, target_rows: int = 12_288,
+def select_complete_games(*, fixture_root: Path, closure: FixtureClosure,
+                          seed_sha256: str, target_rows: int = 12_288,
                           required_cohorts: frozenset[int] = frozenset(range(35))) -> dict[str, Any]:
-    """Freeze an exact-size whole-game selection or refuse; never trim a game."""
+    """Index sealed identity columns and select whole games in one trust boundary."""
     closure.validate()
     require(_hex(seed_sha256), "invalid sampling seed SHA-256")
     require(0 < target_rows <= MAX_ROWS, "invalid sample row target")
     require(set(required_cohorts) <= set(range(35)), "invalid required cohort")
+    # A caller-supplied game map can cover every row yet silently reassign
+    # offsets between game IDs. Rebuild from pinned column bytes here.
+    groups = index_fixture(fixture_root, closure)
     seen_rows: set[tuple[int, int]] = set()
     for key, refs in groups.items():
         require(bool(refs) and len(set(refs)) == len(refs), f"duplicate row in game {key}")

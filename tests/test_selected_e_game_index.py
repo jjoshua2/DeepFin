@@ -6,6 +6,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -46,11 +47,13 @@ def test_cross_shard_unsorted_games_and_source_scoping(tmp_path: Path) -> None:
     index = index_fixture(tmp_path, closure)
     assert index[("/source/a", 7)] == [(0, 0), (0, 2), (1, 1)]
     assert index[("/source/b", 7)] == [(2, 0)]
-    sample = select_complete_games(closure, index, seed_sha256="33" * 32,
+    sample = select_complete_games(fixture_root=tmp_path, closure=closure,
+                                   seed_sha256="33" * 32,
                                    target_rows=6, required_cohorts=frozenset({0, 1, 2}))
     assert sample["status"] == "NO-LAUNCH"
     assert len(sample["rows"]) == 6
-    assert sample == select_complete_games(closure, index, seed_sha256="33" * 32,
+    assert sample == select_complete_games(fixture_root=tmp_path, closure=closure,
+                                           seed_sha256="33" * 32,
                                            target_rows=6,
                                            required_cohorts=frozenset({0, 1, 2}))
     selected = {(r["resolved_base_parent"], r["game_id"]) for r in sample["rows"]}
@@ -59,31 +62,24 @@ def test_cross_shard_unsorted_games_and_source_scoping(tmp_path: Path) -> None:
 
 
 def test_exact_12288_and_35_cohort_coverage(tmp_path: Path) -> None:
-    # One complete 384-row game in each cohort; exact subset chooses 32 games.
-    # The remaining three cohorts have one-row anchors to force all 35 in.
-    cases = [(c, f"/source/{c}", [c] * (384 if c < 32 else 1)) for c in range(35)]
     # 12,288 cannot include three extra anchors, so add 3 replaceable 383-row
     # games and rely on exact subset selection to find the required total.
     cases = [(c, f"/source/{c}", [c] * (383 if c < 3 else 384 if c < 32 else 1))
              for c in range(35)]
     closure = fixture(tmp_path, cases)
-    index = index_fixture(tmp_path, closure)
-    sample = select_complete_games(closure, index, seed_sha256="44" * 32)
+    sample = select_complete_games(fixture_root=tmp_path, closure=closure,
+                                   seed_sha256="44" * 32)
     assert len(sample["rows"]) == 12_288
     assert sample["covered_cohorts"] == list(range(35))
     assert sample["selected_games"] == 35
 
 
-def test_missing_identity_and_incomplete_index_refused(tmp_path: Path) -> None:
+def test_missing_identity_refused(tmp_path: Path) -> None:
     closure = fixture(tmp_path, [(0, "/source/a", [1, 1])], flags=[[True, False]])
     with pytest.raises(ValueError, match="without game identity"):
-        index_fixture(tmp_path, closure)
-    closure = fixture(tmp_path / "second", [(0, "/source/a", [1, 1])])
-    index = index_fixture(tmp_path / "second", closure)
-    index[("/source/a", 1)].pop()
-    with pytest.raises(ValueError, match="omits"):
-        select_complete_games(closure, index, seed_sha256="33" * 32,
-                              target_rows=1, required_cohorts=frozenset({0}))
+        select_complete_games(fixture_root=tmp_path, closure=closure,
+                              seed_sha256="33" * 32, target_rows=1,
+                              required_cohorts=frozenset({0}))
 
 
 def test_seal_digest_and_member_closure_refused(tmp_path: Path) -> None:
@@ -143,9 +139,37 @@ def test_symlink_fifo_size_and_hash_refused(tmp_path: Path) -> None:
 def test_no_exact_whole_game_total_refused(tmp_path: Path) -> None:
     closure = fixture(tmp_path, [(0, "/source/a", [1, 1, 2, 2])])
     with pytest.raises(ValueError, match="no exact row total"):
-        select_complete_games(closure, index_fixture(tmp_path, closure),
+        select_complete_games(fixture_root=tmp_path, closure=closure,
                               seed_sha256="33" * 32, target_rows=3,
                               required_cohorts=frozenset())
+
+
+def test_forged_game_reassignment_cannot_enter_selection(tmp_path: Path) -> None:
+    closure = fixture(tmp_path, [(0, "/source/a", [7, 7, 7, 7])])
+    index = index_fixture(tmp_path, closure)
+    index[("/source/a", 7)] = [(0, 0), (0, 1)]
+    index[("/source/a", 8)] = [(0, 2), (0, 3)]
+    assert sum(map(len, index.values())) == 4  # Forgery still covers every row.
+    with pytest.raises(ValueError, match="no exact row total"):
+        select_complete_games(fixture_root=tmp_path, closure=closure,
+                              seed_sha256="33" * 32, target_rows=2,
+                              required_cohorts=frozenset())
+    with pytest.raises(TypeError):
+        cast(Any, select_complete_games)(closure, index, seed_sha256="33" * 32,
+                                         target_rows=2, required_cohorts=frozenset())
+
+
+def test_group_metadata_and_duplicate_ordinal_refused(tmp_path: Path) -> None:
+    closure = fixture(tmp_path, [(0, "/source/a", [1]), (0, "/source/a", [2])])
+    duplicate = replace(closure, shards=(closure.shards[0], replace(
+        closure.shards[1], shard_ordinal=0)))
+    duplicate = replace(duplicate, first_sealed_identity_sha256=duplicate.identity_sha256())
+    with pytest.raises(ValueError, match="duplicate cohort/shard ordinal"):
+        index_fixture(tmp_path, duplicate)
+    group_meta = tmp_path / closure.shards[0].shard_name / ".zgroup"
+    group_meta.unlink()
+    with pytest.raises(ValueError, match="missing or unlisted members"):
+        index_fixture(tmp_path, closure)
 
 
 def test_chunk_count_cap_refused_before_decode(tmp_path: Path) -> None:

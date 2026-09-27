@@ -22,7 +22,7 @@ pins to this exact closure independently.
 The fixture root must contain exactly the listed shard directories. Every
 directory component is opened with `O_NOFOLLOW`; listed members are checked
 with `stat(..., follow_symlinks=False)`. Symlinks, FIFOs, other special files,
-unlisted files, missing chunks, non-Zarr-v2 metadata, unsupported codecs,
+unlisted files, missing chunks, non-Zarr-v2 group/column metadata, unsupported codecs,
 partial game IDs, and changed decoded hashes refuse. The only decoded arrays
 are 1D little-endian int64 `game_id` and bool `has_game_id`; Blosc-zstd chunk
 headers are checked against the declared decoded size before decoding. Limits:
@@ -38,7 +38,9 @@ Game identity is `(resolved_base_parent, game_id)` across every shard and
 cohort in the closure. The numeric ID alone is insufficient; observed E IDs
 are unsorted and games can cross shard boundaries. The index maps every game
 to *all* `(shard-roster-index, row-offset)` pairs and checks that every fixture
-row appears exactly once. It sorts games by SHA-256 of a domain tag, sampling
+row appears exactly once. The public selector reopens the closed fixture and
+builds this map itself; a caller-supplied map cannot reassign row offsets to
+fabricated game IDs. It sorts games by SHA-256 of a domain tag, sampling
 seed digest, and game key. It selects one deterministic game per required
 cohort, then solves the remaining exact row total by a bitset subset-sum over
 that frozen order. If the anchors exceed the target or no exact remainder is
@@ -86,5 +88,6 @@ not upgrade that source qualification.
 Synthetic verification: `python3 -m pytest -q tests/test_selected_e_game_index.py`
 checks unsorted/cross-shard games, source-scoped duplicate numeric IDs, exact
 12,288 rows across 35 cohorts, deterministic output, missing IDs/rows,
-inexact game totals, nonbinary bool bytes, first-seal/hash changes, symlink,
+inexact game totals, forged game reassignment, duplicate shard ordinals,
+Zarr-group metadata, nonbinary bool bytes, first-seal/hash changes, symlink,
 FIFO, size and chunk-count refusal.
