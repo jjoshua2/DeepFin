@@ -7,14 +7,17 @@ opening contract is a standard-start, 16-ply stack. Tests can supply a smaller
 root/ply contract for tiny rule-50 and WDL+DTZ examples; a production caller
 must pin those arguments in its plan.
 
-**No current full-history PASS:** PR #903's arena writer has no played-move
-digest in its JSONL/PGN schema. A different legal PGN mainline can have the
-same opening, result and ply count while the JSONL stays unchanged. This
-verifier therefore requires a future writer to record `played_uci_sha256` in
-each JSONL game row and `PlayedUCISHA256` in each PGN game. Both must equal
+**No current full-history PASS:** PR #903 now records a played-move digest in
+both JSONL and PGN, starting at writer commit
+`8f601edfba8724c619074e755e88edb6176e479e`. The earlier head
+`0a733b27c07bc29586c40a735d8b5e7bd7a19af8` did not: a different legal
+PGN mainline could have the same opening, result and ply count while the JSONL
+stayed unchanged. This verifier requires `played_uci_sha256` in each JSONL game
+row and `PlayedUCISHA256` in each PGN game. Both must equal
 SHA-256 of `b'arena-played-uci-v1\0'` followed by compact ASCII JSON of the
 ordered **actual played** UCI moves, excluding the pre-play opening stack.
-Existing PR #903 logs fail this gate. The verifier also binds the recorded
+Pre-digest PR #903 logs fail this gate; the new writer fields match the
+verifier's exact digest algorithm. The verifier also binds the recorded
 `opening_plies` to the expected stack length and caps every row's played plies
 at recorded `max_plies`.
 
@@ -69,11 +72,11 @@ and reviewed arena opening-stack commit
 `e9a66f57bf665e491461b328df3ff167188a1c46`. This verifier branch is
 based separately on `origin/main` `38bcfa49a6ce2fab583fffc020ca8610c082794a`;
 it does not contain the arena writer patch.
-The later PR #903 head inspected for this fail-closed correction is
-`0a733b27c07bc29586c40a735d8b5e7bd7a19af8` (tree
-`da8556e406b25eebae188846f143e75967fd07a2`). Its writer source
+The PR #903 writer head inspected for this correction is
+`8f601edfba8724c619074e755e88edb6176e479e` (tree
+`b31b13c5b689a344ccbca892713b5ff40596fcf8`). Its writer source
 `scripts/arena_standard.py` has SHA-256
-`a295fc15cce80f731cd3310d9d94fc076bfaf2df4668542d2f2d93e5a3822a6a`;
+`7089b09146096e218fdf900940dcee6b2f4100da3d2b4aaa1764cb16b0188513`;
 the unchanged PGN writer and game-log utility are
 `b8b6eb84d34389ad8387c334304144c4e605fd5613c1adc0a039d0dff152aae8`
 and `87de3afe424507c488d879897b0cc77a47397bb79fd4b96927f3f57a3fb121`.
