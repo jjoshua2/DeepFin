@@ -89,8 +89,6 @@ def test_publish_never_overwrites_existing_receipt(tmp_path):
 def test_real_base_a_runner_executes_and_binds_honest_receipt(tmp_path, monkeypatch):
     # The disk-pause dependency must be loaded from the exact pinned helper
     # file, not injected into sys.modules or assumed to live in operator_runtime.
-    import types
-
     disk_pause = tmp_path / "training" / "A" / "disk_pause.py"
     disk_pause.parent.mkdir(parents=True)
     disk_pause.write_text(
@@ -101,13 +99,18 @@ def test_real_base_a_runner_executes_and_binds_honest_receipt(tmp_path, monkeypa
         "    @staticmethod\n"
         "    def resume_owned_group(_child): pass\n"
     )
-    operator = types.ModuleType("bootstrap_experiment_operator")
-    setattr(
-        operator,
-        "terminate_owned_group",
-        lambda child, grace: module.cleanup([child], grace=0.1),
+    operator_helper = tmp_path / "operator" / "bootstrap_experiment_operator.py"
+    operator_helper.parent.mkdir(parents=True)
+    operator_helper.write_text(
+        "import subprocess\n"
+        "def terminate_owned_group(child, grace):\n"
+        "    if child.poll() is not None: return\n"
+        "    child.terminate()\n"
+        "    try: child.wait(timeout=grace)\n"
+        "    except subprocess.TimeoutExpired:\n"
+        "        child.kill()\n"
+        "        child.wait()\n"
     )
-    monkeypatch.setitem(sys.modules, "bootstrap_experiment_operator", operator)
     roots = []
     for i in range(35):
         root = tmp_path / f"root{i}"
@@ -145,7 +148,7 @@ def test_real_base_a_runner_executes_and_binds_honest_receipt(tmp_path, monkeypa
         "arm": "A",
         "runtime": str(tmp_path),
         "runtime_head": "test",
-        "pins": [module.ref(disk_pause)],
+        "pins": [module.ref(disk_pause), module.ref(operator_helper)],
         "out": str(out),
         "dataset_complete": str(targets),
         "base_roots": roots,
