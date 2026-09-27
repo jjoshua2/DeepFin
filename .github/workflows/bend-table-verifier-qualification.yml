@@ -1,0 +1,174 @@
+name: Qualify optimization-safe table verifier
+'on':
+  push:
+    branches: [dev/bend-table-verifier-qualification-20260927]
+    paths: [.github/workflows/bend-table-verifier-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: 83045b38c499ecaf945d6df56da68dd1b8ee2e80
+      STAGING: review/bend-table-verifier-checked-20260927
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 83045b38c499ecaf945d6df56da68dd1b8ee2e80
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Recover the five-file harness-only patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/verifier-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$BASE"
+          gh api repos/jjoshua2/DeepFin/git/blobs/21686bbf8e067710c9a5fbcffeb53454b76a859a --jq .content | base64 --decode > "$RUNNER_TEMP/patch.xz"
+          test "$(git hash-object "$RUNNER_TEMP/patch.xz")" = 21686bbf8e067710c9a5fbcffeb53454b76a859a
+          python3 - <<'PY'
+          import hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def git(*a):return subprocess.check_output(['git',*a],text=True).strip()
+          patch=lzma.decompress((Path(os.environ['RUNNER_TEMP'])/'patch.xz').read_bytes(),memlimit=256*1024*1024)
+          assert len(patch)==36588 and hashlib.sha256(patch).hexdigest()=='e8a3933c7a84000e6495280e489f1cd38ae36aaf2cfb13e1f7abef1bec17270b'
+          (e/'candidate.patch').write_bytes(patch)
+          old=json.loads(Path('docs/experiments/evidence/bend-generator-table-preservation/hosted-source-identity.json').read_text())['candidate_source_sha256s']
+          assert len(old)==634
+          for p,h in old.items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          subprocess.run(['git','apply','--check',str(e/'candidate.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(e/'candidate.patch')],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='9582d7597db1dfae28615ca1aec2709c09067bf1'
+          prefix='native/bend_engine/standalone/proofs/table_preservation/'
+          names=['README.md','focused.py','verify_native.py','_validation.py','test_harness.py']
+          changed=git('diff','--cached','--name-only').splitlines()
+          assert set(changed)=={prefix+n for n in names}
+          for p,h in old.items():
+              if p not in changed:assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          hashes={p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in git('ls-files','native/bend_engine').splitlines() if Path(p).is_file()}
+          assert len(hashes)==636
+          (e/'source-identity.json').write_text(json.dumps({'base':os.environ['BASE'],'source_tree':git('write-tree'),'changed_paths':changed,'candidate_source_sha256s':hashes,'active_bend_proofs_changed':False,'native_probe_or_fixtures_changed':False,'new_laws':0,'new_registered_controls':0},indent=2)+'\n')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test: preserve verifier checks under optimization and invalidate stale reports'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git rev-parse HEAD > "$EVIDENCE/source.txt"
+          python3 --version | tee "$EVIDENCE/python.txt"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Run all fifty-four host tests in three optimization modes
+        run: |
+          set -euo pipefail
+          SUITE=native/bend_engine/standalone/proofs/table_preservation
+          python3 "$SUITE/test_harness.py" 2>&1 | tee "$EVIDENCE/host-normal.log"
+          python3 -O "$SUITE/test_harness.py" 2>&1 | tee "$EVIDENCE/host-optimized.log"
+          PYTHONOPTIMIZE=2 python3 "$SUITE/test_harness.py" 2>&1 | tee "$EVIDENCE/host-optimize2.log"
+      - name: Recheck all five source laws and seventeen controls in normal and optimized Python
+        run: |
+          set -euo pipefail
+          SUITE=native/bend_engine/standalone/proofs/table_preservation
+          python3 "$SUITE/focused.py" "$PWD/.compiler" --report "$EVIDENCE/focused-normal.json" 2>&1 | tee "$EVIDENCE/focused-normal.log"
+          python3 -O "$SUITE/focused.py" "$PWD/.compiler" --report "$EVIDENCE/focused-optimized.json" 2>&1 | tee "$EVIDENCE/focused-optimized.log"
+      - name: Run all four native modes with Python optimization enabled
+        env:
+          CC: /usr/bin/clang
+          PYTHONOPTIMIZE: '2'
+        run: |
+          set -euo pipefail
+          python3 -c 'import sys; assert False' >/dev/null
+          python3 -c 'import sys; print("Python optimization:", sys.flags.optimize)' | tee "$EVIDENCE/native-python.txt"
+          python3 native/bend_engine/standalone/proofs/table_preservation/verify_native.py "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Recheck original compiler source and pin gates
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Run unchanged repository lint with locked CPU tools
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify receipts and publish only the isolated checked snapshot
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(p):return json.loads(p.read_text())
+          ident=read(e/'source-identity.json')
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          for mode in ['normal','optimized','optimize2']:
+              log=(e/('host-'+mode+'.log')).read_text()
+              assert 'Ran 54 tests' in log and log.strip().endswith('OK'),mode
+          for mode in ['normal','optimized']:
+              f=read(e/('focused-'+mode+'.json'))
+              assert f['focused_gate']=='PASS' and f['new_law_count']==5 and f['new_control_count']==17
+              assert f['consumer']['exit_code']==0 and f['consumer']['raw_text'].strip()=='All terms check.'
+              assert len(f['negative_controls'])==17 and all(x['rejected'] for x in f['negative_controls'])
+              assert f['raw_dispatch_partition']['raw_u32_values_covered']==2**32
+          n=read(e/'native.json');old=read(Path('docs/experiments/evidence/bend-generator-table-preservation/hosted-native.json'))
+          assert n['native_gate']=='PASS' and n['requests_per_mode']==173 and len(n['modes'])==4
+          assert n['complete_cells_per_mode']==2313088 and n['complete_fields_per_mode']==4626176
+          assert n['modes']==old['modes'] and n['mutations']==old['mutations'] and n['input_sha256']==old['input_sha256']
+          assert len(n['mutations'])==3 and all(x['compiled_and_executed'] and x['rejected'] for x in n['mutations'])
+          assert (e/'native-python.txt').read_text().strip()=='Python optimization: 2'
+          assert read(e/'compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          q={'qualification':'PASS','source':os.environ['SOURCE'],'source_tree':ident['source_tree'],'run':os.environ['GITHUB_RUN_ID'],'host_tests':54,'host_modes':['normal','-O','PYTHONOPTIMIZE=2'],'full_source_gate_modes':['normal','-O'],'source_laws_rerun':5,'registered_controls_rerun':17,'native_verifier_python_optimize':2,'native_build_modes':4,'native_observations_equal_to_original':True,'new_laws':0,'new_registered_controls':0,'independent_review':False,'target_pr_updated_by_this_workflow':False}
+          (e/'qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          PY
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$STAGING" > "$RUNNER_TEMP/staging.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          git push origin "HEAD:refs/heads/$STAGING"
+      - name: Archive exact snapshot and available results
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/verifier-final"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/verifier-final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/verifier-final/commit.raw"
+          git rev-parse HEAD > "$RUNNER_TEMP/verifier-final/commit.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/verifier-final/tree.txt"
+          if test -d "$RUNNER_TEMP/verifier-evidence"; then cp -r "$RUNNER_TEMP/verifier-evidence" "$RUNNER_TEMP/verifier-final/reports"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: table-verifier-optimization-qualification
+          path: ${{ runner.temp }}/verifier-final/
+          retention-days: 14
