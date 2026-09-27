@@ -1,5 +1,11 @@
 # Bend migration and proof inventory
 
+## Initialized geometric checks at derived castling stages
+
+Hosted run36295872282/job108554494045 passes the new complete composition consumer, five certificate-level semantic rejections plus one synthetic output check, four-mode actual stage oracle, original compiler/pin tests and unchanged repository lint. For the actual initial,transit and completed Boards, in_check now equals independent target-centred geometry plus the complete initialized array, with stage singleton/bounds derived from the initial invariants and producer guard.
+
+This is modular191/606, not a full aggregate run or a claim that all checks return safe. The original moving side is retained despite the child turn flip. Sequential table threading, accepted-generator safe results, forward/reverse attack equivalence and historical rights remain separate. All14 files of the saved raw-side singleton variant are archived without replacing the active Boolean-side suite or duplicating counts. See [the readout](experiments/2026-09-27-bend-castle-stage-geometry.md).
+
 ## Latest P3 castling mover-king propagation
 
 Hosted run **36291285103** passes four public laws, the importing consumer, all nineteen controls, all four native modes and three compiled/executed corruptions, original compiler tests and unchanged repository lint on source `bc8d5f83dbd9f3e77492763644ffe92478be1a16`.
