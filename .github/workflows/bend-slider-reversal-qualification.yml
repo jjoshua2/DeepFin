@@ -1,0 +1,219 @@
+name: Qualify blocker-aware slider reversal
+'on':
+  push:
+    branches: [dev/bend-slider-reversal-20260927]
+    paths: [.github/workflows/bend-slider-reversal-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: ec9997838788ea5de34c81a7f97037ef47753723
+      TARGET: feat/bend-generator-table-preservation-20260927
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ec9997838788ea5de34c81a7f97037ef47753723
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Recover exact slider proof candidate and check retained parent
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/slider-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$BASE"
+          : > "$RUNNER_TEMP/patch.xz"
+          for sha in e85f7799cf35d0875cf845847ef3db7c5b6c68ed ac232aa01064cca547d525b548867c6eac380a78 6a73af93a8e2593234366d1a0b5f086f028554aa 54e64ffa964b298051edd8a0bb5dfc863de29cc9; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$sha" --jq .content | base64 --decode > "$RUNNER_TEMP/$sha"
+            test "$(git hash-object "$RUNNER_TEMP/$sha")" = "$sha"
+            cat "$RUNNER_TEMP/$sha" >> "$RUNNER_TEMP/patch.xz"
+          done
+          test "$(git hash-object "$RUNNER_TEMP/patch.xz")" = a0d215b10432e59df92e5485db51725ef26af21c
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108678131701 > "$EVIDENCE/parent-job.json"
+          python3 - <<'PY'
+          import hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);tmp=Path(os.environ['RUNNER_TEMP'])
+          def git(*a):return subprocess.check_output(['git',*a],text=True).strip()
+          def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+          assert git('rev-parse','HEAD^{tree}')=='2788976fa5594ea3c7eb070ff9f9b298407c1b29'
+          old=Path('docs/experiments/evidence/bend-leaper-attack-reversal')
+          q=json.loads((old/'hosted-qualification.json').read_text())
+          assert q['qualification']=='PASS' and q['modular_laws']==205 and q['modular_controls']==689
+          inherited=json.loads((old/'hosted-source-identity.json').read_text())['candidate_source_sha256s']
+          assert len(inherited)==679
+          for p,h in inherited.items():assert digest(Path(p))==h,p
+          job=json.loads((e/'parent-job.json').read_text())
+          assert job['id']==108678131701 and job['status']=='completed' and job['conclusion']=='success'
+          patch=lzma.decompress((tmp/'patch.xz').read_bytes(),memlimit=256*1024*1024)
+          assert len(patch)==107547 and hashlib.sha256(patch).hexdigest()=='c5a96a893f93ba972f5dbaa5368b053cf96b5bc360bed9bcd0fcc7f4f362f035'
+          (e/'candidate.patch').write_bytes(patch)
+          subprocess.run(['git','apply','--check',str(e/'candidate.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(e/'candidate.patch')],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='4070bf56a4829d8d0d8586ee7e12a0e8d21c0974'
+          changed=git('diff','--cached','--name-only').splitlines();assert len(changed)==27
+          assert all(p=='docs/experiments/2026-09-27-bend-slider-reversal.md' or p.startswith('native/bend_engine/standalone/proofs/slider_reversal/') for p in changed)
+          for p,h in inherited.items():assert digest(Path(p))==h,p
+          hashes={p:digest(Path(p)) for p in git('ls-files','native/bend_engine').splitlines() if Path(p).is_file()}
+          assert len(hashes)==705
+          ident={'base':os.environ['BASE'],'source_tree':git('write-tree'),'local_source_commit':'072bc7fb671683a6215c4b9737d5babb321404f4','source_patch_sha256':hashlib.sha256(patch).hexdigest(),'changed_paths':changed,'inherited_native_entries':679,'candidate_source_sha256s':hashes,'production_or_prior_proof_changed':False}
+          (e/'source-identity.json').write_text(json.dumps(ident,indent=2)+'\n')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'proof: establish arbitrary-occupancy slider attack reciprocity'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git cat-file commit HEAD > "$EVIDENCE/source-commit.raw"
+          git rev-parse HEAD > "$EVIDENCE/source.txt"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Reproduce finite coordinate certificates and test host validation
+        run: |
+          set -euo pipefail
+          S=native/bend_engine/standalone/proofs/slider_reversal
+          python3 "$S/generate_certificates.py" | tee "$EVIDENCE/certificates.log"
+          python3 "$S/test_harness.py" 2>&1 | tee "$EVIDENCE/host-normal.log"
+          python3 -O "$S/test_harness.py" 2>&1 | tee "$EVIDENCE/host-optimized.log"
+          PYTHONOPTIMIZE=2 python3 "$S/test_harness.py" 2>&1 | tee "$EVIDENCE/host-optimize2.log"
+      - name: Check both full slider laws and all seventeen controls
+        run: |
+          set -euo pipefail
+          python3 native/bend_engine/standalone/proofs/slider_reversal/focused.py "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Verify actual masks and blocker reciprocity in four native modes
+        env:
+          CC: /usr/bin/clang
+          PYTHONOPTIMIZE: '2'
+        run: |
+          set -euo pipefail
+          python3 -c 'import sys; print(sys.flags.optimize)' | tee "$EVIDENCE/native-optimization.txt"
+          python3 native/bend_engine/standalone/proofs/slider_reversal/verify_native.py "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Check original compiler source suite and pin tests
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU tools and run configured repository lint
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify receipts and fast-forward the existing PR on its exact parent
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$BASE"
+          git diff --exit-code
+          python3 - <<'PY'
+          import collections,hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(p):return json.loads(p.read_text())
+          ident=read(e/'source-identity.json');f=read(e/'focused.json');n=read(e/'native.json')
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          assert (e/'certificates.log').read_text().strip()=='9 certificate files match'
+          for mode in ['normal','optimized','optimize2']:
+              text=(e/('host-'+mode+'.log')).read_text();assert 'Ran 24 tests' in text and text.strip().endswith('OK')
+          assert f['focused_gate']=='PASS' and f['new_laws']==2 and f['new_controls']==17
+          assert f['consumer']['exit_code']==0 and (f['consumer']['stdout']+f['consumer']['stderr']).strip()=='All terms check.'
+          assert len(f['negative_controls'])==17 and all(c['rejected'] for c in f['negative_controls'])
+          kinds=collections.Counter(c['kind'] for c in f['negative_controls'])
+          assert kinds=={'source semantic/refinement':8,'manifest/import policy':8,'synthetic output-wrapper unit':1}
+          assert len(f['source_sha256s'])==53 and f['source_sha256s']==n['source_sha256s']
+          for p,h in f['source_sha256s'].items():assert hashlib.sha256((Path('native/bend_engine')/p).read_bytes()).hexdigest()==h,p
+          assert n['native_gate']=='PASS' and len(n['modes'])==4
+          c=n['coverage'];assert c['aligned_unordered_pairs']==728 and c['interior_subsets_across_pairs']==5322
+          assert c['distinct_native_queries']==86072 and c['distinct_relation_cases']==155852 and c['deduplicated_relation_cases']==3028
+          for m in n['modes']:
+              assert m['whole_mask_comparisons']==86072 and m['mask_u32_fields']==172144 and m['relation_comparisons']==155852
+              assert m['positive_relations']==23154 and m['invalid_rejections']==9
+              assert m['geometry_mismatch'] is None and m['reciprocity_mismatch'] is None
+          assert len({m['output_sha256'] for m in n['modes']})==1
+          assert len(n['mutations'])==2 and all(m['compiled_and_executed'] and m['rejected'] and m['geometry_mismatch'] is not None for m in n['mutations'])
+          assert n['mutations'][0]['reciprocity_mismatch'] is None and n['mutations'][1]['reciprocity_mismatch'] is not None
+          assert (e/'native-optimization.txt').read_text().strip()=='2'
+          assert read(e/'compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          d=Path('docs/experiments/evidence/bend-slider-reversal');d.mkdir(parents=True,exist_ok=False)
+          for name in ['source-identity.json','focused.json','native.json','compiler-proofs.json','parent-job.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['certificates.log','host-normal.log','host-optimized.log','host-optimize2.log','pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes();(d/('hosted-'+name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          q={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':ident['source_tree'],'base':os.environ['BASE'],'new_laws':2,'new_controls':17,'control_categories':dict(kinds),'retained_parent_laws':205,'retained_parent_controls':689,'modular_laws':207,'modular_controls':706,'combined_wrapper_executed':False,'native_source_entries':705,'host_test_methods':24,'host_optimization_modes':3,'native_verifier_python_optimization':2,'native_build_modes':4,'independent_review':False,'initialized_lookup_composition':False}
+          (d/'qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          headline=f"Run **{os.environ['GITHUB_RUN_ID']}** passes both complete slider-reversal laws, the importing consumer and all17 controls, reproducible finite certificates,24 host methods in three optimization modes, four native builds under optimized Python, original compiler/pin checks and configured locked-environment lint on source `{os.environ['SOURCE']}`."
+          paragraphs=['## Completed hosted qualification',headline,
+              'The source laws quantify one shared arbitrary U64 occupancy, not a finite occupancy sample. They cover independent rook/bishop geometric masks and actual unmasked Tables.slider computations, plus the explicit queen union. Both endpoints are bounded below64. Either endpoint can be occupied: the first blocker is included, and only the strict interior must be clear.',
+              'Bits.path reflects generic list scanning into strict-prefix visibility. Boolean/list induction proves clear-prefix reversal. Nine generated source files certify64 source squares/eight directions and1,456 on-ray coordinate-prefix equalities, without occupancy terms or expected bitboard answers. Positive membership supplies the required finite certificate. Opposite-direction implications establish Boolean equality even when neither direction attacks. Computed reuses the unchanged actual slider refinement.',
+              'All17 controls pass: eight semantic/refinement failures, eight manifest/import guards and one synthetic warning-output check. The controls reject a wrong opposite direction, hit inclusion in the strict interior, ignored blockers, unreversed prefixes, omitted endpoint bounds, actual missing stop-at-blocker behavior and a different reverse occupancy. Some target supporting prefix or actual-refinement lemmas, while three mutate public law statements; not all replay the complete outer consumer. Crashes, parser/ownership errors, missing imports and timeouts do not count as valid semantic rejection.',
+              'Each native mode checks86,072 distinct actual unmasked slider queries,172,144 U32 mask fields and155,852 distinct relation cases. All728 aligned unordered pairs exercise every strict-interior subset (5,322 subsets summed over pairs), all four endpoint occupancies and two off-segment contexts. Queen cases union actual rook/bishop results. Six additional global occupancies cover all ordered endpoint pairs and all three families, including unaligned/equal endpoints.3,028 duplicate relation cases are removed. Modes repeat the same fixtures; native occupancies remain finite.',
+              'Complete masks must agree with an independent signed-coordinate forward walk, separately from reciprocity. Ignoring actual blockers passes all tested reciprocal relations yet fails the geometry oracle. Excluding the first occupied square fails geometry and reciprocity with asymmetric endpoint occupancy. Both actual-code corruptions compile and execute with generic flags before rejection. Nine malformed bounded batches are rejected per clean mode. The reused production-only ray probe performs computation, not initialized Chess.attack lookup, and never imports the new proof model or receives expected answers.',
+              'The native driver actually runs under PYTHONOPTIMIZE=2; its mandatory framing and result checks are tested in all three host optimization modes. A partial transcript cannot count as a complete comparison. The wrappers replace a writable requested report with NOT_COMPLETED before external checks. The24 host methods are not new formal laws or registered compiler controls.',
+              'The entire local consumer and all17 controls also completed together; all native modes and both mutations completed locally, as did original compiler and12 pin checks. Local lint failed only because Ruff,Basedpyright,Vulture were missing; its receipt remains in the review package. Fresh hosted configured lint passes with locked CPU dependencies and does not relabel that earlier failure. The 53-entry proof/test closure and all705 candidate native entries are fixed; all679 inherited entries remain unchanged.',
+              'Active evidence is modular207 laws/706 controls: retained205/689 plus newly executed2/17. The complete aggregate wrapper was not run. These two contracts are related interfaces to a shared proof, not two independently discovered mathematical facts. No complete initialized forward-attack witness, full-generator initial/transit safety or historical castling-right result is inferred.',
+              'Source/checker, native lowering/storage, ABI, C toolchain, OS and hardware remain trust boundaries. Self-review only; no independent reviewer is claimed. No production function, old proof, compiler source, permanent workflow, Python application responsibility, model/GPU, training, search, benchmark, perft-budget increase, merge or deployment changed. The temporary workflow remains outside the feature diff.',
+              'Next composition is to convert the existing initialized target-centred attack witness into an attacker-origin witness using both non-slider and blocker-aware slider reversal, then connect the remaining accepted castling stage checks. This increment closes the slider reversal prerequisite, not those final compositions.'
+          ]
+          p=Path('docs/experiments/2026-09-27-bend-slider-reversal.md');p.write_text(p.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          p=Path('docs/experiments/README.md');text=p.read_text();a='| Record | Scope |\n| --- | --- |\n';assert text.count(a)==1
+          p.write_text(text.replace(a,a+'| [Blocker-aware slider reversal](2026-09-27-bend-slider-reversal.md) | Arbitrary shared-occupancy geometric/computed rook,bishop,queen-union reciprocity; complete-mask native oracle; modular207/706 |\n',1))
+          p=Path('docs/bend_migration_proofs.md');title,rest=p.read_text().split('\n',1)
+          p.write_text(title+'\n\n## Blocker-aware slider reciprocity\n\n'+headline+'\n\nThe strict-interior reversal proof allows occupied endpoints and includes the first blocker. All679 inherited source files remain unchanged; active modular totals207/706 retain205/689 and add2/17, without a full aggregate run. Complete initialized forward-witness composition, full-generator starting/transit safety and historical rights remain separate. See [the readout](experiments/2026-09-27-bend-slider-reversal.md).\n'+rest)
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify blocker-aware slider reciprocity and retain scope boundaries'
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$BASE"
+          git push origin "HEAD:refs/heads/$TARGET"
+      - name: Archive exact source and available receipts
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/slider-final"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/slider-final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/slider-final/commit.raw"
+          git rev-parse HEAD > "$RUNNER_TEMP/slider-final/commit.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/slider-final/tree.txt"
+          git diff --binary "$BASE" HEAD > "$RUNNER_TEMP/slider-final/update.patch"
+          if test -d "$RUNNER_TEMP/slider-evidence"; then cp -r "$RUNNER_TEMP/slider-evidence" "$RUNNER_TEMP/slider-final/reports"; fi
+          cd "$RUNNER_TEMP/slider-final"
+          sha256sum source.tar.gz commit.raw update.patch > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: slider-reversal-hosted-qualification
+          path: ${{ runner.temp }}/slider-final/
+          retention-days: 14
