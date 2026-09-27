@@ -303,7 +303,7 @@ def test_session_without_fallback_control_is_rejected(
     sha = tiny_model(model)
 
     class NoFallbackSession(FakeSession):
-        disable_fallback = None  # type: ignore[assignment]
+        disable_fallback: Any = None
 
     session = NoFallbackSession()
     open_fake(monkeypatch, session)
