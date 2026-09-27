@@ -1,0 +1,66 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "source_sha256s": {
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/layout/Spec.bend": "a08495ab3c27218154f6fd79091cd98b48e44d04d8f8b032e4f68f76531dcc89",
+    "standalone/proofs/layout/probe.bend": "5fe6813036a6eb33c9db3f94a3f5954bc4da0c425940643a2867b31f74bab7a2",
+    "standalone/proofs/layout/verify_native.js": "feaeb1103172b5bf35f7d55742aea4a6c33c320ad7f7a7912ce24c51eb27f972",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20"
+  },
+  "distinct_operand_pairs": 2302,
+  "keys": 128,
+  "populations": {
+    "rook": [
+      10,
+      11,
+      12
+    ],
+    "bishop": [
+      5,
+      6,
+      7,
+      9
+    ]
+  },
+  "oracle": "Independent signed-coordinate ray walks; direct BigInt bit-position gather",
+  "reference_only_logical_end": 108160,
+  "reference_offsets_are_not_source_proofs": true,
+  "modes": [
+    {
+      "mode": "generic",
+      "operand_pairs": 2302,
+      "keys": 128,
+      "malformed_or_domain_rejections": 5,
+      "output_sha256": "91c02e0996823687073f2dffe8babdaf5aade8ab3026264d188f9a9b78860f62"
+    },
+    {
+      "mode": "portable",
+      "operand_pairs": 2302,
+      "keys": 128,
+      "malformed_or_domain_rejections": 5,
+      "output_sha256": "91c02e0996823687073f2dffe8babdaf5aade8ab3026264d188f9a9b78860f62"
+    },
+    {
+      "mode": "native",
+      "operand_pairs": 2302,
+      "keys": 128,
+      "malformed_or_domain_rejections": 5,
+      "output_sha256": "91c02e0996823687073f2dffe8babdaf5aade8ab3026264d188f9a9b78860f62"
+    },
+    {
+      "mode": "ubsan",
+      "operand_pairs": 2302,
+      "keys": 128,
+      "malformed_or_domain_rejections": 5,
+      "output_sha256": "91c02e0996823687073f2dffe8babdaf5aade8ab3026264d188f9a9b78860f62"
+    }
+  ],
+  "cc": "clang version 17.0.0 (https://github.com/swiftlang/llvm-project.git 10999b6d034fe318f3d56c83bddb6572593a8bb0)",
+  "bun": "1.4.2",
+  "scope": "Actual native mask geometry, sizes, full PEXT values and lookup indices on bounded fixtures; NOT actual affine table contents, performance or full engine"
+}
