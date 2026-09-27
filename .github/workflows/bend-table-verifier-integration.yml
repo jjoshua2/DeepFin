@@ -1,0 +1,234 @@
+name: Integrate verified table-verifier hardening
+'on':
+  push:
+    branches: [dev/bend-table-verifier-qualification-20260927]
+    paths: [.github/workflows/bend-table-verifier-integration.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: 012d0b0bc883065745433baa5436078083c4310e
+      TARGET: feat/bend-generator-table-preservation-20260927
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 012d0b0bc883065745433baa5436078083c4310e
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Recover exact integrated candidate without modifying the PR yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/integration-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$BASE"
+          for sha in 21686bbf8e067710c9a5fbcffeb53454b76a859a eeefd02cb21d3cbaaf0e2087d9951044f02bb990; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$sha" --jq .content | base64 --decode > "$RUNNER_TEMP/$sha"
+            test "$(git hash-object "$RUNNER_TEMP/$sha")" = "$sha"
+          done
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108652277406 > "$EVIDENCE/parent-job.json"
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108654903128 > "$EVIDENCE/standalone-job.json"
+          python3 - <<'PY'
+          import hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);tmp=Path(os.environ['RUNNER_TEMP'])
+          def git(*args):return subprocess.check_output(['git',*args],text=True).strip()
+          def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+          assert git('rev-parse','HEAD^{tree}')=='1ab7e7a01d7d6f9e023e22ff7e810804fb0f06d1'
+          old=Path('docs/experiments/evidence/bend-table-preservation-continuation')
+          inherited=json.loads((old/'hosted-source-identity.json').read_text())['candidate_source_sha256s']
+          assert len(inherited)==643
+          for p,h in inherited.items():assert sha(Path(p))==h,p
+          prior=json.loads((old/'hosted-qualification.json').read_text())
+          assert prior['qualification']=='PASS' and prior['modular_laws']==200 and prior['modular_controls']==655
+          for name,job in [('parent-job.json',108652277406),('standalone-job.json',108654903128)]:
+              j=json.loads((e/name).read_text());assert j['id']==job and j['status']=='completed' and j['conclusion']=='success'
+          payloads=[('21686bbf8e067710c9a5fbcffeb53454b76a859a',36588,'e8a3933c7a84000e6495280e489f1cd38ae36aaf2cfb13e1f7abef1bec17270b','61a395744430e60f31788ef66b1c2852899da847'),('eeefd02cb21d3cbaaf0e2087d9951044f02bb990',11853,'da730c0445d9ae83d8afc69679c3503f4c16cc0883bc4f61d073ce48dd5ed616','220c52b0f5b2fee5a7e0002e587811be4ffb7a56')]
+          for i,(blob,size,wanted,tree) in enumerate(payloads):
+              patch=lzma.decompress((tmp/blob).read_bytes(),memlimit=256*1024*1024)
+              assert len(patch)==size and hashlib.sha256(patch).hexdigest()==wanted
+              p=e/f'patch-{i}.diff';p.write_bytes(patch)
+              subprocess.run(['git','apply','--check',str(p)],check=True)
+              subprocess.run(['git','apply','--index',str(p)],check=True)
+              assert git('write-tree')==tree
+          prefix='native/bend_engine/standalone/proofs/'
+          allowed={prefix+'table_preservation/'+n for n in ['README.md','focused.py','verify_native.py','_validation.py','test_harness.py']}|{prefix+'generator_followup/'+n for n in ['focused.py','verify_native.py']}
+          changed=git('diff','--cached','--name-only').splitlines();assert set(changed)==allowed
+          for p,h in inherited.items():
+              if p not in allowed:assert sha(Path(p))==h,p
+          assert not git('diff','--cached','--name-only','--','*.bend')
+          hashes={p:sha(Path(p)) for p in git('ls-files','native/bend_engine').splitlines() if Path(p).is_file()};assert len(hashes)==645
+          result={'base':os.environ['BASE'],'source_tree':git('write-tree'),'changed_paths':changed,'candidate_source_sha256s':hashes,'inherited_native_entries':643,'unchanged_bend_sources':True,'new_formal_laws':0,'new_registered_controls':0,'saved_local_verifier_commit':'2a926846c843d4b829091f5415376bc8b5a71c78','integration_fix':'Exact sibling validation import for the actual generator_followup file loaders; transitive helper recorded in both follow-up manifests.'}
+          (e/'source-identity.json').write_text(json.dumps(result,indent=2)+'\n')
+          PY
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test: integrate optimization-safe table verifiers with generator follow-up loaders'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git cat-file commit HEAD > "$EVIDENCE/source-commit.raw"
+          git rev-parse HEAD > "$EVIDENCE/source.txt"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Run all fifty-nine host regressions in three optimization modes
+        run: |
+          set -euo pipefail
+          SUITE=native/bend_engine/standalone/proofs/table_preservation
+          python3 "$SUITE/test_harness.py" 2>&1 | tee "$EVIDENCE/host-normal.log"
+          python3 -O "$SUITE/test_harness.py" 2>&1 | tee "$EVIDENCE/host-optimized.log"
+          PYTHONOPTIMIZE=2 python3 "$SUITE/test_harness.py" 2>&1 | tee "$EVIDENCE/host-optimize2.log"
+      - name: Recheck five preservation laws and seventeen controls in normal and optimized Python
+        run: |
+          set -euo pipefail
+          SUITE=native/bend_engine/standalone/proofs/table_preservation
+          python3 "$SUITE/focused.py" "$PWD/.compiler" --report "$EVIDENCE/preservation-normal.json" 2>&1 | tee "$EVIDENCE/preservation-normal.log"
+          python3 -O "$SUITE/focused.py" "$PWD/.compiler" --report "$EVIDENCE/preservation-optimized.json" 2>&1 | tee "$EVIDENCE/preservation-optimized.log"
+      - name: Recheck full two-law follow-up composition using the new imported helper
+        run: |
+          set -euo pipefail
+          python3 native/bend_engine/standalone/proofs/generator_followup/focused.py "$PWD/.compiler" --report "$EVIDENCE/followup-focused.json" 2>&1 | tee "$EVIDENCE/followup-focused.log"
+      - name: Recheck four preservation native modes under optimization level two
+        env:
+          CC: /usr/bin/clang
+          PYTHONOPTIMIZE: '2'
+        run: |
+          set -euo pipefail
+          python3 -c 'import sys; print(sys.flags.optimize)' | tee "$EVIDENCE/native-optimization.txt"
+          python3 native/bend_engine/standalone/proofs/table_preservation/verify_native.py "$PWD/.compiler" --report "$EVIDENCE/preservation-native.json" 2>&1 | tee "$EVIDENCE/preservation-native.log"
+      - name: Recheck four follow-up native modes with their real file loader
+        env:
+          CC: /usr/bin/clang
+        run: |
+          set -euo pipefail
+          python3 native/bend_engine/standalone/proofs/generator_followup/verify_native.py "$PWD/.compiler" --report "$EVIDENCE/followup-native.json" 2>&1 | tee "$EVIDENCE/followup-native.log"
+      - name: Recheck original compiler source suite and pin tests
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Run configured repository lint with locked CPU tools
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Validate both suites and fast-forward existing PR only on the exact parent
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$BASE"
+          git diff --exit-code
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(p):return json.loads(p.read_text())
+          ident=read(e/'source-identity.json')
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          for mode in ['normal','optimized','optimize2']:
+              text=(e/f'host-{mode}.log').read_text();assert 'Ran 59 tests' in text and text.strip().endswith('OK')
+          helper='standalone/proofs/table_preservation/_validation.py'
+          for name,count,controls in [('preservation-normal.json',5,17),('preservation-optimized.json',5,17),('followup-focused.json',2,15)]:
+              f=read(e/name);assert f['focused_gate']=='PASS' and f['new_law_count']==count and f['new_control_count']==controls
+              assert f['consumer']['exit_code']==0 and f['consumer']['raw_text'].strip()=='All terms check.'
+              assert len(f['negative_controls'])==controls and all(c['rejected'] for c in f['negative_controls'])
+              assert helper in f['source_sha256s']
+              for p,h in f['source_sha256s'].items():assert hashlib.sha256((Path('native/bend_engine')/p).read_bytes()).hexdigest()==h,p
+          for new,old,requests,mutants in [('preservation-native.json','bend-generator-table-preservation',173,3),('followup-native.json','bend-table-preservation-continuation',368,4)]:
+              n=read(e/new);before=read(Path('docs/experiments/evidence')/old/'hosted-native.json')
+              assert n['native_gate']=='PASS' and len(n['modes'])==4 and n['requests_per_mode']==requests
+              assert len(n['mutations'])==mutants and all(m['compiled_and_executed'] and m['rejected'] for m in n['mutations'])
+              assert n['modes']==before['modes'] and n['mutations']==before['mutations']
+              assert helper in n['source_sha256s']
+              for p,h in n['source_sha256s'].items():assert hashlib.sha256((Path('native/bend_engine')/p).read_bytes()).hexdigest()==h,p
+          assert (e/'native-optimization.txt').read_text().strip()=='2'
+          assert read(e/'compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          d=Path('docs/experiments/evidence/bend-table-verifier-publication');d.mkdir(parents=True,exist_ok=False)
+          for name in ['source-identity.json','preservation-normal.json','preservation-optimized.json','followup-focused.json','preservation-native.json','followup-native.json','compiler-proofs.json','parent-job.json','standalone-job.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['host-normal.log','host-optimized.log','host-optimize2.log','pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes();(d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          q={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':ident['source_tree'],'base':os.environ['BASE'],'host_test_methods':59,'host_optimization_modes':3,'preservation_source_modes':['normal','-O'],'preservation_native_python_optimization':2,'preservation_laws_rerun':5,'preservation_controls_rerun':17,'followup_laws_rerun':2,'followup_controls_rerun':15,'followup_python_optimization':0,'native_build_modes_per_suite':4,'native_observations_match_prior_suites':True,'native_source_entries':645,'new_formal_laws':0,'new_registered_controls':0,'modular_laws':200,'modular_controls':655,'combined_wrapper_executed':False,'independent_review':False,'active_bend_source_changed':False}
+          (d/'qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          paragraphs=[
+            '# Optimization-safe verifier publication and follow-up integration',
+            '## Scope and result',
+            f"Run **{os.environ['GITHUB_RUN_ID']}** fully qualified source `{os.environ['SOURCE']}` on parent `{os.environ['BASE']}`. This updates existing PR #910 without replacing its five-law table-preservation suite, its two-law generator-follow-up composition, or its saved-source archive. The final source tree is `220c52b0f5b2fee5a7e0002e587811be4ffb7a56`. Evidence publication changes documentation only.",
+            'The saved local verifier repair at2a926846c843d4b829091f5415376bc8b5a71c78 is now active: table-preservation result validation remains enabled under Python -O and PYTHONOPTIMIZE, complete buffers are required before counting any compared cell, and failed reruns invalidate stale PASS receipts at the requested output path. No active Bend law, consumer, native probe, production function or fixture definition changed.',
+            '## Confirmed old verifier defect and integration repair',
+            'A parser-only reproduction supplied64 complete before cells, one matching after cell and no done terminator. The original runner rejects that in normal Python but accepts it under -O, incorrectly counting64 compared cells with zero changes. The repaired parser rejects it in all tested modes. This is a verification-harness defect under optional Python optimization, not a counterexample to the Bend theorem or grounds to relabel the original normal-mode hosted qualification a failure.',
+            'The latest generator_followup runners load table_preservation runners by file path under arbitrary module names. A naive sibling import in the saved repair failed there with ModuleNotFoundError before CLI startup. Integration tests caught that before changing the PR. Direct/spec-loaded runners now load the exact sibling validation file, rejecting its absence rather than falling back to a same-named module on sys.path. Both follow-up dependency manifests explicitly include that transitive helper. These two manifest changes do not change the follow-up proof or reference logic.',
+            'Both table-preservation entry points replace the specifically requested report with NOT_COMPLETED before external execution and replace it atomically with PASS only after all checks. Unrelated historical receipts are untouched. Concurrent runs still require different paths. This guarantee is not claimed for every other repository runner; generator_followup still uses its existing normal-Python validation and report behavior.',
+            '## Fresh integrated checks',
+            'All59 host test methods passed in normal,-O and PYTHONOPTIMIZE=2 modes. This includes the saved50 methods, four real CLI failure-path tests and five import/consumer compatibility methods. They are repeated host tests, not new formal laws or registered compiler rejection controls.',
+            'The entire five-law table-preservation consumer and17 controls passed in both normal and optimized Python. The full two-law generator-follow-up consumer and15 controls also passed in normal Python with the repaired imported runner. Both manifests include the shared helper. Formal source bodies are unchanged; these are fresh executions of existing contracts, not seven new discoveries.',
+            'The full preservation native driver passed generic,forced-portable,native-target and UBSan with Python optimization level2:173 requests and2,313,088 U64 cells/4,626,176 limb comparisons per mode, seven malformed batches per mode and all three actual-code corruptions. The follow-up driver passed its four modes in normal Python:368 requests per mode, exact generated-list comparisons, independent following-check answers and all four behavioral corruptions. Complete mode/mutation observations match their original respective reports, with current source manifests recorded separately.',
+            'The original compiler16-law/seven-control suite and all12 pin tests passed. Locked CPU tools passed unchanged configured Ruff/Basedpyright/Vulture lint. New runtime validation was not achieved by disabling a checker or suppressing compiler diagnostics. The compiler remains aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae.',
+            'All unchanged files from the643-entry current native manifest remain identical; two new Python helper/test files make645. The already-published14-file alternate source archive was compared byte-for-byte with the saved local package and retained once, at evidence/bend-table-preservation-continuation/saved-a67267f9/source/. No alternate implementation is silently overwritten or counted twice.',
+            'The earlier standalone qualification run36331753111 passed54 tests in three host modes, the five-law gate twice, four native modes under optimization, compiler gates and lint on the old83045b38 baseline. It is retained as component evidence, not substituted for this integrated run. The old local missing-tool receipts and original archives are unmodified.',
+            '## Remaining scope and review',
+            'Active modular coverage remains200 laws/655 controls from the two already-published suites. No new formal law or registered proof control is added by this hardening. The full aggregate wrapper and independent review were not run. These checks do not prove whole-generator move legality, universal attack-direction correspondence, historical rights, native pointer identity or lifetime safety. Source value preservation and native observations remain distinct.',
+            'Self-review only. No merge,force push,deployment,approval-gate bypass,model/GPU work,training,search,benchmark,perft increase or application responsibility change. Ordinary PR CI is distinct from this dedicated qualification.'
+          ]
+          Path('docs/experiments/2026-09-27-bend-table-verifier-publication.md').write_text('\n\n'.join(paragraphs)+'\n')
+          p=Path('docs/experiments/README.md');text=p.read_text();a='| Record | Scope |\n| --- | --- |\n';assert text.count(a)==1
+          p.write_text(text.replace(a,a+'| [Optimization-safe table verifier](2026-09-27-bend-table-verifier-publication.md) | Mandatory result validation, stale-report protection and follow-up import compatibility; both active suites freshly requalified; no new formal-law count |\n',1))
+          p=Path('docs/bend_migration_proofs.md');title,rest=p.read_text().split('\n',1)
+          p.write_text(title+'\n\n## Table-verifier hardening and integrated requalification\n\nThe active table-preservation verifier now rejects incomplete results even under optimized Python and invalidates stale PASS receipts. Its exact sibling helper also supports generator_followup file loaders, with transitive dependency hashing. Both full active source gates, both four-mode native suites,59 host tests in three modes,compiler gates and configured locked lint passed in run'+os.environ['GITHUB_RUN_ID']+'. No Bend proof changed and modular counts remain200/655; no aggregate run or independent review. See [the publication record](experiments/2026-09-27-bend-table-verifier-publication.md).\n'+rest)
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify integrated fail-closed verifiers and retain prior proof provenance'
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$BASE"
+          git push origin "HEAD:refs/heads/$TARGET"
+      - name: Archive current source and available receipts
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/integration-final"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/integration-final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/integration-final/commit.raw"
+          git rev-parse HEAD > "$RUNNER_TEMP/integration-final/commit.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/integration-final/tree.txt"
+          git diff --binary "$BASE" HEAD > "$RUNNER_TEMP/integration-final/update.patch"
+          if test -d "$RUNNER_TEMP/integration-evidence"; then cp -r "$RUNNER_TEMP/integration-evidence" "$RUNNER_TEMP/integration-final/reports"; fi
+          cd "$RUNNER_TEMP/integration-final"
+          sha256sum source.tar.gz commit.raw update.patch > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: table-verifier-integrated-qualification
+          path: ${{ runner.temp }}/integration-final/
+          retention-days: 14
