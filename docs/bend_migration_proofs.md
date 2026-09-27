@@ -1,5 +1,9 @@
 # Bend migration and proof inventory
 
+## Initialized attack state reconciliation
+
+The saved local composition is preserved alongside the existing #897 implementation, not silently substituted or counted again. A new native state regression detects returned-table loss after a correct current answer, and unused-slot corruption even when every query answer remains correct. Fresh four-mode native and configured repository lint evidence is in [the reconciliation record](experiments/2026-09-26-bend-attack-state-reconciliation.md). Exact existing three-law/source-control evidence is retained; totals remain modular186/581, not a full aggregate execution. Forward/reverse geometry and castling singleton propagation remain next.
+
 ## Initialized attack composition (current increment)
 
 Hosted run **36286418567** passes the complete three-law importing consumer and all nineteen controls in one focused command, three positive control-baseline modules, four native initialization/query modes with all four actual-code corruptions, original compiler source/pin tests and unchanged repository lint on source `715ac8b81d665730e00cc2ca4d956c931bda1876`.

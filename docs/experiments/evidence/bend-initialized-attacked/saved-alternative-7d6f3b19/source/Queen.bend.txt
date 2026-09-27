@@ -1,0 +1,20 @@
+# Actual queen callback composition with exact pair witnesses supplied by Query.bend.
+import Base
+import ./Spec.bend as S
+import ./Evidence.bend as E
+import ../../../legal_probe/Chess.bend as Chess
+
+def actual(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+sq: Nat,+side: Bool,+occ: U64,
+  eR: E.query(d,seed,n,extra,sq,side,occ,S.Rook{}),eB: E.query(d,seed,n,extra,sq,side,occ,S.Bishop{})) ->
+  {Chess.attack(4,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(side),occ) ==
+    (S.init(d,seed,n,extra),S.mask(S.Queen{},sq,side,occ)) : Array<U64> & U64}:
+  Equal.trans(Array<U64> & U64,
+    Chess.attack(4,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(side),occ),
+    Chess.queen_after(U32.from_nat(sq),occ,(S.init(d,seed,n,extra),S.mask(S.Rook{},sq,side,occ))),
+    (S.init(d,seed,n,extra),S.mask(S.Queen{},sq,side,occ)),
+    Equal.cong(Array<U64> & U64,Array<U64> & U64,r => Chess.queen_after(U32.from_nat(sq),occ,r),
+      Chess.attack(3,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(side),occ),
+      (S.init(d,seed,n,extra),S.mask(S.Rook{},sq,side,occ)),eR),
+    Equal.cong(Array<U64> & U64,Array<U64> & U64,r => Chess.or_result(S.mask(S.Rook{},sq,side,occ),r),
+      Chess.attack(2,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(side),occ),
+      (S.init(d,seed,n,extra),S.mask(S.Bishop{},sq,side,occ)),eB))
