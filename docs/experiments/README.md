@@ -12,6 +12,9 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Bootstrap research toward RL restart](2026-09-06-bootstrap-research-roadmap.md) | Overall data, mixing, objective and search decisions toward a larger bootstrap and RL restart |
+| [Graded TailRL bootstrap screen](2026-09-06-tailrl-bootstrap.md) | Exact finite-action objective and bounded CPU mechanism comparison; no training or strength result |
+| [TailRL-inspired policy coverage](2026-09-05-tailrl-policy-coverage.md) | Frozen-cohort checkpoint diagnostic and isolated upper-tail loss prototype; no training readout |
 | [Overlay hot-load diagnostic](2026-09-23-overlay-hotload-diagnostic.md) | Exact-parity ABBA on 65,536 B rows: 62.38% less measured loading time; trainer benefit remains unmeasured |
 | [BT4 own-game teacher source](2026-09-23-bt4-own-game-source.md) | Full strict ordinary-bank replay and 752-row reusable policy/native-WDL source; no training admission |
 | [SF-rooted rule-aware corpus outcome mode](2026-09-23-sf-rule50-corpus-mode.md) | Explicit theoretical versus strict six-man rule-aware labels, UCI request guard and derived provenance; synthetic tests plus one bounded real-Stockfish search fixture |
