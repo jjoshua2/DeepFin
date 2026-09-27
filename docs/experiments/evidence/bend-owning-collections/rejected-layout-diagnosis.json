@@ -1,0 +1,44 @@
+[
+  {
+    "executable": "owning",
+    "config": "0 1 0",
+    "exit": 0,
+    "stdout": "sample 0 1 0 0 0\nroot 0 1 4096 0 4096 1 1 0 20 0 2779096485 0\nlength 0\n",
+    "stderr": ""
+  },
+  {
+    "executable": "owning",
+    "config": "1 1 0",
+    "exit": 0,
+    "stdout": "sample 1 1 0 0 0\nroot 0 1 4096 0 4096 1 1 0 20 0 2779096485 0\nlength 0\n",
+    "stderr": ""
+  },
+  {
+    "executable": "owning",
+    "config": "2 1 0",
+    "exit": 1,
+    "stdout": "",
+    "stderr": "bend: memory fault (machine stack overflow?)\n"
+  },
+  {
+    "executable": "owning-asan",
+    "config": "0 1 0",
+    "exit": 0,
+    "stdout": "sample 0 1 0 0 0\nroot 0 1 4096 0 4096 1 1 0 20 0 2779096485 0\nlength 0\n",
+    "stderr": ""
+  },
+  {
+    "executable": "owning-asan",
+    "config": "1 1 0",
+    "exit": 0,
+    "stdout": "sample 1 1 0 0 0\nroot 0 1 4096 0 4096 1 1 0 20 0 2779096485 0\nlength 0\n",
+    "stderr": ""
+  },
+  {
+    "executable": "owning-asan",
+    "config": "2 1 0",
+    "exit": 1,
+    "stdout": "",
+    "stderr": "artifacts/owning-crash/owning.c:1378:32: runtime error: shift exponent 4294967293 is too large for 64-bit type 'unsigned long long'\n    #0 0x555ee2c1bdfe in blk_at /home/runner/work/DeepFin/DeepFin/artifacts/owning-crash/owning.c:1378:32\n    #1 0x555ee2c1bdfe in spin_36 /home/runner/work/DeepFin/DeepFin/artifacts/owning-crash/owning.c:3724:17\n    #2 0x555ee2c1bdfe in spin_35 /home/runner/work/DeepFin/DeepFin/artifacts/owning-crash/owning.c:3882:11\n    #3 0x555ee2c1bdfe in spin_34 /home/runner/work/DeepFin/DeepFin/artifacts/owning-crash/owning.c:3936:9\n    #4 0x555ee2c1bdfe in WL_FID_PUSH /home/runner/work/DeepFin/DeepFin/artifacts/owning-crash/owning.c:7057:11\n    #5 0x555ee2b1e8c0 in work_loop /home/runner/work/DeepFin/DeepFin/artifacts/owning-crash/owning.c:4271:10\n    #6 0x555ee2b1e8c0 in corpus_eval /home/runner/work/DeepFin/DeepFin/artifacts/owning-crash/owning.c:13122:15\n    #7 0x555ee2b1cad3 in io_step /home/runner/work/DeepFin/DeepFin/artifacts/owning-crash/owning.c:13734:16\n    #8 0x555ee2b1cad3 in io_loop /home/runner/work/DeepFin/DeepFin/artifacts/owning-crash/owning.c:13798:16\n    #9 0x555ee2bf9d9f in main /home/runner/work/DeepFin/DeepFin/artifacts/owning-crash/owning.c:14040:15\n    #10 0x7f5f3162a1c9  (/lib/x86_64-linux-gnu/libc.so.6+0x2a1c9) (BuildId: 328820b908de8ea1ef79afa8995e302e819163d7)\n    #11 0x7f5f3162a28a in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2a28a) (BuildId: 328820b908de8ea1ef79afa8995e302e819163d7)\n    #12 0x555ee2b1f274 in _start (/home/runner/work/DeepFin/DeepFin/artifacts/owning-crash/owning-asan+0x5b274) (BuildId: c089dc99205d7b4c3139610496af8375b98ce2f4)\n\nSUMMARY: UndefinedBehaviorSanitizer: undefined-behavior artifacts/owning-crash/owning.c:1378:32 \n"
+  }
+]

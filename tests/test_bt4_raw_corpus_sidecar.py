@@ -491,10 +491,13 @@ def test_projected_reader_stdlib_corner_cases(line: str) -> None:
 @pytest.mark.parametrize("tail", [
     '[1,]', '{"x":}', '01', 'true garbage', '"bad\ncontrol"',
     r'"\x"', r'"\u12xy"', '[1 2]', '{"x" 1}',
-    '9' * 5000, '[' * 1200 + '0' + ']' * 1200,
+    '9' * 5000,
 ])
 def test_projected_reader_preserves_errors_in_skipped_fields(tail: str) -> None:
     line = '{"game_id": 3, "phases": ' + tail + '}'
+    # Deep arrays are not in this list. This interpreter's json.loads accepts
+    # 1,200 nested arrays, so that shape is not an error to preserve. The
+    # nesting test covers the preflight that still selects stdlib for them.
     with pytest.raises((ValueError, RecursionError)) as reference:
         json.loads(line)
     assert tool._decode_bt4_row(line) is None

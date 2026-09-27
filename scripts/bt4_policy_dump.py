@@ -701,6 +701,61 @@ def legal_move_policy(
     return [move.uci() for move in moves], probabilities
 
 
+def _checked_dense_policy_output(buffer: object, row_label: str) -> np.ndarray:
+    if (
+        not isinstance(buffer, np.ndarray)
+        or buffer.shape != (COMPACT_POLICY_SIZE,)
+        or buffer.dtype != np.dtype(np.float32)
+        or not buffer.flags.writeable
+        or not buffer.flags.c_contiguous
+    ):
+        raise ValueError(f"{row_label}: invalid dense policy output buffer")
+    return buffer
+
+
+def compact_legal_policy(
+    board: chess.Board, policy_row: np.ndarray, *, row_label: str = "position",
+    dense_out: np.ndarray | None = None,
+) -> tuple[list[chess.Move], np.ndarray, np.ndarray]:
+    """One BT4 output as legal move probabilities and a dense compact label.
+
+    The two maps have different index orders: gather BT4's Leela logits through
+    ``legal_move_probabilities``, then scatter the same Move objects into the
+    training corpus's lc0_1858 slots. The returned legal probabilities and dense
+    label are both float32, matching the raw sidecar's stored precision. Pass a
+    writable, C-contiguous float32 ``dense_out`` to reuse a caller-owned row;
+    all old entries are cleared before the legal probabilities are scattered.
+    """
+    if dense_out is not None:
+        dense_out = _checked_dense_policy_output(dense_out, row_label)
+    moves, raw_probabilities = legal_move_probabilities(board, policy_row)
+    probabilities = np.asarray(raw_probabilities, dtype=np.float32)
+    indices = np.asarray(
+        [compact_index_for_move(board, move) for move in moves], dtype=np.int64,
+    )
+    if (
+        len(indices) != len(moves)
+        or len(set(indices.tolist())) != len(moves)
+        or bool(np.any(indices < 0))
+        or bool(np.any(indices >= COMPACT_POLICY_SIZE))
+    ):
+        raise ValueError(f"{row_label}: legal policy mapping mismatch")
+    if (
+        probabilities.shape != (len(indices),)
+        or not np.isfinite(probabilities).all()
+        or bool(np.any(probabilities < 0.0))
+        or not np.isclose(float(probabilities.sum()), 1.0, atol=2e-6)
+    ):
+        raise ValueError(f"{row_label}: invalid BT4 legal policy")
+    if dense_out is None:
+        dense = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.float32)
+    else:
+        dense = dense_out
+        dense.fill(0.0)
+    dense[indices] = probabilities
+    return moves, probabilities, dense
+
+
 def entropy_nats(probs: np.ndarray) -> float:
     p = probs[probs > 0.0]
     return float(-(p * np.log(p)).sum())

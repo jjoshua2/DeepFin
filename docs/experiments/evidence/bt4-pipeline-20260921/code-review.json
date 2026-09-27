@@ -1,0 +1,15 @@
+{
+  "verdict": "APPROVE_CODE_ONLY_PENDING_FROZEN_PLAN_AND_LAUNCH_REVIEW",
+  "independent_tests_passed": 9,
+  "sha256": {
+    "scripts/bt4_pipeline_benchmark.py": "fb6c6cb1836c150f9f1f6557253a3bf21d1ce3a6eab3786f58b7ac112f1d4c0b",
+    "tests/test_bt4_pipeline_benchmark.py": "e0e1b3f3547a05d0a5eea3af5b9c70aff24605b24d5490221d69dd87af7d73bb"
+  },
+  "resolved_blocker": "Comparison now guards each512row chunk; final runtime/data checks and completion tail call guard. STOP/time everycall, expensive resource checks throttled2s.",
+  "methodology": "ABCCBA actual labeling+deep verification,128batches, matching input+raw output hashes+allstoredarrays, CUDA warmup profile, inherited exclusive lease. Primary combines producer and verification.",
+  "limits": [
+    "No frozen plan/queue/GPU approval yet.",
+    "Measured producer includes SHA instrumentation, including potential overlap changes; report as instrumented warm-session one-shard screen.",
+    "Outer20minute supervisor necessary for blocking work; code inner19minute guard alone not hard wall timer."
+  ]
+}
