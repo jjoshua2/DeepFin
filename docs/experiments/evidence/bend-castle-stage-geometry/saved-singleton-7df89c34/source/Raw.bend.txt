@@ -1,0 +1,44 @@
+# Exact selected-color king-plane update for actual ordinary/castling branches.
+import Base
+import ./Algebra.bend as A
+import ./Spec.bend as S
+import ../castling/Actual.bend as C
+import ../move_update/Ordinary.bend as O
+import ../move_update/Core.bend as Core
+import ../move_update/Spec.bend as M
+import ../ray/Algebra.bend as Old
+import ../../../legal_probe/Chess.bend as Chess
+
+def selected(+b: Chess.Board,+white: Bool) -> U64:
+  U64.and(Chess.get_kings(b),Chess.select_u64(white,Chess.get_white(b),Chess.get_black(b)))
+
+def normal(+b: Chess.Board,+mask: U64,+target: U64,+rook: U64,+white: Bool) -> U64:
+  U64.or(U64.or(U64.and_not(selected(b,white),mask),target),U64.and(U64.and_not(Chess.get_kings(b),mask),rook))
+
+def projection(+b: Chess.Board,+mask: U64,+target: U64,+rook: U64,+white: Bool,+turn: U32,+rights: U32,+ep: U32) ->
+  {selected(C.raw(b,mask,target,rook,5,white,turn,rights,ep),white) == normal(b,mask,target,rook,white) : U64}:
+  match b white:
+    case Chess.Board{p,n,bi,r,q,+k,+w,bl,t,c,e} True{}: A.projection(k,w,mask,target,rook)
+    case Chess.Board{p,n,bi,r,q,+k,w,+bl,t,c,e} False{}: A.projection(k,bl,mask,target,rook)
+
+def no_rook(+b: Chess.Board,+mask: U64,+target: U64,+white: Bool,+turn: U32,+rights: U32,+ep: U32) ->
+  {selected(Core.raw(b,mask,target,5,white,turn,rights,ep),white) == normal(b,mask,target,U64.zero(),white) : U64}:
+  match b white:
+    case Chess.Board{p,n,bi,r,q,+k,+w,bl,t,c,e} True{}: A.projection(k,w,mask,target,U64.zero())
+    case Chess.Board{p,n,bi,r,q,+k,w,+bl,t,c,e} False{}: A.projection(k,bl,mask,target,U64.zero())
+
+def castle(+b: Chess.Board,+src: U32,+dst: U32,kind: {Chess.piece(b,src) == 5 : U32}) ->
+  {S.owned(Chess.make_move(b,Chess.Ply{src,dst,0,2}),Chess.get_turn(b)) == normal(b,C.mask(src,dst),U64.bit(U32.to_nat(dst)),C.rook_to(src,dst),U32.is_eq(Chess.get_turn(b),1)) : U64}:
+  Equal.trans(U64,S.owned(Chess.make_move(b,Chess.Ply{src,dst,0,2}),Chess.get_turn(b)),S.owned(C.dispatch(b,src,dst,Chess.piece(b,src)),Chess.get_turn(b)),normal(b,C.mask(src,dst),U64.bit(U32.to_nat(dst)),C.rook_to(src,dst),U32.is_eq(Chess.get_turn(b),1)),
+    Equal.cong(Chess.Board,U64,x => S.owned(x,Chess.get_turn(b)),Chess.make_move(b,Chess.Ply{src,dst,0,2}),C.dispatch(b,src,dst,Chess.piece(b,src)),C.unfold(b,src,dst)),
+    Equal.trans(U64,S.owned(C.dispatch(b,src,dst,Chess.piece(b,src)),Chess.get_turn(b)),S.owned(C.dispatch(b,src,dst,5),Chess.get_turn(b)),normal(b,C.mask(src,dst),U64.bit(U32.to_nat(dst)),C.rook_to(src,dst),U32.is_eq(Chess.get_turn(b),1)),
+      Equal.cong(U32,U64,x => S.owned(C.dispatch(b,src,dst,x),Chess.get_turn(b)),Chess.piece(b,src),5,kind),
+      projection(b,C.mask(src,dst),U64.bit(U32.to_nat(dst)),C.rook_to(src,dst),U32.is_eq(Chess.get_turn(b),1),U32.xor(Chess.get_turn(b),1),O.rights(b,src,dst,5),O.ep(src,dst,5))))
+
+def ordinary(+b: Chess.Board,+src: U32,+dst: U32,kind: {Chess.piece(b,src) == 5 : U32}) ->
+  {S.owned(Chess.make_move(b,Chess.Ply{src,dst,0,0}),Chess.get_turn(b)) == normal(b,M.removal(U64.bit(U32.to_nat(src)),U64.bit(U32.to_nat(dst))),U64.bit(U32.to_nat(dst)),U64.zero(),U32.is_eq(Chess.get_turn(b),1)) : U64}:
+  Equal.trans(U64,S.owned(Chess.make_move(b,Chess.Ply{src,dst,0,0}),Chess.get_turn(b)),S.owned(O.dispatch(b,src,dst,Chess.piece(b,src)),Chess.get_turn(b)),normal(b,M.removal(U64.bit(U32.to_nat(src)),U64.bit(U32.to_nat(dst))),U64.bit(U32.to_nat(dst)),U64.zero(),U32.is_eq(Chess.get_turn(b),1)),
+    Equal.cong(Chess.Board,U64,x => S.owned(x,Chess.get_turn(b)),Chess.make_move(b,Chess.Ply{src,dst,0,0}),O.dispatch(b,src,dst,Chess.piece(b,src)),O.unfold(b,src,dst)),
+    Equal.trans(U64,S.owned(O.dispatch(b,src,dst,Chess.piece(b,src)),Chess.get_turn(b)),S.owned(O.dispatch(b,src,dst,5),Chess.get_turn(b)),normal(b,M.removal(U64.bit(U32.to_nat(src)),U64.bit(U32.to_nat(dst))),U64.bit(U32.to_nat(dst)),U64.zero(),U32.is_eq(Chess.get_turn(b),1)),
+      Equal.cong(U32,U64,x => S.owned(O.dispatch(b,src,dst,x),Chess.get_turn(b)),Chess.piece(b,src),5,kind),
+      no_rook(b,M.removal(U64.bit(U32.to_nat(src)),U64.bit(U32.to_nat(dst))),U64.bit(U32.to_nat(dst)),U32.is_eq(Chess.get_turn(b),1),U32.xor(Chess.get_turn(b),1),O.rights(b,src,dst,5),O.ep(src,dst,5))))

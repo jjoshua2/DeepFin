@@ -1,0 +1,79 @@
+# King selection tracks the input side, not the flipped child's side to move.
+import Base
+import ./Spec.bend as S
+import ./Finish.bend as F
+import ../board/Spec.bend as B
+import ../castling/Route.bend as R
+import ../castle_emission/Spec.bend as E
+import ../castle_emission/Guard.bend as G
+import ../../../legal_probe/Chess.bend as Chess
+
+def stage_singleton(+b: Chess.Board,+r: R.Route,+stage: S.Stage,good: {B.valid(b) == True{} : Bool},
+  one: {S.owned(b,Chess.get_turn(b)) == U64.bit(U32.to_nat(R.src(r))) : U64},
+  fresh: {B.fresh_mask(b,R.rook(r)) == True{} : Bool}) ->
+  {S.owned(S.at(b,r,stage),Chess.get_turn(b)) == U64.bit(U32.to_nat(S.square(r,stage))) : U64}:
+  match stage:
+    case S.Start{}: one
+    case S.Transit{}: F.transit(b,r,good,one)
+    case S.Castled{}: F.castle(b,r,good,one,fresh)
+
+def route_index(+r: R.Route,+stage: S.Stage) ->
+  {U64.ctz(U64.bit(U32.to_nat(S.square(r,stage)))) == S.square(r,stage) : U32}:
+  match r stage:
+    case R.WhiteKing{} S.Start{}: {==}
+    case R.WhiteKing{} S.Transit{}: {==}
+    case R.WhiteKing{} S.Castled{}: {==}
+    case R.WhiteQueen{} S.Start{}: {==}
+    case R.WhiteQueen{} S.Transit{}: {==}
+    case R.WhiteQueen{} S.Castled{}: {==}
+    case R.BlackKing{} S.Start{}: {==}
+    case R.BlackKing{} S.Transit{}: {==}
+    case R.BlackKing{} S.Castled{}: {==}
+    case R.BlackQueen{} S.Start{}: {==}
+    case R.BlackQueen{} S.Transit{}: {==}
+    case R.BlackQueen{} S.Castled{}: {==}
+
+def selected(+b: Chess.Board,+r: R.Route,+stage: S.Stage,good: {B.valid(b) == True{} : Bool},
+  one: {S.owned(b,Chess.get_turn(b)) == U64.bit(U32.to_nat(R.src(r))) : U64},
+  fresh: {B.fresh_mask(b,R.rook(r)) == True{} : Bool}) ->
+  {U64.ctz(S.owned(S.at(b,r,stage),Chess.get_turn(b))) == S.square(r,stage) : U32}:
+  Equal.trans(U32,U64.ctz(S.owned(S.at(b,r,stage),Chess.get_turn(b))),U64.ctz(U64.bit(U32.to_nat(S.square(r,stage)))),S.square(r,stage),
+    Equal.cong(U64,U32,x => U64.ctz(x),S.owned(S.at(b,r,stage),Chess.get_turn(b)),U64.bit(U32.to_nat(S.square(r,stage))),stage_singleton(b,r,stage,good,one,fresh)),route_index(r,stage))
+
+def checked(table: Array<U64>,+b: Chess.Board,+r: R.Route,+stage: S.Stage,good: {B.valid(b) == True{} : Bool},
+  one: {S.owned(b,Chess.get_turn(b)) == U64.bit(U32.to_nat(R.src(r))) : U64},
+  fresh: {B.fresh_mask(b,R.rook(r)) == True{} : Bool}) ->
+  {Chess.in_check(table,S.at(b,r,stage),Chess.get_turn(b)) ==
+    Chess.attacked(table,S.at(b,r,stage),S.square(r,stage),U32.xor(Chess.get_turn(b),1)) : Array<U64> & Bool}:
+  %Equal.sym(U32,U64.ctz(S.owned(S.at(b,r,stage),Chess.get_turn(b))),S.square(r,stage),selected(b,r,stage,good,one,fresh)) :
+    {Chess.attacked(table,S.at(b,r,stage),_,U32.xor(Chess.get_turn(b),1)) == Chess.attacked(table,S.at(b,r,stage),S.square(r,stage),U32.xor(Chess.get_turn(b),1)) : Array<U64> & Bool}
+  {==}
+
+def guarded_singleton(+b: Chess.Board,+ks: Bool,good: {B.valid(b) == True{} : Bool},
+  one: {S.owned(b,Chess.get_turn(b)) == U64.bit(U32.to_nat(R.src(E.route(b,ks)))) : U64},guard: {E.guard(b,ks) == True{} : Bool}) ->
+  {S.owned(Chess.make_move(b,E.move(b,ks)),Chess.get_turn(b)) == R.target(E.route(b,ks)) : U64}:
+  Equal.trans(U64,S.owned(Chess.make_move(b,E.move(b,ks)),Chess.get_turn(b)),S.owned(S.final(b,E.route(b,ks)),Chess.get_turn(b)),R.target(E.route(b,ks)),
+    Equal.cong(Chess.Ply,U64,m => S.owned(Chess.make_move(b,m),Chess.get_turn(b)),E.move(b,ks),Chess.Ply{R.src(E.route(b,ks)),R.dst(E.route(b,ks)),0,2},G.route_move(U32.is_eq(Chess.get_turn(b),1),ks)),
+    F.castle(b,E.route(b,ks),good,one,G.fresh(b,ks,guard)))
+
+def guarded_check(table: Array<U64>,+b: Chess.Board,+ks: Bool,+stage: S.Stage,good: {B.valid(b) == True{} : Bool},
+  one: {S.owned(b,Chess.get_turn(b)) == U64.bit(U32.to_nat(R.src(E.route(b,ks)))) : U64},guard: {E.guard(b,ks) == True{} : Bool}) ->
+  {Chess.in_check(table,S.at(b,E.route(b,ks),stage),Chess.get_turn(b)) ==
+    Chess.attacked(table,S.at(b,E.route(b,ks),stage),S.square(E.route(b,ks),stage),U32.xor(Chess.get_turn(b),1)) : Array<U64> & Bool}:
+  checked(table,b,E.route(b,ks),stage,good,one,G.fresh(b,ks,guard))
+
+def raw_turn(+b: Chess.Board,+m: Chess.Ply) ->
+  {Chess.get_turn(Chess.make_move(b,m)) == U32.xor(Chess.get_turn(b),1) : U32}:
+  match b m:
+    case Chess.Board{p,n,bi,r,q,k,w,bl,t,c,e} Chess.Ply{src,dst,prom,flag}: {==}
+
+def flip(+white: Bool) -> {U32.xor(Bool.to_u32(white),1) == Bool.to_u32(Bool.not(white)) : U32}:
+  match white:
+    case True{}: {==}
+    case False{}: {==}
+
+def valid_side(+b: Chess.Board,+m: Chess.Ply,+white: Bool,valid: {Chess.get_turn(b) == Bool.to_u32(white) : U32}) ->
+  {Chess.get_turn(Chess.make_move(b,m)) == Bool.to_u32(Bool.not(white)) : U32}:
+  Equal.trans(U32,Chess.get_turn(Chess.make_move(b,m)),U32.xor(Chess.get_turn(b),1),Bool.to_u32(Bool.not(white)),raw_turn(b,m),
+    Equal.trans(U32,U32.xor(Chess.get_turn(b),1),U32.xor(Bool.to_u32(white),1),Bool.to_u32(Bool.not(white)),
+      Equal.cong(U32,U32,x => U32.xor(x,1),Chess.get_turn(b),Bool.to_u32(white),valid),flip(white)))
