@@ -116,7 +116,8 @@ def verify_audit(bank: Path, summary_sha256: str, rows: int,
         f"bt4_source_fullstrict_{verifier['sha256'][:12]}", verifier_path,
     )
     require(spec is not None and spec.loader is not None, "cannot load pinned verifier")
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)

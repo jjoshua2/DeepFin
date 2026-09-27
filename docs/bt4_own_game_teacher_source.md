@@ -6,9 +6,9 @@ source cohort for later labeling work, **not a training shard**.
 
 Each input is a closed `bt4_root_policy_games_v1` bank, its expected
 `summary.json` SHA-256, and a separately produced full-bank audit receipt with
-its SHA-256. The accepted audit profiles cover the saved two-game qualification,
-independent 32-game readback, and a separately rerun ordinary-bank strict
-audit. The latter is produced by `scripts/bt4_ordinary_bank_audit.py` from a
+its SHA-256. The only accepted audit profile is a separately rerun ordinary-bank
+strict audit. Saved two-game qualification and independent 32-game readback
+receipts are rejected. The ordinary audit is produced by `scripts/bt4_ordinary_bank_audit.py` from a
 completed ordinary pilot or parallel-screen stage. It imports only a
 SHA-reviewed frozen supervisor version, calls that supervisor's full `verify_bank`
 on the saved bank, and checks its facts against the original stage terminal.
