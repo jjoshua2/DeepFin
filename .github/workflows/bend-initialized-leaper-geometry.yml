@@ -1,0 +1,200 @@
+name: Initialized leaper geometry qualification
+'on':
+  push:
+    branches: [feat/bend-initialized-leaper-geometry-dev-20260926]
+    paths: [.github/workflows/bend-initialized-leaper-geometry.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: e78987ccad0dfeafd026548b392e8fb52e960472
+      TARGET: feat/bend-initialized-leaper-geometry-20260926
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e78987ccad0dfeafd026548b392e8fb52e960472
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover checked source and verify exact parent
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/leaper-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/source.xz"
+          for blob in 914b886386827be9e4f57df022e36ee3f9cbef30 e9464d7669e88a1e0cd05611e10feb44db4300f6 fcbcf8595e2d48b1ee57b3fbf4634a1e60fd47eb; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/$blob" >> "$RUNNER_TEMP/source.xz"
+          done
+          test "$(git hash-object "$RUNNER_TEMP/source.xz")" = fb75590b9c40773a6403f5908bc14bb61c45d3c5
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108512964714 > "$EVIDENCE/parent-job.json"
+          python3 - <<'PY'
+          import hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          t=Path(os.environ['RUNNER_TEMP']);e=Path(os.environ['EVIDENCE'])
+          def git(*a):return subprocess.check_output(['git',*a],text=True).strip()
+          def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+          assert git('rev-parse','HEAD')==os.environ['BASE']
+          assert git('rev-parse','HEAD^{tree}')=='0b85dbe7ee8daf64ea0e176510585185cbecc675'
+          old=Path('docs/experiments/evidence/bend-attack-witness')
+          q=json.loads((old/'qualification.json').read_text())
+          assert q['qualification']=='PASS' and q['modular_laws']==180 and q['modular_controls']==543
+          inherited=json.loads((old/'hosted-source-identity.json').read_text())['candidate_source_sha256s']
+          assert len(inherited)==553
+          for p,h in inherited.items():assert digest(Path(p))==h,p
+          job=json.loads((e/'parent-job.json').read_text())
+          assert job['id']==108512964714 and job['run_id']==36281112782 and job['status']=='completed' and job['conclusion']=='success'
+          patch=lzma.decompress((t/'source.xz').read_bytes(),memlimit=256*1024*1024)
+          assert len(patch)==89246 and hashlib.sha256(patch).hexdigest()=='52411361df29b4128da5e68362aa26489f925df5c5b5870be4759f9dd8ca7a73'
+          (e/'source.patch').write_bytes(patch)
+          subprocess.run(['git','apply','--check',str(e/'source.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(e/'source.patch')],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='f0ac2204ab3c8ece44294081c02ed70b62ef1c54'
+          changed=git('diff','--cached','--name-only').splitlines();assert len(changed)==21
+          docs={'docs/bend_migration_proofs.md','docs/experiments/README.md','docs/experiments/2026-09-26-bend-initialized-leaper-geometry.md'}
+          assert all(p in docs or p.startswith('native/bend_engine/standalone/proofs/attack_geometry/') for p in changed)
+          for p,h in inherited.items():assert digest(Path(p))==h,p
+          hashes={p:digest(Path(p)) for p in git('ls-files','native/bend_engine').splitlines() if Path(p).is_file()}
+          assert len(hashes)==571
+          ident={'base':os.environ['BASE'],'source_tree':git('write-tree'),'patch_sha256':hashlib.sha256(patch).hexdigest(),'changed_files':changed,'candidate_source_sha256s':hashes,'parent_manifest_matches':553,'retained_parent_laws':180,'retained_parent_controls':543,'parent_qualification_sha256':digest(old/'qualification.json'),'combined_wrapper_executed':False}
+          (e/'source-identity.json').write_text(json.dumps(ident,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove initialized pawn knight and king attack geometry'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git log -1 --format='%H%n%T' > "$EVIDENCE/source-commit.txt"
+      - name: Execute three public laws and nineteen controls
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/attack_geometry/focused.js "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Check actual initialized queries in four native modes
+        env:
+          CC: /usr/bin/clang
+        run: |
+          set -euo pipefail
+          BUN=bun python3 native/bend_engine/standalone/proofs/attack_geometry/verify_native.py "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Check original compiler source suite and pin tests
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development tools
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged repository lint
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify receipts and publish isolated branch
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          git diff --exit-code
+          test "$(git ls-remote origin refs/heads/feat/bend-attack-witness-20260926 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          python3 - <<'PY'
+          import collections,hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(n):return json.loads((e/n).read_text())
+          def canon(v):return hashlib.sha256(json.dumps(v,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          ident=read('source-identity.json');f=read('focused.json');n=read('native.json')
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          assert f['focused_gate']=='PASS' and f['consumer']=='PASS' and f['controls_gate']=='PASS' and f['new_law_count']==3
+          assert f['consumer_raw'].strip()=='All terms check.'
+          assert len(f['negative_controls'])==19 and all(c['rejected'] for c in f['negative_controls'])
+          kinds=collections.Counter(c['kind'] for c in f['negative_controls'])
+          assert kinds['source semantic/refinement']==10 and kinds['manifest/import policy']==8
+          assert canon(f['source_sha256s'])=='2ac7e9fd72afaa4a66584f4a5f698ad2785bdf3169e89c7a2f9b7ca0c8da93ea'
+          assert n['native_gate']=='PASS' and n['rows_per_mode']==3072 and n['distinct_inputs']==3072 and n['fields_per_mode']==6144
+          assert n['masks_per_initialization']==256 and n['initializations']==4 and n['occupancies_per_mask']==3
+          assert len(n['modes'])==4 and all(m['invalid_rejections']==9 for m in n['modes'])
+          assert len(n['mutations'])==3 and all(m['compiled_and_executed'] and m['rejected'] for m in n['mutations'])
+          assert canon({k:v for k,v in n.items() if k!='cc'})=='25655550e333535c97ec0c75d1d3e8594a8a577077bdbaa060bab84225d35485'
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          d=Path('docs/experiments/evidence/bend-initialized-leaper-geometry');d.mkdir(parents=True,exist_ok=False)
+          for name in ['source-identity.json','focused.json','native.json','compiler-proofs.json','parent-job.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes();(d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          result={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':ident['source_tree'],'new_laws':3,'new_controls':19,'control_categories':dict(kinds),'retained_parent_laws':180,'retained_parent_controls':543,'modular_laws':183,'modular_controls':562,'combined_wrapper_executed':False,'native_source_entries':571,'independent_review':False,'full_initialized_attacked_composition':False}
+          (d/'qualification.json').write_text(json.dumps(result,indent=2)+'\n')
+          headline=f"Hosted run **{os.environ['GITHUB_RUN_ID']}** passes all three public laws, importing consumer, nineteen controls, four native initialization/query modes, three compiled/executed actual-code corruptions, original compiler checks and unchanged repository lint on source `{os.environ['SOURCE']}`."
+          paras=['## Completed hosted qualification',headline,
+            'The three related contracts establish independently specified non-slider masks at actual computation, complete extras storage and initialized Chess.attack boundaries. The last two results include the complete final array. Actual allocation and any preceding Tables.tables loop supply shape; initial slot contents and occupancy are arbitrary. Depth17 is supported, not claimed minimal. No correctness of preceding slider contents follows from the non-slider result.',
+            'Geometry uses bounded natural file/rank steps. Sixty-four scalar coordinate tuples cover all four classes, with structural accumulation rather than host-generated expected bitboards. Address separation and one-block frames compose by induction through all later writes. The natural schedule is explicitly equated with actual Tables.extras. Each selected square is bound into the same complete loop, not a selected-key-dependent runtime.',
+            'The consumer also specializes the actual reversed pawn query for both Boolean attacker colors. This is query-direction wiring, not a new universal forward/reverse attack-membership theorem. Existing initialized-slider and attack-witness results are unchanged; composing the complete initialized attacked result and singleton conditions through castling remains separate.',
+            'Each native mode passes3,072 distinct requests/6,144 U32 mask fields:256 masks for each of four initialization contexts and three occupancies. Contexts are actual full Tables.build, all-ones initialization plus full extras, a partial preceding table loop plus full extras, and a planted last-slot sentinel plus full extras. Nine malformed batches are rejected per mode. Modes repeat fixtures; queries do not inspect the entire array or prove native lifetime. Candidate code never imports the proof model or receives expected answers.',
+            'Actual wrong king-slot, shifted black-pawn storage and reversed white-pawn storage corruptions compile and execute before the independent signed-coordinate reference rejects their values. Ten source/refinement controls and eight policy controls pass; one synthetic warning-output unit is not a compiler execution. Crashes, missing imports, syntax/ownership errors and timeouts are not semantic rejection.',
+            'All553 parent source entries are retained unchanged; all571 candidate hashes match. Parent180/543 plus newly executed3/19 yields modular183 laws/562 controls, not a full aggregate run. Original compiler16-laws/seven-controls and12 pin tests pass. The hosted native report matches the local result except C compiler identity. The source dependency manifest matches exactly.',
+            'Direct complete-mask normalization exceeded a240-second local bound. Two dependent draft checks were then deliberately stopped without a result. A structural accumulation/scalar-coordinate replacement passed, without changing the geometry domain or any accepted prior law. Initial reserved-name/Data/match-order and probe duplication errors were corrected before the completed runs. Original logs/drafts remain in the review package. Local lint failed for missing Ruff/Basedpyright/Vulture; hosted locked CPU tools pass the unchanged lint command, without relabeling the local failure.',
+            'The symbolic depth and full-extras certificates avoid expanding a closed131,072-cell term. No new formal equality for the enormous literal Tables.build expression is claimed; its real native execution is a test context. Source and compiler inputs are unchanged after checking; later publication changes only documentation/evidence.',
+            'Self-review only. Pinned checker/Base, native lowering/storage, ABI, C/C++ toolchain, libraries, OS and hardware remain boundaries. Existing compiler strict-TypeScript, structural-snapshot lowering and literal closed-builder limitations remain unchanged. No production function, earlier proof, permanent workflow, routine perft, search, model/GPU, training or benchmark change. No Python application responsibility moved into Bend. No merge, force push, deployment or live-process action.'
+          ]
+          rec=Path('docs/experiments/2026-09-26-bend-initialized-leaper-geometry.md');rec.write_text(rec.read_text()+'\n\n'+'\n\n'.join(paras)+'\n')
+          matrix=Path('docs/bend_migration_proofs.md');s=matrix.read_text();anchor='## P3 non-slider initialization and coordinate geometry\n\n';assert s.count(anchor)==1
+          matrix.write_text(s.replace(anchor,anchor+headline+'\n\nCompleted qualification is modular183/562 with exact180/543 parent evidence retained; the full aggregate did not run. See the dated record for scope and executed receipts.\n\n',1))
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify initialized non-slider attack geometry'
+          git switch -c "$TARGET"
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$EVIDENCE" "$RUNNER_TEMP/final/reports"
+          git log -2 --format='%H %s' > "$RUNNER_TEMP/final/published-commits.txt"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/commit.raw"
+          git cat-file commit "$SOURCE" > "$RUNNER_TEMP/final/source-commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz commit.raw source-commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: initialized-leaper-geometry-qualification
+          path: |
+            ${{ runner.temp }}/final/
+            ${{ runner.temp }}/leaper-evidence/
+          retention-days: 14
