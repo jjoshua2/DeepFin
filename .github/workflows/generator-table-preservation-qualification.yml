@@ -1,0 +1,204 @@
+name: Generator table preservation qualification
+'on':
+  push:
+    branches: [dev/bend-generator-table-qualification-20260927]
+    paths: [.github/workflows/generator-table-preservation-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: 1915e4f283b1e3d5daf7e26683d5a6c2ef48a121
+      TARGET: feat/bend-generator-table-preservation-20260927
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 1915e4f283b1e3d5daf7e26683d5a6c2ef48a121
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact checked candidate and verify retained parent
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/table-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test "$(git ls-remote origin refs/heads/feat/bend-castle-sequence-20260927 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          : > "$RUNNER_TEMP/source.xz"
+          for sha in 9ba79cd98288d009795f1865a873cb1c665f3d14 158049896aa6ad75839f79ad56121179ea29f71a 5cfcf3874041004105aef348afcd90fbc1eadd0c; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$sha" --jq .content | base64 --decode > "$RUNNER_TEMP/$sha"
+            test "$(git hash-object "$RUNNER_TEMP/$sha")" = "$sha"
+            cat "$RUNNER_TEMP/$sha" >> "$RUNNER_TEMP/source.xz"
+          done
+          test "$(git hash-object "$RUNNER_TEMP/source.xz")" = fef3fdec5e6b94d54836abe072be4192b9310292
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108635080489 > "$EVIDENCE/parent-job.json"
+          python3 - <<'PY'
+          import hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']); t=Path(os.environ['RUNNER_TEMP'])
+          def git(*a): return subprocess.check_output(['git',*a],text=True).strip()
+          def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+          assert git('rev-parse','HEAD^{tree}')=='e0bde84a595e3eccd9c0f275dc66a90cd2762395'
+          old=Path('docs/experiments/evidence/bend-castle-sequence')
+          q=json.loads((old/'hosted-qualification.json').read_text())
+          assert q['qualification']=='PASS' and q['modular_laws']==193 and q['modular_controls']==623
+          inherited=json.loads((old/'hosted-source-identity.json').read_text())['candidate_source_sha256s']; assert len(inherited)==620
+          for p,h in inherited.items(): assert digest(Path(p))==h,p
+          job=json.loads((e/'parent-job.json').read_text())
+          assert job['id']==108635080489 and job['run_id']==36324699695 and job['status']=='completed' and job['conclusion']=='success'
+          patch=lzma.decompress((t/'source.xz').read_bytes(),memlimit=256*1024*1024)
+          assert len(patch)==110236 and hashlib.sha256(patch).hexdigest()=='344f43a7f1e8ff9956c63db95f3165d3969835f63dedb2467cb5dedaa7900564'
+          (e/'source.patch').write_bytes(patch)
+          subprocess.run(['git','apply','--check',str(e/'source.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(e/'source.patch')],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='aa19188f817072b523053d47e8d6f21e3e594444'
+          changes=git('diff','--cached','--name-only').splitlines(); assert len(changes)==19
+          allowed={'docs/bend_migration_proofs.md','docs/experiments/README.md','docs/experiments/2026-09-27-bend-generator-table-preservation.md'}
+          assert all(p in allowed or p.startswith('native/bend_engine/standalone/proofs/table_preservation/') or p.startswith('docs/experiments/evidence/bend-generator-table-preservation/') for p in changes)
+          for p,h in inherited.items(): assert digest(Path(p))==h,p
+          hashes={p:digest(Path(p)) for p in git('ls-files','native/bend_engine').splitlines() if Path(p).is_file()}; assert len(hashes)==634
+          ident={'base':os.environ['BASE'],'source_tree':git('write-tree'),'local_source_commit':'d6445d9e9f8f40d762152d1ebdd9eab24d68b408','changed_files':changes,'inherited_source_entries':620,'candidate_source_sha256s':hashes,'source_patch_sha256':hashlib.sha256(patch).hexdigest(),'parent_qualification_sha256':digest(old/'hosted-qualification.json')}
+          (e/'source-identity.json').write_text(json.dumps(ident,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$TARGET"
+          git commit -m 'proof: preserve arbitrary attack tables through complete move generation'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git cat-file commit HEAD > "$EVIDENCE/source-commit.raw"
+          git rev-parse HEAD > "$EVIDENCE/source-commit.txt"
+          git push origin "HEAD:refs/heads/$TARGET"
+      - name: Check five public laws and all seventeen controls
+        run: |
+          set -euo pipefail
+          python3 native/bend_engine/standalone/proofs/table_preservation/focused.py "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Compare complete before-after native arrays in four modes
+        env:
+          CC: /usr/bin/clang
+          BUN: bun
+        run: |
+          set -euo pipefail
+          python3 native/bend_engine/standalone/proofs/table_preservation/verify_native.py "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Recheck original compiler source and pin tests
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Locked CPU environment and unchanged repository lint
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify every receipt and publish documentation-only evidence
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-castle-sequence-20260927 | cut -f1)" = "$BASE"
+          git diff --exit-code
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']); d=Path('docs/experiments/evidence/bend-generator-table-preservation')
+          def read(p): return json.loads(p.read_text())
+          ident=read(e/'source-identity.json'); f=read(e/'focused.json'); n=read(e/'native.json')
+          for p,h in ident['candidate_source_sha256s'].items(): assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          assert f['focused_gate']=='PASS' and f['new_law_count']==5 and f['new_control_count']==17
+          assert f['consumer']['exit_code']==0 and f['consumer']['raw_text'].strip()=='All terms check.'
+          assert len(f['negative_controls'])==17 and all(c['rejected'] for c in f['negative_controls'])
+          assert f['control_categories']=={'source semantic/refinement':8,'manifest/import policy':8,'synthetic output-wrapper unit':1}
+          assert f['raw_dispatch_partition']['disjoint_boolean_clauses']==153 and f['raw_dispatch_partition']['raw_u32_values_covered']==4294967296
+          for p,h in f['source_sha256s'].items(): assert hashlib.sha256((Path('native/bend_engine')/p).read_bytes()).hexdigest()==h,p
+          assert n['native_gate']=='PASS' and n['requests_per_mode']==173 and n['complete_cells_per_mode']==2313088 and n['complete_fields_per_mode']==4626176
+          assert n['full_131072_cell_buffers_per_mode']==17 and len(n['modes'])==4
+          assert n['input_sha256']=='971ef40f80e7d31c6d5d9a21acbddd3836280d32ea979da5fccdc94f850fc07b'
+          assert all(m['invalid_rejections']==7 and m['observations_sha256']=='06438afd138327cc412d2eb852f6777a41d3b29145648bf5af31f3bc0752f625' for m in n['modes'])
+          assert len(n['mutations'])==3 and all(m['compiled_and_executed'] and m['rejected'] and m['all_move_lists_match_clean'] for m in n['mutations'])
+          for p,h in n['source_sha256s'].items(): assert hashlib.sha256((Path('native/bend_engine')/p).read_bytes()).hexdigest()==h,p
+          local=read(d/'local-summary.json'); assert n['modes']==local['native_modes'] and n['mutations']==local['mutations']
+          assert read(e/'compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for name in ['source-identity.json','focused.json','native.json','compiler-proofs.json','parent-job.json']:
+              target=d/('hosted-'+name); assert not target.exists(); shutil.copyfile(e/name,target)
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes(); (d/('hosted-'+name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          q={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':ident['source_tree'],'new_laws':5,'new_controls':17,'control_categories':f['control_categories'],'retained_parent_laws':193,'retained_parent_controls':623,'modular_laws':198,'modular_controls':640,'combined_wrapper_executed':False,'native_source_entries':634,'independent_review':False,'full_generator_table_preservation':True,'full_generator_move_correctness_claimed':False,'native_lifetime_claimed':False}
+          (d/'hosted-qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          headline=f"Hosted run **{os.environ['GITHUB_RUN_ID']}** passed all five public laws, the complete consumer and17 controls, four native full-buffer modes and three compiled/executed mutations, original compiler/pin tests and unchanged locked-environment lint on source `{os.environ['SOURCE']}`."
+          paragraphs=['## Completed hosted qualification',headline,
+              'All14 new proof/test files are the exact local candidate. All620 inherited native-source files and634 total candidate entries match before and after execution. This new five-contract composition closes whole-array value preservation through actual complete legal_moves, including ordinary scan, both castling sides and optimized filtering. It is not another initialized geometry proof or a move-legality theorem.',
+              'The public source domain permits arbitrary array shape and contents, arbitrary Boards, raw U32 kind/square/side/metadata, and arbitrary lists where present. Existing storage.Read and affine reification establish every read dependency. No public premise assumes initialized masks, correct answers, query preservation, a singleton king or a consistent Board. The 153-clause scalar partition covers all2^32 raw kind values; it is control-flow coverage rather than an external oracle of mask values.',
+              'Each native mode compares173 complete before/after logical buffers totaling2,313,088 U64 cells and4,626,176 U32 limbs, including17 full131,072-cell buffers and156 smaller arrays. All raw index-distinct starting values are independently checked. Real Tables.build buffers are compared with their actual before snapshots; this is not a new independent validation of initial mask values. Candidate operations include all query/scan/castling/full/fast/prepared-filter/full-generator paths. Returned moves are observed, not newly proved legal.',
+              'All three actual-code corruptions compile/run with generic flags. Across eight actual-builder full-generator cases per mutant, every move list remains equal to the clean result, while the corrupted unused cell is rejected by whole-buffer comparisons. Clean modes repeat fixtures; complete snapshots do not establish pointer identity,allocation or native lifetime.',
+              'Eight actual-code/refinement controls fail at the intended new proof bodies. Eight import/manifest controls and one synthetic warning-output check also pass. Missing imports, parse/ownership errors, crashes and timeouts are not semantic successes; the synthetic check is not a compiler execution. Complete source and native manifests remain unchanged. The original compiler16-law/seven-control suite and12 pin tests pass.',
+              'Fresh configured Ruff/Basedpyright/Vulture lint passes using locked CPU tools. The original local missing-tools failure and interrupted native invocation remain historical failures; the final local native rerun and this independent hosted execution are successful. Source projection, ownership and raw-dispatch draft failures were corrected without changing production functions or narrowing the public domain. The original logs are retained in local-failures.json.',
+              'Coverage is modular198 laws/640 controls, retaining193/623 from exact #904. The full aggregate wrapper was not run. The five new laws are related stage properties and their whole-generator composition, not five independent discoveries. Evidence publication changes docs only.',
+              'Self-review only. Source checker/Base,native lowering/storage,ABI,toolchain,OS and hardware remain trust boundaries. No production code, previous proof, compiler input, permanent workflow, application responsibility, model/GPU,training,search,benchmark,perft-budget,merge,force-push or deployment change.',
+              'Next acceptance can transport the initialized-table certificate through complete generation and then connect the existing castling provenance and mandatory checks to the sequential geometric acceptance result. That final semantic composition, universal forward/reverse attack equivalence and historical rights remain separate; generic state preservation is no longer an open prerequisite.'
+          ]
+          record=Path('docs/experiments/2026-09-27-bend-generator-table-preservation.md');record.write_text(record.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          idx=Path('docs/experiments/README.md');text=idx.read_text();old='full-buffer native tests; fresh hosted qualification pending';assert text.count(old)==1;idx.write_text(text.replace(old,'full-buffer native tests and hosted qualification passed; modular198/640',1))
+          matrix=Path('docs/bend_migration_proofs.md');text=matrix.read_text();anchor='## Whole-table preservation through complete move generation\n\n';assert text.count(anchor)==1
+          matrix.write_text(text.replace(anchor,anchor+headline+'\n\nActive evidence is modular198/640; no whole-aggregate execution or new legality claim.\n\n',1))
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify complete-generator table preservation and full-buffer regressions'
+          git push origin "HEAD:refs/heads/$TARGET"
+      - name: Archive exact source and receipts
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/table-final"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/table-final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/table-final/commit.raw"
+          git rev-parse HEAD > "$RUNNER_TEMP/table-final/commit.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/table-final/tree.txt"
+          if test -d "$RUNNER_TEMP/table-evidence"; then cp -r "$RUNNER_TEMP/table-evidence" "$RUNNER_TEMP/table-final/reports"; fi
+          git diff --binary "$BASE" HEAD > "$RUNNER_TEMP/table-final/published.patch"
+          cd "$RUNNER_TEMP/table-final"
+          sha256sum source.tar.gz commit.raw published.patch > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: generator-table-preservation-qualification
+          path: ${{ runner.temp }}/table-final/
+          retention-days: 14
