@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import math
 import shlex
@@ -92,6 +93,14 @@ PgnSink = Callable[..., None]
 def _opening_history(board: chess.Board) -> tuple[str, tuple[str, ...]]:
     """Record the pre-play root and ordered book moves, not just their final FEN."""
     return board.root().fen(), tuple(move.uci() for move in board.move_stack)
+
+
+def _played_uci_sha256(moves: Sequence[chess.Move]) -> str:
+    """Bind one arena attempt's actual play to its JSONL row and PGN game."""
+    played = json.dumps(
+        [move.uci() for move in moves], separators=(",", ":"),
+    ).encode("ascii")
+    return hashlib.sha256(b"arena-played-uci-v1\0" + played).hexdigest()
 
 
 def _is_runtime_str(value: object) -> bool:
@@ -3287,6 +3296,7 @@ def run_arena(
                     or start_fen != openings[int(pair_id)].fen()):
                 raise ValueError("opening history differs from scheduled board")
             _check_opening_history(opening_root_fen, opening_uci, start_fen)
+        played_uci_sha256 = _played_uci_sha256(moves)
         score = score_from_result(result, a_is_white=a_is_white)
         if pgn_writer is not None:
             extra = {
@@ -3321,6 +3331,7 @@ def run_arena(
             if opening_root_fen is not None and opening_uci is not None:
                 extra["OpeningRootFEN"] = opening_root_fen
                 extra["OpeningUCI"] = json.dumps(list(opening_uci), separators=(",", ":"))
+                extra["PlayedUCISHA256"] = played_uci_sha256
             if int(pair_id) in orphan_pair_ids:
                 # This pair is being REPLAYED because the crash left it half
                 # played, and the PGN already holds that orphan game
@@ -3365,6 +3376,7 @@ def run_arena(
         if opening_root_fen is not None and opening_uci is not None:
             row["opening_root_fen"] = opening_root_fen
             row["opening_uci"] = list(opening_uci)
+            row["played_uci_sha256"] = played_uci_sha256
         game_log.write_game(row)
 
     pgn_sink = _on_game

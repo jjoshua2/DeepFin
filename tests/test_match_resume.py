@@ -12,6 +12,7 @@ is refused instead of silently averaging two populations.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -356,6 +357,7 @@ def test_real_matched_time_loop_leaves_unpreserved_history_unclaimed(
         assert row["start_fen"] == opening.fen()
         assert "opening_root_fen" not in row
         assert "opening_uci" not in row
+        assert "played_uci_sha256" not in row
     with pgn_path.open() as stream:
         games = [chess.pgn.read_game(stream) for _ in range(2)]
         assert chess.pgn.read_game(stream) is None
@@ -363,7 +365,75 @@ def test_real_matched_time_loop_leaves_unpreserved_history_unclaimed(
         assert game is not None
         assert "OpeningRootFEN" not in game.headers
         assert "OpeningUCI" not in game.headers
+        assert "PlayedUCISHA256" not in game.headers
         assert game.board().fen() == opening.fen()
+
+
+def test_matched_sims_binds_played_moves_in_log_and_pgn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The persisted digest covers played moves, excluding the opening stack."""
+    import scripts.arena_standard as arena
+
+    side = arena.SideSearch(shape="test", source="test", gumbel={},
+                            vloss_weight=0, target_batch=0)
+    monkeypatch.setattr(
+        "chess_anti_engine.uci.model_loader.load_model_from_checkpoint",
+        lambda *_a, **_kw: object(),
+    )
+    opening = chess.Board()
+    for uci in ("f2f3", "e7e5"):
+        opening.push_uci(uci)
+    monkeypatch.setattr(arena, "load_fen_openings", lambda *_a, **_kw: [opening.copy()])
+    played = tuple(chess.Move.from_uci(uci) for uci in ("g2g4", "d8h4"))
+
+    def play(_candidate: object, _reference: object,
+             openings: list[chess.Board], *, pgn_sink: Any,
+             pair_ids: list[int], **_kw: Any) -> list[float]:
+        assert len(openings) == 1
+        assert pair_ids == [0]
+        for half in (0, 1):
+            pgn_sink(
+                pair_id=0, half=half, a_is_white=(half == 0),
+                start_fen=opening.fen(), opening_root_fen=opening.root().fen(),
+                opening_uci=[move.uci() for move in opening.move_stack],
+                moves=played, result="0-1", termination="rules", plies=2,
+                duration_s=0.01, chunk=None, loop="rolling",
+            )
+        return [1.0]
+
+    monkeypatch.setattr(arena, "play_paired_games_matched_sims_rolling", play)
+    log_path = tmp_path / "digest.games.jsonl"
+    pgn_path = tmp_path / "digest.pgn"
+    arena.run_arena(
+        candidate="cand.pt", reference="ref.pt", games=2,
+        openings_path=None, openings_fen=_openings_file(tmp_path, 1),
+        opening_plies=16, mode="matched_sims",
+        sims_candidate=8, sims_reference=8, ms_per_move=0, max_plies=40,
+        temperature=0.1, gumbel_add_noise=True, device="cpu", seed=7,
+        out_path=None, game_log_path=log_path, pgn_out=pgn_path,
+        compile_models=False, rolling=True, max_concurrent_games=2,
+        search_candidate=side, search_reference=side,
+    )
+    expected = hashlib.sha256(
+        b"arena-played-uci-v1\0" + b'["g2g4","d8h4"]'
+    ).hexdigest()
+    rows = read_game_log(log_path).games
+    with pgn_path.open() as stream:
+        games = [chess.pgn.read_game(stream) for _ in range(2)]
+        assert chess.pgn.read_game(stream) is None
+    assert len(rows) == len(games) == 2
+    for row, game in zip(rows, games):
+        assert game is not None
+        assert row["opening_uci"] == ["f2f3", "e7e5"]
+        assert row["played_uci_sha256"] == expected
+        assert game.headers["PlayedUCISHA256"] == expected
+        parsed = [move.uci() for move in game.mainline_moves()]
+        assert parsed == ["g2g4", "d8h4"]
+        assert hashlib.sha256(
+            b"arena-played-uci-v1\0"
+            + json.dumps(parsed, separators=(",", ":")).encode("ascii")
+        ).hexdigest() == expected
 
 
 @pytest.mark.parametrize("loop_label", ["matched_time", "matched_sims", "rolling", None])
