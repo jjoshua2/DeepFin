@@ -46,7 +46,7 @@ MAX_BUFFERED_ROWS = 4096
 MAX_GAMES = 32
 MAX_TOTAL_REQUESTED_PLIES = 4096
 MAX_GPU_MEM_GB = 8.0
-GPU_LOCK = Path("/home/josh/projects/chess/scratchpad/gpu0_experiment.lock")
+GPU_LOCK = Path(__file__).resolve().parents[1] / "scratchpad" / "gpu0_experiment.lock"
 _NEURAL_OPS = {"Conv", "FusedConv", "NhwcConv", "MatMul", "FusedMatMul", "Gemm", "FusedGemm"}
 _SOURCE_FILES = (
     "scripts/bt4_root_policy_worker.py",
