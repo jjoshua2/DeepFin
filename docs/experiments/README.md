@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Selected-E versus E seed-121 strict arena](2026-09-27-selected-e-vs-e-arena.md) | Preregistered 576-pair noninferiority gate passed; future one-teacher cost screen eligible, with no measured annotation saving or corpus credit |
 | [Exact gather CPU screen](2026-09-22-exact-gather-cpu-screen.md) | Exact preallocated gather CPU prototype/profile; isolated speedup measured, runtime adoption deferred pending end-to-end qualification |
 | [Bound packed output accounting](2026-09-22-packed-output-accounting.md) | Removes repeated output walks during input verification; existing caps retained, no new GPU launch |
 | [Storage observer retry and BT4 results](2026-09-22-packed-observer-retry.md) | First-batch observer schema failure preserved; corrected real-sampler regression and fresh retry; BT4 exact pipeline screen passed |
