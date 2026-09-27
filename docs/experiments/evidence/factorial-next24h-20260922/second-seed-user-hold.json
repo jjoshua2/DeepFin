@@ -1,0 +1,14 @@
+{
+  "status": "PASS_USER_REQUESTED_SECOND_SEED_HOLD",
+  "unix": 1790119178.8508706,
+  "held_ids": [
+    "factorial58_sffree_20260922_D122",
+    "factorial58_sffree_20260922_E122",
+    "factorial58_sffree_20260922_E122_D122"
+  ],
+  "active_E_and_E_D_unchanged": true,
+  "active_state_unchanged": true,
+  "queue_before_sha256": "645760373068dbbd7d72fcd4bc1655b8a1edd2081bba0b843b17595b0ca75865",
+  "queue_after_sha256": "7ce0717feaea6bba5689863f6f08a6d7dab225b32ab8231beef8007666e035ba",
+  "reason": "User changes fixed second-seed plan before first E-D outcome; replicas require a subsequent decision, not automatic dispatch."
+}
