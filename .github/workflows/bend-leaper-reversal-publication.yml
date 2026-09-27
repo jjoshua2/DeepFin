@@ -1,0 +1,233 @@
+name: Qualify and publish leaper reversal
+'on':
+  push:
+    branches: [dev/bend-leaper-reversal-publication-20260927]
+    paths: [.github/workflows/bend-leaper-reversal-publication.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: 4d0d51fcc24b3d814a3e57d0dc676ffd514af33a
+      TARGET: feat/bend-generator-table-preservation-20260927
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 4d0d51fcc24b3d814a3e57d0dc676ffd514af33a
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Recover saved reversal on the newer accepted-destination baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/reversal-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$BASE"
+          : > "$RUNNER_TEMP/transport.xz"
+          for sha in 72b20725190e0fcf43fe5173f626cdf4f53b1b19 13573af7c1299bb92f7465ea583656c6f12efc8a 58f02b6e9ce90b894a6cfb6427cdce5b96ed1d7a 3b52b2382a4a6a616ce35e438c35ae0a4827be6d d71855ff6d2f973e2ad700db98d4814ade15e531; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$sha" --jq .content | base64 --decode > "$RUNNER_TEMP/$sha"
+            test "$(git hash-object "$RUNNER_TEMP/$sha")" = "$sha"
+            cat "$RUNNER_TEMP/$sha" >> "$RUNNER_TEMP/transport.xz"
+          done
+          test "$(git hash-object "$RUNNER_TEMP/transport.xz")" = 94c906e9aafbd47ffa7b4e639b5210e720ac0784
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108667639406 > "$EVIDENCE/parent-job.json"
+          python3 - <<'PY'
+          import hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']); tmp=Path(os.environ['RUNNER_TEMP'])
+          def git(*a): return subprocess.check_output(['git',*a],text=True).strip()
+          def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+          assert git('rev-parse','HEAD^{tree}')=='ae5099a706a8d6de504e6db6afc71f9d088a728d'
+          old=Path('docs/experiments/evidence/bend-accepted-castle-destination')
+          q=json.loads((old/'qualification.json').read_text())
+          assert q['qualification']=='PASS' and q['modular_laws']==203 and q['modular_controls']==672
+          inherited=json.loads((old/'hosted-source-identity.json').read_text())['candidate_source_sha256s']
+          assert len(inherited)==661
+          for p,h in inherited.items(): assert digest(Path(p))==h,p
+          job=json.loads((e/'parent-job.json').read_text())
+          assert job['id']==108667639406 and job['run_id']==36336288019 and job['status']=='completed' and job['conclusion']=='success'
+          raw=lzma.decompress((tmp/'transport.xz').read_bytes(),memlimit=256*1024*1024)
+          assert len(raw)==231611 and hashlib.sha256(raw).hexdigest()=='99064e01e1ff130e765c1e04941274d0ea63f1f2345b4ad1c767484145401695'
+          payload=json.loads(raw); patch=e/'transport.patch'; patch.write_text(payload['patch'])
+          subprocess.run(['git','apply','--check',str(patch)],check=True)
+          subprocess.run(['git','apply','--index',str(patch)],check=True)
+          item=payload['derived'];name=item['path']
+          assert name=='docs/experiments/evidence/bend-leaper-attack-reversal/source-identity.json'
+          obj=item['object'];key=item['key'];assert key=='candidate_source_sha256s'
+          names=obj[key];assert len(names)==663 and len(names)==len(set(names))
+          obj[key]={p:digest(Path(p)) for p in names}
+          restored=(json.dumps(obj,indent=2)+'\n').encode()
+          assert hashlib.sha256(restored).hexdigest()==item['expected_sha256']
+          assert not Path(name).exists();Path(name).write_bytes(restored)
+          subprocess.run(['git','add','--',name],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='1e0b1beb1511270df830fc485e79be5b6f3674b7'
+          complete=subprocess.check_output(['git','diff','--cached','--binary'])
+          assert len(complete)==276541 and hashlib.sha256(complete).hexdigest()=='b5017a7cdda612411a0814c24edb478a1cc54bc257837cfa5f7b610ef754b444'
+          (e/'candidate.patch').write_bytes(complete)
+          changed=git('diff','--cached','--name-only').splitlines();assert len(changed)==36
+          allowed={'docs/bend_migration_proofs.md','docs/experiments/README.md','docs/experiments/2026-09-27-bend-leaper-attack-reversal.md','docs/experiments/2026-09-27-bend-leaper-reversal-publication.md'}
+          assert all(p in allowed or p.startswith('native/bend_engine/standalone/proofs/attack_reversal/') or p.startswith('docs/experiments/evidence/bend-leaper-attack-reversal/') for p in changed)
+          for p,h in inherited.items(): assert digest(Path(p))==h,p
+          saved=json.loads(Path('docs/experiments/evidence/bend-leaper-attack-reversal/local-focused.json').read_text())
+          assert saved['focused_gate']=='PASS' and len(saved['source_sha256s'])==36
+          for p,h in saved['source_sha256s'].items(): assert digest(Path('native/bend_engine')/p)==h,p
+          hashes={p:digest(Path(p)) for p in git('ls-files','native/bend_engine').splitlines() if Path(p).is_file()}
+          assert len(hashes)==679
+          result={'base':os.environ['BASE'],'source_tree':git('write-tree'),'saved_local_commit':'717b56793e1de754536114a4ae31c742728241e9','saved_local_base':'e452fcc965c09fe52010c65ff9b25abcb48ec57d','candidate_source_sha256s':hashes,'retained_parent_entries':661,'saved_primary_files':18,'changed_paths':changed,'source_patch_sha256':hashlib.sha256(complete).hexdigest(),'reconciliation':'Original primary sources and local receipts restored; current index and matrix retained additively. The reconciled tree is not the original older saved tree.'}
+          (e/'source-identity.json').write_text(json.dumps(result,indent=2)+'\n')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'proof: reconcile saved non-slider attack reversal with accepted-castle destination results'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git cat-file commit HEAD > "$EVIDENCE/source-commit.raw"
+          git rev-parse HEAD > "$EVIDENCE/source.txt"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Reproduce certificates and run host regressions in three Python modes
+        run: |
+          set -euo pipefail
+          SUITE=native/bend_engine/standalone/proofs/attack_reversal
+          python3 "$SUITE/generate_certificates.py" | tee "$EVIDENCE/certificates.log"
+          python3 "$SUITE/test_harness.py" 2>&1 | tee "$EVIDENCE/host-normal.log"
+          python3 -O "$SUITE/test_harness.py" 2>&1 | tee "$EVIDENCE/host-optimized.log"
+          PYTHONOPTIMIZE=2 python3 "$SUITE/test_harness.py" 2>&1 | tee "$EVIDENCE/host-optimize2.log"
+      - name: Check both public laws and all seventeen controls
+        run: |
+          set -euo pipefail
+          python3 native/bend_engine/standalone/proofs/attack_reversal/focused.py "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Check actual initialized masks and reversal in four native modes
+        env:
+          CC: /usr/bin/clang
+          BUN: bun
+          PYTHONOPTIMIZE: '2'
+        run: |
+          set -euo pipefail
+          python3 -c 'import sys; print(sys.flags.optimize)' | tee "$EVIDENCE/native-optimization.txt"
+          python3 native/bend_engine/standalone/proofs/attack_reversal/verify_native.py "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Recheck original compiler source and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU tools and run configured repository lint
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Validate evidence and fast-forward existing PR on the unchanged parent
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$BASE"
+          git diff --exit-code
+          python3 - <<'PY'
+          import collections,hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);d=Path('docs/experiments/evidence/bend-leaper-attack-reversal')
+          def read(p):return json.loads(p.read_text())
+          ident=read(e/'source-identity.json');f=read(e/'focused.json');n=read(e/'native.json')
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          assert (e/'certificates.log').read_text().strip()=='4 certificate files match'
+          for mode in ['normal','optimized','optimize2']:
+              text=(e/('host-'+mode+'.log')).read_text();assert 'Ran 15 tests' in text and text.strip().endswith('OK'),mode
+          assert f['focused_gate']=='PASS' and f['new_laws']==2 and f['new_controls']==17
+          assert f['consumer']['exit_code']==0 and (f['consumer']['stdout']+f['consumer']['stderr']).strip()=='All terms check.'
+          assert len(f['negative_controls'])==17 and all(c['rejected'] for c in f['negative_controls'])
+          kinds=collections.Counter(c['kind'] for c in f['negative_controls'])
+          assert kinds=={'source semantic/refinement':8,'manifest/import policy':8,'synthetic output-wrapper unit':1}
+          assert f['source_sha256s']==read(d/'local-focused.json')['source_sha256s'] and len(f['source_sha256s'])==36
+          assert n['native_gate']=='PASS' and n['distinct_mask_requests']==3072 and len(n['modes'])==4
+          assert n['source_sha256s']==f['source_sha256s']
+          for m in n['modes']:
+              assert m['mask_requests']==3072 and m['mask_field_comparisons']==6144 and m['invalid_rejections']==9
+              assert m['pair_comparisons']==196608 and m['positive_edges']==11424 and m['first_mismatch'] is None
+          old=read(d/'local-native.json')
+          assert {k:v for k,v in n.items() if k!='cc'}=={k:v for k,v in old.items() if k!='cc'}
+          assert len(n['mutations'])==2 and all(m['compiled_and_executed'] and m['rejected'] for m in n['mutations'])
+          assert n['mutations'][1]['reciprocity']['first_mismatch'] is None and n['mutations'][1]['coordinate_mismatch'] is not None
+          assert (e/'native-optimization.txt').read_text().strip()=='2'
+          assert read(e/'compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for name in ['source-identity.json','focused.json','native.json','compiler-proofs.json','parent-job.json']:
+              dst=d/('hosted-'+name);assert not dst.exists();shutil.copyfile(e/name,dst)
+          for name in ['certificates.log','host-normal.log','host-optimized.log','host-optimize2.log','pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes();(d/('hosted-'+name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          q={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':ident['source_tree'],'base':os.environ['BASE'],'saved_local_commit':ident['saved_local_commit'],'newly_hosted_laws':2,'newly_hosted_controls':17,'control_categories':dict(kinds),'retained_parent_laws':203,'retained_parent_controls':672,'modular_laws':205,'modular_controls':689,'combined_wrapper_executed':False,'native_source_entries':679,'primary_files_preserved':18,'host_test_methods':15,'host_optimization_modes':3,'native_verifier_python_optimization':2,'native_build_modes':4,'independent_review':False,'slider_reversal_proved':False}
+          (d/'hosted-qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          headline=f"Run **{os.environ['GITHUB_RUN_ID']}** passed both complete public reversal laws, their importing consumer and all17 controls, certificate reproducibility,15 host methods in three optimization modes, four native builds under optimized Python, original compiler/pin checks and configured locked-environment lint on source `{os.environ['SOURCE']}`."
+          paragraphs=['## Completed hosted qualification',headline,
+              'The saved two-law work is now freshly hosted-qualified on the newer accepted-destination baseline. All18 saved primary files and original local receipts are byte-identical. The two old index/migration files were merged additively instead of overwriting current progress. Original local202/672 statements describe the older saved stack; active totals are modular205/689: exact203/672 parent plus the saved2/17, not duplicate discoveries. The complete aggregate wrapper did not run.',
+              'The laws prove coordinate-list membership reversal and actual computed-mask bit reversal for knight,king,white-pawn and black-pawn classes and two on-board endpoints. Pawns exchange colors on reversal; knights and kings retain their kind. Off-board list marker64 is not a valid U64 bit, so bounds on both endpoints remain explicit. Structural list/mask reflection connects the independent finite coordinate certificates to actual computation; host-generated constructors are checked by the pinned source checker, not accepted as axioms.',
+              'Native modes each execute3,072 actual initialized mask requests/6,144 U32 fields and196,608 endpoint comparisons. The latter repeat16,384 class/source/target combinations across four initialization contexts and three occupancies. Modes repeat these fixtures again; they are not disjoint datasets, all chess positions or independent whole-game evidence. Candidate queries reuse actual Tables and Chess, not the proof model or expected answers.',
+              'Both deliberate actual-code corruptions compile/execute normally before rejection. An asymmetric knight offset fails geometry and reciprocity. Exchanging both pawn storage directions still passes reciprocity but fails the independent forward-coordinate oracle. This prevents treating self-consistency as geometry correctness. Nine malformed bounded batches per mode are rejected. These are mutation controls, not discovered engine defects.',
+              'The source controls comprise eight expected semantic/refinement failures,eight manifest/import guards and one synthetic warning-output unit; the synthetic unit is not a compiler execution. The native driver actually ran under PYTHONOPTIMIZE=2. Its complete report matches the saved report except the recorded C compiler identity. The36-entry focused/native dependency manifests match the saved sources. All661 inherited native entries are unchanged and all679 candidate hashes match.',
+              'Original compiler16-law/seven-control checks and all12 pin tests pass. Configured Ruff/Basedpyright/Vulture lint now passes in the locked CPU environment. Saved missing-tools lint and interrupted/draft source receipts remain historical failures, not relabeled as fresh passes. One large saved hash manifest was reconstructed from exact original metadata/key order and actual file hashes; its original complete-file SHA256, the reconciled276,541-byte patch and complete candidate Git tree were checked before execution.',
+              'The newer accepted-castle destination suite remains active and unchanged. Neither these reversal laws nor its target-centred destination theorem is a complete universal forward attack witness or all-stage legal-castling theorem. Blocker-aware rook/bishop/queen reversal, full-generator starting/transit geometric safety,historical rights,other move classes and completeness remain separate.',
+              'Self-review only. No independent reviewer is claimed. No production function,accepted prior law,compiler source,permanent workflow,Python application responsibility,model/GPU,training,search,benchmark,perft-budget,merge or deployment changes. Source checker/Base,native lowering/storage,ABI,toolchain,OS and hardware remain trust boundaries. Publication after qualification changes only documentation/evidence and refuses a concurrently changed feature head.'
+          ]
+          rec=Path('docs/experiments/2026-09-27-bend-leaper-reversal-publication.md');rec.write_text(rec.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          p=Path('docs/experiments/README.md');text=p.read_text();a='Saved coordinate/computed-mask reversal reconciled with accepted-castle destination proofs; fresh qualification pending';assert text.count(a)==1
+          p.write_text(text.replace(a,'Two saved reversal laws and17 controls freshly hosted-qualified with current destination proofs retained; modular205/689',1))
+          p=Path('docs/bend_migration_proofs.md');text=p.read_text();a='## Non-slider reversal publication candidate';assert text.count(a)==1
+          start=text.index(a);end=text.index('## Accepted full-generator castling destination safety',start)
+          text=text[:start]+'## Qualified non-slider reversal publication\n\n'+headline+'\n\nBoth endpoints are bounded and pawn reversal exchanges colors. Active modular totals205/689 retain exact203/672 destination-proof baseline; no full aggregate run or extra discovery count. Slider reversal, full-generator start/transit safety and full forward attack composition remain separate. See [the publication record](experiments/2026-09-27-bend-leaper-reversal-publication.md).\n\n'+text[end:]
+          p.write_text(text)
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify saved leaper reversal without replacing newer destination safety'
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$BASE"
+          git push origin "HEAD:refs/heads/$TARGET"
+      - name: Archive exact current snapshot and available receipts
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/reversal-final"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/reversal-final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/reversal-final/commit.raw"
+          git rev-parse HEAD > "$RUNNER_TEMP/reversal-final/commit.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/reversal-final/tree.txt"
+          git diff --binary "$BASE" HEAD > "$RUNNER_TEMP/reversal-final/update.patch"
+          if test -d "$RUNNER_TEMP/reversal-evidence"; then cp -r "$RUNNER_TEMP/reversal-evidence" "$RUNNER_TEMP/reversal-final/reports"; fi
+          cd "$RUNNER_TEMP/reversal-final"
+          sha256sum source.tar.gz commit.raw update.patch > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: leaper-reversal-publication-qualification
+          path: ${{ runner.temp }}/reversal-final/
+          retention-days: 14
