@@ -1,0 +1,226 @@
+name: Qualify saved castling sequence
+'on':
+  push:
+    branches: [dev/bend-castle-sequence-qualification-20260927]
+    paths: [.github/workflows/bend-castle-sequence-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: 22aa6449cf4fc69506442e9396837f342cf061e6
+      TARGET: feat/bend-castle-sequence-20260927
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 22aa6449cf4fc69506442e9396837f342cf061e6
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover and publish exact saved source tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/castle-sequence-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test "$(git ls-remote origin refs/heads/feat/bend-castle-stage-geometry-20260927 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          : > "$RUNNER_TEMP/transport.xz"
+          for sha in 1357f5fe2a4c2d7442513f79c9cc32f0eac0929f 71e6808e48ce6a8f2202b0ed23966d5c66b05ab3 6518b3db0bf26fe614a8f73b49901e2c9a866a97 27df39f6b29043df1fdea8a4187a6a5bd3147265 49a65602633cffe7d2233be3d5e4c0cd277e4069; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$sha" --jq .content | base64 --decode > "$RUNNER_TEMP/$sha"
+            test "$(git hash-object "$RUNNER_TEMP/$sha")" = "$sha"
+            cat "$RUNNER_TEMP/$sha" >> "$RUNNER_TEMP/transport.xz"
+          done
+          test "$(git hash-object "$RUNNER_TEMP/transport.xz")" = d9deeeb7af9e0998b32f151cbe6a539b93591d76
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108554494045 > "$EVIDENCE/parent-job.json"
+          python3 - <<'PY'
+          import hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']); t=Path(os.environ['RUNNER_TEMP'])
+          def git(*a): return subprocess.check_output(['git',*a],text=True).strip()
+          def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+          assert git('rev-parse','HEAD^{tree}')=='fbae01e969299855cd99aeb9a1ed38d37d912f8c'
+          parent=Path('docs/experiments/evidence/bend-castle-stage-geometry')
+          q=json.loads((parent/'qualification.json').read_text())
+          assert q['qualification']=='PASS' and q['modular_laws']==191 and q['modular_controls']==606
+          inherited=json.loads((parent/'hosted-source-identity.json').read_text())['candidate_source_sha256s']
+          assert len(inherited)==607
+          for p,h in inherited.items(): assert digest(Path(p))==h,p
+          job=json.loads((e/'parent-job.json').read_text())
+          assert job['id']==108554494045 and job['run_id']==36295872282 and job['status']=='completed' and job['conclusion']=='success'
+          raw=lzma.decompress((t/'transport.xz').read_bytes(),memlimit=256*1024*1024)
+          assert len(raw)==258929 and hashlib.sha256(raw).hexdigest()=='fd62e7f1d9c28e7d3bc7bce7de92ba2a9662a800dea09670de251f1f9ae9286e'
+          payload=json.loads(raw)
+          (t/'recover.patch').write_text(payload['patch'])
+          subprocess.run(['git','apply','--check',str(t/'recover.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(t/'recover.patch')],check=True)
+          expected={'docs/experiments/evidence/bend-castle-sequence/source-identity.json','docs/experiments/evidence/bend-castle-sequence/local-focused.json'}
+          assert set(payload['derived'])==expected
+          for name,item in payload['derived'].items():
+              obj=item['object']; key=item['key']; names=obj[key]
+              assert isinstance(names,list) and len(names)==len(set(names))
+              obj[key]={p:digest(Path(item['prefix']+p)) for p in names}
+              restored=(json.dumps(obj,indent=2)+'\n').encode()
+              assert hashlib.sha256(restored).hexdigest()==item['expected_sha256'],name
+              assert not Path(name).exists()
+              Path(name).write_bytes(restored)
+              subprocess.run(['git','add','--',name],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='c5951dcbfb95b1ff565d92e27dfb13d94eb848fc'
+          patch=subprocess.check_output(['git','diff','--cached','--binary'])
+          assert len(patch)==320865 and hashlib.sha256(patch).hexdigest()=='524209ba35e8cddfcf3ead6e5a4448b4b5a5dbb24b3e5771b97a4f7a76a11250'
+          (e/'recovered.patch').write_bytes(patch)
+          changed=git('diff','--cached','--name-only').splitlines(); assert len(changed)==27
+          allowed={'docs/bend_migration_proofs.md','docs/experiments/README.md','docs/experiments/2026-09-27-bend-castle-sequence.md'}
+          assert all(p in allowed or p.startswith('native/bend_engine/standalone/proofs/castle_sequence/') or p.startswith('docs/experiments/evidence/bend-castle-sequence/') for p in changed)
+          for p,h in inherited.items(): assert digest(Path(p))==h,p
+          hashes={p:digest(Path(p)) for p in git('ls-files','native/bend_engine').splitlines() if Path(p).is_file()}
+          saved=json.loads(Path('docs/experiments/evidence/bend-castle-sequence/source-identity.json').read_text())
+          assert len(hashes)==620 and hashes==saved['candidate_source_sha256s']
+          ident={'base':os.environ['BASE'],'source_tree':git('write-tree'),'saved_commit':'f6202f7b490b327004eb78815cd83b8d94be40e7','saved_source_commit':'199ce3bda33e87b0432d153400bdc6f7730b6eb8','saved_tree_reproduced':True,'changed_files':changed,'inherited_source_entries':607,'candidate_source_sha256s':hashes,'transport_sha256':hashlib.sha256(raw).hexdigest(),'patch_sha256':hashlib.sha256(patch).hexdigest(),'evidence_restoration':'Two hash manifests regenerated from original metadata/order and actual source hashes; each original full file SHA256 checked before staging. Complete final tree and patch identities match.'}
+          (e/'source-identity.json').write_text(json.dumps(ident,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$TARGET"
+          git commit -m 'native: publish exact saved castling sequence proofs and evidence'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git cat-file commit HEAD > "$EVIDENCE/published-source-commit.raw"
+          git rev-parse HEAD > "$EVIDENCE/published-source.txt"
+          git push origin "HEAD:refs/heads/$TARGET"
+      - name: Run complete public consumer and all seventeen controls
+        run: |
+          set -euo pipefail
+          python3 native/bend_engine/standalone/proofs/castle_sequence/focused.py "$PWD/.compiler" --smol --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Check native sequence and retained state in four modes
+        env:
+          CC: /usr/bin/clang
+          BUN: bun
+        run: |
+          set -euo pipefail
+          python3 native/bend_engine/standalone/proofs/castle_sequence/verify_native.py "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Run original compiler source and pin gates
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU tools and run unchanged repository lint
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify qualification and publish compact hosted evidence
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-castle-stage-geometry-20260927 | cut -f1)" = "$BASE"
+          git diff --exit-code
+          python3 - <<'PY'
+          import collections,hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']); d=Path('docs/experiments/evidence/bend-castle-sequence')
+          def read(p): return json.loads(p.read_text())
+          ident=read(e/'source-identity.json'); f=read(e/'focused.json'); n=read(e/'native.json')
+          for p,h in ident['candidate_source_sha256s'].items(): assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          assert f['focused_gate']=='PASS' and f['new_law_count']==2 and f['new_control_count']==17
+          assert f['consumer']['exit_code']==0 and f['consumer']['raw_text'].strip()=='All terms check.'
+          assert len(f['negative_controls'])==17 and all(c['rejected'] for c in f['negative_controls'])
+          kinds=collections.Counter(c['kind'] for c in f['negative_controls'])
+          assert kinds=={'source semantic/refinement':8,'manifest/import policy':8,'synthetic output-wrapper unit':1}
+          assert f['source_sha256s']==read(d/'local-focused.json')['source_sha256s'] and len(f['source_sha256s'])==225
+          for p,h in f['source_sha256s'].items(): assert hashlib.sha256((Path('native/bend_engine')/p).read_bytes()).hexdigest()==h,p
+          assert n['native_gate']=='PASS' and n['requests_per_mode']==1776 and n['distinct_inputs']==1776
+          assert n['complete_child_boards_per_mode']==4466 and n['board_fields_per_mode']==84854
+          assert len(n['modes'])==4 and all(m['invalid_rejections']==8 and m['marker_reads']==3552 for m in n['modes'])
+          assert len(n['mutations'])==3 and all(m['rejected'] and m['compiled_and_executed'] for m in n['mutations'])
+          assert n['mutations'][2]['all_move_lists_and_board_values_match']
+          old=read(d/'local-native.json')
+          assert {k:v for k,v in n.items() if k!='cc'}=={k:v for k,v in old.items() if k!='cc'}
+          assert read(e/'compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for name in ['source-identity.json','focused.json','native.json','compiler-proofs.json','parent-job.json']:
+              dst=d/('hosted-'+name); assert not dst.exists(); shutil.copyfile(e/name,dst)
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes(); (d/('hosted-'+name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          q={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':ident['source_tree'],'saved_commit':ident['saved_commit'],'saved_tree_reproduced':True,'newly_hosted_laws':2,'newly_hosted_controls':17,'control_categories':dict(kinds),'retained_parent_laws':191,'retained_parent_controls':606,'modular_laws':193,'modular_controls':623,'combined_wrapper_executed':False,'native_source_entries':620,'independent_review':False,'local_failed_receipts_preserved':True,'full_optimized_generator_theorem':False}
+          (d/'hosted-qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          headline=f"Run **{os.environ['GITHUB_RUN_ID']}** passed both public laws, the complete importing consumer and all17 controls, all four native modes and three actual-code mutations, original compiler/pin gates, and unchanged locked-environment repository lint on published source `{os.environ['SOURCE']}`."
+          paragraphs=['# Publication of saved castling sequence proofs',headline,
+              'The source publication reproduces the complete saved tree c5951dcbfb95b1ff565d92e27dfb13d94eb848fc from local commit f6202f7b490b327004eb78815cd83b8d94be40e7, directly on exact #899 head22aa6449cf4fc69506442e9396837f342cf061e6. All27 saved changed files, including both proofs and original evidence, are identical. GitHub publication uses a new commit identity; the saved full commit history is not being relabeled as the new commit.',
+              'The two contracts prove sequential behavior of actual castle_side and of its initially-empty candidate list followed by actual full filter_legal. The original initialized table is retained in both complete pair results. Producer output prepends the computed move iff start/transit checks are false, preserving any caller tail. The empty-tail filtered adapter returns the single castle iff all three independent target-centred geometric checks are false. It is not the full optimized legal_moves pipeline.',
+              'Initial representation consistency, one moving-side king at home, valid Boolean turn, actual producer guard, depth17,128 slider blocks and64 extras remain explicit. Seed and original tail are arbitrary. Stage singleton, square bound, query values and intermediate table preservation are derived from accepted components. Checks use the original moving side rather than the flipped child turn.',
+              'Fresh qualification ran serially to avoid the saved concurrent-build memory failure. Bun --smol changes runtime garbage-collection scheduling, not compiler source. The complete225-entry proof/test closure and all620 candidate source entries matched before and after execution; all607 inherited entries are unchanged.',
+              'Each native mode passed1,776 distinct input tuples,4,466 complete child Boards/84,854 U32 Board fields and3,552 unused-slot marker reads. All eight geometric check patterns are present;128 destination-only attacked cases survive the producer and are removed by the full filter. There are1,597 true-guard and179 false-guard diagnostic inputs. These are repeated fixture modes, not exhaustive boards or independent datasets.',
+              'All three actual-code mutations compiled/executed before rejection. Marker-only corruption leaves every ordered move list and child Board correct but is detected by retained-state reads. Eight semantic source controls, eight manifest/import controls and one synthetic warning-output unit passed; the latter is not another compiler run. Crashes, missing files, syntax/ownership errors and timeouts do not count as semantic success.',
+              'The native report matches the saved completed local report except recorded C compiler identity. Original16-law/seven-control compiler checks and12 pin tests pass. Fresh configured Ruff/Basedpyright/Vulture lint passes with locked CPU dependencies. The original missing-tools lint failure and earlier OOM/parser receipts remain unchanged in the saved record and are not relabeled successful.',
+              'The two large source-hash manifests were restored from their exact original metadata/key ordering and actual source hashes; each original whole-file SHA256 and the complete saved patch/tree identity were checked before publication. This is lossless transport, not rewriting evidence or substituting a new proof.',
+              'Active totals are modular193 laws/623 controls: retained191/606 plus the saved2/17 now freshly hosted. No additional mathematical discoveries or duplicate proofs are claimed for this publication. The full aggregate wrapper was not run. This evidence successor changes documentation only.',
+              'Self-review only. Source checker/Base, native lowering/storage, ABI, toolchain, OS and hardware remain trust boundaries. Sampled sentinel reads are not full-buffer or lifetime proofs. No production code, previous law, compiler input, permanent workflow, application responsibility, model/GPU, training, search, benchmark, perft increase, merge or deployment changes.',
+              'Next acceptance is initialized-table preservation through ordinary generation and optimized filtering, followed by complete-generator composition. Universal forward/reverse attack correspondence and historical castling-right correctness remain separate obligations.'
+          ]
+          Path('docs/experiments/2026-09-27-bend-castle-sequence-publication.md').write_text('\n\n'.join(paragraphs)+'\n')
+          idx=Path('docs/experiments/README.md'); text=idx.read_text(); a='| Record | Scope |\n| --- | --- |\n'; assert text.count(a)==1
+          idx.write_text(text.replace(a,a+'| [Castling sequence publication](2026-09-27-bend-castle-sequence-publication.md) | Exact saved two-law sequence published and freshly hosted-qualified, including lint; modular193/623, not full optimized legal_moves |\n',1))
+          matrix=Path('docs/bend_migration_proofs.md'); title,rest=matrix.read_text().split('\n',1)
+          matrix.write_text(title+'\n\n## Published sequential castling-check qualification\n\n'+headline+'\n\nThe saved two-law actual producer/full-filter sequence is now published with exact source identity and fresh qualification. Modular193/623; no full aggregate run or extra discovery count. All prior local failure receipts remain historical. See [the publication record](experiments/2026-09-27-bend-castle-sequence-publication.md). Full optimized generator/table-preservation composition and universal attack-direction correspondence remain separate.\n'+rest)
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify saved castling sequence on hosted source native and lint gates'
+          git push origin "HEAD:refs/heads/$TARGET"
+      - name: Archive source and receipts
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/castle-sequence-final"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/castle-sequence-final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/castle-sequence-final/commit.raw"
+          git rev-parse HEAD > "$RUNNER_TEMP/castle-sequence-final/commit.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/castle-sequence-final/tree.txt"
+          if test -d "$RUNNER_TEMP/castle-sequence-evidence"; then cp -r "$RUNNER_TEMP/castle-sequence-evidence" "$RUNNER_TEMP/castle-sequence-final/reports"; fi
+          git diff --binary "$BASE" HEAD > "$RUNNER_TEMP/castle-sequence-final/published.patch"
+          cd "$RUNNER_TEMP/castle-sequence-final"
+          sha256sum source.tar.gz commit.raw published.patch > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: castle-sequence-hosted-qualification
+          path: ${{ runner.temp }}/castle-sequence-final/
+          retention-days: 14
