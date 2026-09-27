@@ -41,7 +41,7 @@ def _digest(data: bytes) -> str:
     return sha256(data).hexdigest()
 
 
-def _require_sha(value: str) -> None:
+def _require_sha(value: object) -> None:
     if not isinstance(value, str) or not _SHA.fullmatch(value):
         raise ValueError("expected lowercase SHA-256")
 
