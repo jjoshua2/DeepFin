@@ -13,7 +13,22 @@ import zarr
 
 from chess_anti_engine.eval.rvg_surgery import position_fingerprints
 from chess_anti_engine.moves.leela_index import compact_index_for_move
+from scripts import bt4_own_game_teacher_source as source
 from scripts.bt4_own_game_teacher_source import inspect_bank, sha_file, write_source
+
+
+@pytest.fixture(autouse=True)
+def isolate_source_adapter_from_strict_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strict receipt/replay semantics are covered in test_bt4_ordinary_bank_audit."""
+    def fake_verify_audit(bank: Path, summary_sha256: str, rows: int,
+                          audit_path: Path, audit_sha256: str) -> dict[str, str]:
+        del bank, summary_sha256, rows
+        audit_path = audit_path.resolve(strict=True)
+        if sha_file(audit_path) != audit_sha256:
+            raise ValueError("full-bank audit pin differs")
+        return {"path": str(audit_path), "sha256": audit_sha256, "status": "TEST_ONLY"}
+
+    monkeypatch.setattr(source, "verify_audit", fake_verify_audit)
 
 
 def _bank(root: Path, *, model: str, value: float,
