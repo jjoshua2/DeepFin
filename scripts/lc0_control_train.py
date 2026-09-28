@@ -2055,13 +2055,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.overlay_storage_qualification is not None or args.expected_overlay_storage_qualification_sha256 is not None:
         if (args.overlay_storage_qualification is None
                 or args.expected_overlay_storage_qualification_sha256 is None
-                or args.sampling_mode != "game_epoch" or len(args.shards) != 1):
-            parser.error("overlay qualification requires both receipt pins, game_epoch and exactly one corpus")
-        from chess_anti_engine.replay.target_overlay import verify_qualification
+                or args.sampling_mode != "game_epoch"):
+            parser.error("overlay qualification requires both receipt pins and game_epoch")
+        from chess_anti_engine.replay.target_overlay import qualified_paths
         overlay_ref = {"path": str(args.overlay_storage_qualification.resolve()),
                        "sha256": args.expected_overlay_storage_qualification_sha256}
-        overlay_qualification = verify_qualification(overlay_ref, Path(args.shards[0]))
-        overlay_seal = BaseSeal(overlay_qualification["base_seal"])
+        overlay_paths = [path for root in args.shards for path in iter_shard_paths(Path(root))]
+        _, overlay_seal = qualified_paths(overlay_ref, overlay_paths)
     if args.epochs < 1 or (args.epochs > 1 and (
         args.sampling_mode != "game_epoch" or args.steps != 0
     )):
@@ -2176,6 +2176,9 @@ def main(argv: list[str] | None = None) -> int:
 
     model_cfg = model_config_from_flat_config(cfg)
     model = build_model(model_cfg)
+    # Bank the actual pre-optimizer initialization for matched recipe comparisons.
+    from scripts.bootstrap_initial_state import record_initial_state
+    record_initial_state(model, out_dir / "initial_state.json", seed=int(args.seed))
   # ⚑ model_config is not decoration: the trainer derives its input-history
   # encoding from it, and without it `select_input_history_arrays` refuses
   # every LC0-root row in the corpus. Same construction as tune/trainable.py.
