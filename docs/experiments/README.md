@@ -13,6 +13,33 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [B100 Tactical300 policy transfer](2026-09-11-b100-tactical300-transfer.md) | Candidate sparse SF mass-transfer policy tooling with mandatory deeper-SF calibration before materialization or training |
+| [Ceres selected-label guard cadence](2026-09-27-ceres-selected-guard-cadence.md) | Four-arm selected-4K GPU A/B/A/B: exact target parity and 17.76% lower arm wall; no production or 500M throughput claim |
+| [Opt-in measured live gather policy](2026-09-26-measured-live-dispatch.md) | Exact-package gather recommendations, bounded runtime application and equal-work controls; speed validation separate |
+| [Native batch service-time profile](2026-09-25-native-service-profile.md) | CPU callback occupancy curves with retained warmups and fixed-package equal-work estimates; no runtime dispatch or GPU claim |
+| [Persistent live CPU-model composition](2026-09-25-live-model-composition.md) | Actual AOTI checkpoint across generation reuse and shared forwards; strict independent oracle, no GPU or strength claim |
+| [Persistent live-cohort recovery](2026-09-25-live-cohort-recovery.md) | PR5d: generation-safe lifecycle reconciled with FIFO, completion waits and configurable arenas; qualification recorded separately |
+| [Async cohort root deadlines](2026-09-23-cohort-deadlines.md) | PR5c: per-root expiry, preadmission row compaction and charged physical retirement; opt-in CPU cohorts |
+| [Asynchronous bounded cohorts](2026-09-23-async-cohort.md) | PR5b: CPU batch worker, per-root cancellation and physical accounting; actual model parity, no dynamic root admission or speed claim |
+| [Bounded Bend multi-root batching](2026-09-22-native-multi-root.md) | PR5a: real selected-leaf CPU cohorts, serial tree parity and physical work accounting; no live scheduler or GPU/speed claim |
+| [Native asynchronous selected-leaf search](2026-09-22-native-async-search.md) | PR4b: composed CPU engine, responsive stop/readiness, cancellation and physical retirement; no GPU/speed claim |
+| [Native async lifecycle](2026-09-22-native-async-lifecycle.md) | Bounded worker ownership, exact cancellation/retirement and separate real CPU-model qualification; no asynchronous UCI or GPU claim |
+| [Native policy-map and buffer reuse](2026-09-22-native-buffer-reuse.md) | Linear Bend-owned reusable storage, packed transport and opt-in diagnostics; bounded CPU qualification |
+| [BT4 root worker CUDA qualification](2026-09-23-bt4-root-worker-gpu-qualification.md) | Preregistered tiny real-model 7-to-6 correctness and accepted-row writer-cost pilots under shared GPU lease; no GPU run yet |
+| [BT4 opt-in root-policy worker](2026-09-23-bt4-root-policy-worker.md) | Experimental CPU-capable ONNX generator and atomic whole-game writer with strict rule50 six-man outcomes, raw teacher retention and >=7-piece rows; fake CPU checks only, no searched actor or replay consumer |
+| [BT4 in-memory root-policy stepper](2026-09-23-bt4-root-policy-stepper.md) | Batch-friendly root-policy game state with explicit historical or rule50-aware six-man outcome mode, exact float32 source retention, outcome backfill and whole-game discard; CPU fakes only, no generator wiring |
+| [AVI-style one-ply value backup](2026-09-11-avi-value-backup.md) | One-ply evaluator, provenance-gated sidecar and value-only rewrite implemented; no executed AVI corpus, training or strength result |
+| [Exact gather CPU screen](2026-09-22-exact-gather-cpu-screen.md) | Exact preallocated gather CPU prototype/profile; isolated speedup measured, runtime adoption deferred pending end-to-end qualification |
+| [Bound packed output accounting](2026-09-22-packed-output-accounting.md) | Removes repeated output walks during input verification; existing caps retained, no new GPU launch |
+| [Storage observer retry and BT4 results](2026-09-22-packed-observer-retry.md) | First-batch observer schema failure preserved; corrected real-sampler regression and fresh retry; BT4 exact pipeline screen passed |
+| [Host-overlap runner preparation](2026-09-22-host-overlap-runner.md) | Frozen-runtime CPU qualification and bounded OFF/ON GPU pair tooling; no full-stream or GPU launch yet |
+| [Selected-E sparse source audit](2026-09-27-selected-e-sparse-source-audit.md) | NO-LAUNCH receipt map and game-cluster sample blocker; no authenticated sparse adapter or throughput result |
+| [Selected-E complete-game index seam](2026-09-27-selected-e-game-index-seam.md) | CPU-only closed small-fixture identity reader and exact whole-game sampling; no registered E scan or row admission |
+| [Selected-E one-teacher label-cost kernel](2026-09-27-selected-e-label-cost-kernel.md) | NO-LAUNCH CPU S/D kernel with exact selected and original-E blend byte pins; authenticated sparse-E adapter, postarena gate and full-wall screen remain |
+| [SF-free E admission and paired seed replication](2026-09-22-sffree-E-admission.md) | Frozen five-job source and independent CPU admission review; no result claim. |
+| [Bootstrap research toward RL restart](2026-09-06-bootstrap-research-roadmap.md) | Overall data, mixing, objective and search decisions toward a larger bootstrap and RL restart |
+| [Graded TailRL bootstrap screen](2026-09-06-tailrl-bootstrap.md) | Exact finite-action objective and bounded CPU mechanism comparison; no training or strength result |
+| [TailRL-inspired policy coverage](2026-09-05-tailrl-policy-coverage.md) | Frozen-cohort checkpoint diagnostic and isolated upper-tail loss prototype; no training readout |
+| [Overlay hot-load diagnostic](2026-09-23-overlay-hotload-diagnostic.md) | Exact-parity ABBA on 65,536 B rows: 62.38% less measured loading time; trainer benefit remains unmeasured |
 | [BT4 own-game teacher source](2026-09-23-bt4-own-game-source.md) | Full strict ordinary-bank replay and 752-row reusable policy/native-WDL source; no training admission |
 | [SF-rooted rule-aware corpus outcome mode](2026-09-23-sf-rule50-corpus-mode.md) | Explicit theoretical versus strict six-man rule-aware labels, UCI request guard and derived provenance; synthetic tests plus one bounded real-Stockfish search fixture |
 | [BT4 verified-session foundation](2026-09-23-bt4-verified-session-foundation.md) | CPU fake-session artifact, head, provider and exact-feed checks; no writer, real model run or throughput claim |
@@ -145,6 +172,15 @@ For durable knowledge, use [model heads](../model_heads.md),
 links to supporting experiments. The `experiment-readout` Skill covers the reusable
 analysis workflow.
 
+- [Native fixed-batch boundary (PR3a)](2026-09-22-native-batch-boundary.md) — bounded full/partial batch qualification; CUDA remains separate.
+- [Native CUDA/BF16 backend implementation and qualification limits](2026-09-22-native-cuda-backend.md)
+- [FIFO cohort integration](2026-09-23-fifo-cohort-integration.md): ready-root queue adoption with exact parent scheduling, tree, cancellation and deadline checks.
+
+- [Matched full-coordinator FIFO timing](2026-09-23-fifo-runner-timing.md): exact list/FIFO sources, optimized callback runner, strict realized-work checks and paired timings; no model/GPU claim.
+- [Bounded completion notification](2026-09-23-bounded-completion-wait.md): notification versus fixed pending sleep, matched callback runner and retained control/deadline checks.
+- [Explicit bounded search arenas](2026-09-24-bounded-search-arenas.md): opt-in fixed node capacity, safe pending sentinels, and actual search beyond 4,096 nodes; no dynamic growth or deployment.
+
+- [Bounded arena memory and initialization-cost screen](2026-09-24-arena-memory-screen.md): equal-work per-child peak RSS and process timing across capacities; no model/GPU or live-memory budget claim.
 - [Ceres CPU history reductions](2026-09-21-ceres-history-reductions.md) — exact-byte CPU encoder comparison.
 Current evidence correction and scale plan: [September 16 bootstrap audit](2026-09-16-bootstrap-status-audit.md).
 - [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
@@ -155,3 +191,5 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 - [CBoard-key map replay](2026-09-24-chess-key-map-replay.md): actual source-derived position keys, exact dictionary replay and explicit history/EP cache-identity limits; no performance or cache-adoption claim.
 - [Matched CBoard-key map timing](2026-09-24-chess-map-timing.md): unchanged chess-derived key fixtures and explicit CPU target; paired hash-versus-scan operation timings, not production search/cache throughput.
 - [Legal-move cache cost screen](2026-09-26-move-cache-cost-screen.md): matched cached/direct work at controlled reuse, cold lifetimes and oversized allocation; local measurements, not engine speedups.
+
+- [BT4 run11 variable-batch scheduling opportunity](2026-09-27-bt4-batching-opportunity.md): fixed-wave tail, conditional rolling-call arithmetic, and 128-game A/B compatibility HOLD.
