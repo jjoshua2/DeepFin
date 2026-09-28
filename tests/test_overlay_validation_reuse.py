@@ -103,6 +103,49 @@ def test_reuse_rejects_changed_anchored_inputs(tmp_path: Path, change: str) -> N
         storage.overlay_content_sha256(target, seal=context)
 
 
+@pytest.mark.parametrize(('change', 'error'), [
+    ('target', 'validated overlay changed during operation'),
+    ('base', 'sealed base changed'),
+    ('qualification_receipt', 'operation receipt/metadata identity changed'),
+])
+def test_hot_load_rejects_mutation_after_cached_decode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str, error: str,
+) -> None:
+    from scripts.lc0_control_train import stage_shards
+
+    _, roots, _, ref = fixture(tmp_path)
+    stage = tmp_path / 'stage'
+    stage_shards(roots, stage)
+    buffer = _buffer(stage, ref)
+    try:
+        record = buffer._records[0]
+        context = buffer._overlay_seal
+        assert context is not None
+        assert record.path.resolve() in context._validated_overlays
+
+        def unexpected_validation(*_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError('hot load reran semantic validation')
+
+        monkeypatch.setattr(storage, '_open_target_manifest', unexpected_validation)
+        assert buffer._load_one(record)['x'].shape[0] == record.rows
+
+        if change == 'target':
+            zarr.open_group(str(record.path), mode='a')['search_wdl'][0] = [1, 0, 0]
+        elif change == 'base':
+            manifest, _ = storage._open_manifest(record.path, seal=context)
+            zarr.open_group(manifest['base'], mode='a')['x'][0, 0, 0, 0] = 7
+        else:
+            receipt = Path(ref['path'])
+            replacement = tmp_path / 'same-bytes-new-qualification-receipt'
+            replacement.write_bytes(receipt.read_bytes())
+            replacement.replace(receipt)
+
+        with pytest.raises(ValueError, match=error):
+            buffer._load_one(record)
+    finally:
+        buffer.close()
+
+
 def test_mutation_during_first_validation_is_not_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _, roots, _, _ = fixture(tmp_path)
     path = storage.shard_paths(roots[0])[0]
