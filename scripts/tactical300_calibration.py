@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Calibrate Tactical300 against already-recorded G10 d10/d12 observations.
+"""Audit Tactical300 against already-recorded G10 d10/d12 observations.
 
 This is a CPU-only retrospective diagnostic.  It joins a provenance-qualified
 raw BT4 policy bank to the exact derived G10 rows described by the existing
@@ -682,7 +682,7 @@ def calibrate(
         final = {
             "schema": SCHEMA,
             "status": "COMPLETE_DIAGNOSTIC_NOT_TRAINING_ADMISSION",
-            "kind": "tactical300-bt4-vs-deeper-sf-calibration",
+            "kind": "tactical300-bt4-vs-deeper-sf-diagnostic",
             "adapter_manifest": manifest_pin,
             "derived_summary": manifest["derived_summary"],
             "teacher": {
