@@ -290,6 +290,10 @@ def stored_x_to_ceres_tpg_bytes(
     history = rows[:, :104].reshape(-1, 8, 13, 64)
     if not np.all((history == 0) | (history == 1)):
         raise ValueError("history must contain binary piece/repetition planes")
+    # Validate before narrowing: fractional inputs must never round into valid
+    # pieces. Binary bytes make the following sums/argmax exact integer work,
+    # avoiding slow float16 CPU reductions without changing the stored input.
+    history = history.astype(np.uint8)
     pieces, repetitions = history[:, :, :12], history[:, :, 12]
     occupied = pieces.sum(axis=2)
     real = occupied.any(axis=2)

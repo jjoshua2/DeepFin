@@ -7,7 +7,7 @@ import sys
 import math
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -236,6 +236,60 @@ class _TrainBatchIterator:
         close = getattr(self._current, "close", None)
         if callable(close):
             close()
+
+
+def _guard_exact_host_overlap(
+    source: Iterator[dict[str, torch.Tensor]], buf: object, count: int,
+) -> Generator[dict[str, torch.Tensor], None, None]:
+    """Join the producer and prove delivery and natural exhaustion per window."""
+    begin = getattr(buf, "begin_overlap", None)
+    mark = getattr(buf, "mark_overlap_delivery", None)
+    end = getattr(buf, "end_overlap", None)
+    close = getattr(source, "close", None)
+    if (not callable(begin) or not callable(mark)
+            or not callable(end) or not callable(close)):
+        raise RuntimeError("exact host overlap lacks delivery/close guard")
+
+    wanted = max(0, int(count))
+    delivered = 0
+    failed = False
+    exhausted = False
+    begin()
+    try:
+        for _ in range(wanted):
+            try:
+                batch = next(source)
+            except StopIteration as exc:
+                raise RuntimeError("exact host-overlap source ended before window") from exc
+            mark()
+            delivered += 1
+            yield batch
+    except BaseException as exc:
+        # Closing after the last yield is clean only if the source also ends
+        # naturally. Closing earlier must never drain or sample another row.
+        failed = not isinstance(exc, GeneratorExit) or delivered != wanted
+        raise
+    finally:
+        try:
+            if delivered == wanted and not failed:
+                try:
+                    next(source)
+                except StopIteration:
+                    exhausted = True
+                else:
+                    raise RuntimeError("exact host-overlap source yielded extra batch")
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            try:
+                # The source owns its one producer and any in-flight H2D copy.
+                close()
+            except BaseException:
+                failed = True
+                raise
+            finally:
+                end(aborted=failed or delivered != wanted or not exhausted)
 
 
 class _DeviceLossSums:
@@ -4684,10 +4738,11 @@ class Trainer:
             return
 
         if bool(getattr(buf, "host_batch_overlap", False)):
-            yield from self._iter_exact_overlapped_batches(
+            source = self._iter_exact_overlapped_batches(
                 buf, batch_size=batch_size, mirror_prob=mirror_prob,
                 count=count, coverage=coverage,
             )
+            yield from _guard_exact_host_overlap(source, buf, count)
             return
 
         # The exact planner prices one materialized host batch at a time.  The
