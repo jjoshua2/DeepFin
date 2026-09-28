@@ -1,10 +1,11 @@
 # Saved Stockfish policy dose by game ply
 
-Status: **source-only readout; no training authorization**. This record reuses the
-published G10 frozen-bank Tactical300 preview. It opens no corpus payload and
-does not run a teacher, model, arena, or trainer. The question is whether that
-fixed policy correction's *saved target change* is concentrated at late game
-plies. It is not a test of playing strength or of a late-only training recipe.
+Status: **read-only saved-target readout; no training authorization**. The
+initial source-only slice reused the published G10 frozen-bank Tactical300
+preview; a later registered CPU cross-tab reopened only its pinned saved row
+banks and raw source shards. Neither stage ran a teacher, model, arena, or
+trainer. The question is where this fixed policy correction's *saved target
+change* is concentrated, not whether it improves playing strength.
 
 The [September 11 constraints readout](2026-09-11-sf-negative-constraints-screen.md)
 banked 262,079 unique rows from 32 shards and retained 1,331 source-qualified
@@ -35,10 +36,10 @@ in that slice. The narrowed deeper rosters leave **57.534%** of the late
 >300-cp inferior BT4 policy mass unscored. Of the late inferior mass with an
 adjudicable deeper comparison, **12.230%** is contradicted by the conservative
 all-winner test. Conditional regret normalizes on the scored roster and cannot
-resolve the missing-move bias. Ply measures game age, not remaining material;
-this bank has no published ply-by-piece-count table. Accepted 58M source
+resolve the missing-move bias. Ply measures game age, not remaining material. The registered G10 follow-up
+below cross-tabulates saved dose by raw-FEN piece count. Accepted 58M source
 summaries declare a minimum of seven pieces, but no decoded-row census proves
-how many late positions have exactly seven pieces.
+how many late positions have exactly seven pieces in that separate corpus.
 
 Strength evidence also remains separate. Tactical100 versus B100 was −13.6 Elo
 [-52.4, +24.9], and Downside300 versus B100 was +17.66
@@ -82,3 +83,19 @@ in the [Tactical100](2026-09-10-bt4-sf-tactical-training.md),
 [Downside300](2026-09-12-sf-allmove-downside.md),
 [factorial](2026-09-22-factorial-readout-next24h.md), and
 [Syzygy audit](2026-09-23-bootstrap-syzygy-correctness-audit.md) records.
+
+## Registered G10 ply-by-piece saved-target cross-tab, 2026-09-28
+
+A separately reviewed, one-core, nice-19 CPU scan joined both exact saved G10 row banks to the 32 raw compressed shards, rechecked FEN-derived piece counts and source-qualified game identities, and read **1,270,054,769 compressed bytes**. It completed in **46.548 seconds** with 186,818,560 bytes peak observed child RSS. The registered terminal passed with zero training credit; independent readback rehashed the result and re-aggregated all nine cells from 1,331 source-qualified game clusters. The same 262,079 rows, 187,628 ordinary scores, 74,451 mate exclusions, 13,495 scientific triggers, and 1,841.994840 total moved-mass units reconcile with the earlier published ply-only readout.
+
+| Ply and raw-FEN piece count | Rows | Ordinary d9 rows | Scientific triggers | Moved mass | Share of all moved mass |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| <80, all material | 104,548 | 86,989 | 4,139 | 138.350166 | 7.511% |
+| ≥80, exactly 7 | 25,816 | 17,708 | 2,471 | 523.451444 | **28.418%** |
+| ≥80, 8–13 | 88,685 | 56,487 | 5,508 | 1,021.599856 | **55.462%** |
+| ≥80, 14–22 | 42,411 | 25,951 | 1,364 | 158.239168 | 8.591% |
+| ≥80, ≥23 | 619 | 493 | 13 | 0.354206 | 0.019% |
+
+Thus late positions with **7–13 pieces account for 83.879%** of this fixed G10 Tactical300 moved mass. Exactly-seven-piece positions alone account for 28.418%; a seven-piece-only selector would omit the larger 8–13-piece share. A 2,000-resample bootstrap over the 1,331 source-qualified games gives a descriptive 95% interval of **82.278–85.311%** for the combined late 7–13-piece mass share. The intervals measure variation among these saved source games, not uncertainty about Elo or a different corpus.
+
+This identifies where an already-defined SF policy correction changes *saved targets*. It does not show that shallow SF reaches Syzygy from 8–13 pieces, that deep SF labels help there, that the excluded mate domain is unimportant, or that the 58M/500M source mix has these piece frequencies. The preregistered 58M read-only pilot and any matched training/strict rule50 six-man arena remain separate decisions. [Compact independently re-aggregated evidence](evidence/g10-sf-ply-piece-cross-tab-20260928.json) has SHA-256 `4eb0232a9a05ee260290dd358deea0b2cef9e21e4346123c6335401103cb50a8`; its terminal/result and source packet SHA-256 values are `62e508d0899275615da26fda145067843a007617a1a245a6579a1ea3249702e8`, `4cf8b044eb4456b4a87defd8171ce7e8e3405d6a8dbe37662479ac8348d71dca`, and `a3c412b9c21c60dba447655e0880545b2a0700cb9d2d9fb2a0dece41b8b7bbba`.
