@@ -7,7 +7,7 @@ import sys
 import math
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -239,8 +239,8 @@ class _TrainBatchIterator:
 
 
 def _guard_exact_host_overlap(
-    source: Iterator[dict[str, torch.Tensor]], buf: ReplayBuffer, count: int,
-) -> Iterator[dict[str, torch.Tensor]]:
+    source: Iterator[dict[str, torch.Tensor]], buf: object, count: int,
+) -> Generator[dict[str, torch.Tensor], None, None]:
     """Join the producer and prove delivery and natural exhaustion per window."""
     begin = getattr(buf, "begin_overlap", None)
     mark = getattr(buf, "mark_overlap_delivery", None)
