@@ -168,13 +168,19 @@ def gathered(+cfg: C.Config,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: 
     a : DW.Admission <- DW.prepare(17n,cfg,DW.Admission{C.Gathered{tail,List.reverse(&1,C.Task,tasks),store,rows,steps},flags,False{}})
     admission_returned(cfg,counts,began,rounds,a)
 
-def round_ready(+cfg: C.Config,roots: Q.Queue<&1, C.Root>,store: C.Store,+flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32) -> IO(State):
+def round_limited(limit: U32,+cfg: C.Config,roots: Q.Queue<&1, C.Root>,store: C.Store,+flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32) -> IO(State):
   C.Store{table,maps,scratch,logits,input,output,+cap} = store
   B.Capabilities{profile,batch,channels,ilog,olog} = cap
   Ctrl.Flags{mask,n,eof,timers} = flags
   do IO<State>:
-    g : C.Gathered <- C.gather(16n,cfg,batch,C.Gathered{mark_queue(Ctrl.stopped(flags),roots),Nil{},C.Store{table,maps,scratch,logits,input,output,cap},0,0})
+    g : C.Gathered <- C.gather(16n,cfg,limit,C.Gathered{mark_queue(Ctrl.stopped(flags),roots),Nil{},C.Store{table,maps,scratch,logits,input,output,cap},0,0})
     gathered(cfg,flags,counts,began,U32.inc(rounds),g)
+
+# Existing fixed-cohort/default-live path retains its full physical gather cap.
+def round_ready(cfg: C.Config,roots: Q.Queue<&1,C.Root>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32) -> IO(State):
+  C.Store{table,maps,scratch,logits,input,output,+cap} = store
+  B.Capabilities{profile,batch,channels,ilog,olog} = cap
+  round_limited(batch,cfg,roots,C.Store{table,maps,scratch,logits,input,output,cap},flags,counts,began,rounds)
 
 def bounded(rounds: U32,cfg: C.Config,roots: Q.Queue<&1, C.Root>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat) -> IO(State):
   match rounds:
