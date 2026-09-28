@@ -82,9 +82,33 @@ def build_cohort(manifest: dict[str, Any], out: Path) -> dict[str, Any]:
     out.mkdir(parents=True)
     for arm in ARMS:
         (out / arm).mkdir()
+    scopes = []
+    for entry in entries:
+        src = (base / entry['shard']).resolve(strict=True)
+        for arm, fields in ARMS.items():
+            scopes.append({
+                'base': str(src),
+                'output': str(out / arm / src.name),
+                'base_seal': manifest['base_seal'],
+                'replacements': list(fields),
+                'recipe': {**RECIPE, 'arm': arm,
+                           'base_summary': manifest['base_summary'],
+                           'ceres_binding': entry['ceres_binding']},
+            })
+    intents = [old._target_intent(
+        Path(scope['base']), Path(scope['output']), scope['base_seal'],
+        sorted(scope['replacements'])) for scope in scopes]
+    registration = out / 'producer-registration.json'
+    old._atomic_new_json(registration, {
+        'schema': 2, 'kind': 'target-overlay-producer-registration',
+        'intents': intents, 'recipes': [scope['recipe'] for scope in scopes],
+    })
+    roster_ref = overlay.write_target_intent_roster(
+        scopes, out / 'intent-roster.json',
+        registration_ref={'path': str(registration), 'sha256': old.sha(registration)})
     rows = 0
     for entry in entries:
-        src = base / entry['shard']
+        src = (base / entry['shard']).resolve(strict=True)
         group: Any = zarr.open_group(str(src), mode='r')
         cpath = Path(entry['ceres']).resolve(strict=True)
         binding = entry['ceres_binding']
@@ -102,7 +126,8 @@ def build_cohort(manifest: dict[str, Any], out: Path) -> dict[str, Any]:
         for arm, fields in ARMS.items():
             dest = out / arm / src.name
             overlay.begin_target_shard(src, dest, manifest['base_seal'],
-                                       replacements=fields, seal=context)
+                                       replacements=fields, roster_ref=roster_ref,
+                                       seal=context)
             destinations[arm] = zarr.open_group(str(dest), mode='a')
         offsets = np.asarray(bank['legal_offsets'][:])
         for start in range(0, n, 512):
@@ -124,7 +149,7 @@ def build_cohort(manifest: dict[str, Any], out: Path) -> dict[str, Any]:
             overlay.finish_target_shard(src, out / arm / src.name,
                 manifest['base_seal'], recipe={**RECIPE, 'arm': arm,
                     'base_summary': manifest['base_summary'], 'ceres_binding': binding},
-                seal=context)
+                roster_ref=roster_ref, seal=context)
         rows += n
     pinned(manifest['base_summary'])
     old.require_base_corpus(manifest['base_seal'], base, context=context)

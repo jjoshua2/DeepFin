@@ -1,0 +1,525 @@
+{
+  "status": "passed",
+  "base": "42d4c78ebfca102e146720c818f5dba9db61fd57",
+  "qualified_source": "5eed9cc30f0352d5c984f53ce96a9369b2a941cf",
+  "run": 36163025335,
+  "job": 108163973419,
+  "artifact": 10877841014,
+  "artifact_zip_sha256": "2855d89f3c8d9a16fa71ea5493c088c0e2f3ff4f5079ec8632cca362ae4515a9",
+  "python_tests": 432,
+  "live": {
+    "live/normal-c146-b4/qualification.json": {
+      "report_sha256": "3c900887021d213bc0c24008cd4ea903c76cddaf00aaa09bbd4fe07cc75d0525",
+      "cases": [
+        "invalid_replacement_preserves_root",
+        "replacement",
+        "stop_abandons",
+        "quit_drains",
+        "capacity_and_eof",
+        "timer_reset",
+        "eof_with_pending_replacement",
+        "serial_reuse",
+        "shared_replacement",
+        "arena_reuse",
+        "startup_rejections",
+        "failures"
+      ],
+      "serial_reuse": {
+        "status": "passed",
+        "generations": 7,
+        "complete_nodes_compared": 483,
+        "work": {
+          "schema": "deepfin.live-cohort-work.v1",
+          "reported_generations": 7,
+          "batch_size": 4,
+          "completed_simulations": 28,
+          "forward_calls": 23,
+          "dispatched_real_rows": 23,
+          "executed_real_rows": 23,
+          "accepted_neural_rows": 23,
+          "cancelled_rows": 0,
+          "executed_wasted_rows": 0,
+          "physical_rows": 92,
+          "padded_rows": 69,
+          "unconfirmed_forward_rows": 0,
+          "unresolved_rows": 0,
+          "wall_seconds": 0.021,
+          "warmup_excluded": false,
+          "useful_eps": null
+        }
+      },
+      "shared_replacement_work": {
+        "schema": "deepfin.live-cohort-work.v1",
+        "reported_generations": 3,
+        "batch_size": 4,
+        "completed_simulations": 9,
+        "forward_calls": 6,
+        "dispatched_real_rows": 10,
+        "executed_real_rows": 10,
+        "accepted_neural_rows": 9,
+        "cancelled_rows": 1,
+        "executed_wasted_rows": 1,
+        "physical_rows": 24,
+        "padded_rows": 14,
+        "unconfirmed_forward_rows": 0,
+        "unresolved_rows": 0,
+        "wall_seconds": 0.01,
+        "warmup_excluded": false,
+        "useful_eps": null
+      },
+      "arena_reuse": {
+        "4096": {
+          "1:1": {
+            "completed_simulations": 184,
+            "used_nodes": 4095,
+            "stop_code": 1,
+            "arena_capacity": 4096,
+            "arena_physical_slots": 4096
+          },
+          "1:2": {
+            "completed_simulations": 184,
+            "used_nodes": 4095,
+            "stop_code": 1,
+            "arena_capacity": 4096,
+            "arena_physical_slots": 4096
+          }
+        },
+        "8192": {
+          "1:1": {
+            "completed_simulations": 256,
+            "used_nodes": 5663,
+            "stop_code": 0,
+            "arena_capacity": 8192,
+            "arena_physical_slots": 8192
+          },
+          "1:2": {
+            "completed_simulations": 256,
+            "used_nodes": 5663,
+            "stop_code": 0,
+            "arena_capacity": 8192,
+            "arena_physical_slots": 8192
+          }
+        }
+      },
+      "startup_rejections": 10,
+      "failures": [
+        {
+          "exit": 2,
+          "error": "async cohort backend failed; no successful summary\n"
+        },
+        {
+          "exit": 2,
+          "error": "async cohort nonfinite batch; no neural backup\n"
+        }
+      ]
+    },
+    "live/normal-c175-b4/qualification.json": {
+      "report_sha256": "d7fc559b7bdee7bba0e2daf5dd7c8cb71bd616b423005c758d04bd996ca4108f",
+      "cases": [
+        "invalid_replacement_preserves_root",
+        "replacement",
+        "stop_abandons",
+        "quit_drains",
+        "capacity_and_eof",
+        "timer_reset",
+        "eof_with_pending_replacement",
+        "serial_reuse",
+        "shared_replacement",
+        "arena_reuse",
+        "startup_rejections",
+        "failures"
+      ],
+      "serial_reuse": {
+        "status": "passed",
+        "generations": 7,
+        "complete_nodes_compared": 483,
+        "work": {
+          "schema": "deepfin.live-cohort-work.v1",
+          "reported_generations": 7,
+          "batch_size": 4,
+          "completed_simulations": 28,
+          "forward_calls": 23,
+          "dispatched_real_rows": 23,
+          "executed_real_rows": 23,
+          "accepted_neural_rows": 23,
+          "cancelled_rows": 0,
+          "executed_wasted_rows": 0,
+          "physical_rows": 92,
+          "padded_rows": 69,
+          "unconfirmed_forward_rows": 0,
+          "unresolved_rows": 0,
+          "wall_seconds": 0.023,
+          "warmup_excluded": false,
+          "useful_eps": null
+        }
+      },
+      "shared_replacement_work": {
+        "schema": "deepfin.live-cohort-work.v1",
+        "reported_generations": 3,
+        "batch_size": 4,
+        "completed_simulations": 9,
+        "forward_calls": 6,
+        "dispatched_real_rows": 10,
+        "executed_real_rows": 10,
+        "accepted_neural_rows": 9,
+        "cancelled_rows": 1,
+        "executed_wasted_rows": 1,
+        "physical_rows": 24,
+        "padded_rows": 14,
+        "unconfirmed_forward_rows": 0,
+        "unresolved_rows": 0,
+        "wall_seconds": 0.01,
+        "warmup_excluded": false,
+        "useful_eps": null
+      },
+      "arena_reuse": {
+        "4096": {
+          "1:1": {
+            "completed_simulations": 184,
+            "used_nodes": 4095,
+            "stop_code": 1,
+            "arena_capacity": 4096,
+            "arena_physical_slots": 4096
+          },
+          "1:2": {
+            "completed_simulations": 184,
+            "used_nodes": 4095,
+            "stop_code": 1,
+            "arena_capacity": 4096,
+            "arena_physical_slots": 4096
+          }
+        },
+        "8192": {
+          "1:1": {
+            "completed_simulations": 256,
+            "used_nodes": 5663,
+            "stop_code": 0,
+            "arena_capacity": 8192,
+            "arena_physical_slots": 8192
+          },
+          "1:2": {
+            "completed_simulations": 256,
+            "used_nodes": 5663,
+            "stop_code": 0,
+            "arena_capacity": 8192,
+            "arena_physical_slots": 8192
+          }
+        }
+      },
+      "startup_rejections": 10,
+      "failures": [
+        {
+          "exit": 2,
+          "error": "async cohort backend failed; no successful summary\n"
+        },
+        {
+          "exit": 2,
+          "error": "async cohort nonfinite batch; no neural backup\n"
+        }
+      ]
+    },
+    "live/ubsan-c146-b4/qualification.json": {
+      "report_sha256": "44dc05f45011d00d9316568416cf501b2840e2f01c1fd9d78d170caf449a7c45",
+      "cases": [
+        "invalid_replacement_preserves_root",
+        "replacement",
+        "stop_abandons",
+        "quit_drains",
+        "capacity_and_eof",
+        "timer_reset",
+        "eof_with_pending_replacement",
+        "serial_reuse",
+        "shared_replacement",
+        "arena_reuse",
+        "startup_rejections",
+        "failures"
+      ],
+      "serial_reuse": {
+        "status": "passed",
+        "generations": 7,
+        "complete_nodes_compared": 483,
+        "work": {
+          "schema": "deepfin.live-cohort-work.v1",
+          "reported_generations": 7,
+          "batch_size": 4,
+          "completed_simulations": 28,
+          "forward_calls": 23,
+          "dispatched_real_rows": 23,
+          "executed_real_rows": 23,
+          "accepted_neural_rows": 23,
+          "cancelled_rows": 0,
+          "executed_wasted_rows": 0,
+          "physical_rows": 92,
+          "padded_rows": 69,
+          "unconfirmed_forward_rows": 0,
+          "unresolved_rows": 0,
+          "wall_seconds": 0.028,
+          "warmup_excluded": false,
+          "useful_eps": null
+        }
+      },
+      "shared_replacement_work": {
+        "schema": "deepfin.live-cohort-work.v1",
+        "reported_generations": 3,
+        "batch_size": 4,
+        "completed_simulations": 9,
+        "forward_calls": 6,
+        "dispatched_real_rows": 10,
+        "executed_real_rows": 10,
+        "accepted_neural_rows": 9,
+        "cancelled_rows": 1,
+        "executed_wasted_rows": 1,
+        "physical_rows": 24,
+        "padded_rows": 14,
+        "unconfirmed_forward_rows": 0,
+        "unresolved_rows": 0,
+        "wall_seconds": 0.015,
+        "warmup_excluded": false,
+        "useful_eps": null
+      },
+      "arena_reuse": {
+        "4096": {
+          "1:1": {
+            "completed_simulations": 184,
+            "used_nodes": 4095,
+            "stop_code": 1,
+            "arena_capacity": 4096,
+            "arena_physical_slots": 4096
+          },
+          "1:2": {
+            "completed_simulations": 184,
+            "used_nodes": 4095,
+            "stop_code": 1,
+            "arena_capacity": 4096,
+            "arena_physical_slots": 4096
+          }
+        },
+        "8192": {
+          "1:1": {
+            "completed_simulations": 256,
+            "used_nodes": 5663,
+            "stop_code": 0,
+            "arena_capacity": 8192,
+            "arena_physical_slots": 8192
+          },
+          "1:2": {
+            "completed_simulations": 256,
+            "used_nodes": 5663,
+            "stop_code": 0,
+            "arena_capacity": 8192,
+            "arena_physical_slots": 8192
+          }
+        }
+      },
+      "startup_rejections": 10,
+      "failures": [
+        {
+          "exit": 2,
+          "error": "async cohort backend failed; no successful summary\n"
+        },
+        {
+          "exit": 2,
+          "error": "async cohort nonfinite batch; no neural backup\n"
+        }
+      ]
+    },
+    "live/ubsan-c175-b4/qualification.json": {
+      "report_sha256": "aa010c34951a8b08b6e2b680ea5723a1593c4d7a0608bfaa125ddde241559ee3",
+      "cases": [
+        "invalid_replacement_preserves_root",
+        "replacement",
+        "stop_abandons",
+        "quit_drains",
+        "capacity_and_eof",
+        "timer_reset",
+        "eof_with_pending_replacement",
+        "serial_reuse",
+        "shared_replacement",
+        "arena_reuse",
+        "startup_rejections",
+        "failures"
+      ],
+      "serial_reuse": {
+        "status": "passed",
+        "generations": 7,
+        "complete_nodes_compared": 483,
+        "work": {
+          "schema": "deepfin.live-cohort-work.v1",
+          "reported_generations": 7,
+          "batch_size": 4,
+          "completed_simulations": 28,
+          "forward_calls": 23,
+          "dispatched_real_rows": 23,
+          "executed_real_rows": 23,
+          "accepted_neural_rows": 23,
+          "cancelled_rows": 0,
+          "executed_wasted_rows": 0,
+          "physical_rows": 92,
+          "padded_rows": 69,
+          "unconfirmed_forward_rows": 0,
+          "unresolved_rows": 0,
+          "wall_seconds": 0.031,
+          "warmup_excluded": false,
+          "useful_eps": null
+        }
+      },
+      "shared_replacement_work": {
+        "schema": "deepfin.live-cohort-work.v1",
+        "reported_generations": 3,
+        "batch_size": 4,
+        "completed_simulations": 9,
+        "forward_calls": 6,
+        "dispatched_real_rows": 10,
+        "executed_real_rows": 10,
+        "accepted_neural_rows": 9,
+        "cancelled_rows": 1,
+        "executed_wasted_rows": 1,
+        "physical_rows": 24,
+        "padded_rows": 14,
+        "unconfirmed_forward_rows": 0,
+        "unresolved_rows": 0,
+        "wall_seconds": 0.018,
+        "warmup_excluded": false,
+        "useful_eps": null
+      },
+      "arena_reuse": {
+        "4096": {
+          "1:1": {
+            "completed_simulations": 184,
+            "used_nodes": 4095,
+            "stop_code": 1,
+            "arena_capacity": 4096,
+            "arena_physical_slots": 4096
+          },
+          "1:2": {
+            "completed_simulations": 184,
+            "used_nodes": 4095,
+            "stop_code": 1,
+            "arena_capacity": 4096,
+            "arena_physical_slots": 4096
+          }
+        },
+        "8192": {
+          "1:1": {
+            "completed_simulations": 256,
+            "used_nodes": 5663,
+            "stop_code": 0,
+            "arena_capacity": 8192,
+            "arena_physical_slots": 8192
+          },
+          "1:2": {
+            "completed_simulations": 256,
+            "used_nodes": 5663,
+            "stop_code": 0,
+            "arena_capacity": 8192,
+            "arena_physical_slots": 8192
+          }
+        }
+      },
+      "startup_rejections": 10,
+      "failures": [
+        {
+          "exit": 2,
+          "error": "async cohort backend failed; no successful summary\n"
+        },
+        {
+          "exit": 2,
+          "error": "async cohort nonfinite batch; no neural backup\n"
+        }
+      ]
+    }
+  },
+  "fixed_report_sha256": {
+    "fixed/c146-b1/async.json": "ffb539a01e251253a079bb0a1cd6cd850d41eaa87f7253aeb695590f23486020",
+    "fixed/c146-b1/sync.json": "2b445dc48d101f4186be26a32a41418827e667d0caa9d71d8fd2799cc8ffb513",
+    "fixed/c146-b16/async.json": "f99e2d9a0f26feec333b94f8b53e0bf3ae20e7474a07aac03862f5129e60e564",
+    "fixed/c146-b16/sync.json": "bc56da91024f86a6d81c8c88603c8f34172cc863aa96fab141176675612a7d9e",
+    "fixed/c146-b2/async.json": "210477477f0413e487ff5c076cde299897918ad28c6b7c0c461fbbcec29833a5",
+    "fixed/c146-b2/sync.json": "360095ca64583cd0c571008d9c3a7601fd165cf16890dacee50055b9240c5de3",
+    "fixed/c146-b4/async.json": "e33d432784407d750fce627cae1091c79f4708020d147511a123d1989e6a8737",
+    "fixed/c146-b4/control-ubsan.json": "d71c5e2b6423f2472e1bb7d319b136e7b85b66a924cec9c24d83d6d0e29e0b0c",
+    "fixed/c146-b4/control.json": "2c6ce901a455992995e60403e84cbbf43caf539150a454e8145f596a4db1b3ca",
+    "fixed/c146-b4/sync.json": "a7fffac9a593bee6e1e8f785c7641fda9345c92d85bf98e13e7d868b7cd48e2d",
+    "fixed/c146-b4/ubsan.json": "e33d432784407d750fce627cae1091c79f4708020d147511a123d1989e6a8737",
+    "fixed/c146-b8/async.json": "364aa347e1d0663520cd53c480d3d11461311c188f48d5b6ee7e369a45ae65da",
+    "fixed/c146-b8/sync.json": "99780526d35adec00faa9fa08da68b3a9482ed4b9d69baed5ba69795ae85ab99",
+    "fixed/c175-b1/async.json": "18b6a35f53d67c2612e8d9c1d4a0e000e8b46c7abef465b1d5e4b20706d3b18c",
+    "fixed/c175-b1/sync.json": "a1470ee97c6570e85ea2ac31953dafafb5d858e2b30983f6d2d9e0730aa190f4",
+    "fixed/c175-b16/async.json": "bd1778393a979fd6f998984b9dcba4e7fd086ffc5a7b18a20ea73773328371ba",
+    "fixed/c175-b16/sync.json": "f8cae2eb0d460b75fae34470a6fb136fc6df08d04a76dbac608f1dae00d8fe59",
+    "fixed/c175-b2/async.json": "97679eaa9949baaf25ead0c2e60522c5616816fbbfc7af1bcd5fb433fb93820e",
+    "fixed/c175-b2/sync.json": "02920c0a5633093ae7a508389892e0097c4bc6ee50922e70eb6c12274f477225",
+    "fixed/c175-b4/async.json": "bcaa536f2b13f06f584d7b2d2898e66d2081aa200f6fa48c6ba54bd36c35ed30",
+    "fixed/c175-b4/control-ubsan.json": "fc432553c7501e510c851bbef55299ef10dd1810638769680e5fe9db06e6ae3a",
+    "fixed/c175-b4/control.json": "57bebb0bbc607b355797e0fb75082f09f8cd3ba2fbd14bb56967e3693e50b1bd",
+    "fixed/c175-b4/sync.json": "2b178e0c84f1dd657e4f0f06f23326e8308321cc8afb67789cebe606284a389e",
+    "fixed/c175-b4/ubsan.json": "bcaa536f2b13f06f584d7b2d2898e66d2081aa200f6fa48c6ba54bd36c35ed30",
+    "fixed/c175-b8/async.json": "f2fc02e4dd2ee749a45ff4580eeab367b17b09a1d7a77d290951d9a04eee7e61",
+    "fixed/c175-b8/sync.json": "fa2c28d378bc7474edf62996475ed093462af5d60bb66cf341612cf6a8c54c8d",
+    "fixed/matrix.json": "0c01b7b82e7aa73bc2c78811e4aad679209e3fe553159cb88cc9bca7ae8068a7",
+    "fixed/worker-normal.json": "26b904b6a6105acc70b6c00552ca093467fa11e260ae20fabda67552247828a3",
+    "fixed/worker-sanitized.json": "26b904b6a6105acc70b6c00552ca093467fa11e260ae20fabda67552247828a3",
+    "deadlines/c146-normal.json": "8e43f52b54cbdd167cfd8914629ad728ab620c4be209ca0f80b7ad605b7e8fb3",
+    "deadlines/c146-ubsan.json": "63997f4053b8d6cf27153816b96e942e8035bfd21b6ce2eb66fe82a458791419",
+    "deadlines/c175-normal.json": "a27569d7f6f109922f61d828139ec2ddd817c92b74a446544e336f7622bff3cc",
+    "deadlines/c175-ubsan.json": "acdcce29e5b5e46b2a862a53046a32ac5ebab141d0f249e20840bda819dcadcc"
+  },
+  "neural_model_qualified": false,
+  "gpu_qualified": false,
+  "speed_qualified": false,
+  "registry": {
+    "status": "passed",
+    "scope": "compiled registry component only",
+    "live_runner_qualified": false,
+    "baseline_modes": [
+      "normal",
+      "ubsan"
+    ],
+    "replacement_cycles_per_mode": 128,
+    "compiled_executed_mutations": [
+      "ignore-generation",
+      "retain-expired-timer"
+    ],
+    "mutation_modes_each": [
+      "normal",
+      "ubsan"
+    ],
+    "files": {
+      "baseline/Deadlines.bend": "80c9c8b377d0989020ddb8484483364c918fe85e46a71af4d442e80f8ee718ec",
+      "baseline/LiveRegistry.bend": "f844fa37c8d713ae08a20e7c4db91ab7a5caa0d7a3af972dc06743ed926d892e",
+      "baseline/build.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "baseline/live_registry_probe.bend": "c03af3b2a6748fee5e6eba83cc897dff9fcf45db8c45b0b1e6121c6c9ab526d6",
+      "baseline/normal.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "baseline/normal.txt": "baa023ac38c5c775c798f2eaf822a78db83495824325be498d691cbbb500ce2c",
+      "baseline/probe.c": "b14754e4407b12da02b8879b26f4b6a968053ef22de1a35a6d1016b6bbc6d2a6",
+      "baseline/ubsan.err": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "baseline/ubsan.txt": "baa023ac38c5c775c798f2eaf822a78db83495824325be498d691cbbb500ce2c",
+      "ignore-generation/Deadlines.bend": "80c9c8b377d0989020ddb8484483364c918fe85e46a71af4d442e80f8ee718ec",
+      "ignore-generation/LiveRegistry.bend": "462f869cb75a509697005df7b63aa32a8b49cfd4b4c2d15b62e2d7aed9047371",
+      "ignore-generation/build.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "ignore-generation/live_registry_probe.bend": "c03af3b2a6748fee5e6eba83cc897dff9fcf45db8c45b0b1e6121c6c9ab526d6",
+      "ignore-generation/normal.err": "73ab78d084baaf980e2eb3e6f94a3d069a4d963273ed53c6eb79d3de66b5b8ce",
+      "ignore-generation/normal.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "ignore-generation/probe.c": "24f2b0008e36b183ee67d946941487077b23dcda4b666507f7370b0294d2fe6b",
+      "ignore-generation/ubsan.err": "73ab78d084baaf980e2eb3e6f94a3d069a4d963273ed53c6eb79d3de66b5b8ce",
+      "ignore-generation/ubsan.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "retain-expired-timer/Deadlines.bend": "80c9c8b377d0989020ddb8484483364c918fe85e46a71af4d442e80f8ee718ec",
+      "retain-expired-timer/LiveRegistry.bend": "b6b909ed74a43144d76dd6f86c1f594bf14976cb149704a7a0943097cda8cf43",
+      "retain-expired-timer/build.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "retain-expired-timer/live_registry_probe.bend": "c03af3b2a6748fee5e6eba83cc897dff9fcf45db8c45b0b1e6121c6c9ab526d6",
+      "retain-expired-timer/normal.err": "73ab78d084baaf980e2eb3e6f94a3d069a4d963273ed53c6eb79d3de66b5b8ce",
+      "retain-expired-timer/normal.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "retain-expired-timer/probe.c": "1198ff5465719d16931b404a77ad5a6f34b83e91b93c00f9d0531d5a5a01c4e9",
+      "retain-expired-timer/ubsan.err": "73ab78d084baaf980e2eb3e6f94a3d069a4d963273ed53c6eb79d3de66b5b8ce",
+      "retain-expired-timer/ubsan.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "generated": {
+    "run": 36162016314,
+    "runtime_source_unchanged": true,
+    "sha256": {
+      "live": "0febc12b7a6a8a27ddf894cf7bfdc01115413f2792a3be5c93fa814ba610e471",
+      "main": "c01e88e969d5eb09c81b48173f33e63023b25ee7914f0384bf7db67f86390b87"
+    }
+  }
+}

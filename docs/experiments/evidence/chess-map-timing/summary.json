@@ -1,0 +1,523 @@
+{
+  "status": "passed",
+  "scope": "hash versus dense scan, shared slots and entry budget",
+  "cases": [
+    {
+      "name": "chess-opening-hits",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "7338777e51bb5c55077d8075be6fdd530bdc43f678d2ed520b5a247bf8369a13"
+    },
+    {
+      "name": "chess-opening-misses",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "c8485b3113bfaa7824d8547b4c9c0edb587da78a73a7685fef1488c62ea32cc8"
+    },
+    {
+      "name": "chess-opening-churn",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "c5d8ecdcf4819ef1d9d3303fda66390f32c317c7df58232fa937b4111dca028f"
+    },
+    {
+      "name": "chess-castling-hits",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "2fb8ba0c2365fbfd4be7be4b1cd7c4bdd499e315526c0933c26c05975c17c2ad"
+    },
+    {
+      "name": "chess-castling-misses",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "dacfc6aa46b7a83a935ea0e527868de96d18295f0aa6cf32ee4d88cf53f7cfd1"
+    },
+    {
+      "name": "chess-castling-churn",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "2c22578080b52e73a4763ee5a621dc8135b1629f8129630436acbc049f4a1b19"
+    },
+    {
+      "name": "chess-ep-hits",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "60bd33548d461f8df23b363019f73c27e72fb37a4b7f78553952fbf5fae4e347"
+    },
+    {
+      "name": "chess-ep-misses",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "a4236fed3e9f55e890a0bd20ec997611c01175139341ffd724592d7d9d8ea8d7"
+    },
+    {
+      "name": "chess-ep-churn",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "a8ae9aca5bc9402210138a3a8d460a4d2f96a4fc5d515227786bb5ff33ae7ca1"
+    },
+    {
+      "name": "chess-promotion-hits",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "801fbc516a113fbd3bf613442ff8576e74d94fa8ad9043bbf043d666752df80f"
+    },
+    {
+      "name": "chess-promotion-misses",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "290514e692d3eec25f00f4b9b5ea67af0e91dca0b60daf5323113ef22b4307ca"
+    },
+    {
+      "name": "chess-promotion-churn",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "0d3489c11b616a88b5c775c65b63078e81bf0338907e599cd7bc0360e3af04b5"
+    }
+  ],
+  "measured": true,
+  "workload_source": "chess",
+  "compiler": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\n",
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\n",
+  "cpu_target": {
+    "name": "bmi2-popcnt",
+    "flags": [
+      "-march=x86-64",
+      "-mpopcnt",
+      "-mbmi2"
+    ],
+    "host": "bmi2=1 popcnt=1",
+    "instruction_check": "passed",
+    "check_source_sha256": "bb3348015ba4c8959bab7a33e59b9b13667faf4dcd4eedeb31e22af8a0a29c75"
+  },
+  "source_sha256": {
+    "U64Map.bend": "d65af76fd97beb4dcadba3971cc99149cd1f85b869cdeca4d24fe2a9d7708517",
+    "ScanMap.bend": "3f259997e31bcd3f3ef83957d95f950f5f801534e625c525d0ee341c58e62ce9",
+    "benchmark.bend": "ffb56dc7c0263ed93919efbc8de9a1991fc24726bbd5ac82fc8247baf7546c58",
+    "benchmark.py": "ff3bbe0a5762da9f7a8bc4e15129d26b75a0cef2a556b58cc72ea3b866e2d4ae",
+    "cpu_target.py": "80db6b3851e2be9d5679465c9554ea547f6a1752e18b20fc0603bd15511007b7"
+  },
+  "chess_corpus": {
+    "scope": "CBoard keys from deterministic legal walks; not selfplay/search traffic or NN cache identities",
+    "python_chess_version": "1.11.2",
+    "cboard_extension_sha256": "d2986741fd7037709cd5673f86537968f58d7f6f9c4d84f7a7ee61c2dd952e5b",
+    "producer_source_sha256": {
+      "chess_anti_engine/encoding/_cboard_impl.h": "13560b4908282aca68c3f6c5747dc3848f036f3a494f24500e76fc44a3646572",
+      "chess_anti_engine/encoding/_lc0_ext.c": "dad4106e18c6da4757aec828a1aefa6991ac99964317b0716d03b1daf659c86f",
+      "chess_anti_engine/mcts/_position_dag.h": "3c7da5adccdc056632483bbe8d384dd44c687b66c6c6ea13549408e3970a02d3",
+      "native/bend_engine/u64_map_probe/chess_workloads.py": "2b707b1093a524b6fa24245399a95f6de84b2672330ab8d27eeeb393dc4ed161"
+    },
+    "identity_checks": [
+      {
+        "name": "knight-cycle-history",
+        "same_key": true,
+        "left_key": 13988166417980563255,
+        "right_key": 13988166417980563255,
+        "same_raw_hash": true,
+        "left_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "right_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 4 3",
+        "left_history_plies": 0,
+        "right_history_plies": 4
+      },
+      {
+        "name": "halfmove-clock",
+        "same_key": true,
+        "left_key": 13988166417980563255,
+        "right_key": 13988166417980563255,
+        "same_raw_hash": true,
+        "left_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "right_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 99 1",
+        "left_history_plies": 0,
+        "right_history_plies": 0
+      },
+      {
+        "name": "capturable-ep",
+        "same_key": false,
+        "left_key": 11876177510179606069,
+        "right_key": 12507960304961716200,
+        "same_raw_hash": true,
+        "left_fen": "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+        "right_fen": "4k3/8/8/3pP3/8/8/8/4K3 w - - 0 1",
+        "left_history_plies": 0,
+        "right_history_plies": 0
+      },
+      {
+        "name": "noncapturable-ep",
+        "same_key": true,
+        "left_key": 8883413546012912086,
+        "right_key": 8883413546012912086,
+        "same_raw_hash": true,
+        "left_fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+        "right_fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+        "left_history_plies": 1,
+        "right_history_plies": 1
+      },
+      {
+        "name": "pinned-ep-conservative-split",
+        "same_key": false,
+        "left_key": 1592479206207216646,
+        "right_key": 2259685802474581467,
+        "same_raw_hash": true,
+        "left_fen": "4r1k1/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+        "right_fen": "4r1k1/8/8/3pP3/8/8/8/4K3 w - - 0 1",
+        "left_history_plies": 0,
+        "right_history_plies": 0
+      },
+      {
+        "name": "castling-rights",
+        "same_key": false,
+        "left_key": 4389989848412292357,
+        "right_key": 12124957533433471099,
+        "same_raw_hash": false,
+        "left_fen": "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "right_fen": "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w - - 0 1",
+        "left_history_plies": 0,
+        "right_history_plies": 0
+      }
+    ],
+    "corpora": [
+      {
+        "name": "opening",
+        "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "walks": 8,
+        "max_plies": 64,
+        "observations": 520,
+        "distinct_keys": 513,
+        "revisits": 7,
+        "high_bit_keys": 237,
+        "records_sha256": "c06c86b47922b8f59c17f64376c15c35742f7ba7c2b0d6d6169f59b9f0bd3328"
+      },
+      {
+        "name": "castling",
+        "root_fen": "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "walks": 8,
+        "max_plies": 64,
+        "observations": 483,
+        "distinct_keys": 476,
+        "revisits": 7,
+        "high_bit_keys": 235,
+        "records_sha256": "e2608ffdd283eedc6755b870223b79f071ed330d0a2fa0aa529e7ca2c25cf874"
+      },
+      {
+        "name": "ep",
+        "root_fen": "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+        "walks": 8,
+        "max_plies": 64,
+        "observations": 341,
+        "distinct_keys": 328,
+        "revisits": 13,
+        "high_bit_keys": 160,
+        "records_sha256": "68510127f1e0152430ccd888636b3472901a06053b9dda3aac379f49ca0af3f0"
+      },
+      {
+        "name": "promotion",
+        "root_fen": "7k/P7/8/8/8/8/1p6/7K w - - 0 1",
+        "walks": 8,
+        "max_plies": 64,
+        "observations": 329,
+        "distinct_keys": 317,
+        "revisits": 12,
+        "high_bit_keys": 142,
+        "records_sha256": "e49a591d1aeff02d33a11c3955ec70711eb86004bcf7ec052e1997839f4e847f"
+      }
+    ]
+  },
+  "chess_replay_cases": [
+    {
+      "name": "chess-opening-encounters",
+      "bits": 11,
+      "operations": 1560,
+      "input_sha256": "7176e338805f15e52a39be1e060fac27ef23325b2fa0fd10da3d43f769ff90a3",
+      "expected_sha256": "561a26ed251dc4c120ad35eff025a0b03df702fb0953d011932f7c3e2c09507c"
+    },
+    {
+      "name": "chess-castling-encounters",
+      "bits": 11,
+      "operations": 1449,
+      "input_sha256": "ef9722d991032cd427ef8ad4754aeef2f29906fee3e05c97dec440c9fa5fb268",
+      "expected_sha256": "b49d7b13a92760f888c4feef370493f88b41b8d7bdd02a8092470febf7533a40"
+    },
+    {
+      "name": "chess-ep-encounters",
+      "bits": 11,
+      "operations": 1023,
+      "input_sha256": "8eb9d88eb0194e06f1c4e75d6377a915ee3f4690ec75a6d96b59aca244fc5a32",
+      "expected_sha256": "fa89092730395f68bb42ef743599d93769c30f031a16b2a57cb9766e11c41421"
+    },
+    {
+      "name": "chess-promotion-encounters",
+      "bits": 11,
+      "operations": 987,
+      "input_sha256": "35465ab55bf429907309e68dfd3d185d3fda3f63bafd2e54d11f50366f51c2d6",
+      "expected_sha256": "ae7b2cfdf47421d5b221e9130d1fc3ec8460c3c306b402c4acb37a7b86c48faa"
+    }
+  ],
+  "reference_checks": [
+    {
+      "arm": "hash",
+      "mode": "bmi2-popcnt",
+      "cases": 36,
+      "operations": 12061
+    },
+    {
+      "arm": "hash",
+      "mode": "ubsan",
+      "cases": 36,
+      "operations": 12061
+    },
+    {
+      "arm": "scan",
+      "mode": "bmi2-popcnt",
+      "cases": 36,
+      "operations": 12061
+    },
+    {
+      "arm": "scan",
+      "mode": "ubsan",
+      "cases": 36,
+      "operations": 12061
+    }
+  ],
+  "contract_executions": 144,
+  "summary": {
+    "chess-opening-hits": {
+      "rounds": 2048,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 88.0,
+        "scan": 499.0
+      },
+      "median_scan_over_hash": 5.67706315381635,
+      "paired_ratios": [
+        5.472527472527473,
+        5.758620689655173,
+        5.577319587628866,
+        5.595505617977528,
+        5.882352941176471,
+        5.767441860465116
+      ]
+    },
+    "chess-opening-misses": {
+      "rounds": 2048,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 100.0,
+        "scan": 891.5
+      },
+      "median_scan_over_hash": 8.910591059105911,
+      "paired_ratios": [
+        8.745098039215685,
+        8.485714285714286,
+        9.237113402061855,
+        8.851485148514852,
+        9.154639175257731,
+        8.969696969696969
+      ]
+    },
+    "chess-opening-churn": {
+      "rounds": 2048,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 114.5,
+        "scan": 592.0
+      },
+      "median_scan_over_hash": 5.192143401983219,
+      "paired_ratios": [
+        5.191304347826087,
+        5.333333333333333,
+        5.05982905982906,
+        5.238938053097345,
+        4.974789915966387,
+        5.192982456140351
+      ]
+    },
+    "chess-castling-hits": {
+      "rounds": 2048,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 78.0,
+        "scan": 498.0
+      },
+      "median_scan_over_hash": 6.451631701631701,
+      "paired_ratios": [
+        6.454545454545454,
+        6.448717948717949,
+        6.518987341772152,
+        6.384615384615385,
+        6.5394736842105265,
+        6.0
+      ]
+    },
+    "chess-castling-misses": {
+      "rounds": 2048,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 103.5,
+        "scan": 894.5
+      },
+      "median_scan_over_hash": 8.647544809559372,
+      "paired_ratios": [
+        8.054054054054054,
+        8.811881188118813,
+        8.689320388349515,
+        8.586538461538462,
+        8.60576923076923,
+        9.198019801980198
+      ]
+    },
+    "chess-castling-churn": {
+      "rounds": 2048,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 98.5,
+        "scan": 595.0
+      },
+      "median_scan_over_hash": 6.004125412541255,
+      "paired_ratios": [
+        6.611111111111111,
+        5.6415094339622645,
+        5.666666666666667,
+        6.166666666666667,
+        6.239583333333333,
+        5.841584158415841
+      ]
+    },
+    "chess-ep-hits": {
+      "rounds": 2048,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 84.5,
+        "scan": 501.0
+      },
+      "median_scan_over_hash": 6.185185185185185,
+      "paired_ratios": [
+        6.469879518072289,
+        6.148148148148148,
+        5.344086021505376,
+        5.790697674418604,
+        6.222222222222222,
+        6.232558139534884
+      ]
+    },
+    "chess-ep-misses": {
+      "rounds": 2048,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 99.5,
+        "scan": 891.5
+      },
+      "median_scan_over_hash": 8.959949494949495,
+      "paired_ratios": [
+        8.98989898989899,
+        8.72549019607843,
+        9.081632653061224,
+        8.514285714285714,
+        8.93,
+        9.216494845360824
+      ]
+    },
+    "chess-ep-churn": {
+      "rounds": 2048,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 97.0,
+        "scan": 593.5
+      },
+      "median_scan_over_hash": 6.120627325890483,
+      "paired_ratios": [
+        5.97979797979798,
+        6.231578947368421,
+        6.02020202020202,
+        6.2631578947368425,
+        5.900990099009901,
+        6.221052631578948
+      ]
+    },
+    "chess-promotion-hits": {
+      "rounds": 2048,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 82.0,
+        "scan": 500.0
+      },
+      "median_scan_over_hash": 6.091463414634147,
+      "paired_ratios": [
+        5.818181818181818,
+        6.085365853658536,
+        6.097560975609756,
+        6.2125,
+        6.367088607594937,
+        5.681818181818182
+      ]
+    },
+    "chess-promotion-misses": {
+      "rounds": 2048,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 103.5,
+        "scan": 894.0
+      },
+      "median_scan_over_hash": 8.66182785660941,
+      "paired_ratios": [
+        8.462264150943396,
+        8.39622641509434,
+        8.663461538461538,
+        8.660194174757281,
+        8.689320388349515,
+        8.669902912621358
+      ]
+    },
+    "chess-promotion-churn": {
+      "rounds": 2048,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 98.0,
+        "scan": 591.5
+      },
+      "median_scan_over_hash": 6.020930959075288,
+      "paired_ratios": [
+        6.134020618556701,
+        5.841584158415841,
+        5.861386138613861,
+        5.96969696969697,
+        6.242105263157895,
+        6.072164948453608
+      ]
+    }
+  },
+  "measurement_run": 36064709080,
+  "tested_commit": "924bd4f6cc1c6dc66cf57839e1d3a9ac6aa5fa30",
+  "base_commit": "89bd90c461ebca9654556ecdf5ac652285cd28a1",
+  "artifact_id": 10834874698,
+  "artifact_zip_sha256": "760e2a50d6de23b53ec42c2b5073639114c988b5be1d5f7dcee18df5a4c358c5",
+  "raw_report_sha256": "fe80a0b18b96f16b68e6e024f33d6aa98f10579466387df0440d32d0f5d34126",
+  "python_tests_passed": 102,
+  "measured_observations": 144,
+  "calibration_observations": 168,
+  "samples_file": "samples.csv",
+  "preregistration_sha256": "c36554899920c98bb66f2edeab3588c86f469bcf57368e3bcec8072dc1dcf954"
+}

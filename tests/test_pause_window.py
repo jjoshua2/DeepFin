@@ -1795,7 +1795,12 @@ def test_the_lease_watchdog_never_touches_a_foreign_marker(tmp_path: Path) -> No
     r = _run_lib(
         f'wd=$(pause_start_lease_watchdog {shlex.quote(str(marker))} {dead.pid} '
         f'600 {shlex.quote(str(wlog))}); '
-        'for i in $(seq 1 20); do [ -e ' + shlex.quote(str(marker)) + ' ] || break; sleep 0.5; done; '
+        # Unlink precedes logging. Wait for BOTH observations before teardown;
+        # killing on unlink alone races the watchdog's final printf/date command.
+        'for i in $(seq 1 20); do '
+        f'if [ ! -e {shlex.quote(str(marker))} ] && '
+        f'grep -q "launcher pid" {shlex.quote(str(wlog))} 2>/dev/null; then break; fi; '
+        'sleep 0.5; done; '
         'kill "$wd" 2>/dev/null; echo done',
         env={"CAE_PAUSE_LEASE_POLL_SECONDS": "1"},
     )

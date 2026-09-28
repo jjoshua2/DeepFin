@@ -1,0 +1,14 @@
+{
+  "status": "PASS_APPEND_ONLY_QUEUE_REGISTRATION",
+  "registered_unix": 1790081642.3497205,
+  "before_items": 239,
+  "after_items": 240,
+  "added_ids": [
+    "packed_trainer256_pair_retry_20260922"
+  ],
+  "prior_items_unchanged": true,
+  "active_state_unchanged": true,
+  "queue_before_sha256": "db9a5feeb4132132f53d61a3bc86882b16d4e983310e29c5dfe16fb93da39586",
+  "queue_after_sha256": "ea5b9a5a5b46ca443d9e2be447fd56c1935a51dc9634fa28a83041c01f0c3058",
+  "estimated_added_hours": 1.0
+}

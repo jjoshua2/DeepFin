@@ -4,4 +4,5 @@ from .target_overlay import (
     begin_target_shard as begin_target_shard,
     finish_target_shard as finish_target_shard,
     qualify_target_roots as qualify_target_roots,
+    write_target_intent_roster as write_target_intent_roster,
 )

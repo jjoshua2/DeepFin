@@ -480,6 +480,7 @@ def test_configured_batch_without_padding_requires_divisibility(tmp_path, monkey
     with pytest.raises(ValueError, match='divisible'):
         tool.produce(args)
 
+
 @pytest.mark.parametrize('mutate', [False, True])
 def test_audited_source_flows_to_bank_and_rejects_changed_pin(tmp_path, monkeypatch, mutate):
     from scripts import audited_source_admission as audited
