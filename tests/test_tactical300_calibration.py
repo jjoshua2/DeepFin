@@ -1,4 +1,4 @@
-"""Retrospective Tactical300 calibration against saved G10 deeper searches."""
+"""Retrospective Tactical300 diagnostic against saved G10 deeper searches."""
 
 from __future__ import annotations
 
