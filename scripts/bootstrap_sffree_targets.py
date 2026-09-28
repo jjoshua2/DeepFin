@@ -109,6 +109,32 @@ def build_cohort(manifest: dict[str, Any], out: Path, *, minimum_free_gib: float
     guard()
     out.mkdir()
     (out / 'E').mkdir()
+    scopes = []
+    for entry in entries:
+        src = (base / entry['shard']).resolve(strict=True)
+        scopes.append({
+            'base': str(src),
+            'output': str(out / 'E' / src.name),
+            'base_seal': manifest['base_seal'],
+            'replacements': ['policy_target', 'search_wdl'],
+            'recipe': {**RECIPE,
+                       'base_summary': manifest['base_summary'],
+                       'ceres_binding': entry['ceres_binding'],
+                       'ceres_attrs_sha256': entry['ceres_attrs_sha256'],
+                       'native_bt4_binding': entry['native_bt4_binding'],
+                       'native_bt4_attrs_sha256': entry['native_bt4_attrs_sha256']},
+        })
+    intents = [old._target_intent(
+        Path(scope['base']), Path(scope['output']), scope['base_seal'],
+        sorted(scope['replacements'])) for scope in scopes]
+    registration = out / 'producer-registration.json'
+    old._atomic_new_json(registration, {
+        'schema': 2, 'kind': 'target-overlay-producer-registration',
+        'intents': intents, 'recipes': [scope['recipe'] for scope in scopes],
+    })
+    roster_ref = overlay.write_target_intent_roster(
+        scopes, out / 'intent-roster.json',
+        registration_ref={'path': str(registration), 'sha256': old.sha(registration)})
     rows = 0
     for entry in entries:
         guard()
@@ -133,7 +159,8 @@ def build_cohort(manifest: dict[str, Any], out: Path, *, minimum_free_gib: float
         factorial.policy.check_ceres_alignment(source, ceres, attrs, n)
         dest = out / 'E' / src.name
         overlay.begin_target_shard(src, dest, manifest['base_seal'],
-                                   replacements=('policy_target', 'search_wdl'), seal=context)
+                                   replacements=('policy_target', 'search_wdl'),
+                                   roster_ref=roster_ref, seal=context)
         target: Any = zarr.open_group(str(dest), mode='a')
         offsets = np.asarray(ceres['legal_offsets'][:])
         for start in range(0, n, 512):
@@ -154,7 +181,8 @@ def build_cohort(manifest: dict[str, Any], out: Path, *, minimum_free_gib: float
             'base_summary': manifest['base_summary'], 'ceres_binding': binding,
             'ceres_attrs_sha256': entry['ceres_attrs_sha256'],
             'native_bt4_binding': entry['native_bt4_binding'],
-            'native_bt4_attrs_sha256': entry['native_bt4_attrs_sha256']}, seal=context)
+            'native_bt4_attrs_sha256': entry['native_bt4_attrs_sha256']},
+            roster_ref=roster_ref, seal=context)
         rows += n
     guard()
     factorial.pinned(manifest['base_summary'])
