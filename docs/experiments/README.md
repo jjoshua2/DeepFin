@@ -13,6 +13,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [BT4/Ceres full-prefix source pilots and 500M capacity](2026-09-27-500m-source-capacity.md) | Strict complete-game source rates, corrected BT4 batching histogram, illustrative 30-day gap and zero-credit mixed-source admission gate |
+| [Ceres v11 sink 10% optimization screen](2026-09-28-ceres-sink-10pct-screen.md) | Read-only saved-receipt/source bound: no safe single low-risk verifier edit proves 10% source-wall saving; timer-only next step |
 | [Native async lifecycle](2026-09-22-native-async-lifecycle.md) | Bounded worker ownership, exact cancellation/retirement and separate real CPU-model qualification; no asynchronous UCI or GPU claim |
 | [Native policy-map and buffer reuse](2026-09-22-native-buffer-reuse.md) | Linear Bend-owned reusable storage, packed transport and opt-in diagnostics; bounded CPU qualification |
 | [BT4 root worker CUDA qualification](2026-09-23-bt4-root-worker-gpu-qualification.md) | Preregistered tiny real-model 7-to-6 correctness and accepted-row writer-cost pilots under shared GPU lease; no GPU run yet |
