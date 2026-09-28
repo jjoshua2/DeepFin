@@ -32,8 +32,8 @@ def identity(root: C.Root) -> C.Root & U32:
   (C.Root{g,S.Tree{pool,used,cap,n,pending,ep,req,stop,depth},neural,draws},ep)
 
 def halt_root(root: C.Root) -> C.Root:
-  C.Root{g,S.Tree{pool,used,cap,n,pending,ep,req,stop,depth},neural,draws} = root
-  C.Root{g,S.Tree{pool,used,cap,n,4096,ep,req,2,depth},neural,draws}
+  C.Root{g,S.Tree{pool,used,+cap,n,pending,ep,req,stop,depth},neural,draws} = root
+  C.Root{g,S.Tree{pool,used,cap,n,S.no_pending(cap),ep,req,2,depth},neural,draws}
 
 def mark_checked(selected: Bool, root: C.Root) -> C.Root:
   match selected:
@@ -85,13 +85,13 @@ def raw_returned(cfg: C.Config,tail: Q.Queue<&1, C.Root>,tasks: List<C.Task>,tab
   (output,valid) = r
   retire(valid,cfg,tail,tasks,C.Store{table,maps,scratch,logits,input,output,cap},flags,counts,began,rounds)
 
-def polled(status: U32, cfg: C.Config, tail: Q.Queue<&1, C.Root>, tasks: List<C.Task>, token: U32, rows: U32,
+def polled(status: U32, cfg: C.Config, tail: Q.Queue<&1, C.Root>, tasks: List<C.Task>, +token: U32, rows: U32,
   table: Array<U64>, maps: Policy.Maps, scratch: Array<F32>, logits: Array<F32>, input: Array<F32>, output: Array<F32>, cap: B.Capabilities,
   flags: Ctrl.Flags, counts: Counts, began: Nat, rounds: U32) -> IO(State):
   match status:
     case 1:
       do IO<State>:
-        IO.sleep(1)
+        A.BatchAsync.wait(token)
         return State{Waiting{tail,tasks,token,rows},C.Store{table,maps,scratch,logits,input,output,cap},flags,counts,began,rounds}
     case 2: raw_returned(cfg,tail,tasks,table,maps,scratch,logits,input,cap,flags,counts,began,rounds,C.raw_valid(rows,output))
     case 4: IO.die(State,2,"async cohort backend failed; no successful summary")
@@ -168,13 +168,19 @@ def gathered(+cfg: C.Config,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: 
     a : DW.Admission <- DW.prepare(17n,cfg,DW.Admission{C.Gathered{tail,List.reverse(&1,C.Task,tasks),store,rows,steps},flags,False{}})
     admission_returned(cfg,counts,began,rounds,a)
 
-def round_ready(+cfg: C.Config,roots: Q.Queue<&1, C.Root>,store: C.Store,+flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32) -> IO(State):
+def round_limited(limit: U32,+cfg: C.Config,roots: Q.Queue<&1, C.Root>,store: C.Store,+flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32) -> IO(State):
   C.Store{table,maps,scratch,logits,input,output,+cap} = store
   B.Capabilities{profile,batch,channels,ilog,olog} = cap
   Ctrl.Flags{mask,n,eof,timers} = flags
   do IO<State>:
-    g : C.Gathered <- C.gather(16n,cfg,batch,C.Gathered{mark_queue(Ctrl.stopped(flags),roots),Nil{},C.Store{table,maps,scratch,logits,input,output,cap},0,0})
+    g : C.Gathered <- C.gather(16n,cfg,limit,C.Gathered{mark_queue(Ctrl.stopped(flags),roots),Nil{},C.Store{table,maps,scratch,logits,input,output,cap},0,0})
     gathered(cfg,flags,counts,began,U32.inc(rounds),g)
+
+# Existing fixed-cohort/default-live path retains its full physical gather cap.
+def round_ready(cfg: C.Config,roots: Q.Queue<&1,C.Root>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32) -> IO(State):
+  C.Store{table,maps,scratch,logits,input,output,+cap} = store
+  B.Capabilities{profile,batch,channels,ilog,olog} = cap
+  round_limited(batch,cfg,roots,C.Store{table,maps,scratch,logits,input,output,cap},flags,counts,began,rounds)
 
 def bounded(rounds: U32,cfg: C.Config,roots: Q.Queue<&1, C.Root>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat) -> IO(State):
   match rounds:

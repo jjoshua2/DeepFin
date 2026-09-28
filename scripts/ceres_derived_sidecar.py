@@ -114,6 +114,11 @@ def collection_counts(n: int, pad_final_batch: bool, size: int = BATCH) -> dict[
 
 def validate_args(args: argparse.Namespace) -> None:
     selected.validate(args)
+    require(not (selected.enabled(args) and getattr(args, 'audited_source_manifest', None)),
+            'selected bank and audited source are exclusive')
+    require(bool(getattr(args, 'audited_source_manifest', None)) ==
+            bool(getattr(args, 'expected_audited_source_manifest_sha256', None)),
+            'audited source requires path and digest')
     batch_size(args)
     require(args.threads == 2, 'requires two threads')
     provider_options(args)
@@ -195,9 +200,45 @@ def open_teacher(args: argparse.Namespace) -> Any:
     return session
 
 
+def audited_binding(args: argparse.Namespace) -> dict[str, Any]:
+    admission = getattr(args, 'audited_source_admission', None)
+    if admission is None:
+        return {}
+    from scripts import audited_source_admission as audited
+    return {'audited_source_admission': admission,
+            'audited_admission_script_sha256': shared.file_sha256(audited.__file__)}
+
+
+def check_audited_pins(args: argparse.Namespace) -> None:
+    admission = getattr(args, 'audited_source_admission', None)
+    if admission is None:
+        return
+    references = [admission['qualification'], admission['derived_summary']]
+    references += [{'path': p, 'sha256': digest}
+                   for p, digest in admission['summary_pins'].items()]
+    references += admission['baseline_exclusion_pins']
+    cache = getattr(args, '_audited_pin_states', {})
+    for ref in references:
+        path = Path(ref['path'])
+        stat = path.stat()
+        state = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+        if path in cache:
+            require(cache[path] == state, 'audited source pin changed: ' + str(path))
+        else:
+            require(shared.file_sha256(path) == ref['sha256'],
+                    'audited source pin changed: ' + str(path))
+            current = path.stat()
+            require(state == (current.st_dev, current.st_ino, current.st_size,
+                              current.st_mtime_ns, current.st_ctime_ns),
+                    'audited source changed during pin read')
+            cache[path] = state
+    args._audited_pin_states = cache
+
+
 def namespace(args: argparse.Namespace) -> dict[str, Any]:
     return {'profile': profile(args), 'source': str(Path(args.source).resolve()),
             'summary_sha256': args.expected_source_summary_sha256,
+            **audited_binding(args),
             **(selected.binding(args) if selected.enabled(args) else shared.g10_binding(args)),
             'model_sha256': args.expected_onnx_sha256,
             'backend': backend(args),
@@ -464,6 +505,7 @@ def produce(args: argparse.Namespace) -> None:
                 selected.guard(args)
             else:
                 shared.check_g10_pin(args)
+                check_audited_pins(args)
 
         if todo:
             gpu_path = Path(args.gpu_lock)
@@ -496,6 +538,11 @@ def produce(args: argparse.Namespace) -> None:
             current = shared.g10.admit(Path(args.g10_common_qualification),
                 args.expected_g10_common_qualification_sha256, Path(args.source), summary)
             require(shared.g10.same(current, args.g10_admission), 'G10 admission changed')
+        if getattr(args, 'audited_source_admission', None) is not None:
+            from scripts import audited_source_admission as audited
+            current = audited.admit(Path(args.audited_source_manifest),
+                args.expected_audited_source_manifest_sha256, Path(args.source), summary)
+            require(audited.same(current, args.audited_source_admission), 'audited admission changed')
         for spec in specs:
             attrs = dict(zarr.open_group(str(Path(args.out) / spec['path']), mode='r').attrs)
             require(shared.storage_identity(source_path(args, spec))
@@ -534,6 +581,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(batch_size=BATCH, gpu_mem_gb=8)
     parser._option_string_actions['--batch-size'].choices = SUPPORTED_BATCHES
     parser._option_string_actions['--expected-source-summary-sha256'].required = False
+    parser.add_argument('--audited-source-manifest')
+    parser.add_argument('--expected-audited-source-manifest-sha256')
     parser.add_argument('--selected-bank-qualification',
                         help='Explicit immutable Soft-SF sample complete.json; --source is its bank directory')
     parser.add_argument('--expected-selected-bank-qualification-sha256')
