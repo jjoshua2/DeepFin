@@ -1,0 +1,86 @@
+[
+  {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run06_g10/derived",
+    "rows": 1006190,
+    "selected_shards": 4,
+    "admitted": true
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run07_g10_companion4/derived",
+    "rows": 511735,
+    "selected_shards": 4,
+    "admitted": true
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/derive_plan_v1/run06_g10/derived",
+    "rows": 3165724,
+    "selected_shards": 4,
+    "admitted": true
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/derive_plan_v1/run07_g10_companion4/derived",
+    "rows": 1053702,
+    "selected_shards": 4,
+    "admitted": true
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/cpu_pipeline_v1/block00/run06_g10/derived",
+    "rows": 3165952,
+    "selected_shards": 4,
+    "admitted": true
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/cpu_pipeline_v1/block00/run07_g10_companion4/derived",
+    "rows": 1054695,
+    "selected_shards": 4,
+    "admitted": true
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/cpu_pipeline_v1/block01/run06_g10/derived",
+    "rows": 3165245,
+    "selected_shards": 4,
+    "admitted": true
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/cpu_pipeline_v1/block01/run07_g10_companion4/derived",
+    "rows": 1053748,
+    "selected_shards": 4,
+    "admitted": true
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/cpu_pipeline_v1/block02/run06_g10/derived",
+    "rows": 791786,
+    "selected_shards": 4,
+    "admitted": true
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/cpu_pipeline_v1/block02/run07_g10_companion4/derived",
+    "rows": 264715,
+    "selected_shards": 4,
+    "admitted": true
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/remaining915_pipeline_v1/block00/run06_g10/derived",
+    "rows": 3166068,
+    "selected_shards": 4,
+    "admitted": true
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/remaining915_pipeline_v1/block00/run07_g10_companion4/derived",
+    "rows": 1053910,
+    "selected_shards": 4,
+    "admitted": true
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/remaining915_pipeline_v1/block01/run06_g10/derived",
+    "rows": 3165618,
+    "selected_shards": 4,
+    "admitted": true
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/remaining915_pipeline_v1/block01/run07_g10_companion4/derived",
+    "rows": 157023,
+    "selected_shards": 4,
+    "admitted": true
+  }
+]

@@ -479,3 +479,38 @@ def test_configured_batch_without_padding_requires_divisibility(tmp_path, monkey
     monkeypatch.setattr(tool, 'open_teacher', lambda _a: pytest.fail('invalid tail opened inference'))
     with pytest.raises(ValueError, match='divisible'):
         tool.produce(args)
+
+
+@pytest.mark.parametrize('mutate', [False, True])
+def test_audited_source_flows_to_bank_and_rejects_changed_pin(tmp_path, monkeypatch, mutate):
+    from scripts import audited_source_admission as audited
+    args = setup(tmp_path, monkeypatch)
+    receipt = tmp_path / 'audited.json'
+    receipt.write_text('{}')
+    args.audited_source_manifest = str(receipt)
+    args.expected_audited_source_manifest_sha256 = tool.shared.file_sha256(receipt)
+    admission = {'qualification': {'path': str(receipt), 'sha256': args.expected_audited_source_manifest_sha256},
+                 'derived_summary': {'path': str(Path(args.source) / tool.shared.SUMMARY),
+                                     'sha256': args.expected_source_summary_sha256},
+                 'summary_pins': {}, 'baseline_exclusion_pins': []}
+    monkeypatch.setattr(audited, 'admit', lambda *a: admission)
+    session = Session(tmp_path)
+    original = session.run
+    def run(names, feed):
+        outputs = original(names, feed)
+        if mutate:
+            receipt.write_text('{"changed": true}')
+        return outputs
+    session.run = run
+    monkeypatch.setattr(tool, 'open_teacher', lambda a: session)
+    if mutate:
+        with pytest.raises(ValueError, match='audited source pin changed'):
+            tool.produce(args)
+        assert not (Path(args.invocation) / 'child_completed.json').exists()
+    else:
+        tool.produce(args)
+        bank = zarr.open_group(str(Path(args.out) / 'shard_000000.zarr'), mode='r')
+        assert bank.attrs['binding']['audited_source_admission'] == admission
+        assert bank.attrs['binding']['audited_admission_script_sha256'] == tool.shared.file_sha256(audited.__file__)
+        complete = json.loads((Path(args.invocation) / 'child_completed.json').read_text())
+        assert complete['namespace']['audited_source_admission'] == admission
