@@ -171,6 +171,7 @@ analysis workflow.
 - [FIFO cohort integration](2026-09-23-fifo-cohort-integration.md): ready-root queue adoption with exact parent scheduling, tree, cancellation and deadline checks.
 
 - [Matched full-coordinator FIFO timing](2026-09-23-fifo-runner-timing.md): exact list/FIFO sources, optimized callback runner, strict realized-work checks and paired timings; no model/GPU claim.
+- [Bounded completion notification](2026-09-23-bounded-completion-wait.md): notification versus fixed pending sleep, matched callback runner and retained control/deadline checks.
 - [Ceres CPU history reductions](2026-09-21-ceres-history-reductions.md) — exact-byte CPU encoder comparison.
 Current evidence correction and scale plan: [September 16 bootstrap audit](2026-09-16-bootstrap-status-audit.md).
 - [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.

@@ -1,0 +1,118 @@
+name: Bend completion regression
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/bend-completion.yml'
+      - 'native/bend_engine/**'
+      - 'chess_anti_engine/encoding/**'
+      - 'chess_anti_engine/moves/**'
+      - 'tests/test_bend*.py'
+      - 'tests/test_neural_work.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.python-version'
+      - 'scripts/lint.sh'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bend-completion.yml'
+      - 'native/bend_engine/**'
+      - 'chess_anti_engine/encoding/**'
+      - 'chess_anti_engine/moves/**'
+      - 'tests/test_bend*.py'
+      - 'tests/test_neural_work.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.python-version'
+      - 'scripts/lint.sh'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bend-completion-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  BEND_NO_TELEMETRY: '1'
+  CAE_TEST_THREADS: '2'
+  OMP_NUM_THREADS: '2'
+  MKL_NUM_THREADS: '2'
+  MAX_JOBS: '1'
+  CUDA_VISIBLE_DEVICES: ''
+  PYTHONUNBUFFERED: '1'
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Native ownership, completion, exception cleanup and mutation
+        env:
+          CXX: clang++-18
+        run: python3 -m native.bend_engine.multi_root.ci_completion native --output artifacts/completion-native
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-completion-native
+          path: |
+            artifacts/completion-native/*.json
+            artifacts/completion-native/*.stdout
+            artifacts/completion-native/*.stderr
+          retention-days: 30
+  coordinator:
+    needs: native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked CPU environment and source compiler
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+      - name: CI admission and existing Python contracts
+        run: |
+          . .venv/bin/activate
+          ruff check native/bend_engine/multi_root/ci_completion.py tests/test_bend_completion_ci.py
+          basedpyright native/bend_engine/multi_root/ci_completion.py tests/test_bend_completion_ci.py
+          python -m pytest -q tests/test_bend_completion_ci.py tests/test_bend_completion_wait.py tests/test_bend_fifo_scheduler.py tests/test_bend_multi_root.py tests/test_bend_async_cohort.py tests/test_bend_cohort_deadlines.py tests/test_neural_work.py --junitxml=artifacts/completion-python.xml
+      - name: Fresh actual coordinator and unchanged serial, control and deadline oracles
+        env:
+          CC: clang-18
+          CXX: clang++-18
+          BUN: bun
+        run: |
+          . .venv/bin/activate
+          revision=$(python -c 'import json; print(json.load(open("native/bend_engine/standalone/toolchain.json"))["revision"])')
+          python -m native.bend_engine.multi_root.ci_completion cohort --compiler-root "build/bend_toolchain/sources/$revision" --output artifacts/completion-cohort
+      - name: Whole-repository static gate
+        run: |
+          . .venv/bin/activate
+          ./scripts/lint.sh
+          git diff --exit-code
+      - name: Compress generated diagnostic C
+        if: always()
+        run: |
+          if test -f artifacts/completion-cohort/runner.c; then
+            gzip -c artifacts/completion-cohort/runner.c > artifacts/completion-cohort/runner.c.gz
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-completion-coordinator
+          path: |
+            artifacts/completion-python.xml
+            artifacts/completion-cohort/**/*.json
+            artifacts/completion-cohort/**/*.txt
+            artifacts/completion-cohort/*.stdout
+            artifacts/completion-cohort/*.stderr
+            artifacts/completion-cohort/runner.c.gz
+          retention-days: 30

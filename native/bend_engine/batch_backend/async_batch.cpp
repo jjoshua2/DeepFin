@@ -22,4 +22,12 @@ extern "C" uint32_t deepfin_async_batch_poll(uint32_t token, float* y, uint32_t 
   try { return instance().take(token, y, rows); }
   catch (const std::exception& e) { invalid(e); }
 }
+// At most one millisecond of requested waiting before Bend services control
+// and deadlines again. Notifications can end this wait early; it never takes.
+extern "C" void deepfin_async_batch_wait(uint32_t token) {
+  try {
+    if (instance().wait_ready(token, std::chrono::milliseconds(1)) == deepfin_native::AsyncBatch::unknown)
+      throw std::invalid_argument("batch completion token");
+  } catch (const std::exception& e) { invalid(e); }
+}
 extern "C" void deepfin_async_batch_shutdown() { instance().shutdown(); }

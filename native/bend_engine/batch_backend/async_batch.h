@@ -1,5 +1,6 @@
 #pragma once
 // Physical batch ownership only. Row-to-root mapping/cancellation belong to Bend.
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
@@ -50,6 +51,19 @@ class AsyncBatch {
     return state;
   }
 
+  // Non-consuming wait by the same owner that submits/takes. No tensor access,
+  // token reuse, or ownership transfer; take() remains the only retirement path.
+  Status wait_ready(uint32_t token, std::chrono::milliseconds budget) {
+    if (budget.count() < 0) throw std::invalid_argument("negative batch wait budget");
+    std::unique_lock guard(mutex_);
+    if (!occupied_ || token != last_) return unknown;
+    ready_.wait_for(guard, budget, [this, token] {
+      return !occupied_ || token != last_ || done_;
+    });
+    if (!occupied_ || token != last_) return unknown;
+    return done_ ? (poisoned_ ? failed : complete) : pending;
+  }
+
   void shutdown() {
     // One owner calls shutdown, never the callback or a racing second shutdown.
     { std::lock_guard guard(mutex_); closing_ = true; wake_.notify_one(); }
@@ -78,12 +92,13 @@ class AsyncBatch {
       try { bad = execute_(input_.data(), rows, output_.data(), rows * 1861) != 0; }
       catch (...) { bad = true; }
       { std::lock_guard guard(mutex_); poisoned_ |= bad; done_ = true; }
+      ready_.notify_one();
     }
   }
   uint32_t batch_, width_;
   Execute execute_;
   std::mutex mutex_;
-  std::condition_variable wake_;
+  std::condition_variable wake_, ready_;
   std::vector<float> input_, output_;
   uint32_t rows_ = 0, last_;
   bool occupied_ = false, queued_ = false, done_ = false, closing_ = false, poisoned_ = false;

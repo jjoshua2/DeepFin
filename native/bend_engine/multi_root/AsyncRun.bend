@@ -85,13 +85,13 @@ def raw_returned(cfg: C.Config,tail: Q.Queue<&1, C.Root>,tasks: List<C.Task>,tab
   (output,valid) = r
   retire(valid,cfg,tail,tasks,C.Store{table,maps,scratch,logits,input,output,cap},flags,counts,began,rounds)
 
-def polled(status: U32, cfg: C.Config, tail: Q.Queue<&1, C.Root>, tasks: List<C.Task>, token: U32, rows: U32,
+def polled(status: U32, cfg: C.Config, tail: Q.Queue<&1, C.Root>, tasks: List<C.Task>, +token: U32, rows: U32,
   table: Array<U64>, maps: Policy.Maps, scratch: Array<F32>, logits: Array<F32>, input: Array<F32>, output: Array<F32>, cap: B.Capabilities,
   flags: Ctrl.Flags, counts: Counts, began: Nat, rounds: U32) -> IO(State):
   match status:
     case 1:
       do IO<State>:
-        IO.sleep(1)
+        A.BatchAsync.wait(token)
         return State{Waiting{tail,tasks,token,rows},C.Store{table,maps,scratch,logits,input,output,cap},flags,counts,began,rounds}
     case 2: raw_returned(cfg,tail,tasks,table,maps,scratch,logits,input,cap,flags,counts,began,rounds,C.raw_valid(rows,output))
     case 4: IO.die(State,2,"async cohort backend failed; no successful summary")
