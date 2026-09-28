@@ -1,0 +1,134 @@
+name: Bend live-root regression
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/bend-live.yml'
+      - 'native/bend_engine/**/*.bend'
+      - 'native/bend_engine/**/*.c'
+      - 'native/bend_engine/**/*.h'
+      - 'native/bend_engine/**/*.cpp'
+      - 'native/bend_engine/**/*.py'
+      - 'native/bend_engine/**/*.sh'
+      - 'native/bend_engine/**/*.js'
+      - 'native/bend_engine/standalone/toolchain.json'
+      - 'native/bend_engine/standalone/CMakeLists.txt'
+      - 'tests/test_bend_live_cohort.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.python-version'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bend-live.yml'
+      - 'native/bend_engine/**/*.bend'
+      - 'native/bend_engine/**/*.c'
+      - 'native/bend_engine/**/*.h'
+      - 'native/bend_engine/**/*.cpp'
+      - 'native/bend_engine/**/*.py'
+      - 'native/bend_engine/**/*.sh'
+      - 'native/bend_engine/**/*.js'
+      - 'native/bend_engine/standalone/toolchain.json'
+      - 'native/bend_engine/standalone/CMakeLists.txt'
+      - 'tests/test_bend_live_cohort.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.python-version'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bend-live-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  BEND_NO_TELEMETRY: '1'
+  CAE_TEST_THREADS: '2'
+  OMP_NUM_THREADS: '2'
+  MKL_NUM_THREADS: '2'
+  MAX_JOBS: '1'
+  CUDA_VISIBLE_DEVICES: ''
+  PYTHONUNBUFFERED: '1'
+jobs:
+  live:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked CPU environment and source compiler
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+      - name: Transcript contracts and scoped static checks
+        run: |
+          . .venv/bin/activate
+          mkdir -p artifacts/live-ci
+          ruff check native/bend_engine/multi_root/verify_live.py tests/test_bend_live_cohort.py
+          basedpyright native/bend_engine/multi_root/verify_live.py tests/test_bend_live_cohort.py
+          python -m pytest -q tests/test_bend_live_cohort.py --junitxml=artifacts/live-python.xml
+      - name: Fresh source-only live application, registry and negative controls
+        env:
+          CC: clang-18
+          CXX: clang++-18
+          BUN: bun
+        run: |
+          . .venv/bin/activate
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          from native.bend_engine.multi_root.ci_completion import Commands
+          output = Path('artifacts/live-ci').resolve()
+          commands = Commands(output)
+          pin = json.loads(Path('native/bend_engine/standalone/toolchain.json').read_text())['revision']
+          compiler = str(Path('build/bend_toolchain/sources', pin).resolve())
+          report = {'status': 'failed', 'scope': 'source-only deterministic callback; no model or benchmark'}
+          try:
+              commands.run('registry', ['bash', 'native/bend_engine/multi_root/qualify_live_registry.sh', compiler, str(output / 'registry')], timeout=300)
+              commands.run('live', ['bash', 'native/bend_engine/multi_root/qualify_live.sh', compiler, str(output / 'live')], timeout=1100)
+              names = ['live/status.json']
+              names += [f'live/{mode}-c{channels}-b4/qualification.json' for mode in ('normal', 'ubsan') for channels in (146, 175)]
+              hashes = {}
+              for name in names:
+                  raw = (output / name).read_bytes()
+                  data = json.loads(raw)
+                  if not isinstance(data, dict) or data.get('status') != 'passed':
+                      raise ValueError(f'live gate did not pass: {name}')
+                  hashes[name] = hashlib.sha256(raw).hexdigest()
+              state = json.loads((output / 'live/status.json').read_text())
+              if state.get('live_runner_qualified') is not True or state.get('neural_model_qualified') is not False:
+                  raise ValueError('incorrect live qualification scope')
+              report.update(status='passed', reports=hashes)
+          except Exception as error:
+              report['error'] = str(error)
+              raise
+          finally:
+              (output / 'summary.json').write_text(json.dumps(report, indent=2) + '\n')
+          PY
+          git diff --exit-code
+      - name: Compress generated diagnostic sources
+        if: always()
+        run: |
+          for entry in live main live_registry_probe; do
+            p="artifacts/live-ci/live/$entry.c"
+            if test -f "$p"; then gzip -c "$p" > "$p.gz"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-live-root-regression
+          path: |
+            artifacts/live-python.xml
+            artifacts/live-ci/**/*.json
+            artifacts/live-ci/**/*.txt
+            artifacts/live-ci/**/*.err
+            artifacts/live-ci/*.stdout
+            artifacts/live-ci/*.stderr
+            artifacts/live-ci/live/*.c.gz
+          retention-days: 30
