@@ -1,4 +1,4 @@
-# Bounded multi-root search (PR5a/PR5b)
+# Bounded multi-root search (PR5a-PR5c)
 
 This is an explicit **CPU-F32, fixed-batch, offline cohort runner**, not a replacement
 for the UCI application. It owns 1–16 independent Bend search trees, visits roots
@@ -70,9 +70,9 @@ python -m native.bend_engine.multi_root.verify \
   --checkpoint /path/to/checkpoint.pt --report /tmp/cohort-model.json
 ```
 
-No production defaults change. PR5b adds opt-in async polling and per-root
-cancellation below. Live root arrival/removal, persistent self-play integration,
-bounded wall-time admission, measured bucket selection, trained-model CUDA
+No production defaults change. PR5b adds async polling/cancellation and PR5c adds
+per-root deadline controls below. Live root arrival/removal, persistent self-play
+integration, service-time-driven admission/bucket selection, trained-model CUDA
 qualification and same-tree concurrency remain later work. PR4's UCI decision
 semantics do not apply to this separate headless executable. Fewer forward calls
 are not a speedup or Elo claim.
@@ -120,8 +120,9 @@ normalization/search resume. Every real raw logit is checked before any neural
 backup, including logits of cancelled rows; cancellation cannot hide backend or
 nonfinite-output failure. There is one slot, not overlapping model execution.
 
-Async final work uses `deepfin.multi-root-async-work.v1`; the synchronous schema is
-unchanged. `cohort_root` gains `dispatched_real_rows`, `cancelled_rows` and
+PR5b introduced `deepfin.multi-root-async-work.v1`; PR5c extends it to
+`deepfin.multi-root-async-work.v2` with the deadline fields below. The synchronous
+schema is unchanged. `cohort_root` gains `dispatched_real_rows`, `cancelled_rows` and
 `cancel_requested`. `cancelled_rows` counts discarded admitted evaluations, not
 cancel commands or undispatched roots. On a successful final report:
 `dispatched = executed = accepted + cancelled`, with padding separate and no
@@ -149,3 +150,52 @@ Real models are separately checked by `verify --asynchronous` using the exact
 checkpoint/package. The [PR5b record](../../../docs/experiments/2026-09-23-async-cohort.md)
 contains completed results and limits. Real no-cancel model tests and deterministic
 cancellation tests are distinct evidence; neither establishes trained/GPU speed.
+
+## Per-root deadlines (PR5c)
+
+In asynchronous mode, `deadline ROOT MS` sets a root's timeout relative to the
+moment the command is processed. ROOT is the existing 1-based cohort ID; MS is an
+integer from 0 to 3,600,000. Zero expires immediately. A later command may shorten
+an existing deadline but cannot extend it. A completed, manually stopped or expired
+root cannot be revived. This is a control command, not a startup wall-time budget.
+Synchronous mode and its report schema are unchanged.
+
+The coordinator checks deadlines before gathering, after gathering/compaction and
+before processing each returned neural row. Expired preadmission rows are removed
+and the surviving inputs compacted in stable physical-row order. They consume no
+forward reservation. Already admitted rows must still finish physically and are
+charged as cancelled/wasted without reaching normalization or Search.resume.
+Unaffected roots in the same batch continue, and previously accepted work remains.
+All raw logits, even expired rows, still pass the whole-batch validation gate.
+
+Timers continue after stdin EOF and between buffered commands. Notifications use
+`cohort_control deadline ROOT MS` and one `cohort_control expired ROOT`. A manual
+cancellation does not later become a deadline-expiry reason. Final summaries wait
+for physical drain, exactly as in PR5b; expiry is not an early UCI bestmove.
+
+Async final reports now use `deepfin.multi-root-async-work.v2`. Each root adds
+`deadline_offset_ms` (null or due time relative to the cohort clock's origin) and
+`deadline_expired`. The aggregate adds `deadline_expired_mask`, with bit ROOT set
+for each expired root. `cancel_requested` retains its logical-stop meaning and is
+true for both manual cancellation and expiry; use `deadline_expired` to distinguish
+them. Existing counters keep their units and all admitted rows remain charged.
+The verifier accepts historic async v1 reports, but rejects unacknowledged or
+contradictory deadline data. Do not compare final drain time with time-to-decision.
+
+Individual encoding, normalization/backup and output operations remain synchronous,
+so no exact hard deadline or maximum stop latency is promised. A model callback is
+not preempted. This does not add dynamic roots, multiple forwards, live self-play,
+measured dispatch choices, CUDA inference or a larger search arena.
+
+After the explicit `qualify_async.sh` matrix, run the deadline-specific tests:
+
+```sh
+bash native/bend_engine/multi_root/qualify_deadlines.sh \
+  /path/to/verified/bend /path/to/async-matrix /tmp/new-deadline-check
+```
+
+This checks actual timer/compaction functions and the compiled coordinator with
+held callbacks in normal and UBSan modes. See the
+[deadline experiment record](../../../docs/experiments/2026-09-23-cohort-deadlines.md)
+for scope and completed evidence. Test-only held callbacks are never linked into
+the model product. No GPU, throughput or Elo claim follows from functional passes.
