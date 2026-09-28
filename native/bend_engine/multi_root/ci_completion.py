@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import time
 from typing import Any
 
@@ -138,7 +139,14 @@ def cohort(commands: Commands, compiler: Path, bun: str, cc: str) -> dict[str, A
                            str(commands.output / 'matrix')], timeout=900)
     commands.run('deadlines', ['bash', str(HERE / 'qualify_deadlines.sh'), str(compiler),
                               str(commands.output / 'matrix'), str(commands.output / 'deadlines')], timeout=180)
-    return {'verifier_reports': matrix_reports(commands.output),
+    commands.run('arena', [sys.executable, '-m', 'native.bend_engine.multi_root.verify_arena',
+                           '--compiler-root', str(compiler), '--matrix', str(commands.output / 'matrix'),
+                           '--oracle', str(oracle), '--output', str(commands.output / 'arena')], timeout=600)
+    arena = json.loads((commands.output / 'arena/summary.json').read_text())
+    if arena.get('status') != 'passed' or len(arena.get('searches', [])) != 37:
+        raise ValueError('incomplete arena qualification')
+    return {'arena_report_sha256': hashlib.sha256((commands.output / 'arena/summary.json').read_bytes()).hexdigest(),
+            'verifier_reports': matrix_reports(commands.output),
             'generated_c_sha256': hashlib.sha256(generated.read_bytes()).hexdigest()}
 
 

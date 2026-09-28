@@ -32,8 +32,8 @@ def identity(root: C.Root) -> C.Root & U32:
   (C.Root{g,S.Tree{pool,used,cap,n,pending,ep,req,stop,depth},neural,draws},ep)
 
 def halt_root(root: C.Root) -> C.Root:
-  C.Root{g,S.Tree{pool,used,cap,n,pending,ep,req,stop,depth},neural,draws} = root
-  C.Root{g,S.Tree{pool,used,cap,n,4096,ep,req,2,depth},neural,draws}
+  C.Root{g,S.Tree{pool,used,+cap,n,pending,ep,req,stop,depth},neural,draws} = root
+  C.Root{g,S.Tree{pool,used,cap,n,S.no_pending(cap),ep,req,2,depth},neural,draws}
 
 def mark_checked(selected: Bool, root: C.Root) -> C.Root:
   match selected:
