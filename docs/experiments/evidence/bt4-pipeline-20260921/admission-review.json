@@ -1,0 +1,27 @@
+{
+  "status": "APPROVED",
+  "scope": "Queue admission for single bounded BT4 pipeline screen after D/D_C/D_B success; no immediate GPU launch.",
+  "plan_sha256": "8ad936c13fd36b1e97fcae11d27b87423a00cea00b754e342f6d90bb5bd614dc",
+  "command_sha256": "2be717bdf04338d03d0c41927bd86f94b1d7631da9dd7275b3c5c31e77583a2b",
+  "queue_item_sha256": "2808d45d0317d7cf2779fe40d59cdd1facf1490b9f5445437f1d8d5f8b33aa94",
+  "harness_sha256": "fb6c6cb1836c150f9f1f6557253a3bf21d1ce3a6eab3786f58b7ac112f1d4c0b",
+  "independent_checks": [
+    "All3fullruntime rosters/HEAD/directorylinks/resolvedfilepins revalidated:2896/2898/2901files.",
+    "Allmodel/source/manifest and dependency descriptor pins verified.",
+    "ExactABCCBA,batch128,8236rows,defaultFalse/B andoptinTrue/C verified.",
+    "Freshoutputs and queue tail D,D_C,D_B verified; runtime dependency gate requires logged/pass/outer0.",
+    "Outer1200s watchdog TERM30sgrace; inner1140s monitoredloop owns separateworker groups and inherits GPUleaseFD throughworker lifetime.",
+    "Nineindependentharness testsPASS; prefetch73tests+realSIGINTcleanupPASS.",
+    "CPUworker smoke receipts actuallabel/verify callcontracts match exactfrozen rawproducerSHA forA/B/C; mockedORT/deviceguards do not qualifyGPU."
+  ],
+  "smoke_receipt_sha256": {
+    "A": "250d74ec94ec1c4430a16beda18a2b3f844131aa88d9a934b2e5ed25edc56572",
+    "B": "a2b2141f1c378b031cf796afd95fb0d09b33c135c9c4f6f8175008b3f9f7cdc0",
+    "C": "5928446f1cc03b7eb82e0bb405318927bf26efed4f1bda28fe973d5e2d27e4d8"
+  },
+  "limitations": [
+    "One warm-session bankedshard withtwoobservationspervariant; measuredSHAoverhead included.",
+    "Appendonly underexistingqueue lock; preserveallprioritems/state; do notbypassdependencies.",
+    "ActualCUDAprovider/outputparity/throughputscreen remains future gatedwork."
+  ]
+}

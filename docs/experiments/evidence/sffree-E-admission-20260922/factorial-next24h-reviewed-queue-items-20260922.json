@@ -1,0 +1,62 @@
+[
+  {
+    "id": "factorial58_sffree_20260922_E",
+    "kind": "registered_command",
+    "status": "queued",
+    "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/scheduler_run",
+    "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/registered_command.json",
+    "command_sha256": "ac2cde06eeb4b3daa6db9c0d32ddcbf9a2fd7b13744aa38bae2e8216d6ded20c",
+    "max_seconds": 79800,
+    "description": "Full fresh exact58M epoch, no clock-truncated epoch",
+    "requires_previous_id": null,
+    "estimated_active_seconds": 47000
+  },
+  {
+    "id": "factorial58_sffree_20260922_E_D",
+    "kind": "registered_command",
+    "status": "queued",
+    "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/scheduler_run",
+    "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/registered_command.json",
+    "command_sha256": "7551fa839591910903bfade62e9fcdc057835c68c125e4a9369965c533850596",
+    "max_seconds": 3660,
+    "description": "Full registered256game128pair400sim match; incomplete bank invalid",
+    "requires_previous_id": "factorial58_sffree_20260922_E",
+    "estimated_active_seconds": 1800
+  },
+  {
+    "id": "factorial58_sffree_20260922_D122",
+    "kind": "registered_command",
+    "status": "queued",
+    "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/scheduler_run",
+    "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/registered_command.json",
+    "command_sha256": "a4a6004e64c127108823cf1c923bd859a61c7ef1b5191942d2d800a7cbfa52de",
+    "max_seconds": 79800,
+    "description": "Full fresh exact58M epoch, no clock-truncated epoch",
+    "requires_previous_id": "factorial58_sffree_20260922_E_D",
+    "estimated_active_seconds": 47000
+  },
+  {
+    "id": "factorial58_sffree_20260922_E122",
+    "kind": "registered_command",
+    "status": "queued",
+    "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/scheduler_run",
+    "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/registered_command.json",
+    "command_sha256": "7217ef61ffa53f1b02c1366e0acb3c8e2bae753d5ceba7bb90c062667ebef442",
+    "max_seconds": 79800,
+    "description": "Full fresh exact58M epoch, no clock-truncated epoch",
+    "requires_previous_id": "factorial58_sffree_20260922_D122",
+    "estimated_active_seconds": 47000
+  },
+  {
+    "id": "factorial58_sffree_20260922_E122_D122",
+    "kind": "registered_command",
+    "status": "queued",
+    "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/scheduler_run",
+    "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/registered_command.json",
+    "command_sha256": "2f85d7d3fe60beb7dcdd25cd2e8e7b682369da90352595f949231fa9f7e8ba17",
+    "max_seconds": 3660,
+    "description": "Full registered256game128pair400sim match; incomplete bank invalid",
+    "requires_previous_id": "factorial58_sffree_20260922_E122",
+    "estimated_active_seconds": 1800
+  }
+]
