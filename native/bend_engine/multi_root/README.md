@@ -1,4 +1,4 @@
-# Bounded multi-root search (PR5a)
+# Bounded multi-root search (PR5a/PR5b)
 
 This is an explicit **CPU-F32, fixed-batch, offline cohort runner**, not a replacement
 for the UCI application. It owns 1–16 independent Bend search trees, visits roots
@@ -43,7 +43,8 @@ with the same real/physical/accepted-work definitions. One backend call is not o
 simulation; physical padding is never accepted. Forward calls and batch histograms
 are global, while accepted rows belong to roots. Do not sum aggregate and per-root
 rows. Failure exits have no successful summary. There are no cancelled or in-flight
-rows at a successful final report because this runner is synchronous and bounded.
+rows in the default synchronous mode. The opt-in async mode reports cancellation
+separately and drains all admitted physical work before its final summary.
 
 The millisecond-resolution cohort clock begins after position validation/model
 loading, before shared policy-map/buffer initialization; it includes the first
@@ -69,12 +70,12 @@ python -m native.bend_engine.multi_root.verify \
   --checkpoint /path/to/checkpoint.pt --report /tmp/cohort-model.json
 ```
 
-No production defaults change. Async multi-root polling/cancellation, live root
-arrival/removal, persistent self-play integration, bounded wall-time admission,
-measured bucket selection, trained-model CUDA qualification and same-tree concurrency
-remain later work. Existing PR4 UCI responsiveness is not weakened or inherited by
-this separate synchronous executable. No speedup or Elo gain is implied by fewer
-forward calls. The experiment record specifies actual qualification and its limits.
+No production defaults change. PR5b adds opt-in async polling and per-root
+cancellation below. Live root arrival/removal, persistent self-play integration,
+bounded wall-time admission, measured bucket selection, trained-model CUDA
+qualification and same-tree concurrency remain later work. PR4's UCI decision
+semantics do not apply to this separate headless executable. Fewer forward calls
+are not a speedup or Elo claim.
 
 ## Qualification evidence
 
@@ -85,3 +86,66 @@ bit-identical across batch sizes; real model outputs are qualified numerically,
 not claimed bit-identical. The primary real batch-four cohort executes 34 accepted
 rows in 9 forwards with 2 padding rows, compared with 34 singleton forwards.
 This is a work-count observation, not a measured speedup.
+
+## Optional asynchronous cohorts (PR5b)
+
+The same build wrapper includes a CPU batch worker, but synchronous execution is
+still the default. Enable asynchronous control processing at launch:
+
+```sh
+DEEPFIN_BEND_MODEL_PACKAGE=/path/to/checkpoint.pt2 DEEPFIN_COHORT_ASYNC=1 \
+  /tmp/new-cohort/build/deepfin-bend-multi-root --threads 1 -- \
+  64 8 32 0 'startpos' 'startpos moves e2e4'
+```
+
+Send newline-terminated commands on stdin while the cohort runs:
+
+| Command | Behavior |
+| --- | --- |
+| `isready` | Returns `info string cohort_ready` when processed, including during a pending forward. |
+| `cancel 1` | Cancels root 1 (IDs are immutable input order, 1 through root count); other batch rows remain live. |
+| `stop` | Cancels all remaining roots; final reports follow physical drain. |
+| `quit` | Cancels all remaining roots, stops accepting controls and exits after physical drain/reporting. |
+
+Cancellation is irreversible for this cohort. Duplicate cancellation is harmless.
+Accepted tree work stays banked; an undispatched cancelled root consumes no row.
+A pending cancelled row still executes and counts as wasted rather than useful.
+Malformed commands are acknowledged as errors without changing state. EOF stops
+further control reads but does not implicitly cancel; a no-stdin batch invocation
+still completes normally. There is no live root add/replace command in this slice.
+
+The native worker snapshots inputs and delivers a batch only after physical
+completion. Bend owns row-to-root identities and filters cancelled rows before
+normalization/search resume. Every real raw logit is checked before any neural
+backup, including logits of cancelled rows; cancellation cannot hide backend or
+nonfinite-output failure. There is one slot, not overlapping model execution.
+
+Async final work uses `deepfin.multi-root-async-work.v1`; the synchronous schema is
+unchanged. `cohort_root` gains `dispatched_real_rows`, `cancelled_rows` and
+`cancel_requested`. `cancelled_rows` counts discarded admitted evaluations, not
+cancel commands or undispatched roots. On a successful final report:
+`dispatched = executed = accepted + cancelled`, with padding separate and no
+unresolved work. Budgets are not refunded. Failed runs have no successful summary.
+Do not sum per-root and aggregate row counts.
+
+Control acknowledgments may precede physical completion. Unlike UCI `stop`, this
+runner does not emit an early final tree/bestmove; root summaries are produced
+after drain. Its final clock includes that wait, first inference and setup, not an
+external decision-time measurement. Async phase/queue/GPU/transfer timings are
+null. Encoding, gathering, backup and output backpressure can still delay controls;
+quit cannot preempt a wedged callback. No GPU or hard-latency guarantee is implied.
+
+Use `--asynchronous` with the existing model verifier to require the new mode and
+schema. Complete serial-versus-async/control qualification is explicit:
+
+```sh
+bash native/bend_engine/multi_root/qualify_async.sh \
+  /path/to/generated/probe.c /path/to/oracle /tmp/new-async-cohort-check
+```
+
+This runs deterministic sync/async matrices and blocked-callback controls with the
+actual generated coordinator and worker, plus normal/sanitized worker checks.
+Real models are separately checked by `verify --asynchronous` using the exact
+checkpoint/package. The [PR5b record](../../../docs/experiments/2026-09-23-async-cohort.md)
+contains completed results and limits. Real no-cancel model tests and deterministic
+cancellation tests are distinct evidence; neither establishes trained/GPU speed.

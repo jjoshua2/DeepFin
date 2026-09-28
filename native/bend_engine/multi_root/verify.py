@@ -58,7 +58,7 @@ def histogram(value: object, batch: int) -> dict[int, int]:
 
 
 def parse(stdout: str, root_count: int, batch: int, sims: int, budget: int,
-          diagnostics: bool) -> dict[str, Any]:
+          diagnostics: bool, *, asynchronous: bool = False) -> dict[str, Any]:
     integer(root_count, 1, 16)
     if type(batch) is not int or batch not in BATCHES:
         raise ValueError('unsupported batch')
@@ -69,6 +69,14 @@ def parse(stdout: str, root_count: int, batch: int, sims: int, budget: int,
             raise ValueError('extra/malformed output')
         content = line[len(PREFIX):]
         name, sep, tail = content.partition(' ')
+        if asynchronous and name == 'cohort_ready' and not sep:
+            continue
+        if asynchronous and name == 'cohort_control':
+            if tail not in ('stop', 'quit', 'error invalid-root', 'error invalid-command', 'error malformed-line') and not re.fullmatch(r'cancel (?:[1-9]|1[0-6])', tail):
+                raise ValueError('invalid control acknowledgment')
+            if tail.startswith('cancel '):
+                integer(int(tail.split()[1]), 1, root_count)
+            continue
         if not sep:
             raise ValueError('missing record payload')
         if name == 'cohort_work':
@@ -80,11 +88,21 @@ def parse(stdout: str, root_count: int, batch: int, sims: int, budget: int,
                 raise ValueError('duplicate root')
             n = integer(r.get('completed_simulations'), 0, sims)
             accepted = integer(r.get('accepted_neural_rows'), 0, n)
-            if integer(r.get('executed_real_rows')) != accepted:
+            if asynchronous:
+                sent = integer(r.get('dispatched_real_rows'))
+                wasted = integer(r.get('cancelled_rows'), 0, 1)
+                requested = r.get('cancel_requested')
+                if type(requested) is not bool or (wasted and not requested):
+                    raise ValueError('invalid root cancellation')
+                if sent != accepted + wasted or integer(r.get('executed_real_rows')) != sent:
+                    raise ValueError('root execution/acceptance/cancellation mismatch')
+                if budget and sent > budget:
+                    raise ValueError('cancelled admission was refunded')
+            elif integer(r.get('executed_real_rows')) != accepted:
                 raise ValueError('root execution/acceptance mismatch')
             integer(r.get('rule_draw_replies'), 0, n - accepted)
             integer(r.get('used_nodes'), 1, 4096)
-            integer(r.get('stop_code'), 0, 1)
+            integer(r.get('stop_code'), 0, 2 if asynchronous else 1)
             if integer(r.get('simulation_budget')) != sims or integer(r.get('neural_budget')) != budget:
                 raise ValueError('root budget mismatch')
             met = r.get('neural_budget_met')
@@ -124,20 +142,30 @@ def parse(stdout: str, root_count: int, batch: int, sims: int, budget: int,
             raise ValueError('unexpected record: ' + name)
     if work is None or set(roots) != set(range(1, root_count + 1)):
         raise ValueError('missing roots or summary')
-    if work.get('schema') != 'deepfin.multi-root-work.v1' or work.get('scope') != 'bounded_cohort':
+    schema = 'deepfin.multi-root-async-work.v1' if asynchronous else 'deepfin.multi-root-work.v1'
+    scope = 'bounded_async_cohort' if asynchronous else 'bounded_cohort'
+    if work.get('schema') != schema or work.get('scope') != scope:
         raise ValueError('wrong accounting schema')
     calls = integer(work.get('forward_calls'))
     real = integer(work.get('executed_real_rows'))
     physical = integer(work.get('physical_rows'))
     if integer(work.get('roots')) != root_count or integer(work.get('dispatched_real_rows')) != real:
         raise ValueError('root/dispatch mismatch')
-    if integer(work.get('accepted_neural_rows')) != real or sum(r['accepted_neural_rows'] for r in roots.values()) != real:
+    accepted_total = integer(work.get('accepted_neural_rows'), 0, real)
+    wasted_total = integer(work.get('cancelled_rows'), 0, real) if asynchronous else 0
+    if accepted_total + wasted_total != real or sum(r['accepted_neural_rows'] for r in roots.values()) != accepted_total:
         raise ValueError('accepted rows do not reconcile')
+    if asynchronous and (sum(r['dispatched_real_rows'] for r in roots.values()) != real
+                         or sum(r['cancelled_rows'] for r in roots.values()) != wasted_total
+                         or integer(work.get('executed_wasted_rows')) != wasted_total):
+        raise ValueError('cancelled rows do not reconcile')
     if sum(r['completed_simulations'] for r in roots.values()) != integer(work.get('completed_simulations')):
         raise ValueError('simulations do not reconcile')
     if physical != calls * batch or integer(work.get('padded_rows')) != physical - real:
         raise ValueError('padding/physical mismatch')
     for k in ZERO:
+        if asynchronous and k in ('cancelled_rows', 'executed_wasted_rows'):
+            continue
         if integer(work.get(k)) != 0:
             raise ValueError('unexpected incomplete/error work')
     rh = histogram(work.get('real_batch_histogram'), batch)
@@ -155,16 +183,21 @@ def parse(stdout: str, root_count: int, batch: int, sims: int, budget: int,
     if (not isinstance(wall, (float, int)) or isinstance(wall, bool)) or not math.isfinite(wall) or wall < 0:
         raise ValueError('invalid clock')
     for k in ('useful_eps', 'executed_eps'):
+        numerator = accepted_total if k == 'useful_eps' else real
         v = work.get(k)
         if not wall:
             if v is not None:
                 raise ValueError('EPS at zero clock interval')
-        elif (not isinstance(v, (float, int)) or isinstance(v, bool)) or not math.isfinite(v) or abs(v - real / wall) > 2e-6:
+        elif (not isinstance(v, (float, int)) or isinstance(v, bool)) or not math.isfinite(v) or abs(v - numerator / wall) > 2e-6:
             raise ValueError('invalid EPS')
     if work.get('warmup_excluded') is not False or work.get('clock_resolution_seconds') != 0.001:
         raise ValueError('unsupported timing claims')
     for k in ('gathering_seconds', 'backend_and_transport_seconds', 'normalization_and_backup_seconds'):
         v = work.get(k)
+        if asynchronous:
+            if k not in work or v is not None:
+                raise ValueError('async phase time is unmeasured')
+            continue
         if (not isinstance(v, (float, int)) or isinstance(v, bool)) or not math.isfinite(v) or not 0 <= v <= wall:
             raise ValueError('invalid phase time')
     phases = work.get('phase_seconds')
@@ -181,7 +214,7 @@ def expected_test_output(x: np.ndarray) -> np.ndarray:
 
 
 def environment() -> dict[str, str]:
-    return {k: v for k, v in os.environ.items() if not k.startswith(('DEEPFIN_BEND_', 'DEEPFIN_MULTI_TEST_'))}
+    return {k: v for k, v in os.environ.items() if not k.startswith(('DEEPFIN_BEND_', 'DEEPFIN_MULTI_TEST_', 'DEEPFIN_COHORT_'))}
 
 
 def execute(binary: Path, roots: list[Any], env: dict[str, str], sims: int = 4,
@@ -319,12 +352,14 @@ def check_run(binary: Path, roots: list[Any], batch: int, channels: int, oracle:
     result = execute(binary, roots, {**env, 'DEEPFIN_BEND_MODEL_TRACE': str(trace)}, sims, depth, budget)
     assert result.returncode == 0, (result.returncode, result.stderr, result.stdout[-1000:])
     assert not result.stderr, (result.returncode, result.stderr, result.stdout[-1000:])
-    parsed = parse(result.stdout, len(roots), batch, sims, budget, True)
+    parsed = parse(result.stdout, len(roots), batch, sims, budget, True,
+                   asynchronous=env.get('DEEPFIN_COHORT_ASYNC') == '1')
     checked = oracle_check(parsed, roots, trace, oracle, channels, batch, sims, depth, budget, eager, history_encoding)
     quiet = execute(binary, roots, env, sims, depth, budget, False)
     assert quiet.returncode == 0, quiet.stderr
     assert not quiet.stderr, quiet.stderr
-    plain = parse(quiet.stdout, len(roots), batch, sims, budget, False)
+    plain = parse(quiet.stdout, len(roots), batch, sims, budget, False,
+                  asynchronous=env.get('DEEPFIN_COHORT_ASYNC') == '1')
     assert plain['roots'] == parsed['roots']
     for k in ('forward_calls', 'executed_real_rows', 'padded_rows', 'real_batch_histogram'):
         assert plain['work'][k] == parsed['work'][k]
@@ -361,6 +396,8 @@ def qualify(args: argparse.Namespace) -> dict[str, Any]:
     rep_fix.apply(True)
     roots = fixtures()
     env = environment()
+    if getattr(args, 'asynchronous', False):
+        env['DEEPFIN_COHORT_ASYNC'] = '1'
     loaded, history, eager = None, 'lc0_root_legacy_meta', None
     if args.package is not None:
         manifest = json.loads(args.package.with_suffix('.json').read_text())
@@ -408,6 +445,7 @@ def qualify(args: argparse.Namespace) -> dict[str, Any]:
                 raise AssertionError('swapped rows escaped the independent oracle')
     tree_hash = hashlib.sha256(json.dumps(main['nodes'], sort_keys=True).encode()).hexdigest()
     report = {'status': 'passed', 'scope': 'CPU selected-leaf model' if loaded else 'deterministic selected-leaf callback',
+              'asynchronous': getattr(args, 'asynchronous', False),
               'batch': args.batch, 'channels': args.channels, 'cases': reports,
               'invalid_input_rejections': bad_inputs, 'fault_controls': faults,
               'root_results': main['roots'], 'complete_tree_sha256': tree_hash,
@@ -426,6 +464,7 @@ def main() -> None:
     p.add_argument('--oracle', type=Path, required=True)
     p.add_argument('--batch', type=int, choices=BATCHES, required=True)
     p.add_argument('--channels', type=int, choices=(146, 175), required=True)
+    p.add_argument('--asynchronous', action='store_true', help='require the async cohort schema and enable its worker')
     p.add_argument('--package', type=Path)
     p.add_argument('--checkpoint', type=Path)
     p.add_argument('--report', type=Path, required=True)

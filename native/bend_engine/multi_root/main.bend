@@ -2,6 +2,8 @@
 # CPU fixed-batch model only in the build script. This is not the UCI product.
 import Base
 import ./Cohort.bend as C
+import ./AsyncRun.bend as AsyncRun
+import ../batch_backend/Async.bend as Async
 import ./Report.bend as R
 import ../batch_backend/Batch.bend as B
 import ../standalone/Tables.bend as Tables
@@ -175,13 +177,23 @@ def load(fuel: Nat,+cfg: C.Config,setup: Setup) -> IO(Setup):
         setup : Setup <- load_one(cfg,setup)
         load(p,cfg,setup)
 
-def opened(cfg: C.Config,roots: List<C.Root>,table: Array<U64>,+cap: B.Capabilities) -> IO(Unit):
+def synchronous(cfg: C.Config,roots: List<C.Root>,table: Array<U64>,+cap: B.Capabilities) -> IO(Unit):
   B.Capabilities{profile,batch,channels,ilog,olog} = cap
   do IO<Unit>:
     now : Nat <- IO.now()
     loop(4098n,State{roots,C.Store{table,Policy.build(),Array.new(F32,14n,0.0),Array.new(F32,11n,0.0),
       Array.new(F32,U32.to_nat(ilog),0.0),Array.new(F32,U32.to_nat(olog),0.0),cap},cfg,
       Metrics{now,0,0,0n,0n,0n},Array.new(U32,5n,0),False{}})
+
+def selected_mode(enabled: Bool,cfg: C.Config,roots: List<C.Root>,table: Array<U64>,cap: B.Capabilities) -> IO(Unit):
+  match enabled:
+    case False{}: synchronous(cfg,roots,table,cap)
+    case True{}: AsyncRun.launch(cfg,roots,table,cap)
+
+def opened(cfg: C.Config,roots: List<C.Root>,table: Array<U64>,cap: B.Capabilities) -> IO(Unit):
+  do IO<Unit>:
+    enabled : Bool <- Async.BatchAsync.enabled()
+    selected_mode(enabled,cfg,roots,table,cap)
 
 def loaded(cfg: C.Config,setup: Setup) -> IO(Unit):
   Setup{remaining,roots,table,count} = setup
