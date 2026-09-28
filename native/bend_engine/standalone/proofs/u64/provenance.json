@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/jjoshua2/bend",
+  "revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "directory": "demos/proof_u64",
+  "git_blobs": {
+    "LAWS.bend": "158f45a68c7f24bc79c8cb7e557424a317d315de",
+    "PROOF.bend": "e08dad20df90b9e542aee34b7e775e4402339b9c",
+    "Words.bend": "503f1e5f49c4ef01ca45a1a3a010d5b52551a3df"
+  }
+}

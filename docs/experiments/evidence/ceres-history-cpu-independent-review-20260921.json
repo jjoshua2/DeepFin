@@ -1,0 +1,41 @@
+{
+  "status": "APPROVE_CERES_CPU_ENCODER_OPTIMIZATION",
+  "reviewer": "/root/factorial_receipt_review",
+  "checked_utc": "2026-09-22T00:36:51.656769+00:00",
+  "source_sha256": "ba8239f815e85bf14c5afe34b4138f899d73a75a659ad5847bcb10e7dd69df0b",
+  "tests_sha256": "3cbcd74a57ebd3e07d0643247fb3bb55b7ed3f9abbe3f41ac26d76fe2412f872",
+  "readout_sha256": "1b8d52934b3ef5db8c1418dae451e0234d28e1adaf9a17769f1923c3fb770eb7",
+  "benchmark_result_sha256": "865632190a5f92802a1dc2fdc4ad10985a16966661a4b418fa27f7dd77bf1bb1",
+  "independent_tests": {
+    "passed": 118,
+    "files": [
+      "tests/test_ceres_tpg_stored.py",
+      "tests/test_ceres_tpg_encoding.py",
+      "tests/test_ceres_derived_sidecar.py"
+    ],
+    "affinity": [
+      16,
+      17
+    ],
+    "nice": 19,
+    "torch_threads": 2
+  },
+  "checks": [
+    "Cast occurs after unchanged finite and exact binary-history validation",
+    "Binary uint8 reductions/argmax preserve mathematical values; sums use wider integer accumulators",
+    "Repetition byte products remain0or100; no overflow or unsigned subtraction introduced",
+    "Original float16 caller inputs unchanged including readonly buffers",
+    "Independent Board encoder fixtures and invalid nearbinary/negative/overflow input tests pass",
+    "Frozen7939609c9 baseline source hash and current candidate/benchmark source hashes verified",
+    "Independent real3072row revalidation across3families in32rowbatches: baseline/candidate arrays and original banked feed/input hashes match exactly",
+    "Five paired medians and fraction-saved calculations independently recomputed"
+  ],
+  "observed_encoder_fraction_saved": [
+    0.22728969916691888,
+    0.30295276712885366,
+    0.2882123424572801
+  ],
+  "findings": [],
+  "claims_review": "APPROVE warm CPU encoder-only22.7\u201330.3% savings;208KiB additional history allocation atbatch32; no inference or end-to-end throughput claim.",
+  "scope": "Code/evidence publication only. Active frozen runtimes remain unchanged; no new teacher inference or deployment."
+}

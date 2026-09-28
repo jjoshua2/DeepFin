@@ -12,11 +12,14 @@ import os
 import shutil
 import stat
 import struct
+import time
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import zarr
+
+from .codec_safety import _reject_unsafe_shard_codecs
 
 MANIFEST = 'target_overlay.json'
 BASE_STATUS = 'PASS_IMMUTABLE_BASE_STORAGE_SEAL'
@@ -24,6 +27,13 @@ OVERLAY_STATUS = 'PASS_IMMUTABLE_POLICY_OVERLAY_STORAGE_QUALIFICATION'
 POLICY = 'policy_target'
 TARGET_OVERLAY_STATUS = 'PASS_IMMUTABLE_TARGET_OVERLAY_STORAGE_QUALIFICATION'
 TARGET_FIELDS = frozenset({'policy_target', 'search_wdl'})
+# The pre-roster E corpus is accepted only through its independently pinned
+# preparation completion and exact storage receipt. New overlays require a
+# producer registration and intent roster; this is a frozen read-only adapter.
+LEGACY_E_QUALIFIED_SHA256 = '4325d6bb319d278d5c844b0e16a82a3211dab1224d9c6443d0bbc25b82af1f03'
+LEGACY_E_COMPLETE_SHA256 = 'ed21767547f8fe0f83918e86e1e1aa899c2aab52f7800f6b949c24059a98916a'
+LEGACY_E_MANIFESTS_SHA256 = 'ca4e61bbae176ac0b6d1f32698aad9de299bc4f48de3035f2a430dac60ccf34c'
+LEGACY_E_COHORT_COUNT = 35
 
 
 def require(condition: bool, message: str) -> None:
@@ -63,19 +73,119 @@ def _plain_content(path: Path) -> str:
 
 
 def _atomic_new_json(path: Path, value: dict[str, Any]) -> None:
+    """Publish a new JSON authority by no-replace link and exact readback.
+
+    The link is the filesystem commit point. A crash after that link can leave
+    the final name installed even if this call did not return. Recovery must
+    read the named bytes through an independently retained expected SHA pin
+    and reverify their semantics; it must never retry by replacing that name.
+    Ordinary post-link exceptions attempt rollback, but SIGKILL cannot.
+    """
     require(not path.exists() and not path.is_symlink(), 'refusing existing storage receipt')
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f'.{path.name}.{os.getpid()}.writing')
-    with temp.open('x') as handle:
-        json.dump(value, handle, sort_keys=True, indent=2, allow_nan=False)
-        handle.write('\n')
-        handle.flush()
-        os.fsync(handle.fileno())
-    # A link publishes the complete file without replacing a concurrent owner.
+    raw = _json_bytes(value)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    temporary = f'.{path.name}.{os.getpid()}.{time.time_ns()}.writing'
+    linked = False
+    link_attempted = False
+    temporary_exists = False
+    created: tuple[int, int] = (-1, -1)
     try:
-        os.link(temp, path)
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=directory)
+        temporary_exists = True
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+            st = os.fstat(stream.fileno())
+            created = (st.st_dev, st.st_ino)
+        link_attempted = True
+        os.link(temporary, path.name, src_dir_fd=directory, dst_dir_fd=directory,
+                follow_symlinks=False)
+        linked = True
+        os.fsync(directory)
+        os.unlink(temporary, dir_fd=directory)
+        temporary_exists = False
+        os.fsync(directory)
+        # Receipt authority is the named bytes, not just a successful write to
+        # the temporary inode. Read them back through the pinned directory.
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                     dir_fd=directory)
+        try:
+            before = os.fstat(fd)
+            require(stat.S_ISREG(before.st_mode)
+                    and (before.st_dev, before.st_ino) == created
+                    and before.st_size == len(raw),
+                    'published storage receipt identity or size differs')
+            with os.fdopen(fd, 'rb', closefd=False) as stream:
+                observed = stream.read(len(raw) + 1)
+            after = os.fstat(fd)
+            named = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+            require((before.st_dev, before.st_ino, before.st_size,
+                     before.st_mtime_ns, before.st_ctime_ns) ==
+                    (after.st_dev, after.st_ino, after.st_size,
+                     after.st_mtime_ns, after.st_ctime_ns)
+                    and (named.st_dev, named.st_ino) == created
+                    and observed == raw,
+                    'published storage receipt readback differs')
+        finally:
+            os.close(fd)
+    except BaseException:
+        rollback_error: BaseException | None = None
+        if link_attempted and not linked:
+            try:
+                named = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            except BaseException as error:
+                rollback_error = error
+            else:
+                linked = (named.st_dev, named.st_ino) == created
+        if linked:
+            try:
+                named = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+                require((named.st_dev, named.st_ino) == created,
+                        'storage receipt changed before rollback')
+                os.unlink(path.name, dir_fd=directory)
+                os.fsync(directory)
+                try:
+                    os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise RuntimeError('storage receipt remained after rollback')
+            except BaseException as error:
+                rollback_error = error
+        if temporary_exists:
+            try:
+                os.unlink(temporary, dir_fd=directory)
+                os.fsync(directory)
+            except BaseException:
+                # A leftover .writing inode has no receipt authority.
+                pass
+        if rollback_error is not None:
+            raise RuntimeError('AMBIGUOUS_STORAGE_RECEIPT_AUTHORITY') from rollback_error
+        raise
     finally:
-        temp.unlink()
+        # A close error after successful fsync/readback must not turn an
+        # authoritative receipt into an apparent failed publication.
+        try:
+            os.close(directory)
+        except OSError:
+            pass
+
+
+def _json_bytes(value: dict[str, Any]) -> bytes:
+    return (json.dumps(value, sort_keys=True, indent=2, allow_nan=False) + '\n').encode()
+
+
+def _json_exact(left: Any, right: Any) -> bool:
+    """Compare JSON values by canonical bytes, including scalar JSON types."""
+    try:
+        return _json_bytes({'value': left}) == _json_bytes({'value': right})
+    except (TypeError, ValueError) as error:
+        raise ValueError('non-JSON authority value') from error
 
 
 def _read_pin(ref: dict[str, str]) -> dict[str, Any]:
@@ -310,7 +420,8 @@ def qualified_paths(ref: dict[str, str], paths: list[Path]) -> tuple[dict[Path, 
     """Bind staging and every new epoch to the actual qualified corpus."""
     receipt = _read_pin(ref)
     if receipt.get('schema') == 2:
-        expected, contexts = verify_receipt(receipt)
+        legacy_ref = ref if 'intent_roster' not in receipt else None
+        expected, contexts = verify_receipt(receipt, legacy_ref=legacy_ref)
         require([path.resolve(strict=True) for path in paths] == list(expected),
                 'staged overlay paths/order differ from qualified corpus')
         return expected, contexts
@@ -326,8 +437,10 @@ def qualified_paths(ref: dict[str, str], paths: list[Path]) -> tuple[dict[Path, 
 class BaseSeals(BaseSeal):
     """Operation-local seal routing; compatible with exact-epoch storage consumers."""
 
-    def __init__(self, refs: list[dict[str, str]]) -> None:
+    def __init__(self, refs: list[dict[str, str]], *,
+                 legacy_recipes: dict[str, dict[str, Any]] | None = None) -> None:
         require(bool(refs), 'empty base seals')
+        self.legacy_recipes = legacy_recipes
         self.contexts = {ref['path']: BaseSeal(ref) for ref in refs}
         super().__init__(refs[0])
         require(bool(refs) and len(self.contexts) == len(refs), 'duplicate/empty base seals')
@@ -347,11 +460,130 @@ def _names(names: list[str] | tuple[str, ...]) -> list[str]:
     return sorted(names)
 
 
+def _target_intent(base: Path, output: Path, seal_ref: dict[str, str],
+                   names: list[str]) -> dict[str, Any]:
+    return {'schema': 2, 'kind': 'target-overlay-begin-intent',
+            'base': str(base), 'output': str(output), 'base_seal': seal_ref,
+            'replacements': names}
+
+
+def write_target_intent_roster(scopes: list[dict[str, Any]], roster_path: Path, *,
+                               registration_ref: dict[str, str]) -> dict[str, str]:
+    """Seal the ordered producer plan before beginning any overlay shard.
+
+    The caller retains the returned SHA pin across restarts. If that pin is
+    lost, an incomplete output cannot establish its own original intent.
+    """
+    require(bool(scopes), 'empty target intent roster')
+    require(roster_path.is_absolute()
+            and roster_path.parent == roster_path.parent.resolve(strict=False),
+            'target intent roster path must be canonical')
+    intents = []
+    recipes = []
+    for scope in scopes:
+        base, output = Path(scope['base']), Path(scope['output'])
+        seal_ref = scope['base_seal']
+        names = _names(scope['replacements'])
+        base_entry(seal_ref, base)
+        require(base.is_absolute() and base == base.resolve(strict=True), 'base must be canonical')
+        require(output.is_absolute()
+                and output.parent == output.parent.resolve(strict=False),
+                'target output parent must be canonical')
+        require(not output.exists(), 'target output already exists')
+        require(output.parent not in roster_path.parents
+                and base.parent not in roster_path.parents,
+                'target intent roster must be outside overlay and base roots')
+        recipe = scope['recipe']
+        require(isinstance(recipe, dict) and bool(recipe),
+                'target intent requires an exact nonempty recipe')
+        intents.append(_target_intent(base, output, seal_ref, names))
+        recipes.append(recipe)
+    require(len({intent['output'] for intent in intents}) == len(intents),
+            'duplicate target intent output')
+    registration = _read_pin(registration_ref)
+    registered_recipes = registration.get('recipes')
+    require(registration.get('schema') == 2
+            and registration.get('kind') == 'target-overlay-producer-registration'
+            and isinstance(registered_recipes, list)
+            and len(registered_recipes) == len(intents)
+            and all(isinstance(recipe, dict) and bool(recipe)
+                    for recipe in registered_recipes)
+            and _json_exact(registered_recipes, recipes)
+            and _json_exact(registration.get('intents'), intents),
+            'target intent roster differs from pinned producer registration')
+    roster = {'schema': 2, 'kind': 'immutable-target-intent-roster',
+              'producer_registration': registration_ref, 'intents': intents}
+    expected_sha = hashlib.sha256(_json_bytes(roster)).hexdigest()
+    _atomic_new_json(roster_path, roster)
+    require(sha(roster_path) == expected_sha, 'published target intent roster differs')
+    return {'path': str(roster_path), 'sha256': expected_sha}
+
+
+def _read_target_roster(ref: dict[str, str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    path = Path(ref['path'])
+    require(path == path.resolve(strict=True), 'target intent roster path changed')
+    roster = _read_pin(ref)
+    require(roster.get('schema') == 2 and roster.get('kind') == 'immutable-target-intent-roster',
+            'wrong target intent roster')
+    intents = roster['intents']
+    if not isinstance(intents, list) or not intents:
+        raise ValueError('empty target intent roster')
+    registration = _read_pin(roster['producer_registration'])
+    recipes = registration.get('recipes')
+    if not isinstance(recipes, list) or len(recipes) != len(intents):
+        raise ValueError('target intent roster differs from pinned producer registration')
+    typed_intents: list[dict[str, Any]] = []
+    for intent in intents:
+        if not isinstance(intent, dict) or not intent:
+            raise ValueError('invalid target intent scope')
+        typed_intents.append(intent)
+    typed_recipes: list[dict[str, Any]] = []
+    for recipe in recipes:
+        if not isinstance(recipe, dict) or not recipe:
+            raise ValueError('target intent roster differs from pinned producer registration')
+        typed_recipes.append(recipe)
+    require(registration.get('schema') == 2
+            and registration.get('kind') == 'target-overlay-producer-registration'
+            and _json_exact(registration.get('intents'), intents),
+            'target intent roster differs from pinned producer registration')
+    outputs = []
+    for intent in typed_intents:
+        names = _names(intent['replacements'])
+        base, output = Path(intent['base']), Path(intent['output'])
+        require(base.is_absolute() and base == base.resolve(strict=True), 'noncanonical roster base')
+        require(output.is_absolute() and output.parent == output.parent.resolve(strict=True),
+                'noncanonical roster output')
+        require(_json_exact(intent, _target_intent(base, output, intent['base_seal'], names)),
+                'invalid target intent scope')
+        require(output.parent not in path.parents and base.parent not in path.parents,
+                'target intent roster must be outside overlay and base roots')
+        outputs.append(str(output))
+    require(len(set(outputs)) == len(outputs), 'duplicate target intent output')
+    return typed_intents, typed_recipes
+
+
+def _roster_scope(ref: dict[str, str], base: Path, output: Path,
+                  seal_ref: dict[str, str]) -> tuple[list[str], dict[str, Any]]:
+    intents, recipes = _read_target_roster(ref)
+    matches = [(index, scope) for index, scope in enumerate(intents)
+               if scope['output'] == str(output)]
+    require(len(matches) == 1, 'target absent from authenticated intent roster')
+    index, scope = matches[0]
+    names = _names(scope['replacements'])
+    require(_json_exact(scope, _target_intent(base, output, seal_ref, names)),
+            'authenticated begin intent differs from target scope')
+    return names, recipes[index]
+
+
 def begin_target_shard(base: Path, output: Path, seal_ref: dict[str, str], *,
-                       replacements: tuple[str, ...], seal: BaseSeal | None = None) -> None:
+                       replacements: tuple[str, ...], roster_ref: dict[str, str],
+                       seal: BaseSeal | None = None) -> None:
     base_entry(seal_ref, base, seal=seal)
     names = _names(replacements)
     require(base.is_absolute() and base == base.resolve(strict=True), 'base must be canonical')
+    authenticated_names, _recipe = _roster_scope(roster_ref, base, output, seal_ref)
+    require(names == authenticated_names,
+            'requested replacements differ from authenticated begin intent')
     require(not output.exists(), 'overlay output already exists')
     original: Any = zarr.open_group(str(base), mode='r')
     require(all(name in original for name in names), 'base target missing')
@@ -369,9 +601,13 @@ def _validate_local(path: Path, base: Path, names: list[str]) -> dict[str, Any]:
     local: Any = zarr.open_group(str(path), mode='r')
     original: Any = zarr.open_group(str(base), mode='r')
     require(set(local.array_keys()) == set(names), 'unexpected overlay arrays')
+    # The ordinary shard loader checks these exact metadata rules before any
+    # chunk decode. Qualification also reads chunks, so it must use that guard.
+    replacements = {name: local[name] for name in names}
+    _reject_unsafe_shard_codecs(replacements)
     require(dict(local.attrs) == dict(original.attrs), 'overlay changed inherited metadata/history')
     for name in names:
-        a, b = local[name], original[name]
+        a, b = replacements[name], original[name]
         require(a.shape == b.shape and np.dtype(a.dtype) == np.dtype(b.dtype),
                     'replacement layout differs')
         require(len(a.shape) == 2 and (name != 'search_wdl' or a.shape[1] == 3),
@@ -390,15 +626,20 @@ def _validate_local(path: Path, base: Path, names: list[str]) -> dict[str, Any]:
 
 
 def finish_target_shard(base: Path, output: Path, seal_ref: dict[str, str], *,
-                        recipe: dict[str, Any], seal: BaseSeal | None = None) -> None:
+                        recipe: dict[str, Any], roster_ref: dict[str, str],
+                        seal: BaseSeal | None = None) -> None:
     entry = base_entry(seal_ref, base, seal=seal)
+    names, registered_recipe = _roster_scope(roster_ref, base, output, seal_ref)
+    require(bool(recipe)
+            and _json_exact(recipe, registered_recipe),
+            'target recipe differs from pinned producer registration')
     local: Any = zarr.open_group(str(output), mode='r')
-    names = _names(list(local.array_keys()))
+    require(set(local.array_keys()) == set(names), 'requested replacements are missing or differ')
     _validate_local(output, base, names)
-    require(bool(recipe), 'missing target recipe')
     manifest = {'schema': 2, 'kind': 'immutable-target-overlay', 'base': str(base),
                 'base_seal': seal_ref, 'base_content_sha256': entry['content_sha256'],
                 'identity': entry['identity'], 'replacements': names, 'recipe': recipe,
+                'intent_roster': roster_ref,
                 'target_content_sha256': {name: _plain_content(output / name) for name in names},
                 'base_lifetime': 'Retain base and seal while any overlay depends on them.'}
     _atomic_new_json(output / MANIFEST, manifest)
@@ -413,6 +654,28 @@ def _open_target_manifest(path: Path, manifest: dict[str, Any], *,
     require(names == manifest['replacements'], 'noncanonical replacements')
     base = Path(manifest['base'])
     require(base.is_absolute() and base == base.resolve(strict=True), 'base must be canonical')
+    if 'intent_roster' in manifest:
+        roster_ref = manifest['intent_roster']
+        canonical_output = path.resolve(strict=True)
+        registered_names, registered_recipe = _roster_scope(
+            roster_ref, base, canonical_output, manifest['base_seal'])
+        require(names == registered_names,
+            'target overlay replacements differ from authenticated begin intent')
+        require(_json_exact(manifest.get('recipe'), registered_recipe),
+            'target recipe differs from pinned producer registration')
+    else:
+        # The frozen E bank predates intent rosters. Its receipt is accepted
+        # only via the exact pinned preparation completion in qualified_paths.
+        if not isinstance(seal, BaseSeals) or seal.legacy_recipes is None:
+            raise ValueError('pre-roster target requires the frozen E qualification')
+        require(names == ['policy_target', 'search_wdl'],
+                'frozen E target must replace policy and value')
+        scope = seal.legacy_recipes.get(str(path.resolve(strict=True).parent))
+        if scope is None or base.parent != Path(scope['base']):
+            raise ValueError('frozen E target differs from pinned cohort scope')
+        require(isinstance(manifest.get('recipe'), dict) and all(
+            manifest['recipe'].get(key) == value for key, value in scope['recipe'].items()),
+            'frozen E recipe differs from pinned cohort completion')
     entry = base_entry(manifest['base_seal'], base, seal=seal)
     require(manifest['identity'] == entry['identity']
                 and manifest['base_content_sha256'] == entry['content_sha256'], 'overlay base identity differs')
@@ -424,7 +687,9 @@ def _open_target_manifest(path: Path, manifest: dict[str, Any], *,
     return manifest, _validate_local(path, base, names)
 
 
-def qualify_target_roots(roots: list[Path], output: Path) -> dict[str, Any]:
+def qualify_target_roots(roots: list[Path], output: Path, *,
+                         roster_ref: dict[str, str]) -> dict[str, Any]:
+    roster_ref = dict(roster_ref)
     roots = [root.resolve(strict=True) for root in roots]
     require(bool(roots) and len(set(roots)) == len(roots), 'duplicate/empty target roots')
     require(all(root not in output.resolve().parents and not root.name.endswith('.writing') for root in roots),
@@ -432,12 +697,18 @@ def qualify_target_roots(roots: list[Path], output: Path) -> dict[str, Any]:
     refs: dict[str, dict[str, str]] = {}
     entries = []
     root_files = {str(root): _root_files(root) for root in roots}
+    expected_paths = [path for root in roots for path in shard_paths(root)]
+    intents, _recipe = _read_target_roster(roster_ref)
+    require([str(path) for path in expected_paths] == [intent['output'] for intent in intents],
+            'target paths/order differ from authenticated intent roster')
     for root in roots:
         paths = shard_paths(root)
         require(bool(paths), 'empty overlay root')
         for path in paths:
             manifest = json.loads((path / MANIFEST).read_bytes())
             require(manifest.get('schema') == 2, 'schema2 qualification requires schema2 shards')
+            require(manifest['intent_roster'] == roster_ref,
+                    'target shard intent roster differs from authoritative qualification')
             ref = manifest['base_seal']
             require(ref['path'] not in refs or refs[ref['path']] == ref, 'conflicting base seal')
             refs[ref['path']] = ref
@@ -445,6 +716,7 @@ def qualify_target_roots(roots: list[Path], output: Path) -> dict[str, Any]:
                             'rows': manifest['identity']['rows']})
     result = {'schema': 2, 'status': TARGET_OVERLAY_STATUS, 'roots': [str(root) for root in roots],
               'root_files': root_files, 'base_seals': list(refs.values()), 'shards': entries,
+              'intent_roster': roster_ref,
               'rows': sum(entry['rows'] for entry in entries),
               'scope': 'Storage only; experiment must separately admit the target recipe.'}
     verify_receipt(result)
@@ -452,13 +724,75 @@ def qualify_target_roots(roots: list[Path], output: Path) -> dict[str, Any]:
     return result
 
 
-def verify_receipt(receipt: dict[str, Any]) -> tuple[dict[Path, str], BaseSeals]:
+def _legacy_e_recipes(ref: dict[str, str], receipt: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Reconstruct only the historical E scopes from pinned JSON metadata."""
+    require(ref['sha256'] == LEGACY_E_QUALIFIED_SHA256,
+            'unrecognized pre-roster target qualification')
+    # The frozen completion is the sibling of its pinned qualification receipt.
+    # Its exact bytes remain independently fixed by this SHA.
+    complete = _read_pin({
+        'path': str(Path(ref['path']).with_name('complete.json')),
+        'sha256': LEGACY_E_COMPLETE_SHA256,
+    })
+    require(complete.get('status') == 'COMPLETE_SFFREE_35_COHORTS'
+            and complete.get('qualified') == ref
+            and complete.get('rows') == receipt.get('rows')
+            and complete.get('shards') == len(receipt['shards']),
+            'frozen E completion differs from qualified receipt')
+    plan = _read_pin(complete['plan'])
+    require(plan.get('status') == 'READY_REVIEWED_FROZEN'
+            and plan['manifests']['sha256'] == LEGACY_E_MANIFESTS_SHA256,
+            'frozen E preparation plan differs')
+    manifests = _read_pin(plan['manifests'])
+    require(manifests.get('rows') == receipt['rows']
+            and manifests.get('shards') == len(receipt['shards'])
+            and len(manifests['cohorts']) == len(complete['cohorts'])
+            == len(receipt['roots']) == LEGACY_E_COHORT_COUNT,
+            'frozen E preparation cohort count differs')
+    require(sum(item['rows'] for item in manifests['cohorts']) == receipt['rows']
+            and sum(item['shards'] for item in manifests['cohorts']) == len(receipt['shards']),
+            'frozen E planned row or shard total differs')
+    recipes: dict[str, dict[str, Any]] = {}
+    for root, cohort_ref, planned in zip(
+        receipt['roots'], complete['cohorts'], manifests['cohorts'], strict=True,
+    ):
+        cohort = _read_pin(cohort_ref)
+        recipe = cohort.get('recipe')
+        require(cohort.get('status') == 'COMPLETE_SFFREE_TARGET_COHORT'
+                and cohort.get('root') == root
+                and isinstance(recipe, dict)
+                and recipe.get('kind') == 'factorial58-sffree-v1'
+                and recipe.get('arm') == 'E'
+                and cohort['rows'] == planned['rows']
+                and cohort['shards'] == planned['shards']
+                and sum(item['rows'] for item in receipt['shards']
+                        if Path(item['path']).parent == Path(root)) == cohort['rows']
+                and sum(Path(item['path']).parent == Path(root)
+                        for item in receipt['shards']) == cohort['shards'],
+                'frozen E cohort differs from pinned preparation')
+        recipes[root] = {'recipe': recipe, 'base': cohort['base']}
+    require(len(recipes) == LEGACY_E_COHORT_COUNT, 'duplicate frozen E cohort roots')
+    return recipes
+
+
+def verify_receipt(receipt: dict[str, Any], *,
+                   legacy_ref: dict[str, str] | None = None,
+                   ) -> tuple[dict[Path, str], BaseSeals]:
     require(receipt.get('schema') == 2 and receipt.get('status') == TARGET_OVERLAY_STATUS, 'wrong target qualification')
     roots = [Path(root) for root in receipt['roots']]
     require(bool(roots) and len(set(roots)) == len(roots), 'duplicate/empty target roots')
     require(all(root.is_absolute() and root == root.resolve(strict=True) for root in roots),
                 'noncanonical target roots')
-    context = BaseSeals(receipt['base_seals'])
+    if 'intent_roster' in receipt:
+        require(legacy_ref is None, 'rostered qualification cannot use legacy scopes')
+        legacy_recipes = None
+    else:
+        if legacy_ref is None or _read_pin(legacy_ref) != receipt:
+            raise ValueError('pre-roster qualification requires its exact pinned receipt')
+        legacy_recipes = _legacy_e_recipes(legacy_ref, receipt)
+        require(list(legacy_recipes) == receipt['roots'],
+                'pre-roster qualification requires pinned E cohort scopes')
+    context = BaseSeals(receipt['base_seals'], legacy_recipes=legacy_recipes)
     for ref in receipt['base_seals']:
         single = context.contexts[ref['path']]
         require_base_corpus(ref, single.root, context=single)
@@ -467,12 +801,22 @@ def verify_receipt(receipt: dict[str, Any]) -> tuple[dict[Path, str], BaseSeals]
     paths = [path for root in roots for path in shard_paths(root)]
     require([str(path) for path in paths] == [entry['path'] for entry in receipt['shards']],
                 'qualified overlay membership changed')
+    if 'intent_roster' in receipt:
+        intents, _recipe = _read_target_roster(receipt['intent_roster'])
+        require([str(path) for path in paths] == [intent['output'] for intent in intents],
+                'qualified paths/order differ from authenticated intent roster')
     expected = {}
     bases = []
     for path, entry in zip(paths, receipt['shards'], strict=True):
         require(overlay_content_sha256(path, seal=context) == entry['content_sha256'],
                     'qualified overlay dependency/content changed')
         manifest = json.loads((path / MANIFEST).read_bytes())
+        if 'intent_roster' in receipt:
+            require(manifest['intent_roster'] == receipt['intent_roster'],
+                    'qualified intent roster changed')
+        else:
+            require('intent_roster' not in manifest,
+                    'frozen E target changed its intent type')
         require(entry['rows'] == manifest['identity']['rows'], 'qualified row count differs')
         bases.append(manifest['base'])
         expected[path] = entry['content_sha256']

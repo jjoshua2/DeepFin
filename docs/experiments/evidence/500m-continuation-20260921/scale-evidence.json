@@ -1,0 +1,330 @@
+{
+  "scope": "Readout of completed banked artifacts; no new experiments. Retention status is snapshot before parent qualification work.",
+  "sources": {
+    "generation": {
+      "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/complete.json",
+      "sha256": "e6dfff02a4db148bc39274f2cec582b2088449ce6e8d8c8f4f6938ff07b8e7d0"
+    },
+    "value_cost": {
+      "path": "/home/josh/chess-artifacts/corpora/sf_value_cost_20260920/run_v1/complete.json",
+      "sha256": "3059d2157c8f8bd0901c514104f24bc61c003000e65f16f6ab1c03c7e166af9b"
+    },
+    "profile": {
+      "path": "/home/josh/chess-artifacts/operations/sf_value_profile_20260920/summary.json",
+      "sha256": "d32ec4fdb5b974a22ea317eedbcf7edde6fc79abc50e83abceca203dd932b037"
+    },
+    "profile_empty_syzygy": {
+      "path": "/home/josh/chess-artifacts/operations/sf_value_profile_no_syzygy_20260920/summary.json",
+      "sha256": "20d04770d48aa1c5b1579556893fac79938fc5f78877ac69be4991de5ccef463"
+    },
+    "bt4_completion": {
+      "path": "/home/josh/chess-artifacts/operations/bt4-batch-benchmark-v2-20260920/complete.json",
+      "sha256": "2a0e2eeaecf4a248b3a038476992c4a6b312e13354f63cca76f50c9f2808f3bd"
+    },
+    "bt4_parity": {
+      "path": "/home/josh/chess-artifacts/labels/bt4-batch-benchmark-v2-20260920/parity.json",
+      "sha256": "545312142244fba90fc5877122e9e131091a8773b993bea17a86e7e8dae4b1a2"
+    },
+    "packed_sampler": {
+      "path": "/home/josh/chess-artifacts/operations/packed-exact-qualification-20260920/batch512/result.json",
+      "sha256": "924708b00814cc301c9c799dae0c2a9f97f8a7a30ba35ce9ee7d1272f2d517bf"
+    },
+    "retention_protocol": {
+      "path": "/home/josh/chess-artifacts/operations/sf_retain_tb_20260920/PROTOCOL.md",
+      "sha256": "c2c620d05f0696d0398101b42d4322a3b485d7ddce86364dcbaf8c6f4c96c503"
+    },
+    "retention_build_plan": {
+      "path": "/home/josh/chess-artifacts/operations/sf_retain_tb_20260920/build_plan.json",
+      "sha256": "d936c89150e5968fb5fb398d78888961c8b23906f4b9a4d93dcca9bb8726502f"
+    },
+    "storage_record": {
+      "path": "/tmp/deepfin-storage-loader-bench/docs/experiments/2026-09-20-storage-loader.md",
+      "sha256": "5656e23978b26adc203475ae261448aed5301a704ea77d41d9e5dc19241e0df0"
+    },
+    "bt4_128": {
+      "path": "/home/josh/chess-artifacts/labels/bt4-batch-benchmark-v2-20260920/128/complete.json",
+      "sha256": "016527f1ab100cb569b5a2feb6de780e705281d07fc4db03ece66688345e08b6"
+    },
+    "bt4_256": {
+      "path": "/home/josh/chess-artifacts/labels/bt4-batch-benchmark-v2-20260920/256/complete.json",
+      "sha256": "313a24906c1a60ca1daa7e4d404d7ab0676d0fff48f1acb9eba4cba6e0499fcb"
+    },
+    "bt4_512": {
+      "path": "/home/josh/chess-artifacts/labels/bt4-batch-benchmark-v2-20260920/512/complete.json",
+      "sha256": "c19c73257642ffb26bba5165cd3b00e5d7fde63e689a833d4b0c02e34bd5849c"
+    }
+  },
+  "generation": {
+    "status": "COMPLETE_SCREEN",
+    "cells": [
+      {
+        "id": "g10_c4",
+        "banked_rows": 10431,
+        "eligible_rows": 10431,
+        "elapsed_seconds": 600.5376211099792,
+        "eligible_rows_per_wall_second": 17.36943637389492,
+        "invalid_rows": 0,
+        "no_result_rows": 0,
+        "stop_reason": "cell_budget",
+        "returncode": -15
+      },
+      {
+        "id": "d8_c4",
+        "banked_rows": 38615,
+        "eligible_rows": 38615,
+        "elapsed_seconds": 601.1821084929979,
+        "eligible_rows_per_wall_second": 64.23178510218382,
+        "invalid_rows": 0,
+        "no_result_rows": 0,
+        "stop_reason": "cell_budget",
+        "returncode": -15
+      }
+    ],
+    "scope": "Closed-game support-qualified rows; no cross-corpus dedup or added teacher labeling. Short cold-start concurrency4 screens."
+  },
+  "value_cost": {
+    "status": "COMPLETE_BOUNDED_VALUE_COST",
+    "wall_seconds": 10.169781239004806,
+    "observed_child_cpu_seconds": 9.18,
+    "worker": {
+      "status": "COMPLETE_MATCHED_VALUE_COST",
+      "rows": 64,
+      "arms": {
+        "root_d8": {
+          "labels": 64,
+          "search_and_reset_seconds": 1.7502850789460354,
+          "labels_per_search_second": 36.56547197359342,
+          "max_seconds": 0.03932329500094056,
+          "median_seconds": 0.02691663202131167
+        },
+        "root_d10": {
+          "labels": 64,
+          "search_and_reset_seconds": 1.7909214477986097,
+          "labels_per_search_second": 35.73579403980472,
+          "max_seconds": 0.038635879987850785,
+          "median_seconds": 0.02751169999828562
+        },
+        "all_d8": {
+          "labels": 64,
+          "search_and_reset_seconds": 2.8592767250956967,
+          "labels_per_search_second": 22.383282960433988,
+          "max_seconds": 0.10913623200030997,
+          "median_seconds": 0.04184716899180785
+        }
+      },
+      "interpretation": "Same existing history-bearing positions; scalar versus full-width label cost only. No generation rate, value-quality or Elo claim."
+    }
+  },
+  "profile": {
+    "costs": {
+      "64": {
+        "root_d8": {
+          "labels": 64,
+          "reset_seconds": 1.645663678937126,
+          "stream_seconds": 0.11573860485805199,
+          "total_seconds": 1.7625164000783116
+        },
+        "root_d10": {
+          "labels": 64,
+          "reset_seconds": 1.6441016771132126,
+          "stream_seconds": 0.17354980140225962,
+          "total_seconds": 1.8186723607359454
+        },
+        "all_d8": {
+          "labels": 64,
+          "reset_seconds": 1.6514655779465102,
+          "stream_seconds": 1.183796694909688,
+          "total_seconds": 2.8432004840578884
+        }
+      },
+      "4": {
+        "root_d8": {
+          "labels": 64,
+          "reset_seconds": 1.4605973311699927,
+          "stream_seconds": 0.1127057402045466,
+          "total_seconds": 1.574301700165961
+        },
+        "root_d10": {
+          "labels": 64,
+          "reset_seconds": 1.492778300656937,
+          "stream_seconds": 0.1685409500496462,
+          "total_seconds": 1.662313916895073
+        },
+        "all_d8": {
+          "labels": 64,
+          "reset_seconds": 1.4520636557717808,
+          "stream_seconds": 1.1567313256673515,
+          "total_seconds": 2.616502771677915
+        }
+      }
+    },
+    "hash4_vs_hash64_changes": {
+      "root_d8": {
+        "root_score_changes": 0,
+        "bestmove_changes": 0,
+        "any_ranked_score_or_move_changes": 0
+      },
+      "root_d10": {
+        "root_score_changes": 0,
+        "bestmove_changes": 0,
+        "any_ranked_score_or_move_changes": 0
+      },
+      "all_d8": {
+        "root_score_changes": 0,
+        "bestmove_changes": 0,
+        "any_ranked_score_or_move_changes": 0
+      }
+    }
+  },
+  "empty_syzygy": {
+    "root_d8": {
+      "reset_seconds": 0.3902392699383199,
+      "stream_seconds": 0.11250304128043354,
+      "total_seconds": 0.5035939699155279,
+      "labels_per_search_second": 127.08650981411725,
+      "root_score_changes": 0,
+      "bestmove_changes": 0,
+      "any_rank_changes": 0
+    },
+    "root_d10": {
+      "reset_seconds": 0.3898956559714861,
+      "stream_seconds": 0.1754629162605852,
+      "total_seconds": 0.5661321310908534,
+      "labels_per_search_second": 113.04781425615502,
+      "root_score_changes": 0,
+      "bestmove_changes": 0,
+      "any_rank_changes": 0
+    },
+    "all_d8": {
+      "reset_seconds": 0.38729008770314977,
+      "stream_seconds": 1.2193675577291287,
+      "total_seconds": 1.6136469652410597,
+      "labels_per_search_second": 39.66171125320411,
+      "root_score_changes": 2,
+      "bestmove_changes": 2,
+      "any_rank_changes": 5
+    }
+  },
+  "bt4": {
+    "status": "INCOMPLETE",
+    "error": "RuntimeError('output parity threshold exceeded')",
+    "parity": [
+      {
+        "batch": 256,
+        "policy_tv_mean": 0.00028506653772713924,
+        "policy_tv_max": 0.0041201377753168344,
+        "wdl_abs_max": 0.002916276454925537,
+        "raw_policy_abs_max": 0.06563284993171692,
+        "pass": false
+      },
+      {
+        "batch": 512,
+        "policy_tv_mean": 0.0002887683148480333,
+        "policy_tv_max": 0.0034075744915753603,
+        "wdl_abs_max": 0.0019625425338745117,
+        "raw_policy_abs_max": 0.08028379082679749,
+        "pass": true
+      }
+    ],
+    "measurements": {
+      "128": {
+        "rows": 8236,
+        "inference_rows_per_second": 3272.360000491939,
+        "end_to_end_rows_per_second": 800.1867815473022,
+        "end_to_end_seconds": 10.292596916027833,
+        "scope": "One ordered screen; end-to-end excludes session startup and bank discovery."
+      },
+      "256": {
+        "rows": 8236,
+        "inference_rows_per_second": 3009.7001868256234,
+        "end_to_end_rows_per_second": 785.8546931538197,
+        "end_to_end_seconds": 10.480308983009309,
+        "scope": "One ordered screen; end-to-end excludes session startup and bank discovery."
+      },
+      "512": {
+        "rows": 8236,
+        "inference_rows_per_second": 3022.161011362661,
+        "end_to_end_rows_per_second": 752.7918108097845,
+        "end_to_end_seconds": 10.940607856959105,
+        "scope": "One ordered screen; end-to-end excludes session startup and bank discovery."
+      }
+    },
+    "decision": "Keep batch128; batch256 fails WDL max tolerance .002 and neither larger batch improved producer throughput."
+  },
+  "packed": {
+    "status": "PASS_MATCHED_PACKED_ZARR_SAMPLER",
+    "scope": "Exact sampler only; fixed order, uncontrolled caches; no trainer/GPU or live adoption",
+    "runs": [
+      {
+        "root": "/home/josh/chess-artifacts/operations/packed-exact-qualification-20260920/batch512/directory",
+        "rows": 262144,
+        "planning_seconds": 1.4928671849775128,
+        "consumer_wall_seconds_including_digest": 24.430323381966446,
+        "sequence_sha256": "2bccddc7bef89b6b223af16bcdab8b31dad16698cab3badb8a26adc7e1fc6585"
+      },
+      {
+        "root": "/mnt/e/chess_packed_exact32_20260920",
+        "rows": 262144,
+        "planning_seconds": 4.080508328974247,
+        "consumer_wall_seconds_including_digest": 25.87810592597816,
+        "sequence_sha256": "2bccddc7bef89b6b223af16bcdab8b31dad16698cab3badb8a26adc7e1fc6585"
+      }
+    ]
+  },
+  "planning": {
+    "month_seconds": 2592000,
+    "target_rows": 500000000,
+    "required_rows_per_second_from_zero": 192.90123456790124,
+    "known_eligible_rows": 58090688,
+    "residual_rows": 441909312,
+    "required_residual_rows_per_second_30days": 170.4897037037037,
+    "raw_82m_scenario": {
+      "raw_rows": 82000000,
+      "unverified_eligible": true,
+      "hypothetical_residual_rows": 418000000,
+      "hypothetical_required_rows_per_second_30days": 161.26543209876544,
+      "caution": "82M raw is a planning scenario only, not verified eligible inventory."
+    }
+  },
+  "retention": {
+    "build_plan": {
+      "status": "PREPARED_REVIEW_REQUIRED_NOT_BUILT",
+      "source": "/tmp/deepfin-sf-retain-tables",
+      "source_head": "0973aa8dcc003edc28522de66c0c8ceff6512199",
+      "base": "2edd935bbb3ea6e484a1700f582a95e0ee773ec2",
+      "patch_sha256": "f4e9a178f88134ccb94d5b19eca34b4b1b4129e5babe9e93551fdf7edf772868",
+      "build_tree": "/home/josh/chess-artifacts/cache/sf_retain_tb_20260920/build",
+      "tracked_code_files_copied": 119,
+      "weights": {
+        "path": "/home/josh/sf213_build/wt_latest/src/nn-1a298aa575a0.nnue",
+        "sha256": "1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2",
+        "link": "/home/josh/chess-artifacts/cache/sf_retain_tb_20260920/build/src/nn-1a298aa575a0.nnue"
+      },
+      "binary": "/home/josh/chess-artifacts/models/stockfish-retain-tb-0973aa8d-bmi2",
+      "command": [
+        "make",
+        "-j2",
+        "build",
+        "ARCH=x86-64-bmi2",
+        "COMP=gcc",
+        "EXE=/home/josh/chess-artifacts/models/stockfish-retain-tb-0973aa8d-bmi2"
+      ],
+      "cwd": "/home/josh/chess-artifacts/cache/sf_retain_tb_20260920/build/src",
+      "resource_guard": {
+        "wall_seconds": 600,
+        "cpus": [
+          8,
+          9
+        ],
+        "nice": 19,
+        "min_available_ram_gib": 40,
+        "min_free_disk_gib": 100,
+        "maximum_build_output_gib": 2
+      },
+      "scope": "Isolated experimental binary only. No original engine replacement; default retention option false."
+    },
+    "next": "Independent review, bounded build, then 72-case equivalence and tablebase lifecycle/probe qualification. Parent agent now owns execution; no adoption verdict in this readout."
+  },
+  "stale_markers": "Generation and value-cost command.prepared.json retain NOT_LAUNCHED text; actual corpus complete.json confirms finished. BT4 operation complete.json is INCOMPLETE because parity failed despite all individual batches completing.",
+  "storage_limits": "32 shards / 262144 rows, fixed-order uncontrolled caches, CPU sampler only. No full GPU trainer or cold multi-terabyte qualification. Sampled derived500M estimate318-354GB; raw~1.28TB, before variants/teachers."
+}

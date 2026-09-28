@@ -1,0 +1,11 @@
+{
+  "status": "APPROVED",
+  "plan_sha256": "84a8fccf3b9360d9421b69eedbbc7b47fc23dbe1d6d0b0d6e9d19881844b43de",
+  "reviewer": "parent independent of author scale_optimization_readout",
+  "tests": "20 observer and pair tests passed, including real persisted GameAwareEpochBuffer schema integration and interrupt cleanup cases",
+  "scope": "Reviewed actual ply_index schema correction, validity-mask fail-closed checks, restored hooks, exact retry plan delta; rehashed all runtime members and direct pins; verified dependency/CPU qualification gates and fixed order/caps/thresholds. No GPU run.",
+  "runtime_members_checked": 2862,
+  "pins_checked": 10,
+  "qualification_rows": 1963948,
+  "qualified_batches": 3836
+}
