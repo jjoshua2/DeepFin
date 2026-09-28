@@ -39,6 +39,7 @@ def test_full_state_round_trip_and_hourly_retention(tmp_path):
     trainer = TinyTrainer()
     trainer.update()
     first = save(rolling, trainer)
+    assert first is not None
     rng = torch.get_rng_state().clone()
     now[0] = 3599
     assert save(rolling, trainer) is None
@@ -47,6 +48,7 @@ def test_full_state_round_trip_and_hourly_retention(tmp_path):
         now[0] = time_value
         trainer.update()
         latest = save(rolling, trainer)
+    assert latest is not None
     assert not first.exists()
     snapshots = json.loads((tmp_path / 'latest.json').read_text())['snapshots']
     assert len(snapshots) == 2
@@ -77,6 +79,7 @@ def test_failed_commit_preserves_previous_good_snapshot(tmp_path, monkeypatch, a
     trainer = TinyTrainer()
     trainer.update()
     first = save(rolling, trainer)
+    assert first is not None
     original_index = (tmp_path / 'latest.json').read_bytes()
     original_checkpoint = (first / 'checkpoint.pt').read_bytes()
     original_write = recovery.atomic_write

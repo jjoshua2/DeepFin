@@ -10,6 +10,9 @@ Run scripts from the repository root with an installed package or `PYTHONPATH=.`
 Use each command's `--help` for its current arguments; examples below inspect interfaces
 and do not launch experiments.
 
+See [workspace storage](workspace_storage.md) before creating agent workspaces or
+choosing bulk input/output locations.
+
 ## Corpus to offline training
 
 | Stage | Entry point | Contract to preserve |

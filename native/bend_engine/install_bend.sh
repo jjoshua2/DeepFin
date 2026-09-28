@@ -3,7 +3,8 @@
 # The parity probe is the compatibility gate: Bend is young and latest moves
 # quickly, so this does not pin a patch version. The archive is still
 # sha256-checked. The old feed carried {ver, sha256, url}; the current feed is
-# {ver, notice} only, so the matching GitHub release asset digest is used.
+# {ver, notice} only. Use the matching GitHub asset digest, or the official
+# installer's matching version/platform checksum if the API is unavailable.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -58,9 +59,9 @@ RESOLVE_ARGS=()
 if [ -n "${BEND_PLATFORM:-}" ]; then
   RESOLVE_ARGS+=(--platform "$BEND_PLATFORM")
 fi
-read -r WANT_VERSION WANT_SHA WANT_URL <<EOF
-$(printf '%s' "$META" | python3 "$RESOLVE" "${RESOLVE_ARGS[@]}")
-EOF
+# Capture the resolver status directly; a read/heredoc masks its failure.
+RESOLVED="$(printf '%s' "$META" | python3 "$RESOLVE" "${RESOLVE_ARGS[@]}")"
+read -r WANT_VERSION WANT_SHA WANT_URL <<< "$RESOLVED"
 
 case "$WANT_VERSION" in
   *[!0-9A-Za-z._-]*|.|..|"")
@@ -122,5 +123,11 @@ if [ -n "${GITHUB_PATH:-}" ]; then
   echo "$BIN" >> "$GITHUB_PATH"
 fi
 
-echo "bend probe: installed $("$BIN/bend" --version 2>/dev/null || echo unknown) at $BIN/bend"
+# Do not report a successful installation of a non-working executable.
+GOT_VERSION="$("$BIN/bend" version)"
+if [ "$GOT_VERSION" != "bend $WANT_VERSION" ]; then
+  echo "error: installed Bend version mismatch: $GOT_VERSION" >&2
+  exit 2
+fi
+echo "bend probe: installed $GOT_VERSION at $BIN/bend"
 echo "$BIN/bend"

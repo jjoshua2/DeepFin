@@ -1,0 +1,1598 @@
+{
+  "status": "PREPARED_NOT_LAUNCHED_REQUIRES_REVIEW",
+  "schema": 1,
+  "cohort_plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation/plan.json",
+  "cohort_plan_sha256": "b3da27e09c704b7c6b5330f5ec17423f4dd5cf0f8f83d31152a7eed456beab65",
+  "reuse": "/mnt/e/chess_packed_exact32_20260920",
+  "output": "/home/josh/chess-artifacts/operations/packed-trainer256-20260921",
+  "external": "/mnt/e/chess_packed_trainer256_20260921",
+  "records": [
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000000.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000001.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000001.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000002.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000002.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000003.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000003.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000004.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000004.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000005.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000005.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000006.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000006.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000007.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000007.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000008.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000008.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000009.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000009.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000010.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000010.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000011.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000011.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000012.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000012.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000013.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000013.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000014.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000014.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000015.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000015.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000016.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000016.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000017.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000017.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000018.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000018.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000019.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000019.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000020.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000020.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000021.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000021.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000022.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000022.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000023.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000023.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000024.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000024.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000025.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000025.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000026.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000026.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000027.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000027.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000028.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000028.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000029.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000029.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000030.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000030.zarr.zip"
+    },
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000031.zarr",
+      "rows": 8192,
+      "reused": "/mnt/e/chess_packed_exact32_20260920/shard_000031.zarr.zip"
+    },
+    {
+      "cohort": 1,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 1,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10/shard_000005.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 1,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10/shard_000010.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 1,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10/shard_000016.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 1,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10/shard_000021.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 1,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10/shard_000026.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 1,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10/shard_000032.zarr",
+      "rows": 1772,
+      "reused": null
+    },
+    {
+      "cohort": 2,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 2,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4/shard_000005.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 2,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4/shard_000010.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 2,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4/shard_000016.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 2,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4/shard_000021.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 2,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4/shard_000026.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 2,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4/shard_000032.zarr",
+      "rows": 2485,
+      "reused": null
+    },
+    {
+      "cohort": 3,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/control/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 3,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/control/shard_000005.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 3,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/control/shard_000010.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 3,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/control/shard_000015.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 3,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/control/shard_000020.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 3,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/control/shard_000025.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 3,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/control/shard_000031.zarr",
+      "rows": 8127,
+      "reused": null
+    },
+    {
+      "cohort": 4,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 4,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4/shard_000005.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 4,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4/shard_000010.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 4,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4/shard_000016.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 4,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4/shard_000021.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 4,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4/shard_000026.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 4,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4/shard_000032.zarr",
+      "rows": 2153,
+      "reused": null
+    },
+    {
+      "cohort": 5,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run06_g10/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 5,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run06_g10/shard_000040.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 5,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run06_g10/shard_000081.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 5,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run06_g10/shard_000122.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 5,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run06_g10/shard_000163.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 5,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run06_g10/shard_000204.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 5,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run06_g10/shard_000245.zarr",
+      "rows": 5979,
+      "reused": null
+    },
+    {
+      "cohort": 6,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 6,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4/shard_000040.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 6,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4/shard_000081.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 6,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4/shard_000122.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 6,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4/shard_000163.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 6,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4/shard_000204.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 6,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4/shard_000245.zarr",
+      "rows": 1912,
+      "reused": null
+    },
+    {
+      "cohort": 7,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run06_g10/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 7,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run06_g10/shard_000016.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 7,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run06_g10/shard_000032.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 7,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run06_g10/shard_000048.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 7,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run06_g10/shard_000064.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 7,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run06_g10/shard_000080.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 7,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run06_g10/shard_000096.zarr",
+      "rows": 3850,
+      "reused": null
+    },
+    {
+      "cohort": 8,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 8,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4/shard_000016.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 8,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4/shard_000032.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 8,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4/shard_000048.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 8,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4/shard_000064.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 8,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4/shard_000080.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 8,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4/shard_000096.zarr",
+      "rows": 6211,
+      "reused": null
+    },
+    {
+      "cohort": 9,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 9,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10/shard_000018.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 9,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10/shard_000037.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 9,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10/shard_000056.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 9,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10/shard_000074.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 9,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10/shard_000093.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 9,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10/shard_000112.zarr",
+      "rows": 3990,
+      "reused": null
+    },
+    {
+      "cohort": 10,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 10,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4/shard_000018.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 10,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4/shard_000037.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 10,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4/shard_000056.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 10,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4/shard_000074.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 10,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4/shard_000093.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 10,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4/shard_000112.zarr",
+      "rows": 7807,
+      "reused": null
+    },
+    {
+      "cohort": 11,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 11,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10/shard_000018.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 11,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10/shard_000037.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 11,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10/shard_000056.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 11,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10/shard_000074.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 11,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10/shard_000093.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 11,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10/shard_000112.zarr",
+      "rows": 6407,
+      "reused": null
+    },
+    {
+      "cohort": 12,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 12,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4/shard_000018.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 12,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4/shard_000037.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 12,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4/shard_000056.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 12,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4/shard_000074.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 12,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4/shard_000093.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 12,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4/shard_000112.zarr",
+      "rows": 4149,
+      "reused": null
+    },
+    {
+      "cohort": 13,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 13,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10/shard_000010.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 13,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10/shard_000021.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 13,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10/shard_000032.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 13,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10/shard_000042.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 13,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10/shard_000053.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 13,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10/shard_000064.zarr",
+      "rows": 3316,
+      "reused": null
+    },
+    {
+      "cohort": 14,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 14,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4/shard_000010.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 14,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4/shard_000021.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 14,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4/shard_000032.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 14,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4/shard_000042.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 14,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4/shard_000053.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 14,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4/shard_000064.zarr",
+      "rows": 1126,
+      "reused": null
+    },
+    {
+      "cohort": 15,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run06_g10/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 15,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run06_g10/shard_000010.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 15,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run06_g10/shard_000021.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 15,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run06_g10/shard_000032.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 15,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run06_g10/shard_000042.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 15,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run06_g10/shard_000053.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 15,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run06_g10/shard_000064.zarr",
+      "rows": 4695,
+      "reused": null
+    },
+    {
+      "cohort": 16,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 16,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4/shard_000010.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 16,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4/shard_000021.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 16,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4/shard_000032.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 16,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4/shard_000042.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 16,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4/shard_000053.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 16,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4/shard_000064.zarr",
+      "rows": 4055,
+      "reused": null
+    },
+    {
+      "cohort": 17,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 17,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10/shard_000018.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 17,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10/shard_000037.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 17,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10/shard_000055.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 17,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10/shard_000074.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 17,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10/shard_000092.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 17,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10/shard_000111.zarr",
+      "rows": 5520,
+      "reused": null
+    },
+    {
+      "cohort": 18,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 18,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4/shard_000018.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 18,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4/shard_000037.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 18,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4/shard_000055.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 18,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4/shard_000074.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 18,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4/shard_000092.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 18,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4/shard_000111.zarr",
+      "rows": 6141,
+      "reused": null
+    },
+    {
+      "cohort": 19,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 19,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10/shard_000021.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 19,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10/shard_000042.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 19,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10/shard_000064.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 19,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10/shard_000085.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 19,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10/shard_000106.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 19,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10/shard_000128.zarr",
+      "rows": 5736,
+      "reused": null
+    },
+    {
+      "cohort": 20,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 20,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/shard_000021.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 20,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/shard_000043.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 20,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/shard_000064.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 20,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/shard_000086.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 20,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/shard_000107.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 20,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/shard_000129.zarr",
+      "rows": 198,
+      "reused": null
+    },
+    {
+      "cohort": 21,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra184_run06_g10/V50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 21,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra184_run06_g10/V50/shard_000024.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 21,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra184_run06_g10/V50/shard_000048.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 21,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra184_run06_g10/V50/shard_000073.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 21,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra184_run06_g10/V50/shard_000097.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 21,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra184_run06_g10/V50/shard_000122.zarr",
+      "rows": 6766,
+      "reused": null
+    },
+    {
+      "cohort": 22,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra184_run07_g10_companion4/V50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 22,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra184_run07_g10_companion4/V50/shard_000012.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 22,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra184_run07_g10_companion4/V50/shard_000024.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 22,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra184_run07_g10_companion4/V50/shard_000037.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 22,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra184_run07_g10_companion4/V50/shard_000049.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 22,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra184_run07_g10_companion4/V50/shard_000062.zarr",
+      "rows": 3831,
+      "reused": null
+    },
+    {
+      "cohort": 23,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra512_run06_g10/V50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 23,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra512_run06_g10/V50/shard_000077.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 23,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra512_run06_g10/V50/shard_000154.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 23,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra512_run06_g10/V50/shard_000231.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 23,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra512_run06_g10/V50/shard_000308.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 23,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra512_run06_g10/V50/shard_000386.zarr",
+      "rows": 3612,
+      "reused": null
+    },
+    {
+      "cohort": 24,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra512_run07_g10_companion4/V50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 24,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra512_run07_g10_companion4/V50/shard_000025.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 24,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra512_run07_g10_companion4/V50/shard_000051.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 24,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra512_run07_g10_companion4/V50/shard_000076.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 24,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra512_run07_g10_companion4/V50/shard_000102.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 24,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra512_run07_g10_companion4/V50/shard_000128.zarr",
+      "rows": 5126,
+      "reused": null
+    },
+    {
+      "cohort": 25,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block00_run06_g10/V50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 25,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block00_run06_g10/V50/shard_000077.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 25,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block00_run06_g10/V50/shard_000154.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 25,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block00_run06_g10/V50/shard_000231.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 25,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block00_run06_g10/V50/shard_000308.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 25,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block00_run06_g10/V50/shard_000386.zarr",
+      "rows": 3840,
+      "reused": null
+    },
+    {
+      "cohort": 26,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block00_run07_g10_companion4/V50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 26,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block00_run07_g10_companion4/V50/shard_000025.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 26,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block00_run07_g10_companion4/V50/shard_000051.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 26,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block00_run07_g10_companion4/V50/shard_000076.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 26,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block00_run07_g10_companion4/V50/shard_000102.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 26,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block00_run07_g10_companion4/V50/shard_000128.zarr",
+      "rows": 6119,
+      "reused": null
+    },
+    {
+      "cohort": 27,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block01_run06_g10/V50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 27,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block01_run06_g10/V50/shard_000077.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 27,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block01_run06_g10/V50/shard_000154.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 27,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block01_run06_g10/V50/shard_000231.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 27,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block01_run06_g10/V50/shard_000308.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 27,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block01_run06_g10/V50/shard_000386.zarr",
+      "rows": 3133,
+      "reused": null
+    },
+    {
+      "cohort": 28,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block01_run07_g10_companion4/V50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 28,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block01_run07_g10_companion4/V50/shard_000025.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 28,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block01_run07_g10_companion4/V50/shard_000051.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 28,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block01_run07_g10_companion4/V50/shard_000076.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 28,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block01_run07_g10_companion4/V50/shard_000102.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 28,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block01_run07_g10_companion4/V50/shard_000128.zarr",
+      "rows": 5172,
+      "reused": null
+    },
+    {
+      "cohort": 29,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block02_run06_g10/V50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 29,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block02_run06_g10/V50/shard_000019.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 29,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block02_run06_g10/V50/shard_000038.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 29,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block02_run06_g10/V50/shard_000057.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 29,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block02_run06_g10/V50/shard_000076.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 29,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block02_run06_g10/V50/shard_000096.zarr",
+      "rows": 5354,
+      "reused": null
+    },
+    {
+      "cohort": 30,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block02_run07_g10_companion4/V50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 30,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block02_run07_g10_companion4/V50/shard_000006.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 30,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block02_run07_g10_companion4/V50/shard_000012.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 30,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block02_run07_g10_companion4/V50/shard_000019.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 30,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block02_run07_g10_companion4/V50/shard_000025.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 30,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block02_run07_g10_companion4/V50/shard_000032.zarr",
+      "rows": 2571,
+      "reused": null
+    },
+    {
+      "cohort": 31,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block00_run06_g10/V50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 31,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block00_run06_g10/V50/shard_000077.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 31,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block00_run06_g10/V50/shard_000154.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 31,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block00_run06_g10/V50/shard_000231.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 31,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block00_run06_g10/V50/shard_000308.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 31,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block00_run06_g10/V50/shard_000386.zarr",
+      "rows": 3956,
+      "reused": null
+    },
+    {
+      "cohort": 32,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block00_run07_g10_companion4/V50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 32,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block00_run07_g10_companion4/V50/shard_000025.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 32,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block00_run07_g10_companion4/V50/shard_000051.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 32,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block00_run07_g10_companion4/V50/shard_000076.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 32,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block00_run07_g10_companion4/V50/shard_000102.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 32,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block00_run07_g10_companion4/V50/shard_000128.zarr",
+      "rows": 5334,
+      "reused": null
+    },
+    {
+      "cohort": 33,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run06_g10/V50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 33,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run06_g10/V50/shard_000077.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 33,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run06_g10/V50/shard_000154.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 33,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run06_g10/V50/shard_000231.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 33,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run06_g10/V50/shard_000308.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 33,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run06_g10/V50/shard_000386.zarr",
+      "rows": 3506,
+      "reused": null
+    },
+    {
+      "cohort": 34,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run07_g10_companion4/V50/shard_000000.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 34,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run07_g10_companion4/V50/shard_000003.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 34,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run07_g10_companion4/V50/shard_000007.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 34,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run07_g10_companion4/V50/shard_000011.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 34,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run07_g10_companion4/V50/shard_000015.zarr",
+      "rows": 8192,
+      "reused": null
+    },
+    {
+      "cohort": 34,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run07_g10_companion4/V50/shard_000019.zarr",
+      "rows": 1375,
+      "reused": null
+    }
+  ],
+  "rows": 1963948,
+  "shards": 256,
+  "cohorts": 35,
+  "runtime_dependency_commit": "7f2c0ca55cbe0a12b08cc80ab107422f290880da",
+  "config": "/tmp/deepfin-factorial58-runtime/configs/lc0_positive_control.yaml",
+  "config_sha256": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+  "seed": 121,
+  "batch_size": 512,
+  "epochs": 1,
+  "cpu": {
+    "affinity": [
+      12,
+      13
+    ],
+    "threads": 2,
+    "nice": 19,
+    "aggregate_preparation_seconds": 1200,
+    "new_disk_cap_gib": 10,
+    "disk_floor_gib": 150,
+    "available_ram_floor_gib": 40
+  },
+  "gpu": {
+    "launch_authorized_now": false,
+    "after": [
+      "D",
+      "D_C",
+      "D_B",
+      "BT4_pipeline_benchmark"
+    ],
+    "per_arm_cap_seconds": 2700,
+    "aggregate_cap_seconds": 5400
+  },
+  "required_gates": [
+    "immutable runtime full roster + native extension pins",
+    "identical compressed members including reused ZIPs",
+    "full ordered tensor stream parity both roots with 2 plan/load workers",
+    "initial model hash and actual game/ply batch sequence match",
+    "exact epoch coverage all selected rows",
+    "all guards enforced by parent owned-child supervisor",
+    "independent review"
+  ],
+  "cache_policy": "No global cache drops; cache-affected paired test; full CPU qualification warms both roots.",
+  "arm_order": [
+    "external_zip",
+    "nvme_directory"
+  ],
+  "epoch_working_set_gib": 12,
+  "epoch_plan_workers": 2,
+  "epoch_load_workers": 2,
+  "primary_metric": "external / NVMe steady trainer rows per second after first two completed 88-step windows",
+  "screen_pass_ratio": 0.9
+}

@@ -27,8 +27,25 @@ def threads() -> Any:
         blosc.set_nthreads(previous)
 
 
+def _roster_ref(tmp_path: Path, name: str, scopes: list[dict[str, Any]]) -> dict[str, str]:
+    intents = [storage._target_intent(
+        Path(scope['base']), Path(scope['output']), scope['base_seal'],
+        sorted(scope['replacements'])) for scope in scopes]
+    directory = tmp_path / 'intents'
+    directory.mkdir(parents=True, exist_ok=True)
+    registration = directory / f'{name}-registration.json'
+    storage._atomic_new_json(registration, {
+        'schema': 2, 'kind': 'target-overlay-producer-registration',
+        'intents': intents, 'recipes': [scope['recipe'] for scope in scopes],
+    })
+    return storage.write_target_intent_roster(
+        scopes, directory / f'{name}.json',
+        registration_ref={'path': str(registration), 'sha256': storage.sha(registration)})
+
+
 def fixture(tmp_path: Path, replacements: tuple[str, ...] = ('policy_target', 'search_wdl')) -> tuple[list[Path], list[Path], list[Path], dict[str, str]]:
-    bases, roots, copies = [], [], []
+    bases, roots, copies, plans = [], [], [], []
+    recipe = {'test': 'balanced'}
     for i in range(2):
         work = tmp_path / str(i)
         work.mkdir()
@@ -39,7 +56,16 @@ def fixture(tmp_path: Path, replacements: tuple[str, ...] = ('policy_target', 's
         root = work / 'targets'
         root.mkdir()
         out = root / shard.name
-        targets.begin_target_shard(shard, out, ref, replacements=replacements)
+        plans.append((shard, out, ref, root, base))
+        bases.append(base)
+        roots.append(root)
+    roster_ref = _roster_ref(tmp_path, 'fixture', [{
+        'base': str(shard), 'output': str(out), 'base_seal': ref,
+        'replacements': list(replacements), 'recipe': recipe,
+    } for shard, out, ref, _root, _base in plans])
+    for shard, out, ref, _root, base in plans:
+        targets.begin_target_shard(
+            shard, out, ref, replacements=replacements, roster_ref=roster_ref)
         src: Any = zarr.open_group(str(shard), mode='r')
         dst: Any = zarr.open_group(str(out), mode='a')
         legal = np.asarray(src['legal_mask'][:], dtype=np.float64)
@@ -47,17 +73,16 @@ def fixture(tmp_path: Path, replacements: tuple[str, ...] = ('policy_target', 's
             dst['policy_target'][:] = (legal / legal.sum(axis=1, keepdims=True)).astype(np.float16)
         if 'search_wdl' in replacements:
             dst['search_wdl'][:] = np.array([[.125, .25, .625]] * 2, dtype=np.float16)
-        targets.finish_target_shard(shard, out, ref, recipe={'test': 'balanced'})
-        copied = work / 'copied'
+        targets.finish_target_shard(
+            shard, out, ref, recipe=recipe, roster_ref=roster_ref)
+        copied = base.parent / 'copied'
         shutil.copytree(base, copied)
         c: Any = zarr.open_group(str(copied / shard.name), mode='a')
         for field in replacements:
             c[field][:] = dst[field][:]
-        bases.append(base)
-        roots.append(root)
         copies.append(copied)
     receipt = tmp_path / 'qualified.json'
-    targets.qualify_target_roots(roots, receipt)
+    targets.qualify_target_roots(roots, receipt, roster_ref=roster_ref)
     return bases, roots, copies, {'path': str(receipt), 'sha256': storage.sha(receipt)}
 
 
@@ -138,10 +163,18 @@ def test_normalized_fill_does_not_hide_missing_replacement_chunk(tmp_path: Path)
     seal = tmp_path / 'seal.json'
     cli.seal_base(base, seal)
     ref = {'path': str(seal), 'sha256': storage.sha(seal)}
-    out = tmp_path / 'overlay'
-    targets.begin_target_shard(shard, out, ref, replacements=('search_wdl',))
+    out = tmp_path / 'work' / 'overlay'
+    out.parent.mkdir()
+    recipe = {'test': 'missing'}
+    roster_ref = _roster_ref(tmp_path, 'missing', [{
+        'base': str(shard), 'output': str(out), 'base_seal': ref,
+        'replacements': ['search_wdl'], 'recipe': recipe,
+    }])
+    targets.begin_target_shard(
+        shard, out, ref, replacements=('search_wdl',), roster_ref=roster_ref)
     group: Any = zarr.open_group(str(out), mode='a')
     del group['search_wdl']
     group.create_dataset('search_wdl', shape=(2, 3), chunks=(2, 3), dtype='float16', fill_value=1/3)
     with pytest.raises(ValueError, match='missing replacement target chunk'):
-        targets.finish_target_shard(shard, out, ref, recipe={'test': 'missing'})
+        targets.finish_target_shard(
+            shard, out, ref, recipe=recipe, roster_ref=roster_ref)
