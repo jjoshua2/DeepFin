@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [SF-free BT4+Ceres targets](2026-09-21-sffree-targets.md) | Reviewed E builder and three real source families qualified; bounded full 58M CPU preparation launched; training pending |
 | [58M policy/value teacher factorial](2026-09-19-58m-policy-value-factorial.md) | Reviewed pipeline queued:22.78M missing Ceres labels, target overlays, four fresh58M arms and four direct matches; active continuation preserved; no factorial results |
 | [B100 Tactical300 policy transfer](2026-09-11-b100-tactical300-transfer.md) | Candidate sparse SF mass-transfer policy tooling with mandatory deeper-SF calibration before materialization or training |
 | [Ceres selected-label guard cadence](2026-09-27-ceres-selected-guard-cadence.md) | Four-arm selected-4K GPU A/B/A/B: exact target parity and 17.76% lower arm wall; no production or 500M throughput claim |
