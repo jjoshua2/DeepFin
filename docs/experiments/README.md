@@ -13,6 +13,15 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [Ceres selected-label guard cadence](2026-09-27-ceres-selected-guard-cadence.md) | Four-arm selected-4K GPU A/B/A/B: exact target parity and 17.76% lower arm wall; no production or 500M throughput claim |
+| [Opt-in measured live gather policy](2026-09-26-measured-live-dispatch.md) | Exact-package gather recommendations, bounded runtime application and equal-work controls; speed validation separate |
+| [Native batch service-time profile](2026-09-25-native-service-profile.md) | CPU callback occupancy curves with retained warmups and fixed-package equal-work estimates; no runtime dispatch or GPU claim |
+| [Persistent live CPU-model composition](2026-09-25-live-model-composition.md) | Actual AOTI checkpoint across generation reuse and shared forwards; strict independent oracle, no GPU or strength claim |
+| [Persistent live-cohort recovery](2026-09-25-live-cohort-recovery.md) | PR5d: generation-safe lifecycle reconciled with FIFO, completion waits and configurable arenas; qualification recorded separately |
+| [Async cohort root deadlines](2026-09-23-cohort-deadlines.md) | PR5c: per-root expiry, preadmission row compaction and charged physical retirement; opt-in CPU cohorts |
+| [Asynchronous bounded cohorts](2026-09-23-async-cohort.md) | PR5b: CPU batch worker, per-root cancellation and physical accounting; actual model parity, no dynamic root admission or speed claim |
+| [Bounded Bend multi-root batching](2026-09-22-native-multi-root.md) | PR5a: real selected-leaf CPU cohorts, serial tree parity and physical work accounting; no live scheduler or GPU/speed claim |
+| [Native asynchronous selected-leaf search](2026-09-22-native-async-search.md) | PR4b: composed CPU engine, responsive stop/readiness, cancellation and physical retirement; no GPU/speed claim |
+| [Native async lifecycle](2026-09-22-native-async-lifecycle.md) | Bounded worker ownership, exact cancellation/retirement and separate real CPU-model qualification; no asynchronous UCI or GPU claim |
 | [Native policy-map and buffer reuse](2026-09-22-native-buffer-reuse.md) | Linear Bend-owned reusable storage, packed transport and opt-in diagnostics; bounded CPU qualification |
 | [BT4 root worker CUDA qualification](2026-09-23-bt4-root-worker-gpu-qualification.md) | Preregistered tiny real-model 7-to-6 correctness and accepted-row writer-cost pilots under shared GPU lease; no GPU run yet |
 | [BT4 opt-in root-policy worker](2026-09-23-bt4-root-policy-worker.md) | Experimental CPU-capable ONNX generator and atomic whole-game writer with strict rule50 six-man outcomes, raw teacher retention and >=7-piece rows; fake CPU checks only, no searched actor or replay consumer |
@@ -164,6 +173,13 @@ analysis workflow.
 
 - [Native fixed-batch boundary (PR3a)](2026-09-22-native-batch-boundary.md) — bounded full/partial batch qualification; CUDA remains separate.
 - [Native CUDA/BF16 backend implementation and qualification limits](2026-09-22-native-cuda-backend.md)
+- [FIFO cohort integration](2026-09-23-fifo-cohort-integration.md): ready-root queue adoption with exact parent scheduling, tree, cancellation and deadline checks.
+
+- [Matched full-coordinator FIFO timing](2026-09-23-fifo-runner-timing.md): exact list/FIFO sources, optimized callback runner, strict realized-work checks and paired timings; no model/GPU claim.
+- [Bounded completion notification](2026-09-23-bounded-completion-wait.md): notification versus fixed pending sleep, matched callback runner and retained control/deadline checks.
+- [Explicit bounded search arenas](2026-09-24-bounded-search-arenas.md): opt-in fixed node capacity, safe pending sentinels, and actual search beyond 4,096 nodes; no dynamic growth or deployment.
+
+- [Bounded arena memory and initialization-cost screen](2026-09-24-arena-memory-screen.md): equal-work per-child peak RSS and process timing across capacities; no model/GPU or live-memory budget claim.
 - [Ceres CPU history reductions](2026-09-21-ceres-history-reductions.md) — exact-byte CPU encoder comparison.
 Current evidence correction and scale plan: [September 16 bootstrap audit](2026-09-16-bootstrap-status-audit.md).
 - [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
