@@ -92,7 +92,9 @@ jobs:
           try:
               commands.run('registry', ['bash', 'native/bend_engine/multi_root/qualify_live_registry.sh', compiler, str(output / 'registry')], timeout=300)
               commands.run('live', ['bash', 'native/bend_engine/multi_root/qualify_live.sh', compiler, str(output / 'live')], timeout=1100)
-              names = ['live/status.json']
+              commands.run('dispatch', ['bash', 'native/bend_engine/multi_root/qualify_dispatch.sh', compiler, str(output / 'live'), str(output / 'dispatch')], timeout=180)
+              names = ['live/status.json', 'dispatch/status.json']
+              names += [f'dispatch/{mode}-{channels}.json' for mode in ('normal', 'ubsan') for channels in (146, 175)]
               names += [f'live/{mode}-c{channels}-b4/qualification.json' for mode in ('normal', 'ubsan') for channels in (146, 175)]
               hashes = {}
               for name in names:
