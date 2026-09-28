@@ -339,3 +339,297 @@ review SHA256 is
 the completion receipt SHA256 is
 `a813f9ed47f151e876a4eb228c0032ecae846414553fe32010eccdee2eb7ddf3`.
 The full source manifests and external archives remain available.
+
+## September 12: older E0 corpus archived and reclaimed
+
+The distinct legacy `qtemp_0.0005_hist_20m_bt4_toptie_a100` corpus completed
+copy/content verification and exact local shard reclamation. This is the older
+top-max-ties alpha1 recipe, not sharpened E0T05 or current SF/B100/Ceres inputs.
+The archive preserves 713,331 members and 9,658,007,914 logical source bytes in an
+11,016,949,760-byte tar. Local and full external readback SHA256 both equal
+`88008399652e742796eca2ede6eac4e4db3c4de111529b173e0754a7713c2bae`.
+The copy finished in 2,386.83 seconds (39m47s); the recorded maximum RSS was
+99,844 KiB with zero swaps. The verified staging tar was removed.
+
+A separate metadata comparison checked the saved manifest digest, all current
+source stamps and exact membership in 38.76 seconds without reading payloads
+again. Host consumer inspection found no source references. The inaccessible
+same-user process was identified as `ssh-agent`; other disclosed processes were
+WSL support services. This is practical scoped visibility, not a claim that every
+process descriptor was readable. Current generation, downside and WDL batch plans
+do not bind this legacy corpus.
+
+After independent and parent review, the remover deleted exactly 2,309 shard
+directories in 37.76 seconds. The durable journal has 2,309 matched intent/removal
+pairs. Only the original `derive_targets_summary.json` and
+`bt4_policy_mix_summary.json` remain at the source root, with unchanged hashes;
+all runs, checkpoints, arena records and lineage were retained. The independently
+observed external archive identity also remained unchanged. Prior allocated shard
+blocks totaled **12,217,753,600 bytes**; the concurrent filesystem free-space
+increase was **12,163,784,704 bytes**. These are different measurements, not an
+exact attribution of every free byte. The completed operation observed
+265,960,140,800 bytes free; this is a historical snapshot, not reserved capacity.
+
+The copy retained its four-hour inclusive bound, CPUs0–1, two threads, no GPU,
+2GiB per-process address-space limit, 24GiB staging ceiling, 16MiB/s transfer
+pacing and 150GiB local reserve plus staging reservation. Exact reclamation used
+a separate 30-minute inclusive bound, 512MiB address space, the same two CPUs,
+shared nonblocking preparation lock, STOP and fd-based deletion with a durable
+per-shard journal. No active input or preserved interrupted output was removed.
+
+Restore location:
+`/mnt/e/chess_derived_archive_20260908/E0Legacy_v1/qtemp_0.0005_hist_20m_bt4_toptie_a100.tar`.
+The source manifest remains at
+`scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/staging/qtemp_0.0005_hist_20m_bt4_toptie_a100/source.jsonl`,
+SHA256 `4331ace78c550937a6a77fe70360ba6030cbf447cbe7528eebc3fb5dc2dc0305`.
+Restore into a fresh directory and verify the archived identities before renewed
+source admission. Retained summaries alone are insufficient for training.
+[Compact completed receipts and review pins](evidence/e0legacy-archive-reclaimed-20260912.json)
+record both operations; this storage recovery establishes no new playing result
+or proof that the full 100M working set fits.
+
+
+## September 13: Tactical100 cold copy launched
+
+The parent launched the completed, unselected Tactical100 policy corpus copy at
+**00:56:00 UTC**, with one absolute **04:56:00 UTC** deadline. This continues
+SSD offloading during training. Tactical100's completed registered match was
+unresolved; B100 remained the incumbent. Archiving its derived corpus does not
+change that scientific interpretation or remove its trained checkpoints.
+
+Source:
+`data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100`.
+The intended archive is
+`/mnt/e/chess_derived_archive_20260908/Tactical100_v1/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100.tar`.
+A single bounded metadata census found **2,309 shards**, **671,768 files** and
+**41,563 directories**, with no hardlinked regular files. Logical file size is
+**11,896,485,651 bytes**; allocated blocks sum to **14,447,185,920 bytes**.
+Neither number is an observed archive size or a promise of space reclaimed.
+The census took about 80 seconds and did not read shard contents.
+
+The reviewed E0Legacy helper/wrapper are reused with literal path bindings and
+one resource change: the available-memory floor rises from 16 to **48 GiB**.
+This leaves margin above training's 32 GiB guard, without guaranteeing reaction
+ordering on sudden allocation. The copy keeps its four-hour inclusive bound,
+CPUs 0–1, idle I/O and low CPU priority, two numeric threads, hidden GPU,
+2 GiB per-process address-space limit, 24 GiB staging ceiling, 16 MiB/s transfer
+pacing, 150 GiB SSD reserve plus staging reservation and 48 GiB external reserve.
+The parent observed approximately 77 GiB available RAM, zero swap use, 210 GiB
+SSD free and 7,514 GiB external free on the writable E: 9p mount before launch.
+These are startup samples, not aggregate memory or disk guarantees.
+
+The actual command uses plan `a5c822c6…` and preserves the shared nonblocking
+preparation lock, STOP markers and one absolute deadline. Parent root session
+**71709**, sole observer **233**, owns completion. All source files remain until
+copy/content verification, full external readback and a later separately reviewed
+reclamation step. Fresh consumer and source-stability checks precede any removal.
+All runs, checkpoints, optimizer state and receipts remain; the current Downside,
+original SF/B100/C and active G10 inputs are outside this operation.
+
+**At the launch snapshot, copy completion was unread and source bytes reclaimed were 0.** The
+[compact actual-launch evidence](evidence/tactical100-archive-launched-20260913.json)
+contains exact command, source/destination and review pins. Preparation's initial
+sandbox mount check failed before the census because its view was read-only;
+the retained host attempt confirmed writable E: and completed the single census.
+This publication read only small saved preparation/launch records; it did not
+poll the archive or repeat the inventory.
+
+
+## September 13: Tactical100 archive verified and exact shards reclaimed
+
+The copy finished successfully in **2,879.775 seconds (47m59.775s)**. Parent root
+71709 / sole observer 233 closed with exit 0. The **13,254,707,200-byte** archive
+passed complete member/content verification and external readback against SHA-256
+`b1765a5674d1dd561718c09be34e7b940aad6d92952659f82e6bb8f98fbbe96e`.
+Its **713,331 members** preserve the original corpus files and directories;
+source manifest SHA-256 is
+`f3156922c3b8dedcb437f2dd752b761836e22eeba62aac6ae1965f4a22753fd0`.
+Only the verified local staging tar was removed at copy completion.
+
+A separate metadata comparison then checked exact membership and all recorded
+source stamps without rereading payloads. It confirmed **2,309 shard directories**
+with **14,384,427,008 allocated bytes**, excluding the two summaries retained
+locally. Fresh scoped observation found no exact-source references among 52
+same-user processes; permission-limited PID 30 was identified as ssh-agent and
+seven other-user processes as WSL roles. Current Downside training and SF recovery
+plans excluded the candidate. These are scoped observations, not a claim of full
+process visibility or absence of future dependencies.
+
+After independent review and parent authorization, the unchanged removal method
+with exact Tactical100 bindings finished in **49.168 seconds**, ending at
+**2026-09-13T02:08:00.076416+00:00**. Parent root **17721 / sole observer 243**
+closed with exit 0. Its durable journal contains exactly **2,309 removal intents
+and 2,309 successful removals**. Final top-level inspection found only
+`derive_targets_summary.json` and `bt4_sf_tactical_policy_summary.json`, with
+unchanged recorded metadata; the external archive identity also remained unchanged.
+All runs, checkpoints, optimizer state and receipts remain. Original SF/B100/C,
+current Downside and active G10 inputs were outside the removal scope.
+
+Filesystem free space changed from **215,922,315,264** to **230,295,519,232 bytes**,
+an observed increase of **14,373,203,968 bytes**. This is a concurrent filesystem
+measurement, not isolated attribution; the prior allocated shard sum is a
+separate measurement. The removal retained the 1,800-second inclusive bound,
+512 MiB address-space cap, CPUs 0–1, owned lock, STOP handling and partial-failure
+journal. No automatic retry, new archive or additional reclamation is launched.
+
+Restore from the exact external archive:
+`/mnt/e/chess_derived_archive_20260908/Tactical100_v1/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100.tar`.
+Before restoration, verify its full SHA-256 above and extract with GNU tar into a
+fresh empty directory with sufficient space. The archive contains the original
+corpus directory name. Do not overwrite the retained source path or an active
+experiment; validate restored contents and the intended consumer before reuse.
+ACL/xattrs were captured but not independently compared. Later metadata stability
+is not a new content-integrity proof against undetected storage corruption.
+
+[Compact completed copy and reclamation evidence](evidence/tactical100-archive-reclaimed-20260913.json)
+pins the copy, metadata eligibility, exact removal list, independent reviews,
+completion and journal. This publication reviewed those saved records, a single
+final directory listing and archive/summary metadata only; it repeated no payload
+hashes, source census, model reads or active-job polling. Scientific results and
+the separately running Downside training are unchanged.
+
+
+## September 13: Downside300 cold archive operator launched
+
+The completed Downside300 policy corpus is the next cold derived candidate: `qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1`, containing **18,910,484 rows / 2,309 shards**. Its matched policy result was unresolved. Current Ceres100 training manifest `c680aeca…` and the saved SF generation plan exclude these shards; checkpoints, optimizer state, match banks and scientific receipts remain online. Historical reuse of the corpus would require a qualified restore after any later reclamation.
+
+One bounded metadata census measured **671,768 files and 41,563 directories**, **12,064,350,439 logical bytes** and **14,615,117,824 allocated bytes (13.611 GiB)**, with no hardlinks. The allocated sum covers the entire tree, including the two summaries that will remain online; it is potential capacity, not guaranteed reclaimed bytes or an observed free-space increase. The coarse tar estimate is 12,819,967,207 bytes, below the unchanged 24-GiB stream ceiling. This estimate and census are not archive-content verification.
+
+Preparation completed with exit 0, reporting **34.802 seconds** for the preparation helper. A scoped consumer observation found no exact-source references among 54 same-user processes. PID30's current command identified the known SSH agent, while its cwd/fd/maps remained inaccessible; seven other-user processes were not inspected. These visibility limits remain explicit. The preparation observed writable E: over 9p, 205,283,602,432 bytes free locally and 81,684,811,776 bytes available RAM. These are preparation snapshots, not current resource or all-process clearance claims.
+
+The parent launched the copy-and-verify **outer command at 2026-09-13 15:01:45.303399 UTC** (exec27665 / sole observer492), bound to plan `5b48c8b9…` and one absolute start-plus-14,400-second deadline. Independent preparation review `b57c5120…` passed. The helper and wrapper differ from the verified Tactical100 workflow only in source/name/destination bindings. They retain CPUs0–1/two numeric threads, low CPU/idle I/O priority, a 48-GiB available-memory floor, 150-GiB local reserve plus initial staging allowance, 24-GiB tar ceiling, 2-GiB per-process address-space limit, 16-MiB/s rsync pacing, 32-MiB/s checksum pacing and 48-GiB external free-space requirement. Sampled headroom and software pacing do not guarantee aggregate memory or block-I/O limits.
+
+The intended destination is `/mnt/e/chess_derived_archive_20260908/Downside300_v1/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1.tar`. The operation must verify all original members/content/metadata, source stability and full external readback before any separately reviewed exact shard reclamation. All source remains in place during this copy. Both root summaries, all checkpoints and receipts, current SF/B100/C/Ceres100/G10 inputs and the adjacent `.writing.interrupted-20260912T182105Z` partial remain protected. Failure preserves partial artifacts without an automatic retry.
+
+**At this launch snapshot, archive verification was pending and source bytes reclaimed were 0.** The [compact plan and actual-launch evidence](evidence/downside300-archive-launched-20260913.json) contains the full plan, census summary, bounds, review and immutable outer argv/deadline. This publication consumed only saved small records; it did not poll the archive, repeat inventories or read payloads. The parent owns terminal review and any later verified reclamation.
+
+
+## September 13: Downside300 archive verified and 2,309 shards reclaimed
+
+The copy completed with **exit 0 in 2909.404 seconds (48m29.404s)**, ending at **2026-09-13T15:50:14.707428+00:00**. Parent exec27665 / sole observer492 recorded the terminal result. The **13,422,223,360-byte archive** passed complete verification of **713,331 members**, followed by matching external readback SHA-256 `42ff61a29d1d416bc657e1e575cd1e1b957b5d6f792da2b2460bb888ecc40ad5`. The source manifest is `121b81ebcaf6bb8cbe63a02f89dee51f7ef1ffb76a23df4889b5909718ddbc00`. The verified local staging tar was removed. At copy completion, the original corpus was still online; the subsequent reclamation is recorded below. Independent completed-copy review `59bd1a7f…` passed. ACL/xattrs were captured but not independently compared.
+
+One fresh bounded metadata comparison checked all recorded source stamps and exact current membership against that completed manifest, without rereading payloads. It passed in **29.161 seconds** and selected exactly **2,309 shard directories**, totaling **14,552,358,912 allocated bytes (13.553 GiB)**. This excludes the two retained root summaries, `derive_targets_summary.json` and `bt4_sf_downside_policy_summary.json`. The allocation sum is potential capacity, not a guaranteed or observed filesystem-free increase.
+
+Fresh scoped observation found no exact-source references among **50 same-user processes**. PID30's observed command was the SSH agent, with cwd/fd/maps still inaccessible; seven other-user processes were not inspected. The pinned current Ceres100 training and unchanged SF recovery plans excluded the source. These observations do not lock against future consumers or establish complete process visibility. The external archive's current size and mtime matched the completed readback receipt; that metadata check is not another content checksum.
+
+The prepared remover reuses the reviewed Tactical100 method with only corpus, summary, evidence-pin and allocation substitutions. Its fixed list contains those 2,309 directories only. It retains fd-based deletion, exact source/archive identity checks, summary checksums, lock/STOP handling, a durable per-shard intent/completion journal and failure preservation without automatic retry. Bounds remain **1,800 seconds inclusive, CPUs0–1, two numeric threads, low priority and a 512-MiB address-space limit**. Independent preparation review `b79f2f72…` and the parent reviewed the exact operator before execution.
+
+**The parent then executed the reviewed removal, finishing with exit 0 in 65.064 seconds at 2026-09-13T15:55:53.113015+00:00 (session50379).** The completed receipt reports exactly **2,309 shards removed**, unchanged checksums and metadata for both retained summaries, and unchanged external archive identity. Independent completion review `36d11094…` verified all **2,309 intent/removal journal pairs**, terminal success, the final two-summary directory and the preserved adjacent interrupted directory. Filesystem free space increased from **204,214,566,912 to 218,763,730,944 bytes**, a **14,549,164,032-byte** change. This is a concurrent whole-filesystem observation, distinct from the prior **14,552,358,912-byte** selected-shard allocation; it is not isolated attribution. Both root summaries, all checkpoints/optimizer state/runs/match banks/scientific receipts, every other corpus and the adjacent `.writing.interrupted-20260912T182105Z` directory remain protected. Restore from `/mnt/e/chess_derived_archive_20260908/Downside300_v1/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1.tar`: verify the full SHA-256 above and extract into a fresh empty directory before qualifying reuse; do not overwrite retained or active paths.
+
+[Compact completed-copy and reclamation evidence](evidence/downside300-archive-reclaimed-20260913.json) preserves both terminal results, the full verification receipt, independent reviews and fresh scoped qualification. The exact removal list and source manifest remain local pinned bulk metadata. No archive was repeated and no payloads, models or active jobs were polled for this publication.
+
+
+## September 13: Ceres100 cold archive copy launched; source retained
+
+The completed Ceres100 policy corpus, `qtemp_0.0005_hist_20m_ceres_policy_C100T05`, is the next cold archive candidate: **18,910,484 rows / 2,309 shards**. Its endpoint training and matched evaluation have completed. The named V100 training/corpus and SF generation plans exclude this derived recipe. Original SF/B100 inputs, saved Ceres teachers and raw corpora remain online, as do every checkpoint, run and experiment receipt. A future consumer that requires these exact derived shards must restore them after any later reclamation; retaining a checkpoint does not waive a corpus-dependent validator.
+
+One bounded metadata census completed in **36.282 seconds**, recording **671,768 files / 41,563 directories**, **12,101,374,597 logical bytes** and **14,652,719,104 allocated bytes**, with no hardlinks. These allocation figures include the two root summaries; they are not reclaimed bytes. The coarse tar estimate was **12,856,991,365 bytes**. The full 75,242,205-byte inventory remains local, pinned by its digest; no bulk roster is committed. This census is metadata eligibility evidence, not content verification.
+
+The existing Downside300 helper requires a local tar, verifies it, transfers it with rsync, then verifies external readback. It has no direct-to-external streaming option. This invocation preserves that method with an accepted **14-GiB hard tar ceiling**, a 10% staging allowance, and a **154-GiB running free-space floor**: the original 150-GiB floor plus 4 GiB reserved for other writers. Startup requires **169.4 GiB free**; the census-end snapshot was **171.304 GiB**. The estimate does not guarantee the tar fits; overflow or resource pressure stops the owned archive work while preserving source bytes. The additional native-label adapter remains deferred for disk headroom.
+
+Bounds are **10,800 seconds inclusive**, CPUs **0–1**, nice 19 and idle I/O priority, two numerical threads, hidden GPU, a **2-GiB per-process address-space cap** and **48 GiB available host RAM**. Rsync is capped at 16 MiB/s and checksums paced at 32 MiB/s; these are not strict aggregate I/O or memory guarantees. The unchanged lock, STOP handling, source-stability checks, content verifier and failure preservation remain. Parent and independent review checked the final plan `86e0abda…` after correcting stale four-hour explanatory text; independent review is `faff94ad…`.
+
+A fresh host fd/cwd observation found no visible references to the exact source. Same-user PID 30 was identified as `ssh-agent`, but its descriptors remained inaccessible; 12 other-user processes were not inspected. Maps were not scanned. These are explicit visibility limits, not deletion clearance. A host mount check confirmed writable E: over 9p; an earlier sandbox read-only view did not describe the host mount.
+
+The parent launched the exact **outer copy command at 2026-09-13T20:37:01.476691+00:00**, with an absolute deadline of **2026-09-13T23:37:01.476691+00:00** (exec **52568**, sole observer **779**). This is an invocation receipt, not a completed archive. **Verification is pending and source bytes reclaimed are zero at this snapshot.** The planned destination is `/mnt/e/chess_derived_archive_20260908/Ceres100_v1/qtemp_0.0005_hist_20m_ceres_policy_C100T05.tar`. No archive checksum or restore-ready claim exists yet. Copying preserves all source bytes; a later separately qualified reclamation would remove only the exact shard directories and retain `derive_targets_summary.json` and `ceres_target_mix_summary.json`, all checkpoints and neighboring partials.
+
+[Compact actual-launch evidence](evidence/ceres100-archive-launched-20260913.json) pins the immutable launch, final plan, census summary and independent review. Preparing this publication read saved small records only; it did not repeat the census, hash payloads, or poll the archive or training.
+
+## September 13: Ceres100 external copy verified
+
+The Ceres100 archive operation completed with **exit 0 in 2925.590 seconds**
+(48 minutes 46 seconds), within its three-hour allocation. All **713,331 archive
+members** were checked against the original source manifest. The external tar
+is **13,459,886,080 bytes**, SHA256
+`292f11114a7927251ea571d2f2e9e3ce62506dfe44d54480cbbe24f91715f0c6`,
+at `/mnt/e/chess_derived_archive_20260908/Ceres100_v1/qtemp_0.0005_hist_20m_ceres_policy_C100T05.tar`.
+
+The completed helper verified source member contents and recorded metadata,
+source stability and external readback; the local staging tar was then removed.
+Independent compact review matched the terminal, verification receipt and
+external file stat without repeating the archive or source payload checks. GNU
+tar captures ACLs/xattrs, but these were not independently compared; the checked
+metadata includes file mode, ownership and modification time.
+
+At copy completion the original corpus was still online. Exact shard reclamation
+requires the subsequent fresh source/consumer qualification and reviewed remover;
+root summaries, all runs/checkpoints, source teachers and neighboring partials
+remain protected. [Completion evidence](evidence/ceres100-archive-completed-20260913.json)
+preserves the actual copy proof and independent review. Copy completion alone
+does not establish reclaimed SSD space.
+
+## September 13: exact Ceres100 shard reclamation completed
+
+After fresh source stability and consumer qualification, the reviewed remover
+completed with **exit 0 in 62.589 seconds**. It removed exactly the listed
+**2309 Ceres100 derived shard directories**. Both root summaries remain with
+their original hashes; all training runs, checkpoints, game banks, teacher/raw
+sources and neighboring partial outputs remain outside the removal scope. The
+external archive identity still matches the verified copy.
+
+The pre-removal allocation of those exact shards was **14,650,634,240 bytes**.
+Observed filesystem free space changed from **182,973,345,792** to
+**197,620,441,088 bytes**, a **14,647,095,296-byte** increase. This is a concurrent
+whole-filesystem observation, not an isolated measurement of reclamation;
+it is intentionally separate from the shard allocation total.
+
+[Final evidence](evidence/ceres100-archive-completed-20260913.json) retains the
+copy verification, exact removal receipt and preserved-summary identities.
+Independent completion review reconciled all 2309 intent/removal pairs and
+confirmed the two retained summary identities and unchanged archive stat. The
+original Ceres100 payload is now cold storage; its experiment/checkpoint evidence
+remains online. No corpus or archive payload was rescanned for publication.
+
+
+## September 13: SoftSF10 copy-only archive launched
+
+The parent invoked the reviewed SoftSF10 archive operation at **2026-09-13T23:58:01.657051+00:00**
+(exec **8341**, sole observer **881**). Its wrapper recorded
+`STARTED_COPY_ONLY` at **2026-09-13T23:58:01.760049+00:00**, with the exact helper argv
+and the same absolute deadline. These saved receipts establish invocation;
+archive completion and external verification remain pending at this snapshot.
+
+The source is `data/nnue_derived/armB/qtemp_0.0005_hist_20m_softsf_cp10`,
+the completed **18,910,484-row / 2,309-shard** SoftSF10 policy product. The
+planned external archive is
+`/mnt/e/chess_derived_archive_20260908/SoftSF10_v1/qtemp_0.0005_hist_20m_softsf_cp10.tar`.
+The entire source remains online during copy. Both root summaries, all runs,
+checkpoints, raw/teacher inputs and neighboring partial directories are protected;
+no source deletion or reclaimed SSD space is claimed.
+
+Plan `caa1d8ef…`, command `0d19b75a…` and independent review `9f723f84…`
+bind the literal adaptation of the completed Ceres100 copy/verify workflow.
+The only behavioral limit change is the staging/tar ceiling from 14 to **12 GiB**.
+The saved metadata census estimated a **10.015-GiB tar** and **11.628 GiB** of
+allocated shard storage; neither is an actual completed archive size or space saving.
+No census or payload hashing was repeated for this launch publication.
+
+The allocation is **three hours inclusive**, CPUs **0–1**, two numerical threads,
+nice 19 and idle I/O, hidden GPU, **2-GiB per-process address space** and a
+**48-GiB available-RAM floor**. Startup requires **167.2 GiB free SSD**:
+154 GiB running floor (150 GiB reserve plus 4 GiB for other writers), plus
+13.2 GiB including the tar allowance and 10% margin. The external reserve is
+24 GiB. Transfer/checksum pacing remains 16/32 MiB per second; periodic guards
+are not hard RAM or disk quotas. The existing owned cleanup shares the original
+10,800-second deadline and preserves partial state on failure.
+
+The saved host preparation observed writable E: through 9p and no visible scoped
+source consumers; opaque PID30 and other-user processes were explicitly disclosed.
+That copy-only observation is not removal qualification. The initial sandbox mount
+check failed on its read-only view before the host check succeeded.
+[Compact launch evidence](evidence/softsf10-archive-launched-20260913.json)
+retains the actual invocation and frozen bindings. Any later reclamation requires
+verified external completion and a fresh exact-shard assessment.
+
+
+## SoftSF10 reclaimed; H20T05 copy launched
+
+The SoftSF10 copy completed with exit 0 in **2,456.734 seconds**. The external archive is **11,356,651,520 bytes**, contains **713,331 verified members**, and its readback SHA256 matches `ddf7dd24425364679e62bdeaff1b63e49cb9b9695c7de6d757bcf138815e39b0`. The existing helper verified source stability, member metadata and contents; ACL/xattrs were captured but not independently compared.
+
+A single fresh metadata comparison covered the exact source roster, followed by a host consumer check after the walker exited. It found no visible source references; opaque ssh-agent PID30 and ten other-user processes remain disclosed. An earlier sandbox observation was excluded from host clearance, and a transient overlapping directory-reference observation was preserved. These observations were not treated as global or future consumer clearance.
+
+The reviewed reclaimer then completed with parent-observed exit 0 in approximately **37.997 seconds**. Its journal contains all **2,309 ordered intent/removal pairs**, and it verified that the two root summaries and external archive identity were retained. The selected shard allocation was **12,485,857,280 bytes**; the observed whole-filesystem free-space increase was **12,309,786,624 bytes**, which includes concurrent activity and is not an isolated attribution. All checkpoints, runs, raw teachers, other corpora and neighboring paths remain outside removal scope.
+
+At **2026-09-14T00:56:01.099887+00:00**, the parent launched the H20T05 copy-only operation after fresh resource checks: 199,012,872,192 free disk bytes and 86,348,681,216 available RAM bytes. The registered three-hour operation uses CPU0,1, two threads, a 14 GiB tar cap, 48 GiB available RAM, and 177.4 GiB startup/162 GiB running disk requirements. Disk reservation includes 8 GiB for the selected raw derivation and 4 GiB for other writers. Source remains in place during copy and verification; no H20 completion or reclamation is claimed here.
+
+[Compact completed/launch evidence](evidence/softsf-reclaimed-h20-launched-20260913.json) binds both independent reviews, the exact reclamation result, and an immutable H20 launch snapshot. Bulk manifests and journals remain external to Git.

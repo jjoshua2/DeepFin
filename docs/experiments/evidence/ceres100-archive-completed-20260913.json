@@ -1,0 +1,231 @@
+{
+  "status": "VERIFIED_EXTERNAL_COPY_AND_EXACT_RECLAMATION_COMPLETE",
+  "verified": {
+    "pool": "qtemp_0.0005_hist_20m_ceres_policy_C100T05",
+    "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05",
+    "source_deleted": false,
+    "plan_sha256": "86e0abda07ef597e20c5f0098ddbf5e5854b8bc96e615d9344673b77ed51055e",
+    "started_unix": 1789331821.581419,
+    "mount": {
+      "target": "/mnt/e",
+      "source": "E:\\",
+      "fstype": "9p",
+      "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+    },
+    "resources": {
+      "local_free_bytes": 183759126528,
+      "available_RAM_bytes": 80858361856
+    },
+    "references": {
+      "observed_source_references": [],
+      "other_user_processes_not_inspected": [
+        1,
+        9,
+        12,
+        13,
+        33,
+        34,
+        894,
+        895,
+        1939,
+        1940,
+        407219,
+        407220
+      ],
+      "same_user_processes_not_inspected": [
+        30
+      ],
+      "complete_process_visibility": false,
+      "scope": "Copy only; source retained and stability independently checked. Not source-removal qualification."
+    },
+    "inventory": {
+      "entries": 713331,
+      "logical_file_bytes": 12101374597
+    },
+    "tar_bytes": 13459886080,
+    "verified_members": 713331,
+    "tar_sha256": "292f11114a7927251ea571d2f2e9e3ce62506dfe44d54480cbbe24f91715f0c6",
+    "source_manifest_sha256": "b29296b98e71a9098cac7ef4f1f270fc8b218478ca3602af90ee9e5ca4191ec1",
+    "rsync_command": [
+      "/usr/bin/rsync",
+      "--no-whole-file",
+      "--partial-dir=.qtemp_0.0005_hist_20m_ceres_policy_C100T05.partial",
+      "--bwlimit=16384",
+      "--fsync",
+      "--",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/staging/qtemp_0.0005_hist_20m_ceres_policy_C100T05/qtemp_0.0005_hist_20m_ceres_policy_C100T05.tar",
+      "/mnt/e/chess_derived_archive_20260908/Ceres100_v1/qtemp_0.0005_hist_20m_ceres_policy_C100T05.tar"
+    ],
+    "rsync_exit_code": 0,
+    "external_tar_sha256": "292f11114a7927251ea571d2f2e9e3ce62506dfe44d54480cbbe24f91715f0c6",
+    "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE",
+    "finished_unix": 1789334746.5794504,
+    "external_archive": "/mnt/e/chess_derived_archive_20260908/Ceres100_v1/qtemp_0.0005_hist_20m_ceres_policy_C100T05.tar",
+    "external_size": 13459886080,
+    "external_mtime_ns": 1789334327068142100,
+    "limitations": [
+      "Source retained; removal requires separate parent verification.",
+      "Observed fd/cwd consumers rejected; inaccessible process IDs disclosed. Not deletion qualification.",
+      "File mode/uid/gid/mtime and all contents verified; GNU tar captures ACL/xattrs but these are not independently compared."
+    ]
+  },
+  "outer_terminal": {
+    "returncode": 0,
+    "ended_unix": 1789334747.066584,
+    "elapsed_seconds": 2925.5898928642273
+  },
+  "independent_completed_copy_review": {
+    "status": "PASS_INDEPENDENT_COMPLETED_COPY_REVIEW_NOT_REMOVAL_QUALIFICATION",
+    "refs": [
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/plan.json",
+        "sha256": "86e0abda07ef597e20c5f0098ddbf5e5854b8bc96e615d9344673b77ed51055e"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/outer_terminal.json",
+        "sha256": "8bb1ebb5584a4441bf1627ad89412c91443cf770d791eae5b08bca786008810c"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/staging/qtemp_0.0005_hist_20m_ceres_policy_C100T05/verified.json",
+        "sha256": "f26ab2fa12502d10e43df2c51d72a613bdb8b081609a2b606bef69b5add4d8eb"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/archive_Ceres100.py",
+        "sha256": "13de10879acc42f87f3ca77f2e5893c68d9370ea53ad065215e8cf442d58138a"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/run_registered.py",
+        "sha256": "ca5b8282d50f4f66971c75792be3c50bd4695dc303a1d013ab14a02f0ee5f1ec"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/independent_preparation_review.json",
+        "sha256": "faff94ad07f614f3c98f592f90fb4b61e675204be19b425af71af0c012af0018"
+      }
+    ],
+    "members": 713331,
+    "logical_file_bytes": 12101374597,
+    "tar_bytes": 13459886080,
+    "archive_sha256": "292f11114a7927251ea571d2f2e9e3ce62506dfe44d54480cbbe24f91715f0c6",
+    "source_manifest_sha256_from_verified_receipt": "b29296b98e71a9098cac7ef4f1f270fc8b218478ca3602af90ee9e5ca4191ec1",
+    "external_archive": "/mnt/e/chess_derived_archive_20260908/Ceres100_v1/qtemp_0.0005_hist_20m_ceres_policy_C100T05.tar",
+    "external_stat_matches_receipt": true,
+    "local_staging_tar_absent": true,
+    "source_root_present": true,
+    "outer_seconds": 2925.5898928642273,
+    "scope": "Reviewed helper records full member contents/metadata and source stability, then external hash/readback. Receipt/terminal/external stat match; no payload/membermanifest/source-tree rehash or traversal repeated.",
+    "limitations": [
+      "Source retained; removal requires separate parent verification.",
+      "Observed fd/cwd consumers rejected; inaccessible process IDs disclosed. Not deletion qualification.",
+      "File mode/uid/gid/mtime and all contents verified; GNU tar captures ACL/xattrs but these are not independently compared."
+    ],
+    "reclamation_boundary": "Fresh source metadata/consumer qualification and separately reviewed exact-shard remover remain required; root summaries/runs/checkpoints protected."
+  },
+  "references": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/staging/qtemp_0.0005_hist_20m_ceres_policy_C100T05/verified.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/staging/qtemp_0.0005_hist_20m_ceres_policy_C100T05/verified.json",
+      "sha256": "f26ab2fa12502d10e43df2c51d72a613bdb8b081609a2b606bef69b5add4d8eb"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/outer_terminal.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/outer_terminal.json",
+      "sha256": "8bb1ebb5584a4441bf1627ad89412c91443cf770d791eae5b08bca786008810c"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/independent_completed_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/independent_completed_review.json",
+      "sha256": "4de381020b9ad1d8b819cd13291c355b7db2fe9d35cadca300521f15893540bb"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/reclamation_execution_v1/completed.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/reclamation_execution_v1/completed.json",
+      "sha256": "fe5dc97c8c8ee894082a850b0ee3417272446eeae561a905c610b6e0ee7ff00b"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/reclamation_execution_v1/independent_completed_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/reclamation_execution_v1/independent_completed_review.json",
+      "sha256": "0a439d897ef6a04f1778016aceadbfb9434a33b95fb968affcc1324d27375e67"
+    }
+  },
+  "limits": [
+    "No archive/source payload rehash or tree scan for publication.",
+    "Source retained at copy completion, followed by separately qualified exact shard reclamation.",
+    "Concurrent free-space delta is not isolated recovered-byte attribution."
+  ],
+  "reclamation_completed": {
+    "status": "COMPLETE_EXACT_SHARD_RECLAMATION_SUMMARIES_RETAINED",
+    "started_unix": 1789335464.0443265,
+    "ended_unix": 1789335526.5834703,
+    "deadline_unix": 1789337264.0066595,
+    "removed_shards": 2309,
+    "list_sha256": "9ac1a37b3e50223798fcdcbcfec1615a2ee9fda279f8326dcf6b34f75efd0485",
+    "script_sha256": "5c25fc6cf1854729654d6f3f45f0e06e81957d22085b08a8a69a9a41666bf174",
+    "archive_current_stat": {
+      "st_dev": 75,
+      "st_ino": 281474978208072,
+      "st_mode": 33279,
+      "st_uid": 1000,
+      "st_gid": 1000,
+      "st_size": 13459886080,
+      "st_mtime_ns": 1789334327068142100,
+      "st_ctime_ns": 1789334328790595800
+    },
+    "retained_summaries": [
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05/ceres_target_mix_summary.json",
+        "sha256": "b640508c736e60868f332c6461a01972af35e5724e2efcbb242d823701fbc866",
+        "stat": {
+          "st_dev": 2096,
+          "st_ino": 17244447,
+          "st_mode": 33188,
+          "st_uid": 1000,
+          "st_gid": 1000,
+          "st_size": 1811596,
+          "st_mtime_ns": 1789290462054302788,
+          "st_ctime_ns": 1789290462054302788
+        }
+      },
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05/derive_targets_summary.json",
+        "sha256": "6844ed432c09cf03f112cffa3452e3315e5f5de832837de4b8fbe022713de095",
+        "stat": {
+          "st_dev": 2096,
+          "st_ino": 17244605,
+          "st_mode": 33188,
+          "st_uid": 1000,
+          "st_gid": 1000,
+          "st_size": 168843,
+          "st_mtime_ns": 1789290462061983331,
+          "st_ctime_ns": 1789290462061983331
+        }
+      }
+    ],
+    "filesystem_free_before_bytes": 182973345792,
+    "filesystem_free_after_bytes": 197620441088,
+    "filesystem_free_delta_bytes": 14647095296,
+    "prior_allocated_shard_bytes": 14650634240,
+    "space_limit": "Free-space delta is a concurrent whole-filesystem observation, not isolated attribution to this removal. Prior allocated sum is separate.",
+    "no_resume": true
+  },
+  "independent_completed_reclamation_review": {
+    "status": "PASS_INDEPENDENT_COMPLETED_EXACT_SHARD_RECLAMATION",
+    "reviewed_unix": 1789335595.3566113,
+    "pins": {
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/reclamation_execution_v1/completed.json": "fe5dc97c8c8ee894082a850b0ee3417272446eeae561a905c610b6e0ee7ff00b",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/reclamation_execution_v1/started.json": "971ae11070b1773eaebb7447ca79fe23072a2e96fba949b14a51377d89401002",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/reclamation_execution_v1/shards.jsonl": "73c2df81a299a4378b68219c1cf912ca7dd076a4aa63d4484f9318391b834e2c",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/reclamation_preparation_v1/proposed_shard_removal_list.json": "9ac1a37b3e50223798fcdcbcfec1615a2ee9fda279f8326dcf6b34f75efd0485",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/reclamation_preparation_v1/independent_preparation_review.json": "d3b94e6bd5bcc42640774ef22f27f3aeb8fc765a2b34b49604b8d5c76b56fefc"
+    },
+    "removed_shards": 2309,
+    "journal_events": 4618,
+    "journal_check": "Exact ordered unique proposal, one intent then removal per shard, monotonic timestamps and correct completed counters; no unresolved intent.",
+    "retained": "Both summary identities agree with pre-removal proposal and shallow current lstat; only these two names remain in source root. Archive current lstat agrees with verified identity; content was not rehashed.",
+    "parent_reported_tool_terminal": {
+      "kind": "parent_reported_exec_observation_not_machine_generated_receipt",
+      "session_id": 5799,
+      "exit_code": 0,
+      "elapsed_seconds": 62.588712215423584,
+      "ended_unix": 1789335526.5953717
+    },
+    "prior_allocated_shard_bytes": 14650634240,
+    "observed_filesystem_free_delta_bytes": 14647095296,
+    "space_caveat": "Free-space delta is a concurrent whole-filesystem observation, not isolated attribution to this removal. Prior allocated sum is separate.",
+    "no_payload_or_archive_rehash": true
+  }
+}

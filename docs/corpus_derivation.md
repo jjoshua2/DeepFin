@@ -625,6 +625,23 @@ source-column hashes, game/ply and actual stored LC0-feed checks. It does not ru
 or modify the historical producer code or relabel its outputs as new inference.
 Proof pins are checked again before publication.
 
+For a complete cohort collected into several original output directories, use
+schema `2`, profile `historical-g10-native-wdl-multi-output-v1`, and replace the
+single `wdl_dir` with an ordered `wdl_dirs` list of absolute canonical directories.
+Pass the first directory as the existing `--wdl` argument. Add `wdl_dir` to each
+invocation entry to identify its actual output directory; its receipts, namespace
+metadata and shard attribute pins must remain inside that directory. No files are
+moved or assigned a synthetic namespace.
+
+Every declared directory must contribute shards, directories must be disjoint,
+and the union of invocation selections must cover the original cohort exactly
+once. Invocation order does not change source row order. The writer inventories
+each directory's exact selected subset, routes each shard to that directory, and
+retains all existing content, stored-feed and final stability checks. Its summary
+records `wdl_dirs` and the distinct multi-output admission profile. Schema 1 and
+the default single-directory route retain their existing contract. This admission
+adds no inference and does not by itself qualify a new training corpus.
+
 Historical-native and `--wdl-adapter-manifest` provenance are mutually exclusive.
 The existing raw-adapter route retains its own typed lineage. Omitting the new
 options preserves the original completed-corpus behavior and recipe identity.

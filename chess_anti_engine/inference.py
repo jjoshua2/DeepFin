@@ -38,6 +38,7 @@ from chess_anti_engine.model import (
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
 )
+from chess_anti_engine.neural_work import WorkCounters
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.moves.torch_maps import compact_to_full_index_for as _compact_to_full_index_for
 from chess_anti_engine.utils.amp import inference_autocast
@@ -1793,6 +1794,9 @@ class SlotBroker:
         self._manifest_cache: dict | None = None
         self._manifest_cache_sig: tuple[int, int] | None = None
         self._timing_metrics: dict[str, float] | None = None
+        # Backend-only observation: slot delivery is NOT search acceptance.
+        self._neural_work = WorkCounters() if os.environ.get("CAE_NEURAL_WORK") == "1" else None
+        self._neural_work_started = time.monotonic()
         # Optional AOTInductor packages keyed by exact compiled batch bucket.
         # None when aot_dir is unset/empty (zero behaviour change); non-empty
         # dict when packages loaded. Per-batch uncovered buckets fall back to
@@ -2413,6 +2417,8 @@ class SlotBroker:
         # today, but the fallback is the trap audit I3-H2 describes.
         hang_token = self._hang_watchdog.mark_forward_start(total)
         forward_ok = False
+        work = getattr(self, "_neural_work", None)
+        work_dispatched = work_completed = False
         try:
             xt = pin_input[:forward_total].to(self.device, non_blocking=True)
 
@@ -2441,7 +2447,11 @@ class SlotBroker:
                 # eager _forward_no_grad path). F32-mode requests stage into the
                 # f32 pinned buffer, so coerce here (no-op when already bf16).
                 with torch.no_grad():
-                    out = self._aot_models[forward_total](xt.to(torch.bfloat16))
+                    aot_input = xt.to(torch.bfloat16)
+                    if work is not None:
+                        work.dispatch(total, forward_total)
+                        work_dispatched = True
+                    out = self._aot_models[forward_total](aot_input)
             elif use_legal_rows_forward:
                 assert legal_flat_all is not None
                 assert legal_rows_all is not None
@@ -2470,6 +2480,9 @@ class SlotBroker:
                     legal_rows_gpu = torch.as_tensor(
                         legal_rows_padded, dtype=torch.long, device=self.device,
                     )
+                if work is not None:
+                    work.dispatch(total, forward_total)
+                    work_dispatched = True
                 out = _forward_legal_rows_no_grad(
                     self._model, xt, legal_flat_gpu, legal_rows_gpu, device=self.device,
                 )
@@ -2478,11 +2491,23 @@ class SlotBroker:
                 assert legal_flat_all is not None
                 legal_counts_gpu = torch.as_tensor(legal_counts_all, dtype=torch.long, device=self.device)
                 legal_flat_gpu = torch.as_tensor(legal_flat_all, dtype=torch.long, device=self.device)
+                if work is not None:
+                    work.dispatch(total, forward_total)
+                    work_dispatched = True
                 out = _forward_legal_no_grad(
                     self._model, xt, legal_flat_gpu, legal_counts_gpu, device=self.device,
                 )
             else:
+                if work is not None:
+                    work.dispatch(total, forward_total)
+                    work_dispatched = True
                 out = _forward_no_grad(self._model, xt, device=self.device)
+
+            # CPU computation has completed even if output validation/scatter
+            # subsequently fails. CUDA is confirmed only at the existing sync.
+            if work is not None and not self.device.startswith("cuda"):
+                work.executed_real_rows += total
+                work_completed = True
 
             if first_inf:
                 log.info("first inference (includes kernel compile) elapsed_s=%.2f batch=%d",
@@ -2546,6 +2571,9 @@ class SlotBroker:
             _t_scatter0 = time.perf_counter()
             if self.device.startswith("cuda"):
                 torch.cuda.current_stream(torch.device(self.device)).synchronize()
+                if work is not None:
+                    work.executed_real_rows += total
+                    work_completed = True
 
             # Scatter from pinned buffer to worker slots
             start = 0
@@ -2573,6 +2601,8 @@ class SlotBroker:
                 _timing["scatter_s"] += time.perf_counter() - _t_scatter0
             forward_ok = True
         finally:
+            if work is not None and work_dispatched and not work_completed:
+                work.failed_forward_rows += total
             self._hang_watchdog.mark_forward_done(success=forward_ok, token=hang_token)
         return unanswered_rows
 
@@ -2690,6 +2720,11 @@ class SlotBroker:
             ),
             flush=True,
         )
+        work = getattr(self, "_neural_work", None)
+        if work is not None:
+            report = work.snapshot(time.monotonic() - self._neural_work_started)
+            report["scope"] = "slot_broker_lifetime_including_startup_and_idle"
+            print("[broker] neural_work " + json.dumps(report, sort_keys=True), flush=True)
         m["batches"] = 0
         m["positions"] = 0
         m["slots"] = 0

@@ -1,0 +1,157 @@
+{
+  "status": "COMPLETE_SCREEN",
+  "cpu_seconds_observed": 1165.12,
+  "controller_cpu_seconds": 18.251159,
+  "elapsed_seconds": 362.38532004808076,
+  "limitations": [
+    "Short cold-start closed-shard rates are conservative and may have high opening/game-length variance.",
+    "Proc CPU accounting may miss very short children; observed cap2200s. This screen uses four single-threaded engines on four CPU affinity cores.",
+    "No strength conclusion, no production corpus mutation, and no500M rate guarantee."
+  ],
+  "cells": [
+    {
+      "id": "d8_c4",
+      "policy": "d8",
+      "concurrency": 4,
+      "elapsed_seconds": 175.20043166796677,
+      "generation_cutoff_seconds": 175.00361984199844,
+      "cutoff_closed_games": 29,
+      "cutoff_closed_rows": 5862,
+      "cutoff_progress_snapshot": {
+        "listed_closed_rows_unvalidated": 5862,
+        "closed_games": 29,
+        "closed_shards": 16,
+        "unlisted_file_bytes": 312338,
+        "unclosed_in_memory_rows": "unknown_not_counted"
+      },
+      "cpu_seconds_observed": 591.1,
+      "stop_reason": "cell_budget",
+      "returncode": -15,
+      "startup_first_manifest_seconds": 2.2520246220519766,
+      "startup_first_progress_file_seconds": 85.73360983503517,
+      "banked_rows": 5862,
+      "eligible_rows": 5862,
+      "no_result_rows": 0,
+      "invalid_rows": 0,
+      "closed_shards": 16,
+      "unique_source_identities": 5862,
+      "duplicate_source_identities": 0,
+      "unique_input_keys": 5862,
+      "games_with_rows": 29,
+      "source_identity_sha256": "ea9e81772c06f5da408f451c16a0950c46be79ba0108aac12878eefce3783e55",
+      "failures": {},
+      "manifest_sha256": "028e3e3d614c3f93cc506b487e77899d38e89a785ee2cbdda6702e97665d5686",
+      "scope": "Closed-game rows passing result, stored-input, phase0 policy and latest-phase value support checks; no cross-corpus dedup or teacher labeling.",
+      "eligible_rows_per_wall_second": 33.4964499893916,
+      "banked_rows_per_wall_second": 33.4964499893916
+    },
+    {
+      "id": "d6_c4",
+      "policy": "d6",
+      "concurrency": 4,
+      "elapsed_seconds": 175.21850234700833,
+      "generation_cutoff_seconds": 175.01035745907575,
+      "cutoff_closed_games": 56,
+      "cutoff_closed_rows": 11788,
+      "cutoff_progress_snapshot": {
+        "listed_closed_rows_unvalidated": 11788,
+        "closed_games": 56,
+        "closed_shards": 32,
+        "unlisted_file_bytes": 185066,
+        "unclosed_in_memory_rows": "unknown_not_counted"
+      },
+      "cpu_seconds_observed": 574.02,
+      "stop_reason": "cell_budget",
+      "returncode": -15,
+      "startup_first_manifest_seconds": 2.0786583779845387,
+      "startup_first_progress_file_seconds": 70.43847034603823,
+      "banked_rows": 11788,
+      "eligible_rows": 11388,
+      "no_result_rows": 400,
+      "invalid_rows": 0,
+      "closed_shards": 32,
+      "unique_source_identities": 11788,
+      "duplicate_source_identities": 0,
+      "unique_input_keys": 11788,
+      "games_with_rows": 56,
+      "source_identity_sha256": "a94e3a8aab8b0053b963f7ac87e994244ea5d96abc560e795214f5c932bcfc4b",
+      "failures": {},
+      "manifest_sha256": "3035e072bb89d3e6f16644b2cee6d5f3197860b2dde465ef0cc26e41f12fa00a",
+      "scope": "Closed-game rows passing result, stored-input, phase0 policy and latest-phase value support checks; no cross-corpus dedup or teacher labeling.",
+      "eligible_rows_per_wall_second": 65.07043448935849,
+      "banked_rows_per_wall_second": 67.35601350198084
+    }
+  ],
+  "eligible_rate_ratio_d6_over_d8": 1.9426068884901666,
+  "artifact_root": "/home/josh/chess-artifacts/operations/sf-shallow-generation-screen-20260922",
+  "artifact_bytes_at_completion": 24542259,
+  "no_result_rows": {
+    "arm": "d6_c4",
+    "worker_id": 3,
+    "game_id": 51,
+    "rows": 400,
+    "ply_min": 0,
+    "ply_max": 399
+  },
+  "postrun_checks": {
+    "all_plan_pins_and_runtime_HEAD": "PASS",
+    "supervisor_and_stockfish_processes_remaining": 0
+  },
+  "files": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-shallow-generation-screen-20260922/benchmark.py",
+      "sha256": "25c3ac0be09f3473f3d9e86af1fbe85bf1b88c71776bca405359263f035d02fd",
+      "bytes": 19539
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-shallow-generation-screen-20260922/complete.json",
+      "sha256": "a011bdfeabcf059118d592b5054b3deb388322706b0ad6afc85ac72b6857a678",
+      "bytes": 212503
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-shallow-generation-screen-20260922/d6_c4.cutoff-progress.json",
+      "sha256": "be655b5655a4f5cc8e4793d51228250f861b2da550e97ebf7f3b5665d5a92e79",
+      "bytes": 33377
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-shallow-generation-screen-20260922/d6_c4.log",
+      "sha256": "edadeb4de69cc2fe3abe46ec640a0b89f9eacaf1a009c33cb3a06771e8709ef2",
+      "bytes": 1867
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-shallow-generation-screen-20260922/d6_c4.result.json",
+      "sha256": "03040643c341e6d409acc7eff1c9ea1e781434dc0e7fa06799da8619b270add0",
+      "bytes": 89112
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-shallow-generation-screen-20260922/d8_c4.cutoff-progress.json",
+      "sha256": "91122a35c0aef86d614701eb4a9b06b13e98c52f6ce56151b4e707863535fa3d",
+      "bytes": 15416
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-shallow-generation-screen-20260922/d8_c4.log",
+      "sha256": "3363c97e89859ddce361486895c3257ea8fe126f3d9709681db8bdbe6f7b680d",
+      "bytes": 1867
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-shallow-generation-screen-20260922/d8_c4.result.json",
+      "sha256": "e594202cf894e4cb54d6d0c30d106c5be479db6bd3666322ebd61d3d9c78282a",
+      "bytes": 88125
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-shallow-generation-screen-20260922/parent-approval.json",
+      "sha256": "79e0be20d240a7bc19de262bd794f9e414e47fc5cfde5c7ba4cb46a02b54874a",
+      "bytes": 532
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-shallow-generation-screen-20260922/plan.json",
+      "sha256": "8eea58cde112942ef1ed6c94d0778e3d33e31c66204331d4766c6fb97a99f7f6",
+      "bytes": 7214
+    }
+  ],
+  "earlier_longer_d8_reference": {
+    "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/complete.json",
+    "sha256": "e6dfff02a4db148bc39274f2cec582b2088449ce6e8d8c8f4f6938ff07b8e7d0",
+    "eligible_rows_per_wall_second": 64.23178510218382
+  }
+}

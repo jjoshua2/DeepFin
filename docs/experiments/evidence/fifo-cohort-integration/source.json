@@ -1,0 +1,14 @@
+{
+  "docs/experiments/2026-09-23-fifo-cohort-integration.md": "a95ba2995e50efec2c1d927f59684c7a239ef0455d14e26c7e4b7567b00687d8",
+  "docs/experiments/README.md": "eec196625201b4a4fed963b0ded6a4f11adfc6dd33fd6e5f05f027ee2941f2a9",
+  "native/bend_engine/collections_probe/Queue.bend": "643a330324cfb637b8bacb74d3fad7ac41d9081452bb74253c6592b65b061c9f",
+  "native/bend_engine/multi_root/AsyncRun.bend": "b69813dfba31fc4269022f111a426ac97cf9822e99690a3948f80151808b292e",
+  "native/bend_engine/multi_root/Cohort.bend": "6a721c8cacb721069aa26a858d904bd834219d1d4213c3957e2b901f49785f7d",
+  "native/bend_engine/multi_root/DeadlineWork.bend": "f8adf40a9959281a8e4f7710294032fcc3484145fde2e4733d8bed8f2c3ed160",
+  "native/bend_engine/multi_root/README.md": "3db0c62ebfad85db4d4f29ca81953dd96b9e693d2bb3bc1a8ca441d644a10751",
+  "native/bend_engine/multi_root/fifo_probe.bend": "543b8ab55d63b988a7a1a0762312899b6760e4d3605dc2a53ff444dbafc08ef5",
+  "native/bend_engine/multi_root/main.bend": "047e5fc2967f10a00e2966ea219c7c1abbe740432dea609e38a59bd27c0d0c23",
+  "native/bend_engine/multi_root/qualify_fifo.sh": "49cd631eb547c157b355111ca23df774debde15af973807243759bafb6993538",
+  "native/bend_engine/multi_root/verify_fifo.py": "777c0d9acfd4afde01e942f6e0b5e6997cc445665a563f30b70b5db02d60c820",
+  "tests/test_bend_fifo_scheduler.py": "3bea0d2a867d7783a98621b93545c1bf91653465710e037d440a0b27e478a010"
+}

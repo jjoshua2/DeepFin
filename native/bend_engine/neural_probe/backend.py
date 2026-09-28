@@ -1,0 +1,244 @@
+"""Persistent native CPU AOTI evaluator with bounded pipe IO and a pinned manifest."""
+from __future__ import annotations
+
+from contextlib import ExitStack
+from dataclasses import asdict
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import select
+import struct
+import subprocess
+import tempfile
+import time
+from threading import Lock
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+from .adapter import Encoding
+
+if TYPE_CHECKING:
+    from typing import IO
+
+MAGIC = 0x44464E31
+FORMAT = 'deepfin-tuple-policy-wdl-cpu-f32-v1'
+BATCH_FORMAT = 'deepfin-tuple-policy-wdl-cpu-f32-batched-v2'
+CHECKPOINT_FORMAT = 'deepfin-tuple-policy-wdl-checkpoint-v3'
+BATCHES = (1, 2, 4, 8, 16)
+HERE = Path(__file__).resolve().parent
+
+
+def package_manifest(package: Path) -> tuple[dict[str, object], Encoding]:
+    data = json.loads(package.with_suffix('.json').read_text())
+    if not isinstance(data, dict) or data.get('format') not in (FORMAT, BATCH_FORMAT, CHECKPOINT_FORMAT):
+        raise ValueError('unsupported evaluator manifest format')
+    import torch
+    if data.get('torch_version') != str(torch.__version__):
+        raise ValueError('AOTI package/runtime Torch version mismatch')
+    if data.get('sha256') != hashlib.sha256(package.read_bytes()).hexdigest():
+        raise ValueError('evaluator package fingerprint mismatch')
+    if (type(data.get('policy_width')) is not int or data.get('policy_width') != 1858
+            or type(data.get('batch')) is not int or data.get('batch') not in BATCHES):
+        raise ValueError('unsupported evaluator policy width or batch')
+    if data['format'] == FORMAT and data['batch'] != 1:
+        raise ValueError('v1 evaluator requires batch one')
+    if data['format'] in (BATCH_FORMAT, CHECKPOINT_FORMAT) and data.get('row_independent') is not True:
+        raise ValueError('batched manifest must declare independent rows')
+    history, extra, fix = (data.get(k) for k in ('input_history_encoding', 'input_extra_features', 'history_rep_fix'))
+    if not isinstance(history, str) or not isinstance(extra, str) or type(fix) is not bool:
+        raise ValueError('missing or invalid model encoding in evaluator manifest')
+    encoding = Encoding(history, extra, fix)
+    if type(data.get('channels')) is not int or data.get('channels') != encoding.channels:
+        raise ValueError('manifest channels disagree with encoding')
+    execution_spec(data)
+    if data['format'] == CHECKPOINT_FORMAT:
+        validate_checkpoint_encoding(data, encoding)
+    return data, encoding
+
+
+def validate_checkpoint_encoding(data: dict[str, object], encoding: Encoding) -> None:
+    """Require the saved architecture, resolved config and wire encoding to agree.
+
+    These fields have been present in every package emitted by this v3 exporter.
+    Hashing the package alone cannot detect a contradictory sidecar. This is a
+    consistency check for trusted artifacts, not authentication of model code.
+    """
+    from chess_anti_engine.model import ARCH_SCHEMA_VERSION
+    from chess_anti_engine.uci.model_loader import model_config_from_arch
+    arch, resolved = data.get('arch'), data.get('resolved_model_config')
+    if not isinstance(arch, dict) or not isinstance(resolved, dict):
+        raise ValueError('checkpoint manifest requires architecture and resolved configuration')
+    schema = arch.get('_schema_version')
+    if type(schema) is not int or not 1 <= schema <= ARCH_SCHEMA_VERSION:
+        raise ValueError('unsupported checkpoint manifest architecture schema')
+    for record in (arch, resolved):
+        if record.get('kind') not in ('tiny', 'transformer') or record.get('policy_encoding') != 'lc0_1858':
+            raise ValueError('unsupported checkpoint model kind/policy encoding')
+        for key, expected in asdict(encoding).items():
+            actual = record.get(key)
+            if type(actual) is not type(expected) or actual != expected:
+                raise ValueError('checkpoint configuration disagrees with encoding: ' + key)
+    expected_config = asdict(model_config_from_arch(arch))
+    if json.dumps(resolved, sort_keys=True, allow_nan=False) != json.dumps(expected_config, sort_keys=True, allow_nan=False):
+        raise ValueError('checkpoint resolved configuration disagrees with architecture')
+
+
+def execution_spec(data: dict[str, object]) -> tuple[str, str, int]:
+    """Old CPU packages retain their ABI; v3 never guesses a device or dtype."""
+    if data.get('format') != CHECKPOINT_FORMAT:
+        return 'cpu', 'float32', 0
+    device, dtype, index = (data.get(k) for k in ('device', 'dtype', 'device_index'))
+    if (device, dtype) not in (('cpu', 'float32'), ('cuda', 'bfloat16')):
+        raise ValueError('unsupported checkpoint device/dtype contract')
+    if type(index) is not int or not 0 <= index <= 127 or (device == 'cpu' and index != 0):
+        raise ValueError('invalid checkpoint device index')
+    digest = data.get('checkpoint_sha256')
+    if (not isinstance(digest, str) or len(digest) != 64
+            or any(c not in '0123456789abcdef' for c in digest)):
+        raise ValueError('missing checkpoint fingerprint')
+    if data.get('weights_key') not in ('model', 'swa_model'):
+        raise ValueError('invalid checkpoint weights key')
+    assert isinstance(device, str)
+    assert isinstance(dtype, str)
+    return device, dtype, index
+
+
+def build_worker(directory: Path, cxx: str) -> Path:
+    import torch
+    directory.mkdir(parents=True, exist_ok=True)
+    for command in ([
+        'cmake', '-S', str(HERE), '-B', str(directory), '-DCMAKE_BUILD_TYPE=Release',
+        '-DCMAKE_CXX_COMPILER=' + cxx, '-DCMAKE_PREFIX_PATH=' + torch.utils.cmake_prefix_path,
+    ], ['cmake', '--build', str(directory), '--parallel', '1']):
+        result = subprocess.run(command, capture_output=True, text=True, timeout=180, check=False)
+        if result.returncode:
+            raise RuntimeError(result.stdout + result.stderr)
+    binary = directory / 'aoti_worker'
+    needed = subprocess.run(['ldd', str(binary)], capture_output=True, text=True, timeout=10, check=True)
+    if 'libpython' in needed.stdout.lower():
+        raise RuntimeError('native evaluator unexpectedly links libpython')
+    return binary
+
+
+def read_exact(stream: IO[bytes], size: int, deadline: float) -> bytes:
+    data = bytearray()
+    while len(data) < size:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([stream], [], [], remaining)[0]:
+            raise TimeoutError('native evaluator reply deadline')
+        part = os.read(stream.fileno(), size - len(data))
+        if not part:
+            raise RuntimeError('native evaluator closed its output')
+        data.extend(part)
+    return bytes(data)
+
+
+def write_all(stream: IO[bytes], data: bytes, deadline: float) -> None:
+    view = memoryview(data)
+    while view:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([], [stream], [], remaining)[1]:
+            raise TimeoutError('native evaluator input deadline')
+        try:
+            written = os.write(stream.fileno(), view)
+        except BlockingIOError:
+            continue
+        if written <= 0:
+            raise RuntimeError("native evaluator input closed")
+        view = view[written:]
+
+
+class NativeEvaluator:
+    """One loaded package, many calls. No mutation/rebinding of package weights."""
+    def __init__(self, binary: Path, package: Path, *, timeout: float = 30):
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError('evaluator timeout must be finite and positive')
+        self.manifest, self.encoding = package_manifest(package)
+        self.timeout, self.sequence, self.failed = timeout, 1, False
+        batch = self.manifest['batch']
+        if not isinstance(batch, int):
+            raise ValueError('invalid evaluator batch')
+        self.batch = batch
+        self.lock = Lock()
+        device, dtype, index = execution_spec(self.manifest)
+        arguments = [str(binary), str(package), str(self.encoding.channels), str(self.batch)]
+        if self.manifest['format'] == CHECKPOINT_FORMAT:
+            arguments += [device + '-' + dtype, str(index)]
+        with ExitStack() as resources:
+            self.errors = resources.enter_context(tempfile.TemporaryFile(mode='w+'))
+            self.proc = subprocess.Popen(arguments,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors, bufsize=0)
+            self.resources = resources.pop_all()
+        assert self.proc.stdin is not None
+        assert self.proc.stdout is not None
+        self.input, self.output = self.proc.stdin, self.proc.stdout
+        try:
+            os.set_blocking(self.input.fileno(), False)
+            if struct.unpack('<2I', read_exact(self.output, 8, time.monotonic() + timeout)) != (MAGIC, 0):
+                raise ValueError('invalid evaluator handshake')
+        except Exception as error:
+            try:
+                details = self.diagnostics()
+            except (OSError, ValueError) as diagnostic_error:
+                details = 'native stderr unavailable: ' + str(diagnostic_error)
+            finally:
+                self.close()
+            raise RuntimeError('native evaluator startup failed: ' + str(error) + '\n' + details) from error
+        except BaseException:
+            self.close()
+            raise
+
+    def diagnostics(self) -> str:
+        # Preserve a bounded stderr tail before close destroys the temporary file.
+        # pread does not race the child's write position or require text seek cookies.
+        size = os.fstat(self.errors.fileno()).st_size
+        return os.pread(self.errors.fileno(), 8192, max(0, size - 8192)).decode('utf-8', errors='replace')
+
+    def evaluate(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        # One stream and sequence per process. Concurrent callers must batch upstream.
+        if not self.lock.acquire(blocking=False):
+            raise RuntimeError('native evaluator already has an in-flight call')
+        try:
+            return self._evaluate(x)
+        finally:
+            self.lock.release()
+
+    def _evaluate(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if self.failed:
+            raise RuntimeError('failed evaluator cannot be reused')
+        if x.shape != (self.batch, self.encoding.channels, 8, 8) or not np.isfinite(x).all():
+            raise ValueError('invalid evaluator input tensor')
+        data = np.asarray(x, dtype='<f4').tobytes()
+        deadline = time.monotonic() + self.timeout
+        try:
+            write_all(self.input, struct.pack('<3I', MAGIC, self.sequence, x.size) + data, deadline)
+            header = struct.unpack('<4I', read_exact(self.output, 16, deadline))
+            if header != (MAGIC, self.sequence, self.batch * 1858, self.batch * 3):
+                raise ValueError('invalid evaluator sequence or output header')
+            result = np.frombuffer(read_exact(self.output, self.batch * (1858 + 3) * 4, deadline), dtype='<f4').copy()
+            if not np.isfinite(result).all():
+                raise ValueError('nonfinite native evaluator response')
+            self.sequence += 1
+            split = self.batch * 1858
+            return result[:split].reshape(self.batch, 1858), result[split:].reshape(self.batch, 3)
+        except BaseException:
+            self.failed = True
+            raise
+
+    def close(self) -> None:
+        self.failed = True
+        if self.proc.poll() is None:
+            self.proc.kill()
+        self.proc.wait(timeout=5)
+        self.input.close()
+        self.output.close()
+        self.resources.close()
+
+    def finish(self) -> None:
+        write_all(self.input, struct.pack('<3I', MAGIC, 0, 0), time.monotonic() + self.timeout)
+        if self.proc.wait(timeout=5) != 0:
+            self.errors.seek(0)
+            raise RuntimeError('evaluator shutdown: ' + self.errors.read())

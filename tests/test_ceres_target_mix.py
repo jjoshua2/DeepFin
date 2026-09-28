@@ -77,9 +77,11 @@ def test_probability_mixing_and_single_sharpening():
                            sum(np.array([.2 * .6, .8 * .4])**2))
 
 
-def test_real_rewrite_and_consumer(tmp_path, monkeypatch):
+@pytest.mark.parametrize('weight', [.5, 0.])
+def test_real_rewrite_and_consumer(tmp_path, monkeypatch, weight):
     from chess_anti_engine.replay.shard import load_shard_arrays
     args, manifest = fixture(tmp_path, monkeypatch)
+    args.bt4_weight = weight
     result = tool.rewrite(args)
     out = Path(args.out)
     assert result['complete']
@@ -90,6 +92,31 @@ def test_real_rewrite_and_consumer(tmp_path, monkeypatch):
     original = Path(manifest['source']) / 'shard_000000.zarr'
     target = out / original.name
     before, after = tool.copies.file_map(original), tool.copies.file_map(target)
+    # Exercise the exact extracted shard path independently after full-manifest
+    # admission, with smaller batches that exercise partial-chunk writes.
+    accepted, source_summary, specs = tool.read_manifest(Path(args.manifest), args.expected_manifest_sha256)
+    single = tmp_path / 'single_shard'
+    single.mkdir()
+    shard_args = argparse.Namespace(**{**vars(args), 'batch_size': 8})
+    proof, states, metrics = tool.rewrite_shard(
+        shard_args, manifest=accepted, original=source_summary, spec=specs[0],
+        entry=accepted['entries'][0], writing=single, weight=weight,
+        temperatures={'bt4': .5, 'ceres': .5}, guard=lambda: None)
+    direct: Any = zarr.open_group(str(single / original.name), mode='r')
+    full: Any = zarr.open_group(str(target), mode='r')
+    assert dict(direct.attrs) == dict(full.attrs)
+    for name in tool.ARRAYS:
+        a, b = np.asarray(direct[name][:]), np.asarray(full[name][:])
+        assert a.dtype == b.dtype
+        assert a.shape == b.shape
+        assert a.tobytes() == b.tobytes()
+    assert proof['policy_target_sha256'] == result['outputs'][0]['policy_target_sha256']
+    assert proof['changed_rows'] == result['outputs'][0]['changed_rows']
+    assert metrics['max_mass_error'] == result['max_stored_mass_error']
+    assert metrics['max_tv'] == result['max_stored_total_variation']
+    assert metrics['support_lost'] == result['support_lost_move_entries']
+    assert metrics['full_input_digest_verified_shards'] == result['bt4_lineage']['full_input_digest_verified_shards']
+    assert all(tool.shared.storage_identity(path) == state for path, state in states.items())
     for name, digest in before.items():
         if name != '.zattrs' and not name.startswith('policy_target/'):
             assert after[name] == digest
@@ -221,3 +248,79 @@ def test_explicit_legacy_collection_binding(tmp_path, monkeypatch, defect):
     specs = [{'path': 'shard_000000.zarr', 'rows': 32}]
     with pytest.raises(ValueError, match=r'BT4|remap'):
         tool.verify_bt4_lineage(manifest, specs)
+
+
+def test_pure_ceres_endpoint_ignores_bt4_allocation():
+    legal = np.array([[1, 1, 0]])
+    logits = np.log(np.array([[.6, .4, .1]]))
+    targets = [tool.policy_target(np.array([b]), logits, legal, bt4_weight=0.,
+               bt4_temperature=.5, ceres_temperature=.5)
+               for b in ([.2, .8, 0.], [.9, .1, 0.])]
+    np.testing.assert_array_equal(targets[0], targets[1])
+    np.testing.assert_allclose(targets[0], [[.36 / .52, .16 / .52, 0.]])
+
+
+@pytest.mark.parametrize(('rows', 'chunk_rows'), [(1153, 512), (385, 256)])
+def test_alignment_reuses_one_source_block_with_identical_batches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rows: int, chunk_rows: int,
+) -> None:
+    import weakref
+
+    # Real chunked storage with row-distinct bytes; the spy stands in for the
+    # converter so this fixture isolates read/order behavior, not chess encoding.
+    source: Any = zarr.open_group(str(tmp_path / 'alignment'), mode='w')
+    x = np.broadcast_to(np.arange(rows, dtype=np.float16)[:, None, None, None], (rows, 175, 8, 8))
+    values = {'x': x, 'game_id': np.arange(rows), 'ply_index': np.arange(rows),
+              'has_game_id': np.ones(rows, dtype='uint8'), 'has_ply_index': np.ones(rows, dtype='uint8')}
+    for name, value in values.items():
+        source.create_dataset(name, data=value, chunks=(chunk_rows, *value.shape[1:]))
+    legal = np.zeros((rows, 1858), dtype='uint8')
+    legal[:, 0] = 1
+    source.create_dataset('legal_mask', data=legal, chunks=(chunk_rows, 1858))
+    source.create_dataset('has_legal_mask', data=np.ones(rows, dtype='uint8'))
+    values.update(legal_mask=legal, has_legal_mask=np.ones(rows, dtype='uint8'))
+    attrs = {'source_array_sha256': {k: tool.shared.raw.sha_array(v) for k, v in values.items()}}
+    bank = {'row_index': np.arange(rows), 'game_id': values['game_id'], 'ply_index': values['ply_index'],
+            'legal_offsets': np.arange(rows + 1), 'legal_indices': np.zeros(rows, dtype='uint16')}
+    expected = []
+    expected_feed_hashes = []
+    batch = feed = None
+    for start in range(0, rows, 128):
+        batch = source['x'][start:start + 128]
+        expected.append(batch.tobytes())
+        feed = np.ascontiguousarray(batch[:, 0, 0, :]).view(np.uint8)
+        expected_feed_hashes.append(tool.shared.row_digests(feed))
+    del batch, feed
+    bank['tpg_feed_sha256'] = np.concatenate(expected_feed_hashes)
+    observed = []
+    def convert(batch: np.ndarray, *, input_history_encoding: str, history_rep_fix: bool) -> np.ndarray:
+        assert input_history_encoding == tool.shared.HISTORY
+        assert history_rep_fix is True
+        observed.append(batch.tobytes())
+        return np.ascontiguousarray(batch[:, 0, 0, :]).view(np.uint8)
+    monkeypatch.setattr(tool.ceres.tpg, 'stored_x_to_ceres_tpg_bytes', convert)
+    getitem = zarr.Array.__getitem__
+    reads = []
+    allocations: list[Any] = []
+    def counted(array: Any, selection: Any) -> Any:
+        if array.path == 'x':
+            # Neither a full-shard hash read nor a preceding cache block may
+            # survive when the next x allocation is requested.
+            assert all(ref() is None for ref in allocations)
+            reads.append(selection)
+        result = getitem(array, selection)
+        if array.path == 'x':
+            allocations.append(weakref.ref(result))
+        return result
+    monkeypatch.setattr(zarr.Array, '__getitem__', counted)
+    tool.check_ceres_alignment(source, bank, attrs, rows)
+    assert observed == expected
+    assert all(ref() is None for ref in allocations)
+    # One mandatory whole-column digest read stays; only the subsequent TPG
+    # input reads shrink from ten to three on 512-row storage, with tail intact.
+    assert reads[0] == slice(None)
+    block_rows = 512 if chunk_rows == 512 else 128
+    assert reads[1:] == [slice(start, min(start + block_rows, rows)) for start in range(0, rows, block_rows)]
+    if chunk_rows == 512:
+        assert len(reads) - 1 == 3
+        assert len(expected) == 10
