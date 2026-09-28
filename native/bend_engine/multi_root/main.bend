@@ -1,6 +1,7 @@
 # Opt-in bounded cohort runner: actual independent trees, actual gathered leaves.
 # CPU fixed-batch model only in the build script. This is not the UCI product.
 import Base
+import ../collections_probe/Queue.bend as Q
 import ./Cohort.bend as C
 import ./AsyncRun.bend as AsyncRun
 import ../batch_backend/Async.bend as Async
@@ -18,7 +19,7 @@ type Metrics is Data:
   Metrics{started: Nat, calls: U32, rows: U32, gather_ms: Nat, backend_ms: Nat, scatter_ms: Nat}
 
 type State is Type:
-  State{roots: List<C.Root>, store: C.Store, config: C.Config, metrics: Metrics, histogram: Array<U32>, finished: Bool}
+  State{roots: Q.Queue<&1, C.Root>, store: C.Store, config: C.Config, metrics: Metrics, histogram: Array<U32>, finished: Bool}
 
 def increment(r: Array<U32> & U32, at: U32) -> Array<U32>:
   (a,n) = r
@@ -104,10 +105,10 @@ def batch_notice(cfg: C.Config, seq: U32, +rows: U32, batch: U32) -> IO(Unit):
   R.diagnostic(Bool.and(diagnostics,U32.is_gt(rows,0)),"info string cohort_batch " ++ U32.show(seq) ++ " " ++ U32.show(rows) ++ " " ++ U32.show(batch))
 
 def next_state(cfg: C.Config, m: Metrics, hist: Array<U32>, +row: U32, steps: U32, begun: Nat, +gathered: Nat, +ran: Nat,
-  ended: Nat, tail: List<C.Root>, result: C.Store & List<C.Root>) -> State:
+  ended: Nat, tail: Q.Queue<&1, C.Root>, result: C.Store & List<C.Root>) -> State:
   Metrics{started,calls,rows,g,b,s} = m
   (store,roots) = result
-  State{List.append(&1,C.Root,tail,roots),store,cfg,
+  State{C.requeue(roots,tail),store,cfg,
     Metrics{started,U32.add(calls,Bool.to_u32(U32.is_gt(row,0))),U32.add(rows,row),Nat.add(g,Nat.sub(gathered,begun)),
       Nat.add(b,Nat.sub(ran,gathered)),Nat.add(s,Nat.sub(ended,ran))},
     increment(Array.get(U32,hist,row),row),U32.is_zero(steps)}
@@ -123,7 +124,7 @@ def gathered(+cfg: C.Config, +m: Metrics, hist: Array<U32>, begun: Nat, +at: Nat
     ended : Nat <- IO.now()
     return next_state(cfg,m,hist,rows,steps,begun,at,ran,ended,tail,result)
 
-def round(+cfg: C.Config, m: Metrics, hist: Array<U32>, roots: List<C.Root>, store: C.Store) -> IO(State):
+def round(+cfg: C.Config, m: Metrics, hist: Array<U32>, roots: Q.Queue<&1, C.Root>, store: C.Store) -> IO(State):
   C.Store{table,maps,scratch,logits,input,output,+cap} = store
   B.Capabilities{profile,+batch,channels,ilog,olog} = cap
   do IO<State>:
@@ -138,7 +139,7 @@ def loop(fuel: Nat, state: State) -> IO(Unit):
     case 1n+p:
       State{roots,store,cfg,m,hist,finished} = state
       match finished:
-        case True{}: finish(cfg,roots,store,m,hist)
+        case True{}: finish(cfg,C.queue_list(roots),store,m,hist)
         case False{}:
           do IO<Unit>:
             state : State <- round(cfg,m,hist,roots,store)
@@ -181,7 +182,7 @@ def synchronous(cfg: C.Config,roots: List<C.Root>,table: Array<U64>,+cap: B.Capa
   B.Capabilities{profile,batch,channels,ilog,olog} = cap
   do IO<Unit>:
     now : Nat <- IO.now()
-    loop(4098n,State{roots,C.Store{table,Policy.build(),Array.new(F32,14n,0.0),Array.new(F32,11n,0.0),
+    loop(4098n,State{C.queued(roots),C.Store{table,Policy.build(),Array.new(F32,14n,0.0),Array.new(F32,11n,0.0),
       Array.new(F32,U32.to_nat(ilog),0.0),Array.new(F32,U32.to_nat(olog),0.0),cap},cfg,
       Metrics{now,0,0,0n,0n,0n},Array.new(U32,5n,0),False{}})
 

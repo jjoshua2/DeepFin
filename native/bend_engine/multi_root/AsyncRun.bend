@@ -1,6 +1,7 @@
 # A single Bend owner services commands between gathers and polls. The worker
 # owns only its private tensor snapshot; it cannot cancel or resume a root.
 import Base
+import ../collections_probe/Queue.bend as Q
 import ./Deadlines.bend as D
 import ./DeadlineWork.bend as DW
 import ./Cohort.bend as C
@@ -16,9 +17,9 @@ import ../session_probe/Search.bend as S
 type Counts is Type:
   Counts{sent: Array<U32>, wasted: Array<U32>, calls: U32, rows: U32, discarded: U32, hist: Array<U32>}
 type Mode is Type:
-  Ready{roots: List<C.Root>}
-  Waiting{tail: List<C.Root>, tasks: List<C.Task>, token: U32, rows: U32}
-  Finished{roots: List<C.Root>}
+  Ready{roots: Q.Queue<&1, C.Root>}
+  Waiting{tail: Q.Queue<&1, C.Root>, tasks: List<C.Task>, token: U32, rows: U32}
+  Finished{roots: Q.Queue<&1, C.Root>}
 type State is Type:
   State{mode: Mode, store: C.Store, flags: Ctrl.Flags, counts: Counts, started: Nat, rounds: U32}
 
@@ -48,6 +49,10 @@ def mark(+mask: U32, roots: List<C.Root>) -> List<C.Root>:
     case Nil{}: Nil{}
     case Con{root,rest}: Con{mark_one(mask,identity(root)),mark(mask,rest)}
 
+def mark_queue(+mask: U32, q: Q.Queue<&1, C.Root>) -> Q.Queue<&1, C.Root>:
+  Q.Queue{front, rear, size} = q
+  Q.Queue{mark(mask, front), mark(mask, rear), size}
+
 def admit_cons(task: C.Task, r: List<C.Task> & Array<U32>) -> List<C.Task> & Array<U32>:
   (rest,sent) = r
   (Con{task,rest},sent)
@@ -60,27 +65,27 @@ def admitted(tasks: List<C.Task>, sent: Array<U32>) -> List<C.Task> & Array<U32>
       S.Ticket{+ep,req,node,b,m,needs} = ticket
       admit_cons(C.Pending{root,game,ticket,entries,row},admitted(rest,inc(ep,Array.get(U32,sent,ep))))
 
-def retirement_scattered(tail: List<C.Root>,sent: Array<U32>,calls: U32,rows: U32,discarded: U32,hist: Array<U32>,began: Nat,rounds: U32,r: DW.Scattered) -> State:
+def retirement_scattered(tail: Q.Queue<&1, C.Root>,sent: Array<U32>,calls: U32,rows: U32,discarded: U32,hist: Array<U32>,began: Nat,rounds: U32,r: DW.Scattered) -> State:
   DW.Scattered{store,roots,flags,wasted,n} = r
-  State{Ready{List.append(&1,C.Root,tail,roots)},store,flags,Counts{sent,wasted,calls,rows,U32.add(discarded,n),hist},began,rounds}
+  State{Ready{C.requeue(roots,tail)},store,flags,Counts{sent,wasted,calls,rows,U32.add(discarded,n),hist},began,rounds}
 
-def retire_valid(cfg: C.Config,tail: List<C.Root>,tasks: List<C.Task>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32) -> IO(State):
+def retire_valid(cfg: C.Config,tail: Q.Queue<&1, C.Root>,tasks: List<C.Task>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32) -> IO(State):
   Counts{sent,wasted,calls,rows,discarded,hist} = counts
   do IO<State>:
     r : DW.Scattered <- DW.scatter(cfg,tasks,DW.Scattered{store,Nil{},flags,wasted,0})
     return retirement_scattered(tail,sent,calls,rows,discarded,hist,began,rounds,r)
 
-def retire(ok: Bool,cfg: C.Config,tail: List<C.Root>,tasks: List<C.Task>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32) -> IO(State):
+def retire(ok: Bool,cfg: C.Config,tail: Q.Queue<&1, C.Root>,tasks: List<C.Task>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32) -> IO(State):
   match ok:
     case False{}: IO.die(State,2,"async cohort nonfinite batch; no neural backup")
     case True{}: retire_valid(cfg,tail,tasks,store,flags,counts,began,rounds)
 
-def raw_returned(cfg: C.Config,tail: List<C.Root>,tasks: List<C.Task>,table: Array<U64>,maps: Policy.Maps,scratch: Array<F32>,logits: Array<F32>,input: Array<F32>,cap: B.Capabilities,
+def raw_returned(cfg: C.Config,tail: Q.Queue<&1, C.Root>,tasks: List<C.Task>,table: Array<U64>,maps: Policy.Maps,scratch: Array<F32>,logits: Array<F32>,input: Array<F32>,cap: B.Capabilities,
   flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32,r: Array<F32> & Bool) -> IO(State):
   (output,valid) = r
   retire(valid,cfg,tail,tasks,C.Store{table,maps,scratch,logits,input,output,cap},flags,counts,began,rounds)
 
-def polled(status: U32, cfg: C.Config, tail: List<C.Root>, tasks: List<C.Task>, token: U32, rows: U32,
+def polled(status: U32, cfg: C.Config, tail: Q.Queue<&1, C.Root>, tasks: List<C.Task>, token: U32, rows: U32,
   table: Array<U64>, maps: Policy.Maps, scratch: Array<F32>, logits: Array<F32>, input: Array<F32>, output: Array<F32>, cap: B.Capabilities,
   flags: Ctrl.Flags, counts: Counts, began: Nat, rounds: U32) -> IO(State):
   match status:
@@ -92,40 +97,40 @@ def polled(status: U32, cfg: C.Config, tail: List<C.Root>, tasks: List<C.Task>, 
     case 4: IO.die(State,2,"async cohort backend failed; no successful summary")
     case _: IO.die(State,2,"async cohort completion token mismatch")
 
-def poll_returned(cfg: C.Config,tail: List<C.Root>,tasks: List<C.Task>,token: U32,rows: U32,
+def poll_returned(cfg: C.Config,tail: Q.Queue<&1, C.Root>,tasks: List<C.Task>,token: U32,rows: U32,
   table: Array<U64>,maps: Policy.Maps,scratch: Array<F32>,logits: Array<F32>,input: Array<F32>,cap: B.Capabilities,
   flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32,p: A.BatchPolled) -> IO(State):
   A.BatchPolled{output,status} = p
   polled(status,cfg,tail,tasks,token,rows,table,maps,scratch,logits,input,output,cap,flags,counts,began,rounds)
 
-def await(cfg: C.Config,tail: List<C.Root>,tasks: List<C.Task>,+token: U32,+rows: U32,
+def await(cfg: C.Config,tail: Q.Queue<&1, C.Root>,tasks: List<C.Task>,+token: U32,+rows: U32,
   store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32) -> IO(State):
   C.Store{table,maps,scratch,logits,input,output,cap} = store
   do IO<State>:
     p : A.BatchPolled <- A.BatchAsync.poll(token,rows,output)
     poll_returned(cfg,tail,tasks,token,rows,table,maps,scratch,logits,input,cap,flags,counts,began,rounds,p)
 
-def submitted(tail: List<C.Root>, tasks: List<C.Task>, rows: U32, table: Array<U64>,maps: Policy.Maps,
+def submitted(tail: Q.Queue<&1, C.Root>, tasks: List<C.Task>, rows: U32, table: Array<U64>,maps: Policy.Maps,
   scratch: Array<F32>,logits: Array<F32>,output: Array<F32>,cap: B.Capabilities,
   flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32,p: A.BatchSubmitted) -> State:
   A.BatchSubmitted{input,token} = p
   State{Waiting{tail,tasks,token,rows},C.Store{table,maps,scratch,logits,input,output,cap},flags,counts,began,rounds}
 
-def finished_mode(done: Bool, roots: List<C.Root>) -> Mode:
+def finished_mode(done: Bool, roots: Q.Queue<&1, C.Root>) -> Mode:
   match done:
     case False{}: Ready{roots}
     case True{}: Finished{roots}
 
-def local_scattered(tail: List<C.Root>,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32,steps: U32,r: C.Store & List<C.Root>) -> State:
+def local_scattered(tail: Q.Queue<&1, C.Root>,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32,steps: U32,r: C.Store & List<C.Root>) -> State:
   (store,roots) = r
-  State{finished_mode(U32.is_zero(steps),List.append(&1,C.Root,tail,roots)),store,flags,counts,began,rounds}
+  State{finished_mode(U32.is_zero(steps),C.requeue(roots,tail)),store,flags,counts,began,rounds}
 
-def no_rows(cfg: C.Config,tail: List<C.Root>,tasks: List<C.Task>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32,steps: U32) -> IO(State):
+def no_rows(cfg: C.Config,tail: Q.Queue<&1, C.Root>,tasks: List<C.Task>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32,steps: U32) -> IO(State):
   do IO<State>:
     r : C.Store & List<C.Root> <- C.scatter(cfg,List.reverse(&1,C.Task,tasks),(store,Nil{}))
     return local_scattered(tail,flags,counts,began,rounds,steps,r)
 
-def reserved(diagnostics: Bool,tail: List<C.Root>,+rows: U32,table: Array<U64>,maps: Policy.Maps,scratch: Array<F32>,logits: Array<F32>,input: Array<F32>,output: Array<F32>,+cap: B.Capabilities,
+def reserved(diagnostics: Bool,tail: Q.Queue<&1, C.Root>,+rows: U32,table: Array<U64>,maps: Policy.Maps,scratch: Array<F32>,logits: Array<F32>,input: Array<F32>,output: Array<F32>,+cap: B.Capabilities,
   flags: Ctrl.Flags,wasted: Array<U32>,+calls: U32,n: U32,discarded: U32,hist: Array<U32>,began: Nat,rounds: U32,r: List<C.Task> & Array<U32>) -> IO(State):
   B.Capabilities{profile,batch,channels,ilog,olog} = cap
   (tasks,sent) = r
@@ -135,13 +140,13 @@ def reserved(diagnostics: Bool,tail: List<C.Root>,+rows: U32,table: Array<U64>,m
     return submitted(tail,tasks,rows,table,maps,scratch,logits,output,cap,flags,
       Counts{sent,wasted,U32.inc(calls),U32.add(n,rows),discarded,inc(rows,Array.get(U32,hist,rows))},began,rounds,p)
 
-def submit_tasks(cfg: C.Config,tail: List<C.Root>,tasks: List<C.Task>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32,rows: U32) -> IO(State):
+def submit_tasks(cfg: C.Config,tail: Q.Queue<&1, C.Root>,tasks: List<C.Task>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32,rows: U32) -> IO(State):
   C.Config{sims,depth,limit,diagnostics} = cfg
   C.Store{table,maps,scratch,logits,input,output,cap} = store
   Counts{sent,wasted,calls,n,discarded,hist} = counts
   reserved(diagnostics,tail,rows,table,maps,scratch,logits,input,output,cap,flags,wasted,calls,n,discarded,hist,began,rounds,admitted(List.reverse(&1,C.Task,tasks),sent))
 
-def gathered_rows(rows: U32,cfg: C.Config,tail: List<C.Root>,tasks: List<C.Task>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32,steps: U32) -> IO(State):
+def gathered_rows(rows: U32,cfg: C.Config,tail: Q.Queue<&1, C.Root>,tasks: List<C.Task>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32,steps: U32) -> IO(State):
   match rows:
     case 0: no_rows(cfg,tail,tasks,store,flags,counts,began,rounds,steps)
     case _: submit_tasks(cfg,tail,tasks,store,flags,counts,began,rounds,rows)
@@ -163,15 +168,15 @@ def gathered(+cfg: C.Config,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: 
     a : DW.Admission <- DW.prepare(17n,cfg,DW.Admission{C.Gathered{tail,List.reverse(&1,C.Task,tasks),store,rows,steps},flags,False{}})
     admission_returned(cfg,counts,began,rounds,a)
 
-def round_ready(+cfg: C.Config,roots: List<C.Root>,store: C.Store,+flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32) -> IO(State):
+def round_ready(+cfg: C.Config,roots: Q.Queue<&1, C.Root>,store: C.Store,+flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32) -> IO(State):
   C.Store{table,maps,scratch,logits,input,output,+cap} = store
   B.Capabilities{profile,batch,channels,ilog,olog} = cap
   Ctrl.Flags{mask,n,eof,timers} = flags
   do IO<State>:
-    g : C.Gathered <- C.gather(16n,cfg,batch,C.Gathered{mark(Ctrl.stopped(flags),roots),Nil{},C.Store{table,maps,scratch,logits,input,output,cap},0,0})
+    g : C.Gathered <- C.gather(16n,cfg,batch,C.Gathered{mark_queue(Ctrl.stopped(flags),roots),Nil{},C.Store{table,maps,scratch,logits,input,output,cap},0,0})
     gathered(cfg,flags,counts,began,U32.inc(rounds),g)
 
-def bounded(rounds: U32,cfg: C.Config,roots: List<C.Root>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat) -> IO(State):
+def bounded(rounds: U32,cfg: C.Config,roots: Q.Queue<&1, C.Root>,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat) -> IO(State):
   match rounds:
     case 4098: IO.die(State,2,"async cohort progress bound")
     case _: round_ready(cfg,roots,store,flags,counts,began,rounds)
@@ -279,22 +284,22 @@ def finish(cfg: C.Config, roots: List<C.Root>, store: C.Store, +flags: Ctrl.Flag
 type Observed is Type:
   Observed{mode: Mode, live: U32}
 
-def observed_ready(r: List<C.Root> & U32) -> Observed:
+def observed_ready(r: Q.Queue<&1, C.Root> & U32) -> Observed:
   (roots,live) = r
   Observed{Ready{roots},live}
 
-def observed_tasks(tail: List<C.Root>,token: U32,rows: U32,r: List<C.Task> & U32) -> Observed:
+def observed_tasks(tail: Q.Queue<&1, C.Root>,token: U32,rows: U32,r: List<C.Task> & U32) -> Observed:
   (tasks,live) = r
   Observed{Waiting{tail,tasks,token,rows},live}
 
-def observed_tail(cfg: C.Config,tasks: List<C.Task>,token: U32,rows: U32,r: List<C.Root> & U32) -> Observed:
+def observed_tail(cfg: C.Config,tasks: List<C.Task>,token: U32,rows: U32,r: Q.Queue<&1, C.Root> & U32) -> Observed:
   (tail,live) = r
   observed_tasks(tail,token,rows,DW.scan_tasks(cfg,tasks,live))
 
 def observe(+cfg: C.Config,mode: Mode) -> Observed:
   match mode:
-    case Ready{roots}: observed_ready(DW.scan_roots(cfg,roots,0))
-    case Waiting{tail,tasks,token,rows}: observed_tail(cfg,tasks,token,rows,DW.scan_roots(cfg,tail,0))
+    case Ready{roots}: observed_ready(DW.scan_queue(cfg,roots,0))
+    case Waiting{tail,tasks,token,rows}: observed_tail(cfg,tasks,token,rows,DW.scan_queue(cfg,tail,0))
     case Finished{roots}: Observed{Finished{roots},0}
 
 def service(cfg: C.Config,store: C.Store,flags: Ctrl.Flags,counts: Counts,began: Nat,rounds: U32,r: Observed) -> IO(State):
@@ -312,7 +317,7 @@ def loop(fuel: Nat,+cfg: C.Config,s: State) -> IO(Unit):
     case 1n+p:
       State{mode,store,flags,counts,began,rounds} = s
       match mode:
-        case Finished{roots}: finish(cfg,roots,store,flags,counts,began)
+        case Finished{roots}: finish(cfg,C.queue_list(roots),store,flags,counts,began)
         case _:
           do IO<Unit>:
             s : State <- service(cfg,store,flags,counts,began,rounds,observe(cfg,mode))
@@ -332,7 +337,7 @@ def counted(cfg: C.Config,table: Array<U64>,+cap: B.Capabilities,r: List<C.Root>
   (roots,n) = r
   do IO<Unit>:
     now : Nat <- IO.now()
-    loop(1000000000n,cfg,State{Ready{roots},C.Store{table,Policy.build(),Array.new(F32,14n,0.0),Array.new(F32,11n,0.0),
+    loop(1000000000n,cfg,State{Ready{C.queued(roots)},C.Store{table,Policy.build(),Array.new(F32,14n,0.0),Array.new(F32,11n,0.0),
       Array.new(F32,U32.to_nat(ilog),0.0),Array.new(F32,U32.to_nat(olog),0.0),cap},Ctrl.Flags{0,n,False{},D.Timers{Nil{},0}},
       Counts{Array.new(U32,5n,0),Array.new(U32,5n,0),0,0,0,Array.new(U32,5n,0)},now,0})
 
