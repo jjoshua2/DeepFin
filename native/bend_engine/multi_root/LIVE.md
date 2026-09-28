@@ -145,3 +145,43 @@ playing strength remain separate work. Encoding, validation, backup and output
 are cooperative operations; a wedged callback is not preempted. Self-review only.
 EOF, stop and graceful quit must not be described as guarantees for all fatal
 process exits. See the September 25 qualification record for exact evidence and failures.
+
+## Opt-in measured gather limits
+
+After building this revision, `service_profile.dispatch` can validate a service
+report and replace itself with the native live runner. No Python scheduler remains.
+The default build and ordinary invocation still gather to full physical capacity.
+
+```sh
+python -m native.bend_engine.service_profile.dispatch \
+  --profile /path/to/measured/report.json --package /path/to/exact-model.pt2 \
+  --binary /path/to/deepfin-bend-live --receipt /tmp/new-launch.json \
+  --simulations 64 --depth 8
+```
+
+The launcher requires the exact measured package/checkpoint/encoding and matching
+CPU model, architecture, logical CPU count and Torch/thread metadata. These are
+coarse compatibility checks, not fresh calibration, affinity isolation or a speed
+guarantee. A re-exported package must still match the measured hash; a different
+hash requires profiling it again.
+`--prepare-only` writes the receipt without executing. A receipt proves preparation,
+not successful model opening or completed search.
+
+`DEEPFIN_COHORT_DISPATCH` carries the physical batch then sixteen real-row caps,
+one for each active-root count. `DEEPFIN_COHORT_PROFILE_PACKAGE_SHA256` is required
+alongside it and checked against the native binary's bound package. Directly setting
+these variables is a manual experimental override, not verified provenance. CPU
+batch execution only; the fixed-cohort program rejects the table. Neither variable
+changes physical tensor shape or loads another model. Wrong tables fail closed.
+
+Each cap is the largest chunk of the recomputed fixed-package equal-work optimum.
+It is applied before gathering in the existing FIFO; candidates may become local
+rule results, so actual occupancy can be smaller. No fill wait or admission refund
+is added. A receding cap need not realize the whole-wave estimate, and sample-p95
+costs are not deadlines. The startup `live_dispatch` record reports the full applied
+table; diagnostic `live_dispatch_step` rows report candidates, cap and physical
+batch. Root budgets and physical/accepted/wasted accounting retain their meaning.
+
+[The experiment record](../../../docs/experiments/2026-09-26-measured-live-dispatch.md)
+separates correctness/composition from the still-required equal-wall-time and
+trained-GPU validation. This feature is not automatically enabled or recommended.

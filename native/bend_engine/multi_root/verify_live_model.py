@@ -151,12 +151,16 @@ def model_identity(package: Path, checkpoint: Path) -> tuple[dict[str, Any], Any
 
 
 def session(binary: Path, package: Path, positions: list[str], directory: Path,
-            diagnostics: bool, *, shared: bool) -> tuple[list[str], list[tuple[int, int]], Path]:
+            diagnostics: bool, *, shared: bool, dispatch_environment: dict[str, str] | None = None) -> tuple[list[str], list[tuple[int, int]], Path]:
     directory.mkdir()
     trace = directory / 'model.trace'
     env = {**environment(), 'CUDA_VISIBLE_DEVICES': '',
            'DEEPFIN_BEND_MODEL_PACKAGE': str(package.resolve()), 'DEEPFIN_BEND_BUFFER_AUDIT': '1'}
     env = {k: v for k, v in env.items() if not k.startswith('DEEPFIN_TEST_')}
+    if dispatch_environment is not None:
+        if set(dispatch_environment) != {'DEEPFIN_COHORT_DISPATCH', 'DEEPFIN_COHORT_PROFILE_PACKAGE_SHA256'}:
+            raise ValueError('unexpected dispatch test environment')
+        env.update(dispatch_environment)
     if diagnostics:
         env['DEEPFIN_BEND_MODEL_TRACE'] = str(trace)
     c = Client(binary.resolve(), simulations=4, environment=env, diagnostics=diagnostics)
