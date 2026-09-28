@@ -12,7 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
-| [Saved Stockfish policy dose by game ply](2026-09-28-sf-late-position-dose.md) | Source-only G10 Tactical300 slice arithmetic: 92.489% of moved mass at ply ≥80; no strength or seven-piece claim; bounded 58M cross-tab is the next screen, not a training launch |
+| [Saved Stockfish policy dose by ply and pieces](2026-09-28-sf-late-position-dose.md) | Registered read-only G10 Tactical300 cross-tab: 83.879% of moved mass at ply ≥80 with 7–13 pieces (55.462% at 8–13); no Elo or 58M distribution claim; bounded 58M screen remains next |
 | [Async cohort root deadlines](2026-09-23-cohort-deadlines.md) | PR5c: per-root expiry, preadmission row compaction and charged physical retirement; opt-in CPU cohorts |
 | [Asynchronous bounded cohorts](2026-09-23-async-cohort.md) | PR5b: CPU batch worker, per-root cancellation and physical accounting; actual model parity, no dynamic root admission or speed claim |
 | [Bounded Bend multi-root batching](2026-09-22-native-multi-root.md) | PR5a: real selected-leaf CPU cohorts, serial tree parity and physical work accounting; no live scheduler or GPU/speed claim |
