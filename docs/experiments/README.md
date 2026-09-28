@@ -13,6 +13,15 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [Selected-E versus D direct strict arena](2026-09-28-selected-e-vs-d-direct-strict-readout.md) | Completed 576-pair strict six-man comparison: Selected-E −19.02 Elo [−33.43, −4.68] versus D; preregistered 30-Elo gate inconclusive |
+| [Overlay validation reuse](2026-09-21-overlay-validation-reuse.md) | Future exact-epoch startup: nine-to-one semantic validations per shard; 5.42× faster constructor stages on eight real shards with exact plan/target parity; active runtime unchanged |
+| [SF-free BT4+Ceres targets](2026-09-21-sffree-targets.md) | Reviewed E builder and three real source families qualified; bounded full 58M CPU preparation launched; training pending |
+| [58M policy/value teacher factorial](2026-09-19-58m-policy-value-factorial.md) | Reviewed pipeline queued:22.78M missing Ceres labels, target overlays, four fresh58M arms and four direct matches; active continuation preserved; no factorial results |
+| [B100 Tactical300 policy transfer](2026-09-11-b100-tactical300-transfer.md) | Candidate sparse SF mass-transfer policy tooling with mandatory deeper-SF calibration before materialization or training |
+| [Ceres selected-label guard cadence](2026-09-27-ceres-selected-guard-cadence.md) | Four-arm selected-4K GPU A/B/A/B: exact target parity and 17.76% lower arm wall; no production or 500M throughput claim |
+| [Opt-in measured live gather policy](2026-09-26-measured-live-dispatch.md) | Exact-package gather recommendations, bounded runtime application and equal-work controls; speed validation separate |
+| [Native batch service-time profile](2026-09-25-native-service-profile.md) | CPU callback occupancy curves with retained warmups and fixed-package equal-work estimates; no runtime dispatch or GPU claim |
+| [Persistent live CPU-model composition](2026-09-25-live-model-composition.md) | Actual AOTI checkpoint across generation reuse and shared forwards; strict independent oracle, no GPU or strength claim |
+| [Persistent live-cohort recovery](2026-09-25-live-cohort-recovery.md) | PR5d: generation-safe lifecycle reconciled with FIFO, completion waits and configurable arenas; qualification recorded separately |
 | [Async cohort root deadlines](2026-09-23-cohort-deadlines.md) | PR5c: per-root expiry, preadmission row compaction and charged physical retirement; opt-in CPU cohorts |
 | [Asynchronous bounded cohorts](2026-09-23-async-cohort.md) | PR5b: CPU batch worker, per-root cancellation and physical accounting; actual model parity, no dynamic root admission or speed claim |
 | [Bounded Bend multi-root batching](2026-09-22-native-multi-root.md) | PR5a: real selected-leaf CPU cohorts, serial tree parity and physical work accounting; no live scheduler or GPU/speed claim |
@@ -121,6 +130,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Varying-horizon online controller](varying_horizon_online_controller.md) | Preregistration and staged evaluation of online search continuation |
 | [Value head architecture](value_head_arch.md) | Historical April 2026 experiments |
 | [Historical ledger](../experiment_ledger.md) | Frozen July–September 2026 record, including yardsticks, gotchas and recovery snapshots |
+| [Strict six-man factorial target readout](2026-09-27-factorial-strict-rule50-readout.md) | Four corrected rule50 A–D arenas: both policy edges +6.79 Elo, both value-recipe edges +25.83; shared-opening bootstrap and limits; separate E−D context |
 | [Completed factorial and next-day queue](2026-09-22-factorial-readout-next24h.md) | Four conditional contrasts; SF-free value and matched second-seed preregistration; BT4 GPU optimization result and storage recovery |
 | [Retained Syzygy option](2026-09-22-retained-syzygy-option.md) | Opt-in Stockfish SyzygyRetainOnNewGame forwarding with resume/provenance guards; no retention-performance claim |
 | [500M continuation and partial factorial readout](2026-09-21-500m-continuation.md) | A/B/C exact epochs complete; policy +6.79 and value +21.74 Elo with intervals crossing zero; recovered arena bookkeeping, D ongoing; packed storage and bounded SF reset optimization |
@@ -172,6 +182,10 @@ analysis workflow.
 - [FIFO cohort integration](2026-09-23-fifo-cohort-integration.md): ready-root queue adoption with exact parent scheduling, tree, cancellation and deadline checks.
 
 - [Matched full-coordinator FIFO timing](2026-09-23-fifo-runner-timing.md): exact list/FIFO sources, optimized callback runner, strict realized-work checks and paired timings; no model/GPU claim.
+- [Bounded completion notification](2026-09-23-bounded-completion-wait.md): notification versus fixed pending sleep, matched callback runner and retained control/deadline checks.
+- [Explicit bounded search arenas](2026-09-24-bounded-search-arenas.md): opt-in fixed node capacity, safe pending sentinels, and actual search beyond 4,096 nodes; no dynamic growth or deployment.
+
+- [Bounded arena memory and initialization-cost screen](2026-09-24-arena-memory-screen.md): equal-work per-child peak RSS and process timing across capacities; no model/GPU or live-memory budget claim.
 - [Ceres CPU history reductions](2026-09-21-ceres-history-reductions.md) — exact-byte CPU encoder comparison.
 Current evidence correction and scale plan: [September 16 bootstrap audit](2026-09-16-bootstrap-status-audit.md).
 - [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
@@ -182,3 +196,5 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 - [CBoard-key map replay](2026-09-24-chess-key-map-replay.md): actual source-derived position keys, exact dictionary replay and explicit history/EP cache-identity limits; no performance or cache-adoption claim.
 - [Matched CBoard-key map timing](2026-09-24-chess-map-timing.md): unchanged chess-derived key fixtures and explicit CPU target; paired hash-versus-scan operation timings, not production search/cache throughput.
 - [Legal-move cache cost screen](2026-09-26-move-cache-cost-screen.md): matched cached/direct work at controlled reuse, cold lifetimes and oversized allocation; local measurements, not engine speedups.
+
+- [BT4 run11 variable-batch scheduling opportunity](2026-09-27-bt4-batching-opportunity.md): fixed-wave tail, conditional rolling-call arithmetic, and 128-game A/B compatibility HOLD.
