@@ -1,5 +1,34 @@
 # Bend migration and proof inventory
 
+## Latest hosted storage qualification
+
+Hosted run **35711968651**, temporary workflow commit `ae80e948fdd5ef12011a8d9f5d9ed98462df0968`, passes all **64 accepted laws**, **90 rejection controls** (18 new plus 72 retained), four native modes, original compiler source/pin checks and unchanged whole-repository lint on exact parent `290fc01a10517374518e505f9855c7d4a9a5d956`. The dated table-storage record and committed reports retain exact identities, original local limitations and remaining trust boundaries. Prefix/nonaliasing/full-lookup geometry remain open; these are eight new actual-buffer laws, not completion of P2.
+
+## Affine-storage increment: September 22, 2026
+
+On PR #820 `290fc01a10517374518e505f9855c7d4a9a5d956`, the new
+[actual-buffer suite](experiments/2026-09-22-bend-table-storage.md) adds eight
+source contracts without changing production or previous laws. Its final
+aggregate retains all 56 earlier laws; qualification status is in the dated record.
+
+| New law | Actual functions and assumptions | Meaning / remaining limit |
+| --- | --- | --- |
+| `storage/read_preserves_storage` | Actual `Array.get`; every affine U64 array and U32 index. | Returned storage is exactly unchanged; no address-bound assertion. |
+| `storage/write_read_same_location` | Actual `Array.set/get`; arbitrary array, value and same index. | Full updated array and written value recovered; different indices may alias. |
+| `storage/initialized_read` | Actual `Array.new/get`; source Nat depth, U64 seed and U32 index. | Initial read returns seed and same array; not an allocation-success or computed-attack theorem. |
+| `storage/write_preserves_shape` | Actual `Array.set`, arbitrary affine array. | Complete constructor topology preserved, not contents or bounds. |
+| `storage/fill_preserves_shape`, `tables_preserve_shape`, `extras_preserve_shape` | Actual `Tables` functions, all source Nat counts and scalar inputs. | Structural induction over the real loops; no interval/overflow or geometry guarantee. |
+| `storage/fill_one_read` | Actual `Tables.fill(1n,...)/Array.get`. | First write stores actual slider result and returns full updated storage; independent slider correctness still open. |
+
+All actual-array premises are supplied by live structural reification, not assumed
+buffer certificates. Proof images never run in the application. Source laws trust
+the unchanged checker/Base. Native fixtures use complete arrays, not all arbitrary
+source constructor shapes. No new Python responsibility, model/GPU or performance
+result follows. The P2 next target remains prefix bounds and nonaliasing/other-slot
+preservation, then complete initialized writes and geometric lookup refinement.
+
+Earlier status sections below retain their original revision/qualification context.
+
 ## Current qualification update: September 22, 2026
 
 Hosted qualification **35706095107** on September 22, 2026 passes all 56 laws, 72 rejection controls, four native modes, original compiler source/pin checks and whole-repository lint. The original saved commit `53b6e78f3052a0ed273f7fc31be47b66b32707b9` and complete tree `fc6400fbefe04deded9d6e1c9ac3ff54ef883221` were recovered exactly, not rewritten. Historical local-only/lint-unqualified statements below retain their original execution context; the hosted result above supersedes those status gaps for this exact candidate. No prefix/affine-storage theorem follows from this update. The parallel six-law exact_index branch remains preserved and separate. See the dated exact-slider-indices readout and hosted evidence.
