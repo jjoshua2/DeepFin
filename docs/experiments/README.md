@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Persistent SF scalar-value cost](2026-09-29-sf-scalar-persistent-cost.md) | Frozen 10k history-bearing SF-origin rows, matched Hash64/Hash8 one/eight-engine d6/d8/d10 cost and exact numeric comparison; no corpus or Elo credit |
 | [Tracked Ceres saved-game source fixture](2026-09-29-ceres-saved-game-source-fixture.md) | Main CPU producer/readback entrypoint exercised on one 47-row saved natural game; complete feature/feed/legal/terminal parity, no generation or throughput credit |
 | [Ceres stored-feed batch conversion](2026-09-29-ceres-stored-feed-batch.md) | CPU-only exact-byte feed proof on eight archived calls plus 512 stratified rows; 77.875% narrow conversion-stage reduction, no integrated throughput credit |
 | [500M practical next tests and target storage](2026-09-29-500m-practical-next-tests.md) | Current-source cost pilot, larger-batch numerical variants, sparse-SF holdout and pack/trainer follow-through; exact old-cohort sparse storage screen |
