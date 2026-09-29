@@ -125,6 +125,35 @@ static int perft_snapshot(PyObject *obj, CBoard *board) {
         PyErr_SetString(PyExc_ValueError, "perft requires a standard-chess CBoard with one king per side");
         return -1;
     }
+    if (ep >= 0) {
+        /* CBoard deliberately preserves python-chess's raw ep square even when
+         * no pawn can capture it.  Validate only the standard-position facts
+         * established by the preceding double push; requiring a capturer here
+         * would reject valid (and common) snapshots.
+         *
+         * With White to move, Black moved rank 7 -> 5 and the target is on
+         * rank 6.  With Black to move, the squares are reflected. */
+        int ep_rank = sq_rank((int)ep);
+        int expected_rank = turn == WHITE_C ? 5 : 2;
+        if (ep_rank != expected_rank) {
+            PyErr_SetString(PyExc_ValueError,
+                            "invalid CBoard en-passant snapshot");
+            return -1;
+        }
+        int pushed_sq = turn == WHITE_C ? (int)ep - 8 : (int)ep + 8;
+        int origin_sq = turn == WHITE_C ? (int)ep + 8 : (int)ep - 8;
+        uint64_t ep_bit = 1ULL << ep;
+        uint64_t pushed_bit = 1ULL << pushed_sq;
+        uint64_t origin_bit = 1ULL << origin_sq;
+        int them = 1 - (int)turn;
+        if ((occupied & ep_bit) ||
+            !(board->bb[PAWN] & board->occ[them] & pushed_bit) ||
+            (occupied & origin_bit)) {
+            PyErr_SetString(PyExc_ValueError,
+                            "invalid CBoard en-passant snapshot");
+            return -1;
+        }
+    }
     board->turn = (int8_t)turn;
     board->castling = (uint8_t)castling;
     board->ep_square = (int8_t)ep;
@@ -201,7 +230,7 @@ static PyObject *py_perft_divide(PyObject *self, PyObject *args) {
     for (int i = 0; i < count; i++) {
         CBoard child = board;
         cboard_push_index(&child, indices[i]);
-        counts[i] = perft_count(&child, depth - 1, &ctx);
+        counts[i] = perft_count(&child, depth - 1, ctx);
         if (ctx.interrupted || ctx.overflow) break;
         if (UINT64_MAX - total < counts[i]) {
             ctx.overflow = 1;
