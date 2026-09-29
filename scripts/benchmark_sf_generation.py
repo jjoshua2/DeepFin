@@ -7,6 +7,7 @@ validates without launching. No active corpus is resumed or mutated.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import ctypes
 import hashlib
 import json
@@ -18,7 +19,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 # Registered commands execute this file directly. Python then places scripts/
 # (not its parent) on sys.path, and changing os.environ["PYTHONPATH"] later
@@ -27,6 +28,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) in sys.path:
     sys.path.remove(str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT))
+
+
+class _PopenKwargs(TypedDict):
+    preexec_fn: Callable[[], None]
 
 
 def require(ok: bool, message: str) -> None:
@@ -495,7 +500,7 @@ def execute(plan: dict[str, Any]) -> dict[str, Any]:
 
             with (root / (cell["id"] + ".log")).open("x") as stream:
                 baseline = child_baseline()
-                popen_kwargs = {"preexec_fn": setup}
+                popen_kwargs: _PopenKwargs = {"preexec_fn": setup}
                 child = subprocess.Popen(
                     cell["command"],
                     cwd=plan["runtime"],
