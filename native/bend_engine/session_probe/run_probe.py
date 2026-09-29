@@ -222,7 +222,7 @@ class Reference:
         self.seq += 1
 
     def check_snapshot(self, rows: list[list[int]], result: list[int], best: int, epoch: int) -> None:
-        expected = [epoch, self.completed, len(self.nodes), self.stop, 4096, self.seq]
+        expected = [epoch, self.completed, len(self.nodes), self.stop, max(4096, self.cap), self.seq]
         if result != expected or len(rows) != len(self.nodes):
             raise AssertionError(f'session accounting mismatch: {result} != {expected}')
         for i, (row, a) in enumerate(zip(rows, self.nodes, strict=True)):

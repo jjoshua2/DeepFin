@@ -1,0 +1,17 @@
+{
+  "docs/experiments/2026-09-24-live-cohort-lifecycle.md": "b9419a02840b4b3fcbc3cf3243680e7dc62cc36d9cd90292ea6cdd9387fb38e4",
+  "docs/experiments/2026-09-25-live-cohort-recovery.md": "4e1174196caf0cd3721b56cb9e64a59ea5781a8fda0b0009facb57020d424ade",
+  "docs/experiments/README.md": "d217bf9f2913782b2087fd95333a795badb1eb36547677645fd401aa90dc53aa",
+  "native/bend_engine/batch_backend/batch_call.c": "67f6be24fe2c8f1f492c26d5ccaf1f896039e8462b140b3a821649c7b4314bef",
+  "native/bend_engine/multi_root/LIVE.md": "6b391fc4c326aa6466ed0780887999c0686315da7ac934a04abf84e3753441c6",
+  "native/bend_engine/multi_root/LiveRegistry.bend": "f844fa37c8d713ae08a20e7c4db91ab7a5caa0d7a3af972dc06743ed926d892e",
+  "native/bend_engine/multi_root/LiveReport.bend": "feb21372ceb57f9fdab157c0051ca9787f39fcc1e00615facb73871d84353bb0",
+  "native/bend_engine/multi_root/LiveRun.bend": "9f5f5b382b3567b3b95060c2b1b1a5cd389a1020cefbdbf96305f5085b3e955c",
+  "native/bend_engine/multi_root/build_live.sh": "c0384383e43b6faf3594442b2f69bafd6f1db1fbdb6b653b027ea4fb5a8d2a96",
+  "native/bend_engine/multi_root/live.bend": "5b1c32e7dc1a4a8013ab0bd40b8bca7a0c9c5b0f72afce79bb5b12932d9f9772",
+  "native/bend_engine/multi_root/live_registry_probe.bend": "c03af3b2a6748fee5e6eba83cc897dff9fcf45db8c45b0b1e6121c6c9ab526d6",
+  "native/bend_engine/multi_root/qualify_live.sh": "4e8dcb7860b8ac03c50b2c654563ff2bff9755bb6515f79693f813de4ed0de40",
+  "native/bend_engine/multi_root/qualify_live_registry.sh": "8bdaefce69ac65612917e4d0405a454dbad33043c0e076ec94f26042f158ad26",
+  "native/bend_engine/multi_root/verify_live.py": "c3159255553cdbdf6bbb5cbf45bc7398492b2d8805e7ebcaec18a4d2660aace6",
+  "tests/test_bend_live_cohort.py": "939fd405fc1825326f2c9b7fa0c92d15ec5a72f3e14e3f6e74ebfa57c987a21e"
+}

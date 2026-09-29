@@ -10,26 +10,18 @@ import ./EvaluationInput.bend as Evaluation
 import ./LogitReply.bend as Logits
 import ./NeuralWork.bend as Work
 
-# Zero is the explicitly material-only build. A native build must load and
-# validate its bound model before returning profile 1..4; errors are fatal.
-def Native.open() -> IO(U32):
-  import "./model_call.c"
+import ./ModelBuffers.bend as Buffers
 
-def Native.run(input: List<F32>) -> IO(List<F32>):
-  import "./model_call.c"
+# Linear, process-lifetime storage, carried through State even across position,
+# ucinewgame and stop. It is not part of the mutable search tree.
+type Cache is Type:
+  Disabled{}
+  Ready{maps: Policy.Maps, input: Array<F32>, output: Array<F32>, diagnostics: Bool}
 
-def append(xs: List<F32>, r: Array<F32> & F32) -> Array<F32> & List<F32>:
-  (a, x) = r
-  (a, Con{x, xs})
-
-def flatten(fuel: Nat, +left: U32, r: Array<F32> & List<F32>) -> List<F32>:
-  match fuel:
-    case 0n:
-      (a, xs) = r
-      xs
-    case 1n+p:
-      (a, xs) = r
-      flatten(p, U32.sub(left, 1), append(xs, Array.get(F32, a, U32.sub(left, 1))))
+def cache(model: U32, diagnostics: Bool) -> Cache:
+  match model:
+    case 0: Disabled{}
+    case _: Ready{Policy.build(), Array.new(F32, 14n, 0.0), Array.new(F32, 11n, 0.0), diagnostics}
 
 # This notice reports the actual selected path and normalized reply, not a
 # request supplied by the Python verifier. Full raw model values may be recorded
@@ -72,37 +64,60 @@ def notice_render(root: Pos.Game, game: Pos.Game, table: Array<U64>, +epoch: U32
       ++ " " ++ U32.show(count) ++ text)
     return (table, Search.Reply{epoch, request, node, 0, win, draw, loss, count, policy})
 
+def notice_enabled(diagnostics: Bool, root: Pos.Game, game: Pos.Game, entries: List<&2, Policy.Entry>,
+  table: Array<U64>, epoch: U32, request: U32, node: U32, win: F32, draw: F32, loss: F32,
+  count: U32, policy: Array<F32>) -> IO(Array<U64> & Search.Reply):
+  match diagnostics:
+    case True{}: notice_render(root, game, table, epoch, request, node, win, draw, loss, count, priors(entries, 0, (policy, "")))
+    case False{}: IO.pure(Array<U64> & Search.Reply, (table, Search.Reply{epoch, request, node, 0, win, draw, loss, count, policy}))
+
 def notice(root: Pos.Game, game: Pos.Game, entries: List<&2, Policy.Entry>,
-  table: Array<U64>, reply: Search.Reply) -> IO(Array<U64> & Search.Reply):
+  table: Array<U64>, diagnostics: Bool, reply: Search.Reply) -> IO(Array<U64> & Search.Reply):
   Search.Reply{epoch, request, node, status, win, draw, loss, count, policy} = reply
   match status:
-    case 0: notice_render(root, game, table, epoch, request, node, win, draw, loss, count, priors(entries, 0, (policy, "")))
+    case 0: notice_enabled(diagnostics, root, game, entries, table, epoch, request, node, win, draw, loss, count, policy)
     case _: IO.die(Array<U64> & Search.Reply, 2, "native model output or legal policy contract failed; no material fallback")
 
 type Result is Type:
-  Result{table: Array<U64>, reply: Search.Reply, encoding_ms: Nat, backend_ms: Nat, post_ms: Nat}
+  Result{cache: Cache, table: Array<U64>, reply: Search.Reply, encoding_ms: Nat, backend_ms: Nat, post_ms: Nat}
 
-def material(r: Array<U64> & Search.Reply) -> Result:
+def material(cache: Cache, r: Array<U64> & Search.Reply) -> Result:
   (table, reply) = r
-  Result{table, reply, 0n, 0n, 0n}
+  Result{cache, table, reply, 0n, 0n, 0n}
 
-def timed_result(started: Nat, +encoded: Nat, +forwarded: Nat, finished: Nat,
+def timed_result(cache: Cache, started: Nat, +encoded: Nat, +forwarded: Nat, finished: Nat,
   r: Array<U64> & Search.Reply) -> Result:
   (table, reply) = r
-  Result{table, reply, Nat.sub(encoded, started), Nat.sub(forwarded, encoded), Nat.sub(finished, forwarded)}
+  Result{cache, table, reply, Nat.sub(encoded, started), Nat.sub(forwarded, encoded), Nat.sub(finished, forwarded)}
 
-def prepared(+profile: Bool, +started: Nat, root: Pos.Game, game: Pos.Game, ticket: Search.Ticket, p: Evaluation.Preparation) -> IO(Result):
+def converted(+profile: Bool, +diagnostics: Bool, started: Nat, encoded: Nat, forwarded: Nat,
+  root: Pos.Game, game: Pos.Game, entries: List<&2, Policy.Entry>, maps: Policy.Maps,
+  table: Array<U64>, input: Array<F32>, c: Logits.Converted) -> IO(Result):
+  Logits.Converted{output, reply} = c
+  do IO<Result>:
+    r : Array<U64> & Search.Reply <- notice(root, game, entries, table, diagnostics, reply)
+    finished : Nat <- Work.clock(profile)
+    return timed_result(Ready{maps, input, output, diagnostics}, started, encoded, forwarded, finished, r)
+
+def forwarded(+profile: Bool, diagnostics: Bool, started: Nat, encoded: Nat,
+  root: Pos.Game, game: Pos.Game, ticket: Search.Ticket, +entries: List<&2, Policy.Entry>,
+  maps: Policy.Maps, table: Array<U64>, b: Buffers.Buffers) -> IO(Result):
+  Buffers.Buffers{input, output, size} = b
+  do IO<Result>:
+    now : Nat <- Work.clock(profile)
+    converted(profile, diagnostics, started, encoded, now, root, game, entries, maps, table,
+      input, Logits.convert_buffer(ticket, entries, size, Array.size(F32, output)))
+
+def prepared(+profile: Bool, diagnostics: Bool, started: Nat, root: Pos.Game, game: Pos.Game,
+  ticket: Search.Ticket, output: Array<F32>, p: Evaluation.Preparation) -> IO(Result):
   match p:
     case Evaluation.Invalid{table, maps}: IO.die(Result, 2, "native input preparation failed")
     case Evaluation.Ready{Evaluation.Prepared{maps, Input.Input{table, values, +channels}, +entries}}:
-      +count = U32.mul(channels, 64)
+      count = U32.mul(channels, 64)
       do IO<Result>:
         encoded : Nat <- Work.clock(profile)
-        output : List<F32> <- Native.run(flatten(U32.to_nat(count), count, (values, Nil{})))
-        forwarded : Nat <- Work.clock(profile)
-        r : Array<U64> & Search.Reply <- notice(root, game, entries, table, Logits.convert(ticket, entries, output))
-        finished : Nat <- Work.clock(profile)
-        return timed_result(started, encoded, forwarded, finished, r)
+        buffers : Buffers.Buffers <- Buffers.Native.run(count, values, output)
+        forwarded(profile, diagnostics, started, encoded, root, game, ticket, entries, maps, table, buffers)
 
 def layout(profile: U32) -> H.Layout:
   match profile:
@@ -117,8 +132,12 @@ def version(profile: U32) -> Input.Version:
     case 2: Input.V1{}
     case _: Input.V2Threats{}
 
-def evaluate(+timing: Bool, +profile: U32, root: Pos.Game, +game: Pos.Game, ticket: Search.Ticket,
+def evaluate(cache: Cache, +timing: Bool, +profile: U32, root: Pos.Game, +game: Pos.Game, ticket: Search.Ticket,
   table: Array<U64>) -> IO(Result):
-  do IO<Result>:
-    now : Nat <- Work.clock(timing)
-    prepared(timing, now, root, game, ticket, Evaluation.prepare(layout(profile), version(profile), game, table, Policy.build()))
+  match cache:
+    case Disabled{}: IO.die(Result, 2, "native cache is not initialized")
+    case Ready{maps, input, output, diagnostics}:
+      do IO<Result>:
+        now : Nat <- Work.clock(timing)
+        prepared(timing, diagnostics, now, root, game, ticket, output,
+          Evaluation.prepare_into(layout(profile), version(profile), game, table, maps, Array.size(F32, input)))
