@@ -90,6 +90,8 @@ def test_opt_in_prefetch_preserves_rng_order_and_tensor_bytes(
     assert old_draws == new_draws
     _equal_batches(old_batches, new_batches)
     assert split.future_calls == split.tensor_calls == 4
+    assert split.host_sample_calls == 0
+    assert split.host_sample_s == 0.0
     assert split.future_wait_s >= 0.008
     assert split.tensor_issue_s >= 4 * 0.006
 
@@ -98,9 +100,14 @@ def test_opt_in_prefetch_preserves_rng_order_and_tensor_bytes(
 def test_serial_sampling_has_no_future_claim_and_preserves_bytes(
     monkeypatch: pytest.MonkeyPatch, exact: bool,
 ) -> None:
-    legacy, timed = _trainer(prefetch=False), _trainer(prefetch=False)
+    # exact=True/prefetch=True is the run12 route: exact serial ownership
+    # overrides the trainer's ordinary prefetch preference.
+    legacy, timed = _trainer(prefetch=exact), _trainer(prefetch=exact)
     old_draws = _install_synthetic_sampler(legacy, monkeypatch, seed=19)
-    new_draws = _install_synthetic_sampler(timed, monkeypatch, seed=19)
+    new_draws = _install_synthetic_sampler(
+        timed, monkeypatch, seed=19, sample_delay_s=0.008,
+        tensor_delay_s=0.006,
+    )
     buf = cast(Any, SimpleNamespace(exact_without_replacement=exact,
                                     host_batch_overlap=False))
     split = _BatchPrefetchSplitTiming()
@@ -116,8 +123,10 @@ def test_serial_sampling_has_no_future_claim_and_preserves_bytes(
     _equal_batches(old_batches, new_batches)
     assert split.future_calls == 0
     assert split.future_wait_s == 0.0
+    assert split.host_sample_calls == 3
+    assert split.host_sample_s >= 3 * 0.006
     assert split.tensor_calls == 3
-    assert split.tensor_issue_s > 0.0
+    assert split.tensor_issue_s >= 3 * 0.004
 
 
 def test_exact_overlap_future_and_tensor_issue_keep_the_same_batches(
@@ -142,5 +151,7 @@ def test_exact_overlap_future_and_tensor_issue_keep_the_same_batches(
     assert old_draws == new_draws
     _equal_batches(old_batches, new_batches)
     assert split.future_calls == split.tensor_calls == 3
+    assert split.host_sample_calls == 0
+    assert split.host_sample_s == 0.0
     assert split.future_wait_s > 0.0
     assert split.tensor_issue_s > 0.0

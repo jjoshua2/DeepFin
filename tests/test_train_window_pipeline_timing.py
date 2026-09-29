@@ -28,6 +28,7 @@ import ast
 import inspect
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, ClassVar, cast
 
 import pytest
@@ -225,6 +226,8 @@ def test_opt_in_prefetch_split_reaches_metrics_and_window_log(
 
     assert metrics.batch_prefetch_split_enabled == 1
     assert metrics.batch_future_calls == metrics.batch_tensor_calls == 3
+    assert metrics.batch_host_sample_calls == 0
+    assert metrics.batch_host_sample_s == 0.0
     assert metrics.batch_future_wait_s > 0.0
     assert metrics.batch_tensor_issue_s >= 0.009
     assert (metrics.batch_future_wait_s + metrics.batch_tensor_issue_s
@@ -234,7 +237,59 @@ def test_opt_in_prefetch_split_reaches_metrics_and_window_log(
     assert len(timing_lines) == 1
     assert "prefetch_split=on" in timing_lines[0]
     assert "batch_future_wait_s=" in timing_lines[0]
+    assert "batch_host_sample_s=" in timing_lines[0]
     assert "batch_tensor_issue_s=" in timing_lines[0]
+    assert "batch_prefetch_residual_s=" in timing_lines[0]
+
+
+def test_exact_serial_window_attributes_host_sampling_and_residual(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    trainer = _make_trainer(
+        tmp_path, prefetch_batches=True, prefetch_split_timing=True,
+    )
+    _install_fake_window(trainer, monkeypatch)
+
+    def sample(*_args: Any, **_kwargs: Any) -> dict[str, torch.Tensor]:
+        time.sleep(0.006)
+        return {"x": torch.zeros((1, 4, 8, 8))}
+
+    def tensor(batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        time.sleep(0.004)
+        return batch
+
+    monkeypatch.setattr(trainer, "_sample_batch_host", sample)
+    monkeypatch.setattr(trainer, "_host_batch_to_tensors", tensor)
+    buf = cast(Any, SimpleNamespace(
+        exact_without_replacement=True, host_batch_overlap=False,
+    ))
+    capsys.readouterr()
+
+    metrics = trainer.train_steps(buf, batch_size=1, steps=3)
+
+    assert metrics.batch_prefetch_split_enabled == 1
+    assert metrics.batch_future_calls == 0
+    assert metrics.batch_future_wait_s == 0.0
+    assert metrics.batch_host_sample_calls == 3
+    assert metrics.batch_host_sample_s >= 0.015
+    assert metrics.batch_tensor_calls == 3
+    assert metrics.batch_tensor_issue_s >= 0.009
+    subspan_sum = (
+        metrics.batch_future_wait_s
+        + metrics.batch_host_sample_s
+        + metrics.batch_tensor_issue_s
+    )
+    assert metrics.batch_prefetch_residual_s >= 0.0
+    assert metrics.batch_prefetch_residual_s == pytest.approx(
+        metrics.batch_prefetch_wait_s - subspan_sum, abs=1e-9,
+    )
+    lines = [line for line in capsys.readouterr().out.splitlines()
+             if "window_timing" in line]
+    assert len(lines) == 1
+    assert "batch_host_sample_calls=3" in lines[0]
+    assert "batch_future_calls=0" in lines[0]
+    assert "batch_prefetch_residual_s=" in lines[0]
 
 
 def test_prefetch_split_is_off_by_default(
@@ -248,8 +303,11 @@ def test_prefetch_split_is_off_by_default(
     metrics = trainer.train_steps(cast(Any, None), batch_size=1, steps=2)
 
     assert metrics.batch_prefetch_split_enabled == 0
-    assert metrics.batch_future_calls == metrics.batch_tensor_calls == 0
-    assert metrics.batch_future_wait_s == metrics.batch_tensor_issue_s == 0.0
+    assert (metrics.batch_future_calls == metrics.batch_host_sample_calls
+            == metrics.batch_tensor_calls == 0)
+    assert (metrics.batch_future_wait_s == metrics.batch_host_sample_s
+            == metrics.batch_tensor_issue_s == 0.0)
+    assert metrics.batch_prefetch_residual_s == 0.0
     timing_lines = [line for line in capsys.readouterr().out.splitlines()
                     if "window_timing" in line]
     assert len(timing_lines) == 1

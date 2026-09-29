@@ -242,13 +242,15 @@ class _TrainBatchIterator:
 class _BatchPrefetchSplitTiming:
     """Opt-in CPU spans inside the existing `next(batches)` wall phase.
 
-    These are subsets, not additional partition phases. The remainder includes
-    synchronous sampling and, on the exact-overlap path, H2D retirement.
+    These are subsets, not additional partition phases. Synchronous sampling
+    has its own span; the remainder includes exact-overlap H2D retirement.
     """
 
     future_wait_s: float = 0.0
+    host_sample_s: float = 0.0
     tensor_issue_s: float = 0.0
     future_calls: int = 0
+    host_sample_calls: int = 0
     tensor_calls: int = 0
 
 
@@ -1383,8 +1385,11 @@ class TrainMetrics:
   # Opt-in CPU subspans of `batch_prefetch_wait_s`, not extra partition phases.
   # Zero with `batch_prefetch_split_enabled == 0` means unmeasured.
     batch_future_wait_s: float = 0.0
+    batch_host_sample_s: float = 0.0
     batch_tensor_issue_s: float = 0.0
+    batch_prefetch_residual_s: float = 0.0
     batch_future_calls: int = 0
+    batch_host_sample_calls: int = 0
     batch_tensor_calls: int = 0
     batch_prefetch_split_enabled: int = 0
     fwd_loss_s: float = 0.0
@@ -4759,9 +4764,15 @@ class Trainer:
             return
         if not self._prefetch_batches or n == 1:
             for _ in range(n):
-                host_batch = self._sample_batch_host(
-                    buf, batch_size=batch_size, mirror_prob=mirror_prob, coverage=coverage,
-                )
+                started = time.perf_counter()
+                try:
+                    host_batch = self._sample_batch_host(
+                        buf, batch_size=batch_size, mirror_prob=mirror_prob,
+                        coverage=coverage,
+                    )
+                finally:
+                    timing.host_sample_s += time.perf_counter() - started
+                    timing.host_sample_calls += 1
                 yield self._timed_host_batch_to_tensors(host_batch, timing)
             return
 
@@ -4837,12 +4848,25 @@ class Trainer:
         # ordinary prefetch path retains batch N while assembling N+1, so exact
         # training deliberately gives up that overlap to keep the cap hard.
         for _ in range(max(0, int(count))):
-            host_batch = self._sample_batch_host(
-                buf,
-                batch_size=batch_size,
-                mirror_prob=mirror_prob,
-                coverage=coverage,
-            )
+            if split_timing is None:
+                host_batch = self._sample_batch_host(
+                    buf,
+                    batch_size=batch_size,
+                    mirror_prob=mirror_prob,
+                    coverage=coverage,
+                )
+            else:
+                started = time.perf_counter()
+                try:
+                    host_batch = self._sample_batch_host(
+                        buf,
+                        batch_size=batch_size,
+                        mirror_prob=mirror_prob,
+                        coverage=coverage,
+                    )
+                finally:
+                    split_timing.host_sample_s += time.perf_counter() - started
+                    split_timing.host_sample_calls += 1
             if split_timing is None:
                 device_batch = self._host_batch_to_tensors(host_batch)
             else:
@@ -6098,11 +6122,24 @@ class Trainer:
   # complete and reading them costs nothing. `pipeline_other_s` is whatever of
   # `train_time_s` the phases did not claim.
         phase_timings = phase_timer.drain(window_wall_s=train_time_s)
+        # The three CPU subspans are inside next(batches), not a new partition
+        # of the training window. This remainder includes iterator bookkeeping
+        # and exact-overlap transfer retirement, without a CUDA synchronization.
+        prefetch_residual_s = (
+            phase_timings["batch_prefetch_wait_s"]
+            - split_timing.future_wait_s
+            - split_timing.host_sample_s
+            - split_timing.tensor_issue_s
+            if split_timing is not None else 0.0
+        )
         split_timings = (
             {
                 "batch_future_wait_s": split_timing.future_wait_s,
+                "batch_host_sample_s": split_timing.host_sample_s,
                 "batch_tensor_issue_s": split_timing.tensor_issue_s,
+                "batch_prefetch_residual_s": prefetch_residual_s,
                 "batch_future_calls": split_timing.future_calls,
+                "batch_host_sample_calls": split_timing.host_sample_calls,
                 "batch_tensor_calls": split_timing.tensor_calls,
                 "batch_prefetch_split_enabled": 1,
             }
@@ -6131,8 +6168,11 @@ class Trainer:
             f"gpu_events={'on' if phase_timer.cuda else 'off'}"
             + (
                 f" batch_future_wait_s={split_timing.future_wait_s:.3f}"
+                f" batch_host_sample_s={split_timing.host_sample_s:.3f}"
                 f" batch_tensor_issue_s={split_timing.tensor_issue_s:.3f}"
+                f" batch_prefetch_residual_s={prefetch_residual_s:.3f}"
                 f" batch_future_calls={split_timing.future_calls}"
+                f" batch_host_sample_calls={split_timing.host_sample_calls}"
                 f" batch_tensor_calls={split_timing.tensor_calls}"
                 f" prefetch_split=on"
                 if split_timing is not None else ""
