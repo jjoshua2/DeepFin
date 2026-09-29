@@ -33,10 +33,13 @@ class PackSourceIdentity:
     opening_stratum: str
 
     def __post_init__(self) -> None:
-        if _SHA256.fullmatch(self.run_manifest_sha256) is None:
+        if (not isinstance(self.run_manifest_sha256, str)
+                or _SHA256.fullmatch(self.run_manifest_sha256) is None):
             raise ValueError("run_manifest_sha256 must be lowercase SHA-256")
-        if not self.source_namespace or not self.opening_stratum:
-            raise ValueError("source namespace and opening stratum are required")
+        if (not isinstance(self.source_namespace, str)
+                or not isinstance(self.opening_stratum, str)
+                or not self.source_namespace or not self.opening_stratum):
+            raise ValueError("source namespace and opening stratum must be nonempty strings")
 
     def as_list(self) -> list[str]:
         return [self.run_manifest_sha256, self.source_namespace,
@@ -150,6 +153,7 @@ class PreservedParentPack:
         suffix = ".zarr.zip" if self.shard_format == "zip_stored" else ".zarr"
         owner_for_parent: dict[Path, PackSourceIdentity] = {}
         resolved_shards: set[Path] = set()
+        physical_shards: set[tuple[int, int]] = set()
         for source, path in ordered:
             source_dir = self.source_parent(pack_root, source)
             try:
@@ -165,10 +169,14 @@ class PreservedParentPack:
                 raise ValueError("packed Zarr shard must be a regular file")
             if self.shard_format == "directory" and not actual.is_dir():
                 raise ValueError("ordinary Zarr shard must be a directory")
+            stamp = actual.stat()
+            physical_identity = (stamp.st_dev, stamp.st_ino)
             previous = owner_for_parent.setdefault(expected, source)
-            if previous != source or actual in resolved_shards:
+            if (previous != source or actual in resolved_shards
+                    or physical_identity in physical_shards):
                 raise ValueError("source parents and physical shards must be distinct")
             resolved_shards.add(actual)
+            physical_shards.add(physical_identity)
         staging.mkdir(parents=True, exist_ok=False)
         try:
             for index, (_, path) in enumerate(ordered):

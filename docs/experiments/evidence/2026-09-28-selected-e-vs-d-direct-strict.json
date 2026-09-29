@@ -1,0 +1,91 @@
+{
+  "arena_duration_s": 4606.4,
+  "candidate": {
+    "arm": "E_SELECTED_SEED121",
+    "checkpoint_sha256": "154e768ce1a76dda98b0077244227df1591ef3d4a4e2e438e16c49b1a58ac203",
+    "initial_state_sha256": "4a580089ea387b58c3281862cc9aee79219ed33eec1ccf373ea3b67f71af3c59",
+    "summary_sha256": "8bf68c8d07e230a780eb40bfeec9348d9f7f6941b67f2048b4c7a341ada5109b"
+  },
+  "end_to_end_elapsed_s": 4684.498170855004,
+  "fixed_readout": {
+    "decision": "INCONCLUSIVE_NO_ADVANCE",
+    "elo": -19.01935927142242,
+    "games": 1152,
+    "interpretation": "Conditional on two trained seed121 checkpoints and this reused 576-opening bank; no global 30-Elo guarantee",
+    "meets_conditional_noninferiority": false,
+    "noninferiority_margin_elo": -30.0,
+    "paired_elo_ci95_normal": [
+      -33.42648526855705,
+      -4.677318119009594
+    ],
+    "paired_score_ci95_normal": [
+      0.45204329524342035,
+      0.49326920475657965
+    ],
+    "paired_score_se": 0.010516813651316147,
+    "pairs": 576,
+    "score": 0.47265625
+  },
+  "game_log_sha256": "3f8905892362c3bd57a4a467f5ea25243b6d02baa1ae1d78d0fb54319e99370e",
+  "games": 1152,
+  "games_verified": 1152,
+  "independent_audit": {
+    "integrity": "PASS",
+    "preregistered_decision": "INCONCLUSIVE_NO_ADVANCE",
+    "manifest_sha256": "e961a2364441697e07091e3d312ff4d85894a2c5b98f84954a5cd9dc72e82f90",
+    "review_note_sha256": "952ac8312327fe6adf840d762bf7096f96a386964bc64e7e078e744349d5748c",
+    "pgn_games_replayed": 1152,
+    "pairs_reconstructed": 576,
+    "strict_wdl_dtz_terminals_reprobed": 593,
+    "unreproven_natural_results": 0
+  },
+  "packet_manifest_sha256": "f4ce6a5069bfd9717694239892b71df6f47728edcb52b12fc2ca16d9515763b1",
+  "pairs": 576,
+  "pairs_verified": 576,
+  "pentanomial": {
+    "DD_WL": 226,
+    "LD_DL": 153,
+    "LL": 47,
+    "WD_DW": 116,
+    "WW": 34
+  },
+  "pgn_sha256": "bcd866bdc8c7ced85abca0747fb24bfc104ed4db4ddfa1e14f8bb999f5d6701e",
+  "plan_sha256": "6a953bbdd97af6c09e0d0cd04e659b62c59e18c2db1ecfa9198a12f80dd01a42",
+  "preregistered_decision_sha256": "6a34f815d88ba56d156aa30467ef291b476337222747681c5cf30fe1ffc94ad2",
+  "reference": {
+    "arm": "D",
+    "checkpoint_sha256": "2aef77229a1aad76ab02a4d640ddfe1d394ee30f329c04bcaa8547a37522c7f2",
+    "initial_state_sha256": "4a580089ea387b58c3281862cc9aee79219ed33eec1ccf373ea3b67f71af3c59",
+    "summary_sha256": "a004f281b2bec41d056bca3d5ec56d8626ccca7c8fdb6e439dfc8f3cde53b405"
+  },
+  "results_jsonl_sha256": "bbc6cc11c21b8d73df2055a9498a2171e0697592d2e4330821b1071e62bf9e51",
+  "resumed_orphan_pairs": 0,
+  "resumed_pairs": 0,
+  "schema": "selected_e_vs_d_direct_strict_compact_evidence_v1",
+  "search": {
+    "candidate_sims": 400,
+    "compiled": "on",
+    "device": "cuda",
+    "max_plies": 1000,
+    "mode": "matched_sims",
+    "opening_plies": 16,
+    "reference_sims": 400,
+    "seed": 2026092101,
+    "shape": "training",
+    "temperature": 0.1
+  },
+  "source_terminal_sha256": "78d4d6f68194355d61c02dda19a137a0601e2363f7232f869cc7aa4f4013bce4",
+  "status": "PASS_SELECTED_E_VS_D_1152_GAME_RULE50_ARENA",
+  "syzygy": {
+    "max_pieces": 6,
+    "protocol": "rule50-aware-root-leaf-and-adjudication-v1",
+    "telemetry": {
+      "dtz_tables_open": 1000,
+      "pairs_completed": 576,
+      "search_hits": 609292,
+      "search_probes": 820861,
+      "wdl_tables_open": 1000
+    }
+  },
+  "truncated": false
+}
