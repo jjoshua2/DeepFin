@@ -44,16 +44,20 @@ how many late positions have exactly seven pieces in that separate corpus.
 Strength evidence also remains separate. Tactical100 versus B100 was −13.6 Elo
 [-52.4, +24.9], and Downside300 versus B100 was +17.66
 [-17.97, +53.66]. Both 256-game, 400-simulation comparisons were unresolved,
-used different policy operators, and had no tablebases. On the 58M factorial
-corpus, the two policy contrasts were B–A +6.79 [-24.95, +38.63] and D–C
-−16.30 [-46.88, +14.04] Elo. The two value contrasts were C–A +21.74
-[-12.49, +56.40] and D–B +17.66 [-13.93, +49.54] Elo; adding Ceres value
-also reduced both SF and BT4 shares, so it did not isolate SF. A later strict
-rule50-aware six-man Selected-E versus D comparison gave −19.02
-[-33.43, −4.68] Elo over 576 opening pairs, **inconclusive** under its
-precommitted −30-Elo noninferiority gate. Its changed source, teacher routing,
-and schedule prevent attribution to SF removal alone. None of these matches
-tests a late-only Stockfish selector.
+used different policy operators, and had no tablebases. In the **earlier
+tablebase-disabled** 58M factorial arenas, the policy contrasts were B–A +6.79
+[-24.95, +38.63] and D–C −16.30 [-46.88, +14.04] Elo; the value contrasts
+were C–A +21.74 [-12.49, +56.40] and D–B +17.66 [-13.93, +49.54]. These
+historical values must not be mistaken for the [strict six-man replacement
+readout](2026-09-27-factorial-strict-rule50-readout.md), which reports +6.79 Elo
+on both policy edges and +25.83 on both value-recipe edges, with every individual
+edge interval including zero. The old and replacement banks are not pooled.
+Adding Ceres value also reduces both SF and BT4 shares, so neither evaluation
+isolates SF. A later strict rule50-aware six-man Selected-E versus D comparison
+gave −19.02 [-33.43, −4.68] Elo over 576 opening pairs, **inconclusive** under
+its precommitted −30-Elo noninferiority gate. Its changed source, teacher
+routing, and schedule prevent attribution to SF removal alone. None of these
+matches tests a late-only Stockfish selector.
 
 The next decision is a **bounded read-only cross-tab screen**, not a training
 launch. Before opening registered 58M payload, freeze and authenticate the 35
