@@ -152,7 +152,7 @@ this same cohort and call the selected rule confirmed.
 
 ## Implementation boundary
 
-This stacked PR adds only the calibration analyzer, focused synthetic tests and this
+This stacked PR adds only the diagnostic analyzer, focused synthetic tests and this
 registration. It does **not** run the full diagnostic, rewrite Tactical300 targets,
 train a model, launch an arena, alter Gumbel search or change live configuration.
 
