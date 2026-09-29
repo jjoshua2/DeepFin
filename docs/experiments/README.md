@@ -13,6 +13,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [Selected-E versus D direct strict arena](2026-09-28-selected-e-vs-d-direct-strict-readout.md) | Completed 576-pair strict six-man comparison: Selected-E −19.02 Elo [−33.43, −4.68] versus D; preregistered 30-Elo gate inconclusive |
+| [Selected-E versus E seed-121 strict arena](2026-09-27-selected-e-vs-e-arena.md) | Preregistered 576-pair noninferiority gate passed; future one-teacher cost screen eligible, with no measured annotation saving or corpus credit |
 | [Overlay validation reuse](2026-09-21-overlay-validation-reuse.md) | Future exact-epoch startup: nine-to-one semantic validations per shard; 5.42× faster constructor stages on eight real shards with exact plan/target parity; active runtime unchanged |
 | [SF-free BT4+Ceres targets](2026-09-21-sffree-targets.md) | Reviewed E builder and three real source families qualified; bounded full 58M CPU preparation launched; training pending |
 | [58M policy/value teacher factorial](2026-09-19-58m-policy-value-factorial.md) | Reviewed pipeline queued:22.78M missing Ceres labels, target overlays, four fresh58M arms and four direct matches; active continuation preserved; no factorial results |
