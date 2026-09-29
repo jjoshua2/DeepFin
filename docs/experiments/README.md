@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Tracked Ceres saved-game source fixture](2026-09-29-ceres-saved-game-source-fixture.md) | Main CPU producer/readback entrypoint exercised on one 47-row saved natural game; complete feature/feed/legal/terminal parity, no generation or throughput credit |
 | [Ceres stored-feed batch conversion](2026-09-29-ceres-stored-feed-batch.md) | CPU-only exact-byte feed proof on eight archived calls plus 512 stratified rows; 77.875% narrow conversion-stage reduction, no integrated throughput credit |
 | [500M practical next tests and target storage](2026-09-29-500m-practical-next-tests.md) | Current-source cost pilot, larger-batch numerical variants, sparse-SF holdout and pack/trainer follow-through; exact old-cohort sparse storage screen |
 | [Full512 old-cohort selected/dual ABBA cost](2026-09-29-full512-old-cohort-abba-cost.md) | Four-arm same-row screen: 38.888684% selected complete-arm saving passes the 15% cost gate; zero corpus or 500M credit, representative pilot next |
