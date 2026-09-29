@@ -1,0 +1,5 @@
+{
+  "original_filename": "source.stderr",
+  "original_sha256": "0be2aa4f6f42c27491151cf3c84f4bac6a01f5c7cc507aadca85ceddf5bc3969",
+  "raw_text": "PASS: unchanged 48-law parent and 55 inherited controls\nPASS: all 56 laws and importing consumer\nPASS rejection: in-range-but-wrong-zero-index\nPASS rejection: wrong-high-half-projection\nPASS rejection: off-by-one-index\nPASS rejection: index-truncated-to-one-bit\nPASS rejection: swapped-pext-operands\nPASS rejection: allows-one-more-bit-than-retained\nPASS rejection: removed-recovery-membership\nPASS rejection: inclusive-ordinal-bound\n"
+}

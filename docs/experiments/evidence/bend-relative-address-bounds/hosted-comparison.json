@@ -1,0 +1,9 @@
+{
+  "comparison": "PASS",
+  "source_commit": "ce9d5e5442cf44cde50a4c8da66e3ea9ffdd5bdc",
+  "source_tree": "4ee76c5d996b16d6ca84b0053b2a65f80d90611e",
+  "native_source_files": 253,
+  "source_report_matches": "Reviewed local controls, diagnostic locations and source identities match; local consumer and controls ran separately, hosted aggregate is a fresh combined execution",
+  "native_report_matches": "Every field except separately recorded C compiler identity",
+  "proof_inputs_unchanged_after_qualification": true
+}
