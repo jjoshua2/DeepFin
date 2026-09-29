@@ -11,12 +11,12 @@ The corrected strict six-man factorial's average policy-recipe contrast was
 +6.79 Elo [−16.30,+29.25]; its average value-recipe contrast was +25.83
 [+4.07,+47.11]. The value contrast adds Ceres while reducing both SF and BT4,
 so it is not an isolated SF effect. The direct original E-versus-D replay on
- the same 576-opening bank used for the two Selected-E matches found **E−D
+the same 576-opening bank used for the two Selected-E matches found **E−D
 −12.37 Elo [−27.18,+2.39]** over 1,152 color-swapped games. Its registered
 zero-Elo decision is unresolved; E and D have identical 50/50 BT4/Ceres policy
 targets, while E removes SF from value and reweights BT4/Ceres. The indirect
 three-edge discrepancy was +0.52 score percentage points [−3.17,+4.30],
-secondary and also unresolved. See [the direct record](2026-09-29-e-vs-d-576-strict.md)
+secondary and also unresolved. See [the direct record](https://github.com/jjoshua2/DeepFin/pull/929)
 and [the factorial readout](2026-09-27-factorial-strict-rule50-readout.md).
 These are one-seed, fixed-bank comparisons. The direct interval's lower
 endpoint happens to exceed −30 Elo, but the preregistered gate was against
