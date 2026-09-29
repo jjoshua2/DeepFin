@@ -1,4 +1,5 @@
 """Closed-game accounting and process ownership for CPU throughput screens."""
+import ctypes
 import gzip
 import json
 import os
@@ -10,6 +11,23 @@ from pathlib import Path
 import pytest
 
 from scripts import benchmark_sf_generation as tool
+
+
+@pytest.fixture
+def restore_child_subreaper():
+    """Do not change who adopts grandchildren in later tests in this process."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    previous = ctypes.c_int()
+    assert libc.prctl(37, ctypes.byref(previous), 0, 0, 0) == 0
+    try:
+        yield
+    finally:
+        # PR_SET_CHILD_SUBREAPER changes process state, not a Python global.
+        # Restore it after the test's existing owned-child cleanup, even on error.
+        assert libc.prctl(36, previous.value, 0, 0, 0) == 0
+        restored = ctypes.c_int()
+        assert libc.prctl(37, ctypes.byref(restored), 0, 0, 0) == 0
+        assert restored.value == previous.value
 
 
 def test_tracker_keeps_escaped_child_and_does_not_signal_reused_pid(monkeypatch):
@@ -83,6 +101,7 @@ def test_tracker_does_not_adopt_reused_root_pid(monkeypatch):
     owned.signal(signal.SIGTERM)
 
 
+@pytest.mark.usefixtures("restore_child_subreaper")
 def test_adopts_engine_that_escapes_before_first_sample(tmp_path):
     baseline = tool.child_baseline()
     pidfile = tmp_path / "pid"
