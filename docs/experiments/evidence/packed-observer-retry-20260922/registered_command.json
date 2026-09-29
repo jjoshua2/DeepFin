@@ -1,0 +1,74 @@
+{
+  "argv": [
+    "/usr/bin/python3.10",
+    "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-registration-20260922/run_packed_trainer_pair.py",
+    "--plan",
+    "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-registration-20260922/plan.json",
+    "--plan-sha256",
+    "84a8fccf3b9360d9421b69eedbbc7b47fc23dbe1d6d0b0d6e9d19881844b43de",
+    "--review",
+    "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-registration-20260922/review.json",
+    "--review-sha256",
+    "843ac527b20ba1fed16c395b526d47b2fd4d24fef895d6ae42f65d87e2867bc8"
+  ],
+  "cwd": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-registration-20260922",
+  "env": {
+    "PYTHONPATH": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-registration-20260922",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "pins": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-registration-20260922/plan.json",
+      "sha256": "84a8fccf3b9360d9421b69eedbbc7b47fc23dbe1d6d0b0d6e9d19881844b43de"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-registration-20260922/review.json",
+      "sha256": "843ac527b20ba1fed16c395b526d47b2fd4d24fef895d6ae42f65d87e2867bc8"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-registration-20260922/run_packed_trainer_pair.py",
+      "sha256": "a6f9821c9acd06c0bedd103b00c89fd5a863ad20bc1d23cdef395a81ce3c1725"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-registration-20260922/run_packed_trainer_preparation.py",
+      "sha256": "91e04bc58117d187d6028f77fea73672e85f451c170de5f14f737835e5781a09"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-registration-20260922/packed_trainer_probe.py",
+      "sha256": "8243420f9ab0c7663ca062fe55348e9728477fa1434d8843461bddb32d5b0692"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-registration-20260922/config.yaml",
+      "sha256": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2"
+    },
+    {
+      "path": "/usr/bin/python3.10",
+      "sha256": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-20260921/receipt.json",
+      "sha256": "e42f319ccd2c10176979bb6dd6b5217b1c29510814df1ec42f263adb71b832f6"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-requalification-20260921/qualification.json",
+      "sha256": "cf3cb25f01812861fe8076dc61b0decfa92dece56b97379a9e62be8300c9da3f"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-requalification-20260921/complete.json",
+      "sha256": "9d73c8d1a965fec94254bba7bf0795a2931d6a7ff3aed65c70a58d1edd6ae7ef"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/bt4-pipeline-20260921/registered_command.json",
+      "sha256": "2be717bdf04338d03d0c41927bd86f94b1d7631da9dd7275b3c5c31e77583a2b"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-pair-20260921/complete.json",
+      "sha256": "2880b678684ad4d98a05e4bc44fd9edc2f873f9217c048f3e2ad218768054759"
+    }
+  ],
+  "completion": {
+    "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-20260922/complete.json",
+    "status_key": "status",
+    "expected": "PASS_EXACT_PACKED_TRAINER_PAIR"
+  }
+}
