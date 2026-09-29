@@ -11,12 +11,12 @@ The corrected strict six-man factorial's average policy-recipe contrast was
 +6.79 Elo [−16.30,+29.25]; its average value-recipe contrast was +25.83
 [+4.07,+47.11]. The value contrast adds Ceres while reducing both SF and BT4,
 so it is not an isolated SF effect. The direct original E-versus-D replay on
-the same 576-opening bank used for the two Selected-E matches found **E−D
+ the same 576-opening bank used for the two Selected-E matches found **E−D
 −12.37 Elo [−27.18,+2.39]** over 1,152 color-swapped games. Its registered
 zero-Elo decision is unresolved; E and D have identical 50/50 BT4/Ceres policy
 targets, while E removes SF from value and reweights BT4/Ceres. The indirect
 three-edge discrepancy was +0.52 score percentage points [−3.17,+4.30],
-secondary and also unresolved. See [the direct record](https://github.com/jjoshua2/DeepFin/pull/929)
+secondary and also unresolved. See [the direct record](2026-09-29-e-vs-d-576-strict.md)
 and [the factorial readout](2026-09-27-factorial-strict-rule50-readout.md).
 These are one-seed, fixed-bank comparisons. The direct interval's lower
 endpoint happens to exceed −30 Elo, but the preregistered gate was against
@@ -36,28 +36,39 @@ records.
 
 ## Capacity boundary
 
+**Input provenance matters:** the inherited BT4 selected-label input of
+**800.19 rows/s is assumed and unverified**, not authenticated by a producing
+numerator, denominator and timed receipt in this publication. The inherited
+329.64-row/s Ceres label input is also not reauthenticated here and is treated
+as an assumption for this calculation. Neither is grouped with measured rates
+in the compact evidence. Every labeling-day and total-pipeline estimate below,
+including the 37.045-day index summary, is conditional on these inputs; none
+establishes measured capacity, a lower bound on actual completion time, or a
+resource reservation that authorizes a launch.
+
 Assume, optimistically, that all 58,090,688 legacy E rows qualify, leaving
 441,909,312 new rows. For illustrative **equal source thirds** this means
-147,303,104 SF-origin, BT4-origin and Ceres-origin rows each. At the measured
+147,303,104 SF-origin, BT4-origin and Ceres-origin rows each. At the reported
 selected-before-global-dedup source/readback rates of 172.079 BT4 rows/s and
 127.197 Ceres rows/s, BT4/Ceres source-plus-readback projects to 9.908 and
 13.404 ideal serial GPU days. Half BT4/half Ceres selected targets
-would project to 10.954 more days at 800.19/329.64 rows/s. At the cache-affected
-run12 external-ZIP rate of 2,081.983 rows/s, one 500M-row epoch would
-project to 2.780 ideal days. The sum is **37.045 ideal GPU-stage days**
-without generating-owner target reuse. Exact fair-route reuse would reduce
-that to 33.393 days; source-matched reuse to 29.742 days, but neither route
-has byte-qualified reuse and the latter changes the conditional
-source-by-teacher distribution. A 30-day month at 95% GPU duty supplies 28.5
-ideal days, before dedup loss, retries, uncached-read penalties or sparse SF search. These
-are capacity sensitivity calculations, not an admitted-unique forecast or a
-promise to finish in one month. They exclude SF-origin CPU generation/search
-and strict replay, assuming those CPU stages overlap GPU work completely.
-Physical dedup, pack qualification and any uncached-read penalty
-beyond the cache-affected trainer measurement are also excluded. The trainer's projected 2.780 days is smaller than the projected
-neural source and label terms; its rate is cache-affected and no cold 500M
-epoch was measured. See the [external trainer screen](2026-09-29-zip128-external-trainer-screen.md)
-and the [capacity arithmetic](evidence/2026-09-29-500m-candidate-capacity.json).
+would project to 10.954 more days **assuming** 800.19/329.64 rows/s. At the
+cache-affected run12 external-ZIP rate of 2,081.983 rows/s, one 500M-row epoch
+would project to 2.780 ideal days. The conditional sum is **37.045 ideal
+GPU-stage days** without generating-owner target reuse. Exact fair-route reuse
+would conditionally reduce that to 33.393 days; source-matched reuse to 29.742
+days, but neither route has byte-qualified reuse and the latter changes the
+conditional source-by-teacher distribution. A 30-day month at 95% GPU duty
+supplies 28.5 ideal days, before dedup loss, retries, uncached-read penalties or
+sparse SF search. These are sensitivities with mixed provenance, not an
+admitted-unique forecast or a promise to finish in one month. They exclude
+SF-origin CPU generation/search and strict replay, assuming those CPU stages
+overlap GPU work completely. Physical dedup, pack qualification and any
+uncached-read penalty beyond the cache-affected trainer measurement are also
+excluded. Under these assumptions, the projected trainer term is smaller than
+the projected neural source and label terms; no cold 500M epoch was measured.
+See the [external trainer screen](2026-09-29-zip128-external-trainer-screen.md)
+and the [capacity arithmetic and per-input provenance](evidence/2026-09-29-500m-candidate-capacity.json).
 
 A bounded SF-origin source pilot has filled its 256 opening roots × 8 selected
 games quota: 2,048 selected games and 390,764 selected rows before global
