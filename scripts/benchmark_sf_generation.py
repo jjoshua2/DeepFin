@@ -194,6 +194,10 @@ def flag(command: list[str], name: str) -> str:
 
 def validate(plan: dict[str, Any]) -> None:
     require(plan["status"] == "READY_BOUNDED_CPU_SCREEN", "plan not ready")
+    require(
+        Path(plan["runtime"]).resolve() == REPO_ROOT,
+        "runtime differs from benchmark checkout",
+    )
     profile = plan.get("profile", "pilot")
     require(profile in {"pilot", "confirmation"}, "unknown benchmark profile")
     cpu_limit = 1500 if profile == "pilot" else 5000
@@ -223,7 +227,20 @@ def validate(plan: dict[str, Any]) -> None:
         {(c["policy"], c["concurrency"]) for c in plan["cells"]} == expected,
         "grid differs",
     )
+    if profile == "confirmation":
+        require(
+            [(cell["policy"], cell["concurrency"]) for cell in plan["cells"]]
+            == [("g10", 4), ("d8", 4)],
+            "confirmation order differs",
+        )
     for cell in plan["cells"]:
+        cell_id = cell["id"]
+        require(
+            isinstance(cell_id, str)
+            and cell_id not in {"", ".", ".."}
+            and Path(cell_id).name == cell_id,
+            "invalid cell id",
+        )
         cmd = cell["command"]
         require("--resume" not in cmd, "fresh corpora only")
         require(
@@ -556,6 +573,10 @@ def execute(plan: dict[str, Any]) -> dict[str, Any]:
                 reason != "natural_completion" or child.returncode == 0,
                 "generator failed before bounded stop",
             )
+            if reason == "cpu_budget":
+                # Do not decode the unfinished cell after exhausting its budget.
+                # Retain prior qualified cells in the bounded-partial receipt.
+                break
             checkpoint()
             closures.append({"elapsed": elapsed, **closure_snapshot(out)})
             bank = closed_readout(out, 8 if cell["policy"] == "d8" else 9, checkpoint)

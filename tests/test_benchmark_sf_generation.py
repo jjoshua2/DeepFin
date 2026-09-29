@@ -227,7 +227,7 @@ def test_confirmation_budget_is_explicit_and_cannot_expand_pilot(monkeypatch, tm
         "memory_gib": 40,
         "output_limit_bytes": 2 * 2**30,
         "out": str(tmp_path),
-        "runtime": str(tmp_path),
+        "runtime": str(tool.REPO_ROOT),
         "runtime_head": "head",
         "pins": [],
         "cells": [

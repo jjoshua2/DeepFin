@@ -7,6 +7,7 @@ import json
 import os
 import resource
 import signal
+import statistics
 import subprocess
 import sys
 import time
@@ -150,7 +151,7 @@ def worker(plan):
                 name: {
                     "labels": len(values), "search_and_reset_seconds": sum(values),
                     "labels_per_search_second": len(values) / sum(values),
-                    "max_seconds": max(values), "median_seconds": sorted(values)[len(values) // 2],
+                    "max_seconds": max(values), "median_seconds": statistics.median(values),
                 }
                 for name, values in timings.items()
             },
