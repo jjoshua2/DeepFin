@@ -136,6 +136,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Retained Syzygy option](2026-09-22-retained-syzygy-option.md) | Opt-in Stockfish SyzygyRetainOnNewGame forwarding with resume/provenance guards; no retention-performance claim |
 | [500M continuation and partial factorial readout](2026-09-21-500m-continuation.md) | A/B/C exact epochs complete; policy +6.79 and value +21.74 Elo with intervals crossing zero; recovered arena bookkeeping, D ongoing; packed storage and bounded SF reset optimization |
 | [BT4 complete pipeline screen](2026-09-21-bt4-pipeline-benchmark.md) | Fixed ABCCBA batch128 projected-decoder/prefetch comparison; exact inputs and outputs, complete labeling plus verification, reviewed and queued after factorial matches |
+| [58M SF late-dose metadata and census design](2026-09-28-sf-late-dose-metadata.md) | 4.7 MB bounded metadata receipt for 58,090,688 retained rows; source-aware controls and capped three-shard pilot proposed, no corpus scan or training |
 
 These descriptions identify the records, not the state of a running experiment.
 Check subsequent readouts and the actual process/artifacts before resuming work.
