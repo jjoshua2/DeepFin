@@ -230,7 +230,7 @@ static PyObject *py_perft_divide(PyObject *self, PyObject *args) {
     for (int i = 0; i < count; i++) {
         CBoard child = board;
         cboard_push_index(&child, indices[i]);
-        counts[i] = perft_count(&child, depth - 1, ctx);
+        counts[i] = perft_count(&child, depth - 1, &ctx);
         if (ctx.interrupted || ctx.overflow) break;
         if (UINT64_MAX - total < counts[i]) {
             ctx.overflow = 1;
