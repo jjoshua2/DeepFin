@@ -4,8 +4,8 @@
   "plan_sha256": "ac89f6534c01989b6f54f8bda6dcd4a449586f0cbec294e7b808b3da1df4bd45",
   "complete_receipt_sha256": "8f10200f1791897205982ef6c0a862e7f44c5d0fc577e6ad1313629fb58f2216",
   "artifacts": {
-    "operations": "/home/josh/chess-artifacts/operations/sf_generation_throughput_v3_20260920",
-    "corpus": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v3"
+    "operations": "~/chess-artifacts/operations/sf_generation_throughput_v3_20260920",
+    "corpus": "~/chess-artifacts/corpora/generation_throughput_20260920/run_v3"
   },
   "elapsed_seconds": 611.085312774987,
   "cpu_seconds_observed": 1345.1,
