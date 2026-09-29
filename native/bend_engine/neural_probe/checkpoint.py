@@ -58,8 +58,8 @@ def load_checkpoint(path: Path, *, weights_key: str = 'model') -> LoadedCheckpoi
         raise ValueError('checkpoint must explicitly declare model and encoding metadata')
     encoding = Encoding(arch['input_history_encoding'], arch['input_extra_features'], arch['history_rep_fix'])
     cfg = model_config_from_arch(arch)
-    if cfg.kind not in ('tiny', 'transformer'):
-        raise ValueError('unsupported checkpoint model kind')
+    if cfg.kind not in ('tiny', 'transformer') or cfg.policy_encoding != 'lc0_1858':
+        raise ValueError('unsupported checkpoint model kind/policy encoding')
     state = checkpoint.get(weights_key)
     if (not isinstance(state, dict) or not state
             or any(not isinstance(k, str) or not isinstance(v, torch.Tensor) for k, v in state.items())):

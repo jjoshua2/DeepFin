@@ -1,0 +1,51 @@
+{
+  "schema": "zip128_external_trainer_screen_public_readout_v1",
+  "status": "PASS_SHORT_SAMEZIP_PATH",
+  "scope": "one ordered cache_affected same_ZIP_128 actual_trainer_pair",
+  "source_cohorts": 17,
+  "shards_per_arm": 128,
+  "source_rows": 1048576,
+  "batch_size": 512,
+  "updates_per_arm": 2048,
+  "postwarm_rows_per_arm": 958464,
+  "postwarm_train_seconds": {
+    "external_zip": 460.3611182948516,
+    "local_zip": 458.65859685104806
+  },
+  "measured_rows_per_second": {
+    "external_zip": 2081.9829518837078,
+    "local_zip": 2089.711185139448
+  },
+  "external_over_local_rate": 0.9963017696843957,
+  "precommitted_rule": {
+    "reject_below": 0.9,
+    "inconclusive_below": 0.95,
+    "pass_at_or_above": 0.95,
+    "metric": "sum(train_samples_seen)/sum(train_time_s) over windows 3-24"
+  },
+  "raw_and_prepared_batch_parity": true,
+  "full_wall_seconds": 2387.031636269996,
+  "optional_full_byte_reread": {
+    "status": "NONAUTHORITATIVE_128_SOURCE_LOCAL_FULL_BYTE_REREAD",
+    "source_zip_records": 128,
+    "local_zip_records": 128,
+    "logical_bytes_read": 1429957770
+  },
+  "sha256": {
+    "physical_source_packet": "40ac6dd8d01d71cc47a87694adaf139316ffb2484638c6e36ae3ade147e8516a",
+    "physical_plan": "33649e90893a8d73a4cea9884f46de9811276a572d4153a3033066d72579cad1",
+    "physical_roster": "8e1d92513a4b0e377845e2ce6e51c4111b9270b48b1ef78ebecce2434e65bb9e",
+    "terminal_index": "35052b4475f97bfd43d4459bf03a7b6f0b0a52091efb3746bfd93ad531b48c87",
+    "postrun_checker_v8_packet": "77a4c6880b0b2acc4169a680e494c9c5750adbbcc364fed8ab9f5f561df033be",
+    "postrun_checker_v8_source_review": "c8b25cf89291f4fbee8ceb73632d2ff0d56be5e45ec7627e00df0d36fad33163",
+    "independent_terminal_audit": "414eccd32ff6849aabf40e8ac1d073377ebd54d68990d301cd2f6ab479f90c86",
+    "optional_full_byte_reread": "14baaf189585d458844b45390454324b77f6bcf6d4803e528104299b25676283"
+  },
+  "credit": {
+    "source": 0,
+    "target": 0,
+    "owner": 0,
+    "corpus": 0,
+    "capacity_500m": 0
+  }
+}

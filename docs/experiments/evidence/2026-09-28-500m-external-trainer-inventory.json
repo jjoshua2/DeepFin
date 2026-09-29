@@ -1,0 +1,65 @@
+{
+  "schema": "external_trainer_inventory_publication_v1",
+  "status": "READ_ONLY_ARCHIVED_RESULT",
+  "source_date": "2026-09-26",
+  "archived_sources": {
+    "inventory": {
+      "archive_manifest_sha256": "6e82df5fe36f6800d2d17d5ee6363fde6d1415e09f4645a611bbf58f60d659a8",
+      "note_sha256": "b0df86985990f9b35f7c91f71e95a6cfaad133bb4eb35a8607d8385532505f64",
+      "independent_review_sha256": "020ecfa2b55528432d5a874e053ae71b92b3dbeed1c44f2439ff94eb927cc737",
+      "independent_review_status": "PASS_READ_ONLY_INVENTORY"
+    },
+    "sizing_addendum": {
+      "archive_manifest_sha256": "8fca8bdc833eeb9e403392d6cafd96fced3cad1eba1d237566e2b74f16b1236a",
+      "note_sha256": "0b70a87c30e5de76dfdfbb853bedeb42426bf5fa658e4f4e35bc005a0e24f342",
+      "independent_review_sha256": "34f8b607bafbff7ef0104207f30c3d4ae158791aaf51ee1b262cd3c14fdeb2fd",
+      "independent_review_status": "PASS_PROSPECTIVE_STORAGE_SCREEN_CORRECTION"
+    }
+  },
+  "upstream_receipts_sha256": {
+    "cold_pair_plan": "908ba5f024f0ee86ca264dfa6b6f8e7b582e9d038fd6fdca3cb4861157446df0",
+    "cold_pair_final_source_audit": "01be470cfabd4b3eb2684a611f5559779f2d9114087c442d3cdcfe58db81ba60",
+    "cold_pair_gpu_completion": "6c9cd015eb20615f089b2e92b15491568d97b1287f7231b9e65b7c065e2d2de2",
+    "warm_recovery_final_source_audit": "5dd39af359e18b0bb3cd67f3e7a7673c83e0561e828ecc38a7c2a181d6e4f591",
+    "original_e_full_epoch": "300e0c18bb7435cb27068a3fc7050cb943c751eba8e3360f605215597e2d7e21",
+    "packed_bank_receipt": "e42f319ccd2c10176979bb6dd6b5217b1c29510814df1ec42f263adb71b832f6",
+    "cold_external_summary": "2a3d62b9475ac235d8f9749ffce04d404ce12218e33a931e20e49a20d7ff1d43",
+    "cold_local_summary": "999f13aa0f35d5659f76c5a9a90070d68c2810aacad9b859460ea9395932a0f0"
+  },
+  "observations": {
+    "cold_pair": {
+      "source_shards": 256,
+      "source_rows": 1963948,
+      "updates": 3836,
+      "post_warm_row_visits": 1873836,
+      "external_rows_per_second": 1387.1648,
+      "local_rows_per_second": 1363.9366,
+      "external_over_local": 1.01703
+    },
+    "warm_recovery": {
+      "post_warm_row_visits": 1873836,
+      "external_rows_per_second": 2118.3455,
+      "local_rows_per_second": 2191.0487,
+      "external_over_local": 0.96682
+    },
+    "original_e_local_epoch": {
+      "rows": 58090688,
+      "active_seconds": 47871.4264,
+      "rows_per_second": 1213.47,
+      "ideal_days_at_500m_rows": 4.769
+    }
+  },
+  "prospective_same_zip_selection": {
+    "status": "NOT_REGISTERED_OR_RUN",
+    "lowest_full_shards": 128,
+    "last_global_shard_id": 142,
+    "rows_per_shard": 8192,
+    "rows": 1048576,
+    "updates_at_batch_512": 2048,
+    "post_warm_windows_at_88_updates": 22,
+    "post_warm_row_visits": 958464,
+    "source_zip_file_size_bytes": 714978885,
+    "unfiltered_64_final_batch_rows": 201
+  },
+  "limits": "ZIP versus directory and fixed order confound the completed storage comparisons; no sustained external 500M rate is measured."
+}

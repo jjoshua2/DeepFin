@@ -1,0 +1,24 @@
+{
+  "status": "PASS_INDEPENDENT_BANK_COUNT_AND_IDENTITY_AUDIT",
+  "scope": "Read every cutoff-listed compressed shard; verify per-shard counts, unique worker/game/ply/input identities, nonmissing outcomes and identity digest. Full encoder/support eligibility was performed by original harness and not duplicated. No quality or sustained-fleet claim.",
+  "records": [
+    {
+      "arm": "d8_c4",
+      "receipt_sha256": "e594202cf894e4cb54d6d0c30d106c5be479db6bd3666322ebd61d3d9c78282a",
+      "banked_rows": 5862,
+      "eligible_rows": 5862,
+      "missing_result_rows": 0,
+      "source_identity_sha256": "ea9e81772c06f5da408f451c16a0950c46be79ba0108aac12878eefce3783e55",
+      "eligible_rows_per_wall_second": 33.4964499893916
+    },
+    {
+      "arm": "d6_c4",
+      "receipt_sha256": "03040643c341e6d409acc7eff1c9ea1e781434dc0e7fa06799da8619b270add0",
+      "banked_rows": 11788,
+      "eligible_rows": 11388,
+      "missing_result_rows": 400,
+      "source_identity_sha256": "a94e3a8aab8b0053b963f7ac87e994244ea5d96abc560e795214f5c932bcfc4b",
+      "eligible_rows_per_wall_second": 65.07043448935849
+    }
+  ]
+}

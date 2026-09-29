@@ -1,0 +1,47 @@
+{
+  "status": "passed",
+  "scheduler_equivalence_pairs": 120,
+  "normal_configurations": 10,
+  "ubsan_configurations": 2,
+  "modes_each": [
+    "sync",
+    "async"
+  ],
+  "cases_each": 5,
+  "adapter_cases_per_mode": 120,
+  "adapter_rows_per_mode": 840,
+  "reversed_requeue_mutation_rejected": true,
+  "candidate_c_sha256": "7f348a6ad58c7e3abebbf876f4ada8862c9f6dbc5856f445e1e2310346d68b74",
+  "parent_c_sha256": "fcb787241c29f10c0fa33fbd8983f9630d3ab52914c109de2449b52a93251a24",
+  "scope": "deterministic coordinator equivalence; no model, speed or strength claim",
+  "workflow_run": 35943091398,
+  "tested_workflow_commit": "65664d2c922325ad2f98922920283112c1a39666",
+  "artifact_id": 10785862321,
+  "artifact_zip_sha256": "8e892da29782d004e9209d65732a5fdaf95a439be7733f77e0a49874f6a799c7",
+  "base_commit": "bb1847d2d7f3c4e8b94e5dfb9f64bfc87e0c3390",
+  "focused_python_tests": 209,
+  "new_python_tests": 15,
+  "source_patch_sha256": "4842105dd7f62c84e5365bfa4611be11aacee4f08d9b022a3063dbcb6e2beb69",
+  "async_matrix": {
+    "status": "passed",
+    "normal_configurations": 10,
+    "modes_each": 2,
+    "ubsan_configurations": 2,
+    "control_configurations": 4,
+    "all_final_tree_bits_match_serial": true
+  },
+  "workers": {
+    "matrix/worker-normal.json": {
+      "status": "passed",
+      "assertions": 1456,
+      "configurations": 10,
+      "reused_calls": 160
+    },
+    "matrix/worker-sanitized.json": {
+      "status": "passed",
+      "assertions": 1456,
+      "configurations": 10,
+      "reused_calls": 160
+    }
+  }
+}

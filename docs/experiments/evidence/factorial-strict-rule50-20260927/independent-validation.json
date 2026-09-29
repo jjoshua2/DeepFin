@@ -1,0 +1,12 @@
+{
+  "status": "PASS_SMALL_RECEIPT_ARITHMETIC_ONLY",
+  "four_strict_edges": 4,
+  "strict_E_D_context_edges": 1,
+  "raw_game_logs_total_bytes_approx": 576887,
+  "independent_four_edge_result_parity": true,
+  "shared_pair_bootstrap_parity": true,
+  "registered_book_or_corpus_read": false,
+  "checkpoint_or_tablebase_hash": false,
+  "gpu_or_live_process_action": false,
+  "selected_E_terminal_outcome_claim": false
+}
