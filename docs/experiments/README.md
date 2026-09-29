@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Same-ZIP external trainer screen](2026-09-29-zip128-external-trainer-screen.md) | One 128-shard actual-trainer pair passes the ≥0.95 short-path external/local rate rule at 0.9963; cache-affected, zero 500M capacity credit |
 | [Selected-E versus E seed-121 strict arena](2026-09-27-selected-e-vs-e-arena.md) | Preregistered 576-pair noninferiority gate passed; future one-teacher cost screen eligible, with no measured annotation saving or corpus credit |
 | [Overlay validation reuse](2026-09-21-overlay-validation-reuse.md) | Future exact-epoch startup: nine-to-one semantic validations per shard; 5.42× faster constructor stages on eight real shards with exact plan/target parity; active runtime unchanged |
 | [SF-free BT4+Ceres targets](2026-09-21-sffree-targets.md) | Reviewed E builder and three real source families qualified; bounded full 58M CPU preparation launched; training pending |
