@@ -24,18 +24,58 @@
     "total_no_owner_reuse": 37.045,
     "total_source_matched_reuse_conditional": 29.742
   },
-  "measured_rates_rows_per_second": {
+  "input_rates_rows_per_second": {
     "bt4_selected_label": 800.19,
     "bt4_source_selected_before_global_dedup": 172.079,
     "ceres_selected_label": 329.64,
     "ceres_source_selected_before_global_dedup": 127.197,
     "external_zip_trainer_cache_affected": 2081.9829518837
   },
+  "input_rate_provenance": {
+    "bt4_selected_label": {
+      "status": "ASSUMED_UNVERIFIED",
+      "producing_receipt_authenticated_here": false,
+      "note": "Inherited planner input; this publication does not bind a producing numerator, denominator and timing profile. Not a measured-rate claim."
+    },
+    "ceres_selected_label": {
+      "status": "INHERITED_NOT_REAUTHENTICATED_ASSUMPTION",
+      "producing_receipt_authenticated_here": false,
+      "note": "Retained for the conditional arithmetic; no fresh producing-receipt verification is claimed here."
+    },
+    "bt4_source_selected_before_global_dedup": {
+      "status": "REPORTED_MEASURED_GROSS_SOURCE_RATE",
+      "producing_receipt_authenticated_here": false,
+      "note": "Inherited reported source/readback observation, before global dedup; not an admitted-unique or whole-pipeline rate."
+    },
+    "ceres_source_selected_before_global_dedup": {
+      "status": "REPORTED_MEASURED_GROSS_SOURCE_RATE",
+      "producing_receipt_authenticated_here": false,
+      "note": "Inherited reported source/readback observation, before global dedup; not an admitted-unique or whole-pipeline rate."
+    },
+    "external_zip_trainer_cache_affected": {
+      "status": "PUBLISHED_BOUNDED_CACHE_AFFECTED_MEASUREMENT",
+      "record": "../2026-09-29-zip128-external-trainer-screen.md",
+      "measured_rows": 958464,
+      "measured_training_seconds": 460.3611182948516,
+      "terminal_audit_sha256": "414eccd32ff6849aabf40e8ac1d073377ebd54d68990d301cd2f6ab479f90c86",
+      "note": "Published same-ZIP screen, not a cold 500M-row epoch; external artifacts were not reopened for this publication."
+    }
+  },
+  "conditional_on_unverified_label_rate_assumptions": [
+    "selected_neural_labels_fair_owner_reuse_conditional",
+    "selected_neural_labels_no_owner_reuse",
+    "selected_neural_labels_source_matched_reuse_conditional",
+    "total_fair_owner_reuse_conditional",
+    "total_no_owner_reuse",
+    "total_source_matched_reuse_conditional"
+  ],
   "new_rows": 441909312,
   "schema": "500m_candidate_capacity_sensitivity_v1",
-  "scope": "illustrative ideal serial GPU-stage arithmetic, not admitted-unique throughput",
+  "scope": "illustrative ideal serial GPU-stage arithmetic with mixed-provenance inputs, including unverified label-rate assumptions; not admitted-unique throughput, a measured completion-time bound or launch authority",
   "target_rows": 500000000,
   "unqualified": [
+    "BT4 selected-label producing rate receipt",
+    "Ceres selected-label input not reauthenticated in this publication",
     "global dedup yield",
     "physical SF source/target admission",
     "generating-owner byte parity",
