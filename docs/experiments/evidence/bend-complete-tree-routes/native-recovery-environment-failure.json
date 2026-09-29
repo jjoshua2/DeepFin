@@ -1,0 +1,8 @@
+{
+  "run": 35766677592,
+  "job": 106877854539,
+  "original_log_sha256": "6da9ec71230fef96796824be845950f2e330aade1a17857ace8ea0aa79133653",
+  "original_log_location": "native-recovery-job.log in bend-complete-routes-final-qualification artifact",
+  "failure": "CC=clang-18 set job-wide affected Python extension build; omp.h was missing; native tests and original compiler checks had already passed",
+  "resolution": "Only external Python development installation uses its normal compiler, with CC/CXX unset. Native result retains explicit Clang 18. No production or proof source changes; no warnings filtered."
+}
