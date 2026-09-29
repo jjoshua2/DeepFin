@@ -121,14 +121,17 @@ def _policy_view(
     tempered = mix._tempered_bt4_policy(
         values[None, :], legal_mask[None, :], temperature=BT4_TEMPERATURE
     )[0]
-    top_probability = float(np.max(tempered[legal_mask]))
+    stored = tempered.astype(np.float32).astype(np.float16).astype(np.float32)
+    stored = np.where(legal_mask, stored, 0.0)
+    stored /= stored[legal_mask].sum(dtype=np.float64)
+    top_probability = float(np.max(stored[legal_mask]))
     top = {
         move
         for move, index in move_to_index.items()
-        if float(tempered[index]) == top_probability
+        if float(stored[index]) == top_probability
     }
     require(bool(top), "BT4 top set is empty")
-    return top, top_probability, tempered
+    return top, top_probability, stored
 
 
 def _ordinary_d9_best(
@@ -227,17 +230,23 @@ def analyze_row(row: dict[str, Any], raw_bt4_policy: np.ndarray) -> dict[str, An
                 if score > SF_CP_CLAMP_CP
             }
             if final_scores is not None
-            else set()
+            else None
         )
         return {
             **base,
             "kind": "winning_mate",
             "d9_winning_mates": sorted(winning_mates),
             "bt4_agrees_with_d9_winning_mate": bool(bt4_top & winning_mates),
-            "final_has_winning_mate": bool(final_winning),
-            "final_preserves_d9_winning_mate": bool(final_winning & winning_mates),
-            "bt4_top_is_final_winning_mate": registration.top_set_is_final_mate(
-                bt4_top, final_winning
+            "final_has_winning_mate": (
+                None if final_winning is None else bool(final_winning)
+            ),
+            "final_preserves_d9_winning_mate": (
+                None if final_winning is None else bool(final_winning & winning_mates)
+            ),
+            "bt4_top_is_final_winning_mate": (
+                None
+                if final_winning is None
+                else registration.top_set_is_final_mate(bt4_top, final_winning)
             ),
         }
     if losing_mates:
@@ -328,6 +337,7 @@ def _new_aggregate() -> dict[str, Any]:
         "losing_mate_rows": 0,
         "mate": {
             "bt4_agrees_d9_winning_mate": 0,
+            "deeper_outcome_adjudicable": 0,
             "final_has_winning_mate": 0,
             "final_preserves_d9_winning_mate": 0,
             "bt4_top_is_final_winning_mate": 0,
@@ -352,18 +362,19 @@ def aggregate_row(aggregate: dict[str, Any], result: dict[str, Any]) -> None:
     if kind == "winning_mate":
         aggregate["winning_mate_rows"] += 1
         mate = aggregate["mate"]
-        for key in (
-            "bt4_agrees_with_d9_winning_mate",
+        mate["bt4_agrees_d9_winning_mate"] += int(
+            bool(result["bt4_agrees_with_d9_winning_mate"])
+        )
+        deeper_keys = (
             "final_has_winning_mate",
             "final_preserves_d9_winning_mate",
             "bt4_top_is_final_winning_mate",
-        ):
-            target = (
-                "bt4_agrees_d9_winning_mate"
-                if key == "bt4_agrees_with_d9_winning_mate"
-                else key
-            )
-            mate[target] += int(bool(result[key]))
+        )
+        adjudicable = all(result[key] is not None for key in deeper_keys)
+        mate["deeper_outcome_adjudicable"] += int(adjudicable)
+        for key in deeper_keys:
+            if result[key] is not None:
+                mate[key] += int(bool(result[key]))
         mate["fallback_no_deeper_scores"] += int(result["final_depth"] == 9)
         return
     if kind == "losing_mate_present":
@@ -448,6 +459,28 @@ def _producer_sha256() -> dict[str, str]:
     return {str(path): file_sha256(path) for path in paths}
 
 
+def _require_unchanged_producers(snapshot: dict[str, str]) -> None:
+    require(_producer_sha256() == snapshot, "producer source changed during calibration")
+
+
+def _authenticate_and_claim_refs(
+    inputs: Any,
+    refs: Any,
+    seen: set[tuple[str, str, int]],
+) -> None:
+    """Authenticate every reference before its identity enters the cohort set."""
+    for ref in refs:
+        inputs.authenticate_ref(ref)
+        registration.claim_source_identity(
+            seen,
+            (
+                str(ref["source_namespace"]),
+                str(ref["source_shard"]),
+                int(ref["source_row"]),
+            ),
+        )
+
+
 def calibrate(
     manifest_path: Path,
     *,
@@ -465,6 +498,7 @@ def calibrate(
         "invalid shard slice",
     )
     manifest_path = manifest_path.resolve()
+    producer_sha256 = _producer_sha256()
     manifest_pin = {"path": str(manifest_path), "sha256": expected_manifest_sha256}
     manifest = json.loads(adapter.pin(manifest_pin).read_text())
     require(
@@ -555,13 +589,8 @@ def calibrate(
             ply_indices = np.asarray(group["ply_index"][:])
             derived_legal = np.asarray(group["legal_mask"][:]) != 0
             grouped: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
+            _authenticate_and_claim_refs(inputs, refs, seen)
             for index, ref in enumerate(refs):
-                source_identity = (
-                    ref["source_namespace"],
-                    ref["source_shard"],
-                    int(ref["source_row"]),
-                )
-                registration.claim_source_identity(seen, source_identity)
                 grouped.setdefault(
                     (str(ref["source_dir"]), str(ref["source_shard"])), []
                 ).append((index, ref))
@@ -671,6 +700,7 @@ def calibrate(
             )
 
         require(rows_analyzed == aggregate["rows"], "aggregate row count differs")
+        _require_unchanged_producers(producer_sha256)
         require(
             all(
                 adapter.storage_identity(path) == stamp
@@ -715,7 +745,7 @@ def calibrate(
             "decision": decision,
             "verified_raw_shards": inputs.verified,
             "shards": shard_receipts,
-            "producer_sha256": _producer_sha256(),
+            "producer_sha256": producer_sha256,
             "elapsed_seconds": time.monotonic() - started,
             "limits": [
                 "Later G10 searches are narrowed and d12 is selected by the d10 gate; they are not optimal-play truth.",
