@@ -176,6 +176,7 @@ def test_decision_requires_full_coverage_and_minimum_denominator() -> None:
     allowed = calibration.decision_from_aggregate(aggregate, full_source_coverage=True)
     assert allowed["verdict"] == "NO_5PCT_BLOCK_CALIBRATION_STILL_REQUIRED_FOR_ADMISSION"
     assert allowed["training_admission"] is False
+    assert allowed["published_transfer_calibrated"] is False
 
 
 def test_invalid_g10_identity_remains_fatal() -> None:
