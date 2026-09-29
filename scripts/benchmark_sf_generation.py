@@ -599,10 +599,7 @@ def execute(plan: dict[str, Any]) -> dict[str, Any]:
             results.append(result)
             owned = None
             child = None
-            if (
-                reason == "cpu_budget"
-                or cpu_used + controller_cpu() >= plan["cpu_budget_seconds"]
-            ):
+            if cpu_used + controller_cpu() >= plan["cpu_budget_seconds"]:
                 break
         report = {
             "status": "COMPLETE_SCREEN"

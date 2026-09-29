@@ -12,6 +12,7 @@ import json
 import statistics
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -19,11 +20,10 @@ from scripts import benchmark_sf_generation as generation
 from scripts import benchmark_sf_values as values
 
 
-def _plan(tmp_path):
+def _plan(tmp_path: Path) -> dict[str, Any]:
     out = tmp_path / "out"
-    cells = []
-    for policy in ("g10", "d8"):
-        cells.append({
+    cells = [
+        {
             "id": policy, "policy": policy, "concurrency": 4, "seconds": 600,
             "command": [
                 "python", "--out-dir", str(out / policy), "--workers", "4",
@@ -31,7 +31,9 @@ def _plan(tmp_path):
                 "--staircase", "all:8" if policy == "d8" else "all:9,8:10,4:12",
                 "--staircase-policy", "fixed" if policy == "d8" else "g10",
             ],
-        })
+        }
+        for policy in ("g10", "d8")
+    ]
     return {
         "status": "READY_BOUNDED_CPU_SCREEN", "profile": "confirmation",
         "cpu_budget_seconds": 10, "wall_budget_seconds": 1800,
@@ -132,7 +134,7 @@ def test_cpu_cutoff_keeps_only_previously_qualified_cells(tmp_path, monkeypatch,
     monkeypatch.setattr(generation.signal, "signal", lambda *_a: None)
     monkeypatch.setattr(generation.shutil, "disk_usage", lambda _p: SimpleNamespace(free=2**50))
     monkeypatch.setattr(generation, "memory", lambda: 2**50)
-    monkeypatch.setattr(generation, "child_baseline", lambda: {})
+    monkeypatch.setattr(generation, "child_baseline", dict)
     monkeypatch.setattr(generation, "OwnedProcesses", Owned)
     monkeypatch.setattr(generation.subprocess, "Popen", Child)
     monkeypatch.setattr(generation, "closure_snapshot", lambda _p: {})
@@ -217,7 +219,7 @@ def test_value_worker_reports_even_sample_medians(tmp_path, monkeypatch, sample_
 
     corpus = SimpleNamespace(
         StaircaseSearcher=Searcher, parse_staircase=lambda _text: None,
-        RowHistory=lambda **kwargs: SimpleNamespace(**kwargs),
+        RowHistory=SimpleNamespace,
         position_command=lambda _history: "position fen fixture",
         parse_depth_blocks=parse,
         deepest_block_with_width=lambda blocks, **_kwargs: (blocks[0], True),
