@@ -95,9 +95,9 @@ root-exit cleanup checks. No GPU queue or existing corpus was changed.
 Frozen benchmark source: `401a93bf8`. Compact full cell evidence, plan hash and
 receipt hash: [JSON artifact](artifacts/2026-09-20-sf-throughput-v3.json).
 Raw results are under
-`/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v3`;
+`~/chess-artifacts/corpora/generation_throughput_20260920/run_v3`;
 plans, logs and recovered-failure readouts are under
-`/home/josh/chess-artifacts/operations/sf_generation_throughput_v3_20260920`.
+`~/chess-artifacts/operations/sf_generation_throughput_v3_20260920`.
 The corpus and operations siblings for v1/v2 preserve the failed attempts.
 
 The independently reviewed longer follow-up has now completed; its prespecified
@@ -214,3 +214,13 @@ summary. Frozen source was `80e50a06e`; the parent independently reviewed the
 code and plan before launch. Ten focused tests passed, including real UCI
 subprocess-pipe protocol coverage. This remains cost evidence on one sample,
 not an adopted labeling contract.
+
+## Publication-path clarification, 2026-09-29
+
+The public prose and three compact JSON copies abbreviate the artifact owner's
+home directory as `~`. These are retrieval references, not executable defaults
+or a claim that the files exist in another user's home. All measured values,
+source/sample/plan/receipt hashes and the exact compressed record archive are
+unchanged. The quoted hashes identify the original external artifacts, not the
+path-abbreviated public JSON copies. This publication cleanup neither modifies
+those external artifacts nor reruns a benchmark, producer, or live process.
