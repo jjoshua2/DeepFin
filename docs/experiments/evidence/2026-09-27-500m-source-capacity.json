@@ -74,7 +74,18 @@
     "sf_cpu_ideal_days": 7.054,
     "sf_cpu_overlap_assumption": "perfect",
     "serial_ideal_gpu_stage_days": 39.587,
-    "perfect_readback_overlap_gpu_stage_days": 34.203
+    "perfect_readback_overlap_gpu_stage_days": 34.203,
+    "trainer_rows_per_second_reference_status": "ASSUMED_UNVERIFIED_NO_PRODUCING_RECEIPT_PINNED",
+    "trainer_rows_per_second_reference_scope": "historical sensitivity input only; not measured capacity or launch/resource authority",
+    "bt4_selected_label_rows_per_second_reference_status": "ASSUMED_UNVERIFIED_NO_PRODUCING_RECEIPT_PINNED",
+    "bt4_selected_label_rows_per_second_reference_scope": "historical sensitivity input only; not measured capacity or launch/resource authority",
+    "dependent_estimates_status": "CONDITIONAL_ON_UNVERIFIED_TRAINER_AND_BT4_LABEL_REFERENCES",
+    "dependent_estimates": [
+      "serial_gap_days",
+      "perfect_overlap_gap_days",
+      "serial_ideal_gpu_stage_days",
+      "perfect_readback_overlap_gpu_stage_days"
+    ]
   },
   "ceres_selected_guard_screen": {
     "selected_rows": 4096,
