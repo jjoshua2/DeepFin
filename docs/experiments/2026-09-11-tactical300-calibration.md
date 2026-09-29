@@ -11,7 +11,7 @@ That is not automatically true. A one-node neural policy can encode strategic
 information that a shallow search has not resolved, and the existing G10 evidence
 already shows that deeper saved searches often change the preferred move set.
 
-The calibration asks the specific retrospective question needed for this recipe:
+The diagnostic asks the specific retrospective question needed for this recipe:
 
 > When d9 Stockfish strongly prefers one move/set, but B100's one-node BT4 policy
 > prefers a different move/set, how often does the already-recorded d10/d12 search
