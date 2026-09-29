@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest relative-address qualification: September 22, 2026
+
+Hosted run **35777583835**, workflow commit `95bde5c08c5dacf52c50a514b3ec93a9bc0e00f6`, passed the complete **89-law / 176-control** aggregate, four native modes, original compiler source/pin checks and unchanged whole-repository lint on source commit `ce9d5e5442cf44cde50a4c8da66e3ea9ffdd5bdc`.
+
+`relative/relative_address_bounds` and `relative_addition_exact` prove every valid relative U32 address stays in its actual-sized block, below allocation capacity, with exact U32-to-U64 addition. `lookup_address_bounds` derives that bound for the actual arbitrary-occupancy PEXT index. `ordered_block_addresses` and `ordered_block_address_paths` derive numeric order and complete-tree separation across ordered keys; `lookup_other_block_write` proves the whole updated read pair preserves the other block query without caller-supplied relative bounds or path certificates.
+
+Actual stored metadata equality to the certified prefix, every fill-clear certificate, final computed contents and independent blocker-ray lookup remain open. These results supersede the historical open scalar prefix-plus-relative-index and cross-block separation steps, not the full P2 theorem. Complete shape is still necessary. See the dated relative-address readout and committed source/native evidence. No new application responsibility moves from Python; prior compiler/native trust limitations remain.
+
 ## Latest complete-tree route qualification: September 22, 2026
 
 Qualification is complete on exact source `868335129a501b677ca916d2bbdc779a1b2e22e9`: source run **35764846623** passed all **83 laws and 156 rejection controls**; run **35766677592** passed all four native modes with explicit Clang 18 and original compiler source/pin checks; final run **35767511451** verifies those retained exact-source results and passes unchanged whole-repository lint. The first two overall workflow verdicts remain red and their failures are preserved.
