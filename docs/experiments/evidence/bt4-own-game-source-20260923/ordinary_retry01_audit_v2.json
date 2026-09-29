@@ -1,0 +1,59 @@
+{
+  "accepted_rows": 752,
+  "auditor": {
+    "function": "audit_bank",
+    "path": "/tmp/bt4-own-label-ordinary-audit-20260923/scripts/bt4_ordinary_bank_audit.py",
+    "sha256": "b53b94cdbaa33f432225c9476dc4e9f90b6b0fbcefad9f5ace3ee4c0c61eba96"
+  },
+  "bank": "/home/josh/chess-artifacts/operations/bt4-root-gpu-qualification-20260923/run04_ordinary_retry01/ordinary_opening/bank",
+  "bank_identity": {
+    "entries": 14,
+    "tree_sha256": "d21cfa5bf181a4450daef612b5eacd564911c9f82816a6d154f0bcdac3837f13"
+  },
+  "facts": {
+    "accepted_rows": 752,
+    "attempted_plies": 752,
+    "completed_games": 8,
+    "compressed_game_bytes": 702958,
+    "discarded_by_termination": {},
+    "discarded_games": 0,
+    "natural_games": 6,
+    "pinned_source_origins": {
+      "chess_anti_engine": "/tmp/bt4-ort-conservative-20260923/chess_anti_engine/__init__.py",
+      "chess_anti_engine.encoding": "/tmp/bt4-ort-conservative-20260923/chess_anti_engine/encoding/__init__.py",
+      "chess_anti_engine.encoding.cboard_encode": "/tmp/bt4-ort-conservative-20260923/chess_anti_engine/encoding/cboard_encode.py",
+      "chess_anti_engine.encoding.rep_fix": "/tmp/bt4-ort-conservative-20260923/chess_anti_engine/encoding/rep_fix.py",
+      "chess_anti_engine.eval": "/tmp/bt4-ort-conservative-20260923/chess_anti_engine/eval/__init__.py",
+      "chess_anti_engine.eval.rvg_surgery": "/tmp/bt4-ort-conservative-20260923/chess_anti_engine/eval/rvg_surgery.py",
+      "chess_anti_engine.moves": "/tmp/bt4-ort-conservative-20260923/chess_anti_engine/moves/__init__.py",
+      "chess_anti_engine.moves.leela_index": "/tmp/bt4-ort-conservative-20260923/chess_anti_engine/moves/leela_index.py",
+      "chess_anti_engine.tablebase": "/tmp/bt4-ort-conservative-20260923/chess_anti_engine/tablebase.py",
+      "scripts": "/tmp/bt4-ort-conservative-20260923/scripts/__init__.py",
+      "scripts.bt4_root_policy_worker": "/tmp/bt4-ort-conservative-20260923/scripts/bt4_root_policy_worker.py",
+      "scripts.gen_sf_rooted_corpus": "/tmp/bt4-ort-conservative-20260923/scripts/gen_sf_rooted_corpus.py"
+    },
+    "post_qualification_wall_seconds": 4.631723945998601,
+    "provider_proof_sha256": "038ddcd7204a9c0f639b861f8ed77116f787563355efa4e5adf9af15c48c36ef",
+    "qualification_seconds": 0.3484602980006457,
+    "sixman_games": 2,
+    "summary_sha256": "d8261d0c8f3e82264c101edd80c2e0bca75d9446e6c62ed424370e18ce69030b",
+    "writer_wall_seconds": 0.29148562400223454
+  },
+  "plan": {
+    "path": "/tmp/bt4-ordinary-pilot-v2-20260923/plan.json",
+    "sha256": "4bce3ad1ba52ae3c34410f58bb1adc017b4f209448716f48327857766c93bbda"
+  },
+  "provider_proof_sha256": "038ddcd7204a9c0f639b861f8ed77116f787563355efa4e5adf9af15c48c36ef",
+  "stage": "ordinary_opening",
+  "status": "PASS_INDEPENDENT_BT4_ORDINARY_BANK_AUDIT",
+  "summary_sha256": "d8261d0c8f3e82264c101edd80c2e0bca75d9446e6c62ed424370e18ce69030b",
+  "terminal": {
+    "path": "/home/josh/chess-artifacts/operations/bt4-root-gpu-qualification-20260923/run04_ordinary_retry01/ordinary_opening/terminal.json",
+    "sha256": "c74ed9513ba2cf868317088e41a09c1d49b1def5c1255bad97f6afd26db73990"
+  },
+  "verifier": {
+    "function": "verify_bank",
+    "path": "/tmp/bt4-ordinary-pilot-v2-20260923/run.py",
+    "sha256": "aa2e16ab1a78973f46839bc6228c4d783ceb6097db55f9f5a5d576fec3103d86"
+  }
+}

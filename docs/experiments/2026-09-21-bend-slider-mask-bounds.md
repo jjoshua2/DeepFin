@@ -144,3 +144,8 @@ No production source, compiler/checker, old proof, existing test, workflow or pe
 Publication creates `feat/bend-slider-mask-bounds-20260921` only after the above checks, with parent `ef3ded0b652a09918abb1d79467b1ac56a8e1ce5`. No force push, PR merge, deployment or live-process change. Temporary development workflows and transport blobs are excluded. Qualification reports are retained in artifact `bend-slider-mask-bounds-qualification` for 30 days and in the clean commit. Self-review only; no independent review is claimed.
 
 The next acceptance remains exact U32 compact-index correspondence, prefix arithmetic and affine writes/reads, then independent blocker-ray lookup refinement. Current size/range proofs do not establish those. Python export, production/data orchestration and training remain dependencies; C++/LibTorch/AOTI remains transitional inference.
+
+
+## Known gap
+
+These laws bound the mask popcount and the scalar `Sliders.pext_index`. They do not read the index `Chess.bend` uses in `slide_mask` / `slide_offset`, and the proof gate does not include that file. Replacing that production index does not fail this suite. Later pull requests on this stack take up the actual lookup. The population and block-size lemmas here remain the base those proofs build on.

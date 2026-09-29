@@ -73,3 +73,8 @@ writes, offsets and lookup. Proofs trust the pinned checker and Base semantics;
 native lowering/runtime/ABI/toolchain/hardware remain separate trust boundaries.
 No Python responsibility moves into Bend, and no model, GPU, engine-performance,
 training, deployment or complete-migration qualification is claimed.
+
+
+## Known gap
+
+These laws bound the mask popcount and the scalar `Sliders.pext_index`. They do not read the index `Chess.bend` uses in `slide_mask` / `slide_offset`, and the proof gate does not include that file. Replacing that production index does not fail this suite. Later pull requests on this stack take up the actual lookup. The population and block-size lemmas here remain the base those proofs build on.

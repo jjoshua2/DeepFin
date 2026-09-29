@@ -1,0 +1,87 @@
+{
+  "assumed_overlaps": [
+    "SF-origin CPU generation/search and strict replay overlap GPU stages completely"
+  ],
+  "assumed_qualifying_legacy_rows": 58090688,
+  "equal_source_third_rows": 147303104,
+  "excluded_stages": [
+    "SF-origin CPU wall",
+    "physical cross-source dedup",
+    "pack qualification",
+    "uncached-read penalty beyond measured cache-affected trainer",
+    "retry and tail costs",
+    "sparse SF correction search"
+  ],
+  "ideal_serial_days": {
+    "available_in_30_calendar_days_at_95pct_duty": 28.5,
+    "bt4_source_and_readback": 9.907641,
+    "ceres_source_and_readback": 13.403595,
+    "one_trainer_epoch_cache_affected": 2.779579,
+    "selected_neural_labels_fair_owner_reuse_conditional": 7.302612,
+    "selected_neural_labels_no_owner_reuse": 10.953918,
+    "selected_neural_labels_source_matched_reuse_conditional": 3.651306,
+    "total_fair_owner_reuse_conditional": 33.393,
+    "total_no_owner_reuse": 37.045,
+    "total_source_matched_reuse_conditional": 29.742
+  },
+  "input_rates_rows_per_second": {
+    "bt4_selected_label": 800.19,
+    "bt4_source_selected_before_global_dedup": 172.079,
+    "ceres_selected_label": 329.64,
+    "ceres_source_selected_before_global_dedup": 127.197,
+    "external_zip_trainer_cache_affected": 2081.9829518837
+  },
+  "input_rate_provenance": {
+    "bt4_selected_label": {
+      "status": "ASSUMED_UNVERIFIED",
+      "producing_receipt_authenticated_here": false,
+      "note": "Inherited planner input; this publication does not bind a producing numerator, denominator and timing profile. Not a measured-rate claim."
+    },
+    "ceres_selected_label": {
+      "status": "INHERITED_NOT_REAUTHENTICATED_ASSUMPTION",
+      "producing_receipt_authenticated_here": false,
+      "note": "Retained for the conditional arithmetic; no fresh producing-receipt verification is claimed here."
+    },
+    "bt4_source_selected_before_global_dedup": {
+      "status": "REPORTED_MEASURED_GROSS_SOURCE_RATE",
+      "producing_receipt_authenticated_here": false,
+      "note": "Inherited reported source/readback observation, before global dedup; not an admitted-unique or whole-pipeline rate."
+    },
+    "ceres_source_selected_before_global_dedup": {
+      "status": "REPORTED_MEASURED_GROSS_SOURCE_RATE",
+      "producing_receipt_authenticated_here": false,
+      "note": "Inherited reported source/readback observation, before global dedup; not an admitted-unique or whole-pipeline rate."
+    },
+    "external_zip_trainer_cache_affected": {
+      "status": "PUBLISHED_BOUNDED_CACHE_AFFECTED_MEASUREMENT",
+      "record": "../2026-09-29-zip128-external-trainer-screen.md",
+      "measured_rows": 958464,
+      "measured_training_seconds": 460.3611182948516,
+      "terminal_audit_sha256": "414eccd32ff6849aabf40e8ac1d073377ebd54d68990d301cd2f6ab479f90c86",
+      "note": "Published same-ZIP screen, not a cold 500M-row epoch; external artifacts were not reopened for this publication."
+    }
+  },
+  "conditional_on_unverified_label_rate_assumptions": [
+    "selected_neural_labels_fair_owner_reuse_conditional",
+    "selected_neural_labels_no_owner_reuse",
+    "selected_neural_labels_source_matched_reuse_conditional",
+    "total_fair_owner_reuse_conditional",
+    "total_no_owner_reuse",
+    "total_source_matched_reuse_conditional"
+  ],
+  "new_rows": 441909312,
+  "schema": "500m_candidate_capacity_sensitivity_v1",
+  "scope": "illustrative ideal serial GPU-stage arithmetic with mixed-provenance inputs, including unverified label-rate assumptions; not admitted-unique throughput, a measured completion-time bound or launch authority",
+  "target_rows": 500000000,
+  "unqualified": [
+    "BT4 selected-label producing rate receipt",
+    "Ceres selected-label input not reauthenticated in this publication",
+    "global dedup yield",
+    "physical SF source/target admission",
+    "generating-owner byte parity",
+    "source-matched strength",
+    "cold 500M trainer rate",
+    "sparse SF wall",
+    "retries and overlap"
+  ]
+}

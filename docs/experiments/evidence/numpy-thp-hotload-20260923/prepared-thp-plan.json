@@ -1,0 +1,130 @@
+{
+  "bounds": {
+    "affinity": [
+      16,
+      17
+    ],
+    "cpu_seconds_per_arm": 120,
+    "gpu": false,
+    "max_arms": 4,
+    "minimum_disk_gib": 150,
+    "minimum_memory_gib": 40,
+    "new_output_limit_mib": 4,
+    "nice": 19,
+    "seconds_per_arm": 180,
+    "threads": 2
+  },
+  "correctness": "Exact parity across all four arms of complete epoch plan, ordered record roster, every decoded array shape/dtype/byte hash, and ordered target hashes; verify requested and realized NumPy advice separately.",
+  "decision": "Warrant later full-trainer test only if candidate median hot-load time falls by at least 10%, each adjacent candidate/control pair improves, candidate median whole-child wall time regresses by no more than 5%, and exact parity passes. Otherwise report local gate not met.",
+  "environment": {
+    "numcodecs": "0.13.1",
+    "numpy": "1.26.2",
+    "python_executable": "/usr/bin/python3",
+    "python_version": "3.10.12",
+    "torch": "2.11.0+cu128",
+    "zarr": "2.18.3"
+  },
+  "fixture": {
+    "description": "First eight qualified B schema-2 shards; not the E corpus.",
+    "receipt": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation/qualifications/B.json",
+    "receipt_sha256": "dfbd5b6e4d75ec31e13eec2e3c8d4466452d9dfe7e1a3af2471a068785616c5a",
+    "rows": 65536,
+    "shards": [
+      {
+        "content_sha256": "cbae1d9e8fee3e48ee713d6ccebc4d18b896a0bcb483beb06efd9aecb27a0cb6",
+        "path": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/B/shard_000000.zarr",
+        "rows": 8192
+      },
+      {
+        "content_sha256": "0b9b3f8ff488f27a765a563b6143c5f754d5adbeee5ec8008fd52739c520f78e",
+        "path": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/B/shard_000001.zarr",
+        "rows": 8192
+      },
+      {
+        "content_sha256": "8736ef37061b043afa894c92fe931e29e7ec0dbd166458cb34af5e92ff1ccab0",
+        "path": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/B/shard_000002.zarr",
+        "rows": 8192
+      },
+      {
+        "content_sha256": "044c1295aed37d643eb2dbe6a268af8f4314fdc254bcf8d650d919e2bd4717d8",
+        "path": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/B/shard_000003.zarr",
+        "rows": 8192
+      },
+      {
+        "content_sha256": "b52b21710ef43f61791769f8d752c85d5467b59dabe12e1a8d56f5fd39eb5e1a",
+        "path": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/B/shard_000004.zarr",
+        "rows": 8192
+      },
+      {
+        "content_sha256": "747761aff844eec40b88894e4b64c3f46b12b23a9ef25a130ab6606f4d2c5bcd",
+        "path": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/B/shard_000005.zarr",
+        "rows": 8192
+      },
+      {
+        "content_sha256": "b2b3088279fc2a95b1f529f904701cef1f410d4f296d0634c03a71162c5fc6b5",
+        "path": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/B/shard_000006.zarr",
+        "rows": 8192
+      },
+      {
+        "content_sha256": "a8e50c92678235e8af2d93b1add1bda439cebf255cd3422a08e9406eb9b262b3",
+        "path": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/B/shard_000007.zarr",
+        "rows": 8192
+      }
+    ]
+  },
+  "fixture_reference": {
+    "path": "/home/josh/projects/chess-worktrees/numpy-thp-hotload-abba-20260923/docs/experiments/evidence/loader-profile-20260923/prepared-hotload-plan.json",
+    "sha256": "a7d406a794e366729c2c1d4f1ca2be330fc361472153a8cabebb05127f406d56"
+  },
+  "hypothesis": "Disabling NumPy MADVISE_HUGEPAGE only in child processes reduces the actual overlay loader _load_one time on the same candidate source, without changing decoded arrays, epoch plan, or target order.",
+  "kernel_thp": {
+    "defrag": "madvise",
+    "defrag_raw": "always defer defer+madvise [madvise] never",
+    "enabled": "madvise",
+    "enabled_raw": "always [madvise] never"
+  },
+  "limitations": [
+    "Eight qualified B schema-2 shards (65,536 rows), not the E corpus or 500M training.",
+    "Warm loader after source identity, scan, and synthetic row-count objective census; no cache flushing, so filesystem cache and order effects remain possible despite ABBA ordering.",
+    "No global transparent-huge-page setting changes; only child NUMPY_MADVISE_HUGEPAGE differs.",
+    "A local positive screen warrants a separate actual full-trainer comparison with objective masks, row order, augmentation, optimizer/checkpoint parity, and end-to-end throughput."
+  ],
+  "numpy_madvise_hugepage": {
+    "candidate": "0",
+    "control": "1"
+  },
+  "order": [
+    "control",
+    "candidate",
+    "candidate",
+    "control"
+  ],
+  "output_namespace": "/home/josh/projects/chess/scratchpad/numpy_thp_hotload_20260923_postreboot_v1/run01",
+  "primary": "Median of summed per-shard actual _load_one wall seconds per arm, comparing two controls with two candidates.",
+  "recovery": "A fresh admission and an empty post-reboot output directory are required. STOP file in output directory or parent blocks new arms; child process groups are PID-start-time checked and bounded. Failed runs retain summary/arm receipts; rerun needs a new admission and output directory. Admission pins exact kernel THP enabled/defrag state; child checks and records it at start/end and around every hot-load shard.",
+  "runner_path": "/home/josh/projects/chess/scratchpad/numpy_thp_hotload_20260923_postreboot_v1/scripts/benchmark_numpy_thp_hotload.py",
+  "runner_sha256": "f0de6e270b2c7ba554c23074907ee4a90c7c274885026b0cc8987d16b10d5c08",
+  "source_runner_provenance": {
+    "path": "/home/josh/projects/chess-worktrees/numpy-thp-hotload-abba-20260923/scripts/benchmark_numpy_thp_hotload.py",
+    "sha256": "c9981d9d8de1a45aea866d10354ddc603f2f434e29e460c0d06d905a9c3002e1"
+  },
+  "sources": {
+    "candidate": {
+      "commit": "7bafd7c3004a010356c214898c807d9d67b8b3f3",
+      "files_sha256": {
+        "chess_anti_engine/replay/game_epoch.py": "a84ad58fd68719e42513fa0411ca64f02ce848167cc1496a0a6add1ff4664b78",
+        "chess_anti_engine/replay/target_overlay.py": "903d0c314b3c4627fe72da63d1fc6a33bd4638145bcc6fab0195472a2a8cb0f0"
+      },
+      "path": "/home/josh/projects/chess-worktrees/overlay-validation-reuse-20260921"
+    },
+    "control": {
+      "commit": "7bafd7c3004a010356c214898c807d9d67b8b3f3",
+      "files_sha256": {
+        "chess_anti_engine/replay/game_epoch.py": "a84ad58fd68719e42513fa0411ca64f02ce848167cc1496a0a6add1ff4664b78",
+        "chess_anti_engine/replay/target_overlay.py": "903d0c314b3c4627fe72da63d1fc6a33bd4638145bcc6fab0195472a2a8cb0f0"
+      },
+      "path": "/home/josh/projects/chess-worktrees/overlay-validation-reuse-20260921"
+    }
+  },
+  "status": "PREPARED_HELD_FOR_UNCONTENDED_CPU_SLOT"
+}
