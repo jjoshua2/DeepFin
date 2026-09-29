@@ -32,3 +32,25 @@ def test_producer_receipt_pins_mate_domain_and_registration() -> None:
     for module in (sf_policy_rewrite, registration):
         path = Path(module.__file__).resolve()
         assert pins[str(path)] == file_sha256(path)
+
+
+def test_every_grouped_reference_authenticates_before_deduplication() -> None:
+    class Inputs:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def authenticate_ref(self, ref: dict[str, object]) -> None:
+            self.calls.append(ref)
+            if ref["source_namespace"] != "valid":
+                raise ValueError("source namespace/config mismatch")
+
+    inputs = Inputs()
+    refs = [
+        {"source_namespace": "valid", "source_shard": "raw", "source_row": 7},
+        {"source_namespace": "forged", "source_shard": "raw", "source_row": 7},
+    ]
+    seen: set[tuple[str, str, int]] = set()
+    with pytest.raises(ValueError, match="source namespace/config mismatch"):
+        calibration._authenticate_and_claim_refs(inputs, refs, seen)
+    assert inputs.calls == refs
+    assert seen == {("valid", "raw", 7)}
