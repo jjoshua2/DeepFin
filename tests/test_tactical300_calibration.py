@@ -59,6 +59,16 @@ def test_exact_300_is_not_threshold300_but_301_is() -> None:
     assert aggregate["thresholds"]["300"]["disagreements"] == 1
 
 
+def test_stored_float16_tie_removes_disagreement() -> None:
+    row = g10_row(extended=False)
+    a, b = _set_d9_scores(row, 501.0, 200.0)
+    result = calibration.analyze_row(
+        row, _policy_for(row, {b: 0.50001, a: 0.49999})
+    )
+    assert result["bt4_top"] == sorted([a, b])
+    assert result["disagreement"] is False
+
+
 def test_d12_can_vindicate_bt4_against_large_d9_gap() -> None:
     row = g10_row(extended=True)
     a, b = _set_d9_scores(row, 600.0, 100.0)
@@ -141,6 +151,37 @@ def test_winning_mate_persistence_is_categorical() -> None:
     assert result["final_has_winning_mate"] is True
     assert result["final_preserves_d9_winning_mate"] is True
     assert result["bt4_top_is_final_winning_mate"] is False
+
+
+def test_winning_mate_fallback_deeper_outcomes_are_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = g10_row(extended=True)
+    mate, other = _moves(row)[:2]
+    row["phases"][0]["per_depth"][0]["lines"][0][2] = 99900.0
+    monkeypatch.setattr(
+        calibration.adaptive,
+        "select",
+        lambda *_args: (None, 9, "no_deeper_scores"),
+    )
+    result = calibration.analyze_row(row, _policy_for(row, {mate: 0.6, other: 0.4}))
+    assert result["final_has_winning_mate"] is None
+    assert result["final_preserves_d9_winning_mate"] is None
+    assert result["bt4_top_is_final_winning_mate"] is None
+    aggregate = calibration._new_aggregate()
+    calibration.aggregate_row(aggregate, result)
+    assert aggregate["mate"]["deeper_outcome_adjudicable"] == 0
+    assert aggregate["mate"]["fallback_no_deeper_scores"] == 1
+
+
+def test_winning_mate_deeper_outcome_is_adjudicable() -> None:
+    row = g10_row(extended=True)
+    mate, other = _moves(row)[:2]
+    row["phases"][0]["per_depth"][0]["lines"][0][2] = 99900.0
+    result = calibration.analyze_row(row, _policy_for(row, {mate: 0.6, other: 0.4}))
+    aggregate = calibration._new_aggregate()
+    calibration.aggregate_row(aggregate, result)
+    assert aggregate["mate"]["deeper_outcome_adjudicable"] == 1
 
 
 def test_losing_mate_row_is_not_folded_into_centipawn_thresholds() -> None:
