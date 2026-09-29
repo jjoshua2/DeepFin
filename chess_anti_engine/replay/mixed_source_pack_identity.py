@@ -26,6 +26,15 @@ MIN_INT64 = -(1 << 63)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
+def _validate_source_fields(manifest: object, namespace: object, stratum: object) -> None:
+    """Validate untyped runtime inputs without trusting constructor annotations."""
+    if not isinstance(manifest, str) or _SHA256.fullmatch(manifest) is None:
+        raise ValueError("run_manifest_sha256 must be lowercase SHA-256")
+    if (not isinstance(namespace, str) or not isinstance(stratum, str)
+            or not namespace or not stratum):
+        raise ValueError("source namespace and opening stratum must be nonempty strings")
+
+
 @dataclass(frozen=True, order=True)
 class PackSourceIdentity:
     run_manifest_sha256: str
@@ -33,13 +42,9 @@ class PackSourceIdentity:
     opening_stratum: str
 
     def __post_init__(self) -> None:
-        if (not isinstance(self.run_manifest_sha256, str)
-                or _SHA256.fullmatch(self.run_manifest_sha256) is None):
-            raise ValueError("run_manifest_sha256 must be lowercase SHA-256")
-        if (not isinstance(self.source_namespace, str)
-                or not isinstance(self.opening_stratum, str)
-                or not self.source_namespace or not self.opening_stratum):
-            raise ValueError("source namespace and opening stratum must be nonempty strings")
+        _validate_source_fields(
+            self.run_manifest_sha256, self.source_namespace, self.opening_stratum,
+        )
 
     def as_list(self) -> list[str]:
         return [self.run_manifest_sha256, self.source_namespace,
