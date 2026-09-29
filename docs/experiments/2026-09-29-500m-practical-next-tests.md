@@ -107,3 +107,10 @@ have small differences. Record their input/history, model, calibration and targe
 profiles, and evaluate the intended use. Reuse changes a byte-preserving claim
 only when exact identity was promised; otherwise it is a recorded data-profile
 choice that needs an appropriate quality comparison.
+
+Already-paid legacy SF targets are another inexpensive option to retain. If all
+58.09M legacy rows qualified and used D's one-third SF value blend, their
+contribution in a 500M corpus would be about 3.9% aggregate SF value weight,
+without new SF labeling. This is arithmetic and a candidate profile choice, not
+a strength result or a claim that all legacy rows qualify. It is separate from
+new targeted SF policy corrections, and needs its own availability/profile check.
