@@ -51,6 +51,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [SF-rooted rule-aware corpus outcome mode](2026-09-23-sf-rule50-corpus-mode.md) | Explicit theoretical versus strict six-man rule-aware labels, UCI request guard and derived provenance; synthetic tests plus one bounded real-Stockfish search fixture |
 | [BT4 verified-session foundation](2026-09-23-bt4-verified-session-foundation.md) | CPU fake-session artifact, head, provider and exact-feed checks; no writer, real model run or throughput claim |
 | [Bend slider-mask populations and sizes](2026-09-21-bend-slider-mask-bounds.md) | Eight scalar laws: all 128 actual masks, safe U32 block sizes, arbitrary-occupancy lookup-index bounds; offsets/affine table refinement remain separate |
+| [Bend exact U32 slider indices](2026-09-21-bend-exact-slider-indices.md) | Eight source-bound scalar index, ordinal and recurrence laws; initialized affine storage and full Chess.slide refinement remain separate |
 | [BT4 CPU prefetch](2026-09-21-bt4-cpu-prefetch.md) | Opt-in one-batch CPU preparation overlap with bounded cleanup and exact feed/output parity; no GPU throughput or live-adoption claim |
 | [NumPy THP hot-load screen](2026-09-23-numpy-thp-hotload.md) | Bounded ABBA loader screen found no benefit from disabling current madvise huge-page advice; no production default change |
 | [BT4 raw JSON projection](2026-09-21-bt4-raw-json-projection.md) | Guarded projected decoding preserves consumed values and hashes; 1.67x CPU preparation on one banked shard, no GPU/live adoption claim |
