@@ -138,6 +138,9 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [500M continuation and partial factorial readout](2026-09-21-500m-continuation.md) | A/B/C exact epochs complete; policy +6.79 and value +21.74 Elo with intervals crossing zero; recovered arena bookkeeping, D ongoing; packed storage and bounded SF reset optimization |
 | [BT4 complete pipeline screen](2026-09-21-bt4-pipeline-benchmark.md) | Fixed ABCCBA batch128 projected-decoder/prefetch comparison; exact inputs and outputs, complete labeling plus verification, reviewed and queued after factorial matches |
 | [58M SF late-dose metadata and census design](2026-09-28-sf-late-dose-metadata.md) | 4.7 MB bounded metadata receipt for 58,090,688 retained rows; source-aware controls and capped three-shard pilot proposed, no corpus scan or training |
+| [SF-free D/E phase-start arena](2026-09-27-factorial58-d-e-phase-arena.md) | Complete strict six-man 384-pair/768-game phase test: primary late-minus-early +1.758 points [−2.734, +6.445], inconclusive; secondary overall GSPRT H0 applies only to its declared hypotheses |
+| [Saved Stockfish policy dose by ply and pieces](2026-09-28-sf-late-position-dose.md) | Registered read-only G10 Tactical300 cross-tab: 83.879% of moved mass at ply ≥80 with 7–13 pieces (55.462% at 8–13); no Elo or 58M distribution claim; bounded 58M screen remains next |
+| [External trainer throughput inventory](2026-09-28-500m-external-trainer-inventory.md) | Archived cold/warm packed trainer rates and local E epoch; historical 128-full-shard same-ZIP sizing, with the later completed screen linked separately |
 
 These descriptions identify the records, not the state of a running experiment.
 Check subsequent readouts and the actual process/artifacts before resuming work.
