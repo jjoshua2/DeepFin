@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [500M source/target candidate after E–D](2026-09-29-500m-source-target-candidate.md) | Cheap BT4/Ceres targets, a separate SF-origin source test and sparse SF correction pilot; 37.045 ideal GPU-stage days before qualification and reuse |
 | [Selected-E versus D direct strict arena](2026-09-28-selected-e-vs-d-direct-strict-readout.md) | Completed 576-pair strict six-man comparison: Selected-E −19.02 Elo [−33.43, −4.68] versus D; preregistered 30-Elo gate inconclusive |
 | [Selected-E versus E seed-121 strict arena](2026-09-27-selected-e-vs-e-arena.md) | Preregistered 576-pair noninferiority gate passed; future one-teacher cost screen eligible, with no measured annotation saving or corpus credit |
 | [Overlay validation reuse](2026-09-21-overlay-validation-reuse.md) | Future exact-epoch startup: nine-to-one semantic validations per shard; 5.42× faster constructor stages on eight real shards with exact plan/target parity; active runtime unchanged |
