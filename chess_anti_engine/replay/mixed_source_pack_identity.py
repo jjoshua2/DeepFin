@@ -177,6 +177,10 @@ class PreservedParentPack:
                 raise ValueError("source parents and physical shards must be distinct")
             resolved_shards.add(actual)
             physical_shards.add(physical_identity)
+        resolved_staging = staging.resolve()
+        if any(resolved_staging == shard or shard in resolved_staging.parents
+               for shard in resolved_shards):
+            raise ValueError("staging must be outside physical source shards")
         staging.mkdir(parents=True, exist_ok=False)
         try:
             for index, (_, path) in enumerate(ordered):

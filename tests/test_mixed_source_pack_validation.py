@@ -72,3 +72,40 @@ def test_distinct_zip_files_with_equal_bytes_can_be_staged(tmp_path: Path) -> No
     assert len(list(stage.iterdir())) == 2
     assert (stage / first.name).resolve() == first
     assert (stage / second.name).resolve() == second
+
+
+@pytest.mark.parametrize("location", ["same", "child", "aliased_child"])
+def test_staging_cannot_mutate_a_source_directory(
+    tmp_path: Path, location: str,
+) -> None:
+    source = PackSourceIdentity("a" * 64, "bt4", "root_a")
+    pack = PreservedParentPack([source])
+    root = tmp_path / "pack"
+    shard = pack.source_parent(root, source) / "shard_000000.zarr"
+    shard.mkdir(parents=True)
+    marker = shard / ".zgroup"
+    marker.write_bytes(b'{"zarr_format":2}')
+    if location == "same":
+        stage = shard
+    elif location == "child":
+        stage = shard / "new" / "view"
+    else:
+        alias = tmp_path / "alias"
+        alias.symlink_to(shard, target_is_directory=True)
+        stage = alias / "new" / "view"
+    with pytest.raises(ValueError, match="outside physical source shards"):
+        pack.stage_shards(root, stage, [(source, shard)])
+    assert list(shard.iterdir()) == [marker]
+    assert marker.read_bytes() == b'{"zarr_format":2}'
+
+
+def test_directory_staging_accepts_a_sibling_destination(tmp_path: Path) -> None:
+    source = PackSourceIdentity("a" * 64, "bt4", "root_a")
+    pack = PreservedParentPack([source])
+    root = tmp_path / "pack"
+    shard = pack.source_parent(root, source) / "shard_000000.zarr"
+    shard.mkdir(parents=True)
+    stage = root / "view"
+    pack.stage_shards(root, stage, [(source, shard)])
+    assert (stage / shard.name).resolve() == shard
+    assert not list(shard.iterdir())
