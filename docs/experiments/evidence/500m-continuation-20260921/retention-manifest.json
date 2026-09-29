@@ -1,0 +1,21 @@
+{
+  "original": "/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2",
+  "candidate": "/home/josh/chess-artifacts/models/stockfish-retain-tb-0973aa8d-bmi2",
+  "tables": "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+  "cpus": [
+    8,
+    9
+  ],
+  "nice": 19,
+  "hashes": {
+    "/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2": "e5f3b866a59210c33880eb1c25915d6399698ac80dc985779737fab124ee3ee8",
+    "/home/josh/chess-artifacts/models/stockfish-retain-tb-0973aa8d-bmi2": "8d5a930411572b197553f9c4f285373f80f0e878b5b137d16c960d3dccc0d217",
+    "/home/josh/chess-artifacts/operations/sf_retain_tb_20260920/retain_tb.patch": "f4e9a178f88134ccb94d5b19eca34b4b1b4129e5babe9e93551fdf7edf772868",
+    "/home/josh/chess-artifacts/operations/sf_retain_tb_20260920/equivalence_cases.json": "d35e3c1f475d84767548b061d583e963baf57a4c8c4e7e2c2630a453b8ec6382",
+    "/home/josh/projects/chess-worktrees/sf-retain-qualification-20260921/scripts/qualify_sf_retention.py": "afa755afb60a19732a29b9cb96fbe63be09bb5f15726df8ddbaa5ced9129edfd"
+  },
+  "compiler": "g++ (GCC) 15.3.0\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+  "wall_budget_seconds": 900,
+  "cpu_budget_seconds": 1800,
+  "LD_LIBRARY_PATH": "/home/josh/.local/gcc-15.3/lib64"
+}

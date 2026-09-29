@@ -1,0 +1,43 @@
+{
+  "status": "PASS_CURRENT_GROK_COPY_PRESERVES_EXTERNAL_DIRECTORY_SYMLINK",
+  "observed_unix": 1789842153.7406392,
+  "grok_version": "1.0.34",
+  "protocol": "LocalACP initialize then_x.ai/git/worktree/create; no session/new auth or modelprompt",
+  "grok_home": "/tmp/grok-symlink-copy-probe-20260919/grok-home",
+  "worktree": "/tmp/grok-symlink-copy-probe-20260919/grok-home/worktrees/grok-symlink-copy-probe-20260919-source/2026-09-19-d023b5f1",
+  "strategy": {
+    "requestedStrategy": "linked",
+    "resolvedStrategy": "copy"
+  },
+  "copyIgnoredInBackground": true,
+  "ignored_completion": {
+    "filesCopied": 1,
+    "dirsCreated": 1
+  },
+  "observations": [
+    {
+      "name": "external-link",
+      "is_symlink": true,
+      "target": "/tmp/grok-symlink-copy-probe-20260919/external",
+      "exists": true,
+      "target_same_inode": true
+    },
+    {
+      "name": "payload",
+      "is_symlink": true,
+      "target": "/tmp/grok-symlink-copy-probe-20260919/external",
+      "exists": true,
+      "target_same_inode": true
+    },
+    {
+      "name": "ignored-local",
+      "is_symlink": false,
+      "target": null,
+      "exists": true,
+      "target_same_inode": false
+    }
+  ],
+  "fixture_bytes": 49152,
+  "scope": "CurrentLinuxbinary/defaultcopystrategy; absoluteexternaldirectorysymlink; no claimaboutothercopytools/futureversions",
+  "compatibility": "Absolute legacy directory symlink points to shared external root; preserve namespacepartition and reader expectations before migrating activepaths."
+}

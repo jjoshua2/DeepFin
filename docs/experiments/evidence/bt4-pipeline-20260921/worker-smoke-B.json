@@ -1,0 +1,15 @@
+{
+  "status": "PASS_CPU_CALL_CONTRACT_SMOKE",
+  "TEST_ONLY_NO_GPU": true,
+  "variant": "B",
+  "runtime": "/home/josh/projects/chess-worktrees/raw-bt4-projected-json-20260921",
+  "harness_sha256": "fb6c6cb1836c150f9f1f6557253a3bf21d1ce3a6eab3786f58b7ac112f1d4c0b",
+  "raw_producer_sha256": "04cddfca96c120c949a5d4d32ae5771aab0a117e1b623b1d98aa605c643b8daa",
+  "rows": 3,
+  "scope": "Actual worker calls real label_shard+verify_shard; fake ORT/providers, fake device guard/runtimecheck, synthetic source fixture. Temporary sidecars removed. This establishes call contract only, not GPU/provider/performance qualification.",
+  "input_hash": "b75a9423c3b1026a1d73981713985f1522ec54f78e226fc9212a1fb688edf396",
+  "output_hashes": [
+    "313539d29feb19088196ab8d687222bbd0c4835e5c9862a887e7f73cd96683a3",
+    "8ae88888f398fc4401f163ac14993f4cf34a18519fda1d84b11703aabfb943e0"
+  ]
+}
