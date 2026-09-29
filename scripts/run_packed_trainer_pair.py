@@ -22,6 +22,46 @@ else:
 GIB = 1024**3
 
 
+class OutputBudget:
+    """Account output bytes without walking the tree for each verified input.
+
+    Call refresh at immutable phase boundaries. While an owned child writes,
+    poll performs a complete scan at most once per 15 seconds (from scan end).
+    Cheap resource/STOP/deadline checks still run on every call and during scans.
+    """
+
+    def __init__(self, out, preparation_bytes, status, cheap_guard):
+        self.out = out
+        self.preparation_bytes = preparation_bytes
+        self.status = status
+        self.cheap_guard = cheap_guard
+        self.next_scan = 0.0
+
+    def refresh(self):
+        self.cheap_guard()
+        used = self.preparation_bytes
+        for base, _dirs, files in os.walk(self.out, followlinks=False):
+            self.cheap_guard()
+            for index, name in enumerate(files):
+                if index % 256 == 0:
+                    self.cheap_guard()
+                path = Path(base) / name
+                if not path.is_symlink():
+                    used += path.stat().st_size
+                if used > 10 * GIB:
+                    raise RuntimeError('10GiB combined preparation+GPU outputs cap')
+        if used > 10 * GIB:
+            raise RuntimeError('10GiB combined preparation+GPU outputs cap')
+        self.cheap_guard()
+        self.status['combined_new_disk_bytes'] = used
+        self.next_scan = time.monotonic() + 15.0
+
+    def poll(self):
+        self.cheap_guard()
+        if time.monotonic() >= self.next_scan:
+            self.refresh()
+
+
 def run_stage(command, *, cwd, env, log, guard, lease_fd):
     guard()
     child = None
@@ -216,15 +256,7 @@ def main():
         for root in (out, Path(plan['external_root'])):
             if shutil.disk_usage(root).free < 150 * GIB:
                 raise RuntimeError('150GiB disk floor')
-        used = plan['preparation_new_bytes']
-        for base, _dirs, files in os.walk(out, followlinks=False):
-            for name in files:
-                path = Path(base) / name
-                if not path.is_symlink():
-                    used += path.stat().st_size
-        if used > 10 * GIB:
-            raise RuntimeError('10GiB combined preparation+GPU outputs cap')
-        status['combined_new_disk_bytes'] = used
+    output_budget = OutputBudget(out, plan['preparation_new_bytes'], status, guard)
     env = dict(os.environ)
     for key in ('PYTHONOPTIMIZE', 'PYTHONHOME', 'LD_PRELOAD'):
         env.pop(key, None)
@@ -237,10 +269,10 @@ def main():
     try:
         lease = Path(plan['gpu_lock']).open('a')  # noqa: SIM115 -- closed after owned-child cleanup in finally
         fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        guard()
+        output_budget.refresh()
         authenticate_sources(preparation, roots, guard)
         for name in ('external_zip', 'nvme_directory'):
-            guard()
+            output_budget.refresh()
             # Admission check is read-only: never stop somebody else's CUDA process.
             gpu_pids = subprocess.check_output(['nvidia-smi', '--query-compute-apps=pid',
                 '--format=csv,noheader,nounits'], timeout=10, text=True).strip()
@@ -266,17 +298,18 @@ def main():
             signal.setitimer(signal.ITIMER_REAL, max(0.001, min(2692, 5392 - (arm_start - started))))
             status['stages'].append({'name': name, 'command': command, 'status': 'STARTED'})
             (out / 'progress.json').write_text(json.dumps(status, indent=2))
-            run_stage(command, cwd=work, env=child_env, log=out / f'{name}.log', guard=guard, lease_fd=lease.fileno())
+            run_stage(command, cwd=work, env=child_env, log=out / f'{name}.log', guard=output_budget.poll, lease_fd=lease.fileno())
             status['stages'][-1].update(status='PASS', wall_seconds=time.monotonic() - arm_start)
             arm_start = None
             signal.setitimer(signal.ITIMER_REAL, max(0.001, 5392 - (time.monotonic() - started)))
+            output_budget.refresh()
             arms[name] = {'summary': json.loads((result / 'summary.json').read_text()),
                           'observation': json.loads(observation.read_text())}
             validate_arm(arms[name]['summary'], arms[name]['observation'], rows=expected_rows, batches=batches)
             repin()
             authenticate_sources(preparation, roots, guard)
         status['comparison'] = compare(arms, rows=expected_rows, batches=batches)
-        guard()
+        output_budget.refresh()
         status['status'] = 'PASS_EXACT_PACKED_TRAINER_PAIR'
     except BaseException as error:
         status.update(status='INCOMPLETE', error=repr(error))

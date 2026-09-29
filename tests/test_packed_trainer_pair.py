@@ -176,3 +176,64 @@ def test_real_qualification_plan_field_names():
     qualified['runs'][1]['plan']['sources'] = 34
     with pytest.raises(ValueError, match='coverage'):
         qualified_batch_count(qualified, 1963948)
+
+
+def test_output_budget_scan_count_tracks_time_not_guard_calls(tmp_path, monkeypatch):
+    from scripts import run_packed_trainer_pair as tool
+    now = [100.0]
+    calls = {'cheap': 0, 'walk': 0}
+    real_walk = tool.os.walk
+    def cheap():
+        calls['cheap'] += 1
+    def walk(*args, **kwargs):
+        calls['walk'] += 1
+        return real_walk(*args, **kwargs)
+    monkeypatch.setattr(tool.time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(tool.os, 'walk', walk)
+    (tmp_path / 'output').write_bytes(b'123')
+    status = {}
+    budget = tool.OutputBudget(tmp_path, 7, status, cheap)
+    budget.refresh()
+    for _ in range(70_606):
+        cheap()  # immutable source authentication uses only this callback
+        budget.poll()  # even writer polling cannot amplify scan count
+    assert calls['walk'] == 1
+    assert calls['cheap'] >= 141_212
+    assert status['combined_new_disk_bytes'] == 10
+    now[0] += 15
+    budget.poll()
+    assert calls['walk'] == 2
+    (tmp_path / 'output').write_bytes(b'12345')
+    budget.refresh()  # final exact check ignores the cadence
+    assert calls['walk'] == 3
+    assert status['combined_new_disk_bytes'] == 12
+
+
+@pytest.mark.parametrize('message', ['STOP requested', '40GiB available RAM floor', 'pair deadline'])
+def test_output_budget_never_caches_cheap_failure(tmp_path, message):
+    from scripts import run_packed_trainer_pair as tool
+    failure = [False]
+    def cheap():
+        if failure[0]:
+            raise RuntimeError(message)
+    budget = tool.OutputBudget(tmp_path, 0, {}, cheap)
+    budget.refresh()
+    failure[0] = True
+    with pytest.raises(RuntimeError, match=message):
+        budget.poll()
+
+
+def test_output_budget_periodic_and_final_checks_enforce_unchanged_cap(tmp_path, monkeypatch):
+    from scripts import run_packed_trainer_pair as tool
+    now = [0.0]
+    monkeypatch.setattr(tool.time, 'monotonic', lambda: now[0])
+    status = {}
+    budget = tool.OutputBudget(tmp_path, 10 * tool.GIB, status, lambda: None)
+    budget.refresh()
+    (tmp_path / 'growth').write_bytes(b'x')
+    now[0] = 15.0
+    with pytest.raises(RuntimeError, match='10GiB'):
+        budget.poll()
+    with pytest.raises(RuntimeError, match='10GiB'):
+        budget.refresh()
+    assert status['combined_new_disk_bytes'] == 10 * tool.GIB
