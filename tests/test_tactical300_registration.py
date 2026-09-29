@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from scripts import tactical300_registration as registration
+from scripts import tactical300_calibration as calibration
 
 
 def test_registered_teacher_is_accepted_without_opening_model() -> None:
@@ -53,7 +54,7 @@ def test_inventory_is_revalidated_before_publication(tmp_path: Path, mutation: s
         registration.derived_inventory(tmp_path, names)
 
 
-@pytest.mark.parametrize("top,mates,expected", [
+@pytest.mark.parametrize(("top", "mates", "expected"), [
     ({"a", "b"}, {"a"}, False),
     ({"a", "b"}, {"a", "b"}, True),
     ({"a"}, {"a", "b"}, True),
@@ -64,3 +65,12 @@ def test_tied_top_set_requires_all_moves_to_be_final_mates(
     top: set[str], mates: set[str], expected: bool,
 ) -> None:
     assert registration.top_set_is_final_mate(top, mates) is expected
+
+
+def test_changed_producer_source_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    snapshot = {"producer.py": "before"}
+    monkeypatch.setattr(
+        calibration, "_producer_sha256", lambda: {"producer.py": "after"}
+    )
+    with pytest.raises(ValueError, match="producer source changed"):
+        calibration._require_unchanged_producers(snapshot)
