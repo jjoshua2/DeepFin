@@ -1,7 +1,8 @@
 """CPU Ceres saved-game archive fixture with physical and semantic readback.
 
-This is a first tracked producer slice: it replays one pinned completed natural
-game into a fresh unqualified archive. It does not run a teacher or Syzygy.
+This tracked producer slice replays one pinned completed game into a fresh
+unqualified archive. Syzygy endings require an owned strict six-man WDL/DTZ
+handle, including during independent readback. It does not run a teacher.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import chess
+import chess.syzygy
 import numpy as np
 import zarr
 from numcodecs import Blosc
@@ -25,6 +27,7 @@ from numcodecs import Blosc
 from chess_anti_engine.encoding.ceres_tpg import stored_x_to_ceres_tpg_bytes
 from chess_anti_engine.encoding.encode import encode_position
 from chess_anti_engine.moves.leela_index import compact_index_for_move, leela_index_for_move
+from chess_anti_engine.selfplay.bt4_outcome import decide_bt4_outcome
 
 ARRAY_NAMES = ("x", "value", "value2", "legal_offsets", "legal_compact",
                "legal_leela", "legal_logits")
@@ -122,7 +125,10 @@ class SavedCeresGame:
     source_archive_sha256: str
 
 
-def _check_game(game: SavedCeresGame) -> None:
+def _check_game(
+    game: SavedCeresGame, *, syzygy_path: str | None = None,
+    match_tablebase: chess.syzygy.Tablebase | None = None,
+) -> None:
     arrays, rows, meta = game.arrays, game.rows, game.game
     n = len(rows)
     _need(0 < n <= MAX_ROWS and set(arrays) == set(ARRAY_NAMES), "game rows/arrays outside cap")
@@ -143,10 +149,23 @@ def _check_game(game: SavedCeresGame) -> None:
                                         for key in ("x", "value", "value2", "legal_logits")),
           "saved game legal offsets or finite values differ")
     _need(meta["row_start"] == 0 and meta["row_end"] == n
-          and meta["termination"] == "natural" and meta["result"] in
+          and meta["termination"] in ("natural", "syzygy") and meta["result"] in
           ("1-0", "0-1", "1/2-1/2")
           and meta["outcome_provenance"]["mode"] == "rule50_match_v1",
-          "fixture supports one completed natural rule50-aware game")
+          "fixture supports one completed rule50-aware game")
+    is_syzygy = meta["termination"] == "syzygy"
+    if is_syzygy:
+        provenance = meta["outcome_provenance"]
+        _need(match_tablebase is not None and bool(syzygy_path)
+              and provenance["syzygy_path"] == syzygy_path
+              and provenance["max_pieces"] == 6
+              and provenance["handle_contract"] == "caller_owned_capacity_checked"
+              and provenance["wdl_table_count"] == len(match_tablebase.wdl)
+              and provenance["dtz_table_count"] == len(match_tablebase.dtz),
+              "saved Syzygy game needs its exact strict six-man WDL/DTZ handle")
+    else:
+        _need(match_tablebase is None and syzygy_path is None,
+              "natural fixture does not use a Syzygy handle")
     board = chess.Board(meta["initial_replay_root_fen"])
     history: list[str] = []
     for uci in meta["initial_history_uci"]:
@@ -157,6 +176,16 @@ def _check_game(game: SavedCeresGame) -> None:
     feeds = stored_x_to_ceres_tpg_bytes(
         arrays["x"], input_history_encoding="lc0_root_legacy_meta", history_rep_fix=True)
     for i, row in enumerate(rows):
+        if is_syzygy:
+            assert syzygy_path is not None
+            assert match_tablebase is not None
+            _need(decide_bt4_outcome(
+                board, plies=i, max_plies=n + 1, syzygy_path=syzygy_path,
+                outcome_mode="rule50_match_v1", match_tablebase=match_tablebase,
+            ) is None, f"saved Syzygy game adjudicated before row {i}")
+        else:
+            _need(board.outcome(claim_draw=True) is None,
+                  f"natural game ended before row {i}")
         x = arrays["x"][i]
         expected_x = encode_position(
             board, input_history_encoding="lc0_root_legacy_meta",
@@ -194,12 +223,28 @@ def _check_game(game: SavedCeresGame) -> None:
               f"saved game legal index maps differ at {i}")
         board.push_uci(row["played_move_uci"])
         history.append(row["played_move_uci"])
-    outcome = board.outcome(claim_draw=True)
-    _need(board.fen() == meta["terminal_fen"] and outcome is not None
-          and outcome.result() == meta["result"], "natural game terminal/result differs")
+    _need(board.fen() == meta["terminal_fen"], "saved game terminal FEN differs")
+    if is_syzygy:
+        assert syzygy_path is not None
+        assert match_tablebase is not None
+        decision = decide_bt4_outcome(
+            board, plies=n, max_plies=n + 1, syzygy_path=syzygy_path,
+            outcome_mode="rule50_match_v1", match_tablebase=match_tablebase,
+        )
+        _need(decision is not None and decision.termination == "syzygy"
+              and decision.result == meta["result"] and decision.detail == meta["detail"],
+              "strict Syzygy terminal/result/detail differs")
+    else:
+        outcome = board.outcome(claim_draw=True)
+        _need(outcome is not None and outcome.result() == meta["result"]
+              and ("detail" not in meta or outcome.termination.name.lower() == meta["detail"]),
+              "natural game terminal/result differs")
 
 
-def load_saved_natural_game(path: Path, expected_sha256: str, game_id: int) -> SavedCeresGame:
+def load_saved_game(
+    path: Path, expected_sha256: str, game_id: int, *, syzygy_path: str | None = None,
+    match_tablebase: chess.syzygy.Tablebase | None = None,
+) -> SavedCeresGame:
     """Select one complete game from a pinned legacy ZIP without scanning other arrays."""
     path = Path(path)
     _need(_file_sha(path) == expected_sha256, "saved source archive SHA differs")
@@ -220,12 +265,20 @@ def load_saved_natural_game(path: Path, expected_sha256: str, game_id: int) -> S
     selected_rows = [{**row, "row_index": i} for i, row in enumerate(rows[start:end])]
     game = SavedCeresGame(arrays, selected_rows, meta, manifest["model_sha256"],
                           expected_sha256)
-    _check_game(game)
+    _check_game(game, syzygy_path=syzygy_path, match_tablebase=match_tablebase)
     _need(_file_sha(path) == expected_sha256, "saved source archive changed during read")
     return game
 
 
-def _read_written(path: Path, receipt: dict[str, Any]) -> SavedCeresGame:
+def load_saved_natural_game(path: Path, expected_sha256: str, game_id: int) -> SavedCeresGame:
+    """Keep the original natural-only API for existing fixture callers."""
+    return load_saved_game(path, expected_sha256, game_id)
+
+
+def _read_written(
+    path: Path, receipt: dict[str, Any], *, syzygy_path: str | None = None,
+    match_tablebase: chess.syzygy.Tablebase | None = None,
+) -> SavedCeresGame:
     _need(_file_sha(path) == receipt["archive_sha256"], "published archive SHA differs")
     manifest = _zip_json(path, "manifest.json", compressed=False)
     rows = _zip_json(path, "rows.json.gz", compressed=True)
@@ -244,15 +297,18 @@ def _read_written(path: Path, receipt: dict[str, Any]) -> SavedCeresGame:
           == manifest["array_sha256"], "published array digest mismatch")
     game = SavedCeresGame(arrays, rows, game_meta, manifest["model_sha256"],
                           manifest["source_archive_sha256"])
-    _check_game(game)
+    _check_game(game, syzygy_path=syzygy_path, match_tablebase=match_tablebase)
     _need(_file_sha(path) == receipt["archive_sha256"],
           "published archive changed during readback")
     return game
 
 
-def write_saved_game(game: SavedCeresGame, output: Path) -> dict[str, Any]:
+def write_saved_game(
+    game: SavedCeresGame, output: Path, *, syzygy_path: str | None = None,
+    match_tablebase: chess.syzygy.Tablebase | None = None,
+) -> dict[str, Any]:
     """Write one fresh ZIP, prove it, then publish without replacing a peer file."""
-    _check_game(game)
+    _check_game(game, syzygy_path=syzygy_path, match_tablebase=match_tablebase)
     output = Path(output)
     _need(output.is_absolute() and not output.exists(), "fresh absolute output required")
     output.mkdir(parents=True)
@@ -284,10 +340,12 @@ def write_saved_game(game: SavedCeresGame, output: Path) -> dict[str, Any]:
                "rows": len(game.rows), "archive_sha256": _file_sha(partial),
                "model_sha256": game.model_sha256,
                "source_archive_sha256": game.source_archive_sha256}
-    _read_written(partial, receipt)
+    _read_written(partial, receipt, syzygy_path=syzygy_path,
+                  match_tablebase=match_tablebase)
     os.link(partial, published, follow_symlinks=False)
     partial.unlink()
-    readback = _read_written(published, receipt)
+    readback = _read_written(published, receipt, syzygy_path=syzygy_path,
+                             match_tablebase=match_tablebase)
     _need(all(np.array_equal(readback.arrays[key], game.arrays[key]) for key in ARRAY_NAMES)
           and readback.rows == game.rows and readback.game == game.game,
           "published decoded game differs from source")
@@ -295,7 +353,10 @@ def write_saved_game(game: SavedCeresGame, output: Path) -> dict[str, Any]:
     return receipt
 
 
-def read_saved_game_archive(output: Path) -> SavedCeresGame:
+def read_saved_game_archive(
+    output: Path, *, syzygy_path: str | None = None,
+    match_tablebase: chess.syzygy.Tablebase | None = None,
+) -> SavedCeresGame:
     """Independently reopen a published fixture through its physical receipt."""
     output = Path(output)
     _need(output.is_dir() and not output.is_symlink(), "published fixture directory missing")
@@ -311,4 +372,5 @@ def read_saved_game_archive(output: Path) -> SavedCeresGame:
     finally:
         os.close(fd)
     _need(receipt["schema"] == SCHEMA, "published fixture receipt schema differs")
-    return _read_written(output / "game.zarr.zip", receipt)
+    return _read_written(output / "game.zarr.zip", receipt, syzygy_path=syzygy_path,
+                         match_tablebase=match_tablebase)
