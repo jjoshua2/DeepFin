@@ -12,11 +12,13 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [D-lite scalar SF value plan](2026-09-29-dlite-scalar-value-plan.md) | Prospective separate value contrast, representative one/eight-engine cost screen and shared CPU/GPU month-budget limits |
 | [Ceres live128 proof-writer A/B/B/A](2026-09-29-ceres-live128-writer-abba.md) | Four full-prefix 128-game arms, exact semantic/all-attempt parity and 8.75% source-stage saving; no full-pipeline or 500M gain claim |
 | [Tracked Ceres saved-game source fixture](2026-09-29-ceres-saved-game-source-fixture.md) | Main CPU producer/readback entrypoint exercised on one 47-row saved natural game; complete feature/feed/legal/terminal parity, no generation or throughput credit |
 | [Ceres stored-feed batch conversion](2026-09-29-ceres-stored-feed-batch.md) | CPU-only exact-byte feed proof on eight archived calls plus 512 stratified rows; 77.875% narrow conversion-stage reduction, no integrated throughput credit |
 | [500M practical next tests and target storage](2026-09-29-500m-practical-next-tests.md) | Current-source cost pilot, larger-batch numerical variants, sparse-SF holdout and pack/trainer follow-through; exact old-cohort sparse storage screen |
 | [Full512 old-cohort selected/dual ABBA cost](2026-09-29-full512-old-cohort-abba-cost.md) | Four-arm same-row screen: 38.888684% selected complete-arm saving passes the 15% cost gate; zero corpus or 500M credit, representative pilot next |
+| [Full512 58,820-row whole-bank selected/dual ABBA cost](2026-09-29-full512-whole-bank-abba-cost.md) | Independently audited 43.936202% mean complete-arm saving across two pairs; zero corpus or 500M credit |
 | [E versus D on shared 576-opening strict bank](2026-09-29-e-vs-d-576-strict.md) | Direct original E−D: −12.37 Elo [−27.18, +2.39], preregistered result unresolved; 1,152 audited games and rule50-aware six-man replay |
 | [Selected-E versus D direct strict arena](2026-09-28-selected-e-vs-d-direct-strict-readout.md) | Completed 576-pair strict six-man comparison: Selected-E −19.02 Elo [−33.43, −4.68] versus D; preregistered 30-Elo gate inconclusive |
 | [Selected-E versus E seed-121 strict arena](2026-09-27-selected-e-vs-e-arena.md) | Preregistered 576-pair noninferiority gate passed; future one-teacher cost screen eligible, with no measured annotation saving or corpus credit |
@@ -66,6 +68,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Actual prefix intervals](2026-09-22-bend-prefix-intervals.md) | Six source laws connect ordered, widened prefix arithmetic to the actual complete-array table loop; interior path certificates and final ray geometry remain separate |
 | [Bounded address normalization](2026-09-22-bend-address-normalization.md) | Five source laws eliminate the actual allocation mask for all bounded addresses and connect real affine APIs; tree-route injectivity and final contents remain separate |
 | [Complete-tree route separation](2026-09-22-bend-complete-tree-routes.md) | Four real-array laws derive separated leaf paths and other-index preservation from complete shape and bounded unequal addresses; actual initialization/builders supply shape |
+| [Relative table address bounds](2026-09-22-bend-relative-address-bounds.md) | Six source laws bound certified prefix-plus-index addresses and preserve other blocks through actual array writes; full fills and initialized lookup geometry remain separate |
 | [BT4 CPU prefetch](2026-09-21-bt4-cpu-prefetch.md) | Opt-in one-batch CPU preparation overlap with bounded cleanup and exact feed/output parity; no GPU throughput or live-adoption claim |
 | [NumPy THP hot-load screen](2026-09-23-numpy-thp-hotload.md) | Bounded ABBA loader screen found no benefit from disabling current madvise huge-page advice; no production default change |
 | [BT4 raw JSON projection](2026-09-21-bt4-raw-json-projection.md) | Guarded projected decoding preserves consumed values and hashes; 1.67x CPU preparation on one banked shard, no GPU/live adoption claim |
