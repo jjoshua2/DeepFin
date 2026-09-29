@@ -1765,7 +1765,9 @@ def search_key(board: chess.Board) -> str:
     label-equivalent.
     """
     counts: Counter[int] = Counter()
-    walk = board.copy(stack=True)
+    # The signature only walks the reversible suffix. Copying the full game
+    # stack pays for earlier, irrelevant plies on every searched position.
+    walk = board.copy(stack=min(int(board.halfmove_clock), len(board.move_stack)))
     counts[chess.polyglot.zobrist_hash(walk)] += 1
     for _ in range(int(board.halfmove_clock)):
         if not walk.move_stack:
