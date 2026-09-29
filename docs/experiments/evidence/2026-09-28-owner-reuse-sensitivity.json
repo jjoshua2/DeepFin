@@ -2,16 +2,43 @@
   "schema": "bootstrap_500m_owner_reuse_sensitivity_v1",
   "status": "CONDITIONAL_ARITHMETIC_ZERO_OWNER_REUSE_CREDIT",
   "new_rows": 441909312,
-  "assumed_new_source_shares": {"stockfish": 0.3333333333333333, "bt4": 0.3333333333333333, "ceres": 0.3333333333333333},
+  "assumed_new_source_shares": {
+    "stockfish": 0.3333333333333333,
+    "bt4": 0.3333333333333333,
+    "ceres": 0.3333333333333333
+  },
   "bt4_selected_label_rows_per_second_reference": 800.19,
   "ceres_selected_label_rows_per_second_reference": 329.64,
   "baseline_serial_gpu_stage_days_rounded": 39.587,
   "baseline_perfect_readback_overlap_gpu_stage_days_rounded": 34.203,
   "calculation": "label_days = new_rows * (bt4_offline_share / bt4_rate + ceres_offline_share / ceres_rate) / 86400; total_days = rounded_baseline_total_days - baseline_label_days + candidate_label_days",
   "arms": {
-    "independent_route_no_reuse": {"bt4_offline_share": 0.5, "ceres_offline_share": 0.5, "label_days": 10.95391816683456, "serial_days": 39.587, "perfect_overlap_days": 34.203},
-    "independent_route_owner_reuse": {"bt4_offline_share": 0.3333333333333333, "ceres_offline_share": 0.3333333333333333, "label_days": 7.302612111223041, "serial_days": 35.93569394438848, "perfect_overlap_days": 30.55169394438848},
-    "source_matched_route_owner_reuse": {"bt4_offline_share": 0.16666666666666666, "ceres_offline_share": 0.16666666666666666, "label_days": 3.6513060556115207, "serial_days": 32.28438788877696, "perfect_overlap_days": 26.90038788877696}
+    "independent_route_no_reuse": {
+      "bt4_offline_share": 0.5,
+      "ceres_offline_share": 0.5,
+      "label_days": 10.95391816683456,
+      "serial_days": 39.587,
+      "perfect_overlap_days": 34.203,
+      "status": "CONDITIONAL_SENSITIVITY_ON_UNVERIFIED_RATE_REFERENCES"
+    },
+    "independent_route_owner_reuse": {
+      "bt4_offline_share": 0.3333333333333333,
+      "ceres_offline_share": 0.3333333333333333,
+      "label_days": 7.302612111223041,
+      "serial_days": 35.93569394438848,
+      "perfect_overlap_days": 30.55169394438848,
+      "status": "CONDITIONAL_SENSITIVITY_ON_UNVERIFIED_RATE_REFERENCES"
+    },
+    "source_matched_route_owner_reuse": {
+      "bt4_offline_share": 0.16666666666666666,
+      "ceres_offline_share": 0.16666666666666666,
+      "label_days": 3.6513060556115207,
+      "serial_days": 32.28438788877696,
+      "perfect_overlap_days": 26.90038788877696,
+      "status": "CONDITIONAL_SENSITIVITY_ON_UNVERIFIED_RATE_REFERENCES"
+    }
   },
-  "limitations": "No exact owner-output target parity, post-dedup source shares, source-matched-route strength, sustained source rate, perfect readback overlap, or external first-read proof is measured."
+  "limitations": "No exact owner-output target parity, post-dedup source shares, source-matched-route strength, sustained source rate, perfect readback overlap, or external first-read proof is measured. The 800.19 BT4 label-rate input and the inherited 39.587/34.203 baselines (which depend on an unauthenticated 1281.357 trainer reference) are assumed/unverified in this publication.",
+  "bt4_selected_label_rows_per_second_reference_status": "ASSUMED_UNVERIFIED_NO_PRODUCING_RECEIPT_PINNED",
+  "baseline_status": "CONDITIONAL_ON_UNVERIFIED_1281.357_TRAINER_AND_800.19_BT4_LABEL_REFERENCES"
 }
