@@ -1,0 +1,41 @@
+{
+  "status": "FROZEN_REVIEWED_NOT_QUEUED",
+  "jobs": [
+    {
+      "id": "factorial58_B_A_400sims",
+      "kind": "registered_command",
+      "status": "queued",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/scheduler_run",
+      "max_seconds": 3660,
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/registered_command.json",
+      "command_sha256": "9008ca46b006f67e1428f9dd400194d09543f140817ae2f4ac6ae6c9f45850ca"
+    },
+    {
+      "id": "factorial58_C_A_400sims",
+      "kind": "registered_command",
+      "status": "queued",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/scheduler_run",
+      "max_seconds": 3660,
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/registered_command.json",
+      "command_sha256": "346d3edd8badc6d71cc4b8d587ac6b5251159d788e74fdd5e38724472d9f250f"
+    },
+    {
+      "id": "factorial58_D_C_400sims",
+      "kind": "registered_command",
+      "status": "queued",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/scheduler_run",
+      "max_seconds": 3660,
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/registered_command.json",
+      "command_sha256": "647c59e3417b47ee322cdb2e927def5b13bb8eaa577038faf4b6fc0d009044be"
+    },
+    {
+      "id": "factorial58_D_B_400sims",
+      "kind": "registered_command",
+      "status": "queued",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/scheduler_run",
+      "max_seconds": 3660,
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/registered_command.json",
+      "command_sha256": "3cbce635f547ec1d07c5457607e55a2d39dcb4b7eff297c80c0721a087e5d110"
+    }
+  ]
+}

@@ -28,6 +28,12 @@ import numpy as np
 _DEFAULT_READ_TIMEOUT_S = 60.0
 
 
+def _retention_flag(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError("retain_syzygy_on_new_game must be a bool")
+    return value
+
+
 def _stockfish_child_nice(current_nice: int, configured_nice: int) -> int:
     """Return the absolute child nice value without raising process priority."""
     target_nice = min(19, max(0, int(configured_nice)))
@@ -399,6 +405,8 @@ class StockfishUCI:
         multipv: int = 1,
         hash_mb: int | None = None,
         syzygy_path: str | None = None,
+        syzygy_50_move_rule: bool | None = None,
+        syzygy_probe_limit: int | None = None,
         nice: int = 0,
         threads: int = 1,
         # ⚑ `None` MEANS "the default", so a caller holding an OPTIONAL timeout
@@ -409,7 +417,10 @@ class StockfishUCI:
         # value is unchanged either way; what changes is that the call site can
         # be written with named arguments.
         read_timeout_s: float | None = None,
+        retain_syzygy_on_new_game: bool = False,
     ):
+        self.retain_syzygy_on_new_game = _retention_flag(retain_syzygy_on_new_game)
+        self.retain_syzygy_option_sent = False
         self.path = path
         self.nodes = int(nodes)
         self.multipv = int(multipv)
@@ -427,6 +438,16 @@ class StockfishUCI:
         # own artifact.
         self.threads = max(1, int(threads))
         self.syzygy_path = syzygy_path or None
+        if (syzygy_50_move_rule is None) != (syzygy_probe_limit is None):
+            raise ValueError("Syzygy50MoveRule and SyzygyProbeLimit must be requested together")
+        if syzygy_probe_limit is not None and type(syzygy_probe_limit) is not int:
+            raise ValueError("SyzygyProbeLimit must be an integer")
+        if syzygy_50_move_rule is not None and not self.syzygy_path:
+            raise ValueError("explicit Syzygy rules require SyzygyPath")
+        self.syzygy_50_move_rule = syzygy_50_move_rule
+        self.syzygy_probe_limit = syzygy_probe_limit
+        self.syzygy_option_capabilities: dict[str, str] = {}
+        self.syzygy_ready_after_requests = False
         self.nice = min(19, max(0, int(nice)))
         self.read_timeout_s = (
             _DEFAULT_READ_TIMEOUT_S if read_timeout_s is None else float(read_timeout_s)
@@ -496,17 +517,27 @@ class StockfishUCI:
 
         try:
             self._send("uci")
-            self._wait_for("uciok")
+            self._read_uci_capabilities()
             self._send("setoption name UCI_ShowWDL value true")
             self._send(f"setoption name Threads value {self.threads}")
             if self.hash_mb is not None:
                 self._send(f"setoption name Hash value {self.hash_mb}")
             if self.syzygy_path:
                 self._send(f"setoption name SyzygyPath value {self.syzygy_path}")
+            if self.syzygy_50_move_rule is not None:
+                self._send(
+                    "setoption name Syzygy50MoveRule value "
+                    + ("true" if self.syzygy_50_move_rule else "false")
+                )
+                self._send(f"setoption name SyzygyProbeLimit value {self.syzygy_probe_limit}")
             if self.multipv > 1:
                 self._send(f"setoption name MultiPV value {self.multipv}")
+            if self.retain_syzygy_on_new_game:
+                self._send("setoption name SyzygyRetainOnNewGame value true")
+                self.retain_syzygy_option_sent = True
             self._send("isready")
             self._wait_for("readyok")
+            self.syzygy_ready_after_requests = self.syzygy_50_move_rule is not None
         except BaseException:
             self.close()
             raise
@@ -653,6 +684,57 @@ class StockfishUCI:
             # merely mentions the token must not satisfy the handshake.
             if line.strip() == token:
                 return
+
+    def _read_uci_capabilities(self) -> None:
+        """Read the UCI handshake and validate explicitly requested Syzygy knobs.
+
+        An advertised option and a later ``readyok`` show capability and a
+        processing barrier after our request. UCI offers no effective-value
+        readback or per-option acknowledgement.
+        """
+        deadline = time.monotonic() + self.read_timeout_s
+        found: dict[str, str] = {}
+        while True:
+            line = self._readline_with_deadline(deadline).strip()
+            if line == "uciok":
+                break
+            for name in (
+                "SyzygyPath", "Syzygy50MoveRule", "SyzygyProbeLimit",
+                "SyzygyRetainOnNewGame",
+            ):
+                if line.startswith(f"option name {name} "):
+                    if name in found and self.syzygy_50_move_rule is not None:
+                        raise RuntimeError(f"duplicate UCI {name} option")
+                    found[name] = line
+        self.syzygy_option_capabilities = found
+        if self.retain_syzygy_on_new_game:
+            retain = found.get("SyzygyRetainOnNewGame", "")
+            if re.fullmatch(
+                r"option name SyzygyRetainOnNewGame type check default (?:true|false)",
+                retain,
+            ) is None:
+                raise ValueError(
+                    "engine does not advertise SyzygyRetainOnNewGame as a check option"
+                )
+        if self.syzygy_50_move_rule is None:
+            return
+        path = found.get("SyzygyPath", "")
+        rule = found.get("Syzygy50MoveRule", "")
+        limit = found.get("SyzygyProbeLimit", "")
+        if re.fullmatch(r"option name SyzygyPath type string default .+", path) is None:
+            raise RuntimeError("Stockfish does not advertise a compatible SyzygyPath")
+        if re.fullmatch(r"option name Syzygy50MoveRule type check default (true|false)", rule) is None:
+            raise RuntimeError("Stockfish does not advertise a compatible Syzygy50MoveRule")
+        bounds = re.fullmatch(
+            r"option name SyzygyProbeLimit type spin default (-?\d+) min (-?\d+) max (-?\d+)",
+            limit,
+        )
+        requested_limit = self.syzygy_probe_limit
+        if (
+            bounds is None or requested_limit is None
+            or not int(bounds[2]) <= requested_limit <= int(bounds[3])
+        ):
+            raise RuntimeError("Stockfish does not advertise SyzygyProbeLimit=6 capability")
 
     def search(
         self, fen: str, *, nodes: int | None = None,

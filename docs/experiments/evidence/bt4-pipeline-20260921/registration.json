@@ -1,0 +1,121 @@
+{
+  "schema": 1,
+  "status": "FROZEN_REVIEWED_READY",
+  "order": [
+    "A",
+    "B",
+    "C",
+    "C",
+    "B",
+    "A"
+  ],
+  "rows": 8236,
+  "batch_size": 128,
+  "harness": {
+    "path": "/home/josh/chess-artifacts/operations/bt4-pipeline-20260921/run.py",
+    "sha256": "fb6c6cb1836c150f9f1f6557253a3bf21d1ce3a6eab3786f58b7ac112f1d4c0b"
+  },
+  "variants": {
+    "A": {
+      "runtime": "/tmp/deepfin-bt4-pipeline-20260921/A",
+      "head": "7939609c903f2a59a57bc52f282fc39ad60182fa",
+      "prefetch": false,
+      "directory_links": {
+        "/tmp/deepfin-bt4-pipeline-20260921/A/.claude/skills": "../.agents/skills"
+      },
+      "pinned_file_count": 2896
+    },
+    "B": {
+      "runtime": "/tmp/deepfin-bt4-pipeline-20260921/B",
+      "head": "74a31a1d3ee18328d12c2e6cf3f519316eb61114",
+      "prefetch": false,
+      "directory_links": {
+        "/tmp/deepfin-bt4-pipeline-20260921/B/.claude/skills": "../.agents/skills"
+      },
+      "pinned_file_count": 2898
+    },
+    "C": {
+      "runtime": "/tmp/deepfin-bt4-pipeline-20260921/C",
+      "head": "0c34941073cb6e4dceb3ca735285be457c18c7d7",
+      "prefetch": true,
+      "directory_links": {
+        "/tmp/deepfin-bt4-pipeline-20260921/C/.claude/skills": "../.agents/skills"
+      },
+      "pinned_file_count": 2901
+    }
+  },
+  "queue": "/home/josh/projects/chess/scratchpad/bt4_joint20/autonomous_loop_20260914/queue.json",
+  "dependencies": [
+    {
+      "id": "factorial58_fresh_D",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/registered_command.json",
+      "sha256": "04cc52756f3a9967eba5a5dc4fb8adc3dc388217cbd7b07fc74f173580927aff"
+    },
+    {
+      "id": "factorial58_D_C_400sims",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/registered_command.json",
+      "sha256": "682dc2bdeae5d1a45f1a4cb3b822a26e0adc5e33c8948566a54cafdf62e9d985"
+    },
+    {
+      "id": "factorial58_D_B_400sims",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/registered_command.json",
+      "sha256": "dd55402134b26c47ee3a0e22a3945cf5b9610d5e29f98875f25cac47a2536674"
+    }
+  ],
+  "source_id": "run06_g10",
+  "source": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+  "shard": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00000.jsonl.zst",
+  "onnx": "/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx",
+  "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+  "data_pins": [
+    {
+      "path": "/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx",
+      "sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00000.jsonl.zst",
+      "sha256": "3c93d2d127bc6d11db9eb31425e0c795c96b417106d737632ef4b689569ae17d"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json",
+      "sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4"
+    }
+  ],
+  "python_version": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+  "versions": {
+    "onnxruntime-gpu": "1.23.2",
+    "numpy": "1.26.2",
+    "zarr": "2.18.3",
+    "numcodecs": "0.13.1",
+    "msgspec": "0.20.0",
+    "torch": "2.11.0+cu128",
+    "python-chess": "1.999"
+  },
+  "gpu_lock": "/home/josh/projects/chess/scratchpad/gpu0_experiment.lock",
+  "stop_paths": [
+    "/home/josh/chess-artifacts/operations/bt4-pipeline-20260921/STOP",
+    "/home/josh/chess-artifacts/operations/STOP"
+  ],
+  "out": "/home/josh/chess-artifacts/operations/bt4-pipeline-20260921/execution_v1",
+  "completion": "/home/josh/chess-artifacts/operations/bt4-pipeline-20260921/complete.json",
+  "bounds": {
+    "inner_seconds": 1140,
+    "outer_seconds": 1200,
+    "minimum_ram_gib": 40,
+    "minimum_disk_gib": 150,
+    "maximum_output_gib": 2,
+    "cpu_affinity": [
+      14,
+      15
+    ],
+    "threads": 2,
+    "nice": 19
+  },
+  "primary": "median(producer_seconds+verification_seconds), B/C >=1/.95 for prefetch gain",
+  "qualification": "exact actual input sequence, raw neural outputs and stored arrays; all six deep verifications; no tolerance widening",
+  "limitations": "One shard, two warm-session observations pervariant; input/output hash observation cost included; no fleet or 500M throughput claim",
+  "full_plan": {
+    "path": "/home/josh/chess-artifacts/operations/bt4-pipeline-20260921/plan.json",
+    "sha256": "8ad936c13fd36b1e97fcae11d27b87423a00cea00b754e342f6d90bb5bd614dc"
+  }
+}

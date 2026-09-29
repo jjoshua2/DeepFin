@@ -161,3 +161,27 @@ def test_require_explicit_corrected_history(fixed: bool) -> None:
 def test_refuse_wrong_storage_shape_or_dtype(shape: tuple[int, ...], dtype: type) -> None:
     with pytest.raises(ValueError, match=r'expected stored float16|empty or nonfinite'):
         convert(np.zeros(shape, dtype=dtype))
+
+
+@pytest.mark.parametrize("value", [
+    np.nextafter(np.float16(0), np.float16(1)),
+    np.nextafter(np.float16(1), np.float16(0)),
+    np.nextafter(np.float16(1), np.float16(2)),
+    np.float16(-1), np.float16(256),
+])
+def test_binary_history_is_validated_before_byte_conversion(value: np.float16) -> None:
+    x = stored(chess.Board())
+    x[0, 0, 0] = value
+    with pytest.raises(ValueError, match="binary piece/repetition"):
+        convert(x)
+
+
+def test_readonly_stored_batch_preserves_independent_board_feed() -> None:
+    board = chess.Board()
+    boards = [board.copy()]
+    for move in ["e2e4", "a7a6", "e4e5", "d7d5"]:
+        board.push_uci(move)
+        boards.append(board.copy())
+    x = np.stack([stored(b) for b in boards])
+    x.setflags(write=False)
+    np.testing.assert_array_equal(convert(x), np.stack([encode_ceres_tpg_bytes(b) for b in boards]))
