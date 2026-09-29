@@ -13,9 +13,17 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-from scripts import benchmark_sf_generation as bounds
 
+
+def _load_bounds():
+    # Direct-file entry must select this checkout before importing its helpers.
+    sys.path.insert(0, str(ROOT))
+    from scripts import benchmark_sf_generation
+
+    return benchmark_sf_generation
+
+
+bounds = _load_bounds()
 require = bounds.require
 
 
