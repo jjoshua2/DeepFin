@@ -27,12 +27,15 @@ The cheaper Selected-E one-teacher route scored −3.02 Elo
 [−17.74,+11.69] against E and passed its predeclared −20-Elo gate **to
 measure label cost**. Against D it scored −19.02 [−33.43,−4.68], inconclusive
 under a separate −30-Elo gate. Neither match measured full end-to-end
-annotation saving or a 500M transfer. A same-row four-arm full-wall comparison
-is still needed; the older S→D two-arm small-receipt complete-arm screen showed an 11.96%
-wall difference on 12,288 rows, below its >15% promotion threshold;
-independent full-byte target reread is still pending. See the [Selected-E versus E](2026-09-27-selected-e-vs-e-arena.md)
-and [Selected-E versus D](2026-09-28-selected-e-vs-d-direct-strict-readout.md)
-records.
+annotation saving or a 500M transfer. A subsequent same-row four-arm screen
+on 12,288 old-cohort rows found a **38.89% selected-versus-dual complete-arm
+wall saving**, with both order-pair contrasts positive and independent full-byte
+audit PASS. It clears the preregistered 15% cost gate only to a larger
+representative pilot; it does not establish 500M label days. The earlier
+S→D two-arm 11.96% screen remains a failed, differently accounted result.
+See the [audited cost readout](https://github.com/jjoshua2/DeepFin/pull/932),
+[Selected-E versus E](2026-09-27-selected-e-vs-e-arena.md) and
+[Selected-E versus D](2026-09-28-selected-e-vs-d-direct-strict-readout.md).
 
 ## Capacity boundary
 
@@ -65,8 +68,10 @@ admitted-unique forecast or a promise to finish in one month. They exclude
 SF-origin CPU generation/search and strict replay, assuming those CPU stages
 overlap GPU work completely. Physical dedup, pack qualification and any
 uncached-read penalty beyond the cache-affected trainer measurement are also
-excluded. Under these assumptions, the projected trainer term is smaller than
-the projected neural source and label terms; no cold 500M epoch was measured.
+excluded. The 10.954-day label subtotal already assumes one selected teacher
+per row; the 38.89% selected-versus-dual cost saving must not be subtracted
+from it again. Under these assumptions, the projected trainer term is smaller
+than the projected neural source and label terms; no cold 500M epoch was measured.
 See the [external trainer screen](2026-09-29-zip128-external-trainer-screen.md)
 and the [capacity arithmetic and per-input provenance](evidence/2026-09-29-500m-candidate-capacity.json).
 
@@ -86,11 +91,12 @@ pack readback and real trainer consumption remain **zero-credit gates**.
    source-terminal replay and physical-call reconciliation, then cross-source
    dedup, selected target-byte readback, pack and the first external-drive
    trainer read. Retain the same strict rule for later arenas. Reserve one GPU job and one heavy-I/O job at a time. Do not extrapolate pre-dedup counts.
-2. Compare selected versus dual BT4/Ceres labeling on exactly the same rows
-   with fresh sessions, matched charged warmups, four balanced arms, separate
-   full-byte output/readback and a predeclared cost gate. Generating-owner
-   reuse additionally needs input/history, legal-map, model/head,
-   calibration, precision and target-byte equality to fresh labeling.
+2. Prepare a roughly 50,000-row, admitted-unique, production-weighted
+   whole-game Full512 selected-versus-dual cost pilot. Freeze the source,
+   opening and phase frame, row count, caps and four-arm same-input protocol
+   before GPU use. Generating-owner reuse additionally needs input/history,
+   legal-map, model/head, calibration, precision and target-byte equality
+   to fresh labeling.
 3. Test **position source** while holding the target recipe fixed. The
    proposed first contrast changes 25% of a matched 1M-row bank to SF-origin
    positions, followed by a conditional 10M-row confirmation if the bounded
