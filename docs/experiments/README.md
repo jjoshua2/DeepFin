@@ -24,6 +24,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [SF-free BT4+Ceres targets](2026-09-21-sffree-targets.md) | Reviewed E builder and three real source families qualified; bounded full 58M CPU preparation launched; training pending |
 | [58M policy/value teacher factorial](2026-09-19-58m-policy-value-factorial.md) | Reviewed pipeline queued:22.78M missing Ceres labels, target overlays, four fresh58M arms and four direct matches; active continuation preserved; no factorial results |
 | [B100 Tactical300 policy transfer](2026-09-11-b100-tactical300-transfer.md) | Candidate sparse SF mass-transfer policy tooling with mandatory deeper-SF calibration before materialization or training |
+| [Ceres saved Syzygy source fixture](2026-09-29-ceres-saved-syzygy-source-fixture.md) | Tracked CPU producer/readback reproves two saved six-man WDL/DTZ game results; zero generated-row credit |
 | [Ceres saved32 proof-reuse writer ABBA](2026-09-29-ceres-saved32-writer-abba.md) | Eight CPU arms: same 4,751 decoded rows and publication records, 34.48% faster saved32 writer interval; no live source-generation gain |
 | [Ceres selected-label guard cadence](2026-09-27-ceres-selected-guard-cadence.md) | Four-arm selected-4K GPU A/B/A/B: exact target parity and 17.76% lower arm wall; no production or 500M throughput claim |
 | [Ceres v8 feed-store CPU screen](2026-09-27-ceres-v8-feed-store-screen.md) | Bounded synthetic all-attempt feed Mapping/RSS screen, sparse and incompressible; frozen v8 unchanged, no full-path or adoption claim |
