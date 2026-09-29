@@ -4,7 +4,10 @@ Read-only publication of the September 26 archived inventory and its independent
 reviewed sizing addendum. No new benchmark, data staging, trainer run or GPU work
 was performed for this record. The earlier [500M continuation](2026-09-21-500m-continuation.md)
 registered the packed trainer comparison; this record reports its completed
-receipts and the next measurement needed to estimate external training wall.
+receipts and the next measurement proposed in that historical inventory.
+The subsequent [September 29 same-ZIP screen](2026-09-29-zip128-external-trainer-screen.md)
+reports the completed successor separately; it does not retrospectively change
+these archived observations or qualify a sustained 500M-epoch rate.
 
 ## What the completed runs measure
 
@@ -39,7 +42,7 @@ the [compact evidence](evidence/2026-09-28-500m-external-trainer-inventory.json)
 pins the archive, review and upstream receipt hashes without publishing private
 host paths or bulk logs.
 
-## One prospective same-format screen
+## Historical proposal for one same-format screen
 
 The archived inventory proposed copying sealed source ZIPs to local ext4, then
 comparing ZIP against ZIP with identical trainer settings in a quiet I/O window.
@@ -52,20 +55,23 @@ a short post-warm rate. Do not use the unfiltered 64-shard selection for the
 
 The proposed quantitative successor selects the **lowest 128 full 8,192-row
 ZIP shards**, through global ID 142: **1,048,576 rows, 2,048 full 512-row
-updates, 24 88-step windows, 958,464 measured row visits in 22 post-warm
-windows, and 714,978,885 source ZIP bytes by archived file-size metadata**.
-The 64-full-shard option is only a smoke check. These are prospective sizing
-facts, not a registered or completed benchmark; future registration must
-revalidate source bytes and seals.
+updates, 24 reporting windows (up to 88 updates each; 24 in the final window),
+958,464 measured row visits in 22 post-warm windows, and 714,978,885 source ZIP
+bytes by archived file-size metadata**. The 64-full-shard option is only a smoke
+check. These were prospective sizing facts in the September 26 archive, not a
+registered or completed benchmark at that time; future registration must
+revalidate source bytes and seals. The linked September 29 successor retains
+its own decision rule and execution evidence.
 
 Before a GPU run, a separate reviewed registration must pin the exact roster
 and source/local ZIP hashes, runtime, driver, model, loader, batch observer,
 randomized arm order, serial sole-GPU lease, quiet-disk condition, deadlines
 and resource bounds. Require matching consumed game/ply order, initial weights,
 raw/prepared batch digests, source preflight and posthash. Report full wall,
-first-batch, per-window, prefetch and observer times. Keep the prior nominal
-0.90 rate ratio, but preregister how a borderline result will be handled; one
-close pair is inconclusive as a stable storage decision. A nonborderline pass
-would qualify only the short storage path. A sustained external trainer
-tranche or full run at the intended source mix and operational contention is
-still needed for a 500M external-wall forecast. This record launches none of it.
+first-batch, per-window, prefetch and observer times. The archived proposal
+retained the prior nominal 0.90 rate ratio and required preregistration of
+borderline-result handling; one close pair is inconclusive as a stable storage
+decision. A nonborderline pass would qualify only the short storage path. A
+sustained external trainer tranche or full run at the intended source mix and
+operational contention is still needed for a 500M external-wall forecast.
+This record launches none of it.
