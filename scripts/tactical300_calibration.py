@@ -422,6 +422,7 @@ def decision_from_aggregate(
         "minimum_adjudicable": MIN_ADJUDICABLE,
         "verdict": verdict,
         "training_admission": False,
+        "published_transfer_calibrated": False,
     }
 
 
