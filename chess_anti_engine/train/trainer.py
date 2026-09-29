@@ -7,7 +7,7 @@ import sys
 import math
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -236,6 +236,76 @@ class _TrainBatchIterator:
         close = getattr(self._current, "close", None)
         if callable(close):
             close()
+
+
+@dataclass
+class _BatchPrefetchSplitTiming:
+    """Opt-in CPU spans inside the existing `next(batches)` wall phase.
+
+    These are subsets, not additional partition phases. Synchronous sampling
+    has its own span; the remainder includes exact-overlap H2D retirement.
+    """
+
+    future_wait_s: float = 0.0
+    host_sample_s: float = 0.0
+    tensor_issue_s: float = 0.0
+    future_calls: int = 0
+    host_sample_calls: int = 0
+    tensor_calls: int = 0
+
+
+def _guard_exact_host_overlap(
+    source: Iterator[dict[str, torch.Tensor]], buf: object, count: int,
+) -> Generator[dict[str, torch.Tensor], None, None]:
+    """Join the producer and prove delivery and natural exhaustion per window."""
+    begin = getattr(buf, "begin_overlap", None)
+    mark = getattr(buf, "mark_overlap_delivery", None)
+    end = getattr(buf, "end_overlap", None)
+    close = getattr(source, "close", None)
+    if (not callable(begin) or not callable(mark)
+            or not callable(end) or not callable(close)):
+        raise RuntimeError("exact host overlap lacks delivery/close guard")
+
+    wanted = max(0, int(count))
+    delivered = 0
+    failed = False
+    exhausted = False
+    begin()
+    try:
+        for _ in range(wanted):
+            try:
+                batch = next(source)
+            except StopIteration as exc:
+                raise RuntimeError("exact host-overlap source ended before window") from exc
+            mark()
+            delivered += 1
+            yield batch
+    except BaseException as exc:
+        # Closing after the last yield is clean only if the source also ends
+        # naturally. Closing earlier must never drain or sample another row.
+        failed = not isinstance(exc, GeneratorExit) or delivered != wanted
+        raise
+    finally:
+        try:
+            if delivered == wanted and not failed:
+                try:
+                    next(source)
+                except StopIteration:
+                    exhausted = True
+                else:
+                    raise RuntimeError("exact host-overlap source yielded extra batch")
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            try:
+                # The source owns its one producer and any in-flight H2D copy.
+                close()
+            except BaseException:
+                failed = True
+                raise
+            finally:
+                end(aborted=failed or delivered != wanted or not exhausted)
 
 
 class _DeviceLossSums:
@@ -1312,6 +1382,16 @@ class TrainMetrics:
   # agrees to that overhead and no more. The old one is kept because
   # `optimizer_steps_per_s` in the Ray report is derived from it.
     batch_prefetch_wait_s: float = 0.0
+  # Opt-in CPU subspans of `batch_prefetch_wait_s`, not extra partition phases.
+  # Zero with `batch_prefetch_split_enabled == 0` means unmeasured.
+    batch_future_wait_s: float = 0.0
+    batch_host_sample_s: float = 0.0
+    batch_tensor_issue_s: float = 0.0
+    batch_prefetch_residual_s: float = 0.0
+    batch_future_calls: int = 0
+    batch_host_sample_calls: int = 0
+    batch_tensor_calls: int = 0
+    batch_prefetch_split_enabled: int = 0
     fwd_loss_s: float = 0.0
     bwd_s: float = 0.0
     gradnorm_zclip_s: float = 0.0
@@ -2841,6 +2921,7 @@ class Trainer:
         moves_left_max_plies: float = 0.0,
         tb_log_interval: int = 10,
         prefetch_batches: bool = True,
+        prefetch_split_timing: bool = False,
         model_config: ModelConfig | None = None,
     ):
         self.device = device
@@ -3202,6 +3283,7 @@ class Trainer:
         self.step = 0
         self._tb_log_interval = max(1, int(tb_log_interval))
         self._prefetch_batches = bool(prefetch_batches)
+        self._prefetch_split_timing = bool(prefetch_split_timing)
 
         self.use_amp = bool(use_amp)
         self._amp_dtype = torch.bfloat16 if device.startswith("cuda") else None
@@ -4615,6 +4697,17 @@ class Trainer:
             return collate_arrays(batch, device=self.device)
         return collate(batch, device=self.device)
 
+    def _timed_host_batch_to_tensors(
+        self, batch: dict[str, np.ndarray] | list,
+        timing: _BatchPrefetchSplitTiming,
+    ) -> dict[str, torch.Tensor]:
+        started = time.perf_counter()
+        try:
+            return self._host_batch_to_tensors(batch)
+        finally:
+            timing.tensor_issue_s += time.perf_counter() - started
+            timing.tensor_calls += 1
+
     def _iter_prefetched_batches(
         self,
         buf: ReplayBuffer,
@@ -4655,6 +4748,59 @@ class Trainer:
                     )
                 yield self._host_batch_to_tensors(host_batch)
 
+    def _iter_timed_prefetched_training_batches(
+        self,
+        buf: ReplayBuffer,
+        *,
+        batch_size: int,
+        mirror_prob: float,
+        count: int,
+        timing: _BatchPrefetchSplitTiming,
+        coverage: _SfRebuildCoverageAccumulator | None = None,
+    ) -> Iterator[dict[str, torch.Tensor]]:
+        """Training-only measured twin; leave the eval ruler's sampler untouched."""
+        n = int(count)
+        if n <= 0:
+            return
+        if not self._prefetch_batches or n == 1:
+            for _ in range(n):
+                started = time.perf_counter()
+                try:
+                    host_batch = self._sample_batch_host(
+                        buf, batch_size=batch_size, mirror_prob=mirror_prob,
+                        coverage=coverage,
+                    )
+                finally:
+                    timing.host_sample_s += time.perf_counter() - started
+                    timing.host_sample_calls += 1
+                yield self._timed_host_batch_to_tensors(host_batch, timing)
+            return
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                self._sample_batch_host,
+                buf,
+                batch_size=batch_size,
+                mirror_prob=mirror_prob,
+                coverage=coverage,
+            )
+            for idx in range(n):
+                started = time.perf_counter()
+                try:
+                    host_batch = future.result()
+                finally:
+                    timing.future_wait_s += time.perf_counter() - started
+                    timing.future_calls += 1
+                if idx + 1 < n:
+                    future = pool.submit(
+                        self._sample_batch_host,
+                        buf,
+                        batch_size=batch_size,
+                        mirror_prob=mirror_prob,
+                        coverage=coverage,
+                    )
+                yield self._timed_host_batch_to_tensors(host_batch, timing)
+
     def _iter_training_batches(
         self,
         buf: ReplayBuffer,
@@ -4663,9 +4809,16 @@ class Trainer:
         mirror_prob: float,
         count: int,
         coverage: _SfRebuildCoverageAccumulator | None = None,
+        split_timing: _BatchPrefetchSplitTiming | None = None,
     ) -> Iterator[dict[str, torch.Tensor]]:
         """Training batches, serialized when exact replay owns a hard cap."""
         if not bool(getattr(buf, "exact_without_replacement", False)):
+            if split_timing is not None:
+                yield from self._iter_timed_prefetched_training_batches(
+                    buf, batch_size=batch_size, mirror_prob=mirror_prob,
+                    count=count, coverage=coverage, timing=split_timing,
+                )
+                return
             if coverage is None:
                 yield from self._iter_prefetched_batches(
                     buf,
@@ -4684,23 +4837,42 @@ class Trainer:
             return
 
         if bool(getattr(buf, "host_batch_overlap", False)):
-            yield from self._iter_exact_overlapped_batches(
+            source = self._iter_exact_overlapped_batches(
                 buf, batch_size=batch_size, mirror_prob=mirror_prob,
-                count=count, coverage=coverage,
+                count=count, coverage=coverage, split_timing=split_timing,
             )
+            yield from _guard_exact_host_overlap(source, buf, count)
             return
 
         # The exact planner prices one materialized host batch at a time.  The
         # ordinary prefetch path retains batch N while assembling N+1, so exact
         # training deliberately gives up that overlap to keep the cap hard.
         for _ in range(max(0, int(count))):
-            host_batch = self._sample_batch_host(
-                buf,
-                batch_size=batch_size,
-                mirror_prob=mirror_prob,
-                coverage=coverage,
-            )
-            device_batch = self._host_batch_to_tensors(host_batch)
+            if split_timing is None:
+                host_batch = self._sample_batch_host(
+                    buf,
+                    batch_size=batch_size,
+                    mirror_prob=mirror_prob,
+                    coverage=coverage,
+                )
+            else:
+                started = time.perf_counter()
+                try:
+                    host_batch = self._sample_batch_host(
+                        buf,
+                        batch_size=batch_size,
+                        mirror_prob=mirror_prob,
+                        coverage=coverage,
+                    )
+                finally:
+                    split_timing.host_sample_s += time.perf_counter() - started
+                    split_timing.host_sample_calls += 1
+            if split_timing is None:
+                device_batch = self._host_batch_to_tensors(host_batch)
+            else:
+                device_batch = self._timed_host_batch_to_tensors(
+                    host_batch, split_timing,
+                )
             del host_batch
             yield device_batch
             # A suspended generator retains its locals.  Drop the yielded
@@ -4711,6 +4883,7 @@ class Trainer:
     def _iter_exact_overlapped_batches(
         self, buf: ReplayBuffer, *, batch_size: int, mirror_prob: float,
         count: int, coverage: _SfRebuildCoverageAccumulator | None = None,
+        split_timing: _BatchPrefetchSplitTiming | None = None,
     ) -> Iterator[dict[str, torch.Tensor]]:
         """One host future; CUDA and transfer lifetime stay on the caller."""
         n = max(0, int(count))
@@ -4745,17 +4918,32 @@ class Trainer:
             future = pool.submit(prepare)
             try:
                 for index in range(n):
+                    future_started = (
+                        time.perf_counter() if split_timing is not None else 0.0
+                    )
                     host_batch = future.result()
+                    future_elapsed = (
+                        time.perf_counter() - future_started
+                        if split_timing is not None else 0.0
+                    )
                     # Nonblocking copies can outlive collate's local pinned
                     # tensors. Retire that generation before pinning another;
                     # this waits for H2D, not all subsequent model computation.
                     if transfer is not None:
-                        transfer.synchronize()
+                        transfer.synchronize()  # pyright: ignore[reportUnreachable]  # Retained across generator yields.
                         transfer = None
+                    if split_timing is not None:
+                        split_timing.future_wait_s += future_elapsed
+                        split_timing.future_calls += 1
                     if str(self.device).startswith("cuda"):
                         transfer = torch.cuda.Event()
                     try:
-                        device_batch = self._host_batch_to_tensors(host_batch)
+                        if split_timing is None:
+                            device_batch = self._host_batch_to_tensors(host_batch)
+                        else:
+                            device_batch = self._timed_host_batch_to_tensors(
+                                host_batch, split_timing,
+                            )
                     finally:
                         # Collation may enqueue only some fields before raising.
                         # Record their lifetime too, without replacing the
@@ -5734,6 +5922,9 @@ class Trainer:
   # `_PipelinePhaseTimer` for why there is no switch and what the two clocks
   # mean.
         phase_timer = _PipelinePhaseTimer(device=self.device)
+        split_timing = (
+            _BatchPrefetchSplitTiming() if self._prefetch_split_timing else None
+        )
         train_wall_start = time.perf_counter()
 
   # ⚑ DEVICE-RESIDENT until the window ends. `sums` (the host dict every
@@ -5771,13 +5962,24 @@ class Trainer:
 
         requested_steps = int(steps)
         effective_cycle_steps = max(1, requested_steps)
-        batch_iter = _TrainBatchIterator(
-            lambda count: self._iter_training_batches(
+        def batches_for_count(count: int) -> Iterator[dict[str, torch.Tensor]]:
+            if split_timing is None:
+                return self._iter_training_batches(
+                    buf,
+                    batch_size=batch_size,
+                    mirror_prob=self.mirror_prob,
+                    count=count,
+                )
+            return self._iter_training_batches(
                 buf,
                 batch_size=batch_size,
                 mirror_prob=self.mirror_prob,
                 count=count,
-            ),
+                split_timing=split_timing,
+            )
+
+        batch_iter = _TrainBatchIterator(
+            batches_for_count,
             requested_steps * self.accum_steps,
         )
 
@@ -5920,6 +6122,29 @@ class Trainer:
   # complete and reading them costs nothing. `pipeline_other_s` is whatever of
   # `train_time_s` the phases did not claim.
         phase_timings = phase_timer.drain(window_wall_s=train_time_s)
+        # The three CPU subspans are inside next(batches), not a new partition
+        # of the training window. This remainder includes iterator bookkeeping
+        # and exact-overlap transfer retirement, without a CUDA synchronization.
+        prefetch_residual_s = (
+            phase_timings["batch_prefetch_wait_s"]
+            - split_timing.future_wait_s
+            - split_timing.host_sample_s
+            - split_timing.tensor_issue_s
+            if split_timing is not None else 0.0
+        )
+        split_timings = (
+            {
+                "batch_future_wait_s": split_timing.future_wait_s,
+                "batch_host_sample_s": split_timing.host_sample_s,
+                "batch_tensor_issue_s": split_timing.tensor_issue_s,
+                "batch_prefetch_residual_s": prefetch_residual_s,
+                "batch_future_calls": split_timing.future_calls,
+                "batch_host_sample_calls": split_timing.host_sample_calls,
+                "batch_tensor_calls": split_timing.tensor_calls,
+                "batch_prefetch_split_enabled": 1,
+            }
+            if split_timing is not None else {}
+        )
   # print(), NOT logging.info() -- the trial actor installs no logging handler;
   # see the `export_swa` comment. One line per window, unconditional: a
   # throughput decomposition that only appears when someone remembers to ask
@@ -5940,7 +6165,18 @@ class Trainer:
             f"gpu_bwd_s={phase_timings['gpu_bwd_s']:.3f} "
             f"gpu_gradnorm_zclip_s={phase_timings['gpu_gradnorm_zclip_s']:.3f} "
             f"gpu_opt_step_s={phase_timings['gpu_opt_step_s']:.3f} "
-            f"gpu_events={'on' if phase_timer.cuda else 'off'}",
+            f"gpu_events={'on' if phase_timer.cuda else 'off'}"
+            + (
+                f" batch_future_wait_s={split_timing.future_wait_s:.3f}"
+                f" batch_host_sample_s={split_timing.host_sample_s:.3f}"
+                f" batch_tensor_issue_s={split_timing.tensor_issue_s:.3f}"
+                f" batch_prefetch_residual_s={prefetch_residual_s:.3f}"
+                f" batch_future_calls={split_timing.future_calls}"
+                f" batch_host_sample_calls={split_timing.host_sample_calls}"
+                f" batch_tensor_calls={split_timing.tensor_calls}"
+                f" prefetch_split=on"
+                if split_timing is not None else ""
+            ),
             flush=True,
         )
   # ⚑ ANNOUNCE THE NaN THE ZERO-WEIGHT GUARD SWALLOWED. A term at weight 0.0 is
@@ -5997,6 +6233,7 @@ class Trainer:
             batches_drawn=float(batch_iter.consumed),
             transient_cuda_retry_batches=float(transient_cuda_retry_batches),
             **phase_timings,
+            **split_timings,
             **_grad_clip_metric_kwargs(grad_norms, clip_counts, aurora_grad_norms),
             **self._sf_rebuild_coverage.drain(),
             **getattr(self.opt, "last_uw_stats", {}),

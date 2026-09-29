@@ -26,7 +26,7 @@ mkdir -p "$BUILD_DIR"
 GENERATED="$BUILD_DIR/cuda_parity.generated.c"
 CMAKE_BUILD="$BUILD_DIR/cmake"
 
-echo "bend CUDA parity: $("$BEND_BIN" --version 2>/dev/null || echo unknown)"
+echo "bend CUDA parity: $("$BEND_BIN" version 2>/dev/null || echo unknown)"
 "$BEND_BIN" "$PROBE_DIR/main.bend" -o "$GENERATED"
 
 TORCH_PREFIX="$("$PYTHON_BIN" - <<'PY'

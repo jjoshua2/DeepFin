@@ -1,0 +1,54 @@
+name: Native service-profile regression
+on:
+  pull_request:
+    paths:
+      - 'native/bend_engine/service_profile/**'
+      - 'tests/test_bend_service_profile.py'
+      - '.github/workflows/bend-service-profile.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: service-profile-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Compile and execute source-only timer and failure controls
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          python -m native.bend_engine.service_profile.qualify --out /tmp/service-controls --cxx clang++-18
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('/tmp/service-controls/report.json').read_text())
+          assert r['status']=='passed'
+          assert len(r['cases'])==12
+          assert sum(c['negative_controls'] for c in r['cases'])==252
+          assert all(c['status']=='passed' for c in r['cases'])
+          PY
+      - name: Keep reports and compiler diagnostics
+        if: always()
+        run: |
+          mkdir -p artifacts/service-controls
+          if test -d /tmp/service-controls; then
+            find /tmp/service-controls -type f \( -name '*.json' -o -name 'build.txt' \) | while read -r f; do
+              cp "$f" "artifacts/service-controls/$(basename "$(dirname "$f")")-$(basename "$f")"
+            done
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-service-controls
+          path: artifacts/service-controls
+          retention-days: 14

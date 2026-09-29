@@ -4,15 +4,22 @@ on:
   pull_request:
     paths:
       - "native/bend_engine/**"
-      - "native/bend_engine/install_bend.sh"
       - "tests/test_bend_chess_probe.py"
       - "tests/test_bend_latest_manifest.py"
+      - "tests/test_bend_installer.py"
+      - "tests/test_bend_release_fallback.py"
       - ".github/workflows/bend-probe.yml"
       - "chess_anti_engine/encoding/_cboard_impl.h"
       - "chess_anti_engine/encoding/_lc0_ext.c"
       - "chess_anti_engine/encoding/_bitboard_planes_impl.h"
       - "chess_anti_engine/encoding/_slider_attacks_impl.h"
   workflow_dispatch:
+    inputs:
+      compiler:
+        description: "PR checks use the pinned U64 fork; upstream latest is opt-in compatibility testing"
+        type: choice
+        default: pinned-fork
+        options: [pinned-fork, upstream-latest]
 
 jobs:
   probe:
@@ -30,26 +37,26 @@ jobs:
       - name: Install DeepFin CPU test environment
         run: uv sync --locked --extra dev --extra cpu
 
-      # bun.sh is the supported bun install path for source tarballs. Official
-      # GitHub release archives ship a binary. Bend is installed from
-      # latest.json (sha256-checked, GitHub asset digest when the feed has no
-      # sha256/url) rather than a pinned patch: the language is young and the
-      # parity probe is the compatibility gate.
-      - name: Check latest.json resolver
-        run: pytest -q tests/test_bend_latest_manifest.py
+      - name: Verify installer and metadata without network
+        run: pytest -q tests/test_bend_latest_manifest.py tests/test_bend_installer.py tests/test_bend_release_fallback.py
 
-      - name: Install bun
-        run: |
-          if ! command -v bun >/dev/null 2>&1; then
-            curl -fsSL https://bun.sh/install | bash
-          fi
-          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+      # PR checks are reproducible even when the upstream download feed changes.
+      # Explicit manual upstream-latest runs still check the latest release.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
 
-      - name: Install latest Bend
+      - name: Install explicitly selected Bend compiler
         env:
           BEND_NO_TELEMETRY: "1"
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: native/bend_engine/install_bend.sh
+          GITHUB_TOKEN: ${{ github.token }}
+          BEND_COMPILER: ${{ inputs.compiler || 'pinned-fork' }}
+        run: |
+          case "$BEND_COMPILER" in
+            pinned-fork) native/bend_engine/install_ci_bend.sh ;;
+            upstream-latest) native/bend_engine/install_bend.sh ;;
+            *) echo "error: unsupported compiler selection" >&2; exit 2 ;;
+          esac
 
       - name: Build and verify Bend/CBoard parity probe
         env:
