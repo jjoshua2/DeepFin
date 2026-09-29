@@ -90,28 +90,28 @@ def position(input: PositionInput, table: Array<U64>) -> Array<U64> & Maybe<&2, 
   limited(Nat.is_le(List.length(&2, String, xs), 512n), xs, validate(g, table))
 
 type Limits is Data:
-  Limits{nodes: U32, depth: U32, milliseconds: U32, infinite: Bool, seen: U32, valid: Bool}
+  Limits{nodes: U32, depth: U32, milliseconds: U32, infinite: Bool, seen: U32, valid: Bool, evals: U32}
 
 def field(+s: String) -> U32:
   Bool.pick(U32, String.eq(s, "nodes"), 1, Bool.pick(U32, String.eq(s, "depth"), 2,
-    Bool.pick(U32, String.eq(s, "movetime"), 4, Bool.pick(U32, String.eq(s, "infinite"), 8, 0))))
+    Bool.pick(U32, String.eq(s, "movetime"), 4, Bool.pick(U32, String.eq(s, "infinite"), 8, Bool.pick(U32, String.eq(s, "evals"), 16, Bool.pick(U32, String.eq(s, "profile"), 32, 0))))))
 
 def set_limit(+which: U32, value: Maybe<&2, U32>, lim: Limits) -> Limits:
   match value:
     case None{}:
-      Limits{n, d, ms, inf, seen, valid} = lim
-      Limits{n, d, ms, inf, seen, False{}}
+      Limits{n, d, ms, inf, seen, valid, evals} = lim
+      Limits{n, d, ms, inf, seen, False{}, evals}
     case Some{+v}:
-      Limits{n, d, ms, inf, +seen, valid} = lim
-      max = Bool.pick(U32, U32.is_eq(which, 1), 256, Bool.pick(U32, U32.is_eq(which, 2), 32, 60000))
+      Limits{n, d, ms, inf, +seen, valid, evals} = lim
+      max = Bool.pick(U32, U32.is_eq(which, 1), 256, Bool.pick(U32, U32.is_eq(which, 2), 32, Bool.pick(U32, U32.is_eq(which, 16), 65536, 60000)))
       ok = Bool.and(valid, Bool.and(U32.is_gt(which, 0), Bool.and(U32.is_zero(U32.and(seen, which)),
         Bool.and(U32.is_gt(v, 0), U32.is_le(v, max)))))
       Limits{Bool.pick(U32, U32.is_eq(which, 1), v, n), Bool.pick(U32, U32.is_eq(which, 2), v, d),
-        Bool.pick(U32, U32.is_eq(which, 4), v, ms), inf, U32.or(seen, which), ok}
+        Bool.pick(U32, U32.is_eq(which, 4), v, ms), inf, U32.or(seen, which), ok, Bool.pick(U32, U32.is_eq(which, 16), v, evals)}
 
 def unlimited(l: Limits) -> Limits:
-  Limits{n, d, ms, inf, +seen, valid} = l
-  Limits{n, d, ms, True{}, U32.or(seen, 8), Bool.and(valid, U32.is_zero(U32.and(seen, 12)))}
+  Limits{n, d, ms, inf, +seen, valid, evals} = l
+  Limits{n, d, ms, True{}, U32.or(seen, 8), Bool.and(valid, U32.is_zero(U32.and(seen, 12))), evals}
 
 type GoState is Data:
   GoState{lim: Limits, pending: U32}
@@ -119,6 +119,9 @@ type GoState is Data:
 def go_field(which: U32, lim: Limits) -> GoState:
   match which:
     case 8: GoState{unlimited(lim), 0}
+    case 32:
+      Limits{n, d, ms, inf, +seen, valid, evals} = lim
+      GoState{Limits{n, d, ms, inf, U32.or(seen, 32), Bool.and(valid, U32.is_zero(U32.and(seen, 32))), evals}, 0}
     case 0: GoState{set_limit(0, None{}, lim), 0}
     case _: GoState{lim, which}
 
@@ -128,10 +131,16 @@ def go_word(word: String, state: GoState) -> GoState:
     case 0: go_field(field(word), lim)
     case _: GoState{set_limit(pending, Text.number(word), lim), 0}
 
+def measured_limits(lim: Limits) -> Limits:
+  Limits{n, d, ms, inf, +seen, valid, evals} = lim
+  # Bounded safety guard, NOT the requested NN-row or wall-time budget.
+  measured = Bool.and(U32.is_zero(U32.and(seen, 1)), U32.is_gt(U32.and(seen, 20), 0))
+  Limits{Bool.pick(U32, measured, 65536, n), d, ms, inf, seen, valid, evals}
+
 def go_finish(s: GoState) -> Limits:
   GoState{lim, pending} = s
   match pending:
-    case 0: lim
+    case 0: measured_limits(lim)
     case _: set_limit(pending, None{}, lim)
 
 def go(xs: List<&2, String>, state: GoState) -> Limits:

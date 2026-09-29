@@ -1,0 +1,10 @@
+{
+  "id": "packed_trainer256_pair_20260921",
+  "kind": "registered_command",
+  "status": "queued",
+  "out": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-registration-20260921/scheduler_run",
+  "max_seconds": 5400,
+  "estimated_active_seconds": 3600,
+  "command_file": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-registration-20260921/registered_command.json",
+  "command_sha256": "0ee0ba7c32d1ad5afc6f00d7166e63b7634e9f24c2c2da203938f5a756aac3d4"
+}

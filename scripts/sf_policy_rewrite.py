@@ -75,10 +75,11 @@ class Observation:
 
 
 def observation(
-    row: dict[str, Any], config_sha: str, *, selected_phase0: bool = False
+    row: dict[str, Any], config_sha: str, *, selected_phase0: bool = False,
+    expected_outcome_mode: str = derive.corpus.OUTCOME_MODE_THEORETICAL,
 ) -> Observation:
     """Full legal phase-zero roster, preserving original score/order precision."""
-    derive._check_row_identity(row, config_sha)
+    derive._check_row_identity(row, config_sha, expected_outcome_mode)
     require(derive.row_schema_of(row) == 3, "raw row is not history schema3")
     derive.require_row_regime(row)
     key = row.get("input_key")
@@ -358,6 +359,13 @@ def tactical_source(
 
 
 def source_contract(summary: dict[str, Any], record: derive.CorpusRecord) -> None:
+    require(
+        derive.corpus.outcome_mode_of(summary["corpus"].get(
+            "outcome_mode", derive.corpus.OUTCOME_MODE_THEORETICAL,
+        ))
+        == derive.corpus_outcome_mode(record.facts),
+        "source/raw outcome modes differ",
+    )
     rows = summary["realized"]["rows_written"]
     require(
         record.corpus_complete and record.facts["row_schema"] == 3,
@@ -445,6 +453,13 @@ def source_contract(summary: dict[str, Any], record: derive.CorpusRecord) -> Non
 
 
 def shard_contract(attrs: dict[str, Any], summary: dict[str, Any], rows: int) -> None:
+    require(
+        attrs.get("derive_outcome_mode", derive.corpus.OUTCOME_MODE_THEORETICAL)
+        == derive.corpus.outcome_mode_of(summary["corpus"].get(
+            "outcome_mode", derive.corpus.OUTCOME_MODE_THEORETICAL,
+        )),
+        "source shard outcome mode differs",
+    )
     expected = {
         "derive_state": "committed",
         "derive_run_finalized": True,
@@ -561,7 +576,9 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
 
         selected = SelectedG10(
             args, summary, raw_dir, source,
-            lambda row, config: observation(row, config, selected_phase0=True),
+            lambda row, config, mode: observation(
+                row, config, selected_phase0=True, expected_outcome_mode=mode,
+            ),
         )
         metadata.update(selected.metadata)
     else:
@@ -588,6 +605,17 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             out != parent and parent not in out.parents and out not in parent.parents,
             "output overlaps B100 source",
         )
+    value_parent = None
+    value_args = [getattr(args, name, None) for name in (
+        "downside_value_source", "expected_downside_value_summary_sha256",
+        "expected_downside_value_recipe_sha256")]
+    if any(value_args):
+        require(all(value_args) and downside and tactical is not None,
+                "combined value source requires all pins and Downside300")
+        from scripts.sf_downside_value import ValueParent
+
+        value_parent = ValueParent(args, source, parent, out)
+        metadata.update({Path(p): h for p, h in value_parent.pins.items()})
     full_specs = summary["shards"]
     require(not pilot or pilot_shards <= len(full_specs), "pilot exceeds source shards")
     specs = full_specs[:pilot_shards] if pilot else full_specs
@@ -606,6 +634,10 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                 for x in specs
             }
         )
+    if value_parent:
+        source_states.update({value_parent.root / x["path"]:
+                              rank._storage_identity(value_parent.root / x["path"])
+                              for x in specs})
     producer_hashes = {
         str(p): file_sha256(p)
         for p in (Path(__file__), Path(derive.__file__), Path(rank.__file__))
@@ -618,6 +650,11 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             producer_hashes[str(Path(module.__file__))] = file_sha256(
                 Path(module.__file__)
             )
+    if value_parent:
+        for name in ("sf_downside_value.py", "combined_corpus_schedule.py"):
+            path = Path(__file__).with_name(name)
+            producer_hashes[str(path)] = file_sha256(path)
+            metadata[path] = producer_hashes[str(path)]
     writing.mkdir(parents=True)
     start = time.monotonic()
     raw_rows = dropped = rows_written = 0
@@ -749,6 +786,11 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             rank._storage_identity(copy_source) == source_states[copy_source],
             "B100 source changed before copy",
         )
+        b100_files: dict[str, str] = {}
+        if value_parent:
+            copy_source, b100_files = value_parent.check_shard(spec["path"], parent / spec["path"])
+            require(rank._storage_identity(copy_source) == source_states[copy_source],
+                    "value parent changed before copy")
         copied = copy_shard(copy_source, dst)
         if tactical:
             # Ordinary B100 copies, independently bound to the original SF
@@ -765,7 +807,8 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                 "B100 nonpolicy file inventory differs",
             )
             require(
-                all(file_sha256(path) == copied[rel] for rel, path in sf_files.items()),
+                all(file_sha256(path) == (b100_files[rel]
+                     if value_parent else copied[rel]) for rel, path in sf_files.items()),
                 "B100 changed nonpolicy bytes",
             )
         dest: Any = zarr.open_group(str(dst), mode="a")
@@ -877,7 +920,8 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                 raw_rows += 1
                 read += 1
                 assert record is not None
-                derive._check_row_identity(raw, str(record.facts["config_sha256"]))
+                record_mode = derive.corpus_outcome_mode(record.facts)
+                derive._check_row_identity(raw, str(record.facts["config_sha256"]), record_mode)
                 require(
                     all(
                         type(raw[k]) is int and raw[k] >= 0
@@ -910,7 +954,9 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                         ),
                         "invalid d9 nodes field",
                     )
-                pending.append(observation(raw, str(record.facts["config_sha256"])))
+                pending.append(observation(
+                    raw, str(record.facts["config_sha256"]), expected_outcome_mode=record_mode,
+                ))
                 if len(pending) == summary["rows_per_shard"]:
                     flush()
             raw_proofs[str(path)] = {
@@ -942,7 +988,7 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             selected.verify()
             selected.copy_exclusion_evidence(writing)
         if tactical:
-            for root in (source, parent):
+            for root in (source, parent, *((value_parent.root,) if value_parent else ())):
                 require(
                     [p.name for p in sorted(root.glob("shard_*.zarr"))]
                     == [s["path"] for s in full_specs],
@@ -1016,6 +1062,9 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                 algorithm=DOWNSIDE_ALGORITHM,
                 recipe=recipe_for_summary(downside=True),
             )
+        if value_parent:
+            result["selected_value_parent"] = value_parent.binding
+
         if selected:
             result.update(
                 selected_g10=True,
@@ -1044,7 +1093,7 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             ),
             result,
         )
-        derived = dict(summary)
+        derived = dict(value_parent.summary if value_parent else summary)
         derived["policy_target_postprocess"] = {
             k: v for k, v in result.items() if k != "outputs"
         }
@@ -1105,6 +1154,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--selected-g10-roster", help="Pinned closed raw selection; downside only")
     p.add_argument("--expected-selected-g10-roster-sha256")
+    p.add_argument("--downside-value-source", help="Explicit completed V50/V100 copy parent; Downside300 only")
+    p.add_argument("--expected-downside-value-summary-sha256")
+    p.add_argument("--expected-downside-value-recipe-sha256")
     p.add_argument("--expected-bt4-summary-sha256")
     p.add_argument("--expected-bt4-mix-sha256")
     return p

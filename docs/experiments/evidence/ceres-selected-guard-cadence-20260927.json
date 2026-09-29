@@ -1,0 +1,95 @@
+{
+  "schema": "ceres_selected_guard_cadence_compact_readout_v1",
+  "date": "2026-09-27",
+  "scope": "fixed selected 4096 rows, 64 fragments, 128 fixed32 neural calls per arm",
+  "source_packet_sha256": "f78ce28ab1c9c5e483931c1a16450a2cc715d65920e7c2d20f1b8bc2db7c606e",
+  "result_sha256": "ea7d70608278d965035be7fa1e55e37f0ca53edf66ddb91fbabc6270b46052fd",
+  "independent_source_review_sha256": "f66e86f551b18d80dcae45886f5448a04e87c135ecbe831096af8a72e79cbaf2",
+  "independent_terminal_review_sha256": "8a0ee3428fb8b3d33901f57973b4f3a4287e3d7807e9cbeba303821568b49706",
+  "status": "PASS_TERMINAL_SELECTED_4K_PROVISIONAL_ONLY",
+  "total_supervised_wall_seconds": 160.84911766099685,
+  "arms": [
+    {
+      "name": "A1",
+      "scan_cadence_seconds": 0.0,
+      "outer_wall_seconds": 42.8464952899958,
+      "exit_code": 0,
+      "plan_sha256": "7c4ccaead7e2affc58cf0ff7a6f872ef44b862d1becb9378c9d6b7056c72b657",
+      "completion_sha256": "ab84989ab8b07703d41e9b60f31bb8ab3191547093544e9c2ac9c8129cde04be",
+      "readback_sha256": "4e94a178620af7872abee0f4fad9b2f9a833808643ad3136ca9e273fcf1922ed",
+      "rows": 4096,
+      "fragments": 64,
+      "calls": 128
+    },
+    {
+      "name": "B1",
+      "scan_cadence_seconds": 5.0,
+      "outer_wall_seconds": 34.49471423801151,
+      "exit_code": 0,
+      "plan_sha256": "453fd1709d743991206c02eaccf53d19c29b916184d7b26a9607971b9dc072b3",
+      "completion_sha256": "7bb068c2cec404e8fbee0e5ee0ec62086cd2cdb591d7ea8e878965c5693eb206",
+      "readback_sha256": "8daf56f66318cd2b52fce597a75592213f66d471106569b1d4f91da9c91225d0",
+      "rows": 4096,
+      "fragments": 64,
+      "calls": 128
+    },
+    {
+      "name": "A2",
+      "scan_cadence_seconds": 0.0,
+      "outer_wall_seconds": 40.782581513005425,
+      "exit_code": 0,
+      "plan_sha256": "09df28624b26828f95beb7518455636c15cb441cb4560f508956346a5fcf5131",
+      "completion_sha256": "9471032054dcdb0c0881069042b1ec30ab26f97412e30d0494e89b46544bfd5a",
+      "readback_sha256": "646e2f26214a521b0058b47c85a4c5db7c614195cd1b8d470102efa7743b0b98",
+      "rows": 4096,
+      "fragments": 64,
+      "calls": 128
+    },
+    {
+      "name": "B2",
+      "scan_cadence_seconds": 5.0,
+      "outer_wall_seconds": 34.2856539820059,
+      "exit_code": 0,
+      "plan_sha256": "6c371a11ffc628fce1f2ed871de745582d7e25eb265821ce30800f36048c4f0b",
+      "completion_sha256": "5146df95b4113e7d372285c9e0c3774747f0a28120a332141ec0bc6426fe2981",
+      "readback_sha256": "e618e130028fbbcd8a4a56cd1fb245d6a728e0fcd2d803733629f73261c655b3",
+      "rows": 4096,
+      "fragments": 64,
+      "calls": 128
+    }
+  ],
+  "stream_parity_sha256": {
+    "policy_logits": "fdec046364fdcbb6a29e40bc387a4e55ef6840a358b81ae5778cb455f71e273c",
+    "value_logits": "dabc1c5549192a1431636bb074c257e988e1d7bf649396af4aa2e7ea89a6d597",
+    "value2_logits": "91cb177d1d56d8c55463a4a0e4393d7aecdd85c07a2f0db7d95ae13e4743d3df",
+    "tpg_feed_sha256": "5e824352c050efa49f4e1cb74a033cf41ef7438c07401993fec1a2fa1d46b4a4",
+    "x_sha256": "c3feefab45addc6901039dbba36981d63cdd6c09ae631dea6082c803956e2038",
+    "legal_offsets": "fa99d04655bb06ba56377edf7032154027d4f06204ed4f8312799a5b34f09e23",
+    "legal_indices": "ff40e57636ed71fe5bb42cb63f787f7edd280805c2f0f90235f0aee3b4b6d837",
+    "feed_rebuilt": "02752393bb9624b86972712a92c0299b51315f2346ab169ab2e39c0057129e82",
+    "selected_policy": "dce49cf5af6e3a58f1c1f7f5d2bd5c4c5b37d88dbc37935bfe72bd15d996d159",
+    "selected_wdl": "fec3c4ea28d00cebd78ffba1bd593dc77889e3e24e7f7728386067a90abd6d2e",
+    "dual_policy": "dce49cf5af6e3a58f1c1f7f5d2bd5c4c5b37d88dbc37935bfe72bd15d996d159",
+    "dual_wdl": "fec3c4ea28d00cebd78ffba1bd593dc77889e3e24e7f7728386067a90abd6d2e",
+    "row_identity": "c2f75ba53137bd8a591fd0e9f28300e34d5463d1549d896df365df26a7622975",
+    "source_x": "b41af5038dd20826bc1c500c121b6fec660b0c9dadb7e270810f588a56c07153"
+  },
+  "all_four_stream_maps_equal": true,
+  "decision": {
+    "paired_B_savings_seconds": [
+      8.35178105198429,
+      6.496927530999528
+    ],
+    "A_mean_outer_wall_seconds": 41.81453840150061,
+    "B_mean_outer_wall_seconds": 34.390184110008704,
+    "relative_full_wall_saving": 0.17755437642773234,
+    "verdict": "PROVISIONAL_SELECTED_4K_WIN",
+    "scope": "Paired outer launch-to-exit walls only; no Selected-E/500M extrapolation."
+  },
+  "interpretation_limits": [
+    "Two fixed A/B pairs; no formal uncertainty interval.",
+    "Target and raw-head parity on fixed selected bank, not full Selected-E 35-cohort route.",
+    "No production code change or sustained 500M throughput measurement.",
+    "Sole-GPU exclusivity cannot be retrospectively proven outside cooperating lock."
+  ]
+}
