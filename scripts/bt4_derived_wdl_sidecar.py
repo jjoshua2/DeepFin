@@ -21,7 +21,7 @@ import signal
 import sys
 import time
 from typing import Any
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import numpy as np
 import zarr
@@ -102,8 +102,19 @@ def source_inventory(
         args.g10_admission = g10.admit(Path(qualification), qualification_sha, source, summary)
     else:
         args.g10_admission = None
+    audited_path = getattr(args, "audited_source_manifest", None)
+    audited_sha = getattr(args, "expected_audited_source_manifest_sha256", None)
+    require(bool(audited_path) == bool(audited_sha), "audited source requires path and digest")
+    require(not (audited_path and qualification), "audited and common G10 routes are exclusive")
+    args.audited_source_admission = None
+    if audited_path:
+        if not isinstance(audited_sha, str):
+            raise ValueError('audited source SHA256 must be a string')
+        from scripts import audited_source_admission as audited
+        args.audited_source_admission = audited.admit(Path(audited_path), audited_sha, source, summary)
     require(
         type(rows) is int and rows > 0 and (args.g10_admission is not None
+            or args.audited_source_admission is not None
             or summary["corpus"]["corpus_complete"] is True),
         "source is incomplete",
     )
@@ -165,6 +176,30 @@ def source_arrays(path: Path, summary: dict[str, Any], rows: int) -> Any:
             require(array.dtype.kind in kinds, "nonintegral source identity/presence")
         complete_chunks(array)
     return group
+
+
+def source_batches(group: Any, rows: int, batch_size: int,
+                   guard: Callable[[], None]) -> Iterator[tuple[int, int, dict[str, np.ndarray]]]:
+    """Decode source chunks once without changing inference batch boundaries.
+
+    Keep read-ahead bounded to 2048 rows (about 44 MiB of x). Unusual chunk/batch
+    combinations whose common boundary exceeds that cap use the original reads.
+    A caller-selected larger inference batch never gains additional read-ahead.
+    """
+    arrays = {name: group[name] for name in COLUMNS}
+    aligned = math.lcm(int(arrays["x"].chunks[0]), batch_size)
+    read_rows = aligned if aligned <= max(2048, batch_size) else batch_size
+    buffered: dict[str, np.ndarray] = {}
+    buffer_start = buffer_end = 0
+    for start in range(0, rows, batch_size):
+        guard()
+        end = min(rows, start + batch_size)
+        if start >= buffer_end:
+            buffer_start, buffer_end = start, min(rows, start + read_rows)
+            buffered = {name: np.asarray(array[buffer_start:buffer_end])
+                        for name, array in arrays.items()}
+        yield start, end, {name: array[start - buffer_start:end - buffer_start]
+                           for name, array in buffered.items()}
 
 
 def row_digests(feed: np.ndarray) -> np.ndarray:
@@ -345,10 +380,7 @@ def label_shard(
         )
     hashes = {name: hashlib.sha256() for name in layouts}
     source_hashes = {name: hashlib.sha256() for name in COLUMNS}
-    for start in range(0, n, args.batch_size):
-        guard()
-        end = min(n, start + args.batch_size)
-        batch = {name: np.asarray(group[name][start:end]) for name in COLUMNS}
+    for start, end, batch in source_batches(group, n, args.batch_size, guard):
         require(
             all(np.all(batch[name] == 1) for name in ("has_game_id", "has_ply_index")),
             "missing row identity",

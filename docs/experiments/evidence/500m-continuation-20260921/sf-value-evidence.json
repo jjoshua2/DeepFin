@@ -1,0 +1,285 @@
+{
+  "scope": "Read-only completed bootstrap value endpoints; historical RL load-bearing claim excluded.",
+  "sources": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Combined35M_V100_V50_fixed400_run01/arena.results.jsonl": {
+      "sha256": "c06b6684e3c6dc0dd0b45116004df9ef45e1ee041ae468f7e037ec6c2d544f57"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Combined35M_V100_V50_fixed400_seed2_run01/arena.results.jsonl": {
+      "sha256": "4acf16810eb4dadd1f0abdb7bce1d69d7dc100a7660123e8f38f88674eab520b"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Combined35M_V50_SF100_fixed400_run01/arena.results.jsonl": {
+      "sha256": "0655c606239f90c01b454125764571e24322cadc1b02224648a793d9a54ddd81"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Combined35M_V100_SF100_fixed400_run01/arena.results.jsonl": {
+      "sha256": "18334654c54a0cc6b66094394850254c73cb773fba8bb38276729b5f98a90cbc"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Combined35M_V100_SF100_fixed400_seed2_run01/arena.results.jsonl": {
+      "sha256": "997b42a8cc7fe6e7275262b6ae2f290c1b4f76319b75ff5db065f14a91d77ffa"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100CeresV25_B100V50_fixed400_run01/arena.results.jsonl": {
+      "sha256": "0aa1d543bde0ffca87fb60bd59131fac5e38ff198c492cadc271afa7180bdeb9"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100CeresV25_B100V50_fixed400_seed2_run01/arena.results.jsonl": {
+      "sha256": "e5110f0096e1c19428bb2334e4fc0a096e03fa2a28c31e96a42b48c717853bf2"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100CeresV25_B100V50_fixed400_seed3_run01/arena.results.jsonl": {
+      "sha256": "dcf60cd4907d8424f80476eb47f7ea6895e472e179fb2d870b46d8435870dbff"
+    },
+    "/tmp/deepfin-v100-trained-arena-launched/docs/experiments/2026-09-13-native-bt4-value-endpoint.md": {
+      "sha256": "3acbc2659bad70a8a885c766b37b84d5ea3f8cac324a112834707ca89f18364b"
+    },
+    "/tmp/deepfin-v100-trained-arena-launched/docs/experiments/2026-09-13-combined35m-value-transfer.md": {
+      "sha256": "b98c7fa4925a191d90ae406406f68d73d9ffe46115ab089d702fa8c6ad594467"
+    },
+    "/tmp/deepfin-v100-trained-arena-launched/docs/experiments/2026-09-11-ceres-weighted-bootstrap.md": {
+      "sha256": "38a7f92f16db6b51ba0396bc22b7654aaf15141044521685e4bd671f5b86cefe"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/training/training.complete.json": {
+      "sha256": "4b957c80913a1022fcd5fc0e3ec5468c39ee73e33a2dc0f328b95601805b44bd"
+    }
+  },
+  "arenas": [
+    {
+      "name": "Combined35M_V100_V50_fixed400_run01",
+      "candidate": "/home/josh/projects/chess/runs/combined35m_v100_seed101/checkpoint.pt",
+      "reference": "/home/josh/projects/chess/runs/combined35m_v50_seed101/checkpoint.pt",
+      "games": 512,
+      "pairs": 256,
+      "truncated": false,
+      "game_log_agrees": true,
+      "seed": 20260913,
+      "sims_candidate": 400,
+      "sims_reference": 400,
+      "score": 0.5127,
+      "elo": 8.82,
+      "elo_ci95": [
+        -16.84,
+        34.58
+      ],
+      "pentanomial": {
+        "WW": 30,
+        "WD_DW": 67,
+        "DD_WL": 80,
+        "LD_DL": 44,
+        "LL": 35
+      },
+      "git_sha": "82298a5d4010e7097f473712e3720de229522427",
+      "config_authoritative": true
+    },
+    {
+      "name": "Combined35M_V100_V50_fixed400_seed2_run01",
+      "candidate": "/home/josh/projects/chess/runs/combined35m_v100_seed101/checkpoint.pt",
+      "reference": "/home/josh/projects/chess/runs/combined35m_v50_seed101/checkpoint.pt",
+      "games": 512,
+      "pairs": 256,
+      "truncated": false,
+      "game_log_agrees": true,
+      "seed": 20260925,
+      "sims_candidate": 400,
+      "sims_reference": 400,
+      "score": 0.47363,
+      "elo": -18.34,
+      "elo_ci95": [
+        -43.19,
+        6.33
+      ],
+      "pentanomial": {
+        "WW": 26,
+        "WD_DW": 47,
+        "DD_WL": 91,
+        "LD_DL": 58,
+        "LL": 34
+      },
+      "git_sha": "82298a5d4010e7097f473712e3720de229522427",
+      "config_authoritative": false
+    },
+    {
+      "name": "Combined35M_V50_SF100_fixed400_run01",
+      "candidate": "/home/josh/projects/chess/runs/combined35m_v50_seed101/checkpoint.pt",
+      "reference": "/home/josh/projects/chess/runs/combined35m_sf100_seed101/checkpoint.pt",
+      "games": 512,
+      "pairs": 256,
+      "truncated": false,
+      "game_log_agrees": true,
+      "seed": 20260913,
+      "sims_candidate": 400,
+      "sims_reference": 400,
+      "score": 0.54492,
+      "elo": 31.3,
+      "elo_ci95": [
+        8.53,
+        54.34
+      ],
+      "pentanomial": {
+        "WW": 22,
+        "WD_DW": 85,
+        "DD_WL": 87,
+        "LD_DL": 41,
+        "LL": 21
+      },
+      "git_sha": "82298a5d4010e7097f473712e3720de229522427",
+      "config_authoritative": true
+    },
+    {
+      "name": "Combined35M_V100_SF100_fixed400_run01",
+      "candidate": "/home/josh/projects/chess/runs/combined35m_v100_seed101/checkpoint.pt",
+      "reference": "/home/josh/projects/chess/runs/combined35m_sf100_seed101/checkpoint.pt",
+      "games": 256,
+      "pairs": 128,
+      "truncated": false,
+      "game_log_agrees": true,
+      "seed": 20260927,
+      "sims_candidate": 400,
+      "sims_reference": 400,
+      "score": 0.5332,
+      "elo": 23.11,
+      "elo_ci95": [
+        -11.62,
+        58.3
+      ],
+      "pentanomial": {
+        "WW": 16,
+        "WD_DW": 33,
+        "DD_WL": 44,
+        "LD_DL": 22,
+        "LL": 13
+      },
+      "git_sha": "82298a5d4010e7097f473712e3720de229522427",
+      "config_authoritative": false
+    },
+    {
+      "name": "Combined35M_V100_SF100_fixed400_seed2_run01",
+      "candidate": "/home/josh/projects/chess/runs/combined35m_v100_seed101/checkpoint.pt",
+      "reference": "/home/josh/projects/chess/runs/combined35m_sf100_seed101/checkpoint.pt",
+      "games": 256,
+      "pairs": 128,
+      "truncated": false,
+      "game_log_agrees": true,
+      "seed": 20260929,
+      "sims_candidate": 400,
+      "sims_reference": 400,
+      "score": 0.56836,
+      "elo": 47.8,
+      "elo_ci95": [
+        12.54,
+        84.07
+      ],
+      "pentanomial": {
+        "WW": 20,
+        "WD_DW": 38,
+        "DD_WL": 37,
+        "LD_DL": 23,
+        "LL": 10
+      },
+      "git_sha": "82298a5d4010e7097f473712e3720de229522427",
+      "config_authoritative": false
+    },
+    {
+      "name": "B100CeresV25_B100V50_fixed400_run01",
+      "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_ceres_value25_epoch_v1/checkpoint.pt",
+      "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50_epoch_v1/checkpoint.pt",
+      "games": 256,
+      "pairs": 128,
+      "truncated": false,
+      "game_log_agrees": true,
+      "seed": 20260909,
+      "sims_candidate": 400,
+      "sims_reference": 400,
+      "score": 0.53711,
+      "elo": 25.83,
+      "elo_ci95": [
+        -10.06,
+        62.29
+      ],
+      "pentanomial": {
+        "WW": 19,
+        "WD_DW": 28,
+        "DD_WL": 50,
+        "LD_DL": 15,
+        "LL": 16
+      },
+      "git_sha": "82298a5d4010e7097f473712e3720de229522427",
+      "config_authoritative": true
+    },
+    {
+      "name": "B100CeresV25_B100V50_fixed400_seed2_run01",
+      "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_ceres_value25_epoch_v1/checkpoint.pt",
+      "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50_epoch_v1/checkpoint.pt",
+      "games": 256,
+      "pairs": 128,
+      "truncated": false,
+      "game_log_agrees": true,
+      "seed": 20260915,
+      "sims_candidate": 400,
+      "sims_reference": 400,
+      "score": 0.51562,
+      "elo": 10.86,
+      "elo_ci95": [
+        -25.76,
+        47.72
+      ],
+      "pentanomial": {
+        "WW": 19,
+        "WD_DW": 24,
+        "DD_WL": 48,
+        "LD_DL": 20,
+        "LL": 17
+      },
+      "git_sha": "82298a5d4010e7097f473712e3720de229522427",
+      "config_authoritative": false
+    },
+    {
+      "name": "B100CeresV25_B100V50_fixed400_seed3_run01",
+      "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_ceres_value25_epoch_v1/checkpoint.pt",
+      "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50_epoch_v1/checkpoint.pt",
+      "games": 256,
+      "pairs": 128,
+      "truncated": false,
+      "game_log_agrees": true,
+      "seed": 20260917,
+      "sims_candidate": 400,
+      "sims_reference": 400,
+      "score": 0.50195,
+      "elo": 1.36,
+      "elo_ci95": [
+        -32.2,
+        34.93
+      ],
+      "pentanomial": {
+        "WW": 14,
+        "WD_DW": 23,
+        "DD_WL": 55,
+        "LD_DL": 22,
+        "LL": 14
+      },
+      "git_sha": "82298a5d4010e7097f473712e3720de229522427",
+      "config_authoritative": false
+    }
+  ],
+  "matched35m": {
+    "rows": 35314577,
+    "updates": 68974,
+    "initialization_and_schedule_seed": 101,
+    "policy": "B100 unchanged",
+    "V100": "Native BT4 search_wdl, zero SF contribution to active value target",
+    "V50": "50% SF / 50% BT4 search_wdl",
+    "SF100": "Original SF value",
+    "V100_checkpoint_sha256": "9bf9ceffd4f93fe36eba3f525d69c1a8756e97e4f332973594c8c4eff1a7c836",
+    "canonical_schedule_prefix": "ca3922c4",
+    "limitations": "One trained checkpoint per recipe, arena opening seeds are not training replications; reused development panels, no proof of equivalence or dose optimum."
+  },
+  "ceres_value_endpoint": {
+    "recipe": "50% SF /25% BT4 /25% Ceres; Ceres component60/40primary/secondary with .55/1.5 temperatures",
+    "rows": 18910484,
+    "policy": "B100 unchanged",
+    "no_sf_bt4_ceres_test_found": false,
+    "search_scope": "Inspected historical Ceres weighted bootstrap doc, native endpoint doc, named Ceres preparation/publication records and current operator queue. No completed SF-free BT4+Ceres value endpoint located. This is absence in inspected records, not an exhaustive filesystem assertion."
+  },
+  "interpretation": [
+    "Reducing SF100 to SF50 with BT4 improved35M arena +31.30[8.53,54.34].",
+    "Zero-SF BT4 versus SF50 mixture mixed +8.82[-16.84,34.58] and-18.34[-43.19,6.33],512games each; unresolved.",
+    "Zero-SF BT4 vsSF100 +23.11[-11.62,58.30] and+47.80[12.54,84.07],256games each.",
+    "SF usefulness is unproven in this bootstrap; results do not prove a monotonic benefit from every reduction.",
+    "Current C contrast both adds Ceres and reduces SF50->33, so cannot isolate Ceres addition from SF reduction."
+  ]
+}

@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import math
 import shlex
@@ -58,7 +59,9 @@ import chess
 import numpy as np
 
 if TYPE_CHECKING:
+    from chess.syzygy import Tablebase
     from chess_anti_engine.eval.production_shape import LiveConfig
+    from chess_anti_engine.tablebase import SyzygyProbe
 
 from chess_anti_engine.eval.arena_pgn import (
     ArenaGame,
@@ -85,6 +88,43 @@ from chess_anti_engine.utils.game_log import (
 # installed, because the per-game JSONL that makes a crashed arena resumable
 # rides the same hook.
 PgnSink = Callable[..., None]
+
+
+def _opening_history(board: chess.Board) -> tuple[str, tuple[str, ...]]:
+    """Record the pre-play root and ordered book moves, not just their final FEN."""
+    return board.root().fen(), tuple(move.uci() for move in board.move_stack)
+
+
+def _played_uci_sha256(moves: Sequence[chess.Move]) -> str:
+    """Bind one arena attempt's actual play to its JSONL row and PGN game."""
+    played = json.dumps(
+        [move.uci() for move in moves], separators=(",", ":"),
+    ).encode("ascii")
+    return hashlib.sha256(b"arena-played-uci-v1\0" + played).hexdigest()
+
+
+def _is_runtime_str(value: object) -> bool:
+    """Validate dynamic sink/log values even when the caller has a str annotation."""
+    return isinstance(value, str)
+
+
+def _check_opening_history(
+    root_fen: str, opening_uci: Sequence[str], start_fen: str,
+) -> None:
+    """Require the recorded book to reconstruct the actual play position."""
+    try:
+        board = chess.Board(root_fen)
+        for uci in opening_uci:
+            if not _is_runtime_str(uci):
+                raise ValueError("opening UCI is not a string")
+            move = chess.Move.from_uci(uci)
+            if move not in board.legal_moves:
+                raise ValueError("opening UCI is illegal")
+            board.push(move)
+    except (ValueError, AssertionError) as exc:
+        raise ValueError("opening history cannot be replayed") from exc
+    if board.fen() != start_fen:
+        raise ValueError("opening history does not reach start FEN")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -168,6 +208,7 @@ AUTO_COMPILE_WORK_THRESHOLD = 12800
 # (candidate points over the two games of one opening pair).
 PAIR_SCORES = (2.0, 1.5, 1.0, 0.5, 0.0)
 PAIR_LABELS = ("WW", "WD_DW", "DD_WL", "LD_DL", "LL")
+SYZYGY_MATCH_PROTOCOL = "rule50-aware-root-leaf-and-adjudication-v1"
 
 
 # ---------------------------------------------------------------------------
@@ -1195,6 +1236,8 @@ def arena_game_log_settings(
         "uci_args": uci_args,
         "syzygy": syzygy_path or "",
         "syzygy_max_pieces": int(tb_max_pieces),
+        **({"syzygy_protocol": SYZYGY_MATCH_PROTOCOL}
+           if syzygy_path is not None else {}),
     }
 
 
@@ -1275,6 +1318,38 @@ def load_arena_resume(
                 "the recorded settings, so resumed and replayed pairs would be "
                 "different openings. Refusing."
             )
+        has_root = "opening_root_fen" in row
+        has_stack = "opening_uci" in row
+        if settings.get("mode") == "matched_time" and (has_root or has_stack):
+            raise SystemExit(
+                f"--resume: {path} pair {pair_id} half {half} claims opening "
+                "history in matched_time, but UCI play did not preserve the "
+                "pre-play move stack. Refusing."
+            )
+        if has_root != has_stack:
+            raise SystemExit(
+                f"--resume: {path} pair {pair_id} half {half} has incomplete "
+                "opening history; root FEN and UCI stack must occur together"
+            )
+        if has_root:
+            root_fen, stack = _opening_history(openings[pair_id])
+            recorded_stack = row["opening_uci"]
+            if (row["opening_root_fen"] != root_fen
+                    or not isinstance(recorded_stack, list)
+                    or not all(isinstance(uci, str) for uci in recorded_stack)
+                    or recorded_stack != list(stack)
+                    or row.get("start_fen") != want):
+                raise SystemExit(
+                    f"--resume: {path} pair {pair_id} half {half} opening "
+                    "root/stack differs from regenerated schedule. Refusing."
+                )
+            try:
+                _check_opening_history(root_fen, recorded_stack, want)
+            except ValueError as exc:
+                raise SystemExit(
+                    f"--resume: {path} pair {pair_id} half {half} has invalid "
+                    "opening history. Refusing."
+                ) from exc
         halves.setdefault(pair_id, {})[half] = score_from_result(
             str(row["result"]), a_is_white=a_is_white,
         )
@@ -1861,7 +1936,8 @@ def play_paired_games_matched_sims(
     search_candidate: SideSearch,
     search_reference: SideSearch,
     volatility_candidate: dict[str, float] | None = None,
-    syzygy_tablebase: object | None = None,
+    syzygy_tablebase: Tablebase | None = None,
+    tb_probe: SyzygyProbe | None = None,
     tb_max_pieces: int = 6,
     pgn_sink: PgnSink | None = None,
     pair_ids: Sequence[int] | None = None,
@@ -1909,6 +1985,7 @@ def play_paired_games_matched_sims(
         split_active_by_side_to_move,
     )
     from scripts.match_vs_uci import _tb_adjudicate_result
+    from chess_anti_engine.tablebase import rule50_match_result
 
     ids = list(range(len(openings))) if pair_ids is None else list(pair_ids)
     if len(ids) != len(openings):
@@ -1918,6 +1995,8 @@ def play_paired_games_matched_sims(
     boards: list[chess.Board] = []
     a_plays_white: list[bool] = []
     start_fens: list[str] = []
+    opening_roots: list[str] = []
+    opening_stacks: list[tuple[str, ...]] = []
     start_offsets: list[int] = []
     for opening in openings:
         for a_white in (True, False):
@@ -1927,6 +2006,9 @@ def play_paired_games_matched_sims(
             # rather than from the standard start: move_stack carries the book's
             # own moves too, and slicing at this offset is what separates them.
             start_fens.append(opening.fen())
+            root_fen, opening_uci = _opening_history(boards[-1])
+            opening_roots.append(root_fen)
+            opening_stacks.append(opening_uci)
             start_offsets.append(len(opening.move_stack))
 
     g = len(boards)
@@ -1946,6 +2028,8 @@ def play_paired_games_matched_sims(
             half=i % 2,
             a_is_white=bool(a_plays_white[i]),
             start_fen=start_fens[i],
+            opening_root_fen=opening_roots[i],
+            opening_uci=opening_stacks[i],
             moves=mv,
             result=res,
             termination=termination,
@@ -1963,8 +2047,14 @@ def play_paired_games_matched_sims(
                 _emit(i, "rules")
             elif syzygy_tablebase is not None:
                 # Adjudicate the instant a game reaches a covered (<=N-man) position
-                # — kills long endgame tails. Reuses match_vs_uci's WDL probe.
-                _tb = _tb_adjudicate_result(boards[i], syzygy_tablebase, max_pieces=tb_max_pieces)
+                # — kills long endgame tails. Strict runs use the same rule-aware
+                # contract as the in-search probe; legacy callers keep their
+                # historical adjudication behavior.
+                _tb = (
+                    rule50_match_result(boards[i], syzygy_tablebase, max_pieces=tb_max_pieces)
+                    if tb_probe is not None else
+                    _tb_adjudicate_result(boards[i], syzygy_tablebase, max_pieces=tb_max_pieces)
+                )
                 if _tb is not None:
                     adjudicated[i] = _tb
                     done[i] = True
@@ -2000,15 +2090,38 @@ def play_paired_games_matched_sims(
                 gumbel_vloss_weight=side.vloss_weight,
                 gumbel_target_batch=side.target_batch,
                 evaluator=ev,
+                tb_probe=tb_probe,
             )
             # strict: this is the deciding Elo instrument. Substituting a legal
             # move for an id that decoded to nothing would keep the arena
             # scoring games under a broken action space.
             apply_actions_to_boards(boards, idxs, actions, strict=True)
 
+    # The final permitted move may itself enter tablebase range. Reap it
+    # before classifying an unresolved max-ply game, just as the rolling loop
+    # does at the start of its next pass.
+    if tb_probe is not None and syzygy_tablebase is not None:
+        for i in range(g):
+            if done[i]:
+                continue
+            if boards[i].is_game_over(claim_draw=True):
+                done[i] = True
+                _emit(i, "rules")
+                continue
+            _tb = rule50_match_result(boards[i], syzygy_tablebase, max_pieces=tb_max_pieces)
+            if _tb is not None:
+                adjudicated[i] = _tb
+                done[i] = True
+                _emit(i, "syzygy")
+
     def _game_score(i: int) -> float:
         res = adjudicated[i] or boards[i].result(claim_draw=True)
         if res == "*":  # unfinished at max_plies, not TB-covered: adjudicate as draw
+            if tb_probe is not None:
+                raise RuntimeError(
+                    f"strict Syzygy arena reached max_plies with unresolved game "
+                    f"pair={ids[i // 2]} half={i % 2}; refusing a fabricated draw"
+                )
             return 0.5
         return {1: 1.0, 0: 0.5, -1: 0.0}[
             result_from_a_pov(res, a_is_white=bool(a_plays_white[i]))
@@ -2063,7 +2176,8 @@ def play_paired_games_matched_sims_rolling(
     search_candidate: SideSearch,
     search_reference: SideSearch,
     volatility_candidate: dict[str, float] | None = None,
-    syzygy_tablebase: object | None = None,
+    syzygy_tablebase: Tablebase | None = None,
+    tb_probe: SyzygyProbe | None = None,
     tb_max_pieces: int = 6,
     pool_size: int = 256,
     report_every: int = 64,
@@ -2122,6 +2236,7 @@ def play_paired_games_matched_sims_rolling(
         split_active_by_side_to_move,
     )
     from scripts.match_vs_uci import _tb_adjudicate_result
+    from chess_anti_engine.tablebase import rule50_match_result
 
     # ``pair_ids[k]`` is the GLOBAL pair id of ``openings[k]`` (default: k) —
     # a resumed run plays a non-contiguous subset of the schedule, and the
@@ -2154,6 +2269,8 @@ def play_paired_games_matched_sims_rolling(
     awhite: list[bool] = []
     gplies: list[int] = []
     gfens: list[str] = []
+    groots: list[str] = []
+    gstacks: list[tuple[str, ...]] = []
     goffs: list[int] = []
     gt0: list[float] = []
 
@@ -2177,6 +2294,9 @@ def play_paired_games_matched_sims_rolling(
             # Book position + how many of move_stack belongs to the book, so the
             # PGN starts where PLAY started rather than replaying the opening.
             gfens.append(opening.fen())
+            root_fen, opening_uci = _opening_history(boards[-1])
+            groots.append(root_fen)
+            gstacks.append(opening_uci)
             goffs.append(len(opening.move_stack))
             gt0.append(time.time())
 
@@ -2197,6 +2317,8 @@ def play_paired_games_matched_sims_rolling(
                 half=gids[j] % 2,
                 a_is_white=bool(awhite[j]),
                 start_fen=gfens[j],
+                opening_root_fen=groots[j],
+                opening_uci=gstacks[j],
                 moves=mv,
                 result="1/2-1/2" if res == "*" else res,
                 termination=termination,
@@ -2223,6 +2345,8 @@ def play_paired_games_matched_sims_rolling(
         ka: list[bool] = []
         kp: list[int] = []
         kf: list[str] = []
+        kr: list[str] = []
+        ks: list[tuple[str, ...]] = []
         ko: list[int] = []
         kt: list[float] = []
         for j in range(len(boards)):
@@ -2232,10 +2356,20 @@ def play_paired_games_matched_sims_rolling(
             if b.is_game_over(claim_draw=True):
                 res = b.result(claim_draw=True)
             elif syzygy_tablebase is not None:
-                res = _tb_adjudicate_result(b, syzygy_tablebase, max_pieces=tb_max_pieces)
+                res = (
+                    rule50_match_result(b, syzygy_tablebase, max_pieces=tb_max_pieces)
+                    if tb_probe is not None else
+                    _tb_adjudicate_result(b, syzygy_tablebase, max_pieces=tb_max_pieces)
+                )
                 if res is not None:
                     termination = "syzygy"
             if res is None and gplies[j] >= int(max_plies):
+                if tb_probe is not None:
+                    raise RuntimeError(
+                        f"strict Syzygy arena reached max_plies with unresolved game "
+                        f"pair={ids[gids[j] // 2]} half={gids[j] % 2}; "
+                        "refusing a fabricated draw"
+                    )
                 res = "*"  # not naturally decided and not TB-covered: adjudicate draw
                 termination = "max_plies"
             if res is not None:
@@ -2247,10 +2381,13 @@ def play_paired_games_matched_sims_rolling(
                 ka.append(awhite[j])
                 kp.append(gplies[j])
                 kf.append(gfens[j])
+                kr.append(groots[j])
+                ks.append(gstacks[j])
                 ko.append(goffs[j])
                 kt.append(gt0[j])
         boards[:], gids[:], awhite[:], gplies[:] = kb, kg, ka, kp
         gfens[:], goffs[:], gt0[:] = kf, ko, kt
+        groots[:], gstacks[:] = kr, ks
         # Submit full pair IDs after reap. The monitor buffers faster suffix
         # completions until all earlier pairs are complete; no missing-pair
         # imputation or completion-order selection enters the LLR.
@@ -2324,6 +2461,7 @@ def play_paired_games_matched_sims_rolling(
                 gumbel_vloss_weight=side.vloss_weight,
                 gumbel_target_batch=side.target_batch,
                 evaluator=ev,
+                tb_probe=tb_probe,
             )
             # strict: same instrument as the chunked path above.
             apply_actions_to_boards(boards, idxs, actions, strict=True)
@@ -2767,6 +2905,20 @@ def run_arena(
             raise SystemExit("--sprt-lookahead-pairs must be a nonnegative integer")
         if sprt is None or mode != "matched_sims" or not rolling or max_concurrent_games < 2:
             raise SystemExit("--sprt-lookahead-pairs requires rolling matched_sims SPRT and >= 2 game slots")
+    if syzygy_path is not None:
+        if mode != "matched_sims":
+            raise SystemExit("--syzygy is supported only in matched_sims")
+        if type(syzygy_path) is not str or not syzygy_path.strip():
+            raise SystemExit("--syzygy requires a nonempty tablebase path")
+        if type(tb_max_pieces) is not int or not 3 <= tb_max_pieces <= 7:
+            raise SystemExit("--syzygy-max-pieces must be an integer from 3 through 7")
+        if volatility_candidate is not None:
+            raise SystemExit("--syzygy cannot use candidate volatility search (Python Gumbel path)")
+        if pgn_out is None:
+            raise SystemExit("--syzygy requires --pgn-out to bank auditable game moves")
+        from chess_anti_engine.selfplay import match as match_helpers
+        if not match_helpers._HAS_GUMBEL_C:
+            raise SystemExit("--syzygy requires compiled Gumbel search")
     if games < 2 or games % 2 != 0:
         raise SystemExit("--games must be even and >= 2 (paired openings)")
     if eval_max_batch < 0:
@@ -3074,6 +3226,9 @@ def run_arena(
             "GitSha": git_sha(),
             "ArenaMode": mode,
         }
+        if syzygy_path is not None:
+            base_tags["SyzygyProtocol"] = SYZYGY_MATCH_PROTOCOL
+            base_tags["SyzygyMaxPieces"] = str(tb_max_pieces)
         if label:
             base_tags["ArenaLabel"] = label
         pgn_writer = ArenaPgnWriter(pgn_out, event=label or "arena", base_tags=base_tags)
@@ -3105,6 +3260,8 @@ def run_arena(
         half: int,
         a_is_white: bool,
         start_fen: str,
+        opening_root_fen: str | None = None,
+        opening_uci: Sequence[str] | None = None,
         moves: tuple[chess.Move, ...],
         result: str,
         termination: str,
@@ -3124,6 +3281,22 @@ def run_arena(
         JSONL and never replays it. match_vs_uci.py orders its writes the same
         way.
         """
+        if (opening_root_fen is None) != (opening_uci is None):
+            raise ValueError("opening root FEN and UCI stack must occur together")
+        has_history = opening_root_fen is not None
+        if mode == "matched_time" and has_history:
+            raise ValueError("matched_time opening stack was not preserved by UCI play")
+        if has_history:
+            if (not _is_runtime_str(opening_root_fen)
+                    or not isinstance(opening_uci, (tuple, list))
+                    or not all(_is_runtime_str(uci) for uci in opening_uci)):
+                raise ValueError("opening history has invalid types")
+            want_root, want_stack = _opening_history(openings[int(pair_id)])
+            if (opening_root_fen != want_root or tuple(opening_uci) != want_stack
+                    or start_fen != openings[int(pair_id)].fen()):
+                raise ValueError("opening history differs from scheduled board")
+            _check_opening_history(opening_root_fen, opening_uci, start_fen)
+        played_uci_sha256 = _played_uci_sha256(moves)
         score = score_from_result(result, a_is_white=a_is_white)
         if pgn_writer is not None:
             extra = {
@@ -3155,6 +3328,10 @@ def run_arena(
                 # game-log row's `eval_hoist` relies on.
                 "EvaluatorHoist": this_hoist,
             }
+            if opening_root_fen is not None and opening_uci is not None:
+                extra["OpeningRootFEN"] = opening_root_fen
+                extra["OpeningUCI"] = json.dumps(list(opening_uci), separators=(",", ":"))
+                extra["PlayedUCISHA256"] = played_uci_sha256
             if int(pair_id) in orphan_pair_ids:
                 # This pair is being REPLAYED because the crash left it half
                 # played, and the PGN already holds that orphan game
@@ -3173,7 +3350,7 @@ def run_arena(
                 pair_half=half,
                 extra=extra,
             ))
-        game_log.write_game({
+        row: dict[str, Any] = {
             "pair_id": int(pair_id),
             "half": int(half),
             "opening_index": int(pair_id),
@@ -3195,7 +3372,12 @@ def run_arena(
             "chunk": None if chunk is None else int(chunk),
             "loop": loop,
             "duration_s": round(float(duration_s), 2),
-        })
+        }
+        if opening_root_fen is not None and opening_uci is not None:
+            row["opening_root_fen"] = opening_root_fen
+            row["opening_uci"] = list(opening_uci)
+            row["played_uci_sha256"] = played_uci_sha256
+        game_log.write_game(row)
 
     pgn_sink = _on_game
 
@@ -3226,6 +3408,9 @@ def run_arena(
             flush=True,
         )
 
+    # A no-op resume never constructs a probe. Keep telemetry explicitly
+    # scoped to this process rather than implying resumed games were reprobed.
+    tb_probe: SyzygyProbe | None = None
     t0 = time.time()
     if not openings_to_play:
         print(
@@ -3427,19 +3612,23 @@ def run_arena(
             f"reference={sims_reference} sims/move, temp={temperature}, "
             f"noise={gumbel_add_noise}"
         )
-        # Syzygy adjudication: end each game the instant it reaches a covered
-        # (<=N-man) position, so long endgame tails don't dominate the wall clock
-        # (reuses match_vs_uci's WDL probe). Opened once, shared across chunks.
+        # One caller-owned handle feeds BOTH root/leaf search and full-board
+        # adjudication. A bad component or a missing eligible material must
+        # abort this match, never switch tablebase support off mid-run.
         syzygy_tb = None
-        if syzygy_path:
-            from scripts.match_vs_uci import _open_syzygy_tablebase
+        if syzygy_path is not None:
+            from chess_anti_engine.tablebase import SyzygyProbe, open_strict_match_tablebase
+            syzygy_tb = open_strict_match_tablebase(syzygy_path, max_pieces=tb_max_pieces)
             try:
-                syzygy_tb = _open_syzygy_tablebase(syzygy_path)
-            except Exception as exc:
-                syzygy_tb = None
-                print(f"[arena] WARNING: syzygy open failed ({exc})", flush=True)
+                tb_probe = SyzygyProbe(
+                    syzygy_path, max_pieces=tb_max_pieces,
+                    rule50_aware=True, tablebase=syzygy_tb,
+                )
+            except BaseException:
+                syzygy_tb.close()
+                raise
             print(
-                f"[arena] syzygy adjudication {'ON' if syzygy_tb is not None else 'OFF'} "
+                f"[arena] Syzygy {SYZYGY_MATCH_PROTOCOL} ON "
                 f"(<={tb_max_pieces}-man, {syzygy_path})",
                 flush=True,
             )
@@ -3486,6 +3675,7 @@ def run_arena(
                     gumbel_add_noise=gumbel_add_noise,
                     volatility_candidate=volatility_candidate,
                     syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
+                    tb_probe=tb_probe,
                     pool_size=int(max_concurrent_games),
                     search_candidate=search_candidate, search_reference=search_reference,
                     report_every=int(report_every),
@@ -3537,6 +3727,7 @@ def run_arena(
                         gumbel_add_noise=gumbel_add_noise,
                         volatility_candidate=volatility_candidate,
                         syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
+                        tb_probe=tb_probe,
                         search_candidate=search_candidate,
                         search_reference=search_reference,
                         pgn_sink=pgn_sink,
@@ -3727,6 +3918,19 @@ def run_arena(
         arena_pool=int(pool_size),
         sprt=sprt_record,
     )
+    if syzygy_path is not None:
+        record["syzygy_protocol"] = SYZYGY_MATCH_PROTOCOL
+        record["syzygy_path"] = syzygy_path
+        record["syzygy_max_pieces"] = tb_max_pieces
+        record["syzygy_this_invocation"] = (
+            None if tb_probe is None else {
+                "wdl_tables_open": tb_probe.n_wdl,
+                "dtz_tables_open": tb_probe.n_dtz,
+                "search_probes": tb_probe.probes,
+                "search_hits": tb_probe.hits,
+                "pairs_completed": len(played_pair_scores),
+            }
+        )
     if sprt_lookahead_pairs is not None:
         record["sprt_lookahead_pairs"] = sprt_lookahead_pairs
     if out_path is not None:
@@ -4015,11 +4219,13 @@ def main() -> None:
                         "computed on 2026-07-30/31 that way). The budget covers "
                         "opening sampling and checkpoint loading too.")
     p.add_argument("--syzygy", default=None,
-                   help="matched_sims: colon-separated Syzygy dir(s) to adjudicate "
-                        "games the instant they reach a covered position (kills "
-                        "long endgame tails). e.g. data/syzygy_3-4-5")
+                   help="matched_sims: colon-separated Syzygy dir(s) for strict "
+                        "root/leaf search and rule-aware game adjudication; "
+                        "requires complete WDL+DTZ coverage and --pgn-out. "
+                        "Unresolved max-ply games invalidate the match.")
     p.add_argument("--syzygy-max-pieces", type=int, default=6,
-                   help="adjudicate positions with <= this many men (default: 6)")
+                   help="strict root/leaf search and adjudication through this "
+                        "many men (default: 6)")
     p.add_argument("--compile", choices=["auto", "on", "off"], default="auto",
                    help="matched_sims torch.compile policy (default: auto). "
                         "on=always compile; off=eager; auto=compile only when "

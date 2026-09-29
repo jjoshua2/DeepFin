@@ -134,3 +134,181 @@ def test_policy_indices_are_one_per_legal_move(label: str, fen: str) -> None:
         f"{board.legal_moves.count()}"
     )
     assert np.array_equal(indices, np.sort(indices))
+
+
+# Keep the original Python-recursive CBoard oracle above: the native walker
+# must agree with both those published counts and CBoard's exposed operations.
+@pytest.mark.parametrize(
+    ("label", "fen", "expectations"),
+    PERFT_SUITE,
+    ids=[row[0] for row in PERFT_SUITE],
+)
+def test_native_perft_matches_published_counts(
+    label: str, fen: str, expectations: list[tuple[int, int]]
+) -> None:
+    from chess_anti_engine.encoding.perft import perft, perft_divide
+
+    native = CBoard.from_board(chess.Board(fen))
+    assert perft(native, 0) == 1
+    for depth, expected in expectations:
+        assert perft(native, depth) == expected, (label, depth)
+        assert sum(perft_divide(native, depth).values()) == expected, (label, depth)
+
+
+def test_native_perft_startpos_depth_five() -> None:
+    from chess_anti_engine.encoding.perft import perft
+
+    assert perft(CBoard.from_board(chess.Board()), 5) == 4865609
+
+
+def test_native_perft_uses_the_cboard_slider_backend() -> None:
+    from chess_anti_engine.encoding import _lc0_ext, _perft_ext
+
+    assert _perft_ext.SLIDER_BACKEND == _lc0_ext.SLIDER_BACKEND
+
+
+def _python_chess_perft(board: chess.Board, depth: int) -> int:
+    if depth == 0:
+        return 1
+    if depth == 1:
+        return board.legal_moves.count()
+    total = 0
+    for move in list(board.legal_moves):
+        board.push(move)
+        total += _python_chess_perft(board, depth - 1)
+        board.pop()
+    return total
+
+
+@pytest.mark.parametrize(
+    "fen",
+    [
+        # Root castling in both orientations; direct and discovered checks.
+        "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+        "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+        # All four promotion labels, including captures, for either color.
+        "1r5k/P7/8/8/8/8/8/7K w - - 0 1",
+        "7k/8/8/8/8/8/p7/1R5K b - - 0 1",
+        # Legal en passant, and an EP capture prohibited by a horizontal pin.
+        "7k/8/8/3pP3/8/8/8/K7 w - d6 0 1",
+        "7k/8/8/r4pPK/8/8/8/8 w - f6 0 1",
+        # A non-pawn on rank 7 must not acquire a bogus queen suffix.
+        "7k/1R6/8/8/8/8/8/K7 w - - 0 1",
+    ],
+)
+def test_native_divide_matches_python_chess_move_by_move(fen: str) -> None:
+    from chess_anti_engine.encoding.perft import perft, perft_divide
+
+    board = chess.Board(fen)
+    assert board.is_valid()
+    expected: dict[str, int] = {}
+    for move in list(board.legal_moves):
+        board.push(move)
+        expected[move.uci()] = _python_chess_perft(board, 2)
+        board.pop()
+    native = CBoard.from_board(board)
+    actual = perft_divide(native, 3)
+    assert actual == expected
+    assert len(actual) == len(native.legal_move_indices())
+    assert sum(actual.values()) == perft(native, 3)
+    assert perft_divide(native, 1) == {move.uci(): 1 for move in board.legal_moves}
+
+
+@pytest.mark.parametrize(
+    "fen",
+    [
+        "7k/6Q1/5K2/8/8/8/8/8 b - - 0 1",  # checkmate
+        "7k/5K2/6Q1/8/8/8/8/8 b - - 0 1",  # stalemate
+    ],
+)
+def test_native_perft_no_moves_and_depth_zero(fen: str) -> None:
+    from chess_anti_engine.encoding.perft import perft, perft_divide
+
+    native = CBoard.from_board(chess.Board(fen))
+    assert perft(native, 0) == 1
+    for depth in (1, 2, 4):
+        assert perft(native, depth) == 0
+        assert perft_divide(native, depth) == {}
+
+
+@pytest.mark.parametrize("halfmove", [0, 99, 100, 149, 150, 255])
+def test_native_perft_does_not_stop_at_draw_adjudication(halfmove: int) -> None:
+    from chess_anti_engine.encoding.perft import perft, perft_divide
+
+    board = chess.Board(f"7k/8/8/8/8/8/8/K7 w - - {halfmove} 1")
+    native = CBoard.from_board(board)
+    assert native.is_game_over()  # insufficient material, regardless of clock
+    expected = _python_chess_perft(board, 3)
+    assert expected > 0
+    assert perft(native, 3) == expected
+    assert sum(perft_divide(native, 3).values()) == expected
+
+
+def test_native_perft_ignores_repetition_and_preserves_input() -> None:
+    from chess_anti_engine.encoding.perft import perft, perft_divide
+
+    board = chess.Board()
+    for move in ["g1f3", "g8f6", "f3g1", "f6g8"] * 2:
+        board.push_uci(move)
+    native = CBoard.from_board(board)
+    assert native.is_threefold_repetition()
+    before = (
+        native.fen(), native.zobrist_hash, native.transposition_key,
+        native.hist_len, native.hash_stack_len, native.ply,
+    )
+    planes = native.encode_146().copy()
+    legal = native.legal_move_indices().copy()
+    assert perft(native, 3) == 8902
+    assert sum(perft_divide(native, 3).values()) == 8902
+    assert before == (
+        native.fen(), native.zobrist_hash, native.transposition_key,
+        native.hist_len, native.hash_stack_len, native.ply,
+    )
+    assert native.is_threefold_repetition()
+    np.testing.assert_array_equal(native.encode_146(), planes)
+    np.testing.assert_array_equal(native.legal_move_indices(), legal)
+
+
+@pytest.mark.parametrize("depth", [-1, 65])
+def test_native_perft_rejects_unsafe_depth(depth: int) -> None:
+    from chess_anti_engine.encoding.perft import perft, perft_divide
+
+    native = CBoard.from_board(chess.Board())
+    with pytest.raises(ValueError, match="depth"):
+        perft(native, depth)
+    with pytest.raises(ValueError, match="depth"):
+        perft_divide(native, depth)
+
+
+def test_native_perft_rejects_zero_depth_divide() -> None:
+    from chess_anti_engine.encoding.perft import perft_divide
+
+    with pytest.raises(ValueError, match="depth"):
+        perft_divide(CBoard.from_board(chess.Board()), 0)
+
+
+def test_native_perft_rejects_huge_depth() -> None:
+    from chess_anti_engine.encoding.perft import perft
+
+    with pytest.raises(OverflowError):
+        perft(CBoard.from_board(chess.Board()), 1 << 100)
+
+
+def test_native_perft_rejects_missing_kings() -> None:
+    from chess_anti_engine.encoding.perft import perft
+
+    with pytest.raises(ValueError, match="one king per side"):
+        perft(CBoard.from_board(chess.Board(None)), 1)
+
+
+def test_native_perft_calls_are_independent() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from chess_anti_engine.encoding.perft import perft
+
+    native = CBoard.from_board(chess.Board())
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(perft, native, 4)
+        second = pool.submit(perft, native, 3)
+        assert first.result(timeout=15) == 197281
+        assert second.result(timeout=15) == 8902
