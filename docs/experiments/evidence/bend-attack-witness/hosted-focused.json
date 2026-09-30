@@ -1,0 +1,181 @@
+{
+  "focused_gate": "PASS",
+  "consumer": "PASS",
+  "controls_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "new_law_count": 3,
+  "new_laws": [
+    "mask_reduction_has_square_witness",
+    "actual_attacked_uses_witness_reduction",
+    "single_king_in_check_uses_witness_reduction"
+  ],
+  "consumer_seconds": 5.410309987,
+  "consumer_raw": "All terms check.\n",
+  "negative_controls": [
+    {
+      "name": "actual-wrong-attacker-color",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Flow.bend",
+      "location": "bishop",
+      "diagnostic_sha256": "047fb320d6c3520afbcbc48ed61b241c9b2e278c10f3a931808a59f8548b3ae0",
+      "diagnostic_excerpt": "Error:\n- expected : {(table, Bool.not(U64.is_zero(U64.and(U64.or(U64.or(U64.or(U64.or(U64.and(pa, ../../../legal_probe/Chess.get_pawns(b)), U64.and(na, ../../../legal_probe/Chess.get_knights(b))), U64.and(ka, ../../../legal_probe/Chess.get_kings(b))), U64.and(ra, U64.or(../../../legal_probe/Chess.get_rooks(b), ../../../legal_probe/Chess.get_queens(b)))), U64.and(ba, U64.or(../../../legal_probe/Chess.get_bishops(b), ../../../legal_probe/Chess.get_queens(b)))), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(U32.xor(by, 1), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)))))) == (table, Spec.observe(b, Spec.select(b, Cmp.is_eq(U32.cmp(by, 1))), Spec.Masks{pa, na, ka, ra, ba})) : Sigma<&1, &1, Array<U64>, _ => Bool>}\n- observed : {(table, Bool.not(U64.is_zero(U64.and(U64.or(U64.or(U64.or(U64.or(U64.and(pa, ../../../legal_probe/Chess.get_pawns(b)), U64.and(na, ../../../legal_probe/Chess.get_knights(b))), U64.and(ka, ../../../legal_probe/Chess.get_kings(b))), U64.and(ra, U64.or(../../../legal_probe/Chess.get_rooks(b), ../../../legal_probe/Chess.get_queens(b)))), U64.and(ba, U64.or(../../../legal_probe/Chess.get_bishops(b), ../../../legal_probe/Chess.get_queens(b)))), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(by, 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)))))) == (table, Spec.observe(b, Spec.select(b, Cmp.is_eq(U32.cmp(by, 1))), Spec.Masks{pa, na, ka, ra, ba})) : Sigma<&1, &1, Array<U64>, _ => Bool>}\nContext:\n- b     : ../../../legal_probe/Chess.Board\n- by    : U32\n- pa    : U64\n- na    : U64\n- ka    : U64\n- ra    : U64\n- table : Array<U64>\n- ba    : U64\n- m     : Spec.Masks\nLocation: bishop\n11 |   +m = S.masks(pa,na,ka,ra,ba)\n12>|   %Equal.sym(Bool,Bool.not(U64.is_zero(U64.and(R.hits(b,m),Chess.color(b,by)))),S.present(b,by,m),R.decision(b,by,m)) :\n13 |     {(table,_) == (table,S.present(b,by,m)) : Array<U64> & Bool}\n"
+    },
+    {
+      "name": "actual-drops-knight",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Flow.bend",
+      "location": "knight",
+      "diagnostic_sha256": "0c72814bc0ff00371a6e9e8e08b4b9c2279527c1b6509b161a365c3cb3f7bdae",
+      "diagnostic_excerpt": "Error:\n- expected : {../../../legal_probe/Chess.attacked_king(b, sq, by, U64.or(U64.and(pa, ../../../legal_probe/Chess.get_pawns(b)), U64{0, 0}), Array.get.at(U64, U32.add(320, sq), Array.size(U64, table))) == Queries.king(b, sq, by, pa, na, Array.get.at(U64, U32.add(320, sq), Array.size(U64, table))) : Sigma<&1, &1, Array<U64>, _ => Bool>}\n- observed : {../../../legal_probe/Chess.attacked_king(b, sq, by, U64.or(U64.and(pa, ../../../legal_probe/Chess.get_pawns(b)), U64.and(na, ../../../legal_probe/Chess.get_knights(b))), Array.get.at(U64, U32.add(320, sq), Array.size(U64, table))) == Queries.king(b, sq, by, pa, na, Array.get.at(U64, U32.add(320, sq), Array.size(U64, table))) : Sigma<&1, &1, Array<U64>, _ => Bool>}\nContext:\n- b     : ../../../legal_probe/Chess.Board\n- sq    : U32\n- by    : U32\n- pa    : U64\n- table : Array<U64>\n- na    : U64\nLocation: knight\n28 |   (table,na) = r\n29>|   king(b,sq,by,pa,na,Chess.attack(5,table,sq,by,Chess.occupied(b)))\n30 | \n"
+    },
+    {
+      "name": "actual-drops-diagonal-queens",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Flow.bend",
+      "location": "bishop",
+      "diagnostic_sha256": "35e3602ea67076164e610891f31e606294c9d38d177e1c341fe0d082b4c8d3af",
+      "diagnostic_excerpt": "Error:\n- expected : {(table, Bool.not(U64.is_zero(U64.and(U64.or(U64.or(U64.or(U64.or(U64.and(pa, ../../../legal_probe/Chess.get_pawns(b)), U64.and(na, ../../../legal_probe/Chess.get_knights(b))), U64.and(ka, ../../../legal_probe/Chess.get_kings(b))), U64.and(ra, U64.or(../../../legal_probe/Chess.get_rooks(b), ../../../legal_probe/Chess.get_queens(b)))), U64.and(ba, ../../../legal_probe/Chess.get_bishops(b))), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(by, 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)))))) == (table, Spec.observe(b, Spec.select(b, Cmp.is_eq(U32.cmp(by, 1))), Spec.Masks{pa, na, ka, ra, ba})) : Sigma<&1, &1, Array<U64>, _ => Bool>}\n- observed : {(table, Bool.not(U64.is_zero(U64.and(U64.or(U64.or(U64.or(U64.or(U64.and(pa, ../../../legal_probe/Chess.get_pawns(b)), U64.and(na, ../../../legal_probe/Chess.get_knights(b))), U64.and(ka, ../../../legal_probe/Chess.get_kings(b))), U64.and(ra, U64.or(../../../legal_probe/Chess.get_rooks(b), ../../../legal_probe/Chess.get_queens(b)))), U64.and(ba, U64.or(../../../legal_probe/Chess.get_bishops(b), ../../../legal_probe/Chess.get_queens(b)))), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(by, 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)))))) == (table, Spec.observe(b, Spec.select(b, Cmp.is_eq(U32.cmp(by, 1))), Spec.Masks{pa, na, ka, ra, ba})) : Sigma<&1, &1, Array<U64>, _ => Bool>}\nContext:\n- b     : ../../../legal_probe/Chess.Board\n- by    : U32\n- pa    : U64\n- na    : U64\n- ka    : U64\n- ra    : U64\n- table : Array<U64>\n- ba    : U64\n- m     : Spec.Masks\nLocation: bishop\n11 |   +m = S.masks(pa,na,ka,ra,ba)\n12>|   %Equal.sym(Bool,Bool.not(U64.is_zero(U64.and(R.hits(b,m),Chess.color(b,by)))),S.present(b,by,m),R.decision(b,by,m)) :\n13 |     {(table,_) == (table,S.present(b,by,m)) : Array<U64> & Bool}\n"
+    },
+    {
+      "name": "actual-drops-straight-queens",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Flow.bend",
+      "location": "rook",
+      "diagnostic_sha256": "a3e1db2aa5eb4c1d0a07d96ff9424d34f809aa2339e2bf2a7efe8e40c958035f",
+      "diagnostic_excerpt": "Error:\n- expected : {../../../legal_probe/Chess.attacked_bishop(b, by, U64.or(U64.or(U64.or(U64.and(pa, ../../../legal_probe/Chess.get_pawns(b)), U64.and(na, ../../../legal_probe/Chess.get_knights(b))), U64.and(ka, ../../../legal_probe/Chess.get_kings(b))), U64.and(ra, ../../../legal_probe/Chess.get_rooks(b))), ../../../legal_probe/Chess.slide_mask(U32.add(64, sq), U64.or(../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), Array.get.at(U64, U32.add(64, sq), Array.size(U64, table)))) == Queries.bishop(b, by, pa, na, ka, ra, ../../../legal_probe/Chess.slide_mask(U32.add(64, sq), U64.or(../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), Array.get.at(U64, U32.add(64, sq), Array.size(U64, table)))) : Sigma<&1, &1, Array<U64>, _ => Bool>}\n- observed : {../../../legal_probe/Chess.attacked_bishop(b, by, U64.or(U64.or(U64.or(U64.and(pa, ../../../legal_probe/Chess.get_pawns(b)), U64.and(na, ../../../legal_probe/Chess.get_knights(b))), U64.and(ka, ../../../legal_probe/Chess.get_kings(b))), U64.and(ra, U64.or(../../../legal_probe/Chess.get_rooks(b), ../../../legal_probe/Chess.get_queens(b)))), ../../../legal_probe/Chess.slide_mask(U32.add(64, sq), U64.or(../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), Array.get.at(U64, U32.add(64, sq), Array.size(U64, table)))) == Queries.bishop(b, by, pa, na, ka, ra, ../../../legal_probe/Chess.slide_mask(U32.add(64, sq), U64.or(../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), Array.get.at(U64, U32.add(64, sq), Array.size(U64, table)))) : Sigma<&1, &1, Array<U64>, _ => Bool>}\nContext:\n- b     : ../../../legal_probe/Chess.Board\n- sq    : U32\n- by    : U32\n- pa    : U64\n- na    : U64\n- ka    : U64\n- table : Array<U64>\n- ra    : U64\nLocation: rook\n18 |   (table,ra) = r\n19>|   bishop(b,by,pa,na,ka,ra,Chess.attack(2,table,sq,by,Chess.occupied(b)))\n20 | \n"
+    },
+    {
+      "name": "actual-wrong-pawn-direction",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Flow.bend",
+      "location": "attacked",
+      "diagnostic_sha256": "278fb4677cec117c3a8e01c81f99911b3969e37998bead6d173235d2c61b2ac7",
+      "diagnostic_excerpt": "Error:\n- expected : {../../../legal_probe/Chess.attacked_pawn(b, sq, by, Array.get.at(U64, U32.add(sq, Bool.pick(U32, Cmp.is_eq(U32.cmp(by, 1)), 384, 448)), Array.size(U64, table))) == Queries.pawn(b, sq, by, Array.get.at(U64, U32.add(sq, Bool.pick(U32, Cmp.is_eq(U32.cmp(U32.xor(by, 1), 1)), 384, 448)), Array.size(U64, table))) : Sigma<&1, &1, Array<U64>, _ => Bool>}\n- observed : {../../../legal_probe/Chess.attacked_pawn(b, sq, by, Array.get.at(U64, U32.add(sq, Bool.pick(U32, Cmp.is_eq(U32.cmp(U32.xor(by, 1), 1)), 384, 448)), Array.size(U64, table))) == Queries.pawn(b, sq, by, Array.get.at(U64, U32.add(sq, Bool.pick(U32, Cmp.is_eq(U32.cmp(U32.xor(by, 1), 1)), 384, 448)), Array.size(U64, table))) : Sigma<&1, &1, Array<U64>, _ => Bool>}\nContext:\n- table : Array<U64>\n- b     : ../../../legal_probe/Chess.Board\n- sq    : U32\n- by    : U32\nLocation: attacked\n37 |   {Chess.attacked(table,b,sq,by) == Q.run(table,b,sq,by) : Array<U64> & Bool}:\n38>|   pawn(b,sq,by,Chess.attack(0,table,sq,U32.xor(by,1),Chess.occupied(b)))\n39 | \n"
+    },
+    {
+      "name": "actual-checks-own-attacks",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "King.bend",
+      "location": "checked",
+      "diagnostic_sha256": "72ff4628ab8772d5889b7b02b39231d2f74ee1b646a16b61b858721cc4383818",
+      "diagnostic_excerpt": "../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))), U64.sub(U64{0, 0}, U64.and(../../../legal_probe/Chess.get_kings(b), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(side, 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))))), U64{1, 0})))), U32.xor(side, 1), Array.get.at(U64, U32.add(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(U64.and(../../../legal_probe/Chess.get_kings(b), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(side, 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))), U64.sub(U64{0, 0}, U64.and(../../../legal_probe/Chess.get_kings(b), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(side, 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))))), U64{1, 0})))), Bool.pick(U32, Cmp.is_eq(U32.cmp(U32.xor(U32.xor(side, 1), 1), 1)), 384, 448)), Array.size(U64, table))) == Queries.pawn(b, U32.from_nat(sq), U32.xor(side, 1), Array.get.at(U64, U32.add(U32.from_nat(sq), Bool.pick(U32, Cmp.is_eq(U32.cmp(U32.xor(U32.xor(side, 1), 1), 1)), 384, 448)), Array.size(U64, table))) : Sigma<&1, &1, Array<U64>, _ => Bool>}\nContext:\n- table : Array<U64>\n- b     : ../../../legal_probe/Chess.Board\n- side  : U32\n- sq    : Nat\n- bound : {Cmp.is_lt(Nat.cmp(sq, 64n)) == True{} : Bool}\n- one   : {U64.and(../../../legal_probe/Chess.get_kings(b), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(side, 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))) == U64.shln.go(Nat.min(sq, 64n), U64{1, 0}) : U64}\nLocation: checked\n84 |   {Chess.in_check(table,b,side) == Q.run(table,b,U32.from_nat(sq),U32.xor(side,1)) : Array<U64> & Bool}:\n85>|   %Equal.sym(U32,U64.ctz(U64.and(Chess.get_kings(b),Chess.color(b,side))),U32.from_nat(sq),selected(b,side,sq,bound,one)) :\n86 |     {Chess.attacked(table,b,_,U32.xor(side,1)) == Q.run(table,b,U32.from_nat(sq),U32.xor(side,1)) : Array<U64> & Bool}\n"
+    },
+    {
+      "name": "model-drops-attacker-ownership",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Bits.bend",
+      "location": "pointwise",
+      "diagnostic_sha256": "abb333604f5215a8908022a50993e212821b28d2b9e06c021e1105ce6129c122",
+      "diagnostic_excerpt": "t, Word.and(t, Word.or(t, Word.or(t, Word.or(t, Word.or(t, Word.and(t, pat, pt), Word.and(t, nat, nt)), Word.and(t, kat, kt)), Word.and(t, rat, Word.or(t, rt, qt))), Word.and(t, bat, Word.or(t, bt, qt))), ownt))) == Bool.or(Bool.and(Bool.or(Bool.or(Bool.or(Bool.or(Bool.and(pah, ph), Bool.and(nah, nh)), Bool.and(kah, kh)), Bool.and(rah, Bool.or(rh, qh))), Bool.and(bah, Bool.or(bh, qh))), True{}), Spec.scan(t, ownt, pt, nt, bt, rt, qt, kt, pat, nat, kat, rat, bat)) : Bool}\n- observed : {Bool.or(Bool.and(Bool.or(Bool.or(Bool.or(Bool.or(Bool.and(pah, ph), Bool.and(nah, nh)), Bool.and(kah, kh)), Bool.and(rah, Bool.or(rh, qh))), Bool.and(bah, Bool.or(bh, qh))), True{}), any(t, Word.and(t, Word.or(t, Word.or(t, Word.or(t, Word.or(t, Word.and(t, pat, pt), Word.and(t, nat, nt)), Word.and(t, kat, kt)), Word.and(t, rat, Word.or(t, rt, qt))), Word.and(t, bat, Word.or(t, bt, qt))), ownt))) == Bool.or(Bool.and(Bool.or(Bool.or(Bool.or(Bool.or(Bool.and(pah, ph), Bool.and(nah, nh)), Bool.and(kah, kh)), Bool.and(rah, Bool.or(rh, qh))), Bool.and(bah, Bool.or(bh, qh))), True{}), Spec.scan(t, ownt, pt, nt, bt, rt, qt, kt, pat, nat, kat, rat, bat)) : Bool}\nContext:\n- t    : Nat\n- ownh : Bool\n- ownt : Word(t)\n- ph   : Bool\n- pt   : Word(t)\n- nh   : Bool\n- nt   : Word(t)\n- bh   : Bool\n- bt   : Word(t)\n- rh   : Bool\n- rt   : Word(t)\n- qh   : Bool\n- qt   : Word(t)\n- kh   : Bool\n- kt   : Word(t)\n- pah  : Bool\n- pat  : Word(t)\n- nah  : Bool\n- nat  : Word(t)\n- kah  : Bool\n- kat  : Word(t)\n- rah  : Bool\n- rat  : Word(t)\n- bah  : Bool\n- bat  : Word(t)\nLocation: pointwise\n53 |         case WCon{+ownh,+ownt} WCon{+ph,+pt} WCon{+nh,+nt} WCon{+bh,+bt} WCon{+rh,+rt} WCon{+qh,+qt} WCon{+kh,+kt} WCon{+pah,+pat} WCon{+nah,+nat} WCon{+kah,+kat} WCon{+rah,+rat} WCon{+bah,+bat}:\n54>|           Equal.cong(Bool,Bool,x => Bool.or(S.row(ownh,ph,nh,bh,rh,qh,kh,pah,nah,kah,rah,bah),x),\n55 |             any(t,fold(t,ownt,pt,nt,bt,rt,qt,kt,pat,nat,kat,rat,bat)),S.scan(t,ownt,pt,nt,bt,rt,qt,kt,pat,nat,kat,rat,bat),\n"
+    },
+    {
+      "name": "actual-intersects-attack-classes",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Flow.bend",
+      "location": "bishop",
+      "diagnostic_sha256": "b316d249578b7dcf2c8fcd9920193320a726ee58727095c8a413129e5ee6df89",
+      "diagnostic_excerpt": "Error:\n- expected : {(table, Bool.not(U64.is_zero(U64.and(U64.and(U64.or(U64.or(U64.or(U64.and(pa, ../../../legal_probe/Chess.get_pawns(b)), U64.and(na, ../../../legal_probe/Chess.get_knights(b))), U64.and(ka, ../../../legal_probe/Chess.get_kings(b))), U64.and(ra, U64.or(../../../legal_probe/Chess.get_rooks(b), ../../../legal_probe/Chess.get_queens(b)))), U64.and(ba, U64.or(../../../legal_probe/Chess.get_bishops(b), ../../../legal_probe/Chess.get_queens(b)))), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(by, 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)))))) == (table, Spec.observe(b, Spec.select(b, Cmp.is_eq(U32.cmp(by, 1))), Spec.Masks{pa, na, ka, ra, ba})) : Sigma<&1, &1, Array<U64>, _ => Bool>}\n- observed : {(table, Bool.not(U64.is_zero(U64.and(U64.or(U64.or(U64.or(U64.or(U64.and(pa, ../../../legal_probe/Chess.get_pawns(b)), U64.and(na, ../../../legal_probe/Chess.get_knights(b))), U64.and(ka, ../../../legal_probe/Chess.get_kings(b))), U64.and(ra, U64.or(../../../legal_probe/Chess.get_rooks(b), ../../../legal_probe/Chess.get_queens(b)))), U64.and(ba, U64.or(../../../legal_probe/Chess.get_bishops(b), ../../../legal_probe/Chess.get_queens(b)))), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(by, 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)))))) == (table, Spec.observe(b, Spec.select(b, Cmp.is_eq(U32.cmp(by, 1))), Spec.Masks{pa, na, ka, ra, ba})) : Sigma<&1, &1, Array<U64>, _ => Bool>}\nContext:\n- b     : ../../../legal_probe/Chess.Board\n- by    : U32\n- pa    : U64\n- na    : U64\n- ka    : U64\n- ra    : U64\n- table : Array<U64>\n- ba    : U64\n- m     : Spec.Masks\nLocation: bishop\n11 |   +m = S.masks(pa,na,ka,ra,ba)\n12>|   %Equal.sym(Bool,Bool.not(U64.is_zero(U64.and(R.hits(b,m),Chess.color(b,by)))),S.present(b,by,m),R.decision(b,by,m)) :\n13 |     {(table,_) == (table,S.present(b,by,m)) : Array<U64> & Bool}\n"
+    },
+    {
+      "name": "public-drops-single-king-premise",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "consumer.bend",
+      "location": "LAWS.single_king_in_check_uses_witness_reduction",
+      "diagnostic_sha256": "1c585b1ff4573a073af2a61eed2b2b1a4384a88b1380119681866bc06084418c",
+      "diagnostic_excerpt": "Error:\n- expected : {U64.and(../../../legal_probe/Chess.get_kings(b), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(side, 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))) == U64.shln.go(Nat.min(sq, 64n), U64{1, 0}) : U64}\n- observed : {True{} == True{} : Bool}\nContext:\n- table : Array<U64>\n- b     : ../../../legal_probe/Chess.Board\n- side  : U32\n- sq    : Nat\n- bound : {Cmp.is_lt(Nat.cmp(sq, 64n)) == True{} : Bool}\n- one   : {True{} == True{} : Bool}\nLocation: LAWS.single_king_in_check_uses_witness_reduction\n13 | def Laws.single_king_in_check_uses_witness_reduction(table,b,side,sq,bound,one):\n14>|   K.checked(table,b,side,sq,bound,one)\n15 | \n"
+    },
+    {
+      "name": "public-drops-king-square-bound",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "consumer.bend",
+      "location": "LAWS.single_king_in_check_uses_witness_reduction",
+      "diagnostic_sha256": "f068ade0d8464ee2a0b7f371159c8fd7c031ba0d6d191696b8360fc4563cdc3e",
+      "diagnostic_excerpt": "Error:\n- expected : {Cmp.is_lt(Nat.cmp(sq, 64n)) == True{} : Bool}\n- observed : {True{} == True{} : Bool}\nContext:\n- table : Array<U64>\n- b     : ../../../legal_probe/Chess.Board\n- side  : U32\n- sq    : Nat\n- bound : {True{} == True{} : Bool}\n- one   : {U64.and(../../../legal_probe/Chess.get_kings(b), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(side, 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))) == U64.shln.go(Nat.min(sq, 64n), U64{1, 0}) : U64}\nLocation: LAWS.single_king_in_check_uses_witness_reduction\n13 | def Laws.single_king_in_check_uses_witness_reduction(table,b,side,sq,bound,one):\n14>|   K.checked(table,b,side,sq,bound,one)\n15 | \n"
+    },
+    {
+      "name": "missing-law",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "missing-proof",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "missing-laws-import",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "missing-consumer-import",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "hole",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "foreign",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "unsafe",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "symlink",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "warning-on-zero-exit",
+      "kind": "synthetic output-wrapper unit; not compiler execution",
+      "rejected": true
+    }
+  ],
+  "source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/attack_witness/Bits.bend": "d5aedea8fdcebf2b1a1114e287ddeaebc91e1c810f00a30750053b68cc42b69a",
+    "standalone/proofs/attack_witness/Flow.bend": "bfc7376b4bb2b47e84d03a2814aef745101fcb3570c7622a667dc0a8cce4c6fd",
+    "standalone/proofs/attack_witness/King.bend": "516d18ec38b0c293cbdc6ce3bf2dd7e71a967f4723acfbabe1e141ea931ee6d5",
+    "standalone/proofs/attack_witness/LAWS.bend": "d5b2582a3fc0c004f42a2ce5a264b70d55e4dee2c9e3c856a69dc690d1614f72",
+    "standalone/proofs/attack_witness/PROOF.bend": "17880c6d8d2c19b9d64ec049039b21c8ab94df780de74f3b6c367c7b69b62b0e",
+    "standalone/proofs/attack_witness/Queries.bend": "f478f8538ea0228f2e71731f890c2d056ff37bdd0d363a77b6600b0bbf0fc2fc",
+    "standalone/proofs/attack_witness/Reduction.bend": "62c6d9fe0a1a65f9ae5ce191fbaeef83a33c5c43333e49d6dd660ff9c088cea4",
+    "standalone/proofs/attack_witness/Spec.bend": "08ba67468406ab7edd96828f562e6b17dfd6e31a9ecfaaf4a535401dfe270a33",
+    "standalone/proofs/attack_witness/consumer.bend": "106163c8e6bf77020b4e7cb950fed5e9ce3295478f46c18319e3c6e6bb8a9fa4",
+    "standalone/proofs/attack_witness/focused.js": "64385f2a4e78bcf6356bb4d6c8c6fc6be356e3747888b805a6fdaef565821c4a",
+    "standalone/proofs/attack_witness/probe.bend": "4957453e4f513896e1e8c98b8bb41c94516b667efaef98ced701a596a4a44182",
+    "standalone/proofs/attack_witness/verify_native.py": "1244bea5156f61362383953a201ed29ca177cc7f55870c4765d6d6ec106d2f84",
+    "standalone/proofs/index/Bits.bend": "1fe9e204243efe2e651e14ec3db15f2ea2141ee7febf639fb0a7a8e4b5bc8afb",
+    "standalone/proofs/layout/Domain.bend": "5acad280e9df6975f63fa0fe51c18c08cb4f5ae9296c89a7e10673d5fa2e87b6",
+    "standalone/proofs/successor/Value.bend": "8e97a14a3659bda32dc061ae458338827d66b60dbb5749c71e2f3300140ceccf",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "inherited_gate_run": false,
+  "scope": "Exact attack aggregation as a per-square owned-piece witness relation over actual retrieved masks, and actual in_check under an explicit singleton owned-king premise. Complete table/result pairs preserved between implementations. Independent geometry of table masks, pinned-attacker legality and general chess soundness remain separate."
+}

@@ -1,0 +1,11 @@
+{
+  "command": [
+    "../../bun",
+    "tests/run/u64_proofs.js"
+  ],
+  "cwd": "/mnt/data/castle-continuation/compiler/bend",
+  "exit_code": 0,
+  "timed_out": false,
+  "elapsed_seconds": 9.087548038000023,
+  "sha256": "b1366bab9cbd545e1ed78212bc36b9e2fa1a5b1646f5bfe9be5779ecc4a3e72d"
+}
