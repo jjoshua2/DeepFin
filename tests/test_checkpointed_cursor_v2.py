@@ -31,8 +31,9 @@ def _archive(game: int) -> bytes:
 
 
 def _locators(*, large: bool = False) -> tuple[cursor.GameLocator, ...]:
-    # 31*256 + 255 = 8,191, so the 2-row final game crosses segment 8,192.
-    sizes = [256] * 31 + [255, 2] if large else [2, 2]
+    # 31*256 + 255 = 8,191. A 2-row game crosses 8,192, then two
+    # independent games prove that the stored midgame hash is not reused.
+    sizes = [256] * 31 + [255, 2, 1, 1] if large else [2, 2]
     return tuple(cursor.GameLocator(
         "BT4-v9", MANIFEST, NAMESPACE, f"root-{index}", index,
         size, wave.sha(_archive(index)), STRICT)
@@ -109,9 +110,16 @@ def _sort(root: Path, source: cursor.SourceCursor) -> sort.CheckpointedSort:
                                  row_cap=2048, byte_cap=256 << 10, fanin=4)
 
 
-def _run_child(root: str) -> None:
+def _run_child(root: str, hook: str) -> None:
     pipeline, _ = _pipeline(Path(root), large=True)
-    pipeline.wave1(after_seal=lambda _: os.kill(os.getpid(), signal.SIGKILL))
+    def kill(_: int) -> None:
+        os.kill(os.getpid(), signal.SIGKILL)
+    if hook == "wave":
+        pipeline.wave1(after_wave_seal=kill)
+    elif hook == "comparison":
+        pipeline.wave1(after_comparison=kill)
+    else:
+        raise ValueError("unknown kill hook")
 
 
 def test_literal_uid_paired_candidate_and_sort(tmp_path: Path) -> None:
@@ -135,25 +143,42 @@ def test_literal_uid_paired_candidate_and_sort(tmp_path: Path) -> None:
     assert wave.file_sha(pipeline.root / "candidate_00000000" / "RECEIPT.json") == before
 
 
-def test_8193_midgame_seal_sigkill_resume_and_noop(tmp_path: Path) -> None:
+def test_8195_midgame_two_crash_boundaries_resume_and_noop(tmp_path: Path) -> None:
     script = ("import runpy,sys; "
-              "runpy.run_path(sys.argv[1])['_run_child'](sys.argv[2])")
+              "runpy.run_path(sys.argv[1])['_run_child'](sys.argv[2],sys.argv[3])")
     exit_code = sort.run_owned_cpu(
-        [sys.executable, "-c", script, __file__, str(tmp_path)],
+        [sys.executable, "-c", script, __file__, str(tmp_path), "wave"],
         log_path=tmp_path / "kill.log", timeout_seconds=90)
     assert exit_code == -signal.SIGKILL
+    sealed_wave = tmp_path / "waves" / "segment_00000000" / "RECEIPT.json"
+    assert sealed_wave.exists()
+    wave_hash = wave.file_sha(sealed_wave)
+    wave_mtime = sealed_wave.stat().st_mtime_ns
     first = tmp_path / "pipeline" / "cursor_00000000.json"
-    assert first.exists()
-    sealed_hash = wave.file_sha(first)
-    sealed_mtime = first.stat().st_mtime_ns
+    assert not first.exists()
+    exit_code = sort.run_owned_cpu(
+        [sys.executable, "-c", script, __file__, str(tmp_path), "comparison"],
+        log_path=tmp_path / "kill-comparison.log", timeout_seconds=90)
+    assert exit_code == -signal.SIGKILL
+    comparison = tmp_path / "waves" / "compare_00000000.json"
+    assert comparison.exists()
+    assert not first.exists()
+    compare_hash = wave.file_sha(comparison)
+    compare_mtime = comparison.stat().st_mtime_ns
+    pipeline, source = _pipeline(tmp_path, large=True)
+    pipeline.wave1()
+    assert wave.file_sha(sealed_wave) == wave_hash
+    assert sealed_wave.stat().st_mtime_ns == wave_mtime
+    assert wave.file_sha(comparison) == compare_hash
+    assert comparison.stat().st_mtime_ns == compare_mtime
     first_cursor = json.loads(first.read_bytes())
     assert first_cursor["end"][:2] == [32, 1]
     assert first_cursor["end"][2] is not None
-    pipeline, source = _pipeline(tmp_path, large=True)
-    pipeline.wave1()
+    sealed_hash = wave.file_sha(first)
+    sealed_mtime = first.stat().st_mtime_ns
     runs = pipeline.wave2_metadata_sort(_sort(tmp_path, source))
     assert len(runs) == 5
-    assert sum(_sort(tmp_path, source).verify_run(run)["rows"] for run in runs) == 8193
+    assert sum(_sort(tmp_path, source).verify_run(run)["rows"] for run in runs) == 8195
     assert first.stat().st_mtime_ns == sealed_mtime
     assert wave.file_sha(first) == sealed_hash
     pipeline.wave1()
@@ -195,14 +220,17 @@ def test_source_namespace_native_and_receipt_tamper_refusal(tmp_path: Path) -> N
         for loc in locators)
     with pytest.raises(wave.Hold, match=r"cursor/wave source pins|claim/source/config"):
         _pipeline(tmp_path, locators=coordinated)
-    duplicate_root = cursor.GameLocator(
+    reused_game_id = cursor.GameLocator(
         locators[0].source, locators[0].source_manifest_sha,
         locators[0].namespace, "another-root", locators[0].game_id,
         locators[0].rows, locators[0].archive_sha,
         locators[0].strict_receipt_sha)
-    with pytest.raises(wave.Hold, match="one root per source-qualified game"):
-        _pipeline(tmp_path / "duplicate-root",
-                  locators=(locators[0], duplicate_root))
+    accepted, _ = _pipeline(tmp_path / "reused-game-id",
+                            locators=(locators[0], reused_game_id))
+    assert accepted.source.total_rows == 4
+    with pytest.raises(wave.Hold, match="duplicate literal source-qualified game"):
+        _pipeline(tmp_path / "duplicate-game",
+                  locators=(locators[0], locators[0]))
     path = pipeline.root / "cursor_00000000.json"
     original = path.read_bytes()
     path.write_bytes(original[:-1])
@@ -224,7 +252,7 @@ def test_source_namespace_native_and_receipt_tamper_refusal(tmp_path: Path) -> N
     receipt_path = records.parent / "RECEIPT.json"
     original_receipt = receipt_path.read_bytes()
     receipt = json.loads(original_receipt)
-    receipt["files"]["RECORDS.bin"]["sha256"] = wave.sha(changed)
+    receipt["files"]["RECORDS.bin"]["sha256"] = wave.sha(bytes(changed))
     receipt_path.write_bytes(wave.canonical(receipt))
     with pytest.raises(wave.Hold, match="candidate differs from paired wave"):
         candidate.verify(pipeline.store, 0, records.parent)
@@ -251,3 +279,22 @@ def test_valid_but_false_presealed_sort_run_refused(tmp_path: Path) -> None:
         source_identity_sha256=identity)
     with pytest.raises(wave.Hold, match="sort run differs from paired candidate"):
         pipeline.wave2_metadata_sort(sorter)
+
+
+def test_comparison_without_cursor_rechecks_source_bytes(tmp_path: Path) -> None:
+    pipeline, _ = _pipeline(tmp_path)
+
+    def interrupt(_: int) -> None:
+        raise RuntimeError("controlled unsealed cursor window")
+
+    with pytest.raises(RuntimeError, match="controlled"):
+        pipeline.wave1(after_wave_seal=interrupt)
+    with pytest.raises(RuntimeError, match="controlled"):
+        pipeline.wave1(after_comparison=interrupt)
+    comparison = tmp_path / "waves" / "compare_00000000.json"
+    saved = comparison.read_bytes()
+    changed, _ = _pipeline(tmp_path, tamper_native=True)
+    with pytest.raises(wave.Hold, match="source differs from sealed paired wave"):
+        changed.wave1()
+    assert comparison.read_bytes() == saved
+    assert not (pipeline.root / "cursor_00000000.json").exists()

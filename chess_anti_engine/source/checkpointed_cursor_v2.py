@@ -143,7 +143,7 @@ class SourceCursor:
                   wave._hex64(reader_code_sha256), "bounded source roster")
         expected = []
         key_labels: dict[tuple[str, str], str] = {}
-        unique_games: set[tuple[str, str, int]] = set()
+        unique_games: set[tuple[str, str, str, int]] = set()
         for loc in locators:
             wave.need(type(loc) is GameLocator and
                       loc.source in ("BT4-v9", "Ceres-v8", "SF-d6") and
@@ -159,9 +159,10 @@ class SourceCursor:
             wave.need(key not in key_labels or key_labels[key] == loc.source,
                       "conflicting source namespace")
             key_labels[key] = loc.source
-            game = loc.source_manifest_sha, loc.namespace, loc.game_id
+            game = (loc.source_manifest_sha, loc.namespace,
+                    loc.root_id, loc.game_id)
             wave.need(game not in unique_games,
-                      "one root per source-qualified game")
+                      "duplicate literal source-qualified game")
             unique_games.add(game)
             expected.append({"source": loc.source,
                              "source_manifest_sha": loc.source_manifest_sha,
@@ -212,8 +213,9 @@ class SourceCursor:
             game_sha = digest.hexdigest()
             start = cursor.row if index == cursor.game else 0
             wave.need(0 <= start < len(rows) and
-                      ((start == 0 and cursor.game_sha256 is None) or
-                       (start > 0 and cursor.game_sha256 == game_sha)),
+                      (index != cursor.game or
+                       ((start == 0 and cursor.game_sha256 is None) or
+                        (start > 0 and cursor.game_sha256 == game_sha))),
                       "midgame resume complete-game hash")
             for ply in range(start, len(rows)):
                 self.current = (Cursor(index, ply + 1, game_sha)
@@ -311,7 +313,30 @@ class CursorPipeline:
                   "cursor sealed ordinal coverage")
         return receipt, cursor
 
-    def wave1(self, *, after_seal: Callable[[int], None] | None = None) -> None:
+    def _compare_source_to_sealed(
+            self, number: int, rows: Iterator[tuple[dict, bytes]],
+            expected: int) -> None:
+        comparison = self.store.verify_comparison(number)
+        digest = hashlib.sha256()
+        count = 0
+        for (sealed, old_native), (row, native) in zip(
+                self.store.iter_rows(number), _take(rows, expected),
+                strict=True):
+            note = wave._note(row, native,
+                              number * wave.SEGMENT_ROWS + count,
+                              self.store.roster, self.store.syzygy_sha256)
+            wave.need(note == sealed and native == old_native,
+                      "source differs from sealed paired wave")
+            digest.update(wave.canonical(note))
+            digest.update(native)
+            count += 1
+        wave.need(count == expected and
+                  digest.hexdigest() == comparison["paired_rows_sha256"],
+                  "sealed paired-wave source coverage")
+
+    def wave1(self, *, after_seal: Callable[[int], None] | None = None,
+              after_wave_seal: Callable[[int], None] | None = None,
+              after_comparison: Callable[[int], None] | None = None) -> None:
         cursor = Cursor(0, 0, None)
         previous = "0" * 64
         segments = (self.source.total_rows + wave.SEGMENT_ROWS - 1) // wave.SEGMENT_ROWS
@@ -331,10 +356,20 @@ class CursorPipeline:
             source_rows = self.source.rows_from(start)
             existing = self.store._path(number).exists()
             if existing:
-                self.store.compare_wave2(number, _take(source_rows, expected))
+                comparison = self.store.root / f"compare_{number:08d}.json"
+                if comparison.exists():
+                    self._compare_source_to_sealed(
+                        number, source_rows, expected)
+                else:
+                    self.store.compare_wave2(
+                        number, _take(source_rows, expected))
+                    if after_comparison is not None:
+                        after_comparison(number)
             else:
                 self.store.seal_wave1(number, _take(source_rows, expected),
                                       expected_rows=expected)
+                if after_wave_seal is not None:
+                    after_wave_seal(number)
             end = self.source.current
             wave.need(end != start, "cursor did not advance")
             receipt = {"schema": "source_cursor_segment_v2",
