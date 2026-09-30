@@ -1,4 +1,4 @@
-"""Retrospective Tactical300 calibration against saved G10 deeper searches."""
+"""Retrospective Tactical300 diagnostic against saved G10 deeper searches."""
 
 from __future__ import annotations
 
@@ -57,6 +57,16 @@ def test_exact_300_is_not_threshold300_but_301_is() -> None:
     calibration.aggregate_row(aggregate, result)
     assert aggregate["thresholds"]["300"]["eligible_gap"] == 1
     assert aggregate["thresholds"]["300"]["disagreements"] == 1
+
+
+def test_stored_float16_tie_removes_disagreement() -> None:
+    row = g10_row(extended=False)
+    a, b = _set_d9_scores(row, 501.0, 200.0)
+    result = calibration.analyze_row(
+        row, _policy_for(row, {b: 0.50001, a: 0.49999})
+    )
+    assert result["bt4_top"] == sorted([a, b])
+    assert result["disagreement"] is False
 
 
 def test_d12_can_vindicate_bt4_against_large_d9_gap() -> None:
@@ -143,6 +153,37 @@ def test_winning_mate_persistence_is_categorical() -> None:
     assert result["bt4_top_is_final_winning_mate"] is False
 
 
+def test_winning_mate_fallback_deeper_outcomes_are_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = g10_row(extended=True)
+    mate, other = _moves(row)[:2]
+    row["phases"][0]["per_depth"][0]["lines"][0][2] = 99900.0
+    monkeypatch.setattr(
+        calibration.adaptive,
+        "select",
+        lambda *_args: (None, 9, "no_deeper_scores"),
+    )
+    result = calibration.analyze_row(row, _policy_for(row, {mate: 0.6, other: 0.4}))
+    assert result["final_has_winning_mate"] is None
+    assert result["final_preserves_d9_winning_mate"] is None
+    assert result["bt4_top_is_final_winning_mate"] is None
+    aggregate = calibration._new_aggregate()
+    calibration.aggregate_row(aggregate, result)
+    assert aggregate["mate"]["deeper_outcome_adjudicable"] == 0
+    assert aggregate["mate"]["fallback_no_deeper_scores"] == 1
+
+
+def test_winning_mate_deeper_outcome_is_adjudicable() -> None:
+    row = g10_row(extended=True)
+    mate, other = _moves(row)[:2]
+    row["phases"][0]["per_depth"][0]["lines"][0][2] = 99900.0
+    result = calibration.analyze_row(row, _policy_for(row, {mate: 0.6, other: 0.4}))
+    aggregate = calibration._new_aggregate()
+    calibration.aggregate_row(aggregate, result)
+    assert aggregate["mate"]["deeper_outcome_adjudicable"] == 1
+
+
 def test_losing_mate_row_is_not_folded_into_centipawn_thresholds() -> None:
     row = g10_row(extended=False)
     lines = row["phases"][0]["per_depth"][0]["lines"]
@@ -176,6 +217,7 @@ def test_decision_requires_full_coverage_and_minimum_denominator() -> None:
     allowed = calibration.decision_from_aggregate(aggregate, full_source_coverage=True)
     assert allowed["verdict"] == "NO_5PCT_BLOCK_CALIBRATION_STILL_REQUIRED_FOR_ADMISSION"
     assert allowed["training_admission"] is False
+    assert allowed["published_transfer_calibrated"] is False
 
 
 def test_invalid_g10_identity_remains_fatal() -> None:

@@ -74,7 +74,6 @@ def environment(runtime: Path, *, gpu: bool) -> dict[str, str]:
 
 def inputs(m: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
     """Validate immutable upstream qualification; no model loading or inference."""
-    overlay_head, overlay = arena_overlay(m)
     reader.require(m["schema"] == 1 and m["profile"] in ("B100_H20", reader.MATCHED_PROFILE), "unknown profile")
     for name, filename in [
         ("launcher_sha256", __file__),
@@ -96,6 +95,12 @@ def inputs(m: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
         )
     if m["profile"] == "B100_H20":
         reader.require(m["reference"]["sha256"] == H20_SHA, "reference is not qualified H20")
+    return qualified_runtime(m)
+
+
+def qualified_runtime(m: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+    """Existing arena runtime qualification, independent of training-corpus profile."""
+    overlay_head, overlay = arena_overlay(m)
     frozen = reader.read_json(m["runtime"])
     reader.require(
         frozen["status"] == "CPU_QUALIFIED_INACTIVE_RUNTIME_IDENTITY",

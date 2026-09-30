@@ -1,0 +1,12 @@
+{
+  "repository": "jjoshua2/DeepFin",
+  "base_pr": 819,
+  "base_commit": "40803892f3204a54a33a87e2e7b25fa48fed2e1a",
+  "base_tree": "50269344ff41534586f485a1b5aa70875e465a46",
+  "complete_source_tree_matches_remote": true,
+  "reconstructed_commit_object_matches_remote_sha": true,
+  "remote_published": false,
+  "shallow_boundary": "40803892f3204a54a33a87e2e7b25fa48fed2e1a",
+  "local_branch": "feat/bend-exact-slider-indices-20260921",
+  "commit_object_reconstructed_from_unsigned_remote_metadata": true
+}

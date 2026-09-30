@@ -1,0 +1,9 @@
+{
+  "returncode": 0,
+  "timeout": false,
+  "command": [
+    "/mnt/data/compact-work/bun",
+    "/mnt/data/compact-work/bend/tests/run/u64_proofs.js"
+  ],
+  "elapsed_seconds": 3.9997937450000336
+}

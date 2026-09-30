@@ -268,6 +268,10 @@ def uci_double(engine: ScriptedEngine, **attrs: Any) -> StockfishUCI:
     sf.hash_mb = 64
     sf.threads = 1
     sf.syzygy_path = "/nonexistent/syzygy"
+    sf.syzygy_50_move_rule = None
+    sf.syzygy_probe_limit = None
+    sf.syzygy_option_capabilities = {}
+    sf.syzygy_ready_after_requests = False
     sf.nice = 15
     sf.read_timeout_s = 5.0
     sf._lock = threading.Lock()
@@ -362,6 +366,13 @@ def worker_spec(tmp_path: Path, **overrides: Any) -> corpus.WorkerSpec:
     }
     values.update(overrides)
     return corpus.WorkerSpec(**values)
+
+
+def parse_theoretical_args(argv: list[str]) -> Any:
+    """Existing generator fixtures explicitly select their historical mode."""
+    return corpus.build_parser().parse_args([
+        *argv, "--outcome-mode", corpus.OUTCOME_MODE_THEORETICAL,
+    ])
 
 
 def fen_opening(fen: str, tmp_path: Path) -> OpeningConfig:
@@ -795,6 +806,81 @@ def test_g10_never_calls_an_earlier_complete_block_d10() -> None:
     assert search.staircase_gate.decision_depth_observed == 8
     assert searcher.stats.staircase_gate_forced_stops == 1
     assert len(engine.go_lines) == 2
+
+
+@pytest.mark.parametrize("fault", ["duplicate", "illegal", "rank_gap", "partial", "unique", "benign_flush"])
+@pytest.mark.parametrize("adaptive", [False, True])
+def test_invalid_candidate_roster_stops_actual_search_handoff(fault: str, adaptive: bool) -> None:
+    class RosterEngine(ScriptedEngine):
+        def score_of(self, uci: str, *, depth: int) -> int:
+            del depth
+            return {"c3g7": 100, "d2d3": 95, "d2e3": 90, "c3d4": 85}.get(uci, -500)
+
+        def _reply_to(self, go_cmd: str) -> list[str]:
+            if not go_cmd.startswith("go depth 10 "):
+                return super()._reply_to(go_cmd)
+            roots = go_cmd.split("searchmoves ")[1].split()
+            ranked = sorted(roots, key=lambda move: self.score_of(move, depth=10), reverse=True)
+            if fault == "duplicate":
+                # Preserved failure: the first four ranks name only two moves.
+                ranked[:4] = ["c3g7", "d2d3", "d2d3", "d2d3"]
+            elif fault == "illegal":
+                ranked[-1] = "a1a2"
+            elif fault == "partial":
+                ranked = ranked[:-1]
+            lines = [
+                info(10, rank + int(fault == "rank_gap" and rank >= 3),
+                     self.score_of(move, depth=10), move, 100)
+                for rank, move in enumerate(ranked, 1)
+            ]
+            if fault == "benign_flush":
+                lines = lines + lines
+            return [*lines, f"bestmove {ranked[0]}"]
+
+    board = chess.Board("8/1b6/8/3p4/7p/k1B2b2/3K4/8 w - - 24 168")
+    engine = RosterEngine()
+    searcher = searcher_for(
+        engine, staircase=corpus.G10_STAIRCASE,
+        staircase_policy=corpus.STAIRCASE_POLICY_G10 if adaptive else corpus.STAIRCASE_POLICY_FIXED,
+    )
+    search = searcher.search_position(board)
+    assert {pv.move for pv in search.values} == {move.uci() for move in board.legal_moves}
+    assert search.value_full_width
+    phase = search.phases[1].as_row()
+    if fault in {"unique", "benign_flush"}:
+        assert len(engine.go_lines) == len(search.phases) == 3
+        expected = [line[1] for line in phase["per_depth"][0]["lines"]][:4]
+        assert engine.go_lines[2].split("searchmoves ")[1].split() == expected
+        assert phase["anomalies"]["duplicate_iteration_flushes"] == int(fault == "benign_flush")
+        assert phase["anomalies"]["re_emissions_disagreeing"] == 0
+        assert "extension_stop_reason" not in phase
+    else:
+        assert len(engine.go_lines) == len(search.phases) == 2
+        assert phase["extension_stop_reason"] == "invalid_candidate_roster"
+        assert phase["per_depth"][0]["complete"] == (fault in {"duplicate", "illegal"})
+        if fault == "duplicate":
+            assert [line[1] for line in phase["per_depth"][0]["lines"]][:4] == ["c3g7", "d2d3", "d2d3", "d2d3"]
+        if adaptive:
+            assert search.staircase_gate is not None
+            assert not search.staircase_gate.extended
+            assert search.staircase_gate.reason == "invalid_candidate_roster"
+            assert search.staircase_gate.margin_cp is None
+        else:
+            assert search.staircase_gate is None
+
+
+def test_numeric_first_rung_keeps_its_unique_legal_top_k_handoff() -> None:
+    board = chess.Board()
+    engine = ScriptedEngine(preferred=("e2e4",))
+    search = searcher_for(engine, staircase="4:9,2:10").search_position(board)
+    assert len(search.phases) == len(engine.go_lines) == 2
+    assert search.phases[0].searchmoves is None
+    assert search.phases[0].width_realized == 4
+    moves = [pv.move for pv in search.phases[0].parse.blocks[-1].lines]
+    assert len(moves) == len(set(moves)) == 4
+    assert set(moves) < {move.uci() for move in board.legal_moves}
+    assert engine.go_lines[1].split("searchmoves ")[1].split() == moves[:2]
+    assert "extension_stop_reason" not in search.phases[0].as_row()
 
 
 def test_the_g10_shape_remains_fixed_without_the_named_policy() -> None:
@@ -1379,6 +1465,40 @@ def test_the_search_key_is_the_dedup_key_plus_the_reversible_segments_repeats() 
     assert corpus.search_key(cut) == f"{corpus.dedup_key(cut)}|"
 
 
+def test_search_key_copies_only_the_reversible_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A long game does not copy history older than the reversible segment."""
+    route = (
+        "g1f3 g8f6 f3g1 f6g8 e2e4 e7e5 "
+        "g1f3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1 f6g8"
+    )
+    boards = [
+        board_after(""),
+        board_after(T2_ROUTE_REPEATED),
+        board_after(route),
+        board_after(route + " d2d4"),
+    ]
+    # A FEN may carry a halfmove clock longer than the available move stack.
+    fen_only = chess.Board(board_after(route).fen())
+    boards.append(fen_only)
+
+    original_copy = chess.Board.copy
+    copied_stacks: list[int | bool] = []
+
+    def record_copy(self: chess.Board, *, stack: int | bool = True) -> chess.Board:
+        copied_stacks.append(stack)
+        return original_copy(self, stack=stack)
+
+    monkeypatch.setattr(chess.Board, "copy", record_copy)
+    assert all(corpus.search_key(board).startswith(corpus.dedup_key(board) + "|")
+               for board in boards)
+    assert copied_stacks == [
+        min(int(board.halfmove_clock), len(board.move_stack))
+        for board in boards
+    ]
+
+
 #: ⚑ THE ROUTE WHERE THE TWO REGIMES DISAGREE: two knight cycles (every position
 #: a repeat) then ``e2e4 e7e5``.  The irreversible move clears the hash stack
 #: the UNFIXED encoder rebuilds repetition planes from, so at plies 9-10 the
@@ -1560,6 +1680,7 @@ def test_a_fresh_process_generates_and_derives_under_one_regime(tmp_path: Path) 
         "    out = root / 'corpus'\n"
         "    summary = corpus.run(corpus.build_parser().parse_args([\n"
         "        '--out-dir', str(out), '--games', str(len(lines)), '--workers', '2',\n"
+        "        '--outcome-mode', 'theoretical_v1',\n"
         "        '--syzygy-path', str(SMOKE_SYZYGY or corpus.REPO_ROOT),\n"
         "        '--temp-high', '0.01', '--temp-low', '0.01', '--nice', '0', '--max-plies', '1',\n"
         "    ]))\n"
@@ -1907,6 +2028,129 @@ def test_an_unfinished_game_never_gets_a_fabricated_result(tmp_path: Path) -> No
     assert outcome.result_pgn is None
     assert [row["result"] for row in outcome.rows] == [None]
     assert [row["result_pgn"] for row in outcome.rows] == [None]
+
+
+class FakeRule50Tablebase:
+    def __init__(self, wdl: int, dtz: int, *, missing: bool = False) -> None:
+        self.wdl = wdl
+        self.dtz = dtz
+        self.missing = missing
+        self.probes: list[str] = []
+
+    def probe_wdl(self, board: chess.Board) -> int:
+        self.probes.append(board.fen())
+        if self.missing:
+            raise KeyError("missing material")
+        return self.wdl
+
+    def probe_dtz(self, board: chess.Board) -> int:
+        self.probes.append(board.fen())
+        return self.dtz
+
+
+@pytest.mark.parametrize(
+    ("wdl", "dtz", "result", "row_result"),
+    [(-2, -5, "1-0", 1.0), (2, 5, "0-1", -1.0),
+     (-1, -101, "1/2-1/2", 0.0), (0, 0, "1/2-1/2", 0.0)],
+)
+def test_rule50_capture_entry_backfills_only_the_seven_piece_row(
+    tmp_path: Path, wdl: int, dtz: int, result: str, row_result: float,
+) -> None:
+    engine = ScriptedEngine(preferred=BLACK_ADJUDICATION_SCRIPT)
+    spec = worker_spec(tmp_path, outcome_mode=corpus.OUTCOME_MODE_RULE50)
+    searcher = searcher_for(engine)
+    tablebase = FakeRule50Tablebase(wdl, dtz)
+    outcome = corpus.play_game(
+        spec=spec, searcher=searcher,
+        opening_cfg=fen_opening(BLACK_ADJUDICATION_FEN, tmp_path),
+        game_id=0, cache=corpus.DedupCache(max_entries=spec.dedup_cache_max),
+        dedup=corpus.DedupStats(), progress=corpus.WorkerProgress(),
+        seq=corpus.WorkerSeq(), match_tablebase=cast(Any, tablebase),
+    )
+    assert outcome.termination == "syzygy"
+    assert outcome.result_pgn == result  # the six-man seat is black
+    assert len(tablebase.probes) == 2  # WDL and DTZ at the capture entry
+    assert [row["piece_count"] for row in outcome.rows] == [7]
+    assert outcome.rows[0]["result"] == row_result
+    assert outcome.rows[0]["run"]["outcome_mode"] == corpus.OUTCOME_MODE_RULE50
+
+
+def test_rule50_positive_clock_cap_is_unresolved_and_missing_probe_fails(
+    tmp_path: Path,
+) -> None:
+    fen = "7k/8/8/8/8/8/8/KQ6 w - - 7 1"
+    spec = worker_spec(tmp_path, outcome_mode=corpus.OUTCOME_MODE_RULE50, max_plies=0)
+
+    def play(tablebase: Any) -> Any:
+        return corpus.play_game(
+            spec=spec,
+            searcher=searcher_for(ScriptedEngine()),
+            opening_cfg=fen_opening(fen, tmp_path),
+            game_id=0,
+            cache=corpus.DedupCache(max_entries=spec.dedup_cache_max),
+            dedup=corpus.DedupStats(),
+            progress=corpus.WorkerProgress(),
+            seq=corpus.WorkerSeq(),
+            match_tablebase=tablebase,
+        )
+
+    outcome = play(cast(Any, FakeRule50Tablebase(2, 5)))
+    assert outcome.termination == "max_plies"
+    assert outcome.result_pgn is None
+    assert outcome.rule50_unknown_plies == 1
+    with pytest.raises(RuntimeError, match="missing eligible match Syzygy probe"):
+        play(cast(Any, FakeRule50Tablebase(2, 5, missing=True)))
+
+
+def test_rule50_resume_refuses_old_theoretical_manifest() -> None:
+    with pytest.raises(ValueError, match="outcome_mode"):
+        corpus.refuse_resume_config_drift(
+            {"config_requested": {"seed": 7}},
+            requested={"seed": 7, "outcome_mode": corpus.OUTCOME_MODE_RULE50},
+        )
+    corpus.refuse_resume_config_drift(
+        {"config_requested": {"seed": 7}},
+        requested={"seed": 7, "outcome_mode": corpus.OUTCOME_MODE_THEORETICAL},
+    )
+
+
+def test_outcome_mode_is_required_on_the_cli(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        corpus.build_parser().parse_args(["--out-dir", str(tmp_path), "--games", "1"])
+    args = corpus.build_parser().parse_args([
+        "--out-dir", str(tmp_path), "--games", "1",
+        "--outcome-mode", corpus.OUTCOME_MODE_RULE50,
+    ])
+    assert args.outcome_mode == corpus.OUTCOME_MODE_RULE50
+
+
+def test_single_worker_strict_handshake_failure_banks_failed_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Opened:
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        corpus, "open_strict_match_tablebase", lambda *_args, **_kwargs: Opened(),
+    )
+    monkeypatch.setattr(corpus, "announce_engine", lambda *_args: {"binary": "fake"})
+    monkeypatch.setattr(corpus.audit_targets, "engine_identity", lambda *_args: "fake")
+
+    def refuse(_spec: corpus.WorkerSpec) -> dict[str, Any]:
+        raise RuntimeError("unsupported Syzygy50MoveRule")
+
+    monkeypatch.setattr(corpus, "run_worker", refuse)
+    out_dir = tmp_path / "run"
+    assert corpus.main([
+        "--out-dir", str(out_dir), "--games", "1", "--syzygy-path", "fake",
+        "--outcome-mode", corpus.OUTCOME_MODE_RULE50,
+    ]) == 1
+    summary = json.loads((out_dir / corpus.SUMMARY_NAME).read_text("utf-8"))
+    assert summary["run_finished"] is False
+    assert summary["failed_workers"][0]["exception"] == (
+        "unsupported Syzygy50MoveRule"
+    )
 
 
 def test_a_terminal_position_is_never_searched() -> None:
@@ -2523,7 +2767,7 @@ def test_a_run_refuses_a_half_open_syzygy_pair_before_it_writes_anything(
     tmp_path: Path,
 ) -> None:
     out_dir = tmp_path / "run"
-    args = corpus.build_parser().parse_args([
+    args = parse_theoretical_args([
         "--out-dir", str(out_dir), "--games", "1",
         "--syzygy-path", f"{SMOKE_SYZYGY}{os.pathsep}/nonexistent/syzygy_6",
     ])
@@ -2534,10 +2778,14 @@ def test_a_run_refuses_a_half_open_syzygy_pair_before_it_writes_anything(
 
 def test_the_config_stamp_hash_moves_with_every_knob() -> None:
     parser = corpus.build_parser()
-    base = parser.parse_args(["--out-dir", "/tmp/x", "--games", "1"])
+    base = parser.parse_args([
+        "--out-dir", "/tmp/x", "--games", "1",
+        "--outcome-mode", corpus.OUTCOME_MODE_THEORETICAL,
+    ])
     stamp = corpus.config_stamp(base, sf_binary="/bin/sf")
     changed = parser.parse_args(
-        ["--out-dir", "/tmp/x", "--games", "1", "--temp-low", "0.9"],
+        ["--out-dir", "/tmp/x", "--games", "1", "--temp-low", "0.9",
+         "--outcome-mode", corpus.OUTCOME_MODE_THEORETICAL],
     )
     assert corpus.stamp_sha256(stamp) != corpus.stamp_sha256(
         corpus.config_stamp(changed, sf_binary="/bin/sf"),
@@ -2547,6 +2795,7 @@ def test_the_config_stamp_hash_moves_with_every_knob() -> None:
         "--out-dir", "/tmp/x", "--games", "1",
         "--staircase", corpus.G10_STAIRCASE,
         "--staircase-policy", corpus.STAIRCASE_POLICY_G10,
+        "--outcome-mode", corpus.OUTCOME_MODE_THEORETICAL,
     ])
     g10_stamp = corpus.config_stamp(g10, sf_binary="/bin/sf")
     assert g10_stamp["staircase_policy"] == corpus.STAIRCASE_POLICY_G10
@@ -2557,7 +2806,7 @@ def test_g10_with_the_wrong_staircase_is_refused_before_output_exists(
     tmp_path: Path,
 ) -> None:
     out = tmp_path / "run"
-    args = corpus.build_parser().parse_args([
+    args = parse_theoretical_args([
         "--out-dir", str(out), "--games", "1",
         "--staircase-policy", corpus.STAIRCASE_POLICY_G10,
     ])
@@ -2919,7 +3168,7 @@ def test_the_cli_run_banks_and_reports_the_g10_policy_end_to_end(
         lambda _path: "ScriptedEngine",
     )
     out_dir = tmp_path / "run"
-    args = corpus.build_parser().parse_args([
+    args = parse_theoretical_args([
         "--out-dir", str(out_dir),
         "--games", "1",
         "--workers", "1",
@@ -3083,7 +3332,7 @@ def test_a_whole_run_writes_a_summary_and_refuses_a_second_pass(
         "--syzygy-path", str(SMOKE_SYZYGY), "--temp-high", "0.01",
         "--temp-low", "0.01", "--nice", "0",
     ]
-    args = corpus.build_parser().parse_args(argv)
+    args = parse_theoretical_args(argv)
 
     summary = corpus.run(args)
 
@@ -3118,7 +3367,7 @@ def test_a_whole_run_writes_a_summary_and_refuses_a_second_pass(
     ] * 2
 
     with pytest.raises(FileExistsError, match="already holds files"):
-        corpus.run(corpus.build_parser().parse_args(argv))
+        corpus.run(parse_theoretical_args(argv))
 
 
 def test_the_read_timeout_flag_reaches_the_engine_it_configures(
@@ -3157,14 +3406,14 @@ def test_the_read_timeout_flag_reaches_the_engine_it_configures(
 
 
 def test_the_read_timeout_default_is_stated_and_a_bad_one_is_refused() -> None:
-    args = corpus.build_parser().parse_args(["--out-dir", "/tmp/x", "--games", "1"])
+    args = parse_theoretical_args(["--out-dir", "/tmp/x", "--games", "1"])
     assert args.sf_read_timeout == corpus.DEFAULT_SF_READ_TIMEOUT_S
     assert corpus.config_stamp(args, sf_binary="/bin/sf")["sf_read_timeout_s"] == (
         corpus.DEFAULT_SF_READ_TIMEOUT_S
     )
     for bad in ("0", "-1", "nan"):
         with pytest.raises(ValueError, match="finite and positive"):
-            corpus.run(corpus.build_parser().parse_args(
+            corpus.run(parse_theoretical_args(
                 ["--out-dir", "/tmp/x", "--games", "1", "--sf-read-timeout", bad],
             ))
 
@@ -3197,20 +3446,20 @@ def test_the_search_timeout_flag_reaches_the_searcher_and_the_stamp(
 
 
 def test_the_search_timeout_default_is_stated_and_a_bad_one_is_refused() -> None:
-    args = corpus.build_parser().parse_args(["--out-dir", "/tmp/x", "--games", "1"])
+    args = parse_theoretical_args(["--out-dir", "/tmp/x", "--games", "1"])
     assert args.sf_search_timeout == corpus.DEFAULT_SF_SEARCH_TIMEOUT_S
     assert corpus.config_stamp(args, sf_binary="/bin/sf")["sf_search_timeout_s"] == (
         corpus.DEFAULT_SF_SEARCH_TIMEOUT_S
     )
     for bad in ("0", "-1", "nan"):
         with pytest.raises(ValueError, match="finite and positive"):
-            corpus.run(corpus.build_parser().parse_args(
+            corpus.run(parse_theoretical_args(
                 ["--out-dir", "/tmp/x", "--games", "1", "--sf-search-timeout", bad],
             ))
     # A tripwire looser than the outer deadline is a stamp naming a bound the
     # engine never enforces -- refused, not silently reordered.
     with pytest.raises(ValueError, match="exceeds"):
-        corpus.run(corpus.build_parser().parse_args(
+        corpus.run(parse_theoretical_args(
             ["--out-dir", "/tmp/x", "--games", "1",
              "--sf-search-timeout", "20", "--sf-read-timeout", "10"],
         ))
@@ -3323,6 +3572,7 @@ def test_a_dead_worker_does_not_take_the_other_workers_summary_with_it(
 
     code = corpus.main([
         "--out-dir", str(out_dir), "--games", "2", "--workers", "2",
+        "--outcome-mode", corpus.OUTCOME_MODE_THEORETICAL,
         "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT),
         "--temp-high", "0.01", "--temp-low", "0.01", "--nice", "0",
     ])
@@ -4325,25 +4575,25 @@ def test_a_resume_that_changes_a_generation_setting_is_refused(
         "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT),
         "--temp-high", "0.01", "--temp-low", "0.01", "--nice", "0",
     ]
-    corpus.run(corpus.build_parser().parse_args(argv))
+    corpus.run(parse_theoretical_args(argv))
 
     # A run that WROTE ITS SUMMARY finished; there is nothing to resume.
     with pytest.raises(ValueError, match="Nothing to resume"):
-        corpus.run(corpus.build_parser().parse_args([*argv, "--resume"]))
+        corpus.run(parse_theoretical_args([*argv, "--resume"]))
     (out_dir / corpus.SUMMARY_NAME).unlink()  # ... now it looks killed.
 
     with pytest.raises(ValueError, match=r"temp_high: 0\.01 -> 0\.5"):
-        corpus.run(corpus.build_parser().parse_args(
+        corpus.run(parse_theoretical_args(
             [*argv[:argv.index("--temp-high") + 1], "0.5",
              *argv[argv.index("--temp-high") + 2:], "--resume"],
         ))
     # ... and a plain rerun is still refused, --resume or not.
     with pytest.raises(FileExistsError, match="already holds files"):
-        corpus.run(corpus.build_parser().parse_args(argv))
+        corpus.run(parse_theoretical_args(argv))
 
     (out_dir / corpus.MANIFEST_NAME).unlink()
     with pytest.raises(ValueError, match="no run in this directory"):
-        corpus.run(corpus.build_parser().parse_args([*argv, "--resume"]))
+        corpus.run(parse_theoretical_args([*argv, "--resume"]))
 
 
 def test_a_manifest_that_does_not_hash_its_own_config_is_refused(
@@ -4540,7 +4790,7 @@ def test_a_schema_1_corpus_cannot_be_resumed_by_any_worker_shape(
         "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT), "--resume",
     ]
     with pytest.raises(ValueError, match="row schema 2"):
-        corpus.run(corpus.build_parser().parse_args(argv))
+        corpus.run(parse_theoretical_args(argv))
 
     after = {p.name: p.read_bytes() for p in out_dir.iterdir()}
     assert after == before, "a refused resume must not archive or write a byte"
@@ -4582,7 +4832,7 @@ def test_a_two_worker_schema_1_resume_is_refused_before_either_worker_exists(
         "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT), "--resume",
     ]
     with pytest.raises(ValueError, match="row schema 2"):
-        corpus.run(corpus.build_parser().parse_args(argv))
+        corpus.run(parse_theoretical_args(argv))
 
     after = {p.name: p.read_bytes() for p in out_dir.iterdir()}
     assert after == before
@@ -4753,6 +5003,7 @@ def test_a_crashed_run_resumes_and_its_crash_record_survives(
     out_dir = tmp_path / "run"
     argv = [
         "--out-dir", str(out_dir), "--games", "2", "--workers", "2",
+        "--outcome-mode", corpus.OUTCOME_MODE_THEORETICAL,
         "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT),
         "--temp-high", "0.01", "--temp-low", "0.01", "--nice", "0",
     ]
@@ -4766,8 +5017,14 @@ def test_a_crashed_run_resumes_and_its_crash_record_survives(
     assert crashed["games"] == 1, "worker 0's game is banked, worker 1's is not"
     assert "RUN DID NOT FINISH" in corpus.format_summary(crashed)
 
-    oom_kills.clear()  # the OOM is over; the same corpus, resumed
-    assert corpus.main([*argv, "--resume"]) == 0
+    manifest_before = (out_dir / corpus.MANIFEST_NAME).read_bytes()
+    oom_kills.clear()  # the OOM is over; resume with fewer resident workers
+    assert corpus.main([*argv, "--resume", "--worker-concurrency", "1"]) == 0
+    assert (out_dir / corpus.MANIFEST_NAME).read_bytes() == manifest_before
+    invocations = [json.loads(line) for line in
+                   (out_dir / "execution_invocations.jsonl").read_text().splitlines()]
+    assert [item["worker_concurrency_effective"] for item in invocations] == [2, 1]
+    assert invocations[0]["config_sha256"] == invocations[1]["config_sha256"]
 
     resumed = json.loads((out_dir / corpus.SUMMARY_NAME).read_text("utf-8"))
     assert resumed["run_finished"] is True
@@ -4851,6 +5108,7 @@ def test_the_json_copy_is_freed_by_the_resume_and_written_fresh(
     aux.parent.mkdir()
     argv = [
         "--out-dir", str(out_dir), "--games", "2", "--workers", "2",
+        "--outcome-mode", corpus.OUTCOME_MODE_THEORETICAL,
         "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT),
         "--temp-high", "0.01", "--temp-low", "0.01", "--nice", "0",
         "--json", str(aux),
@@ -4911,6 +5169,7 @@ def test_a_refused_resume_moves_neither_record(
     aux = tmp_path / "burn.json"
     argv = [
         "--out-dir", str(out_dir), "--games", "2", "--workers", "2",
+        "--outcome-mode", corpus.OUTCOME_MODE_THEORETICAL,
         "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT),
         "--temp-high", "0.01", "--temp-low", "0.01", "--nice", "0",
         "--json", str(aux),
@@ -4962,13 +5221,13 @@ def test_a_resumed_run_summarises_the_whole_corpus_not_the_last_shift(
         "--temp-high", "0.01", "--temp-low", "0.01", "--nice", "0",
         "--max-plies", "1", "--staircase", RESUME_STAIRCASE,
     ]
-    first = corpus.run(corpus.build_parser().parse_args([*argv, "--games", "2"]))
+    first = corpus.run(parse_theoretical_args([*argv, "--games", "2"]))
     assert first["resumed"] is False
     assert first["games"] == 2
     (out_dir / corpus.SUMMARY_NAME).unlink()  # the kill
 
     second = corpus.run(
-        corpus.build_parser().parse_args([*argv, "--games", "2", "--resume"]),
+        parse_theoretical_args([*argv, "--games", "2", "--resume"]),
     )
 
     assert second["resumed"] is True
@@ -5106,3 +5365,61 @@ def test_real_stockfish_emits_exactly_one_line_per_rank_per_depth() -> None:
         )
     assert search.value_full_width is True
     assert len(search.values) == 20
+
+
+@pytest.mark.parametrize(("limit", "effective"), [(None, 3), (1, 1), (2, 2), (9, 3)])
+def test_worker_concurrency_preserves_all_logical_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    limit: int | None, effective: int,
+) -> None:
+    limits: list[int] = []
+    specs: list[corpus.WorkerSpec] = []
+
+    class RecordingExecutor(InlineExecutor):
+        def __init__(self, *, max_workers: int, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            limits.append(max_workers)
+
+    def record_worker(spec: corpus.WorkerSpec) -> dict[str, Any]:
+        specs.append(spec)
+        return corpus.failed_worker_slot(spec, corpus.worker_failure(
+            RuntimeError("no engine needed"), progress=corpus.WorkerProgress(),
+            games_completed=0,
+        ))
+
+    monkeypatch.setattr(corpus, "ProcessPoolExecutor", RecordingExecutor)
+    monkeypatch.setattr(corpus, "run_worker", record_worker)
+    monkeypatch.setattr(corpus, "refuse_unopenable_syzygy", lambda _path: ())
+    monkeypatch.setattr(corpus.audit_targets, "engine_identity", lambda _path: "test")
+    args = parse_theoretical_args([
+        "--out-dir", str(tmp_path / "run"), "--games", "8", "--workers", "3",
+        "--seed", "42", "--stockfish", "/bin/true",
+    ])
+    original_stamp = corpus.config_stamp(args, sf_binary=str(args.stockfish))
+    args.worker_concurrency = limit
+    summary = corpus.run(args)
+    assert limits == [effective]
+    assert [(s.worker_id, s.game_ids, s.seed) for s in specs] == [
+        (0, (0, 3, 6), 42), (1, (1, 4, 7), 42), (2, (2, 5), 42),
+    ]
+    assert summary["config_requested"] == original_stamp
+    assert {s.config_sha256 for s in specs} == {corpus.stamp_sha256(original_stamp)}
+    assert summary["execution"]["worker_concurrency_effective"] == effective
+    invocation = json.loads((tmp_path / "run" / "execution_invocations.jsonl").read_text())
+    assert invocation == summary["execution"]
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_invalid_worker_concurrency_leaves_output_untouched(tmp_path: Path, limit: int) -> None:
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    sentinel = out_dir / "summary.json"
+    sentinel.write_text('{"run_finished": false}')
+    args = parse_theoretical_args([
+        "--out-dir", str(out_dir), "--games", "2", "--resume",
+        "--worker-concurrency", str(limit),
+    ])
+    with pytest.raises(ValueError, match="worker-concurrency must be positive"):
+        corpus.run(args)
+    assert list(out_dir.iterdir()) == [sentinel]
+    assert sentinel.read_text() == '{"run_finished": false}'

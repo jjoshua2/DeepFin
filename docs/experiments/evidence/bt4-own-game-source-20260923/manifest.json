@@ -1,0 +1,72 @@
+{
+  "actor_outcome_fields": [
+    "game_id",
+    "ply_index",
+    "outcome_wdl_target"
+  ],
+  "missing_for_sf_factorial": [
+    "sf_source_policy",
+    "sf_search_wdl",
+    "sf_raw_row_provenance",
+    "ceres_labels"
+  ],
+  "outcome_mode": "rule50_match_v1",
+  "producer_sha256": "acc90938726a9cddab6383eace93c92b912bdfc24247735256dfc116f3708a84",
+  "rows": 752,
+  "schema": "bt4_own_teacher_source_v1",
+  "shards": [
+    {
+      "array_sha256": {
+        "bt4_policy": "b6cdbb87535feb51ec17059690198e33e551cd170a277d79b2d9db9224ef1969",
+        "bt4_wdl_raw": "b87d710f33a385e04869e5df074ee050c7b83826b79ba701fe2e8e5e87c5e351",
+        "game_id": "b6ac4f4440eec6c01672794373dea8d307f668ac3e2413c41fc93579cb803e58",
+        "input_key": "722072f6aa6f8d64c649e26a48ec5ac9c0f690c965857db76820b6263e6f3b57",
+        "outcome_wdl_target": "f119f29924368d20b3f3fd5923bd4bfb47328d4c88d32489f35ccddbb4794905",
+        "ply_index": "d0ea7b299b32f97218942fcdb1aab7465d05f923c575b9dbbf33b31ddcf5a6b1",
+        "row_uid": "72821b4935d3c8c5c294e5cd4465600c0ba62ad50bc2fc6ebe9f31e2fbdf4b80",
+        "source_key": "5c8b9069f583abe7675124ed19ef7fd9eaec28177670b443aa4c312c907a1b88",
+        "x": "4a206f7906ffaeca9f8457878b093884bac3242ef981eb6f60ef17753f2e58aa"
+      },
+      "bank_summary_sha256": "d8261d0c8f3e82264c101edd80c2e0bca75d9446e6c62ed424370e18ce69030b",
+      "path": "bank_0000.zarr",
+      "row_references": "bank_0000.rows.jsonl",
+      "row_references_sha256": "3571171b135ad32812f82a5e5e20ff2be25e0b753555b4e81317bce5d13ecea4",
+      "rows": 752
+    }
+  ],
+  "source_kind": "bt4_own_games",
+  "sources": [
+    {
+      "bank": "/home/josh/chess-artifacts/operations/bt4-root-gpu-qualification-20260923/run04_ordinary_retry01/ordinary_opening/bank",
+      "completed_rows": 752,
+      "discarded_games": 0,
+      "full_bank_audit": {
+        "path": "/tmp/bt4-own-label-reuse-20260923/ordinary_retry01_audit_v2.json",
+        "sha256": "aa7d3f8fb01bc6ca5a4403622effbfbcf1c311e9bf5ff209032d5022ff0db625",
+        "status": "PASS_INDEPENDENT_BT4_ORDINARY_BANK_AUDIT"
+      },
+      "launch_sha256": "ab58f272ebf67ddd253ec9e00e9ad99a6b72871c5a95fe25f223af95f358a0ea",
+      "provider_proof_sha256": "038ddcd7204a9c0f639b861f8ed77116f787563355efa4e5adf9af15c48c36ef",
+      "summary_sha256": "d8261d0c8f3e82264c101edd80c2e0bca75d9446e6c62ed424370e18ce69030b"
+    }
+  ],
+  "status": "complete",
+  "teacher_contract": {
+    "history_rep_fix": true,
+    "input_dtype": "float32",
+    "input_extra_features": "v2_threats",
+    "input_history_encoding": "lc0_root_legacy_meta",
+    "input_name": "/input/planes",
+    "model_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+    "policy_encoding": "lc0_1858_compact",
+    "policy_output": "/output/policy",
+    "wdl_dtype": "float32",
+    "wdl_kind": "probabilities",
+    "wdl_output": "/output/wdl"
+  },
+  "teacher_fields": {
+    "native_wdl": "bt4_wdl_raw",
+    "policy": "bt4_policy"
+  },
+  "training_ready": false
+}

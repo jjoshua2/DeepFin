@@ -1,0 +1,31 @@
+{
+  "arena_source_commit": "c2e74fe3a8582dfe402faa0fa484314df19d8026",
+  "arena_source_sha256": "7089b09146096e218fdf900940dcee6b2f4100da3d2b4aaa1764cb16b0188513",
+  "credit": {
+    "ingest": 0,
+    "owner": 0,
+    "pack": 0,
+    "source": 0,
+    "strength": 0,
+    "target": 0,
+    "throughput": 0,
+    "unique": 0
+  },
+  "members_sha256": {
+    "ARITHMETIC.json": "30815b773ba0d7d587e2af6ce78c9e033bb3f60433829921e9f160c03918a459",
+    "PREREG.md": "4bf4e96922b09106e4df0dd29b363d0f0b09c557b8209e4b8eb726b02f57e227",
+    "REVIEW.md": "78e14a71d1aafdeb545e40e233e68ffaef75b8b76cff56245846e15ab6e19f06",
+    "VALIDATION.json": "c0d8951c2923399e8da39c680bf1d69eaa722eac81e04855701bee0ed41a5884",
+    "ci_gate.py": "517a6a4e99e96ab03830f3691979361dc565d3a9ecf2cc19590db19fa0ec95ee",
+    "test_ci_gate.py": "91f0051f0e58730a59379b99180253089478f30d1aecf68281e0d76c436517c8",
+    "test_verify_packet.py": "d7543bc2099b98302a59bbced7383b952a1177f6abb6ee68e99e4a65987feb0f",
+    "verify_packet.py": "129839346b3fe0614ef9ebe0624b2e628354e0595cdddc8c908191611c3927b0"
+  },
+  "parent_v2_arithmetic_sha256": "30815b773ba0d7d587e2af6ce78c9e033bb3f60433829921e9f160c03918a459",
+  "parent_v2_prereg_sha256": "2f114bac00b377fec5c6fd9460158fd9ac40864532587c1d23dbeaec224f18a7",
+  "parent_v3_manifest_sha256": "20610f078564559a60606e1d13ec856b142c8bef6da5987d822610d367a9bf25",
+  "schema": "owner_vs_fair_teacher_route_prereg_v4_source_packet",
+  "status": "SOURCE_ONLY_HOLD_LAUNCH_PENDING_INDEPENDENT_REVIEW",
+  "v2_hold_review_sha256": "80bba3e96ea944d13e2a3d0d4b0103770b64ab94e6c680c1a585ce110b5a3842",
+  "v3_independent_review_sha256": "0712cc8b9417ca81fdce6d0d57d02db422ee89d1680dbf24f1371786a1b2a1f0"
+}

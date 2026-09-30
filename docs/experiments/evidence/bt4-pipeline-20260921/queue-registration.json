@@ -1,0 +1,17 @@
+{
+  "status": "PASS_APPEND_ONLY_QUEUE_REGISTRATION",
+  "registered_unix": 1790039970.0697103,
+  "id": "bt4_pipeline_prefetch_20260921",
+  "before_count": 237,
+  "after_count": 238,
+  "queue_before_sha256": "589f6527b7bc3a99d7464902be6699e45263646044a242e3ad268a82d2b6c50a",
+  "queue_after_sha256": "72eb05d19e31ece6c6cb7e00880aed2cba159d51e2b6d92616bbd7b102ab1a9a",
+  "state_unchanged": true,
+  "prior_items_unchanged": true,
+  "dependencies": [
+    "factorial58_fresh_D",
+    "factorial58_D_C_400sims",
+    "factorial58_D_B_400sims"
+  ],
+  "descriptor_sha256": "2be717bdf04338d03d0c41927bd86f94b1d7631da9dd7275b3c5c31e77583a2b"
+}

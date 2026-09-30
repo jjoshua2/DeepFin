@@ -1,0 +1,165 @@
+{
+  "proof_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "aggregate_law_count": 68,
+  "new_law_count": 4,
+  "new_laws": [
+    "write_preserves_other_location",
+    "write_preserves_separation",
+    "fill_preserves_unwritten_location",
+    "fill_preserves_separation"
+  ],
+  "inherited_law_count": 64,
+  "inherited_negative_controls": 90,
+  "negative_controls": [
+    {
+      "name": "leaf-alias-declared-separated",
+      "rejected": true,
+      "kind": "source contract/refinement",
+      "entry": "Model.bend"
+    },
+    {
+      "name": "left-overlap-declared-separated",
+      "rejected": true,
+      "kind": "source contract/refinement",
+      "entry": "Model.bend"
+    },
+    {
+      "name": "right-overlap-declared-separated",
+      "rejected": true,
+      "kind": "source contract/refinement",
+      "entry": "Model.bend"
+    },
+    {
+      "name": "omit-index-normalization",
+      "rejected": true,
+      "kind": "source contract/refinement",
+      "entry": "Actual.bend"
+    },
+    {
+      "name": "numeric-inequality-is-not-separation",
+      "rejected": true,
+      "kind": "source contract/refinement",
+      "entry": "Actual.bend"
+    },
+    {
+      "name": "clear-omits-first-write",
+      "rejected": true,
+      "kind": "source contract/refinement",
+      "entry": "Fill.bend"
+    },
+    {
+      "name": "clear-repeats-address",
+      "rejected": true,
+      "kind": "source contract/refinement",
+      "entry": "Fill.bend"
+    },
+    {
+      "name": "actual-fill-writes-next-address",
+      "rejected": true,
+      "kind": "source contract/refinement",
+      "entry": "Fill.bend"
+    },
+    {
+      "name": "actual-fill-zero-case-writes",
+      "rejected": true,
+      "kind": "source contract/refinement",
+      "entry": "Fill.bend"
+    },
+    {
+      "name": "omitted-law",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "omitted-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-laws-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-consumer-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "proof-hole",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "foreign-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "symlinked-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe-frame",
+      "rejected": true,
+      "kind": "policy and exact output",
+      "raw_cli_status": 0
+    }
+  ],
+  "source_sha256s": {
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/proofs/layout/Spec.bend": "a08495ab3c27218154f6fd79091cd98b48e44d04d8f8b032e4f68f76531dcc89",
+    "standalone/proofs/separation/Actual.bend": "b96b6a911f64b5fbec48c7acd3874e1bcbf7e49ba9422bf900742f33168190e4",
+    "standalone/proofs/separation/Fill.bend": "ed596c1b000029b5172567996a729359da996d01984eb0bf3d4efc632ec809a7",
+    "standalone/proofs/separation/LAWS.bend": "1f5a9dea7b0e713863bf2235ee0db6a199746a06c9ff238a9b04c925d6b3fa7c",
+    "standalone/proofs/separation/Model.bend": "bbb1b65365edad902ce88522fea8c7dd2763a26bacb58fd2acf62967ae4d40f8",
+    "standalone/proofs/separation/PROOF.bend": "32a46ba67224ba5d3f0903bc77fc54fa1a75854745a2a350acd9fb3118e892d2",
+    "standalone/proofs/separation/Spec.bend": "8afa6d10a68644534ce3a200fe46259e28f3c75b9acb9fdf9532a8c58f83a64f",
+    "standalone/proofs/separation/consumer.bend": "dbe5eff5251864b564943b926f80680ca33b674911bc9780f27f978eaae8efa0",
+    "standalone/proofs/separation/focused.js": "26083bbe26a17222a124aa59a3240f69368cb0168b5728e9afa19573237a06b9",
+    "standalone/proofs/separation/verify.js": "bf93cb64a66d64046d69d608f4972120ce961796107b567470cd82dfc999f4b9",
+    "standalone/proofs/separation/verify_native.js": "5f4c0185b846e5e8ce6851c150bab8775acb0fa6c5823fb80e495d53104e343c",
+    "standalone/proofs/storage/Build.bend": "4859dd6c15f0ec33c63607cba33fa4891e32d671fb2d17c6b0f04476376905ae",
+    "standalone/proofs/storage/Model.bend": "147b9fa371bb6066e1adcbe70bb85aab9ca931eb6465af49626c633ea23bca5a",
+    "standalone/proofs/storage/Observe.bend": "51d1b811b9ed4933db9672d0348490e2e017110460dd473d33a0fe6bde6b292b",
+    "standalone/proofs/storage/Read.bend": "4df305d3b934e27d4c12e3049f337b1ae5312bb1ff428b98b048c4d9b2fbfaa1",
+    "standalone/proofs/storage/Refinement.bend": "73da23ca26992ca657505a4daeacdbbfe3f9004943bd14948af15c47a7ba8647",
+    "standalone/proofs/storage/Representation.bend": "1703fb62ab133fbfd4fa8155fa59dc19d1fa87ce2d838c92453eed516fbc9e2d",
+    "standalone/proofs/storage/Roundtrip.bend": "05d00fbc9089cb176c434c8042e2220344ce643c8dcd1c2155c623d195d43a54",
+    "standalone/proofs/storage/Write.bend": "a12f1778b8d176939174df2050e8ae00c03f20af55eeae3fc7c5744abe47ca41",
+    "standalone/proofs/storage/probe.bend": "cdedd4e7858f3ffba635b3f5a8878af3081f2d461680df371674a9089d41061d",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "inherited_source_sha256s": {
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/proofs/layout/Spec.bend": "a08495ab3c27218154f6fd79091cd98b48e44d04d8f8b032e4f68f76531dcc89",
+    "standalone/proofs/storage/Build.bend": "4859dd6c15f0ec33c63607cba33fa4891e32d671fb2d17c6b0f04476376905ae",
+    "standalone/proofs/storage/Fill.bend": "5e5598fd8aec1e65680a91953b029a9256deafd85e96c7b0ae9a6a4d79d0294a",
+    "standalone/proofs/storage/Initialize.bend": "df9a8e127908e60f687170dbf1c532c4f6dcff20f14a4282b624cf954eeb35ce",
+    "standalone/proofs/storage/LAWS.bend": "0c54bd8cd58ee1679ea93d2fe17d35c2ed74c36aa7ee7260bc4dc1914b12a671",
+    "standalone/proofs/storage/Model.bend": "147b9fa371bb6066e1adcbe70bb85aab9ca931eb6465af49626c633ea23bca5a",
+    "standalone/proofs/storage/Observe.bend": "51d1b811b9ed4933db9672d0348490e2e017110460dd473d33a0fe6bde6b292b",
+    "standalone/proofs/storage/PROOF.bend": "fc84559c8500eca28dca432acc886e47b4164d4e0ea352af1c6299f977138dc3",
+    "standalone/proofs/storage/Read.bend": "4df305d3b934e27d4c12e3049f337b1ae5312bb1ff428b98b048c4d9b2fbfaa1",
+    "standalone/proofs/storage/Refinement.bend": "73da23ca26992ca657505a4daeacdbbfe3f9004943bd14948af15c47a7ba8647",
+    "standalone/proofs/storage/Representation.bend": "1703fb62ab133fbfd4fa8155fa59dc19d1fa87ce2d838c92453eed516fbc9e2d",
+    "standalone/proofs/storage/Roundtrip.bend": "05d00fbc9089cb176c434c8042e2220344ce643c8dcd1c2155c623d195d43a54",
+    "standalone/proofs/storage/Write.bend": "a12f1778b8d176939174df2050e8ae00c03f20af55eeae3fc7c5744abe47ca41",
+    "standalone/proofs/storage/consumer.bend": "0d6ed1918cbb65d7749c99c6f90631b5d3bade26b22e278d69e8912d699e5c57",
+    "standalone/proofs/storage/probe.bend": "cdedd4e7858f3ffba635b3f5a8878af3081f2d461680df371674a9089d41061d",
+    "standalone/proofs/storage/verify.js": "b52beb28367f2475897669fe9401b85076e6a1a9191c262ad06424d7ae9d33c0",
+    "standalone/proofs/storage/verify_native.js": "ee3141b09cd8a9278661c5a7273b8f55f05a47b281e2b7b995e3d1f9535cad65",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "consumer": "PASS",
+  "scope": "Normalized-path frame laws for actual Array.set/get and Tables.fill; not numeric prefix bounds or final geometric lookup refinement"
+}

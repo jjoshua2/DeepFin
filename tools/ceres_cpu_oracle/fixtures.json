@@ -1,0 +1,188 @@
+{
+  "schema": 1,
+  "histories": [
+    {
+      "id": "published_00",
+      "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "moves": []
+    },
+    {
+      "id": "published_01",
+      "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "moves": [
+        "e2e4",
+        "e7e5",
+        "g1f3",
+        "b8c6",
+        "f1b5"
+      ]
+    },
+    {
+      "id": "published_02",
+      "root_fen": "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+      "moves": []
+    },
+    {
+      "id": "published_03",
+      "root_fen": "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+      "moves": []
+    },
+    {
+      "id": "published_04",
+      "root_fen": "k7/4P3/8/8/8/8/8/7K w - - 0 1",
+      "moves": []
+    },
+    {
+      "id": "published_05",
+      "root_fen": "7k/8/8/8/8/8/4p3/K7 b - - 0 1",
+      "moves": []
+    },
+    {
+      "id": "published_06",
+      "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "moves": [
+        "e2e4",
+        "a7a6",
+        "e4e5",
+        "d7d5"
+      ]
+    },
+    {
+      "id": "published_07",
+      "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "moves": [
+        "a2a3",
+        "e7e5",
+        "a3a4",
+        "e5e4",
+        "d2d4"
+      ]
+    },
+    {
+      "id": "knight_history_4",
+      "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "moves": [
+        "g1f3",
+        "g8f6",
+        "f3g1",
+        "f6g8"
+      ]
+    },
+    {
+      "id": "knight_history_8",
+      "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "moves": [
+        "g1f3",
+        "g8f6",
+        "f3g1",
+        "f6g8",
+        "g1f3",
+        "g8f6",
+        "f3g1",
+        "f6g8"
+      ]
+    },
+    {
+      "id": "knight_history_12",
+      "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "moves": [
+        "g1f3",
+        "g8f6",
+        "f3g1",
+        "f6g8",
+        "g1f3",
+        "g8f6",
+        "f3g1",
+        "f6g8",
+        "g1f3",
+        "g8f6",
+        "f3g1",
+        "f6g8"
+      ]
+    },
+    {
+      "id": "knight_history_9",
+      "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "moves": [
+        "g1f3",
+        "g8f6",
+        "f3g1",
+        "f6g8",
+        "g1f3",
+        "g8f6",
+        "f3g1",
+        "f6g8",
+        "g1f3"
+      ]
+    },
+    {
+      "id": "castle_white_history",
+      "root_fen": "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+      "moves": [
+        "e1g1"
+      ]
+    },
+    {
+      "id": "castle_black_history",
+      "root_fen": "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+      "moves": [
+        "e8c8"
+      ]
+    },
+    {
+      "id": "noncapturable_ep_history",
+      "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "moves": [
+        "e2e4"
+      ]
+    },
+    {
+      "id": "promotion_history",
+      "root_fen": "k7/4P3/8/8/8/8/8/7K w - - 0 1",
+      "moves": [
+        "e7e8q"
+      ]
+    }
+  ],
+  "synthetic_values": [
+    {
+      "id": "tie",
+      "primary_bits": [
+        0,
+        0,
+        0
+      ],
+      "secondary_bits": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "id": "asymmetric",
+      "primary_bits": [
+        15360,
+        0,
+        48128
+      ],
+      "secondary_bits": [
+        0,
+        16384,
+        48128
+      ]
+    },
+    {
+      "id": "small",
+      "primary_bits": [
+        11878,
+        44646,
+        0
+      ],
+      "secondary_bits": [
+        13312,
+        0,
+        46080
+      ]
+    }
+  ]
+}

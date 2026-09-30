@@ -1,0 +1,22 @@
+{
+  "source_commit": "94e380d218d1713828fd192427282588bf7df910",
+  "current_head": "6f2c71fa9bd1d1537c1f5ae0ff6e70e31e495c53",
+  "qualification_run": 35896688343,
+  "artifact": 10768704502,
+  "artifact_sha256": "8314fe4d6106b6c8e4678e47b48b402ca6a638105b8f9f3982c9f00e5b37c476",
+  "all_native_manifest_entries_matched": 283,
+  "parent_gate": "PASS (retained; not rerun)",
+  "parent_laws": 98,
+  "parent_controls": 212,
+  "remote_compare": "Only documentation/evidence differs from qualified source",
+  "current_pr_ci": {
+    "CI": {
+      "id": 35912865132,
+      "conclusion": "success"
+    },
+    "Bend chess probe": {
+      "id": 35912865194,
+      "conclusion": "success"
+    }
+  }
+}

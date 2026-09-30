@@ -1,0 +1,86 @@
+{
+  "status": "ACTUAL_AUDIT_LAUNCH_ONLY",
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/operator_v1/plan.json": "a138c9e7517e063aafbe9bbd56d08b91a46eed1a3ab7165541a05856737deaf6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/operator_v1/command.txt": "8a38a750d06ea8b1f68ff349e600516955923d19898aa268c9d0f9f9c0a30ff8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/operator_v1/independent_review.json": "e05bdddb9d85cca7fd0fafcf36e317f3ca654590bbb7d28223571bea08719f1b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/operator_v1/outer_started.json": "b736d1414903249cc82e709c9cf0e234406262ad5c37ca16369e75b20ed1e8fd",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/operator_v1/started.json": "6c228d06f94e4f7cab3de5b5827c636e06021f1b447a4dfd1a9895065e719a47",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/selection.final.json": "771c331c15f5ab8791ecf1afa904899949fb4d1a086c76dc19ca332f0259493d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/manifest.final.json": "32bcd2d9c3a524e4c7b9ac2ddeaf7a278d5fed7c743dff12132b69f719e40990",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/actual_metadata_selection.json": "4fd3ad3a33d242fb92555106d874cd3bbdfdd0c44960cf62607e44f812a67658"
+  },
+  "runtime_commit": "2d2b0215b084006c97e191076c602e1ca92a0ca5",
+  "published_source_merge": "111c8c5bf5c2b983096261f62d024941b46188d9",
+  "selection": {
+    "shards": 512,
+    "raw_rows": 4249935,
+    "run06_shards": 384,
+    "run07_shards": 128
+  },
+  "outer_started": {
+    "started_unix": 1789340757.634636,
+    "argv": [
+      "/bin/bash",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/operator_v1/command.txt"
+    ],
+    "plan_sha256": "a138c9e7517e063aafbe9bbd56d08b91a46eed1a3ab7165541a05856737deaf6",
+    "command_sha256": "8a38a750d06ea8b1f68ff349e600516955923d19898aa268c9d0f9f9c0a30ff8"
+  },
+  "supervisor_started": {
+    "plan_sha256": "a138c9e7517e063aafbe9bbd56d08b91a46eed1a3ab7165541a05856737deaf6",
+    "started_unix": 1789340757.70651
+  },
+  "saved_process_observation": {
+    "scope": "One saved process observation; not a completion or progress poll",
+    "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/operator_v1/selected/process/process.json",
+    "started_unix": 1789340757.7086535,
+    "audit_pid": 550756,
+    "owner_pid": 550754,
+    "supervisor_pid": 550755,
+    "complete": false,
+    "cwd": "/tmp/deepfin-saved-raw-audit",
+    "hard_seconds": 7094,
+    "command": [
+      "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+      "/tmp/deepfin-saved-raw-audit/scripts/audit_raw_baseline.py",
+      "--manifest",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/manifest.final.json",
+      "--expected-manifest-sha256",
+      "32bcd2d9c3a524e4c7b9ac2ddeaf7a278d5fed7c743dff12132b69f719e40990",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/operator_v1/selected/audit",
+      "--max-shards",
+      "512",
+      "--max-seconds",
+      "7140",
+      "--deadline-unix",
+      "1789347897.6565416"
+    ],
+    "audit_cmdline_matches_command": true
+  },
+  "resources": {
+    "cpu": [
+      8,
+      9
+    ],
+    "threads": 2,
+    "memory_available_gib": [
+      48,
+      32
+    ],
+    "disk_floor_gib": 150,
+    "metadata_output_cap_gib": 1,
+    "address_space_cap": null
+  },
+  "whole_seconds": 7200,
+  "parent_handles": {
+    "exec": 89943,
+    "sole_observer": 849
+  },
+  "limits": [
+    "No completed audit or eligible-row result observed.",
+    "No derivation, new teacher inference, value mixture or training admission.",
+    "Saved process observation is launch evidence, not a resource peak or completion proof."
+  ]
+}

@@ -1,0 +1,142 @@
+{
+  "status": "SAVED_ONE_SHARD_PILOT_PASS_NOT_TRAINING",
+  "source_commit": "b5e68000f",
+  "references": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/pilot_v2/plan.json",
+      "sha256": "e4611100699001fea94a76213f5c7545c0958677d97a0169a97104a89dc6276f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/pilot_v2/independent_review.json",
+      "sha256": "713230963a8108c34be1f943f24d39a1db40b804c8bbdef21963994d93487870"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/pilot_v2/terminal.json",
+      "sha256": "c507aef4bfd18fa8cb4c9856514b47b8ed03f81bc94205d2b3c1f6e129cdd7c2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/pilot_v2/execution/status.json",
+      "sha256": "5487344cf4169899f64550fca1ad643522f0c43e6e4e0feaaab923b01c59634b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/pilot_v2/execution/output/bt4_sf_downside_policy_summary.json",
+      "sha256": "658b74c0a800a1983a3b8765df42a3c1eab90b75ba9123ca3dd1679b02a2d010"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/pilot_v2/execution/producer.resources",
+      "sha256": "0bdde9af4af44572b823abee9b0e72f97003d3c91da3762da8d006bf59964204"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/pilot_v1/execution/status.json",
+      "sha256": "9f37f0afd09e70f56f045748daa9f2f64546823a590a3cc684129a2c000fc635"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/pilot_v2/completed_independent_review.json",
+      "sha256": "e92651dd5c3eccb07be24ef9b0d22298f2d2ddc4cd1788b2fff14287844839ed"
+    }
+  ],
+  "summary": {
+    "algorithm": "stored-b100-allmove-sf-gapgt300-weight0.5-ordinary-v1",
+    "categories": {
+      "mate_domain_unchanged": 2513,
+      "ordinary_downside": 5679
+    },
+    "changed_rows": 4660,
+    "elapsed_seconds": 9.601956227998016,
+    "full_source_rows": 18910484,
+    "history_lineage": "Inherited original input_key_verified/source x; no fresh history re-encoding.",
+    "kind": "bt4_sf_allmove_downside",
+    "limitations": "Original historical control/provenance limitations unchanged; no valid-control promotion, inference, training or strength claim.",
+    "metadata_sha256": {
+      "/home/josh/projects/chess/data/nnue_bootstrap/run03_s3/summary.json": "55a9cf043b9b90a005bd1adf1dc6d810cb282341bcc11a4eccf127c07c09d6af",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/bt4_policy_mix_summary.json": "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/derive_targets_summary.json": "47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43"
+    },
+    "mutated_arrays": [
+      "policy_target"
+    ],
+    "nonpolicy_arrays_copied": 16,
+    "pilot_max_raw_rows": 16384,
+    "pilot_only": true,
+    "producer_sha256": {
+      "/tmp/deepfin-sf-allmove-downside/chess_anti_engine/stockfish/wdl.py": "11b80c842254e825272d2e84bff473fb12cd3cb5d61c98d5f0bd9f743af43b98",
+      "/tmp/deepfin-sf-allmove-downside/scripts/derive_corpus_targets.py": "2328f5729a887c52674d10107add06a1b51de590a9f1cd2ada17bd16d47f721e",
+      "/tmp/deepfin-sf-allmove-downside/scripts/sf_d9_rank_sidecar.py": "53c2d1d1638c9e0646e68430c56a413c2b0b78a5ca815996eda770eecd8d3def",
+      "/tmp/deepfin-sf-allmove-downside/scripts/sf_policy_rewrite.py": "9c396c63c0348bae0f84e05336fef09a01a448c792dc620e4a7c9c0d28e0bb38"
+    },
+    "raw_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run03_s3",
+    "raw_files": {
+      "/home/josh/projects/chess/data/nnue_bootstrap/run03_s3/w00-00000.jsonl.zst": {
+        "identity": [
+          2096,
+          9682027,
+          15091686,
+          1788352555075640567,
+          1788352555075640567
+        ],
+        "rows_consumed": 8219,
+        "sha256": "12cc2c6e5bd3626df88659294adce8f22b4c206dbe93a306828db8dc17fc4d62"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run03_s3/w00-00001.jsonl.zst": {
+        "identity": [
+          2096,
+          9682030,
+          15161931,
+          1788352565499637787,
+          1788352565499637787
+        ],
+        "rows_consumed": 152,
+        "sha256": "a2b8e98cfc40481920862ba0985190f9d9f174dcc38edd02ab40bdccc2e69414"
+      }
+    },
+    "raw_history_keys_sha256_in_emitted_order": "0b414b4e643ec0a3a80ff03bfa425f5b20385b8dad75162b2e8c83ea9ab5a677",
+    "raw_limit": 8371,
+    "raw_manifest_present": false,
+    "recipe": {
+      "base": "normalized stored B100 float16 policy",
+      "cp_domain": [
+        -32000.0,
+        32000.0
+      ],
+      "flagged_relative_weight": 0.5,
+      "gap_cp_strictly_greater_than": 300.0,
+      "mate_handling": "any-mate-domain-row-unchanged",
+      "roster": "all original legal d9 moves; no next-best gate",
+      "storage": "float64 weighting -> float32 -> float16; zero flagged mass preserves bytes"
+    },
+    "rows": 8192,
+    "rows_dropped_no_result": 179,
+    "schema": 1,
+    "score_bounds": "Original producer discards UCI upper/lower bounds; rows retain aggregate counts, not per-line flags.",
+    "sf_derive_summary_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "sf_source_dir": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+    "shards": 1,
+    "source_derive_summary_sha256": "47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43",
+    "source_dir": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05",
+    "source_policy_summary_sha256": "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38",
+    "status": "PILOT_COMPLETE_NOT_TRAINING",
+    "stored_TV_error_max": 0.00018748933258411302,
+    "stored_mass_error_max": 0.00038444995880126953,
+    "stored_relative_error_max": 0.14285693851768977,
+    "stored_support_losses": 0,
+    "winning_mate_zero_base_mass_rows": 0
+  },
+  "saved_output": {
+    "policy_sha256": "5f2db419215fffecf2d18f00709890ca1e00b42555b23159e98a2e639e2d5558",
+    "source_policy_sha256": "0d03d8e2ffb26af6b7615e4db2f81fce12af94c43e7414a2a3bfc520d9805eb2",
+    "verified_nonpolicy_copied_files": 273,
+    "nonpolicy_arrays": 16
+  },
+  "wall_seconds": {
+    "producer": 13.57,
+    "whole_including_saved_qualification": 15.999182224273682,
+    "prior_preimport_failure": 0.6248438358306885
+  },
+  "producer_peak_rss_kib": 518204,
+  "limits": [
+    "One convenience prefix; measured cost not full-corpus throughput guarantee.",
+    "All raw source and B100/SF originals preserved; pilot has no derive_targets_summary.json.",
+    "No inference, full target rewrite, training or playing result."
+  ]
+}

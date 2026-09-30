@@ -1,0 +1,9 @@
+{
+  "command": [
+    "/mnt/data/fill-tools/bun",
+    "test",
+    "native/bend_engine/standalone/verify_compiler.test.js"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 0.24633899700006623
+}
