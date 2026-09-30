@@ -1,0 +1,175 @@
+"""Reproduce supplementary flag-one update proofs and two-mode native validation.
+
+Run after installing the archived .bend files into proofs/en_passant_review/:
+  python ep_review.py REPOSITORY COMPILER --bun BUN --report REPORT.json --cc clang
+Does not modify any input source; mutations are confined to temporary copies.
+"""
+from __future__ import annotations
+import argparse, hashlib, json, os, re, shutil, subprocess, tempfile, time
+from pathlib import Path
+
+
+def sha(b: bytes) -> str:
+    return hashlib.sha256(b).hexdigest()
+
+
+def main() -> None:
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('repository',type=Path)
+    parser.add_argument('compiler',type=Path)
+    parser.add_argument('--bun',type=Path,required=True)
+    parser.add_argument('--report',type=Path,required=True)
+    parser.add_argument('--cc',default='clang')
+    args=parser.parse_args()
+    engine=args.repository.resolve()/'native/bend_engine'
+    suite=engine/'standalone/proofs/en_passant_review'
+    cli=args.compiler.resolve()/'bend2/main.ts'
+    bun=args.bun.resolve()
+    env=dict(os.environ,BEND_NO_TELEMETRY='1',TERM='dumb',OMP_NUM_THREADS='2')
+    def invoke(cmd,timeout=120):
+        return subprocess.run([str(x) for x in cmd],capture_output=True,env=env,timeout=timeout)
+    def run(cmd,timeout=120):
+        r=invoke(cmd,timeout)
+        if r.returncode or r.stderr:
+            raise RuntimeError((r.returncode,(r.stdout+r.stderr).decode()[-3500:]))
+        return r.stdout
+    pin=run([bun,engine/'standalone/verify_compiler.js',args.compiler.resolve()])
+    assert b'aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae' in pin
+    assert b'd9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4' in pin
+    # Recursively inspect the full local proof closure, not just the top file.
+    closure={}
+    def scan(p):
+        p=p.absolute()
+        assert p.is_file() and not p.is_symlink() and p.resolve()==p
+        key=str(p.relative_to(engine))
+        if key in closure:return
+        raw=p.read_bytes();closure[key]=sha(raw)
+        code='\n'.join(line.split('#',1)[0] for line in raw.decode().splitlines())
+        assert '@unsafe' not in code and '?' not in code
+        for imp in re.findall(r'^\s*import\s+(\S+)',code,re.M):
+            if imp=='Base':continue
+            assert re.fullmatch(r'\.{1,2}/[\w./]+\.bend',imp),imp
+            target=(p.parent/imp).resolve()
+            assert target.is_relative_to(engine)
+            scan(target)
+    scan((suite/'consumer.bend').resolve())
+    closure['standalone/proofs/en_passant_review/probe.bend']=sha((suite/'probe.bend').read_bytes())
+    started=time.monotonic()
+    source=invoke([bun,cli,suite/'consumer.bend'])
+    raw=source.stdout+source.stderr
+    assert source.returncode==0 and raw.decode().strip()=='All terms check.',raw.decode()[-3500:]
+    source_receipt={'exit_code':source.returncode,'elapsed_seconds':time.monotonic()-started,'raw_text':raw.decode(),'sha256':sha(raw)}
+    print('PASS: flag-one exact update and partition-preservation consumer',flush=True)
+    # External, square-based reference. Current metadata behavior is reproduced,
+    # not claimed independently correct chess metadata.
+    def empty():return [(set(),set()) for _ in range(64)]
+    def put(board,sq,kind,side):board[sq]=({kind},{side})
+    def encode(board,meta):
+        planes=[0]*8
+        for i,(kinds,colors) in enumerate(board):
+            for k in kinds:planes[k]|=1<<i
+            for c in colors:planes[6 if c else 7]|=1<<i
+        return [v for word in planes for v in (word>>32,word&0xffffffff)]+list(meta)
+    def consistent(board):return all((not ks and not cs) or (len(ks)==len(cs)==1) for ks,cs in board)
+    def result(board,meta,src,dst):
+        kind=next((k for k in range(5) if k in board[src][0]),5)
+        out=[(set(ks),set(cs)) for ks,cs in board]
+        for sq in (src,dst,dst^8):out[sq]=(set(),set())
+        side=1 if meta[0]==1 else 0;put(out,dst,kind,side)
+        corners={0:2,7:1,56:8,63:4}
+        lost=corners.get(src,0)|corners.get(dst,0)|((3 if side else 12) if kind==5 else 0)
+        ep=(src+dst)//2 if kind==0 and src^dst==16 else 64
+        return out,((meta[0]^1)&0xffffffff,meta[1]&(~lost&0xffffffff),ep)
+    cases=[];counts={};consistent_inputs=0
+    def add(cat,board,meta,src,dst):
+        nonlocal consistent_inputs
+        after,m=result(board,meta,src,dst)
+        if consistent(board):
+            assert consistent(after);consistent_inputs+=1
+        cases.append({'category':cat,'input':[0,src,dst,0]+encode(board,meta),'expected':encode(after,m)})
+        counts[cat]=counts.get(cat,0)+1
+    for src in range(64):
+        for dst in range(64):
+            b=empty();side=(src^dst)&1
+            put(b,dst^8,0,1-side)
+            put(b,src,(src+dst)%6,side)
+            add('all_raw_pairs',b,(side,15,64),src,dst)
+    for side in (0,1):
+        rank=4 if side else 3
+        for file in range(8):
+            for df in (-1,1):
+                if not 0<=file+df<8:continue
+                src=rank*8+file;dst=(rank+(1 if side else -1))*8+file+df
+                b=empty();put(b,src,0,side);put(b,dst^8,0,1-side)
+                put(b,0,3,1-side);put(b,63,5,side)
+                add('pawn_coordinate_geometries',b,(side,15,dst),src,dst)
+    for i in range(64):
+        b=empty();put(b,i,0,i%2);dst=(i+9)%64;put(b,dst^8,2,1-i%2)
+        add('raw_metadata',b,((i*1029933+13)&0xffffffff,(i*93853)&0xffffffff,i),i,dst)
+    for i in range(128):
+        b=empty();src=i%64;dst=(src+17)%64;put(b,src,0,i%2)
+        b[(src+5)%64]=({0,3},{0,1})
+        add('inconsistent_diagnostic',b,(i%2,15,64),src,dst)
+    assert len(cases)==4316
+    malformed=[]
+    base=cases[0]['input']
+    for at,value in ((0,'1'),(1,'64'),(2,'64'),(3,'1'),(4,'-1'),(4,'4294967296'),(4,'x')):
+        row=list(map(str,base));row[at]=value;malformed.append(row)
+    malformed.extend([list(map(str,base[1:])),list(map(str,base*65))])
+    modes=[];mutations=[]
+    with tempfile.TemporaryDirectory(prefix='deepfin-ep-review-') as td:
+        work=Path(td);cfile=work/'ep.c'
+        run([bun,cli,suite/'probe.bend','-o',cfile])
+        def build(cfile,name,flags):
+            exe=work/name
+            run([args.cc,'-std=c11','-O1','-ffp-contract=off','-Werror=shift-count-overflow',*flags,cfile,'-pthread','-lm','-o',exe])
+            return exe
+        def query(exe,subset):
+            values=[str(x) for case in subset for x in case['input']]
+            raw=run([exe,'--threads','1',*values])
+            lines=raw.decode().splitlines();assert len(lines)==len(subset)
+            return raw,[[int(x) for x in line.split()] for line in lines]
+        for mode,flags in [('generic',[]),('ubsan',['-fsanitize=undefined','-fno-sanitize-recover=all'])]:
+            exe=build(cfile,mode,flags);out=[]
+            for start in range(0,len(cases),64):
+                sub=cases[start:start+64];raw,boards=query(exe,sub);out.append(raw)
+                for i,(got,case) in enumerate(zip(boards,sub)):
+                    assert len(got)==19 and got==case['expected'],(mode,start+i,got,case['expected'])
+            for row in malformed:
+                p=invoke([exe,'--threads','1',*row]);assert p.returncode==2 and b'invalid en-passant' in p.stdout+p.stderr
+            modes.append({'mode':mode,'boards':len(cases),'fields':len(cases)*19,'invalid_rejections':len(malformed),'output_sha256':sha(b''.join(out))})
+            print(f'PASS {mode}: {len(cases)} complete boards and {len(malformed)} invalid requests',flush=True)
+        for name,replacement in [('omit_remote_capture','dst'),('wrong_capture_offset','U32.xor(dst,16)')]:
+            mutant=work/name;shutil.copytree(engine,mutant)
+            chess=mutant/'legal_probe/Chess.bend';original=chess.read_text()
+            old='cap = Bool.pick(U32,U32.is_eq(flag,1),U32.xor(dst,8),dst)'
+            # Preserve the repository's whitespace rather than guessing a source site.
+            line=next(x for x in original.splitlines() if 'cap = Bool.pick' in x)
+            assert line.count('U32.xor(dst,8)')+line.count('U32.xor(dst, 8)')==1
+            new=line.replace('U32.xor(dst,8)',replacement).replace('U32.xor(dst, 8)',replacement)
+            assert original.count(line)==1 and new!=line
+            chess.write_text(original.replace(line,new))
+            source_bad=invoke([bun,cli,mutant/'standalone/proofs/en_passant_review/Actual.bend'])
+            diagnostic=(source_bad.stdout+source_bad.stderr).decode().strip()
+            assert source_bad.returncode==1 and re.search(r'expected[\s\S]*observed',diagnostic) and 'Location: unfold' in diagnostic,diagnostic[-3000:]
+            assert not re.search(r'no such file|more than once|RangeError|a defined name',diagnostic)
+            badc=work/(name+'.c');run([bun,cli,mutant/'standalone/proofs/en_passant_review/probe.bend','-o',badc])
+            exe=build(badc,name+'-exe',[]);raw,boards=query(exe,cases[:64])
+            first=next((i for i,(got,case) in enumerate(zip(boards,cases)) if got!=case['expected']),None)
+            assert first is not None
+            changed=next(j for j,(a,b) in enumerate(zip(boards[first],cases[first]['expected'])) if a!=b)
+            # Previously accepted ordinary and promotion domains do not use flag1.
+            unaffected=[]
+            for suite_name in ['move_update','promotion']:
+                p=invoke([bun,cli,mutant/f'standalone/proofs/{suite_name}/consumer.bend'])
+                assert p.returncode==0 and (p.stdout+p.stderr).decode().strip()=='All terms check.'
+                unaffected.append(suite_name)
+            mutations.append({'name':name,'source_status':source_bad.returncode,'source_location':'Actual.unfold','source_diagnostic_sha256':sha(diagnostic.encode()),'compiled_and_executed':True,'native_rejected':True,'row':first,'field':changed,'actual':boards[first][changed],'expected':cases[first]['expected'][changed],'previous_consumers_still_pass':unaffected,'mutated_chess_sha256':sha(chess.read_bytes())})
+            print('PASS new source and native rejection:',name,flush=True)
+    for name,h in closure.items():assert sha((engine/name).read_bytes())==h,name
+    assert run([bun,engine/'standalone/verify_compiler.js',args.compiler.resolve()])==pin
+    report={'supplementary_en_passant':'PASS','source_receipt':source_receipt,'new_registered_laws':0,'source_statements':['actual flag1/promotion0 complete update','representation preservation under input partition'],'source_domain':'arbitrary actual Board and raw U32 src/dst; consistency premise only for preservation; not legal-move validation','cases':len(cases),'consistent_input_cases':consistent_inputs,'cases_by_category':counts,'source_sha256s':closure,'fixture_sha256':sha(json.dumps(cases,sort_keys=True,separators=(',',':')).encode()),'modes':modes,'mutations':mutations,'cc':run([args.cc,'--version']).decode().splitlines()[0],'compiler_identity':pin.decode().strip(),'driver_sha256':sha(Path(__file__).read_bytes()),'limitations':'Generic and UBSan only; no registered aggregate gate, independent review, legal EP or metadata proof. Existing saved primary sources unchanged.'}
+    args.report.parent.mkdir(parents=True,exist_ok=True);args.report.write_text(json.dumps(report,indent=2)+'\n')
+    print('PASS: supplementary report saved',flush=True)
+
+if __name__=='__main__':main()
