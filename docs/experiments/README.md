@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Ceres stored-feed-once root preparation](2026-09-29-ceres-root-feedonce.md) | Tracked CPU root binder exercised by saved-game readback, exact 2,022-root replay parity and narrow 16.81% saved-root prep saving; fresh actor adoption pending |
 | [D-lite historical donor adaptation](2026-09-30-sf-dlite-historical-donor-adapter.md) | Main-archived patch against pinned historical game-epoch runtime; exact donor/paired-pack/consumed-batch gates CPU-reviewed, no training or strength credit |
 | [Initialized attack composition](2026-09-26-bend-initialized-attacked.md) | Three source contracts composing initialized six-piece masks, attacked and singleton in_check; complete-array results; target-centred geometry, not complete castling legality |
 | [Attack state reconciliation](2026-09-26-bend-attack-state-reconciliation.md) | Preserves all15 saved alternative files; catches delayed and unused-slot table loss; no duplicate public-law counts |
