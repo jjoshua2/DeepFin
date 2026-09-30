@@ -107,10 +107,11 @@ the other's check:
 * `_ALLOWED` — a per-file, per-shape, EXACT-COUNT budget for paths that cannot
   be rewritten (a config's `syzygy_path` points outside the checkout). Hit N+1
   is a finding; hit N-1 is a stale pin.
-* `_HISTORICAL_PREFIXES` — `scratchpad/`, whose tracked contents are frozen
-  one-shot drivers for finished experiments. Their recorded paths ARE the
-  record of which checkout and which export a ledger number came from, so the
-  two PATH shapes are skipped there; `worker_username` and `hostname` are not.
+* `_HISTORICAL_PREFIXES` — `scratchpad/` and `docs/experiments/evidence/`,
+  frozen one-shot drivers and the signed dumps they banked. Their recorded
+  paths ARE the record of which checkout and which export a ledger number came
+  from, so the two PATH shapes are skipped there; `worker_username` and
+  `hostname` are not.
 * `_IDENTITY_EXEMPT` — `docs/experiment_ledger.md`, for the derived-token sweep
   ONLY. What remains there after its paths were scrubbed is the maintainer's
   first name in prose, attributing decisions; all four patterns still cover it.
@@ -522,18 +523,22 @@ _ALLOWED: dict[str, dict[str, tuple[int, str]]] = {
 #
 # ⚑ THE EXEMPTION IS THE DIRECTORY'S PURPOSE, NOT ITS SIZE. `scratchpad/` holds
 # the one-shot drivers and probe scripts that produced the numbers in
-# `docs/experiment_ledger.md`. Their paths ARE part of the record — which
+# `docs/experiment_ledger.md`. `docs/experiments/evidence/` holds the frozen
+# signed dumps those drivers banked. Their paths ARE part of the record — which
 # checkout, which salvage export, which engine binary a readout was taken
-# against — so rewriting them to a derived form would make the script no longer
-# describe the run it documents, while the script itself is never re-executed.
-# ("45 files is a lot of edits" would NOT be a reason; see the note above
-# `_YAML_HAS_NO_SELF_LOCATION` on exemptions that argue unimportance.)
+# against — so rewriting them to a derived form would make the artefact no
+# longer describe the run it documents, while the files themselves are never
+# re-executed. ("45 files is a lot of edits" would NOT be a reason; see the
+# note above `_YAML_HAS_NO_SELF_LOCATION` on exemptions that argue unimportance.)
 #
 # ⚑ TWO SHAPES ONLY, and the split is the point: the PATH shapes are the ones
 # that carry the record. `worker_username` and `hostname` stay fully live here —
 # a fleet login or a machine name in a scratchpad script is a leak with no
 # historical value, and those are the shapes a NEW file is most likely to add.
-_HISTORICAL_PREFIXES: tuple[str, ...] = ("scratchpad/",)
+_HISTORICAL_PREFIXES: tuple[str, ...] = (
+    "scratchpad/",
+    "docs/experiments/evidence/",
+)
 _HISTORICAL_SHAPES: frozenset[str] = frozenset({"abs_home", "session_scratch"})
 
 #: Files exempt from the LOCAL-IDENTITY sweep only, each for a stated reason.

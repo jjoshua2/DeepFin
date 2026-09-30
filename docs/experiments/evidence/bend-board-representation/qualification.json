@@ -1,0 +1,23 @@
+{
+  "qualification": "PASS",
+  "run": "36080761492",
+  "source": "ad0c9e379a0b1bfbb91b7c5d7755e22668bf1004",
+  "source_tree": "5210ff4c5300a710f4b679b3619bba2ccfb33a1d",
+  "new_laws": 6,
+  "universal_new_laws": 4,
+  "closed_new_laws": 2,
+  "new_controls": 17,
+  "control_categories": {
+    "source semantic/refinement": 8,
+    "manifest/import policy": 8,
+    "synthetic exact-output unit, not compiler execution": 1
+  },
+  "retained_parent_laws": 117,
+  "retained_parent_controls": 315,
+  "modular_laws": 123,
+  "modular_controls": 332,
+  "combined_wrapper_executed": false,
+  "native_source_entries": 391,
+  "independent_review": false,
+  "claim": "Per-square bitboard partition consistency and actual fresh insertion, not legality or complete P3."
+}

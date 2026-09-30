@@ -1,0 +1,68 @@
+{
+  "status": "PASS_SAVED_G10_CERES_FIRST4_NOT_TRAINING",
+  "rows": 32768,
+  "shards": 4,
+  "collection": {
+    "schema": 1,
+    "status": "COMPLETE",
+    "plan_sha256": "01056ebba89e71aabe2a62b50ded096767cd31c0e95d93a7ed282ff531a2ceaf",
+    "ended_unix": 1789177374.9289033,
+    "elapsed_seconds": 152.46719385799952
+  },
+  "calls": 1024,
+  "padding_rows": 0,
+  "verified_arrays": 36,
+  "root_terminals": {
+    "collection": {
+      "session": 60278,
+      "exit_code": 0
+    },
+    "qualification": {
+      "session": 34959,
+      "exit_code": 0
+    },
+    "basis": "Parent-observed terminal success"
+  },
+  "pins": {
+    "plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/plan.json",
+      "sha256": "391af44c33683c31ec55eda1e5fa23834c08b8114f309ef067bb19d7fdf72a3b"
+    },
+    "driver.plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/driver.plan.json",
+      "sha256": "01056ebba89e71aabe2a62b50ded096767cd31c0e95d93a7ed282ff531a2ceaf"
+    },
+    "driver/manifest.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/driver/manifest.json",
+      "sha256": "fed39f93d223c279203d7f4e549aa3ad97e4c64387c46e0d2a7e977253458849"
+    },
+    "completed.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/completed.json",
+      "sha256": "e97c7ac1338c4c27f3e4685f1494b711141123ec012030e67f0250af29d033b5"
+    },
+    "post_collection/plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/post_collection/plan.json",
+      "sha256": "937277ccb53c7549d818b83b9ef6b541f769964a577111408ed1a6099863a8ef"
+    },
+    "post_collection/independent_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/post_collection/independent_review.json",
+      "sha256": "127f5abfa0b32f691598a63395ed33b9aa7f9453a6e9de05c4546c48ab33f6ed"
+    },
+    "post_collection/completed/qualification.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/post_collection/completed/qualification.json",
+      "sha256": "d82997934ae7b5a5dca31c1b9ce3588b854c4158bc98e5b9c5edc5d759d477d5"
+    },
+    "post_collection/completed/ceres_policy_manifest.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/post_collection/completed/ceres_policy_manifest.json",
+      "sha256": "972da2fabb2d1c721c6ca6b737d7404064147ecf92944ebf98392aeeaf87755e"
+    }
+  },
+  "policy_diagnostic_executed": false,
+  "training_admission": false,
+  "new_strength_results": false,
+  "limitations": [
+    "Convenience prefix, not representative G10.",
+    "Saved producer feed/history proof inherited; original features/model/libraries not rehashed.",
+    "Both value heads banked; native BT4 value join is not performed."
+  ]
+}

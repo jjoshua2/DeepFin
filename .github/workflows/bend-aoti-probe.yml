@@ -1,0 +1,74 @@
+name: Bend AOTI probe
+
+on:
+  pull_request:
+    paths:
+      - "native/bend_engine/aoti_probe/**"
+      - "native/bend_engine/cuda_parity/**"
+      - "native/bend_engine/install_bend.sh"
+      - "native/bend_engine/install_ci_bend.sh"
+      - "native/bend_engine/resolve_latest.py"
+      - "tests/test_bend_latest_manifest.py"
+      - "tests/test_bend_aoti_probe.py"
+      - "tests/test_bend_cuda_parity_harness.py"
+      - ".github/workflows/bend-aoti-probe.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".python-version"
+      - "chess_anti_engine/inference.py"
+      - "chess_anti_engine/moves/encode.py"
+      - "chess_anti_engine/encoding/**"
+  workflow_dispatch:
+    inputs:
+      compiler:
+        description: "PR checks use the pinned U64 fork; upstream latest is opt-in compatibility testing"
+        type: choice
+        default: pinned-fork
+        options: [pinned-fork, upstream-latest]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          activate-environment: true
+
+      - name: Install DeepFin CPU test environment
+        run: uv sync --locked --extra dev --extra cpu
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install explicitly selected Bend compiler
+        env:
+          BEND_NO_TELEMETRY: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+          BEND_COMPILER: ${{ inputs.compiler || 'pinned-fork' }}
+        run: |
+          case "$BEND_COMPILER" in
+            pinned-fork) native/bend_engine/install_ci_bend.sh ;;
+            upstream-latest) native/bend_engine/install_bend.sh ;;
+            *) echo "error: unsupported compiler selection" >&2; exit 2 ;;
+          esac
+
+      - name: Build .pt2 and verify Bend/native AOTI parity
+        env:
+          BEND_NO_TELEMETRY: "1"
+          CAE_REQUIRE_BEND_AOTI_PROBE: "1"
+        run: pytest -q tests/test_bend_aoti_probe.py
+
+      # GitHub's hosted runner has no NVIDIA GPU, but the CUDA parity binary
+      # should still compile against LibTorch. This catches Bend syntax, C ABI,
+      # C++20, and linker regressions before the manual GPU gate.
+      - name: Compile-check DeepFin CUDA parity harness
+        env:
+          BEND_NO_TELEMETRY: "1"
+          CAE_REQUIRE_BEND_CUDA_PARITY: "1"
+        run: pytest -q tests/test_bend_cuda_parity_harness.py

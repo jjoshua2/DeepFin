@@ -1,0 +1,134 @@
+{
+  "actual_outer": {
+    "argv": [
+      "/bin/bash",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/command.txt"
+    ],
+    "command_sha256": "3f7825a643099d11d95856ce0274ad99ca9cc887c0eca9936816bf45cd4f1343",
+    "plan_sha256": "a0ac417babe731c8bbd702191456329fc1512c99fdd24a4c774714b939efd7e8",
+    "started_unix": 1789335632.0130057
+  },
+  "actual_supervisor": {
+    "plan_sha256": "a0ac417babe731c8bbd702191456329fc1512c99fdd24a4c774714b939efd7e8",
+    "started_unix": 1789335632.091139
+  },
+  "bounds": {
+    "address_space_cap": null,
+    "aggregate_output_cap_gib": 16,
+    "available_memory_running_gib": 32,
+    "available_memory_start_gib": 48,
+    "cpus": [
+      8,
+      9
+    ],
+    "minimum_free_gib": 150,
+    "proposed_whole_seconds": 10800,
+    "startup_minimum_free_gib": 170,
+    "threads": 2,
+    "writer_reserve_gib": 4
+  },
+  "expected_derived_shards": 186,
+  "expected_rows": 1517925,
+  "first_stage_saved_process_snapshot": {
+    "adapt_cmdline": [
+      "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+      "/tmp/deepfin-audited-row-exclusions/scripts/adapt_raw_bt4_sidecars.py",
+      "--manifest",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run06_g10.manifest.json",
+      "--expected-manifest-sha256",
+      "433a517569d049cc69e67a340a0211404638acadc03bafee70d0ac2b300ef2ec",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run06_g10/adapted",
+      "--max-raw-rows",
+      "100000",
+      "--max-index-bytes",
+      "1073741824"
+    ],
+    "adapt_pid": 525514,
+    "command": [
+      "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+      "/tmp/deepfin-audited-row-exclusions/scripts/adapt_raw_bt4_sidecars.py",
+      "--manifest",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run06_g10.manifest.json",
+      "--expected-manifest-sha256",
+      "433a517569d049cc69e67a340a0211404638acadc03bafee70d0ac2b300ef2ec",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run06_g10/adapted",
+      "--max-raw-rows",
+      "100000",
+      "--max-index-bytes",
+      "1073741824"
+    ],
+    "complete": false,
+    "cwd": "/tmp/deepfin-audited-row-exclusions",
+    "hard_seconds": 10694,
+    "owner_pid": 525509,
+    "source_id": "run06_g10",
+    "started_unix": 1789335632.0932047,
+    "supervisor_command": [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      "--kill-after=30s",
+      "10664s",
+      "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+      "/tmp/deepfin-audited-row-exclusions/scripts/adapt_raw_bt4_sidecars.py",
+      "--manifest",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run06_g10.manifest.json",
+      "--expected-manifest-sha256",
+      "433a517569d049cc69e67a340a0211404638acadc03bafee70d0ac2b300ef2ec",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run06_g10/adapted",
+      "--max-raw-rows",
+      "100000",
+      "--max-index-bytes",
+      "1073741824"
+    ],
+    "supervisor_pid": 525513
+  },
+  "limits": [
+    "Reuse of saved policy and native WDL; no new inference/model evaluation.",
+    "First source process observed; second source remains scheduled, no completed joint outputs claimed.",
+    "Saved process is a timestamped local snapshot, not an assertion of current liveness.",
+    "No arrays/models/raw payloads or active progress/terminal polled for publication."
+  ],
+  "parent_execution": {
+    "exec": 90211,
+    "sole_observer": 804,
+    "terminal": "NOT_READ_FOR_PUBLICATION"
+  },
+  "preceding_ceres100_reclamation": {
+    "filesystem_free_delta_bytes": 14647095296,
+    "prior_allocated_shard_bytes": 14650634240,
+    "removed_shards": 2309,
+    "status": "COMPLETE_EXACT_SHARD_RECLAMATION_SUMMARIES_RETAINED"
+  },
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_cold_archive_v1/reclamation_execution_v1/completed.json": "fe5dc97c8c8ee894082a850b0ee3417272446eeae561a905c610b6e0ee7ff00b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/command.txt": "3f7825a643099d11d95856ce0274ad99ca9cc887c0eca9936816bf45cd4f1343",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/independent_manifest_source_review.json": "6e6f4309883fd9b0f64f7edec75ac5d175ee4eb5aa797564443466389d7bd74e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/independent_operator_review.json": "8e761f350de470b552b10a9b1738e3bc3bbe56b9420c0353bfe95ced45de9498",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/outer_started.json": "4a439d634f724c934483a8ac33dcb31a49cd4fc1bfbbf005126bf55f0707bbda",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/plan.json": "a0ac417babe731c8bbd702191456329fc1512c99fdd24a4c774714b939efd7e8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/publication_launch_process_snapshot.json": "9b945fece511039c61f06ba4b7aa4625c6c6b004c435808ec4b2732f65c585a1",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run06_g10.manifest.json": "433a517569d049cc69e67a340a0211404638acadc03bafee70d0ac2b300ef2ec",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run06_g10.receipts.jsonl": "212e432375125c8bf37bdf3dbbc45fadb9ef1efc4c0cc12f9720c904afaa520d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run07_g10_companion4.manifest.json": "361ee944158201f5d532b1801a699ba4d38e53b36421c27b869b7447556d318f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run07_g10_companion4.receipts.jsonl": "c585887e0982a40ed737eed0669b4a6a57119ba80e589ee8d480191e39c93b61",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/started.json": "ca6166f66e1ad6d202be5d55a23a9a10513d84cddf62c623d8f9bd04d1bcadc7"
+  },
+  "snapshot_observed_unix": 1789335804.4990013,
+  "snapshot_source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run06_g10/process/process.json",
+  "source_targets": [
+    {
+      "rows": 1006190,
+      "shards": 123,
+      "source_id": "run06_g10"
+    },
+    {
+      "rows": 511735,
+      "shards": 63,
+      "source_id": "run07_g10_companion4"
+    }
+  ],
+  "status": "ACTUAL_ADAPTER_LAUNCH_NOT_COMPLETION_OR_TRAINING_ADMISSION"
+}

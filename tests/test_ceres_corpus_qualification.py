@@ -22,9 +22,11 @@ def reference(path: Path) -> dict[str, str]:
 
 def prepared(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str) -> tuple[Path, dict[str, Any], list[str]]:
     monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '')
-    producer = tool.policy if profile == 'CeresB50' else tool.value
-    fixture = policy_fixture if profile == 'CeresB50' else value_fixture
+    producer = tool.policy if profile in ('CeresB50', 'Ceres100') else tool.value
+    fixture = policy_fixture if profile in ('CeresB50', 'Ceres100') else value_fixture
     args, manifest = fixture(tmp_path, monkeypatch)
+    if profile == 'Ceres100':
+        args.bt4_weight = 0.
     result = producer.rewrite(args)
     corpus = Path(args.out)
     sf = Path(manifest.get('sf_source', manifest['source']))
@@ -45,7 +47,7 @@ def prepared(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str) -> t
         assert isinstance(derived['shards'], list)
         calls.append(profile)
 
-    monkeypatch.setattr(tool.epoch, 'verify_ceres_recipe' if profile == 'CeresB50' else 'verify_ceres_value_recipe', verify)
+    monkeypatch.setattr(tool.epoch, 'verify_ceres_recipe' if profile in ('CeresB50', 'Ceres100') else 'verify_ceres_value_recipe', verify)
     plan: dict[str, Any] = {'schema': 1, 'profile': profile, 'corpus': str(corpus),
         'producer_manifest': reference(Path(args.manifest)),
         'derive_summary': reference(corpus / producer.DERIVE_SUMMARY),
@@ -63,7 +65,7 @@ def prepared(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str) -> t
     return path, plan, calls
 
 
-@pytest.mark.parametrize('profile', ['CeresB50', 'B100CeresV25'])
+@pytest.mark.parametrize('profile', ['CeresB50', 'Ceres100', 'B100CeresV25'])
 def test_actual_producer_metadata_qualifies_without_source_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str) -> None:
     path, plan, calls = prepared(tmp_path, monkeypatch, profile)
     original = json.loads(Path(plan['producer_manifest']['path']).read_text())
@@ -122,11 +124,11 @@ def test_changed_or_incomplete_storage_refused(tmp_path: Path, monkeypatch: pyte
     assert not (tmp_path / 'qualified.json').exists()
 
 
-@pytest.mark.parametrize('profile', ['CeresB50', 'B100CeresV25'])
+@pytest.mark.parametrize('profile', ['CeresB50', 'Ceres100', 'B100CeresV25'])
 def test_producer_refuses_output_mutated_after_witness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str) -> None:
-    producer = tool.policy if profile == 'CeresB50' else tool.value
-    args, _ = (policy_fixture if profile == 'CeresB50' else value_fixture)(tmp_path, monkeypatch)
-    owner = tool.policy.shared if profile == 'CeresB50' else tool.value.wdl
+    producer = tool.policy if profile in ('CeresB50', 'Ceres100') else tool.value
+    args, _ = (policy_fixture if profile in ('CeresB50', 'Ceres100') else value_fixture)(tmp_path, monkeypatch)
+    owner = tool.policy.shared if profile in ('CeresB50', 'Ceres100') else tool.value.wdl
     original = owner.storage_identity
     output = Path(args.out).with_name(Path(args.out).name + '.writing') / 'shard_000000.zarr'
     calls = 0

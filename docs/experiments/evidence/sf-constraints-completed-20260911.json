@@ -1,0 +1,438 @@
+{
+  "status": "COMPLETE_SAVED_METRIC_READOUT_NOT_STRENGTH",
+  "rows": 262079,
+  "shards": 32,
+  "game_clusters": 1331,
+  "readout_terminal": {
+    "session": 17027,
+    "returncode": 0,
+    "evidence": "Parent observed terminal success; observer2532 closed"
+  },
+  "remaining31_execution": {
+    "producer_time": {
+      "seconds": 1402.71,
+      "max_rss_kib": 1993580,
+      "exit_code": 0
+    },
+    "outer_seconds": 1403.2742532319971
+  },
+  "all_ordinary_metrics": {
+    "sums": {
+      "rows": 262079,
+      "ordinary": 187628,
+      "mate_excluded": 74451,
+      "reversal_adjudicable": 174386,
+      "reversal": 51846,
+      "inferior_mass_100": 35515.98110424819,
+      "confirmed_mass_100": 14255.646780793266,
+      "contradicted_mass_100": 2224.8083388692216,
+      "ties_mass_100": 410.66643597059453,
+      "unscored_mass_100": 18624.859548614968,
+      "inferior_mass_300": 11445.028409951894,
+      "confirmed_mass_300": 3854.813565555156,
+      "contradicted_mass_300": 546.7324608012931,
+      "ties_mass_300": 287.4921390979201,
+      "unscored_mass_300": 6755.990244497087,
+      "inferior_mass_500": 7406.826625750221,
+      "confirmed_mass_500": 2350.815251130856,
+      "contradicted_mass_500": 366.9927888403592,
+      "ties_mass_500": 262.11115547959,
+      "unscored_mass_500": 4426.907430299422,
+      "inferior_mass_1000": 5772.148197731389,
+      "confirmed_mass_1000": 1732.4666452075269,
+      "contradicted_mass_1000": 311.20519585183723,
+      "ties_mass_1000": 241.42947531836057,
+      "unscored_mass_1000": 3487.046881353633,
+      "gap_comparable_rows": 184709,
+      "gap_discrepant_rows": 150043,
+      "bt4_top_gt300_next_lower_le300": 4180,
+      "moved_mass": 1841.9948401132096,
+      "changed_rows": 13495,
+      "recorded_l1_mass": 1841.9948401132096,
+      "bit_level_changed_rows": 45164,
+      "nontriggered_l1_mass": 2.9503952473916028e-12,
+      "nontriggered_bit_level_changed_rows": 31669,
+      "bt4_invalid_final_rows": 4772,
+      "bt4_coverage_rows": 182856,
+      "bt4_zero_coverage_rows": 0,
+      "bt4_regret_rows": 182856,
+      "t300_invalid_final_rows": 4772,
+      "t300_coverage_rows": 182856,
+      "t300_zero_coverage_rows": 0,
+      "t300_regret_rows": 182856,
+      "pair_coverage_rows": 182856,
+      "pair_coverage_delta": 503.8384748932452,
+      "pair_regret_rows": 182856,
+      "pair_regret_delta": -8818580.22497265,
+      "changed_pair_coverage_rows": 12673,
+      "changed_pair_coverage_delta": 503.8384748932452,
+      "changed_pair_regret_rows": 12673,
+      "changed_pair_regret_delta": -8818580.22497265
+    },
+    "thresholds": {
+      "100": {
+        "mean_inferior_mass_all_ordinary": 0.18928934436357148,
+        "outcomes": {
+          "confirmed": {
+            "mean_mass_all_ordinary": 0.07597824834669274,
+            "fraction_of_all_inferior_mass": 0.4013868218633583,
+            "fraction_of_adjudicable_inferior_mass": 0.8439727778786235
+          },
+          "contradicted": {
+            "mean_mass_all_ordinary": 0.011857549720026977,
+            "fraction_of_all_inferior_mass": 0.0626424575556243,
+            "fraction_of_adjudicable_inferior_mass": 0.1317146603641156
+          },
+          "ties": {
+            "mean_mass_all_ordinary": 0.0021887268210000347,
+            "fraction_of_all_inferior_mass": 0.011562863342144118,
+            "fraction_of_adjudicable_inferior_mass": 0.024312561757252674
+          },
+          "unscored": {
+            "mean_mass_all_ordinary": 0.09926481947585099,
+            "fraction_of_all_inferior_mass": 0.5244078572388694,
+            "fraction_of_adjudicable_inferior_mass": null
+          }
+        }
+      },
+      "300": {
+        "mean_inferior_mass_all_ordinary": 0.06099850987033862,
+        "outcomes": {
+          "confirmed": {
+            "mean_mass_all_ordinary": 0.02054498030973605,
+            "fraction_of_all_inferior_mass": 0.3368111836405095,
+            "fraction_of_adjudicable_inferior_mass": 0.8220904649389356
+          },
+          "contradicted": {
+            "mean_mass_all_ordinary": 0.002913917223449022,
+            "fraction_of_all_inferior_mass": 0.04777030176053457,
+            "fraction_of_adjudicable_inferior_mass": 0.11659799760837807
+          },
+          "ties": {
+            "mean_mass_all_ordinary": 0.001532245395665466,
+            "fraction_of_all_inferior_mass": 0.02511939060351607,
+            "fraction_of_adjudicable_inferior_mass": 0.061311537452592935
+          },
+          "unscored": {
+            "mean_mass_all_ordinary": 0.03600736694148574,
+            "fraction_of_all_inferior_mass": 0.5902991239954015,
+            "fraction_of_adjudicable_inferior_mass": null
+          }
+        }
+      },
+      "500": {
+        "mean_inferior_mass_all_ordinary": 0.039476126301779164,
+        "outcomes": {
+          "confirmed": {
+            "mean_mass_all_ordinary": 0.012529128121233801,
+            "fraction_of_all_inferior_mass": 0.31738494363539216,
+            "fraction_of_adjudicable_inferior_mass": 0.7888855693535768
+          },
+          "contradicted": {
+            "mean_mass_all_ordinary": 0.001955959605391302,
+            "fraction_of_all_inferior_mass": 0.04954791132338504,
+            "fraction_of_adjudicable_inferior_mass": 0.12315528199577269
+          },
+          "ties": {
+            "mean_mass_all_ordinary": 0.0013969724960005438,
+            "fraction_of_all_inferior_mass": 0.03538778058721489,
+            "fraction_of_adjudicable_inferior_mass": 0.08795914865065264
+          },
+          "unscored": {
+            "mean_mass_all_ordinary": 0.02359406607915355,
+            "fraction_of_all_inferior_mass": 0.5976793644540087,
+            "fraction_of_adjudicable_inferior_mass": null
+          }
+        }
+      },
+      "1000": {
+        "mean_inferior_mass_all_ordinary": 0.030763788974627393,
+        "outcomes": {
+          "confirmed": {
+            "mean_mass_all_ordinary": 0.009233518692346168,
+            "fraction_of_all_inferior_mass": 0.3001424401903668,
+            "fraction_of_adjudicable_inferior_mass": 0.7581574754653586
+          },
+          "contradicted": {
+            "mean_mass_all_ordinary": 0.0016586287539804147,
+            "fraction_of_all_inferior_mass": 0.053914969815596445,
+            "fraction_of_adjudicable_inferior_mass": 0.13618879549076027
+          },
+          "ties": {
+            "mean_mass_all_ordinary": 0.001286745450137296,
+            "fraction_of_all_inferior_mass": 0.04182662451619813,
+            "fraction_of_adjudicable_inferior_mass": 0.1056537290438676
+          },
+          "unscored": {
+            "mean_mass_all_ordinary": 0.01858489607816335,
+            "fraction_of_all_inferior_mass": 0.6041159654778333,
+            "fraction_of_adjudicable_inferior_mass": null
+          }
+        }
+      }
+    },
+    "gap_discrepancy_fraction_comparable": 0.8123210022251217,
+    "bt4_top_gt300_next_lower_le300_fraction_ordinary": 0.02227812480013644,
+    "t300_vs_bt4": {
+      "ordinary_rows": 187628,
+      "changed_rows": 13495,
+      "mean_moved_mass_all_ordinary": 0.009817270557236711,
+      "mean_moved_mass_changed": 0.13649461579201258,
+      "mean_regret_delta_common_valid": -48.226912023519326,
+      "mean_coverage_delta_common_final_valid": 0.002755383880721689,
+      "mean_regret_delta_changed_common_valid": -695.8557740844828,
+      "mean_coverage_delta_changed_common_final_valid": 0.039756843280458073
+    }
+  },
+  "score_strata_descriptive": {
+    "score_balanced": {
+      "ordinary_rows": 17031,
+      "paired_valid_rows": 17012,
+      "threshold300": {
+        "mean_inferior_mass_all_ordinary": 0.004526612640717212,
+        "outcomes": {
+          "confirmed": {
+            "mean_mass_all_ordinary": 0.0016538648175490704,
+            "fraction_of_all_inferior_mass": 0.3653647768913194,
+            "fraction_of_adjudicable_inferior_mass": 0.9762344987718022
+          },
+          "contradicted": {
+            "mean_mass_all_ordinary": 4.0169329588603474e-05,
+            "fraction_of_all_inferior_mass": 0.008874037338047753,
+            "fraction_of_adjudicable_inferior_mass": 0.023710937508812528
+          },
+          "ties": {
+            "mean_mass_all_ordinary": 9.243784760641364e-08,
+            "fraction_of_all_inferior_mass": 2.0420975891537178e-05,
+            "fraction_of_adjudicable_inferior_mass": 5.456371939716529e-05
+          },
+          "unscored": {
+            "mean_mass_all_ordinary": 0.002832486055731952,
+            "fraction_of_all_inferior_mass": 0.6257407647947457,
+            "fraction_of_adjudicable_inferior_mass": null
+          }
+        }
+      },
+      "t300_vs_bt4": {
+        "ordinary_rows": 17031,
+        "changed_rows": 1525,
+        "mean_moved_mass_all_ordinary": 0.00047097458429525506,
+        "mean_moved_mass_changed": 0.005259782390250812,
+        "mean_regret_delta_common_valid": -0.9709798293922001,
+        "mean_coverage_delta_common_final_valid": 0.00014020264809311595,
+        "mean_regret_delta_changed_common_valid": -10.874462710743982,
+        "mean_coverage_delta_changed_common_final_valid": 0.0015701958191968906
+      }
+    },
+    "score_winning": {
+      "ordinary_rows": 97360,
+      "paired_valid_rows": 94548,
+      "threshold300": {
+        "mean_inferior_mass_all_ordinary": 0.06927054583534814,
+        "outcomes": {
+          "confirmed": {
+            "mean_mass_all_ordinary": 0.02339410800397166,
+            "fraction_of_all_inferior_mass": 0.33772085555061204,
+            "fraction_of_adjudicable_inferior_mass": 0.8665563648876363
+          },
+          "contradicted": {
+            "mean_mass_all_ordinary": 0.0026943924723006143,
+            "fraction_of_all_inferior_mass": 0.03889665426781854,
+            "fraction_of_adjudicable_inferior_mass": 0.09980474339868146
+          },
+          "ties": {
+            "mean_mass_all_ordinary": 0.0009081369634688878,
+            "fraction_of_all_inferior_mass": 0.013110001552860198,
+            "fraction_of_adjudicable_inferior_mass": 0.03363889171367822
+          },
+          "unscored": {
+            "mean_mass_all_ordinary": 0.04227390839560688,
+            "fraction_of_all_inferior_mass": 0.6102724886287078,
+            "fraction_of_adjudicable_inferior_mass": null
+          }
+        }
+      },
+      "t300_vs_bt4": {
+        "ordinary_rows": 97360,
+        "changed_rows": 9432,
+        "mean_moved_mass_all_ordinary": 0.013605836445384526,
+        "mean_moved_mass_changed": 0.14044362132343485,
+        "mean_regret_delta_common_valid": -59.984343020115126,
+        "mean_coverage_delta_common_final_valid": 0.004260487855296143,
+        "mean_regret_delta_changed_common_valid": -640.6913312094266,
+        "mean_coverage_delta_changed_common_final_valid": 0.045506168746333
+      }
+    },
+    "score_losing": {
+      "ordinary_rows": 73237,
+      "paired_valid_rows": 71296,
+      "threshold300": {
+        "mean_inferior_mass_all_ordinary": 0.06313414431964691,
+        "outcomes": {
+          "confirmed": {
+            "mean_mass_all_ordinary": 0.02115045999400323,
+            "fraction_of_all_inferior_mass": 0.3350082625166958,
+            "fraction_of_adjudicable_inferior_mass": 0.7623790092276853
+          },
+          "contradicted": {
+            "mean_mass_all_ordinary": 0.003874029327332924,
+            "fraction_of_all_inferior_mass": 0.06136187270898598,
+            "fraction_of_adjudicable_inferior_mass": 0.1396413430785178
+          },
+          "ties": {
+            "mean_mass_all_ordinary": 0.002718220981547674,
+            "fraction_of_all_inferior_mass": 0.04305468951610994,
+            "fraction_of_adjudicable_inferior_mass": 0.09797964769379876
+          },
+          "unscored": {
+            "mean_mass_all_ordinary": 0.03539143401676313,
+            "fraction_of_all_inferior_mass": 0.5605751752582091,
+            "fraction_of_adjudicable_inferior_mass": null
+          }
+        }
+      },
+      "t300_vs_bt4": {
+        "ordinary_rows": 73237,
+        "changed_rows": 2538,
+        "mean_moved_mass_all_ordinary": 0.006954264042020221,
+        "mean_moved_mass_changed": 0.20067353650332345,
+        "mean_regret_delta_common_valid": -43.910769920460936,
+        "mean_coverage_delta_common_final_valid": 0.0013834260225166286,
+        "mean_regret_delta_changed_common_valid": -1359.974914096083,
+        "mean_coverage_delta_changed_common_final_valid": 0.04284654287634472
+      }
+    }
+  },
+  "cluster_bootstrap": {
+    "seed": 20260911,
+    "resamples": 1000,
+    "estimates": {
+      "inferior_mass_300/ordinary": {
+        "valid_resamples": 1000,
+        "percentile_95": [
+          0.05849776389807016,
+          0.06350804933320403
+        ]
+      },
+      "confirmed_mass_300/ordinary": {
+        "valid_resamples": 1000,
+        "percentile_95": [
+          0.01962198178387582,
+          0.02143998617188993
+        ]
+      },
+      "contradicted_mass_300/ordinary": {
+        "valid_resamples": 1000,
+        "percentile_95": [
+          0.0025840383931632644,
+          0.0033181636131859025
+        ]
+      },
+      "unscored_mass_300/ordinary": {
+        "valid_resamples": 1000,
+        "percentile_95": [
+          0.034542249255545734,
+          0.03748488389460752
+        ]
+      },
+      "pair_regret_delta/pair_regret_rows": {
+        "valid_resamples": 1000,
+        "percentile_95": [
+          -52.69819238506595,
+          -43.6349517642831
+        ]
+      },
+      "changed_pair_regret_delta/changed_pair_regret_rows": {
+        "valid_resamples": 1000,
+        "percentile_95": [
+          -755.7952879702377,
+          -634.481471977214
+        ]
+      }
+    }
+  },
+  "mate_domain_d9_excluded_percent": 28.407846489035748,
+  "summed_paired_cp_reduction_percent_outside_abs_d9best_le100": 99.8126874345278,
+  "scientific_changed_definition": "ordinary next-lower gap>300 and positive BT4 mass on >300-inferior moves; banked L1 drift outside this gate reported separately",
+  "pins": {
+    "full_readout": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/readout/completed_union_v1/readout.json",
+      "sha256": "ae504f4231dd9d9e1af25d4f4cf5796cc917f60163cf6d644cdc14b62344473a"
+    },
+    "original_summary": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived/derive_targets_summary.json",
+      "sha256": "ab214d52665ee4ad6ccf756c0515344dc9653c3b51de15965fc74323198b7fd9"
+    },
+    "readout_plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/readout/plan.completed_inputs.json",
+      "sha256": "a08310b3a39aff3bd47c39cc9956ff964f0728729cd140b1a9b16707a0a29d38"
+    },
+    "readout_implementation_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/readout/independent_review.json",
+      "sha256": "d03e69a2c62652fe97450280290946632986f4874bea4b18279e02a1eabaab84"
+    },
+    "completed_input_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/readout/completed_inputs_review.json",
+      "sha256": "2936c8665784eb087b4731c705450c1811fafc717015b39501ae7494fffc037a"
+    },
+    "scientific_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/readout/completed_review.json",
+      "sha256": "ecac856394badae688fffbfea29871dce75c9f909e4b03e3aa68a88f4f1979b1"
+    },
+    "game_cluster_sufficient_statistics": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/readout/completed_union_v1/game_cluster_sufficient_statistics.jsonl",
+      "sha256": "6c5f37cc505006f46177e7667b6436c0b376c1bc74eb58206db72f3fb2cc9213"
+    }
+  },
+  "input_bindings": [
+    {
+      "expected_terminal_status": "COMPLETE_POLICY_DIAGNOSTIC_QUALIFICATION_NOT_TRAINING",
+      "bank": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/qualification/execution/audit/teacher_adjudication_rows.jsonl",
+        "sha256": "cdeeefb7a613f27f86a84edc0e457db86cdce58881d5b2d2161bb04a12f517b4"
+      },
+      "summary": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/qualification/execution/audit/teacher_adjudication_audit.json",
+        "sha256": "54c452a37dcf8c16af8477e88574ea49f585b55907337c32b35b955fead6781e"
+      },
+      "terminal": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/qualification/execution/status.json",
+        "sha256": "3ae5824e0dad73fd03458c4db1c17833bf0078cc99276b5771a03bf1c6d781d4"
+      },
+      "launch_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/qualification/plan.json",
+        "sha256": "eac5409157f1646ab5dcc4650f1ad3e6d38a3a69d3b609625174ba2f37beb151"
+      }
+    },
+    {
+      "expected_terminal_status": "COMPLETE_REMAINING31_POLICY_DIAGNOSTIC_NOT_TRAINING",
+      "bank": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/remaining31/execution/audit/teacher_adjudication_rows.jsonl",
+        "sha256": "644e125c30c3c8f62fa4912a7323b9cbc6eb70dd112df9c50865e262fdae3dd4"
+      },
+      "summary": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/remaining31/execution/audit/teacher_adjudication_audit.json",
+        "sha256": "def65dbe027339cbbff87f48cb7a96af1f659ea04930033f100bb146be0b6f40"
+      },
+      "terminal": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/remaining31/execution/status.json",
+        "sha256": "5b29b4dc2dcf5f0660fa779240ac8a05c3ec57a56096959b6da901bccb40cdc7"
+      },
+      "launch_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/remaining31/plan.json",
+        "sha256": "17585d8e2fef24e60440c583bb227df21676bf1380fc8a4996910e515d867199"
+      }
+    }
+  ],
+  "limitations": [
+    "Do not promote blanket Tactical300 training from this SF-ruler result. It improves conditional saved-SF target geometry; no trained student or playing result exists.",
+    "99.8126874% of summed paired-cp reduction lies outside abs(d9best)<=100. Those bins are merely >100 and <-100, not proven decisive positions; avoid claiming decisive-position concentration without finer banked cp analysis.",
+    "11.66% is probability-mass-weighted contradiction on observed all-winner constraints, not row error rate, error rate for every SF constraint, or evidence BT4 is better than the surviving best SF move.",
+    "Zero observed high-threshold contradictions in small balanced scored subsets does not establish safety: omitted mass rises to72.3%/85.0% at500/1000 and these are descriptive selections.",
+    "Balanced T300 mean moved mass0.0471percentage points across rows; lowmean can hide rare important tactics and does not prove no Elo value.40balanced rows have BT4-top regret>300 while next-lower<=300, a distinct rare axis, not an optimized recipe.",
+    "Conditional regret independently renormalizes each target on same scored move roster; coverage changes+0.2755percentage points overall. Common rows remove population mismatch but not policy-dependent normalization or unknown outside-roster scores.",
+    "Cluster intervals are conditional frozen-bank sampling uncertainty, not training seeds, teacher truth, causal search savings or confidence in an optimum. Mate-domain28.41% excluded; no conclusions about forced-mate intervention."
+  ],
+  "publication_verification": "Compact fullreadout and receipt/plan/review pins rechecked; no rowbank, sufficient-statistics, source, or bootstrap repetition.",
+  "decision": "Hold Tactical300 training behind registered Ceres anchors, retaining SF negative constraints as plausible later candidates. SF agreement alone neither promotes nor rejects the family. A bounded same-row G10 Ceres conflict/calibration sample is an optional follow-up, not a mandatory training gate. No new training or inference launched by this record."
+}

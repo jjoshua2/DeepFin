@@ -1,0 +1,20 @@
+bun test v1.4.2 (744846f84)
+
+DeepFin/native/bend_engine/standalone/verify_compiler.test.js:
+(pass) fetch and source verifier share the exact documented U64 pin [0.06ms]
+(pass) fingerprint is independent of checkout location [1.42ms]
+(pass) nested effects and core inputs all count [0.33ms]
+(pass) core mutation changes fingerprint [0.70ms]
+(pass) effect mutation changes fingerprint [0.44ms]
+(pass) extra effects are not silently ignored [0.58ms]
+(pass) renaming unchanged effect bytes changes the fingerprint [0.43ms]
+(pass) missing core input is rejected [0.32ms]
+(pass) core symlinks are rejected [0.48ms]
+(pass) effect directory symlinks are rejected [0.28ms]
+(pass) mismatched source fails without mutating the checkout [0.54ms]
+(pass) build derives revision and revision-keyed cache from the pin reader [0.05ms]
+
+ 12 pass
+ 0 fail
+ 19 expect() calls
+Ran 12 tests across 1 file. [18.00ms]

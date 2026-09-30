@@ -1,0 +1,17 @@
+{
+  "qualification": "PASS",
+  "run": "36002630448",
+  "source": "58c9136bccdf6667a36776fb48480eab7ebfe5a2",
+  "source_tree": "69648f55cc70d02f667576b3345140860e648f8a",
+  "new_laws": 5,
+  "new_controls": 19,
+  "retained_parent_laws": 110,
+  "retained_parent_controls": 276,
+  "modular_laws": 115,
+  "modular_controls": 295,
+  "combined_wrapper_executed": false,
+  "consumer_and_controls_separate": true,
+  "candidate_source_entries": 367,
+  "independent_review": false,
+  "claim": "Bounded actual initialized source pipeline returns independent coordinate first-blocker-inclusive attacks and the complete final array; native trust boundaries remain."
+}

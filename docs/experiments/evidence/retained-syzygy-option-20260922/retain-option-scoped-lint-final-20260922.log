@@ -1,0 +1,12 @@
+
+::: running lint tools in parallel
+
+::: ruff check
+All checks passed!
+
+::: basedpyright
+0 errors, 0 warnings, 0 notes
+
+::: vulture (dead code, min confidence 80)
+
+lint: OK

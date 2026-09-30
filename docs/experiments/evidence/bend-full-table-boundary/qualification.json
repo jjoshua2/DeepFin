@@ -1,0 +1,24 @@
+{
+  "qualification": "PASS",
+  "run": "36009970976",
+  "source": "12327c34c5279fd41ae66eb10ab42470bb06d199",
+  "source_tree": "7199d988f42077327279caeae493e6241c8d80e0",
+  "new_laws": 2,
+  "new_controls": 20,
+  "control_categories": {
+    "source semantic/refinement": 4,
+    "public source-recipe guard, not source theorem rejection": 7,
+    "manifest/import policy": 8,
+    "synthetic exact-output wrapper unit; not compiler execution": 1
+  },
+  "retained_parent_laws": 115,
+  "retained_parent_controls": 295,
+  "modular_laws": 117,
+  "modular_controls": 315,
+  "combined_wrapper_executed": false,
+  "consumer_and_controls_separate": true,
+  "source_recipe_guard_is_formal_equality": false,
+  "closed_Tables_build_equality_proved": false,
+  "native_source_entries": 379,
+  "independent_review": false
+}

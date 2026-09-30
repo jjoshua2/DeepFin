@@ -1,0 +1,8 @@
+{
+  "status": "PASS_CPU_QUALIFICATION_NOT_GPU_READY",
+  "plan_sha256": "e321ca4f189ae00ede1f0e367301d85530f21d9499eb2dc4ffcd15f39a295b79",
+  "new_disk_bytes": 1528578896,
+  "qualification_sha256": "cf3cb25f01812861fe8076dc61b0decfa92dece56b97379a9e62be8300c9da3f",
+  "seconds": 748.0450980379828,
+  "total_cpu_preparation_seconds": 1374.334299265931
+}

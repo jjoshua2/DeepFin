@@ -1,0 +1,8 @@
+{
+  "focused_report_canonical_sha256": "4cbbcfa6983e8a04bc3ad081b6cebde287c45f46ab341f7cfe18963078c7399c",
+  "native_report_except_cc_canonical_sha256": "1f212a0a29d461356b99a74653f05186ea529dc97114bc03b98b3d58d40986d4",
+  "focused_local_raw_sha256": "3b93d19d201275b8ef5585216b3271806a82fbcf5a21193cf9d4714bb295d64e",
+  "native_local_raw_sha256": "6c623a1f48bc836d281e82cac38d5b39a5bcb52c34aaeb2d09735d449722d0c6",
+  "comparison": "PASS",
+  "scope": "Same focused contract/control/source report; same complete native report except C compiler identity. The full 68-law aggregate was first run hosted, not locally."
+}

@@ -1,0 +1,20 @@
+{
+  "base": "e680c126908d1e816f31c38b7e3255e196e6f174",
+  "source": "868335129a501b677ca916d2bbdc779a1b2e22e9",
+  "tree": "2e6428e87a347679b2f39b5eacc0a0ea58e421fc",
+  "changed_files": [
+    "docs/experiments/2026-09-22-bend-complete-tree-routes.md",
+    "native/bend_engine/standalone/proofs/complete/Actual.bend",
+    "native/bend_engine/standalone/proofs/complete/Arithmetic.bend",
+    "native/bend_engine/standalone/proofs/complete/Core.bend",
+    "native/bend_engine/standalone/proofs/complete/LAWS.bend",
+    "native/bend_engine/standalone/proofs/complete/PROOF.bend",
+    "native/bend_engine/standalone/proofs/complete/README.md",
+    "native/bend_engine/standalone/proofs/complete/Spec.bend",
+    "native/bend_engine/standalone/proofs/complete/consumer.bend",
+    "native/bend_engine/standalone/proofs/complete/focused.js",
+    "native/bend_engine/standalone/proofs/complete/verify.js",
+    "native/bend_engine/standalone/proofs/complete/verify_native.js"
+  ],
+  "transfer": "Direct Git tree entries; complete tree equals the locally checked candidate"
+}
