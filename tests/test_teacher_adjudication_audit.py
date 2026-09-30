@@ -144,3 +144,22 @@ def test_selection_strata_prioritize_known_reversal() -> None:
     assert audit._selection_stratum(disagreement=True, gap=500.0, reversal=False) == "d9_bt4_large_conflict"
     assert audit._selection_stratum(disagreement=True, gap=100.0, reversal=False) == "d9_bt4_other_conflict"
     assert audit._selection_stratum(disagreement=False, gap=500.0, reversal=False) == "agreement_control"
+
+def test_position_reversal_rate_excludes_unadjudicable_rows() -> None:
+    aggregate = audit.new_aggregate()
+    audit._update_position_strata(
+        aggregate, ["late"], reversal=None, bt4_regret=None
+    )
+    audit._update_position_strata(
+        aggregate, ["late"], reversal=True, bt4_regret=None
+    )
+    audit._update_position_strata(
+        aggregate, ["late"], reversal=False, bt4_regret=None
+    )
+    final = audit.finalize(aggregate)
+    cell = final["position_strata"]["late"]
+    assert cell["rows"] == 3
+    assert cell["reversal_rows"] == 2
+    assert cell["reversals"] == 1
+    assert cell["reversal_rate"] == pytest.approx(0.5)
+
