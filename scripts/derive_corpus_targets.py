@@ -448,6 +448,13 @@ from scripts import corpus_row_provenance as row_refs
 from scripts import adaptive_sf_value
 from scripts.corpus_selection_schema import validate_selection_metadata
 
+
+def _baseline_rows() -> Any:
+    # importlib: a `from scripts import` here still counts in basedpyright's
+    # import-cycle graph with audit_raw_baseline.
+    import importlib
+    return importlib.import_module("scripts.baseline_row_exclusions")
+
 #: Derived-shard schema.  Bumped when the MEANING of an emitted column changes,
 #: which is a different event from the corpus row schema changing -- a consumer
 #: needs both numbers to know what it is holding, so both are stamped.
@@ -2508,6 +2515,7 @@ class DeriveStats:
 
     rows_read: int = 0
     rows_written: int = 0
+    rows_dropped_baseline_audit: int = 0
     rows_dropped_no_result: int = 0
     rows_dropped_envelope: int = 0
     rows_dropped_policy_support: int = 0
@@ -2970,8 +2978,19 @@ class DeriveOptions:
     spill_chunk_rows: int = SPILL_CHUNK_ROWS
     row_provenance: bool = False
     max_policy_support_misses: int = 0
+    baseline_exclusions: Any = None
 
     def __post_init__(self) -> None:
+        if self.baseline_exclusions is not None and (
+            self.scheme.kind != 'uniform' or self.scheme.depth != 9 or self.scheme.value_depth is not None
+            or self.scheme.policy_observation != 'phase0'
+            or self.scheme.value_observation != 'latest-phase'
+            or self.scheme.sf_value_selector != 'current'
+            or self.value_scheme != VALUE_SCHEME_SEARCH or self.limit
+            or self.max_envelope_misses or self.max_policy_support_misses
+            or not self.row_provenance
+        ):
+            raise ValueError('baseline exclusions require full selected phase0/latest-phase uniform-d9 search with provenance and no other skip allowance')
         if self.scheme.sf_value_selector != "current" and self.value_scheme != VALUE_SCHEME_SEARCH:
             raise ValueError("adaptive SF value initially requires value-scheme search")
         if self.max_policy_support_misses < 0:
@@ -4381,6 +4400,8 @@ def derive(
         corpus_record if corpus_record is not None
         else read_corpus_record(corpus_dir)
     )
+    if options.baseline_exclusions is not None:
+        options.baseline_exclusions.bind(record.source_selection)
     summary = record.facts
     problems = scheme_vs_staircase_problems(
         options.scheme, summary.get("staircase_parsed", []),
@@ -4403,6 +4424,7 @@ def derive(
         raise CorpusIntegrityError(f"{corpus_dir} holds no .jsonl.zst/.jsonl.gz shards")
 
     corpus_sha = str(summary.get("config_sha256", ""))
+    expected_outcome_mode = corpus_outcome_mode(summary)
     deriver = TargetDeriver(options)
     rng = np.random.default_rng(options.seed)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -4452,12 +4474,18 @@ def derive(
             pending_refs = pending_refs[options.rows_per_shard :]
             shard_index += 1
 
+    exclusions = options.baseline_exclusions.pending(list(shards)) if options.baseline_exclusions else {}
     for path in shards:
         for raw_index, row in enumerate(iter_corpus_rows(path)):
             if options.limit and deriver.stats.rows_read >= options.limit:
                 break
             deriver.stats.rows_read += 1
-            tt_carried.add(_check_row_identity(row, corpus_sha))
+            tt_carried.add(_check_row_identity(
+                row, corpus_sha, expected_outcome_mode,
+            ))
+            if _baseline_rows().consume(exclusions, path, raw_index, row):
+                deriver.stats.rows_dropped_baseline_audit += 1
+                continue
             try:
                 derived = deriver.derive_row(row)
             except PolicySupportMiss as exc:
@@ -4535,6 +4563,8 @@ def derive(
             "was dropped are different problems.",
         )
 
+    _baseline_rows().require(not exclusions, 'unused exclusion IDs')
+    _check_baseline_coverage(options, deriver.stats, record)
     enforce_take_effect(options, deriver.stats)
     _stamp_realized_row_schema(out_dir, written, deriver.stats, record)
     out = build_summary(
@@ -4879,7 +4909,23 @@ class GameGrouper:
         return GameBatch(rows=rows, banked_tail_ply=banked_tail_ply)
 
 
-def _check_row_identity(row: dict[str, Any], corpus_sha: str) -> bool:
+def corpus_outcome_mode(facts: Mapping[str, Any]) -> str:
+    """Read the versioned result convention; old records mean theoretical_v1."""
+    requested = facts.get("config_requested")
+    requested_mode = (
+        requested.get("outcome_mode", corpus.OUTCOME_MODE_THEORETICAL)
+        if isinstance(requested, dict) else corpus.OUTCOME_MODE_THEORETICAL
+    )
+    mode = corpus.outcome_mode_of(requested_mode)
+    if "outcome_mode" in facts and facts["outcome_mode"] != mode:
+        raise CorpusIntegrityError("corpus outcome_mode disagrees with config_requested")
+    return mode
+
+
+def _check_row_identity(
+    row: dict[str, Any], corpus_sha: str,
+    expected_outcome_mode: str = corpus.OUTCOME_MODE_THEORETICAL,
+) -> bool:
     """Every row belongs to the run ``summary.json`` describes.  Returns its TT flag.
 
     ⚑ The join key is the row's OWN ``config_sha256``, not the directory it was
@@ -4909,6 +4955,14 @@ def _check_row_identity(row: dict[str, Any], corpus_sha: str) -> bool:
         )
     if schema == ROW_SCHEMA_HISTORY:
         require_row_regime(row)
+    row_mode = corpus.outcome_mode_of(
+        run.get("outcome_mode", corpus.OUTCOME_MODE_THEORETICAL),
+    )
+    if row_mode != expected_outcome_mode:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)}: outcome_mode {row_mode!r} does not match "
+            f"corpus record {expected_outcome_mode!r}",
+        )
     row_sha = str(run["config_sha256"])
     if corpus_sha and row_sha != corpus_sha:
         raise CorpusIntegrityError(
@@ -4930,6 +4984,7 @@ class CommitIdentity:
     corpus_shards_adopted: int
     corpus_rows_claimed: int
     corpus_record_row_schema: int
+    corpus_outcome_mode: str
 
     @classmethod
     def of(cls, record: CorpusRecord) -> CommitIdentity:
@@ -4939,6 +4994,7 @@ class CommitIdentity:
             corpus_shards_adopted=len(record.shards),
             corpus_rows_claimed=int(record.rows_claimed),
             corpus_record_row_schema=int(record.facts["row_schema"]),
+            corpus_outcome_mode=corpus_outcome_mode(record.facts),
         )
 
 
@@ -4994,6 +5050,7 @@ def _shard_identity(
         ),
         "derive_corpus_row_schema_counts": dict(sorted(counts.items())),
         "derive_corpus_record_row_schema": identity.corpus_record_row_schema,
+        "derive_outcome_mode": identity.corpus_outcome_mode,
         "zero_history": filled_max <= 1,
         "history_slots_nonzero_max": int(filled_max),
         "derive_history_rep_fix": HISTORY_REP_FIX,
@@ -5090,6 +5147,8 @@ def _flush_ordered(
     )
     _verify_value_column_on_disk(writing, arrs)
     provenance = None
+    if options.baseline_exclusions is not None:
+        zarr.open_group(str(writing), mode="a").attrs['derive_baseline_exclusions'] = options.baseline_exclusions.proof
     if options.row_provenance:
         if references is None:
             raise CorpusIntegrityError("requested row provenance is missing from writer")
@@ -5263,6 +5322,13 @@ def _stamp_realized_row_schema(
                 "at finalization; every shard is committed with its identity",
             )
         record_schema = int(corpus_record.facts["row_schema"])
+        record_outcome_mode = corpus_outcome_mode(corpus_record.facts)
+        if committed.get("derive_outcome_mode") != record_outcome_mode:
+            raise CorpusIntegrityError(
+                f"{entry['path']}: committed outcome mode "
+                f"{committed.get('derive_outcome_mode')!r} disagrees with "
+                f"corpus record {record_outcome_mode!r}",
+            )
         if int(committed.get("derive_corpus_record_row_schema", -1)) != record_schema:
             raise CorpusIntegrityError(
                 f"{entry['path']}: committed with corpus record row schema "
@@ -5350,6 +5416,15 @@ def _stamp_shard_attrs(path: Path, options: DeriveOptions, corpus_sha: str) -> N
     })
 
 
+def _check_baseline_coverage(options: DeriveOptions, stats: DeriveStats, corpus_record: CorpusRecord) -> None:
+    if options.baseline_exclusions is not None:
+        options.baseline_exclusions.bind(corpus_record.source_selection)
+        proof = options.baseline_exclusions.proof
+        _baseline_rows().require((stats.rows_dropped_baseline_audit, stats.rows_read, stats.rows_written, stats.rows_dropped_no_result)
+                              == (proof['excluded_rows'], proof['physical_rows'], proof['eligible_rows'], proof['no_result_rows']),
+                              'realized audited coverage differs')
+
+
 def build_summary(
     *,
     options: DeriveOptions,
@@ -5364,6 +5439,7 @@ def build_summary(
     verify_source_selection(corpus_record)
     facts = corpus_record.facts
     return {
+        **({'baseline_exclusions': options.baseline_exclusions.proof} if options.baseline_exclusions else {}),
         **({"source_selection": corpus_record.source_selection} if corpus_record.source_selection is not None else {}),
         "schema": derive_schema_for(options.value_scheme),
         "started_utc": started_utc,
@@ -5392,6 +5468,7 @@ def build_summary(
             # a schema-1 corpus (Fable review, finding 1).
             "row_schema": int(facts["row_schema"]),
             "row_schema_realized": realized_row_schema(stats),
+            "outcome_mode": corpus_outcome_mode(facts),
             "staircase_parsed": facts.get("staircase_parsed"),
             "staircase_gate": facts.get(
                 "staircase_gate",
@@ -5604,6 +5681,7 @@ def build_summary(
            if options.max_policy_support_misses else {}),
         "realized": {
             **stats.summary(),
+            **({'rows_dropped_baseline_audit': stats.rows_dropped_baseline_audit} if options.baseline_exclusions else {}),
             **({"rows_dropped_policy_support": stats.rows_dropped_policy_support,
                 "policy_support_exclusions": stats.policy_support_exclusions}
                if options.max_policy_support_misses else {}),
@@ -6030,6 +6108,7 @@ _GAME_OWNED_FIELDS: tuple[str, ...] = (
 _SUM_FIELDS: tuple[str, ...] = (
     "rows_read",
     "rows_dropped_no_result",
+    "rows_dropped_baseline_audit",
     "rows_dropped_envelope",
     "rows_dropped_policy_support",
     "nodes_floor_hits",
@@ -6337,6 +6416,7 @@ class _WorkerTask:
     span: ShardRange
     options: DeriveOptions
     corpus_sha: str
+    outcome_mode: str
     spill_dir: Path
     shards_in_play: int
 
@@ -6586,6 +6666,8 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
             del buffered_refs[:options.spill_chunk_rows]
 
     stop = False
+    exclusions = (task.options.baseline_exclusions.pending(list(task.shards[task.span.lo:task.span.hi]))
+                  if task.options.baseline_exclusions else {})
     for shard_index in range(span.lo, task.shards_in_play):
         overflow = shard_index >= span.hi
         if overflow and (
@@ -6626,7 +6708,12 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
                     skipping = False
             max_gidx = gidx
             deriver.stats.rows_read += 1
-            tt_carried.add(_check_row_identity(row, task.corpus_sha))
+            tt_carried.add(_check_row_identity(
+                row, task.corpus_sha, task.outcome_mode,
+            ))
+            if _baseline_rows().consume(exclusions, task.shards[shard_index], seen - 1, row):
+                deriver.stats.rows_dropped_baseline_audit += 1
+                continue
             try:
                 derived = deriver.derive_row(row)
             except PolicySupportMiss as exc:
@@ -6691,6 +6778,7 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
         if bank.stream_path(name).exists()
     }
 
+    _baseline_rows().require(not exclusions, 'unused worker exclusion IDs')
     return _WorkerResult(
         index=task.index,
         stats=bank.plain(),
@@ -7107,6 +7195,8 @@ def derive_parallel(
         corpus_record if corpus_record is not None
         else read_corpus_record(corpus_dir)
     )
+    if options.baseline_exclusions is not None:
+        options.baseline_exclusions.bind(record.source_selection)
     summary = record.facts
     problems = scheme_vs_staircase_problems(
         options.scheme, summary.get("staircase_parsed", []),
@@ -7130,6 +7220,7 @@ def derive_parallel(
             f"{corpus_dir} holds no .jsonl.zst/.jsonl.gz shards",
         )
     corpus_sha = str(summary.get("config_sha256", ""))
+    expected_outcome_mode = corpus_outcome_mode(summary)
 
     counts = shard_row_counts(record)
     ranges, shards_in_play, rows_to_read = plan_ranges(
@@ -7152,6 +7243,7 @@ def derive_parallel(
             span=span,
             options=options,
             corpus_sha=corpus_sha,
+            outcome_mode=expected_outcome_mode,
             spill_dir=spill_dir,
             shards_in_play=shards_in_play,
         )
@@ -7216,6 +7308,7 @@ def derive_parallel(
     stats = _merge_stats(results, streams=_stream_files(results))
     stats.rows_written = _check_rows_written(written, survivors)
 
+    _check_baseline_coverage(options, stats, record)
     enforce_take_effect(options, stats)
     _stamp_realized_row_schema(out_dir, written, stats, record)
     out = build_summary(
@@ -7251,6 +7344,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--source-shards", type=Path,
                         help="source-bound closed-shard JSON selection; --limit cuts the selected original-order stream")
+    parser.add_argument("--baseline-exclusions", type=Path, help="pinned complete audit exclusions; requires full source selection and provenance")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--scheme", required=True, help=" | ".join(_SCHEME_FORMS))
     parser.add_argument("--temp", type=float, default=1.0)
@@ -7508,6 +7602,7 @@ def main(argv: list[str] | None = None) -> int:
         spill_chunk_rows=spill_chunk_rows,
         qz=qz,
         row_provenance=bool(args.row_provenance),
+        baseline_exclusions=_baseline_rows().load(args.baseline_exclusions) if args.baseline_exclusions else None,
     )
     if workers > 1:
         # ⚑ A DIFFERENT FUNCTION, NOT A PARAMETER ON THE SAME ONE.  `--workers

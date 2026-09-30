@@ -1,0 +1,186 @@
+{
+  "status": "FILTERED_DERIVATION_ACTUALLY_LAUNCHED_NOT_COMPLETED",
+  "outer_started": {
+    "started_unix": 1789327623.448478,
+    "available_ram_bytes": 88641429504,
+    "free_disk_bytes": 189193846784,
+    "plan_sha256": "53a99a8c0a5164d9298663a76fdb8c4071154ad7f073526216d9a9300a9a72c7"
+  },
+  "expected_rows": 1517925,
+  "physical_rows": 1527153,
+  "exact_additional_exclusions": 30,
+  "normal_no_result_drops": 9198,
+  "expected_by_source": {
+    "run06_g10": 1006190,
+    "run07_g10_companion4": 511735
+  },
+  "runtime": "/tmp/deepfin-audited-row-exclusions",
+  "runtime_commit": "a22893d1434d05365a33a95c846d3b8bf47b1eed",
+  "command": "DERIVE_DEADLINE=\"$(date -u +%s)\"\nDERIVE_DEADLINE=\"$((DERIVE_DEADLINE + 10740))\"\ntaskset -c 8,9 env CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 TORCHINDUCTOR_COMPILE_THREADS=2 PYTHONOPTIMIZE= PYTHONPATH=/tmp/deepfin-audited-row-exclusions nice -n 19 timeout --signal=TERM --kill-after=40 10760 /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python /home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run.py --expected-plan-sha256 53a99a8c0a5164d9298663a76fdb8c4071154ad7f073526216d9a9300a9a72c7 --deadline-unix \"$DERIVE_DEADLINE\"\n",
+  "independent_preparation_review": {
+    "status": "PASS_INDEPENDENT_FINAL_STATIC_DERIVATION_PREPARATION",
+    "reviewer": "archive_review",
+    "reviewed_unix": 1789327597.858889,
+    "pins": {
+      "run.py": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run.py",
+        "sha256": "89c29b93b70788f16333f4acbf1fae2f43ef57567d527e075fbba3f7d1989da9"
+      },
+      "plan.json": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/plan.json",
+        "sha256": "53a99a8c0a5164d9298663a76fdb8c4071154ad7f073526216d9a9300a9a72c7"
+      },
+      "command.txt": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/command.txt",
+        "sha256": "d83011d5226c631a5b0c869feebdaf550f424be48ee100b656ea8b92da2e040c"
+      }
+    },
+    "findings": [],
+    "resolved_finding": "Before any started receipt write, refuse existing or symlink started/complete/failed/progress records and both planned stage directories. Prevents overwrite of original launch evidence on repeated attempt.",
+    "verified": [
+      "Exact reviewed a22893d1 deriver/exclusion loader, same qualified Python3.13 interpreter/native suffix alignment;10 small code/selection pins matched in initial review, binary pins not reread.",
+      "Run06 thenrun07 sequential1worker/source,CPU8,9/nice19/two numericthreads/compiler2/noGPU. Exact122/62shard selection manifests and22/8additional exclusions bound, expected1006190+511735=1517925retained. No limit, extra skips, altered value-depth or policy/value selector.",
+      "Shared absolute10740deadline from shell start, outer10760TERM40KILL10800inclusive; eachstage budget residualminus45, refuses under300. Existing owned-stage timeout/group cleanup used with no GPUlease or model execution.",
+      "48GiB startup32periodic and150GiB disk;8GiB allocated aggregate over output namespace sampled30s with bounded disappearance-only retry, symlink/error/deadline refusal. Resource checks sampled, not quotas.",
+      "Final source summaries require actualphysical/retained/noresult/excluded counts; completion stage receipts and summary pins retained. No arrays reread by supervisor."
+    ],
+    "limits": [
+      "Parent owns actual fresh-resource launch and terminal; preparation review does not derive or admit rows.",
+      "If firststage exhausts shared budget, second cannot start; partial completed evidence survives but no complete two-source status.",
+      "No new tests/defaults/imports/raw/model payload scans or jobs run by reviewer.",
+      "Final source hashes/selected source identity validation occurs in existing actual deriver; all surviving physical offsets retained for downstream joins."
+    ]
+  },
+  "references": {
+    "outer_started.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/outer_started.json",
+      "sha256": "deb33fa698eef468b51831f25963519d42af0d463a18246aacb84d9b1c563fb6"
+    },
+    "started.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/started.json",
+      "sha256": "13d646a8e67c71e4551e041be0f414a369a12a7869017d974c04c87e4a8b8cb7"
+    },
+    "plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/plan.json",
+      "sha256": "53a99a8c0a5164d9298663a76fdb8c4071154ad7f073526216d9a9300a9a72c7"
+    },
+    "command.txt": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/command.txt",
+      "sha256": "d83011d5226c631a5b0c869feebdaf550f424be48ee100b656ea8b92da2e040c"
+    },
+    "run.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run.py",
+      "sha256": "89c29b93b70788f16333f4acbf1fae2f43ef57567d527e075fbba3f7d1989da9"
+    },
+    "independent_preparation_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/independent_preparation_review.json",
+      "sha256": "44b54922a80717a30b6d609ca4abbf9943916cad25bf6f70827619e9af8e0ec4"
+    },
+    "ceres_remaining/outer_terminal.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/outer_terminal.json",
+      "sha256": "c4c86a570561fc7aef6e571249530a69fbbe79076b90c611c4829a89e55f9bd2"
+    },
+    "ceres_remaining/driver/manifest.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/driver/manifest.json",
+      "sha256": "c6dae616795f618a7cbd47899eef2c4c02664561f449da46e84cefa48fa33c3e"
+    },
+    "ceres_remaining/independent_completed_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/independent_completed_review.json",
+      "sha256": "7d315759585dc6deb41833547a97426b3fd342416a6ccbc230b919021cfd5d78"
+    }
+  },
+  "limits": [
+    "No derivation completion or output/adapter/training admission claim.",
+    "No source/model/payload scans or active-job polls for publication."
+  ],
+  "ceres_remaining_completed": {
+    "terminal": {
+      "returncode": 0,
+      "ended_unix": 1789327705.9836352,
+      "elapsed_seconds": 971.3279802799225
+    },
+    "independent_completed_review": {
+      "status": "PASS_COMPACT_COMPLETE_COHORT_COLLECTION_NOT_CONSUMER_ADMISSION",
+      "reviewer": "archive_review",
+      "reviewed_unix": 1789327947.7404613,
+      "pins": {
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000016/completed.json": "eb61ed106872227ffa1946f8df6410b136b7519af65e69f91b2106421faab8bc",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000016/invocations/1789326735889105496/completed.json": "e39abd82e81c8ca6d32389c641abdcf678e82047ec0917cc050793f14f49ca0e",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000017/completed.json": "8f4a9789b2fb2dccb926f392cd585941b79d801740b951babc67cb94fbcd81e2",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000017/invocations/1789326795170056552/completed.json": "da4037964505513b5aa0abdd3fd41cc30dd056f50c9ee34f813dfb8cc76201a3",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000018/completed.json": "0c5e5d7955f1a027811d369751bc29857c0293d5c77d07d924c55d8cb421fecf",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000018/invocations/1789326854549143303/completed.json": "c0d9bfc52a2e89c46e859309284f9b3c2653967efebde71ba555c088e889308c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000019/completed.json": "4d55b93f10829412ed09b2b0035919a1bc13302597bf9e8a63efa3baa4ed01f1",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000019/invocations/1789326916461673096/completed.json": "c816a668f3745a35deae267623af85f817613f5cd846733b135c38c2672a799c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000020/completed.json": "8137f43d8a8806bfc203574395e38b2c8b37cb2a9eee2fd32ec7e307ffa75c36",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000020/invocations/1789326974192599999/completed.json": "5d2028983c1b2deb8f1f34eb61eb85cbab5963ae182a5219e3f55df2ecfa3c2e",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000021/completed.json": "95df521ee26a452df182883ebe1a287d62a194b25a912dc4e4c082c9722b7ce2",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000021/invocations/1789327031293001893/completed.json": "92120ebba506d523decf2731520ba88d697c13bd19f575e14f3afabbb06ca513",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000022/completed.json": "139643cc809a558019a76a1881aee7aefb7ea15a29f7315203aab30164c6f9ad",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000022/invocations/1789327091172430442/completed.json": "1304466983b6466fd679b7ceb417e92056343dec302d36f87ae5354876efcd04",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000023/completed.json": "b30c4699e1cf45b275f21609928362cfbd69650c75f56bbbb23bbac0291d9cb1",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000023/invocations/1789327153631397147/completed.json": "2036148c60e1510c987990d603ac2e944e5e369cc9e6f42b613fda8cdc30206f",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000024/completed.json": "7b4190df7b26d1c84d230c4c80364f3b27c1a0beb260878d8b8bd85ee0a8cd26",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000024/invocations/1789327209840130384/completed.json": "b5e4ea2272f496e229eb4503d759982ef63dd35c56527463f3055d04c61aac42",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000025/completed.json": "bd5b337626547f82292d968e2e7e8055d7207d1789bf231f45f3ebe0841230b5",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000025/invocations/1789327267026781482/completed.json": "a30dd6b07e67ea033065764e31c33d9abec9a8f87d8e4a7a02ec8c5da0b16de8",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000026/completed.json": "4e468f3480c6bdf21383874ec7afd652810da5f958b77f2ac1bd4c715ce83d85",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000026/invocations/1789327326870410882/completed.json": "3f5e93304c89ba3f089cff126e0f51efc0fc57b674c3f35961c551597739c3ea",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000027/completed.json": "a1c859f073ea47104d924624ff46bb6f8df16469104c8c9daf89b635e45f7b3e",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000027/invocations/1789327385998536993/completed.json": "82f416a56eaf5c937ccdd3d578987056d6f74102cd4dcf4446407b933cae51d7",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000028/completed.json": "04fd5c3c4a1a9b64be8c898426bf2993eb60e34c0929738d3d96937149c02500",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000028/invocations/1789327443565455807/completed.json": "080db1329235f0a1648e918f434ab0cd5ab33a2eafe537c895e0f140a3e68085",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000029/completed.json": "138b23d4d51a5d90e8dd2b77803ed1eab84d420c4d2f767efb4fcd0425ba1f94",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000029/invocations/1789327502077538896/completed.json": "76dd4168e0eb8e6262d5de4a86a06ff4f4b56e8b1006ef30b2fd9c988a9f21b5",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000030/completed.json": "54d1056b4eaebfada52a445d5efbecfaf265b769e011e5a5ab177b7bacb883d5",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000030/invocations/1789327564022906090/completed.json": "c77bc838b41921a1dbee4974787c6d6092cee40040be6d37186cf44d346b8df9",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000031/completed.json": "020fd718d92d588245d5cf84acb94e8c12a60021bb5591f3d9992f44f2ea5a83",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000031/invocations/1789327628817823155/completed.json": "fc98d1c1b48483819c6d5a67db04b1e9ca8a6f87a0dad6540a44530cd477e6cb",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/shard000032/completed.json": "b98b2e02790743bfdbcc8d68be8263e00fb07e70a79c4a2f5c922805aa917ea7",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_remaining17_v1/shard000032/invocations/1789327693238365048/completed.json": "2c289688e90a1637484771d518f093aa77c3f0b836ee1ae5f20f56f552baaece",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/driver.plan.json": "8deb02170c5c073bb03a81ac5eb31e92d7658c5c24231f92b04e89a25c65f4ba",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/run_chunk.py": "6d95eaa5e115f596e628f42be3edb67576eb8ace495c33bafbb213d154a80618",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/command.sh": "50c8f252a54be5920fd7076c8686f078b44fd25952c0e7d7bc8d3e2c63f6967c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/outer_terminal.json": "c4c86a570561fc7aef6e571249530a69fbbe79076b90c611c4829a89e55f9bd2",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/driver/manifest.json": "c6dae616795f618a7cbd47899eef2c4c02664561f449da46e84cefa48fa33c3e",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/independent_completed_review.json": "e52e39ea8c7e766a1e872fcf8c326e5c22f5a45fc833f4e31a86476422a66349"
+      },
+      "remaining_actual": {
+        "rows": 132844,
+        "shards": 17,
+        "range": "16..32",
+        "padding_rows": 20,
+        "fixed32_calls": 4152,
+        "outer_seconds": 971.3279802799225,
+        "driver_seconds": 971.2565500630008,
+        "exit_code": 0,
+        "sampled_device_peak_MiB": 5064
+      },
+      "combined_collection": {
+        "rows": 263916,
+        "shards": 33,
+        "range": "0..32",
+        "padding_rows": 20,
+        "fixed32_calls": 8248,
+        "prefix_outer_seconds": 923.1456525325775,
+        "remaining_outer_seconds": 971.3279802799225,
+        "sum_outer_seconds": 1894.4736328125
+      },
+      "findings": [],
+      "verified": [
+        "All17 actual completions hashes/counts/selectors agree with driver and frozen wrapper plan, original full source order16..32; disjoint from reviewed0..15.",
+        "Last real1772 padded20 to1792 for56fixed32calls; padding is not consumer/source coverage.",
+        "Actual fixed32 policy/value/value2 backend,2/1ORTthreads/8GiB, original source qualification retained. No native parity assertion.",
+        "Allchunks exit0 within180s and driver+outerexit0 within1800. Combined33shards263916 complete source collection is now banked."
+      ],
+      "limits": [
+        "No full saved-array or consumer qualification performed here; do not yet add this to qualified training-ready Ceres coverage.",
+        "No models/arrays/content hashes/tests/defaults/inference/jobs repeated; compact receipts only.",
+        "Sampled peak is not instantaneous maximum; two invocation allocations reported separately and as sum, no extrapolated speedup."
+      ]
+    },
+    "whole_cohort_rows": 263916,
+    "whole_cohort_shards": 33,
+    "fully_qualified_coverage_unchanged": true
+  }
+}

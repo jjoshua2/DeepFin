@@ -1,0 +1,294 @@
+{
+  "schema": 1,
+  "status": "ACTUAL_LAUNCH_SNAPSHOT_NO_COMPLETION_OBSERVED",
+  "references": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/plan.json",
+      "sha256": "bdca27264c2ca8d86f56b4b28a18c4a20504b30a16356a7ae024debdf72ef287"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/run.py",
+      "sha256": "807307cee468f8fc3d38e5bfb30056c14a9ca294b642401034b89130c701ccdf"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/command.sh",
+      "sha256": "2e9964cc4a00151758a8a055cdf40f9e959f35156df14e8dc67a8ed1c83c3eca"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/preregistration.md",
+      "sha256": "983cc8125bd00eaccaa0211a0d58172b7a84ca77a8c0f0186edcca2819a96de8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/preparation.json",
+      "sha256": "4e07d4d78b30433ce6b0a47b060f2f38b76c174c019f21d328f66c8b77209eca"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/independent_preparation_review.json",
+      "sha256": "74ce1320987521e09924488519e646eaf6ebccdf54d52bb9a3a32128e9df67a1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/outer_started.json",
+      "sha256": "cb1d7246c2347ff9acf70fc8bcfcda469497359dbfed0170f3b01c28195ac9ef"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/started.json",
+      "sha256": "273cd868451a2d3efaa0da42bcf0401b093c5724f0c1ae9c8b5a3174f11d4f98"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/ownership.json",
+      "sha256": "790a4ca09dbca2ec39cdd6fee5dd462459c5b61072de5024c34a1bc4c7c2327a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_00/started.json",
+      "sha256": "235b6bb2b5390bd9687e40d4ff3422bbbb6b7e285e3ddb7c06331471dfc9c903"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/next_scale_labels_after_v100_v1/inventory.json",
+      "sha256": "997bd04173f7a6a5350e2da66ba186eb898fb370904017c3179c9e60f44686bc"
+    }
+  ],
+  "outer_launch": {
+    "started_unix": 1789321811.9103665,
+    "command": [
+      "bash",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/command.sh"
+    ],
+    "inclusive_seconds": 7200,
+    "available_ram_bytes": 88090669056,
+    "filesystem_free_bytes": 214444892160,
+    "ceres_arena_terminal_observed_exit_code": 0
+  },
+  "operator_launch": {
+    "pid": 411312,
+    "started_unix": 1789321811.9766617,
+    "deadline": 1789329011.9335093,
+    "plan_sha256": "bdca27264c2ca8d86f56b4b28a18c4a20504b30a16356a7ae024debdf72ef287"
+  },
+  "ownership": {
+    "status": "NO_MATCHING_SAME_USER_PROCESS",
+    "unix": 1789321811.979128,
+    "probe_pid": 411312
+  },
+  "first_group_launch": {
+    "pid": 411322,
+    "pgid": 411322,
+    "unix": 1789321812.2052217,
+    "command": [
+      "/usr/bin/python3",
+      "scripts/bt4_raw_corpus_sidecar.py",
+      "--source",
+      "run06_g10=/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+      "--source",
+      "run07_g10_companion4=/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+      "--out-root",
+      "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw",
+      "--onnx",
+      "/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx",
+      "--batch-size",
+      "128",
+      "--threads",
+      "2",
+      "--gpu-mem-gb",
+      "8",
+      "--gpu-lock",
+      "/home/josh/projects/chess/scratchpad/gpu0_experiment.lock",
+      "--min-free-gib",
+      "150",
+      "--wdl-output",
+      "/output/wdl",
+      "--wdl-output-kind",
+      "probabilities",
+      "--max-shards",
+      "16"
+    ],
+    "deadline": 1789323552.2052217,
+    "plan": "bdca27264c2ca8d86f56b4b28a18c4a20504b30a16356a7ae024debdf72ef287"
+  },
+  "initial_inventory": {
+    "run06_g10": {
+      "closed_shards": 5517,
+      "closed_rows": 45790939,
+      "sidecar_receipts": 5399,
+      "missing_shards": 118,
+      "missing_rows": 979788,
+      "missing_overlap_selected35m_raw_roster": [],
+      "first16": [
+        {
+          "path": "w00-00449.jsonl.zst",
+          "rows": 8350
+        },
+        {
+          "path": "w00-00450.jsonl.zst",
+          "rows": 8299
+        },
+        {
+          "path": "w00-00451.jsonl.zst",
+          "rows": 8259
+        },
+        {
+          "path": "w00-00452.jsonl.zst",
+          "rows": 8215
+        },
+        {
+          "path": "w00-00453.jsonl.zst",
+          "rows": 8206
+        },
+        {
+          "path": "w00-00454.jsonl.zst",
+          "rows": 8321
+        },
+        {
+          "path": "w00-00455.jsonl.zst",
+          "rows": 8432
+        },
+        {
+          "path": "w00-00456.jsonl.zst",
+          "rows": 8342
+        },
+        {
+          "path": "w00-00457.jsonl.zst",
+          "rows": 8244
+        },
+        {
+          "path": "w00-00458.jsonl.zst",
+          "rows": 8401
+        },
+        {
+          "path": "w00-00459.jsonl.zst",
+          "rows": 8471
+        },
+        {
+          "path": "w00-00460.jsonl.zst",
+          "rows": 8403
+        },
+        {
+          "path": "w00-00461.jsonl.zst",
+          "rows": 8300
+        },
+        {
+          "path": "w00-00462.jsonl.zst",
+          "rows": 8331
+        },
+        {
+          "path": "w00-00463.jsonl.zst",
+          "rows": 8331
+        },
+        {
+          "path": "w00-00464.jsonl.zst",
+          "rows": 8364
+        }
+      ],
+      "last_new": [
+        {
+          "path": "w01-00508.jsonl.zst",
+          "rows": 8409
+        }
+      ]
+    },
+    "run07_g10_companion4": {
+      "closed_shards": 1618,
+      "closed_rows": 13424037,
+      "sidecar_receipts": 1558,
+      "missing_shards": 60,
+      "missing_rows": 497502,
+      "missing_overlap_selected35m_raw_roster": [],
+      "first16": [
+        {
+          "path": "w00-00392.jsonl.zst",
+          "rows": 8298
+        },
+        {
+          "path": "w00-00393.jsonl.zst",
+          "rows": 8363
+        },
+        {
+          "path": "w00-00394.jsonl.zst",
+          "rows": 8266
+        },
+        {
+          "path": "w00-00395.jsonl.zst",
+          "rows": 8204
+        },
+        {
+          "path": "w00-00396.jsonl.zst",
+          "rows": 8231
+        },
+        {
+          "path": "w00-00397.jsonl.zst",
+          "rows": 8305
+        },
+        {
+          "path": "w00-00398.jsonl.zst",
+          "rows": 8302
+        },
+        {
+          "path": "w00-00399.jsonl.zst",
+          "rows": 8300
+        },
+        {
+          "path": "w00-00400.jsonl.zst",
+          "rows": 8366
+        },
+        {
+          "path": "w00-00401.jsonl.zst",
+          "rows": 8206
+        },
+        {
+          "path": "w00-00402.jsonl.zst",
+          "rows": 8207
+        },
+        {
+          "path": "w00-00403.jsonl.zst",
+          "rows": 8312
+        },
+        {
+          "path": "w00-00404.jsonl.zst",
+          "rows": 8214
+        },
+        {
+          "path": "w00-00405.jsonl.zst",
+          "rows": 8333
+        },
+        {
+          "path": "w00-00406.jsonl.zst",
+          "rows": 8416
+        },
+        {
+          "path": "w00-00407.jsonl.zst",
+          "rows": 8422
+        }
+      ],
+      "last_new": [
+        {
+          "path": "w00-00451.jsonl.zst",
+          "rows": 8332
+        }
+      ]
+    }
+  },
+  "allocation": {
+    "whole_seconds": 7200,
+    "max_newly_recorded_shards": 192,
+    "group_max_shards": 16,
+    "cpu_affinity": [
+      2,
+      3
+    ],
+    "threads": 2,
+    "batch_size": 128,
+    "ORT_gpu_allowance_GiB": 8,
+    "startup_available_GiB": 48,
+    "running_available_GiB": 32,
+    "disk_floor_GiB": 150,
+    "first_group_inclusive_seconds": 1800,
+    "child_seconds": 1740,
+    "outer_TERM_seconds": 7160,
+    "outer_KILL_grace_seconds": 40
+  },
+  "scope": [
+    "Parent owns exec55179/observer609; no job evolution or outcome read for publication.",
+    "Raw labels only: no derived cohort or training admission.",
+    "No old policy-only backfill; new receipt coverage may recover already-published sidecars.",
+    "Old pause markers and PID records retained; fresh parent STOP.request yields at group boundary."
+  ]
+}

@@ -1,0 +1,117 @@
+{
+  "status": "COMPLETED_FIRST4_DIAGNOSTIC_REMAINDER_STOPPED_BEFORE_INFERENCE",
+  "diagnostic": {
+    "status": "COMPLETE_POLICY_DIAGNOSTIC_QUALIFICATION_NOT_TRAINING",
+    "plan_sha256": "86366e0b42aa7db04c6869a520fd28902f330a11a31781d96842e61165750345",
+    "started_unix": 1789178406.1599119,
+    "returncode": 0,
+    "rows": 32768,
+    "summary_sha256": "4ecfcb6197d625ba4591806fa959979163375a836705473cf8092b3fd4c91af8",
+    "row_bank_sha256": "5e4dcabcc0ba6473d2d109b82fe9ff236931ea8664ae6acf69c57e3daa7a70fa",
+    "time_receipt": {
+      "seconds": 376.63,
+      "max_rss_kib": 2000152,
+      "exit_code": 0
+    },
+    "elapsed_seconds": 376.8211047179939,
+    "completed_unix": 1789178782.9431283
+  },
+  "diagnostic_root_terminal": {
+    "session": 50016,
+    "exit_code": 0,
+    "basis": "Parent observed terminal and closed observer2614"
+  },
+  "readout_validation": {
+    "session": 61832,
+    "exit_code": 0,
+    "seconds": 6.53,
+    "max_rss_kib": 53196,
+    "bank_passes": 1,
+    "source_payload_passes": 0,
+    "bootstrap": false
+  },
+  "remainder_preregistered": {
+    "real_rows": 229311,
+    "shards": 28,
+    "ranges": [
+      "4..19",
+      "20..31"
+    ],
+    "calls": 7166,
+    "padding_rows": 1,
+    "inclusive_cap_seconds": 2400,
+    "preserved_prior_rows": 32768,
+    "preserved_prior_shards": 4,
+    "decision_before_outcomes": "Complete the fixed same-source cohort, no result-dependent row selection."
+  },
+  "failure": {
+    "root_session": 90935,
+    "exit_code": 1,
+    "elapsed_seconds": 5.225722119997954,
+    "reason": "sampled device memory above12GiB",
+    "exact_failed_MiB": null,
+    "bound_only": "strictly greater than12288; wrapper raised before persisting sample",
+    "inference_started": false
+  },
+  "failed_wrapper_utc": "2026-09-12T02:01:23.014076+00:00",
+  "later_contention_observation": {
+    "utc": "2026-09-12T02:03:12.516662+00:00",
+    "device_used_MiB": 20204,
+    "gpu_utilization_percent": 52,
+    "scope": "Later observation, not the unpersisted triggering memory sample. Windows graphics activity supports external contention; process counters need not sum to instantaneous device residency."
+  },
+  "actions": "Preserved failed v1 evidence and user graphics workload; no retry, process stop, cap relaxation, inference or GPU reallocation. CPU materialization remains a separate operation.",
+  "training_or_value_result": false,
+  "pins": {
+    "diagnostic/plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_policy_diagnostic_v1/plan.json",
+      "sha256": "86366e0b42aa7db04c6869a520fd28902f330a11a31781d96842e61165750345"
+    },
+    "diagnostic/execution/status.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_policy_diagnostic_v1/execution/status.json",
+      "sha256": "428259fc175e47942a1b441be23d7785c801ffe7da676a12419394d24dc61c63"
+    },
+    "diagnostic/execution/audit/teacher_adjudication_audit.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_policy_diagnostic_v1/execution/audit/teacher_adjudication_audit.json",
+      "sha256": "4ecfcb6197d625ba4591806fa959979163375a836705473cf8092b3fd4c91af8"
+    },
+    "diagnostic/readout/readout.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_policy_diagnostic_v1/readout/readout.json",
+      "sha256": "e2dfac8a3d3d285dbfc99247adb6e9882d8f36b7754dc14babf95038efe92970"
+    },
+    "diagnostic/readout/scientific_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_policy_diagnostic_v1/readout/scientific_review.json",
+      "sha256": "72f0e34fc726d2393e7a4403129030179c8750cdad23f85c29609f7a4799fa13"
+    },
+    "remaining28/driver.plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v1/driver.plan.json",
+      "sha256": "87852892bbe186856040ffc202188234e07b9efe89e6afa5960bd66530db2f8a"
+    },
+    "remaining28/preregistration.md": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v1/preregistration.md",
+      "sha256": "d35560a20dcfc83ad960b31b4603d00bd84c10b964e8e17d89989a3a80bce286"
+    },
+    "remaining28/independent_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v1/independent_review.json",
+      "sha256": "2409bffd099d5ba5f73daaf5c2f0d7858229a26802688d4ca972987015d11ec9"
+    },
+    "remaining28/failure_readout_v1.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v1/failure_readout_v1.json",
+      "sha256": "1d0e799c4ab65214df7174a0ec556959e0f4f2c8f8d16f9e83d8937e5992113a"
+    },
+    "remaining28/driver/chunks/shards4_19/receipt.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v1/driver/chunks/shards4_19/receipt.json",
+      "sha256": "ca17559f49923738f8906fd25697fb18a86dc8969c714aa46e3597e04e287d6e"
+    },
+    "remaining28/shards4_19/failed.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v1/shards4_19/failed.json",
+      "sha256": "f88ced1c7a34bfbbbad6e8da32e277b72e7eb63d686cdf339c783829b3ce1e88"
+    }
+  },
+  "bank": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_policy_diagnostic_v1/execution/audit/teacher_adjudication_rows.jsonl",
+    "sha256": "5e4dcabcc0ba6473d2d109b82fe9ff236931ea8664ae6acf69c57e3daa7a70fa",
+    "rows": 32768,
+    "note": "No bank reread for publication; one-pass readout verified this identity."
+  }
+}

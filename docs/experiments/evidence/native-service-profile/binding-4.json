@@ -1,0 +1,1 @@
+{"package_sha256":"e08421109e5eb3b0ee0b1d911bfff82bc49de6b8a327dda3d696dc2f26e0384a","checkpoint_sha256":"bb9934134c0d9a39c515c10fa870122c3dfd28259bece392be026e32a9ca60d7","torch_version":"2.14.0","channels":175,"batch":4,"profile":4,"weights_key":"model"}

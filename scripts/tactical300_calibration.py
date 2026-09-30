@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Calibrate Tactical300 against already-recorded G10 d10/d12 observations.
+"""Audit Tactical300 against already-recorded G10 d10/d12 observations.
 
 This is a CPU-only retrospective diagnostic.  It joins a provenance-qualified
 raw BT4 policy bank to the exact derived G10 rows described by the existing
@@ -41,6 +41,7 @@ from scripts import bt4_raw_corpus_sidecar as raw
 from scripts import corpus_row_provenance as provenance
 from scripts import derive_corpus_targets as derive
 from scripts import sf_policy_rewrite as sf_rewrite
+from scripts import tactical300_registration as registration
 from scripts.bt4_policy_dump import file_sha256
 
 SUMMARY = "tactical300_calibration.json"
@@ -120,14 +121,17 @@ def _policy_view(
     tempered = mix._tempered_bt4_policy(
         values[None, :], legal_mask[None, :], temperature=BT4_TEMPERATURE
     )[0]
-    top_probability = float(np.max(tempered[legal_mask]))
+    stored = tempered.astype(np.float32).astype(np.float16).astype(np.float32)
+    stored = np.where(legal_mask, stored, 0.0)
+    stored /= stored[legal_mask].sum(dtype=np.float64)
+    top_probability = float(np.max(stored[legal_mask]))
     top = {
         move
         for move, index in move_to_index.items()
-        if float(tempered[index]) == top_probability
+        if float(stored[index]) == top_probability
     }
     require(bool(top), "BT4 top set is empty")
-    return top, top_probability, tempered
+    return top, top_probability, stored
 
 
 def _ordinary_d9_best(
@@ -226,16 +230,24 @@ def analyze_row(row: dict[str, Any], raw_bt4_policy: np.ndarray) -> dict[str, An
                 if score > SF_CP_CLAMP_CP
             }
             if final_scores is not None
-            else set()
+            else None
         )
         return {
             **base,
             "kind": "winning_mate",
             "d9_winning_mates": sorted(winning_mates),
             "bt4_agrees_with_d9_winning_mate": bool(bt4_top & winning_mates),
-            "final_has_winning_mate": bool(final_winning),
-            "final_preserves_d9_winning_mate": bool(final_winning & winning_mates),
-            "bt4_top_is_final_winning_mate": bool(final_winning & bt4_top),
+            "final_has_winning_mate": (
+                None if final_winning is None else bool(final_winning)
+            ),
+            "final_preserves_d9_winning_mate": (
+                None if final_winning is None else bool(final_winning & winning_mates)
+            ),
+            "bt4_top_is_final_winning_mate": (
+                None
+                if final_winning is None
+                else registration.top_set_is_final_mate(bt4_top, final_winning)
+            ),
         }
     if losing_mates:
         return {
@@ -325,6 +337,7 @@ def _new_aggregate() -> dict[str, Any]:
         "losing_mate_rows": 0,
         "mate": {
             "bt4_agrees_d9_winning_mate": 0,
+            "deeper_outcome_adjudicable": 0,
             "final_has_winning_mate": 0,
             "final_preserves_d9_winning_mate": 0,
             "bt4_top_is_final_winning_mate": 0,
@@ -349,18 +362,19 @@ def aggregate_row(aggregate: dict[str, Any], result: dict[str, Any]) -> None:
     if kind == "winning_mate":
         aggregate["winning_mate_rows"] += 1
         mate = aggregate["mate"]
-        for key in (
-            "bt4_agrees_with_d9_winning_mate",
+        mate["bt4_agrees_d9_winning_mate"] += int(
+            bool(result["bt4_agrees_with_d9_winning_mate"])
+        )
+        deeper_keys = (
             "final_has_winning_mate",
             "final_preserves_d9_winning_mate",
             "bt4_top_is_final_winning_mate",
-        ):
-            target = (
-                "bt4_agrees_d9_winning_mate"
-                if key == "bt4_agrees_with_d9_winning_mate"
-                else key
-            )
-            mate[target] += int(bool(result[key]))
+        )
+        adjudicable = all(result[key] is not None for key in deeper_keys)
+        mate["deeper_outcome_adjudicable"] += int(adjudicable)
+        for key in deeper_keys:
+            if result[key] is not None:
+                mate[key] += int(bool(result[key]))
         mate["fallback_no_deeper_scores"] += int(result["final_depth"] == 9)
         return
     if kind == "losing_mate_present":
@@ -422,6 +436,7 @@ def decision_from_aggregate(
         "minimum_adjudicable": MIN_ADJUDICABLE,
         "verdict": verdict,
         "training_admission": False,
+        "published_transfer_calibrated": False,
     }
 
 
@@ -435,6 +450,39 @@ def _raw_rows(path: Path, offsets: set[int]) -> dict[int, dict[str, Any]]:
                 break
     require(set(result) == offsets, "raw physical rows missing from pinned source shard")
     return result
+
+
+def _producer_sha256() -> dict[str, str]:
+    modules = (adaptive, adapter, mix, sf_rewrite, registration)
+    paths = [Path(__file__).resolve()]
+    for module in modules:
+        module_file = module.__file__
+        if module_file is None:
+            raise ValueError("producer module has no source path")
+        paths.append(Path(module_file).resolve())
+    return {str(path): file_sha256(path) for path in paths}
+
+
+def _require_unchanged_producers(snapshot: dict[str, str]) -> None:
+    require(_producer_sha256() == snapshot, "producer source changed during calibration")
+
+
+def _authenticate_and_claim_refs(
+    inputs: Any,
+    refs: Any,
+    seen: set[tuple[str, str, int]],
+) -> None:
+    """Authenticate every reference before its identity enters the cohort set."""
+    for ref in refs:
+        inputs.authenticate_ref(ref)
+        registration.claim_source_identity(
+            seen,
+            (
+                str(ref["source_namespace"]),
+                str(ref["source_shard"]),
+                int(ref["source_row"]),
+            ),
+        )
 
 
 def calibrate(
@@ -454,6 +502,7 @@ def calibrate(
         "invalid shard slice",
     )
     manifest_path = manifest_path.resolve()
+    producer_sha256 = _producer_sha256()
     manifest_pin = {"path": str(manifest_path), "sha256": expected_manifest_sha256}
     manifest = json.loads(adapter.pin(manifest_pin).read_text())
     require(
@@ -465,6 +514,7 @@ def calibrate(
         and manifest["schema"] == 1,
         "adapter manifest fields/schema differ",
     )
+    registration.validate_teacher(manifest["teacher"])
     summary_path = adapter.pin(manifest["derived_summary"])
     require(summary_path.name == derive.SUMMARY_NAME, "expected derived corpus summary")
     source = summary_path.parent
@@ -473,12 +523,9 @@ def calibrate(
         summary.get("row_provenance", {}).get("path_in_shard") == provenance.FILENAME,
         "derivation has no row provenance",
     )
-    paths = sorted(source.glob("shard_*.zarr"))
     written = {entry["path"]: entry for entry in summary["shards"]}
-    require(
-        bool(paths) and set(written) == {path.name for path in paths},
-        "derived shard inventory differs from summary",
-    )
+    require(len(written) == len(summary["shards"]), "duplicate summary shard")
+    paths = registration.derived_inventory(source, written.keys())
     stop = (
         len(paths)
         if max_shards is None
@@ -511,6 +558,7 @@ def calibrate(
     rows_analyzed = 0
     started = time.monotonic()
     shard_receipts: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, int]] = set()
     try:
         for path in selected:
             derived_stable[path] = adapter.storage_identity(path)
@@ -545,18 +593,8 @@ def calibrate(
             ply_indices = np.asarray(group["ply_index"][:])
             derived_legal = np.asarray(group["legal_mask"][:]) != 0
             grouped: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
-            seen: set[tuple[str, str, int]] = set()
+            _authenticate_and_claim_refs(inputs, refs, seen)
             for index, ref in enumerate(refs):
-                source_identity = (
-                    ref["source_namespace"],
-                    ref["source_shard"],
-                    int(ref["source_row"]),
-                )
-                require(
-                    source_identity not in seen,
-                    "duplicate source-qualified derived row",
-                )
-                seen.add(source_identity)
                 grouped.setdefault(
                     (str(ref["source_dir"]), str(ref["source_shard"])), []
                 ).append((index, ref))
@@ -666,6 +704,7 @@ def calibrate(
             )
 
         require(rows_analyzed == aggregate["rows"], "aggregate row count differs")
+        _require_unchanged_producers(producer_sha256)
         require(
             all(
                 adapter.storage_identity(path) == stamp
@@ -676,13 +715,17 @@ def calibrate(
         for item in [manifest_pin, manifest["derived_summary"], *inputs.pins]:
             adapter.pin(item)
 
+        require(
+            registration.derived_inventory(source, written.keys()) == paths,
+            "derived shard inventory changed before publication",
+        )
         decision = decision_from_aggregate(
             aggregate, full_source_coverage=full_source_coverage
         )
         final = {
             "schema": SCHEMA,
             "status": "COMPLETE_DIAGNOSTIC_NOT_TRAINING_ADMISSION",
-            "kind": "tactical300-bt4-vs-deeper-sf-calibration",
+            "kind": "tactical300-bt4-vs-deeper-sf-diagnostic",
             "adapter_manifest": manifest_pin,
             "derived_summary": manifest["derived_summary"],
             "teacher": {
@@ -706,18 +749,7 @@ def calibrate(
             "decision": decision,
             "verified_raw_shards": inputs.verified,
             "shards": shard_receipts,
-            "producer_sha256": {
-                str(Path(__file__).resolve()): file_sha256(Path(__file__).resolve()),
-                str(Path(adaptive.__file__).resolve()): file_sha256(
-                    Path(adaptive.__file__).resolve()
-                ),
-                str(Path(adapter.__file__).resolve()): file_sha256(
-                    Path(adapter.__file__).resolve()
-                ),
-                str(Path(mix.__file__).resolve()): file_sha256(
-                    Path(mix.__file__).resolve()
-                ),
-            },
+            "producer_sha256": producer_sha256,
             "elapsed_seconds": time.monotonic() - started,
             "limits": [
                 "Later G10 searches are narrowed and d12 is selected by the d10 gate; they are not optimal-play truth.",

@@ -1,0 +1,51 @@
+{
+  "status": "ILLUSTRATIVE_CAPACITY_REQUIREMENTS_NOT_MEASURED_SCHEDULE",
+  "cpu": [
+    {
+      "availability": 1.0,
+      "required_accepted_sf_positions_per_second": 64.30041152263374
+    },
+    {
+      "availability": 0.5,
+      "required_accepted_sf_positions_per_second": 128.60082304526748
+    }
+  ],
+  "gpu": [
+    {
+      "reuse_generating_teacher_labels": false,
+      "gpu_availability": 1.0,
+      "remaining_label_gpu_days": 12.99,
+      "training_gpu_days": 4.7,
+      "available_generation_gpu_days": 12.310000000000002,
+      "minimum_aggregate_accepted_neural_positions_per_second": 313.40574259610264,
+      "resource_budget_feasible_before_generation": true
+    },
+    {
+      "reuse_generating_teacher_labels": false,
+      "gpu_availability": 0.8,
+      "remaining_label_gpu_days": 12.99,
+      "training_gpu_days": 4.7,
+      "available_generation_gpu_days": 6.31,
+      "minimum_aggregate_accepted_neural_positions_per_second": 611.4143726399404,
+      "resource_budget_feasible_before_generation": true
+    },
+    {
+      "reuse_generating_teacher_labels": true,
+      "gpu_availability": 1.0,
+      "remaining_label_gpu_days": 8.660000000000002,
+      "training_gpu_days": 4.7,
+      "available_generation_gpu_days": 16.64,
+      "minimum_aggregate_accepted_neural_positions_per_second": 231.85244539411204,
+      "resource_budget_feasible_before_generation": true
+    },
+    {
+      "reuse_generating_teacher_labels": true,
+      "gpu_availability": 0.8,
+      "remaining_label_gpu_days": 8.660000000000002,
+      "training_gpu_days": 4.7,
+      "available_generation_gpu_days": 10.64,
+      "minimum_aggregate_accepted_neural_positions_per_second": 362.5963055787617,
+      "resource_budget_feasible_before_generation": true
+    }
+  ]
+}

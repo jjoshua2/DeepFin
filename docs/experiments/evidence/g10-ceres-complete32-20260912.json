@@ -1,0 +1,244 @@
+{
+  "schema": 1,
+  "status": "PASS_SAVED_G10_CERES_COMPLETE32_NOT_TRAINING",
+  "rows": 262079,
+  "shards": 32,
+  "new_payload_shards": 28,
+  "reused_shards": 4,
+  "runtime": "e9c1b74bc44c45f9ac6d70195f1422c6d24a65f9",
+  "profile": "ceres-c3-fixed32-compact-v2",
+  "manifest_sha256": "69101b506b70bab8f94ee6520eeab2f8080b8c59295f29612389dde0a2032f36",
+  "collection_terminal": {
+    "schema": 1,
+    "status": "COMPLETE",
+    "plan_sha256": "d739b44bf840456d6ffc6267272a97b48a8a9fc831d84b108cd39672bb9493e3",
+    "ended_unix": 1789188094.7978773,
+    "elapsed_seconds": 985.2825989070116,
+    "completed_chunks": [
+      {
+        "id": "shards4_19",
+        "completion_sha256": "a9d33ef662e5c6faead1885a861df6eb6bdba4253b9fabf91eb9459377e40a11",
+        "completion_path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_run06_remaining28_v2/shards4_19/invocations/1789187113075829683/completed.json",
+        "elapsed_seconds": 549.5639365040115,
+        "exit_code": 0,
+        "stdout_log": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/driver/chunks/shards4_19/stdout.log"
+      },
+      {
+        "id": "shards20_31",
+        "completion_sha256": "e981dcb93ff91ef45045683eefe1b1dc2559c497c3115aa73db139f8c3566727",
+        "completion_path": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_run06_remaining28_v2/shards20_31/invocations/1789187692369383001/completed.json",
+        "elapsed_seconds": 405.7090290419874,
+        "exit_code": 0,
+        "stdout_log": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/driver/chunks/shards20_31/stdout.log"
+      }
+    ]
+  },
+  "qualification_terminal": {
+    "session": 60919,
+    "exit_code": 0,
+    "tool_chunk": "97f685",
+    "time": "16.19 72460 0",
+    "qualification_sha256": "401f190c04a33d2403e0e7bb06c8781d45d44909fb6cecd682cb0feaa1bddeb4",
+    "manifest_sha256": "69101b506b70bab8f94ee6520eeab2f8080b8c59295f29612389dde0a2032f36"
+  },
+  "cumulative_collection_seconds": 990.5083210270095,
+  "prior_failed_collection_seconds": 5.225722119997954,
+  "original_allocation_seconds": 2400,
+  "v2_inclusive_cap_seconds": 2394,
+  "preflights": {
+    "host_preflight.json": {
+      "unix": 1789187026.9741466,
+      "status": "PREFLIGHT_FAILED",
+      "telemetry_failures": [],
+      "ssd_free_gib": 296.65896224975586,
+      "available_ram_gib": 51.67794418334961,
+      "error": "BlockingIOError(11, 'Resource temporarily unavailable')"
+    },
+    "lease_recheck.json": {
+      "unix": 1789187062.7555413,
+      "path": "/home/josh/projects/chess/scratchpad/gpu0_experiment.lock",
+      "pid": 640125,
+      "uid": 1000,
+      "stat": [
+        2096,
+        81348917,
+        0
+      ],
+      "fd": "/home/josh/projects/chess/scratchpad/gpu0_experiment.lock",
+      "result": "FREE"
+    },
+    "host_preflight_final.json": {
+      "unix": 1789187094.6981378,
+      "status": "PASS_IMMEDIATE_RESOURCE_PREFLIGHT",
+      "telemetry_failures": [],
+      "ssd_free_gib": 296.5885887145996,
+      "available_ram_gib": 51.99252700805664,
+      "device_used_mib": 3364,
+      "gpu_utilization_percent": 4,
+      "lease": "FREE_PROBED_RELEASED"
+    }
+  },
+  "qualification": {
+    "new_payload_shards": 28,
+    "reused_shards": 4,
+    "first4_qualification": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/post_collection/completed/qualification.json",
+      "sha256": "d82997934ae7b5a5dca31c1b9ce3588b854c4158bc98e5b9c5edc5d759d477d5"
+    },
+    "manifest_sha256": "69101b506b70bab8f94ee6520eeab2f8080b8c59295f29612389dde0a2032f36",
+    "plan_sha256": "4dc4bdbac4c8231ea9b11c3501fe518cec3f85f483b39a2d477d14cc37424d00",
+    "limitations": [
+      "Convenience run06 cohort; no strength inference.",
+      "Inherited source/feed proofs; no raw features/model/library reread.",
+      "Both value heads retained; manifest enables policy consumer, not training admission."
+    ]
+  },
+  "review": {
+    "verdict": "PASS_SAVED_BANK_NOT_TRAINING",
+    "qualification_sha256": "401f190c04a33d2403e0e7bb06c8781d45d44909fb6cecd682cb0feaa1bddeb4",
+    "manifest_sha256": "69101b506b70bab8f94ee6520eeab2f8080b8c59295f29612389dde0a2032f36",
+    "scope": "Completed receipt/manifest and selected completion/last-shard attrs metadata only; no array or storage scans, inference or repeated tests.",
+    "findings": [],
+    "verified": [
+      "Original exact source summary and ordered32shards/262079rows retained",
+      "28new saved payload shard receipts contain9array proofs each (252 total), plus4accepted reused shards",
+      "Both chunk completions match receipt/evidence hashes:131072rows4096calls0pad and98239rows3070calls1pad",
+      "Final8127row shard has254calls8128inputrows1padding; actual attrs hash matches qualification pin",
+      "New manifest rows and source storage bindings agree with reviewed shard receipts; no missing final evidence or partial directories",
+      "Driver COMPLETE985.282599seconds matches reviewed plan; plus prior5.225722seconds below original2400second budget",
+      "Qualifier60919terminal0,16.19seconds72460KiB, exact reviewed plan and manifest digest"
+    ],
+    "limits": [
+      "This qualifies saved labels and manifest, not training admission, new teacher comparison or playing strength",
+      "First4 reuse remains based on accepted historical verification plus completed metadata witness",
+      "Original failed v1 retained; no new diagnostic run requested"
+    ]
+  },
+  "chunk_counts": {
+    "shards4_19": {
+      "calls": 4096,
+      "input_rows": 131072,
+      "padding_rows": 0,
+      "real_rows": 131072
+    },
+    "shards20_31": {
+      "calls": 3070,
+      "input_rows": 98240,
+      "padding_rows": 1,
+      "real_rows": 98239
+    }
+  },
+  "artifacts": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/driver.plan.json",
+      "sha256": "d739b44bf840456d6ffc6267272a97b48a8a9fc831d84b108cd39672bb9493e3",
+      "bytes": 4437
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/driver/manifest.json",
+      "sha256": "a6ce6f40a0535f84cbe20f0b7aa4698e376b42b01be704e7a249a9d71e2bd077",
+      "bytes": 1236
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/run_chunk.py",
+      "sha256": "8daf0e781bb12805afe4395eaf1edd174778d7ae2d0d52660923ee98bcd0f942",
+      "bytes": 18425
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/preparation.json",
+      "sha256": "52a5da9274a1ba1c20e651e2406d1a24c0cb5a04d61e373dc1eded5e59ed953a",
+      "bytes": 1413
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/commands.json",
+      "sha256": "a9ecc81741e1e501408cd03b44cec88cb8d461039f63663afc2a744ba1b08b8d",
+      "bytes": 714
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/independent_review.json",
+      "sha256": "a1bd2c38dc84a605045a64b1d662d89becd944ea8d229bd10b3593872fd7395c",
+      "bytes": 1376
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/host_preflight.json",
+      "sha256": "c8442e3fb93035270cad7e07f9bd29f6511da3d5c8a15f5616aa03d1cd4c8f9a",
+      "bytes": 243
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/lease_recheck.json",
+      "sha256": "0309701f83e1a17b0f4818b38d717e429d282cdadf29b9a115943b8da42ecf04",
+      "bytes": 272
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/host_preflight_final.json",
+      "sha256": "e89a4c763c402a252ffee2955851699f7a015f9b573898c0ff9a75e71fbff847",
+      "bytes": 283
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/post_collection/plan.json",
+      "sha256": "4dc4bdbac4c8231ea9b11c3501fe518cec3f85f483b39a2d477d14cc37424d00",
+      "bytes": 3238
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/post_collection/qualify.py",
+      "sha256": "64052033f88a4df74b60f6b0ee4a604646067ceec6f1fafeea8065a87c90f7b7",
+      "bytes": 8317
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/post_collection/audit_saved_chunk.py",
+      "sha256": "210aec78dbf26d9aa68e487bcaccf0222ec51a644fa13cfd637e85d95a2b7683",
+      "bytes": 7649
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/post_collection/independent_review.json",
+      "sha256": "f7db41cbfc0c3339ffaee7482fd330750789b585d3004ceeb8555bffbe526a34",
+      "bytes": 1484
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/post_collection/completed_review.json",
+      "sha256": "14b8f48d8f60b87aaedd4e2e0d331f81be4fb1b9b21546cf462696527d69895c",
+      "bytes": 1478
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/post_collection/terminal.json",
+      "sha256": "006b03dc55247befb6e4973d988db1178182c9daa4515d978033a60a97476006",
+      "bytes": 277
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/post_collection/completed/qualification.json",
+      "sha256": "401f190c04a33d2403e0e7bb06c8781d45d44909fb6cecd682cb0feaa1bddeb4",
+      "bytes": 79458
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/post_collection/completed/ceres_policy_manifest.json",
+      "sha256": "69101b506b70bab8f94ee6520eeab2f8080b8c59295f29612389dde0a2032f36",
+      "bytes": 385500
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v1/driver/chunks/shards4_19/receipt.json",
+      "sha256": "ca17559f49923738f8906fd25697fb18a86dc8969c714aa46e3597e04e287d6e",
+      "bytes": 1607
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/shards4_19/completed.json",
+      "sha256": "8cae43ce4ca40b28eb4315d24f1fa050a9df481b0dd1245b23fc6c3eb7a82d0e",
+      "bytes": 18505
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/driver/chunks/shards4_19/receipt.json",
+      "sha256": "09ff373413ac69225de6fbe2251a24d1b83176de7c9a10b9abd798a4e44a0f9c",
+      "bytes": 1817
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/shards20_31/completed.json",
+      "sha256": "b3c2a9d2c87fcd5407b89f113ac8894126e440ee568efbc3f3b4e8941269b80c",
+      "bytes": 14086
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_remaining28_v2/driver/chunks/shards20_31/receipt.json",
+      "sha256": "e47bf614dc29b860d823c82596f85cccf3aa5770a0ead791fa75a03e91725c3e",
+      "bytes": 1821
+    }
+  ],
+  "interpretation": "Bank readiness only. Prior science still first4; no new inference comparison, training admission or strength result."
+}

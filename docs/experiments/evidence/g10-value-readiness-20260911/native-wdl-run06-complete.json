@@ -1,0 +1,168 @@
+{
+  "status": "COMPLETE_SOURCE_LABEL_READINESS_NOT_CONSUMER_MANIFEST",
+  "created_utc": "2026-09-12T05:38:28.234895+00:00",
+  "source_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_v1/run06_g10/derived",
+  "source_summary": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_v1/run06_g10/derived/derive_targets_summary.json",
+    "sha256": "08f468f65093ac4b2f227ea312e0e7a89801307ec4e007264ea1a8ce6573c6c5"
+  },
+  "source_qualification": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_v1/run06_g10/common_input_qualification.json",
+    "sha256": "ad6409b8ef986c7467e031685dab954df80e98b3d84f4e29b96693f5c78bcdbd"
+  },
+  "run06_large_rows": 2013019,
+  "run06_large_shards": 246,
+  "earlier_common_increment_rows": 526376,
+  "all_direct_native_rows": 2539395,
+  "units": [
+    {
+      "unit": "g10_wdl_large_slice_v1",
+      "range": [
+        "shard_000000.zarr",
+        "shard_000063.zarr"
+      ],
+      "rows": 524288,
+      "shards": 64,
+      "output": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_large_slice_v1/run06_g10",
+      "completion": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice_v1/complete.json",
+        "sha256": "2f7353609a830a37021227d29832bd46240a066347f8bc1ca41d0cfcffae265b"
+      },
+      "qualification": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice_v1/independent_completed_review/receipt.json",
+        "sha256": "b237e3072cca359778211c98c1d438b8ab7b37e056669c788bf6a2c3274ce4f3"
+      },
+      "invocation": {
+        "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_large_slice_v1/run06_g10/invocations/1788963606633499925/completed.json",
+        "sha256": "2e642366a81846eca4f5e5d70db3135e5862a8f407cae510389a8948150473e1",
+        "bytes": 67806
+      },
+      "wall_seconds": 322.2853753566742,
+      "wdl_checks": {
+        "native_dtype": "float32",
+        "finite_and_range_valid": true,
+        "max_abs_unit_mass_error": 1.471489667892456e-07,
+        "min": 3.1036329062317236e-08,
+        "max": 0.9999998807907104,
+        "normalized_rounding_tolerance": 2e-06
+      },
+      "decoded_saved_bytes": 33554432
+    },
+    {
+      "unit": "g10_wdl_large_slice_next_v1",
+      "range": [
+        "shard_000064.zarr",
+        "shard_000127.zarr"
+      ],
+      "rows": 524288,
+      "shards": 64,
+      "output": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_large_slice_next_v1/run06_g10",
+      "completion": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice_next_v1/complete.json",
+        "sha256": "3e0e6ae54fde15616acb421b5a082517f89945be4b594d1e6ff5f049640b4bf0"
+      },
+      "qualification": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice_next_v1/independent_completed_review/receipt.json",
+        "sha256": "07692f78b6cd2271f047798e92b02147417668f573fcfa53a83fa0ced92fdad7"
+      },
+      "invocation": {
+        "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_large_slice_next_v1/run06_g10/invocations/1788964424853163382/completed.json",
+        "sha256": "5363dba3f15bf57c571f7a1a1bac444daa6b8bee97fba29cc2b57fbe4ca8ed72",
+        "bytes": 67806
+      },
+      "wall_seconds": 316.4344713687897,
+      "wdl_checks": {
+        "native_dtype": "float32",
+        "finite_and_range_valid": true,
+        "max_abs_unit_mass_error": 1.471926225349307e-07,
+        "min": 1.500381152652608e-08,
+        "max": 0.9999996423721313,
+        "normalized_rounding_tolerance": 2e-06
+      },
+      "decoded_saved_bytes": 33554432
+    },
+    {
+      "unit": "g10_wdl_large_slice128_v1",
+      "range": [
+        "shard_000128.zarr",
+        "shard_000191.zarr"
+      ],
+      "rows": 524288,
+      "shards": 64,
+      "output": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_large_slice128_v1/run06_g10",
+      "completion": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice128_v1/complete.json",
+        "sha256": "e2b89f402a7262174a9d082f58add5d5d4208b6812ec35da9d0bb7bafe5c4e31"
+      },
+      "qualification": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice128_v1/independent_completed_review/receipt.json",
+        "sha256": "f5890ae33fe85f772d886ede0b0cd5123959da3a30092e6c19848bc1bc0d2c4a"
+      },
+      "invocation": {
+        "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_large_slice128_v1/run06_g10/invocations/1789189791810685422/completed.json",
+        "sha256": "a8398069cce907054df3165b560b4637c8645e19917d991c3a9c0e44dc2b007e",
+        "bytes": 67806
+      },
+      "wall_seconds": 359.5122230052948,
+      "wdl_checks": {
+        "native_dtype": "float32",
+        "finite_and_range_valid": true,
+        "max_abs_unit_mass_error": 1.4647957868874073e-07,
+        "min": 3.341245147225891e-08,
+        "max": 0.9999997615814209,
+        "normalized_rounding_tolerance": 2e-06
+      },
+      "decoded_saved_bytes": 33554432
+    },
+    {
+      "unit": "g10_wdl_large_slice192_v1",
+      "range": [
+        "shard_000192.zarr",
+        "shard_000245.zarr"
+      ],
+      "rows": 440155,
+      "shards": 54,
+      "output": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_large_slice192_v1/run06_g10",
+      "completion": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice192_v1/complete.json",
+        "sha256": "517f62582314ccdd6952fc7dcbc15bd5055bbaa86a101950b136f311770712a3"
+      },
+      "qualification": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice192_v1/independent_completed_review/receipt.json",
+        "sha256": "abae9b287f702f205d574be9258eecb9597e5ee0e9a3eda6d8205242f9369555"
+      },
+      "invocation": {
+        "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_large_slice192_v1/run06_g10/invocations/1789190986961023095/completed.json",
+        "sha256": "030b4e49a212f2f493e8d078f69574f8f7e8d69009e73ed669072066c7146322",
+        "bytes": 64846
+      },
+      "wall_seconds": 317.0093672275543,
+      "wdl_checks": {
+        "native_dtype": "float32",
+        "finite_and_range_valid": true,
+        "max_abs_unit_mass_error": 1.4804390957579017e-07,
+        "min": 1.6620475662421086e-08,
+        "max": 0.9999997615814209,
+        "normalized_rounding_tolerance": 2e-06
+      },
+      "decoded_saved_bytes": 28169920
+    }
+  ],
+  "final_unit_independent_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_large_slice192_v1/independent_completed_review/independent_review.json",
+    "sha256": "523f593d26ecf879d2d1cdd84e75adc94a6a073e7bd0934993ceab7bdc3d7c5a"
+  },
+  "consumer_boundary": {
+    "source": {
+      "path": "/tmp/deepfin-g10-native-wdl-complete/scripts/g10_native_wdl_reuse.py",
+      "sha256": "602d77b54b04b17f67a1067867a110b0800f86e6a1fd6563a0405a354a7cde66"
+    },
+    "status": "NOT_ADMITTED_AS_ONE_COMPLETE_COHORT",
+    "reason": "Existing historical G10 native-WDL reader requires one wdl_dir, matching invocation --out and attribute namespaces; these four qualified units retain four distinct output directories. No synthetic merged namespace or new admission builder created."
+  },
+  "limits": [
+    "Metadata union of existing qualified receipts; no historical payload reread or freshness claim beyond each receipt.",
+    "Complete native WDL for original run06 common-large only; not all G10, target materialization, training admission or stronger values.",
+    "Does not repair the separate malformed adaptive-SF baseline outside qualified prefix."
+  ]
+}

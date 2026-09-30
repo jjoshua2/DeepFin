@@ -1,0 +1,64 @@
+{
+  "proof_gate": "PASS",
+  "report": [
+    {
+      "source_laws": [
+        "pext_pdep_roundtrip",
+        "popcount_bound",
+        "popcount_zero",
+        "popcount_full",
+        "popcount_bit63",
+        "word_roundtrip",
+        "word_fullwidth",
+        "parts_roundtrip",
+        "from_parts_low",
+        "from_parts_high",
+        "widening_low",
+        "widening_high_zero",
+        "pext_zero_mask",
+        "pdep_zero_mask",
+        "xor_twice",
+        "not_twice"
+      ],
+      "checked": true,
+      "unsafe_or_foreign": false
+    },
+    {
+      "importing_application": "demos/proof_u64/main.bend",
+      "checked": true
+    },
+    {
+      "standard_test_fixture": "tests/proof/u64_laws.bend",
+      "checked": true
+    },
+    {
+      "negative": "missing-proof",
+      "rejected": true
+    },
+    {
+      "negative": "false-bound",
+      "rejected": true
+    },
+    {
+      "negative": "missing-laws-import",
+      "rejected": true
+    },
+    {
+      "negative": "proof-hole",
+      "rejected": true
+    },
+    {
+      "negative": "unsafe-proof",
+      "rejected": true,
+      "raw_cli_status": 0
+    },
+    {
+      "negative": "corrupted-high-half",
+      "rejected": true
+    },
+    {
+      "negative": "template-instance-cycle",
+      "rejected": true
+    }
+  ]
+}

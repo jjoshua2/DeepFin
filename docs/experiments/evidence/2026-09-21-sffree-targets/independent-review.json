@@ -1,0 +1,38 @@
+{
+  "status": "PASS_INDEPENDENT_THREE_FAMILY_SMOKE_AND_MANIFEST_REVIEW",
+  "reviewer": "/root/factorial_receipt_review",
+  "checked_utc": "2026-09-22T00:06:27.498241+00:00",
+  "builder_sha256": "081d69f0217991493638b36d8a442ea62e6946ca26f44388ae1ea08a9e19959c",
+  "smoke_complete_sha256": "d4a054ea178ddb32580d703668774a34b30b22360922426ce90c27ec4eb94e92",
+  "manifests_index_sha256": "ca4e61bbae176ac0b6d1f32698aad9de299bc4f48de3035f2a430dac60ccf34c",
+  "document_sha256": "e082f84fae16a6c0b7ea48e16085bdcd26c6fefb4d5c96b210fdc91648e1c96c",
+  "smoke_checks": {
+    "cohorts": [
+      0,
+      1,
+      21
+    ],
+    "rows_each": 8192,
+    "schema2_storage_receipts_revalidated": true,
+    "every_nonvalue_array_and_metadata_exact_D": true,
+    "policy_and_search_wdl_masks_all_one": true,
+    "independent_half_native_bt4_plus_half_ceres_formula_exact_float16": true,
+    "changed_wdl_rows": 24576,
+    "builder_and_manifest_and_completion_hashes_verified": true
+  },
+  "manifest_checks": {
+    "cohorts": 35,
+    "unique_canonical_base_shards": 7108,
+    "rows": 58090688,
+    "manifest_base_summary_and_seal_hashes_verified": true,
+    "rosters_equal_seals": true,
+    "native_and_ceres_current_attrs_hashes_and_bindings_verified": 14216,
+    "same_bank_and_metadata_pins_as_readiness": true
+  },
+  "claims_review": "APPROVE: metadata-only coverage distinguished from full qualification; smoke scope and initial schema1 harness failure preserved; historical producer/invocation limitation stated.",
+  "limitations": [
+    "Whole-corpus dense teacher/base bytes and feed identities remain for full preparation; current independent manifest review is metadata/pins.",
+    "No full E preparation/training launch approval from this artifact; orchestrator/frozen-runtime review separate.",
+    "15-test/full-lint statements belong to parent test reports; independent code review separately ran3mask/feed regression tests."
+  ]
+}
