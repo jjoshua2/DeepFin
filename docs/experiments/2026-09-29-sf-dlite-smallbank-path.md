@@ -19,13 +19,17 @@ cache), checks the observed UCI request flags, and uses Hash8 with a cold
 `ucinewgame` plus serialized `readyok` for every row. Fixed d6/d8/d10 is
 chosen before a run. The sidecar retains raw CP or mate, native UCI WDL,
 nodes, move and **separate historical D-calibrated** WDL. Missing or malformed
-scores fail the complete small-bank attempt; they never become zero CP or a
+scores fail the complete small-bank attempt; each row also retains its raw
+UCI `info` lines, including the PV/node/WDL emission used for the score,
+so an independent parser can revisit it without re-searching. They never become zero CP or a
 neural-only fallback. The executable uses pinned inputs of at most 16 MiB
 each, a cooperative one-hour cap, a 15-second per-search tripwire and a
 64-MiB output cap. It requires a fresh one-shot output directory, writes a
 claim, reopens written bytes and publishes `COMPLETE` only after all rows.
 This is not an independent physical resource supervisor or attestation of
-effective engine options.
+effective engine options. The claim and completion record the requested
+Syzygy path/rule50/probe-limit/retention profile, qualified binary SHA and
+runtime source-code SHAs.
 
 The separate attachment step requires the *corrected and independently
 audited* selected-neural target route, exact target-byte SHA, matching UID,
@@ -34,7 +38,9 @@ only the three float16 main `search_wdl` values with the float32 blend
 `(SF_D_calibrated + 2 * selected_neural) / 3` rounded once to float16. All
 1,858 policy bytes are copied exactly, and no SF policy/value auxiliary is
 populated. The chosen target and route need their own source authentication;
-this code does not repair or certify a target producer. A recently found
+the adapter recomputes the frozen source-independent fair BT4/Ceres route
+from the UID and refuses a conflicting chosen teacher. It still cannot certify
+that an upstream producer used the right model or legal-head alignment. A recently found
 legal-order permutation in an untrained full-bank Ceres target readback must
 be corrected before physical attachment. The full D-lite experiment also
 needs a frozen matched training/arena comparison against selected-neural

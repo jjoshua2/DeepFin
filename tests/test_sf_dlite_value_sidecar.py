@@ -90,6 +90,7 @@ def selected(row: dlite.PreparedRow):
     mask = np.zeros(1858, dtype=np.uint8)
     mask[0] = 1
     label = {"uid": list(row.uid), "input_digest": row.input_digest,
+             "teacher": dlite.selected_teacher(row.uid),
              "pov_white": row.pov_white, "target_sha256": dlite.digest(target)}
     return label, target, mask
 
@@ -111,6 +112,8 @@ def test_history_identity_orientation_and_game_offset() -> None:
         bad["row_index"] = 0
         with pytest.raises(dlite.Hold, match="ply"):
             dlite.prepare_row(winner, bad, game)
+    # Independently computed from the frozen full58k route contract.
+    assert dlite.selected_teacher(("a" * 64, "Ceres-v8", "root", 7, 0)) == "BT4"
 
 
 def test_history_proof_and_missing_moves_refuse() -> None:
@@ -163,6 +166,10 @@ def test_cold_scalar_and_main_wdl_only() -> None:
     assert engine.resets == 1
     assert raw["score"]["cp"] == 25
     assert raw["score"]["native_wdl_permille"] == [400, 300, 300]
+    assert raw["raw_info_lines"] == [
+        "info depth 8 multipv 1 score cp 25 wdl 400 300 300 nodes 100 "
+        f"pv {raw['score']['move']}"
+    ]
     sel, target, mask = selected(row)
     candidate, receipt = dlite.attach_main_wdl(row, raw, sel, target, mask)
     assert candidate[:1858 * 2] == target[:1858 * 2]
@@ -199,6 +206,18 @@ def test_missing_score_mismatch_and_illegal_mask_refuse() -> None:
     bad["score"]["move"] = "a1a8"
     with pytest.raises(dlite.Hold, match="complete raw"):
         dlite.attach_main_wdl(row, bad, sel, target, mask)
+    bad = copy.deepcopy(raw)
+    bad["raw_info_lines"] = []
+    with pytest.raises((dlite.Hold, RuntimeError), match=r"score|search"):
+        dlite.attach_main_wdl(row, bad, sel, target, mask)
+    bad = copy.deepcopy(raw)
+    bad["raw_info_lines"][0] = bad["raw_info_lines"][0].replace(
+        "score cp 25", "score cp 26")
+    with pytest.raises(dlite.Hold, match="raw UCI"):
+        dlite.attach_main_wdl(row, bad, sel, target, mask)
+    wrong_route = dict(sel, teacher=("BT4" if sel["teacher"] == "Ceres" else "Ceres"))
+    with pytest.raises(dlite.Hold, match="fair selected"):
+        dlite.attach_main_wdl(row, raw, wrong_route, target, mask)
     mask[0] = 0
     with pytest.raises(dlite.Hold, match="legal mask"):
         dlite.attach_main_wdl(row, raw, sel, target, mask)
@@ -280,7 +299,7 @@ def test_executable_small_bank_label_attach_and_resume_refusal(tmp_path: Path) -
                          engine_factory=FakeEngine, searcher_factory=FakeSearcher)
     prepared = small.load_small_bank(winner_file.read_bytes(), proof_file.read_bytes())[0]
     selected_meta, target, mask = selected(prepared)
-    selected_meta.update({"teacher": "Ceres", "target_hex": target.hex(),
+    selected_meta.update({"target_hex": target.hex(),
                           "legal_mask_hex": mask.tobytes().hex()})
     selected_file = tmp_path / "SELECTED.jsonl"
     selected_file.write_bytes(dlite.canonical(selected_meta) + b"\n")
@@ -294,4 +313,4 @@ def test_executable_small_bank_label_attach_and_resume_refusal(tmp_path: Path) -
     assert attached["rows"] == 1
     candidate = (tmp_path / "attached" / "CANDIDATE_TARGETS.jsonl").read_bytes()
     assert dlite.digest(candidate) == attached["candidate_targets_sha256"]
-    assert json.loads(candidate)["selected_teacher"] == "Ceres"
+    assert json.loads(candidate)["selected_teacher"] == selected_meta["teacher"]

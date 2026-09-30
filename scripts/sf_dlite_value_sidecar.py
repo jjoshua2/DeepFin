@@ -27,6 +27,8 @@ from scripts import gen_sf_rooted_corpus as corpus
 POLICY_WIDTH = 1858
 TARGET_BYTES = 2 * (POLICY_WIDTH + 3)
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+ROUTE_DOMAIN = b"mixed500m/selected-teacher/v1\0"
+ROUTE_SEED = "c8308d72aa70a137c34679f076959d9183e58dbf4cae3fef879b60fde7a2850b"
 
 
 class Hold(ValueError):
@@ -62,6 +64,15 @@ def uid_of(value: Any) -> tuple[str, str, str, int, int]:
          all(type(x) is int and x >= 0 for x in value[3:]),
          "source-qualified winner UID")
     return tuple(value)  # type: ignore[return-value]
+
+
+def selected_teacher(uid: tuple[str, str, str, int, int]) -> str:
+    """Frozen source-independent fair route for this first D-lite frame."""
+    uid_of(list(uid))
+    raw = json.dumps([ROUTE_SEED, *uid], separators=(",", ":"),
+                     ensure_ascii=True).encode("ascii") + b"\n"
+    return ("BT4" if hashlib.sha256(ROUTE_DOMAIN + raw).digest()[0] & 1 == 0
+            else "Ceres")
 
 
 def _sha_field(value: Any, name: str) -> str:
@@ -254,8 +265,12 @@ def label_one(row: PreparedRow, searcher: ScalarSearcher, *, depth: int,
          "UCI window orientation/context")
     searcher.new_game()
     lines = searcher.stream(row.history, depth=depth, multipv=1)
+    need(type(lines) is list and all(type(line) is str for line in lines),
+         "raw UCI info stream")
+    score = _score(lines, depth, board)
     result = {**row.identity(), "depth": depth, "hash_mb": hash_mb,
-              "wdl_orientation": "side_to_move", "score": _score(lines, depth, board)}
+              "wdl_orientation": "side_to_move", "raw_info_lines": lines,
+              "score": score}
     return result
 
 
@@ -325,6 +340,8 @@ def attach_main_wdl(row: PreparedRow, label: dict[str, Any],
          label.get("wdl_orientation") == "side_to_move" and
          label.get("depth") in (6, 8, 10) and label.get("hash_mb") == 8,
          "label/selected winner identity and orientation")
+    need(selected.get("teacher") == selected_teacher(row.uid),
+         "independently frozen fair selected-teacher route")
     need(selected.get("target_sha256") == digest(target),
          "selected target byte pin")
     need(type(legal_mask) is np.ndarray and legal_mask.shape == (POLICY_WIDTH,) and
@@ -360,6 +377,11 @@ def attach_main_wdl(row: PreparedRow, label: dict[str, Any],
          all(type(x) in (int, float) and math.isfinite(x) for x in observed) and
          np.allclose(np.asarray(observed, dtype=np.float32), sf, rtol=0, atol=1e-7),
          "historical D-calibrated scalar value")
+    raw_lines = label.get("raw_info_lines")
+    need(type(raw_lines) is list and
+         all(type(line) is str for line in raw_lines) and
+         score == _score(raw_lines, label["depth"], board),
+         "raw UCI info/parsed score parity")
     mixed = (sf.astype(np.float32) + 2 * chosen.astype(np.float32)) / 3
     need(np.isfinite(mixed).all() and abs(float(mixed.sum()) - 1) <= .005,
          "finite D-lite main WDL")

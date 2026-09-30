@@ -15,10 +15,22 @@ from typing import Any
 
 import numpy as np
 
+from chess_anti_engine.stockfish import uci as uci_module
+from chess_anti_engine.stockfish import wdl as wdl_module
 from scripts import sf_dlite_value_sidecar as core
 
 MAX_INPUT = 16 << 20
 MAX_OUTPUT = 64 << 20
+
+
+def _runtime_source_hashes() -> dict[str, str]:
+    return {
+        "smallbank": core.file_digest(Path(__file__)),
+        "dlite_core": core.file_digest(Path(core.__file__)),
+        "stockfish_uci": core.file_digest(Path(uci_module.__file__)),
+        "stockfish_wdl": core.file_digest(Path(wdl_module.__file__)),
+        "sf_history_parser": core.file_digest(Path(core.corpus.__file__)),
+    }
 
 
 def _read_pinned(path: Path, expected_sha: str) -> bytes:
@@ -104,6 +116,10 @@ def _write_jsonl(path: Path, values: list[dict[str, Any]]) -> str:
     return core.digest(raw)
 
 
+def _output_bytes(out: Path) -> int:
+    return sum(item.stat().st_size for item in out.iterdir() if item.is_file())
+
+
 def run_label(*, winners: Path, winners_sha256: str,
               proofs: Path, proofs_sha256: str, stockfish: Path,
               stockfish_sha256: str, syzygy_path: str, depth: int,
@@ -111,9 +127,18 @@ def run_label(*, winners: Path, winners_sha256: str,
               searcher_factory: Any = None) -> dict[str, Any]:
     rows = load_small_bank(_read_pinned(winners, winners_sha256),
                            _read_pinned(proofs, proofs_sha256))
+    sources = _runtime_source_hashes()
+    profile = {"depth": depth, "hash_mb": 8, "threads": 1,
+               "syzygy_path": syzygy_path,
+               "syzygy_50_move_rule": True, "syzygy_probe_limit": 6,
+               "retain_syzygy_on_new_game": True,
+               "uci_reset": "ucinewgame_then_serialized_readyok_per_row"}
     _new_output(out, {"schema": "sf_dlite_smallbank_label_v1", "depth": depth,
                       "winners_sha256": winners_sha256,
                       "proofs_sha256": proofs_sha256,
+                      "stockfish_sha256": stockfish_sha256,
+                      "requested_uci_profile": profile,
+                      "runtime_source_sha256": sources,
                       "status": "CLAIMED_ZERO_CREDIT"})
     try:
         kw = {}
@@ -125,12 +150,18 @@ def run_label(*, winners: Path, winners_sha256: str,
                                  stockfish_sha256=stockfish_sha256,
                                  syzygy_path=syzygy_path, **kw)
         raw_sha = _write_jsonl(out / "LABELS.jsonl", labels)
+        core.need(_output_bytes(out) < MAX_OUTPUT - (1 << 20),
+                  "total small-bank output reserve")
+        core.need(_runtime_source_hashes() == sources,
+                  "runtime source changed during small-bank labeling")
         receipt = {"schema": "sf_dlite_smallbank_label_v1",
                    "status": "COMPLETE_DIAGNOSTIC_ZERO_CORPUS_CREDIT",
                    "rows": len(rows), "depth": depth, "hash_mb": 8,
                    "winners_sha256": winners_sha256,
                    "proofs_sha256": proofs_sha256,
                    "stockfish_sha256": stockfish_sha256,
+                   "requested_uci_profile": profile,
+                   "runtime_source_sha256": sources,
                    "labels_sha256": raw_sha,
                    "scope": "side-to-move D-calibrated scalar facts only; no policy or active target"}
         _write(out / "COMPLETE.json", receipt)
@@ -151,11 +182,15 @@ def run_attach(*, winners: Path, winners_sha256: str,
     selected_records = [x for _, x in _records(_read_pinned(selected, selected_sha256))]
     core.need(len(rows) == len(label_records) == len(selected_records),
               "exact selected/label row count")
+    sources = _runtime_source_hashes()
     _new_output(out, {"schema": "sf_dlite_smallbank_attach_v1",
                       "winners_sha256": winners_sha256,
                       "proofs_sha256": proofs_sha256,
                       "labels_sha256": labels_sha256,
                       "selected_sha256": selected_sha256,
+                      "selected_route_seed": core.ROUTE_SEED,
+                      "selected_route_domain_hex": core.ROUTE_DOMAIN.hex(),
+                      "runtime_source_sha256": sources,
                       "status": "CLAIMED_ZERO_CREDIT"})
     try:
         candidate_rows = []
@@ -170,11 +205,18 @@ def run_attach(*, winners: Path, winners_sha256: str,
             candidate_rows.append({**proof, "target_hex": candidate.hex(),
                                    "selected_teacher": target_row["teacher"]})
         raw_sha = _write_jsonl(out / "CANDIDATE_TARGETS.jsonl", candidate_rows)
+        core.need(_output_bytes(out) < MAX_OUTPUT - (1 << 20),
+                  "total small-bank output reserve")
+        core.need(_runtime_source_hashes() == sources,
+                  "runtime source changed during small-bank attachment")
         receipt = {"schema": "sf_dlite_smallbank_attach_v1",
                    "status": "COMPLETE_DIAGNOSTIC_ZERO_CORPUS_CREDIT",
                    "rows": len(rows), "candidate_targets_sha256": raw_sha,
                    "labels_sha256": labels_sha256,
                    "selected_sha256": selected_sha256,
+                   "selected_route_seed": core.ROUTE_SEED,
+                   "selected_route_domain_hex": core.ROUTE_DOMAIN.hex(),
+                   "runtime_source_sha256": sources,
                    "scope": "only main search_wdl changed; no SF policy or auxiliary"}
         _write(out / "COMPLETE.json", receipt)
         return receipt
