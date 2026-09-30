@@ -12,7 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
-| [Zarr ZIP decoder pilot](2026-09-20-zarr-zip-pilot.md) | Byte-preserving packed chunks; validated external decoder 8.2x faster in cache-affected pilot, no sampler adoption |
+| [Audited 50M bootstrap expansion](2026-09-17-audited-scale-bootstrap.md) | Historical saved-audit V50 and explicit 50–60M contract; missing source binding and isolated scheduler recovered with both histories, no new experiment or training launch |
 | [Ceres direct-compact synthetic sink](2026-09-30-ceres-direct-compact-synthetic-sink.md) | 26-arm tiny full-head synthetic CPU screen: noisy +2.000% median sink-wall saving, semantic ZIP parity, no live adoption or measured production gain |
 | [Ceres owner target and compact-order correction](2026-09-30-ceres-owner-target-and-compact-order.md) | CPU source-game target reconstruction, one real selected-row overlap and a zero-credit diagnostic legal-order fix; no saved-call or production gain claim |
 | [Persistent Stockfish scalar cost](2026-09-29-sf-scalar-persistent-cost.md) | Frozen 10k-row persistent one-thread d6/d8/d10 cost/agreement screen with cold TT per row/depth and zero corpus/training credit |
@@ -135,6 +135,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Bend subset source laws](2026-09-21-bend-subset-source-laws.md) | Eight initial production-step laws with negative controls and independent native table checks; full P1 ordering/refinement still open |
 | [Bend-owned native neural leaves](2026-09-21-bend-native-leaf.md) | Actual search inputs and legal priors in Bend, native model execution without Python runtime; CPU fixture only |
 | [Bend policy/input composition](2026-09-21-bend-policy-composition.md) | Recovered Bend policy vocabulary paired with complete input from one Game; no inference or Python runtime |
+| [Packed Zarr exact-sampler qualification](2026-09-20-packed-zarr-exact.md) | 131,072 identical ordered rows at batch256; external ZIP consumer12.537s vs NVMe directory10.953s; opt-in ordinary reader, no live adoption |
 | [Bend complete feature inputs](2026-09-20-bend-classical-encoding.md) | Complete 146/175-plane inputs authored in Bend, exact C parity and current U64 compiler; no model/policy execution |
 | [Bend neural history encoding](2026-09-20-bend-history-encoding.md) | Bend-authored 112-plane history/metadata block with exact Python/C comparisons; partial input, no neural inference |
 | [Bend-owned draw rules](2026-09-20-bend-owned-draws.md) | Standalone native history identity and automatic root/leaf draws, no Python runtime; claims/encoding remain separate |
@@ -208,6 +209,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [58M SF late-dose metadata and census design](2026-09-28-sf-late-dose-metadata.md) | 4.7 MB bounded metadata receipt for 58,090,688 retained rows; source-aware controls and capped three-shard pilot proposed, no corpus scan or training |
 | [SF-free D/E phase-start arena](2026-09-27-factorial58-d-e-phase-arena.md) | Complete strict six-man 384-pair/768-game phase test: primary late-minus-early +1.758 points [−2.734, +6.445], inconclusive; secondary overall GSPRT H0 applies only to its declared hypotheses |
 | [Saved Stockfish policy dose by ply and pieces](2026-09-28-sf-late-position-dose.md) | Registered read-only G10 Tactical300 cross-tab: 83.879% of moved mass at ply ≥80 with 7–13 pieces (55.462% at 8–13); no Elo or 58M distribution claim; bounded 58M screen remains next |
+| [Zarr ZIP decoder pilot](2026-09-20-zarr-zip-pilot.md) | Byte-preserving packed chunks; validated external decoder 8.2x faster in cache-affected pilot, no sampler adoption |
 | [External trainer throughput inventory](2026-09-28-500m-external-trainer-inventory.md) | Archived cold/warm packed trainer rates and local E epoch; historical 128-full-shard same-ZIP sizing, with the later completed screen linked separately |
 
 These descriptions identify the records, not the state of a running experiment.
