@@ -366,4 +366,5 @@ def test_qualification_refuses_zip_alias_as_directory_control(corpus, tmp_path):
             "input_planes": 146,
             "input_history_encoding": "legacy",
             "history_rep_fix": False,
+            "mirror_augmentation": False,
         })
