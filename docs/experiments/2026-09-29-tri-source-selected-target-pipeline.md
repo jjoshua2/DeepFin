@@ -119,8 +119,10 @@ containers. Their internal Zarr chunks remain 512 rows. The eight ZIPs total
 immediately after sealing the first container, resume retained it and sealed
 the other seven. A separate self-authored readback matched all 15 stored
 arrays over all 58,773 rows and matched all 115 corresponding CPU collation
-batches through the production loader. An independent review of the larger
-ZIPs remains pending. Applying only the container geometry to 500M rows
+batches through the production loader. An independently authored direct-chunk
+parser then matched all 15 arrays over all 58,773 rows in 1,725 chunk
+comparisons, without importing the producer or production loader. Applying
+only the container geometry to 500M rows
 would yield about 61,036 physical ZIPs; external-drive loading, training
 throughput and the full three-source mix remain unmeasured.
 
@@ -139,6 +141,27 @@ per-row reader cost are not qualified for 500M rows. The size subtotal
 excludes the final receipt, archived proof copies and the original source
 bank; it is not a complete corpus storage rate.
 
+A bounded indexed-source successor on the same 58,773 B/C rows sealed eight
+source segments with input-slice hashes, segment-local UID prefix tables and
+restart cursors. A deliberate kill after the first seal resumed without
+rebuilding it, and a no-op rerun kept the final receipt. An independently
+authored parser matched every UID, source, teacher, ordinal and native payload
+byte against the audited bank. The retention v2 builder then sealed eight
+segments containing 115 independently compressed 512-row frames. Its direct
+frame/index/prefix data occupy 7,481,221 bytes; with the claim and segment
+receipts, the retained subtotal is 7,514,615 bytes before the final receipt
+(127.858 bytes/row). A second first-seal kill resumed seven remaining
+segments, and an independent parser checked all 115 decompressed frames and
+all 58,773 row identities and native payload bytes. An author-checked cached
+reader matched 72 seeded/boundary rows and read a 512-row batch with one
+prefix-table load and one frame decode.
+
+This verifies a bounded local-prefix format and restart path. Its migration
+stage still starts from the old monolithic 43.9 MB JSON index; it does not
+establish 500M-row source preparation or random-access throughput. The v2
+subtotal excludes the final receipt, archived proofs, source segments and
+original bank, so it is not a complete corpus storage rate.
+
 ## Decision and evidence
 
 The decision for this slice is **pipeline qualification PASS, corpus admission
@@ -146,10 +169,9 @@ HOLD**. Exact source replay, selected-target bytes, physical trainer-format
 arrays and the B/C compact raw-head diagnostic each have independent all-row
 checks. No matched training run or arena
 used this pack, so no Elo or source-mixture strength conclusion follows. The
-next production gates are a scalable compact raw observation reader and resume
-path, independent larger-ZIP review, an actual external-loader screen, and an
-independently registered matched training/arena comparison on a representative
-unique-position bank.
+next production gates are directly indexed source generation at scale, an
+actual external-loader screen, and an independently registered matched
+training/arena comparison on a representative unique-position bank.
 
 The [compact evidence manifest](evidence/2026-09-29-tri-source-selected-target-pipeline.json)
 records source packet, producer receipt and independent-audit SHA-256 identities,

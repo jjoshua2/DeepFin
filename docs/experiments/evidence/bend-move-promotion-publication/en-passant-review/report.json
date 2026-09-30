@@ -1,0 +1,110 @@
+{
+  "supplementary_en_passant": "PASS",
+  "source_receipt": {
+    "exit_code": 0,
+    "elapsed_seconds": 2.860350009000058,
+    "raw_text": "All terms check.\n",
+    "sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+  },
+  "new_registered_laws": 0,
+  "source_statements": [
+    "actual flag1/promotion0 complete update",
+    "representation preservation under input partition"
+  ],
+  "source_domain": "arbitrary actual Board and raw U32 src/dst; consistency premise only for preservation; not legal-move validation",
+  "cases": 4316,
+  "consistent_input_cases": 4188,
+  "cases_by_category": {
+    "all_raw_pairs": 4096,
+    "pawn_coordinate_geometries": 28,
+    "raw_metadata": 64,
+    "inconsistent_diagnostic": 128
+  },
+  "source_sha256s": {
+    "standalone/proofs/en_passant_review/consumer.bend": "5a52a406c14b5acf3e18b96d5b2c10da0e536b85665acadca2bf05e1c3425693",
+    "standalone/proofs/en_passant_review/Actual.bend": "87ccdeedd67046856e88ed886e40b27fbfe5df978b1cafbfcb8828cebd5f215d",
+    "standalone/proofs/en_passant_review/Mask.bend": "e2c4d8f8f82af54cd859d47c5b5dc92b56d94c927854bfc2abd1f49de876a769",
+    "standalone/proofs/move_update/Spec.bend": "45dfe5836c7f0656cc8d76a63f1bf59e7c24d0c6b8d0ef9aad6808712695e901",
+    "standalone/proofs/board/Spec.bend": "d0e60648dc7a0b803fa715c05c53ad92274657995a994996470afb7fc45f581a",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/move_update/Ordinary.bend": "6ebcad3f9b60661ef8ba7053e5e369d94cb3820556709bb64bcbf104e499f4ad",
+    "standalone/proofs/move_update/Selection.bend": "3e4def8b492e0136265d3da5155a4bada2d87e30b3bfef8949f2ce00c3554ee8",
+    "standalone/proofs/move_update/Clear.bend": "d17e4cfa8bab35d0a97b01723c8967b554fe54204f51d1e30c2302c5e9de82c9",
+    "standalone/proofs/move_update/Words.bend": "932612b475100accde1d82fdb27cd39686ce49e171ddc0fe72039f20b49de64b",
+    "standalone/proofs/move_update/Rows.bend": "664efb66f2afd0fe4287060ba808f34510cdac51190ee9ad6ad916527f3470e6",
+    "standalone/proofs/ray/Frame.bend": "eacd6b86d18f3ead0dd56f4843f36b134b5c61630ae16fc6147dae7be8f8ccc9",
+    "standalone/proofs/ray/Path.bend": "92595303f046ac947264f179a3489b40cd7822b674807511d846955eda6269ad",
+    "standalone/proofs/ray/Masking.bend": "c129c86d11aeda8ccc417f57906ebddbf8607550e8fe6bc881df89254d235149",
+    "standalone/proofs/ray/Algebra.bend": "9b654dc68a5bb5c1d47232e2be23200eebcbd1bfa6b071a5bee60d7c7077ab69",
+    "standalone/proofs/ray/Rays.bend": "f90217fa004d1c221ecf5a83c69167cb7cf3044055ab97d7cf612a5e12400054",
+    "standalone/proofs/ray/Grid.bend": "c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a",
+    "standalone/proofs/board/Actual.bend": "c27ac87812368df1f565cfd2f0406a28ceaf212f4f1cd93d9e3c0f4f28ac4b5b",
+    "standalone/proofs/board/Words.bend": "614c05950398a65d56d5c4953882ec3c7952236b71029624ccabc5db2bd94fff",
+    "standalone/proofs/board/Rows.bend": "5a03bfbd266f4ef984127a86a9007a5e73a79e135a43acc6e90ce47bb831a342",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+    "standalone/proofs/move_update/Core.bend": "03622895c74c320c298f5ffde8be5bb866c395be90fb51d7fd38dc0ad3987034",
+    "standalone/proofs/board/LAWS.bend": "d4e846830b6b2cb244ad3b2f3a6bc33e50132f71cd79b083824efc1c2fd42f21",
+    "standalone/proofs/board/PROOF.bend": "e1072ffc1f8eab14a9d3fa40fe37e65daf3e7c193512a433465b0e402cd2a5d8",
+    "standalone/proofs/en_passant_review/probe.bend": "687a5079edfd7c84ee8ba62dfa0f0ec5e8f3bf52958f0ab4f5ae8a59e06a73f5"
+  },
+  "fixture_sha256": "a3518febf8ba0385b25200952d8fd838954a9ea6ea719c95078c56a9a54e19ac",
+  "modes": [
+    {
+      "mode": "generic",
+      "boards": 4316,
+      "fields": 82004,
+      "invalid_rejections": 9,
+      "output_sha256": "3240f45616a9844ef16889cb211afea9bbbcbdea716d1185a364d7d8b5159131"
+    },
+    {
+      "mode": "ubsan",
+      "boards": 4316,
+      "fields": 82004,
+      "invalid_rejections": 9,
+      "output_sha256": "3240f45616a9844ef16889cb211afea9bbbcbdea716d1185a364d7d8b5159131"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "omit_remote_capture",
+      "source_status": 1,
+      "source_location": "Actual.unfold",
+      "source_diagnostic_sha256": "35e379820cb600b2af8a353908f3cbbfe2bff13fb2921de6c5ab2e6699d9f9fc",
+      "compiled_and_executed": true,
+      "native_rejected": true,
+      "row": 0,
+      "field": 1,
+      "actual": 257,
+      "expected": 1,
+      "previous_consumers_still_pass": [
+        "move_update",
+        "promotion"
+      ],
+      "mutated_chess_sha256": "fb18505539bf4c89e8423a07e7caa7cb2ab59ff1862fc52e4dfb51e49fb6c14d"
+    },
+    {
+      "name": "wrong_capture_offset",
+      "source_status": 1,
+      "source_location": "Actual.unfold",
+      "source_diagnostic_sha256": "78e6b8ddc8a62c33c5357ee89a16461db9cdb40b7d4dbad531d65a8a47d0a6af",
+      "compiled_and_executed": true,
+      "native_rejected": true,
+      "row": 0,
+      "field": 1,
+      "actual": 257,
+      "expected": 1,
+      "previous_consumers_still_pass": [
+        "move_update",
+        "promotion"
+      ],
+      "mutated_chess_sha256": "7277762242a957566e215a4b0b9cf007d6e3ca3e510947ba2bff563cf81314bf"
+    }
+  ],
+  "cc": "clang version 17.0.0 (https://github.com/swiftlang/llvm-project.git 10999b6d034fe318f3d56c83bddb6572593a8bb0)",
+  "compiler_identity": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "driver_sha256": "fcd952e5e39b75471f5d0ffbe1938bdb96bb6e0513eb73090da084f01f8e979b",
+  "limitations": "Generic and UBSan only; no registered aggregate gate, independent review, legal EP or metadata proof. Existing saved primary sources unchanged."
+}
