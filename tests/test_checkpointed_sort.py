@@ -164,18 +164,28 @@ def test_stable_same_key_merge_kill_resume_and_group_bound(tmp_path: Path) -> No
     indexes = (entry.input_index for entry in store.iter_run(final))
     assert all(index == expected for expected, index in enumerate(indexes))
     losers = 0
+    loser_sink = tmp_path / "losers.jsonl"
 
-    def on_loser(_: cs.SortEntry) -> None:
-        nonlocal losers
-        losers += 1
+    with loser_sink.open("w", encoding="ascii") as sink:
+        def on_loser(entry: cs.SortEntry) -> None:
+            nonlocal losers
+            losers += 1
+            sink.write(f"{entry.input_index}\n")
 
-    result = list(cs.fold_digest_groups(
-        store.iter_run(final), fetch=_fetch, on_loser=on_loser))
+        tracemalloc.start()
+        try:
+            result = list(cs.fold_digest_groups(
+                store.iter_run(final), fetch=_fetch, on_loser=on_loser))
+            _, fold_peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
     assert len(result) == 1
     assert result[0].count == 8193
     assert result[0].winner.input_index == 8192
     assert result[0].outcome_counts == (2731, 2731, 2731)
     assert losers == 8192
+    assert sum(1 for _ in loser_sink.open(encoding="ascii")) == 8192
+    assert fold_peak < 16 << 20
 
     manifest_sha = hashlib.sha256((final / "RUN.json").read_bytes()).hexdigest()
     receipts = {p.relative_to(store.root): hashlib.sha256(p.read_bytes()).hexdigest()
@@ -334,8 +344,13 @@ def test_verification_session_caps_are_explicit(tmp_path: Path) -> None:
     session = cs._VerificationSession(store)
     for index in range(cs.MAX_VERIFIED_RUNS):
         session.record_run(Path(f"run_{index}"), {"parts": 1})
-    with pytest.raises(cs.CheckpointError, match="run cap"):
-        session.record_run(Path("one_more_run"), {"parts": 1})
+    session.record_run(Path("one_more_run"), {"parts": 1})
+    assert len(session.runs) == cs.MAX_VERIFIED_RUNS
+    assert Path("run_0") not in session.runs
+    assert session.run_evictions == 1
+    session.stack.update(session.runs)
+    with pytest.raises(cs.CheckpointError, match="active run cap"):
+        session.record_run(Path("all_active"), {"parts": 1})
 
     proof = cs._PartProof("a" * 64, "b" * 64, 1, 1,
                           (DIGEST, 0), (DIGEST, 0))
@@ -343,6 +358,67 @@ def test_verification_session_caps_are_explicit(tmp_path: Path) -> None:
         session.record_part(Path("run"), index, proof)
     with pytest.raises(cs.CheckpointError, match="part cap"):
         session.record_part(Path("run"), cs.MAX_VERIFIED_PARTS, proof)
+
+
+def test_129_ancestor_rollover_sigkill_resume_and_fresh_tamper(
+        tmp_path: Path) -> None:
+    store = cs.CheckpointedSort(
+        tmp_path / "runs", source_sha256=SOURCE, config_sha256=CONFIG,
+        kind="digest", row_cap=16, byte_cap=4096, fanin=4)
+    inputs = [store.seal_source_run(
+        f"source_{index:03d}",
+        [cs.SortEntry(DIGEST, index, (0, index))],
+        source_identity_sha256=hashlib.sha256(
+            f"source-slice-{index}".encode()).hexdigest())
+        for index in range(129)]
+    # Each source identity stands for one bounded synthetic slice. No archive
+    # parser or real cursor is being qualified by this fixture.
+    child = (
+        "import os,signal,sys; from pathlib import Path; "
+        "from chess_anti_engine.source.checkpointed_sort import CheckpointedSort; "
+        "r=Path(sys.argv[1]); "
+        "s=CheckpointedSort(r,source_sha256='a'*64,config_sha256='b'*64,"
+        "kind='digest',row_cap=16,byte_cap=4096,fanin=4); "
+        "s.merge_all([r/f'source_{i:03d}' for i in range(129)],"
+        "prefix='merge',after_part_seal=lambda run,_:os.kill("
+        "os.getpid(),signal.SIGKILL) if run.name=='merge_003_000000'"
+        " else None)"
+    )
+    code = cs.run_owned_cpu(
+        [sys.executable, "-c", child, str(store.root)],
+        log_path=tmp_path / "rollover_kill.log", timeout_seconds=60)
+    assert code == -signal.SIGKILL
+    first = store.root / "merge_003_000000" / "part_00000000.receipt.json"
+    assert first.is_file()
+    first_sha = hashlib.sha256(first.read_bytes()).hexdigest()
+    first_mtime_ns = first.stat().st_mtime_ns
+
+    resume = cs._VerificationSession(store)
+    final = store.merge_all(inputs, prefix="merge", _session=resume)
+    assert hashlib.sha256(first.read_bytes()).hexdigest() == first_sha
+    assert first.stat().st_mtime_ns == first_mtime_ns
+    assert len(resume.runs) <= cs.MAX_VERIFIED_RUNS
+    assert len(resume.parts) <= cs.MAX_VERIFIED_PARTS
+    assert resume.run_evictions > 0
+    assert [entry.input_index for entry in store.iter_run(final)] == list(
+        range(129))
+    final_sha = hashlib.sha256((final / "RUN.json").read_bytes()).hexdigest()
+    noop = cs._VerificationSession(store)
+    assert store.merge_all(inputs, prefix="merge", _session=noop) == final
+    assert hashlib.sha256((final / "RUN.json").read_bytes()).hexdigest() == final_sha
+    assert hashlib.sha256(first.read_bytes()).hexdigest() == first_sha
+    assert first.stat().st_mtime_ns == first_mtime_ns
+    assert noop.run_evictions > 0
+    assert len(noop.runs) <= cs.MAX_VERIFIED_RUNS
+    assert noop.payload_reads >= len(noop.parts)
+    assert inputs[0] not in noop.runs
+
+    ancestor = inputs[0] / "part_00000000.jsonl"
+    ancestor.write_bytes(ancestor.read_bytes()[:-1])
+    with pytest.raises(cs.CheckpointError, match="part hash/size"):
+        store.verify_run(inputs[0], _session=noop)
+    with pytest.raises(cs.CheckpointError, match="part hash/size"):
+        store.verify_run(final)
 
 
 def test_verification_session_binds_store_identity(tmp_path: Path) -> None:

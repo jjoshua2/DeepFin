@@ -21,6 +21,7 @@ import shutil
 import struct
 import subprocess
 import sys
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from typing import Any, Literal, cast
 
@@ -432,9 +433,10 @@ class _VerificationSession:
     def __init__(self, owner: CheckpointedSort) -> None:
         self.identity = self._identity(owner)
         self.byte_cap = owner.byte_cap
-        self.runs: dict[Path, dict[str, Any]] = {}
+        self.runs: OrderedDict[Path, dict[str, Any]] = OrderedDict()
         self.parts: dict[tuple[Path, int], _PartProof] = {}
         self.stack: set[Path] = set()
+        self.run_evictions = 0
         self.payload_reads = 0
         self.payload_bytes_read = 0
         self.cursor_probe_reads = 0
@@ -459,10 +461,16 @@ class _VerificationSession:
         self.parts[key] = proof
 
     def record_run(self, run: Path, receipt: dict[str, Any]) -> None:
-        if run not in self.runs:
-            _need(len(self.runs) < MAX_VERIFIED_RUNS,
-                  "bounded verification session run cap")
+        if run not in self.runs and len(self.runs) == MAX_VERIFIED_RUNS:
+            evict = next((old for old in self.runs
+                          if old not in self.stack), None)
+            if evict is None:
+                raise CheckpointError(
+                    "bounded verification session active run cap")
+            del self.runs[evict]
+            self.run_evictions += 1
         self.runs[run] = receipt
+        self.runs.move_to_end(run)
 
     def read_part(self, path: Path) -> bytes:
         with path.open("rb") as stream:
@@ -765,6 +773,7 @@ class CheckpointedSort:
         memo = session.runs
         stack = session.stack
         if run in memo:
+            memo.move_to_end(run)
             return memo[run]
         _need(run not in stack, "cyclic run inputs")
         stack.add(run)
@@ -783,6 +792,7 @@ class CheckpointedSort:
               claim["expected_rows"] > 0,
               "sort source/config/code claim")
         inputs = claim["inputs"]
+        child_receipts: dict[str, dict[str, Any]] = {}
         if claim["mode"] == "source":
             _need(_hex64(claim["source_identity_sha256"]) and
                   inputs == [] and claim["expected_rows"] <= self.row_cap,
@@ -797,6 +807,7 @@ class CheckpointedSort:
             for item in inputs:
                 child = self._path(item["name"])
                 child_receipt = self.verify_run(child, _session=session)
+                child_receipts[item["name"]] = child_receipt
                 _need(_file_sha(child / "RUN.json") == item["run_sha256"],
                       "changed merge input receipt")
                 total += child_receipt["rows"]
@@ -807,7 +818,7 @@ class CheckpointedSort:
             for item, cursor in zip(inputs, state.end_cursors, strict=True):
                 child = self._path(item["name"])
                 self._validate_cursor(child, cursor, session=session)
-                child_run = memo[child]
+                child_run = child_receipts[item["name"]]
                 _need(cursor == (child_run["parts"], 0),
                       "final merge did not consume every input")
         receipt = json.loads((run / "RUN.json").read_bytes())
