@@ -12,7 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
-| [V50 checkpoint continuation](2026-09-17-v50-checkpoint-continuation.md) | Strict LC0 bootstrap state continuation and retained epoch boundaries; archived 35M/50M operational evidence, no current launch claim |
+| [Audited 50M bootstrap expansion](2026-09-17-audited-scale-bootstrap.md) | Historical saved-audit V50 and explicit 50–60M contract; missing source binding and isolated scheduler recovered with both histories, no new experiment or training launch |
 | [Ceres direct-compact synthetic sink](2026-09-30-ceres-direct-compact-synthetic-sink.md) | 26-arm tiny full-head synthetic CPU screen: noisy +2.000% median sink-wall saving, semantic ZIP parity, no live adoption or measured production gain |
 | [Ceres owner target and compact-order correction](2026-09-30-ceres-owner-target-and-compact-order.md) | CPU source-game target reconstruction, one real selected-row overlap and a zero-credit diagnostic legal-order fix; no saved-call or production gain claim |
 | [Persistent Stockfish scalar cost](2026-09-29-sf-scalar-persistent-cost.md) | Frozen 10k-row persistent one-thread d6/d8/d10 cost/agreement screen with cold TT per row/depth and zero corpus/training credit |
@@ -135,6 +135,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Bend subset source laws](2026-09-21-bend-subset-source-laws.md) | Eight initial production-step laws with negative controls and independent native table checks; full P1 ordering/refinement still open |
 | [Bend-owned native neural leaves](2026-09-21-bend-native-leaf.md) | Actual search inputs and legal priors in Bend, native model execution without Python runtime; CPU fixture only |
 | [Bend policy/input composition](2026-09-21-bend-policy-composition.md) | Recovered Bend policy vocabulary paired with complete input from one Game; no inference or Python runtime |
+| [Packed Zarr exact-sampler qualification](2026-09-20-packed-zarr-exact.md) | 131,072 identical ordered rows at batch256; external ZIP consumer12.537s vs NVMe directory10.953s; opt-in ordinary reader, no live adoption |
 | [Bend complete feature inputs](2026-09-20-bend-classical-encoding.md) | Complete 146/175-plane inputs authored in Bend, exact C parity and current U64 compiler; no model/policy execution |
 | [Bend neural history encoding](2026-09-20-bend-history-encoding.md) | Bend-authored 112-plane history/metadata block with exact Python/C comparisons; partial input, no neural inference |
 | [Bend-owned draw rules](2026-09-20-bend-owned-draws.md) | Standalone native history identity and automatic root/leaf draws, no Python runtime; claims/encoding remain separate |
@@ -165,6 +166,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Saved G10 value pilot and coverage](2026-09-11-g10-value-pilot-and-coverage.md) | 1,574,952 matched saved-SF rows; native BT4 WDL and metadata manifest admission complete for all 16,404,093 accepted common G10 positions; original B100 policy products now complete for all 20 (16,404,093 rows); fixed SF50/native BT4 WDL50 value products now also complete for all 20, including the four-root writer; [combined 35.3M value result supports V50 at +31.30 Elo](2026-09-13-combined35m-value-transfer.md) |
 | [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | Both CeresV25 fixed-400 matches complete: +6.79 Elo vs B100 and +25.83 vs B100V50, intervals include zero; retain B100 incumbent/Ceres alternative; no automatic extra games |
 | [Combined 35.3M value transfer](2026-09-13-combined35m-value-transfer.md) | Completed 512-game/400-simulation comparison: V50 +31.30 Elo [+8.53, +54.34]; provisional 35M value recipe after reviewed read-only recovery |
+| [V50 checkpoint continuation](2026-09-17-v50-checkpoint-continuation.md) | Strict LC0 bootstrap state continuation and retained epoch boundaries; archived 35M/50M operational evidence, no current launch claim |
 | [All-move SF downside candidate](2026-09-12-sf-allmove-downside.md) | Completed 18.91M-row training at 2/2 workers; fixed 400-simulation comparison +17.66 Elo [−17.97, +53.66] versus B100, unresolved; selected G10 phase-zero/provenance pilot completed 8,192 rows in 9.889s, no full rewrite or training selected |
 | [SF tactical guidance for BT4 policy](2026-09-10-bt4-sf-tactical-training.md) | Completed 400-simulation match: tactical recipe −13.6 Elo [−52.4,+24.9]; unresolved, retain B100 |
 | [Deeper SF value census](2026-09-11-deeper-sf-value-census.md) | Complete: saved SF values pass label-change thresholds; 3,247 single-move exclusions and two malformed rosters explained; opt-in selector selected, no strength claim |

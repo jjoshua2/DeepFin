@@ -77,11 +77,22 @@ def test_rejects_wrong_identity_and_architecture(tmp_path):
         resume_bootstrap(trainer, path, sha256_file(path), 9, 102)
 
 
-def test_real_epoch_continuation_keeps_global_steps_and_each_boundary(tmp_path):
+@pytest.mark.parametrize("packed", [False, True])
+def test_real_epoch_continuation_keeps_global_steps_and_each_boundary(tmp_path: Path, packed: bool) -> None:
     from scripts import lc0_control_train as driver
     from tests.test_offline_game_epochs import arguments
     first = tmp_path / 'first'
     argv = [*arguments(tmp_path, first, epochs=1), '--seed', '101']
+    if packed:
+        from tests.test_packed_zarr_epoch import pack
+
+        source = Path(argv[argv.index('--shards') + 1])
+        packed_root = tmp_path / 'packed'
+        packed_root.mkdir()
+        for shard in source.glob('*.zarr'):
+            pack(shard, packed_root / (shard.name + '.zip'))
+        argv[argv.index('--shards') + 1] = str(packed_root)
+        argv.append('--allow-packed-zarr')
     assert driver.main(argv) == 0
     path = first / 'checkpoint.pt'
     initial = torch.load(path, map_location='cpu', weights_only=False)['step']
@@ -92,6 +103,7 @@ def test_real_epoch_continuation_keeps_global_steps_and_each_boundary(tmp_path):
     argv += ['--resume-checkpoint', str(path), '--resume-checkpoint-sha256', sha256_file(path), '--resume-step', str(initial)]
     assert driver.main(argv) == 0
     summary = json.loads((second / 'summary.json').read_text())
+    assert summary['realized_replay_after_guard']['applied']['allow_packed_zarr'] is packed
     assert summary['continuation']['step_start'] == initial
     assert summary['continuation']['step_end'] == initial + summary['steps_realized']
     checkpoints = ['checkpoint_epoch1.pt', 'checkpoint_epoch2.pt', 'checkpoint.pt']
@@ -139,7 +151,7 @@ def test_partial_restore_is_refused(tmp_path: Path, component: str) -> None:
         resume_bootstrap(trainer, path, sha256_file(path), 9, 102)
 
 
-def test_same_shaped_optimizer_slots_must_keep_their_names(tmp_path: Path) -> None:
+def test_optimizer_slots_must_keep_their_names(tmp_path: Path) -> None:
     trainer, path, state = donor(tmp_path)
     state['opt_param_names'] = ['bias', 'weight']
     torch.save(state, path)
