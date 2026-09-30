@@ -267,14 +267,14 @@ def test_shared_noop_verification_reads_each_part_once(
         source_identity_sha256=hashlib.sha256(
             f"source-{index}".encode()).hexdigest())
         for index in range(source_count)]
-    build = cs._VerificationSession(store.byte_cap)
+    build = cs._VerificationSession(store)
     final = store.merge_all(inputs, prefix="merge", _session=build)
     before = hashlib.sha256((final / "RUN.json").read_bytes()).hexdigest()
     part_receipts = {
         path.relative_to(store.root): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in store.root.glob("*/part_*.receipt.json")}
 
-    fresh = cs._VerificationSession(store.byte_cap)
+    fresh = cs._VerificationSession(store)
     assert store.merge_all(inputs, prefix="merge", _session=fresh) == final
     parts = list(store.root.glob("*/part_*.jsonl"))
     distinct_extent = sum(path.stat().st_size for path in parts)
@@ -327,8 +327,11 @@ def test_input_part_changed_after_preflight_is_refused_before_merge(
     assert not list((store.root / "merged").glob("part_*.receipt.json"))
 
 
-def test_verification_session_caps_are_explicit() -> None:
-    session = cs._VerificationSession(256)
+def test_verification_session_caps_are_explicit(tmp_path: Path) -> None:
+    store = cs.CheckpointedSort(
+        tmp_path / "runs", source_sha256=SOURCE, config_sha256=CONFIG,
+        kind="digest", row_cap=2, byte_cap=256, fanin=2)
+    session = cs._VerificationSession(store)
     for index in range(cs.MAX_VERIFIED_RUNS):
         session.record_run(Path(f"run_{index}"), {"parts": 1})
     with pytest.raises(cs.CheckpointError, match="run cap"):
@@ -340,6 +343,25 @@ def test_verification_session_caps_are_explicit() -> None:
         session.record_part(Path("run"), index, proof)
     with pytest.raises(cs.CheckpointError, match="part cap"):
         session.record_part(Path("run"), cs.MAX_VERIFIED_PARTS, proof)
+
+
+def test_verification_session_binds_store_identity(tmp_path: Path) -> None:
+    store = cs.CheckpointedSort(
+        tmp_path / "runs", source_sha256=SOURCE, config_sha256=CONFIG,
+        kind="digest", row_cap=2, byte_cap=2048, fanin=2)
+    run = store.seal_source_run(
+        "source_0", [cs.SortEntry(DIGEST, 0, (0, 0))],
+        source_identity_sha256="0" * 64)
+    session = cs._VerificationSession(store)
+    store.verify_run(run, _session=session)
+    changed = cs.CheckpointedSort(
+        store.root, source_sha256=SOURCE, config_sha256="f" * 64,
+        kind="digest", row_cap=2, byte_cap=2048, fanin=2)
+    with pytest.raises(cs.CheckpointError, match="session store identity"):
+        changed.verify_run(run, _session=session)
+    store.code_sha256 = "0" * 64
+    with pytest.raises(cs.CheckpointError, match="session store identity"):
+        store.verify_run(run, _session=session)
 
 
 def test_duplicate_digest_group_accumulator_does_not_grow_with_members() -> None:

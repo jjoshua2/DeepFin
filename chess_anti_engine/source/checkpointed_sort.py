@@ -429,14 +429,25 @@ class _PartProof:
 class _VerificationSession:
     """One invocation's capped proof cache; never persisted across restarts."""
 
-    def __init__(self, byte_cap: int) -> None:
-        self.byte_cap = byte_cap
+    def __init__(self, owner: CheckpointedSort) -> None:
+        self.identity = self._identity(owner)
+        self.byte_cap = owner.byte_cap
         self.runs: dict[Path, dict[str, Any]] = {}
         self.parts: dict[tuple[Path, int], _PartProof] = {}
         self.stack: set[Path] = set()
         self.payload_reads = 0
         self.payload_bytes_read = 0
         self.cursor_probe_reads = 0
+
+    @staticmethod
+    def _identity(owner: CheckpointedSort) -> tuple[object, ...]:
+        return (owner.root, owner.source_sha256, owner.config_sha256,
+                owner.code_sha256, owner.kind, owner.row_cap,
+                owner.byte_cap, owner.fanin)
+
+    def require_owner(self, owner: CheckpointedSort) -> None:
+        _need(self.identity == self._identity(owner),
+              "verification session store identity changed")
 
     def record_part(self, run: Path, part: int, proof: _PartProof) -> None:
         key = run, part
@@ -749,7 +760,8 @@ class CheckpointedSort:
         run = Path(run)
         _need(run.parent == self.root and not run.is_symlink() and
               self._path(run.name) == run, "run outside store")
-        session = _session or _VerificationSession(self.byte_cap)
+        session = _session or _VerificationSession(self)
+        session.require_owner(self)
         memo = session.runs
         stack = session.stack
         if run in memo:
@@ -867,7 +879,7 @@ class CheckpointedSort:
         claim = self._claim_value(name, mode="source",
                                   expected_rows=len(rows),
                                   source_identity=source_identity_sha256)
-        session = _VerificationSession(self.byte_cap)
+        session = _VerificationSession(self)
         claim_sha = self._prepare(run, claim)
         if (run / "RUN.json").exists():
             self.verify_run(run, _session=session)
@@ -894,7 +906,8 @@ class CheckpointedSort:
         """Resume a <=4-way stable merge at a sealed physical-part boundary."""
         _need(2 <= len(inputs) <= self.fanin and
               len(set(inputs)) == len(inputs), "merge input fan-in/uniqueness")
-        session = _session or _VerificationSession(self.byte_cap)
+        session = _session or _VerificationSession(self)
+        session.require_owner(self)
         input_receipts = [self.verify_run(path, _session=session)
                           for path in inputs]
         claim = self._claim_value(
@@ -988,7 +1001,8 @@ class CheckpointedSort:
                   _session: _VerificationSession | None = None
                   ) -> Path:
         _need(bool(inputs), "no external sort runs")
-        session = _session or _VerificationSession(self.byte_cap)
+        session = _session or _VerificationSession(self)
+        session.require_owner(self)
         current = list(inputs)
         depth = 0
         while len(current) > 1:
@@ -1007,7 +1021,7 @@ class CheckpointedSort:
         return current[0]
 
     def iter_run(self, run: Path) -> Iterator[SortEntry]:
-        session = _VerificationSession(self.byte_cap)
+        session = _VerificationSession(self)
         receipt = self.verify_run(run, _session=session)
         with _RunReader(run, self.kind, receipt["parts"], session) as reader:
             while (item := reader.next_entry()) is not None:
