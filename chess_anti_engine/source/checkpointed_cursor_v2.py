@@ -404,6 +404,10 @@ class CursorPipeline:
                                             cursor.game_sha256],
                       "cursor segment continuity")
             expected = self.store.verify_segment(number)["rows"]
+            wave.need(expected == min(
+                wave.SEGMENT_ROWS,
+                self.source.total_rows - number * wave.SEGMENT_ROWS),
+                "paired segment truncated against source roster")
             comparison = self.store.root / f"compare_{number:08d}.json"
             if comparison.exists():
                 # Immutable source/code pins are in the claim. A completed
@@ -430,4 +434,6 @@ class CursorPipeline:
                     sorter, group, receipt_sha, index))
             cursor = end
             previous = wave.file_sha(path)
+        wave.need(cursor == Cursor(len(self.source.locators), 0, None),
+                  "paired cursor final source coverage")
         return runs

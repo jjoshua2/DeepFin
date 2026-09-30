@@ -13,6 +13,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [Bounded tri-source verification rollover](2026-09-30-tri-source-verification-rollover.md) | CPU-only 129-run synthetic ancestry crosses the 128-summary cache limit and survives a final-merge SIGKILL/resume; rereads grow and 500M source integration remains open |
+| [Literal-UID tri-source cursor diagnostic](2026-09-30-tri-source-literal-uid-cursor.md) | CPU-only bounded whole-game reader interface and paired segment/100-byte metadata/sort input; two crash boundaries and direct truncated-segment refusal, no archive admission |
 | [Bounded tri-source shared verification](2026-09-30-tri-source-shared-verification.md) | CPU-only process-scoped capped part verification; synthetic no-op reads each distinct part once, while full-run validation and production source joins remain open |
 | [Ceres direct-compact synthetic sink](2026-09-30-ceres-direct-compact-synthetic-sink.md) | 26-arm tiny full-head synthetic CPU screen: noisy +2.000% median sink-wall saving, semantic ZIP parity, no live adoption or measured production gain |
 | [Ceres owner target and compact-order correction](2026-09-30-ceres-owner-target-and-compact-order.md) | CPU source-game target reconstruction, one real selected-row overlap and a zero-credit diagnostic legal-order fix; no saved-call or production gain claim |

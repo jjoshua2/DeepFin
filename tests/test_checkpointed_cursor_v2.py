@@ -298,3 +298,26 @@ def test_comparison_without_cursor_rechecks_source_bytes(tmp_path: Path) -> None
         changed.wave1()
     assert comparison.read_bytes() == saved
     assert not (pipeline.root / "cursor_00000000.json").exists()
+
+
+def test_direct_wave2_refuses_valid_sealed_truncated_last_segment(
+        tmp_path: Path) -> None:
+    pipeline, source = _pipeline(tmp_path)
+    two_rows = source.reader.read_game(source.locators[0])
+    pipeline.store.seal_wave1(0, iter(two_rows), expected_rows=2)
+    pipeline.store.compare_wave2(0, iter(two_rows))
+    receipt = {
+        "schema": "source_cursor_segment_v2",
+        "claim_sha256": wave.sha(wave.canonical(pipeline.claim)),
+        "segment": 0,
+        "start": [0, 0, None], "end": [1, 0, None],
+        "previous_cursor_receipt_sha256": "0" * 64,
+        "wave_receipt_sha256": wave.file_sha(
+            pipeline.store._path(0) / "RECEIPT.json"),
+    }
+    wave.atomic_write(pipeline.root / "cursor_00000000.json",
+                      wave.canonical(receipt))
+    assert pipeline.store.verify_segment(0)["rows"] == 2
+    assert pipeline.store.verify_comparison(0)["rows"] == 2
+    with pytest.raises(wave.Hold, match="paired segment truncated"):
+        pipeline.wave2_metadata_sort(_sort(tmp_path, source))
