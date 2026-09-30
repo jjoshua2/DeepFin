@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Ceres direct-compact synthetic sink](2026-09-30-ceres-direct-compact-synthetic-sink.md) | 26-arm tiny full-head synthetic CPU screen: noisy +2.000% median sink-wall saving, semantic ZIP parity, no live adoption or measured production gain |
 | [Ceres owner target and compact-order correction](2026-09-30-ceres-owner-target-and-compact-order.md) | CPU source-game target reconstruction, one real selected-row overlap and a zero-credit diagnostic legal-order fix; no saved-call or production gain claim |
 | [Persistent Stockfish scalar cost](2026-09-29-sf-scalar-persistent-cost.md) | Frozen 10k-row persistent one-thread d6/d8/d10 cost/agreement screen with cold TT per row/depth and zero corpus/training credit |
 | [Ceres stored-feed-once root preparation](2026-09-29-ceres-root-feedonce.md) | Tracked CPU root binder exercised by saved-game readback, exact 2,022-root replay parity and narrow 16.81% saved-root prep saving; fresh actor adoption pending |
@@ -28,6 +29,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Public en-passant updates](2026-09-25-bend-en-passant-update.md) | Two actual flag1 update/partition laws promoted unchanged,17 controls and four native modes; modular152/453,not move legality |
 | [Ordinary moves and promotions](2026-09-25-bend-move-promotion-publication.md) | Publishes both saved suites unchanged; fresh9-law/35-control qualification and complete native Board updates; modular150/436,not move legality |
 | [Ceres fixed32 WSL recovery](2026-09-30-ceres-wsl-recovery.md) | Resumed exact chunks 0–6 after WSL crash; first new chunk 7 source, strict, ledger and archive PASS with zero admission; current boot uses bounded shared physical I/O telemetry |
+| [Ceres fixed32 source timing observation](2026-09-30-ceres-source-phase-observation.md) | Closed run-8 phase evidence, one independently replayed ZIP shard, and a CPU-checked observation-only successor patch; no live change or corpus credit |
 | [SF / BT4 / Ceres teacher adjudication](2026-09-11-teacher-adjudication-audit.md) | Broader saved-search audit of policy regret, ranking constraints, routing, optional Ceres complementarity/value calibration and a bounded Ceres-on-G10 selection; no inference/training result |
 | [Promotion and en-passant updates](2026-09-25-bend-special-move-updates.md) | Four new actual special-update contracts plus requalified saved ordinary suite; modular150/436; castling and legal-move conditions remain separate |
 | [Accepted parser frontiers](2026-09-25-bend-parser-frontier.md) | Four actual-source laws derive fresh bounded insertion and accepted-placement consistency; modular141/401 with separate exact-source compiler recovery |
@@ -47,6 +49,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Ceres live128 proof-writer A/B/B/A](2026-09-29-ceres-live128-writer-abba.md) | Four full-prefix 128-game arms, exact semantic/all-attempt parity and 8.75% source-stage saving; no full-pipeline or 500M gain claim |
 | [Full 58,820-row BT4/Ceres batch profiles](2026-09-29-full58820-batch-profiles.md) | Separate audited BT4 and Ceres four-arm fixed-input screens: 28.558% and 74.070% call-core savings; numerical quality bounds, no integrated throughput or corpus credit |
 | [D-lite scalar SF value plan](2026-09-29-dlite-scalar-value-plan.md) | Prospective separate value contrast, representative one/eight-engine cost screen and shared CPU/GPU month-budget limits |
+| [Selected-E D-lite value preregistration](sf_dlite_selected_e_value_prereg_20260930.md) | Frozen 2.5M-row value-only contrast, direct depth-12 target audit, matched donor adaptation and 576-pair strength decision; no training or Elo result |
+| [D-lite depth-8 label operations](2026-09-30-sf-dlite-d8-label-operations.md) | Three bounded full-label attempts stopped at conservative RSS guards; failed roots and sealed prefixes preserved with zero label, target, training or Elo credit |
 | [D-lite small-bank scalar path](2026-09-29-sf-dlite-smallbank-path.md) | Audited 128-row d8 raw labels and 92-row B/C selected-value attachment smoke; no full-128 target, corpus, training or Elo credit |
 | [Tracked Ceres saved-game source fixture](2026-09-29-ceres-saved-game-source-fixture.md) | Main CPU producer/readback entrypoint exercised on one 47-row saved natural game; complete feature/feed/legal/terminal parity, no generation or throughput credit |
 | [Ceres stored-feed batch conversion](2026-09-29-ceres-stored-feed-batch.md) | CPU-only exact-byte feed proof on eight archived calls plus 512 stratified rows; 77.875% narrow conversion-stage reduction, no integrated throughput credit |
@@ -118,6 +122,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [BT4 root-output reuse foundation](2026-09-23-bt4-root-output-reuse-foundation.md) | CPU-tested batched roots, explicit repetition-mode guard and optional C-search leaves; no game generator or throughput claim |
 | [BT4 output-adapter foundation](2026-09-23-bt4-output-adapter-foundation.md) | Shared legal BT4-to-compact float32 conversion with caller-owned buffer parity; CPU contract only, no generator or speedup claim |
 | [35M V50 training horizon](2026-09-18-v50-training-horizon.md) | Four complete 256-game matches: epochs 2/3/4 improve over epoch 1; latest increment and search-scaling interaction unresolved; first 50.55M pass +21.74 Elo [−9.66,+53.51] against 35M epoch 4; later expanded passes pending |
+| [Ceres collector throughput: zero pauses and grouped sessions](2026-09-16-ceres-collector-throughput.md) | Historical September 16–17 fixed32/grouped and batch512 readouts, numerical-difference caveats and qualification recovery; seven original receipts, no new run or strength claim |
 | [BT4 labeling throughput and scale costs](2026-09-17-bt4-label-throughput.md) | Verified1.527M fresh joint rows at578.76 outer rows/s;48h/100M and20days/1B linear estimates; bounded batch-tuning and metadata-cost priorities |
 | [PFS-inspired frontier advancement](2026-09-14-pfs-frontier-advancement.md) | Proposed frozen-checkpoint search tests: diagnose admission, halving and interior bottlenecks; no runs or default changes |
 | [BT4 generation outcome policy](2026-09-22-bt4-outcome-policy.md) | Standalone six-man theoretical adjudication and unresolved-game discard contract; fake-tablebase CPU tests only, no generator wiring or real games |
