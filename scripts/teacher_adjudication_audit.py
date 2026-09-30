@@ -43,6 +43,7 @@ from scripts import ceres_value_mix as ceres_value
 from scripts import corpus_row_provenance as provenance
 from scripts import derive_corpus_targets as derive
 from scripts import tactical300_calibration as tactical
+from scripts import tactical300_registration as registration
 from scripts.bt4_policy_dump import file_sha256
 
 SUMMARY = "teacher_adjudication_audit.json"
@@ -99,14 +100,9 @@ def _normalize(policy: np.ndarray, legal: np.ndarray, *, name: str) -> np.ndarra
 
 
 def bt4_policy(board: chess.Board, raw_policy: np.ndarray) -> np.ndarray:
-    """Reconstruct B100's one-node BT4 T=0.5 target in float64."""
-    _mapping, legal = _legal_map(board)
-    values = np.asarray(raw_policy, dtype=np.float32)
-    require(values.shape == (COMPACT_POLICY_SIZE,), "raw BT4 policy width differs")
-    result = bt4_mix._tempered_bt4_policy(
-        values[None, :], legal[None, :], temperature=BT4_TEMPERATURE
-    )[0]
-    return _normalize(result, legal, name="BT4 T0.5")
+    """Reconstruct the actually stored B100 T=0.5 policy geometry."""
+    _top, _probability, stored = tactical._policy_view(board, raw_policy)
+    return stored.astype(np.float64, copy=False)
 
 
 def dense_ceres_policy(bank: Any, row: int, legal: np.ndarray) -> np.ndarray:
@@ -733,6 +729,25 @@ def finalize(aggregate: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _producer_sha256() -> dict[str, str]:
+    """Pin every source module that defines this audit's published semantics."""
+    modules = (
+        adapter, adaptive, bt4_mix, ceres, ceres_policy, ceres_value,
+        derive, tactical, registration,
+    )
+    paths = [Path(__file__).resolve()]
+    for module in modules:
+        module_file = module.__file__
+        if module_file is None:
+            raise ValueError("audit producer module has no source path")
+        paths.append(Path(module_file).resolve())
+    return {str(source_path): file_sha256(source_path) for source_path in paths}
+
+
+def _require_unchanged_producers(snapshot: dict[str, str]) -> None:
+    require(_producer_sha256() == snapshot, "producer source changed during audit")
+
+
 def audit(
     manifest_path: Path,
     *,
@@ -752,8 +767,10 @@ def audit(
     )
     manifest_path = manifest_path.resolve()
     manifest_pin = {"path": str(manifest_path), "sha256": expected_manifest_sha256}
+    producer_sha256 = _producer_sha256()
     manifest = json.loads(adapter.pin(manifest_pin).read_text())
     require(manifest.get("schema") == 1, "unsupported adapter manifest")
+    registration.validate_teacher(manifest.get("teacher"))
     summary_path = adapter.pin(manifest["derived_summary"])
     source = summary_path.parent
     summary = json.loads(summary_path.read_text())
@@ -761,12 +778,9 @@ def audit(
         summary.get("row_provenance", {}).get("path_in_shard") == provenance.FILENAME,
         "derivation has no row provenance",
     )
-    paths = sorted(source.glob("shard_*.zarr"))
     written = {entry["path"]: entry for entry in summary["shards"]}
-    require(
-        bool(paths) and set(written) == {path.name for path in paths},
-        "derived inventory differs",
-    )
+    require(len(written) == len(summary["shards"]), "duplicate summary shard")
+    paths = registration.derived_inventory(source, written.keys())
     stop = (
         len(paths)
         if max_shards is None
@@ -812,6 +826,7 @@ def audit(
     started = time.monotonic()
     rows_analyzed = 0
     shard_receipts: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, int]] = set()
     try:
         for path in selected:
             derived_states[path] = adapter.storage_identity(path)
@@ -845,18 +860,8 @@ def audit(
                 else None
             )
             grouped: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
-            seen: set[tuple[str, str, int]] = set()
+            tactical._authenticate_and_claim_refs(inputs, refs, seen)
             for index, ref in enumerate(refs):
-                identity = (
-                    str(ref["source_namespace"]),
-                    str(ref["source_shard"]),
-                    int(ref["source_row"]),
-                )
-                require(
-                    identity not in seen,
-                    "duplicate source-qualified derived row",
-                )
-                seen.add(identity)
                 grouped.setdefault(
                     (str(ref["source_dir"]), str(ref["source_shard"])), []
                 ).append((index, ref))
@@ -955,6 +960,7 @@ def audit(
             )
 
         require(rows_analyzed == aggregate["rows"], "aggregate row count differs")
+        _require_unchanged_producers(producer_sha256)
         require(
             all(
                 adapter.storage_identity(path) == state
@@ -966,6 +972,10 @@ def audit(
             adapter.pin(item)
         if optional_ceres is not None:
             optional_ceres.guard()
+        require(
+            registration.derived_inventory(source, written.keys()) == paths,
+            "derived shard inventory changed before publication",
+        )
 
         selected_rows = selector.selected()
         selection_payload = {
@@ -1006,6 +1016,7 @@ def audit(
                 "sha256": file_sha256(writing / SELECTION),
             },
             "shard_receipts": shard_receipts,
+            "producer_sha256": producer_sha256,
             "elapsed_seconds": time.monotonic() - started,
             "limitations": [
                 "Saved d10/d12 rosters are narrowed/adaptive and are calibration evidence, not ground truth.",
