@@ -1,0 +1,104 @@
+{
+  "native_gate": "PASS",
+  "compiler_identity": {
+    "source_files": 84,
+    "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4"
+  },
+  "cc": "clang version 17.0.0 (https://github.com/swiftlang/llvm-project.git 10999b6d034fe318f3d56c83bddb6572593a8bb0)",
+  "fixture_count": 1360,
+  "distinct_inputs": 1360,
+  "deduplicated_candidates": 0,
+  "fixture_sha256": "49462b7d02899de0fb6ee6da9a0eb6e607c712228995e44dbc7badef5d1148ef",
+  "cases_by_label": {
+    "owned-king-all-squares": 1024,
+    "route-safe": 64,
+    "destination-attacked": 64,
+    "transit-attacked": 64,
+    "raw-empty-source": 64,
+    "raw-unowned-source": 64,
+    "nonking-shortcut-boundary": 16
+  },
+  "owned_king_sources": 64,
+  "owned_king_cases": 1216,
+  "required_cases": 1224,
+  "shortcut_cases": 136,
+  "shortcut_full_disagreement_cases": 8,
+  "complete_child_boards_per_mode": 4184,
+  "board_fields_per_mode": 79496,
+  "mask_required_check_fields_per_mode": 5440,
+  "modes": [
+    {
+      "mode": "generic",
+      "records": 4184,
+      "owned": 1216,
+      "checked": 1224,
+      "skipped": 136,
+      "output_sha256": "32d399b72af27b73c13ba76aa20676f444d2a6eac18fae18149b9315d6fa3f24",
+      "invalid_rejections": 8
+    },
+    {
+      "mode": "portable",
+      "records": 4184,
+      "owned": 1216,
+      "checked": 1224,
+      "skipped": 136,
+      "output_sha256": "32d399b72af27b73c13ba76aa20676f444d2a6eac18fae18149b9315d6fa3f24",
+      "invalid_rejections": 8
+    },
+    {
+      "mode": "native",
+      "records": 4184,
+      "owned": 1216,
+      "checked": 1224,
+      "skipped": 136,
+      "output_sha256": "32d399b72af27b73c13ba76aa20676f444d2a6eac18fae18149b9315d6fa3f24",
+      "invalid_rejections": 8
+    },
+    {
+      "mode": "ubsan",
+      "records": 4184,
+      "owned": 1216,
+      "checked": 1224,
+      "skipped": 136,
+      "output_sha256": "32d399b72af27b73c13ba76aa20676f444d2a6eac18fae18149b9315d6fa3f24",
+      "invalid_rejections": 8
+    }
+  ],
+  "mutations": [
+    {
+      "name": "omit-kings-from-blocker-mask",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "first_batch_index": 0,
+      "diagnostic": "AssertionError [ERR_ASSERTION]: blockers list owned-king-all-squares\n+ actual - expected\n\n+ [\n+   [\n+     0,\n+     1,\n+     0,\n+     0\n+   ]\n+ ]\n- []\n",
+      "output_sha256": "8e5644387b17c2fafd81a855a7181bf5aafa68a5eb021255ef030402112db5ca"
+    },
+    {
+      "name": "bypass-required-check",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "first_batch_index": 0,
+      "diagnostic": "AssertionError [ERR_ASSERTION]: blockers list owned-king-all-squares\n+ actual - expected\n\n+ [\n+   [\n+     0,\n+     1,\n+     0,\n+     0\n+   ]\n+ ]\n- []\n",
+      "output_sha256": "aa9504ed7c22d682f7c81265c42e599d6046ffe657e54813a0cff55995f8a276"
+    },
+    {
+      "name": "check-opponent-instead",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "first_batch_index": 0,
+      "diagnostic": "AssertionError [ERR_ASSERTION]: blockers list owned-king-all-squares\n+ actual - expected\n\n+ [\n+   [\n+     0,\n+     1,\n+     0,\n+     0\n+   ]\n+ ]\n- []\n",
+      "output_sha256": "fec8c7bd0918aac5b25992252ad0aaa88371a66e85dc8c07ce8741a9464d5955"
+    }
+  ],
+  "source_sha256s": {
+    "standalone/proofs/castle_safety/probe.bend": "6ea7554649453656ef706cc03226841d3a1483805dbd2274a16992bd65641669",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/castle_safety/verify_native.js": "915be0b69b21d68be9b244ce44c6c268cc663fc381aaf31f93531f2756b6403a"
+  },
+  "generated_c_sha256": "6e4c67f83a1032c701a0fbf390009d8c5ac09e83f4f289b5c87268fef25d8ec4",
+  "scope": "Current Tables.build, actual filter_requires/blockers/fast_step/filter_step/in_check. External square-set mask and geometric attack oracle checks ordered lists and all child Board fields. Direct raw-step domain includes outside-pipeline shortcut counterexamples. No proof of independent attack correctness or full legal-move set completeness."
+}
