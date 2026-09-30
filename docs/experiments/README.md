@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Ceres active128 frozen-source quality](2026-09-30-ceres-active128-frozen-quality.md) | 52,820 exact shared feeds, corrected FP16 target TV maximum 0.226679 fails the frozen 0.05 policy gate; source and CPU reader timings, no promotion |
 | [Board partition and fresh insertion](2026-09-24-bend-board-representation.md) | Six source contracts for actual board consistency, exact insertion and metadata framing; modular123/332; move legality and reachability remain open |
 | [Full-table boundary](2026-09-24-bend-full-table-boundary.md) | Two uniform full-table lookup laws, separate public-builder recipe guard and late-block omission regression; modular117/315; no closed-builder equality claim |
 | [Independent blocker rays and initialized lookup](2026-09-24-bend-independent-rays.md) | Five source laws connect arbitrary-occupancy production rays, mask irrelevance and actual initialized lookup to independent coordinates; modular115/295 and bounded native qualification |
