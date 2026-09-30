@@ -12,8 +12,9 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
-| [D-lite scalar SF value plan](2026-09-29-dlite-scalar-value-plan.md) | Prospective separate value contrast, representative one/eight-engine cost screen and shared CPU/GPU month-budget limits |
 | [Ceres live128 proof-writer A/B/B/A](2026-09-29-ceres-live128-writer-abba.md) | Four full-prefix 128-game arms, exact semantic/all-attempt parity and 8.75% source-stage saving; no full-pipeline or 500M gain claim |
+| [Full 58,820-row BT4/Ceres batch profiles](2026-09-29-full58820-batch-profiles.md) | Separate audited BT4 and Ceres four-arm fixed-input screens: 28.558% and 74.070% call-core savings; numerical quality bounds, no integrated throughput or corpus credit |
+| [D-lite scalar SF value plan](2026-09-29-dlite-scalar-value-plan.md) | Prospective separate value contrast, representative one/eight-engine cost screen and shared CPU/GPU month-budget limits |
 | [Tracked Ceres saved-game source fixture](2026-09-29-ceres-saved-game-source-fixture.md) | Main CPU producer/readback entrypoint exercised on one 47-row saved natural game; complete feature/feed/legal/terminal parity, no generation or throughput credit |
 | [Ceres stored-feed batch conversion](2026-09-29-ceres-stored-feed-batch.md) | CPU-only exact-byte feed proof on eight archived calls plus 512 stratified rows; 77.875% narrow conversion-stage reduction, no integrated throughput credit |
 | [500M practical next tests and target storage](2026-09-29-500m-practical-next-tests.md) | Current-source cost pilot, larger-batch numerical variants, sparse-SF holdout and pack/trainer follow-through; exact old-cohort sparse storage screen |
@@ -39,6 +40,9 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Asynchronous bounded cohorts](2026-09-23-async-cohort.md) | PR5b: CPU batch worker, per-root cancellation and physical accounting; actual model parity, no dynamic root admission or speed claim |
 | [Bounded Bend multi-root batching](2026-09-22-native-multi-root.md) | PR5a: real selected-leaf CPU cohorts, serial tree parity and physical work accounting; no live scheduler or GPU/speed claim |
 | [Native asynchronous selected-leaf search](2026-09-22-native-async-search.md) | PR4b: composed CPU engine, responsive stop/readiness, cancellation and physical retirement; no GPU/speed claim |
+| [BT4/Ceres full-prefix source pilots and 500M capacity](2026-09-27-500m-source-capacity.md) | Strict complete-game source rates, corrected BT4 batching histogram, illustrative 30-day gap and zero-credit mixed-source admission gate |
+| [Owner versus fair teacher route preregistration](2026-09-28-owner-vs-fair-teacher-route-prereg-v4.md) | Independently reviewed source-only matched-row protocol and conditional owner-reuse arithmetic; registered launch held, zero credit |
+| [Ceres v11 sink 10% optimization screen](2026-09-28-ceres-sink-10pct-screen.md) | Read-only saved-receipt/source bound: no safe single low-risk verifier edit proves 10% source-wall saving; timer-only next step |
 | [Native async lifecycle](2026-09-22-native-async-lifecycle.md) | Bounded worker ownership, exact cancellation/retirement and separate real CPU-model qualification; no asynchronous UCI or GPU claim |
 | [Native policy-map and buffer reuse](2026-09-22-native-buffer-reuse.md) | Linear Bend-owned reusable storage, packed transport and opt-in diagnostics; bounded CPU qualification |
 | [BT4 root worker CUDA qualification](2026-09-23-bt4-root-worker-gpu-qualification.md) | Preregistered tiny real-model 7-to-6 correctness and accepted-row writer-cost pilots under shared GPU lease; no GPU run yet |
@@ -68,6 +72,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Actual prefix intervals](2026-09-22-bend-prefix-intervals.md) | Six source laws connect ordered, widened prefix arithmetic to the actual complete-array table loop; interior path certificates and final ray geometry remain separate |
 | [Bounded address normalization](2026-09-22-bend-address-normalization.md) | Five source laws eliminate the actual allocation mask for all bounded addresses and connect real affine APIs; tree-route injectivity and final contents remain separate |
 | [Complete-tree route separation](2026-09-22-bend-complete-tree-routes.md) | Four real-array laws derive separated leaf paths and other-index preservation from complete shape and bounded unequal addresses; actual initialization/builders supply shape |
+| [Whole fill intervals](2026-09-22-bend-fill-intervals.md) | Six laws derive actual fill-clear certificates from numeric budgets and prove every complete slider block preserves outside queried values; stored headers and final contents/geometry remain separate |
 | [Relative table address bounds](2026-09-22-bend-relative-address-bounds.md) | Six source laws bound certified prefix-plus-index addresses and preserve other blocks through actual array writes; full fills and initialized lookup geometry remain separate |
 | [BT4 CPU prefetch](2026-09-21-bt4-cpu-prefetch.md) | Opt-in one-batch CPU preparation overlap with bounded cleanup and exact feed/output parity; no GPU throughput or live-adoption claim |
 | [NumPy THP hot-load screen](2026-09-23-numpy-thp-hotload.md) | Bounded ABBA loader screen found no benefit from disabling current madvise huge-page advice; no production default change |
