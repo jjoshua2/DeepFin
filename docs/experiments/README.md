@@ -13,6 +13,11 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [Ceres fixed32 WSL recovery](2026-09-30-ceres-wsl-recovery.md) | Resumed exact chunks 0–6 after WSL crash; first new chunk 7 source, strict, ledger and archive PASS with zero admission; current boot uses bounded shared physical I/O telemetry |
+| [Promotion and en-passant updates](2026-09-25-bend-special-move-updates.md) | Four new actual special-update contracts plus requalified saved ordinary suite; modular150/436; castling and legal-move conditions remain separate |
+| [Accepted parser frontiers](2026-09-25-bend-parser-frontier.md) | Four actual-source laws derive fresh bounded insertion and accepted-placement consistency; modular141/401 with separate exact-source compiler recovery |
+| [Parser prefix safety](2026-09-25-bend-parser-prefix-safety.md) | Five actual placement-parser laws for prefix composition, sticky invalidity, metadata and typed transitions; modular137/384; parser-wide freshness and full FEN validity remain open |
+| [Whole-board reconstruction](2026-09-24-bend-whole-board-roundtrip.md) | Five source contracts for lossless Board snapshots, coordinate order and injectivity; actual decoder native checks; structural snapshot lowering remains unqualified; modular132/367 |
+| [Occupied decoder and abstract squares](2026-09-24-bend-occupied-decoder.md) | Four universal source laws connect actual occupied decoding to independent local square states; modular127/350; parser and move semantics remain open |
 | [Corrected full58k BT4/Ceres selected targets](2026-09-30-full58820-corrected-selected-targets.md) | Banked CPU reconstruction and independent direct readback of all 58,820 targets; corrected Ceres batch-profile top-1, zero corpus or strength credit |
 | [Ceres active128 frozen-source quality](2026-09-30-ceres-active128-frozen-quality.md) | 52,820 exact shared feeds, corrected FP16 target TV maximum 0.226679 fails the frozen 0.05 policy gate; source and CPU reader timings, no promotion |
 | [Board partition and fresh insertion](2026-09-24-bend-board-representation.md) | Six source contracts for actual board consistency, exact insertion and metadata framing; modular123/332; move legality and reachability remain open |
