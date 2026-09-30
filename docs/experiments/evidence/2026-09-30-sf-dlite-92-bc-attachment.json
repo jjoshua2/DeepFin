@@ -1,0 +1,58 @@
+{
+  "schema": "sf_dlite_92_bc_selected_attachment_diagnostic_v1",
+  "status": "PASS_INDEPENDENT_92_SAVED_TARGET_VALUE_ONLY_ATTACHMENT_ZERO_TRAINING_CREDIT",
+  "rows": 92,
+  "source_rows": {"BT4-v9": 42, "Ceres-v8": 50},
+  "route_cells": {"BT4-v9->BT4": 21, "BT4-v9->Ceres": 21, "Ceres-v8->BT4": 19, "Ceres-v8->Ceres": 31},
+  "source_pins": {
+    "metadata_128_winners_sha256": "1a0e1febdd1f95f12b924bff28f920bc1c2a003eb2431cc711fe3ace8952d76c",
+    "metadata_128_proofs_sha256": "d3238cd2f478fb500768027d41b522c7de42bad43a02ce05c68246981c01d90b",
+    "raw_128_labels_sha256": "27fb718ac78da3ec3b6c4a974f0d3ed7b99114f14f0e94577f88e5836c15ddf4",
+    "raw_128_independent_audit_sha256": "bcc842d55d0778d10dc27ffdf879d2d183853f85bacde140b0c52560924e065c",
+    "corrected_58820_targets_sha256": "beff46ac8464a3a3da6c278221b2951f818f2cc2af2a83ea714d49d939f4da10",
+    "corrected_58820_targets_independent_audit_sha256": "69c7eec1a4f67a7eea46dd31ebf4640c40c6f72af83fc8616cab3d17b8bd4c3a",
+    "packed_58773_receipt_sha256": "422e044bef6c846c748a60a33418e529c6f03b4252d412ea4d730ffdb2786831",
+    "packed_58773_rows_sha256": "851df4b5fa568fb6a3ba12afc1721caaf39a5202b91b9c556b73cccf3d9823e4",
+    "packed_58773_independent_audit_sha256": "a1b10362cbff551aa06f50dad3b4dcf608afaa332dd798d52d26eae10b6c32f8"
+  },
+  "frozen_92_inputs": {
+    "winner_rows_sha256": "4d749e93ffbe0c24bc914023e297e2acc540fdeee13fa1ef8088de2a52cc734c",
+    "proof_rows": 83,
+    "proof_rows_sha256": "905f64ef2ad0bb4cfa869003bfd66382352ead39e7e89f9d14a241ff4e9c6a0f",
+    "raw_label_rows_sha256": "c856a9287ef2f2490cc802919900123612d9b10ccbc4bd43be5590ff38cf4e66",
+    "selected_target_rows_sha256": "1f0ed3763e1f71e68e75579d8556dd1ddd99650330d8fabc99668796199e609a",
+    "preparation_manifest_sha256": "9b9bb5bdc7440c3a119e209d1634697f94fc8e3a0191aec6e45cafdc21b662",
+    "preparation_source_sha256": "bdcb7cac07acd11c0c14db14ebbbb8abaee4c9a78cc79fa60fd4fbe15a32be65",
+    "packed_shards_read": 62
+  },
+  "attachment": {
+    "claim_sha256": "8a1dcb4375d8bdc3aa025fd2f1b22cd9fead939e869d0e63ab03d2f2e058936b",
+    "complete_sha256": "5d672c66db3d0ff4b8c7151d5a46a02f17ada3cdf14f698e2c1933a55b1654e6",
+    "candidate_targets_sha256": "61670306ec295c8ae923a50829d4a037e5ece695e9dee091e9444c08a395865f",
+    "unchanged_policy_rows": 92,
+    "mean_max_channel_value_delta": 0.036882557298826134,
+    "max_channel_value_delta": 0.20751953125,
+    "independent_audit_sha256": "7948e3e26e66d5fc43b6f3062934e1e24b9b77d19e1188bc3fa3a69148297ad3",
+    "independent_audit_source_sha256": "204c712997d2f78fdb4adfd07e42e93650074f2e1a5e44170e4f9a85a3e19888"
+  },
+  "preserved_artifact": {
+    "id": "sf_dlite_92_bc_attach_20260930_v1",
+    "files": 11,
+    "bytes": 13180548,
+    "manifest_sha256": "7c75a376988d3fc8020f0be79d3a245bf5bde0d3eb76790372f1a5b55db1c22e"
+  },
+  "remaining_sf_source_sample": {
+    "rows": 36,
+    "chosen_teacher_rows": {"BT4": 13, "Ceres": 23},
+    "missing_head_bridge_sha256": "07f85210705d62bd5f02b23251d91d4c4a623d8b6cc60e3ff231b91a1b71d2de",
+    "missing_head_stage_receipt_sha256": "7951c39697c7f4efa1984256c6d93fa57e60ecea77c4256024d3667e97616f56",
+    "missing_head_stage_independent_audit_sha256": "7c9cc46a475a0ca36651bd74924bc23843742dddd65c7c03e294ff720453a08a"
+  },
+  "limits": [
+    "This is a selected-target attachment smoke on 92 B/C source rows, not a full 128-row attachment.",
+    "The chosen neural targets use the corrected saved FP16 profile; this result does not validate a new generation profile.",
+    "Policy bytes were preserved and main WDL values changed, but no trainer consumed these candidate rows and no playing strength was measured.",
+    "There is no corpus admission, GPU, throughput or Elo credit."
+  ],
+  "credit": {"diagnostic_selected_target_attachments": 92, "full_128_attachment": 0, "corpus": 0, "training": 0, "elo": 0}
+}
