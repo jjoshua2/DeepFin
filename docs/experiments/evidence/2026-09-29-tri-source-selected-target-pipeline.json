@@ -1,5 +1,13 @@
 {
   "artifact_sha256": {
+    "bc_8192_zip_producer": "2f8b33b1b627432b65afe57d6d1eafcaec505735e19d434df37074b9befb52f4",
+    "bc_8192_zip_receipt": "4cf609d225edb34b2e2afb37a9bcf698bdfa60c871107af4323e4d0e2121e03e",
+    "bc_8192_zip_self_audit": "3d902826836e69d6e9f3bd29b007d87eb41c5da3d9f25675215e7f88a98d7fcd",
+    "bc_8192_zip_self_audit_source": "7b3b6e9d43307cbd23780593e4fc6f43166ff720196d3d8f434b446f5f0f5bd1",
+    "bc_compact_binary_producer": "8d07354fe30ad14d6a9884a3686a52592f8bdc3fe34917cd53a4a1f255b6f195",
+    "bc_compact_binary_receipt": "d4a1a8f05d86f6fe43be05e924d39757d7fd6d7f986015dc3e014e3b08142a11",
+    "bc_compact_binary_root_audit": "67399020948063c264085247bd1211b2b7e9e64e1cb2c94e8508b61265f654e7",
+    "bc_compact_binary_root_audit_source": "fcd5b226c253c8daf9b5d731db604d01e786d787a92109d1a475b5a59a67ca79",
     "bc_corrected_target_direct_audit": "69c7eec1a4f67a7eea46dd31ebf4640c40c6f72af83fc8616cab3d17b8bd4c3a",
     "bc_corrected_target_receipt": "11b1f64cfb3d327841d05d97bd95bc388f5b721a7cbcd972451262d4d2265c0f",
     "compact_raw_legal_independent_audit": "341bebb2c59b384e41339bb59e2840fc0552976a158ef78edd4f54db81ed503c",
@@ -26,6 +34,10 @@
     "storage_worksheet": "bb908fdc6d8f4d0ad4c4e7657ca2dfc9b531cc1adf41a666145bbe6df59c42f7"
   },
   "counts": {
+    "bc_8192_zip_output_shards": 8,
+    "bc_8192_zip_source_shards_512": 115,
+    "bc_compact_binary_frames_512": 115,
+    "bc_compact_binary_segments": 8,
     "dedup_losers": 575,
     "gross_rows": 83991,
     "pack_shards_512": 163,
@@ -65,11 +77,21 @@
     "external storage loader and GPU training throughput unmeasured",
     "whole source archives include unselected members and losing rows",
     "compact chosen raw legal-head bank is measured on B/C subset only, with a verbose diagnostic index",
-    "large-shard physical format remains pending"
+    "larger-shard physical format measured on B/C subset; independent and external-loader qualification pending",
+    "compact binary and 8192-row ZIP follow-ups cover only the 58773-row B/C subset",
+    "compact binary subtotal excludes final receipt, proof copies and source bank",
+    "compact binary prefix table and completed-segment resume require scaling work",
+    "8192-row ZIP independent audit and external-drive loader screen remain pending",
+    "process logical I/O unavailable on reboot kernel; no zero-I/O claim"
   ],
   "schema": "tri_source_selected_target_pipeline_compact_evidence_v1",
   "scope": "bounded archived three-source diagnostic, zero corpus credit",
   "storage_bytes": {
+    "bc_8192_zip_output": 33804060,
+    "bc_8192_zip_output_per_row": 575.1630850900924,
+    "bc_8192_zip_source": 34731302,
+    "bc_compact_binary_retained_before_final_receipt": 7510524,
+    "bc_compact_binary_retained_before_final_receipt_per_row": 127.78867847480986,
     "bc_compact_raw_legal_uncompressed_payload": 8468846,
     "bc_compact_raw_legal_uncompressed_payload_per_row": 144.09415888248006,
     "bc_compact_raw_legal_verbose_index": 43931297,
@@ -81,6 +103,9 @@
     "whole_source_archives_per_unique_winner": 3131.2765057063393
   },
   "verification": {
+    "bc_8192_zip_independent": "PENDING",
+    "bc_8192_zip_self": "PASS_ALL_15_ARRAYS_ALL_58773_ROWS_CPU_COLLATE",
+    "bc_compact_binary_root": "PASS_ALL_58773_ORDINAL_UID_NATIVE_PAYLOAD_BYTES",
     "compact_raw_legal": "PASS_ALL_INDEX_NATIVE_BYTES_AND_TARGETS_DIAGNOSTIC",
     "full_pack": "PASS_DIAGNOSTIC_FULL_WINNERS_ZERO_CORPUS_CREDIT",
     "replay": "PASS_DIAGNOSTIC_ZERO_CREDIT",
@@ -88,6 +113,8 @@
     "sf_targets": "PASS_CPU_TARGET_BYTES_UNADMITTED"
   },
   "wall_seconds": {
+    "bc_8192_zip_resume_after_kill": 6.86383155700014,
+    "bc_8192_zip_self_audit": 7.039031509999859,
     "full_pack": 137.04914226703113,
     "full_pack_independent_audit": 118.60696868400555,
     "sf_missing_gpu": 62.251800397993065,

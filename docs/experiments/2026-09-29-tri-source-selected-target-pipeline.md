@@ -111,9 +111,33 @@ observed zstd legal-head payload gives about 48.9 GB for 500M rows, before a
 qualified index, headers, source-mix changes or redundancy.
 
 The 512-row ZIPs here are a controlled diagnostic. At 500M rows this layout
-would create about 976,563 files. A production 8,192-row container with
-internal 512-row locality is the next format measurement; no such container
-is qualified by this pack.
+would create about 976,563 files. A follow-up on the **same 58,773 B/C rows**
+repacked 115 audited 512-row trainer ZIPs into eight 8,192-row ZIP_STORED Zarr
+containers. Their internal Zarr chunks remain 512 rows. The eight ZIPs total
+33,804,060 bytes (575.163 bytes/row), compared with 34,731,302 bytes
+(590.940 bytes/row) for the 115 inputs. After a deliberate process kill
+immediately after sealing the first container, resume retained it and sealed
+the other seven. A separate self-authored readback matched all 15 stored
+arrays over all 58,773 rows and matched all 115 corresponding CPU collation
+batches through the production loader. An independent review of the larger
+ZIPs remains pending. Applying only the container geometry to 500M rows
+would yield about 61,036 physical ZIPs; external-drive loading, training
+throughput and the full three-source mix remain unmeasured.
+
+The B/C raw legal-head diagnostic also has a follow-up binary format. Eight
+physical segments hold 115 independently compressed 512-row frames, a
+24-byte ordinal index per row and one table of the 512 observed UID prefixes.
+The retained segments, indexes, prefix table and segment receipts occupy
+7,510,524 bytes before the final receipt (127.789 bytes/row), compared with
+49,680,579 bytes (845.30 bytes/row) for the earlier compressed payload plus
+verbose JSON index. A deliberate kill after the first sealed segment resumed
+from that segment. An independent parser matched every UID, source, teacher,
+ordinal and native payload byte to the previously audited raw-head bank.
+This is a format diagnostic: its global 16-bit prefix table, source-wide
+verification and recompression of completed segments on resume, and
+per-row reader cost are not qualified for 500M rows. The size subtotal
+excludes the final receipt, archived proof copies and the original source
+bank; it is not a complete corpus storage rate.
 
 ## Decision and evidence
 
@@ -122,9 +146,10 @@ HOLD**. Exact source replay, selected-target bytes, physical trainer-format
 arrays and the B/C compact raw-head diagnostic each have independent all-row
 checks. No matched training run or arena
 used this pack, so no Elo or source-mixture strength conclusion follows. The
-next production gates are a durable compact raw observation format, a larger
-shard and actual external-loader screen, and an independently registered
-matched training/arena comparison on a representative unique-position bank.
+next production gates are a scalable compact raw observation reader and resume
+path, independent larger-ZIP review, an actual external-loader screen, and an
+independently registered matched training/arena comparison on a representative
+unique-position bank.
 
 The [compact evidence manifest](evidence/2026-09-29-tri-source-selected-target-pipeline.json)
 records source packet, producer receipt and independent-audit SHA-256 identities,
