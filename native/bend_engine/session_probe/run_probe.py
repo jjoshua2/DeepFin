@@ -222,7 +222,7 @@ class Reference:
         self.seq += 1
 
     def check_snapshot(self, rows: list[list[int]], result: list[int], best: int, epoch: int) -> None:
-        expected = [epoch, self.completed, len(self.nodes), self.stop, 4096, self.seq]
+        expected = [epoch, self.completed, len(self.nodes), self.stop, max(4096, self.cap), self.seq]
         if result != expected or len(rows) != len(self.nodes):
             raise AssertionError(f'session accounting mismatch: {result} != {expected}')
         for i, (row, a) in enumerate(zip(rows, self.nodes, strict=True)):
@@ -243,12 +243,12 @@ class Reference:
 
 
 class Peer:
-    def __init__(self, binary: Path, board: rules.Position):
+    def __init__(self, binary: Path, board: rules.Position, *, environment: dict[str, str] | None = None):
         with ExitStack() as resources:
             self.errors = resources.enter_context(tempfile.TemporaryFile(mode='w+'))
             self.proc = subprocess.Popen([str(binary), '--threads', '1'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=self.errors, text=True, bufsize=1,
-                                         env={**os.environ, 'BEND_NO_TELEMETRY': '1'})
+                                         env={**(os.environ if environment is None else environment), 'BEND_NO_TELEMETRY': '1'})
             self.resources = resources.pop_all()
         assert self.proc.stdout
         assert self.proc.stdin

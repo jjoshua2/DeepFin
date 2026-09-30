@@ -1,0 +1,191 @@
+{
+  "status": "PASS",
+  "source_baseline_sha256": "ea0bc14c31eedd18abe67b9b90287b2d1b20245ec42aed4faa0d69d21df229b0",
+  "source_candidate_sha256": "ba8239f815e85bf14c5afe34b4138f899d73a75a659ad5847bcb10e7dd69df0b",
+  "benchmark_sha256": "60173764b9a44ccc2da25e13e45cb098161e13f9a5592bcd3279eb34c639a391",
+  "numpy": "1.26.2",
+  "records": [
+    {
+      "cohort": 0,
+      "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/shard_000000.zarr",
+      "rows": 1024,
+      "input_sha256": "43e216162ec2bbee15193794a94f125f4069adcd0827d8f03ca35c16d32bdfc1",
+      "feed_sha256": "d69acea3e1d3339f1d284da716991168de22425ab2edf6299b94a9190c1cbddc",
+      "observations": [
+        {
+          "repeat": 0,
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": 0.12439146102406085,
+          "candidate": 0.09000104700680822
+        },
+        {
+          "repeat": 1,
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "candidate": 0.0982607719488442,
+          "baseline": 0.1271637919708155
+        },
+        {
+          "repeat": 2,
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": 0.12683323497185484,
+          "candidate": 0.09255410102196038
+        },
+        {
+          "repeat": 3,
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "candidate": 0.10085291403811425,
+          "baseline": 0.14041550498222932
+        },
+        {
+          "repeat": 4,
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": 0.1775904000387527,
+          "candidate": 0.1622273389948532
+        }
+      ],
+      "median_seconds": {
+        "baseline": 0.1271637919708155,
+        "candidate": 0.0982607719488442
+      },
+      "speedup": 1.294146071201421,
+      "fraction_saved": 0.22728969916691888
+    },
+    {
+      "cohort": 1,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/derived/shard_000000.zarr",
+      "rows": 1024,
+      "input_sha256": "de28011871fdb102266ce823b16bae1c6e447b1e880dfeeba6f0b7cafdd702bc",
+      "feed_sha256": "8c12798e8e7320adf6099b1f618cd8e657d1cdd672d01c74908fbf3841baebed",
+      "observations": [
+        {
+          "repeat": 0,
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": 0.24268109403783455,
+          "candidate": 0.1424889740301296
+        },
+        {
+          "repeat": 1,
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "candidate": 0.11258630297379568,
+          "baseline": 0.23610781301977113
+        },
+        {
+          "repeat": 2,
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": 0.20441796095110476,
+          "candidate": 0.155474289029371
+        },
+        {
+          "repeat": 3,
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "candidate": 0.1423005349934101,
+          "baseline": 0.20136996201472357
+        },
+        {
+          "repeat": 4,
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": 0.1934073960292153,
+          "candidate": 0.14817241503624246
+        }
+      ],
+      "median_seconds": {
+        "baseline": 0.20441796095110476,
+        "candidate": 0.1424889740301296
+      },
+      "speedup": 1.4346230109557818,
+      "fraction_saved": 0.30295276712885366
+    },
+    {
+      "cohort": 21,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run06_g10/derived/shard_000000.zarr",
+      "rows": 1024,
+      "input_sha256": "8914838b9e9ca9a03c6825d73f819c6584b9300f0b1b96dcfbfd1bf7732bb8fd",
+      "feed_sha256": "34ed42b76ea3a67907f2aff42a7b91bfd3aa85abcd6a436fa01ac723ff4c1094",
+      "observations": [
+        {
+          "repeat": 0,
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": 0.13631297700339928,
+          "candidate": 0.09128149499883875
+        },
+        {
+          "repeat": 1,
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "candidate": 0.08925630402518436,
+          "baseline": 0.12766305799596012
+        },
+        {
+          "repeat": 2,
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": 0.13310534198535606,
+          "candidate": 0.09653836995130405
+        },
+        {
+          "repeat": 3,
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "candidate": 0.0877120720106177,
+          "baseline": 0.12104945600731298
+        },
+        {
+          "repeat": 4,
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": 0.12337715196190402,
+          "candidate": 0.09086898900568485
+        }
+      ],
+      "median_seconds": {
+        "baseline": 0.12766305799596012,
+        "candidate": 0.09086898900568485
+      },
+      "speedup": 1.404913374660451,
+      "fraction_saved": 0.2882123424572801
+    }
+  ],
+  "elapsed_seconds": 5.4872602300019935,
+  "scope": "warm in-memory encoder only, no inference; source reads and equality hashes excluded; exact32rowcalls"
+}

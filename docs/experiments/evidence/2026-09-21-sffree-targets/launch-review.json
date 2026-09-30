@@ -1,0 +1,47 @@
+{
+  "status": "APPROVE_BOUNDED_FULL_CPU_PREPARATION_ONLY",
+  "reviewer": "/root/factorial_receipt_review",
+  "checked_utc": "2026-09-22T00:10:23.102657+00:00",
+  "plan": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/full_cpu_plan.json",
+    "sha256": "c0e137a3ec1a64bd6bc1fd2d0345901b18d4c2408923c302869cb710cdd40cdc"
+  },
+  "orchestrator": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/full_cpu_run.py",
+    "sha256": "8e94ae8c5b255b8d1ca27a98c840678f407f785674666910e7dd2fb5cba6a0c8"
+  },
+  "runtime_head": "4ecf772963967cb9de53d6e9a2cd895172a41e15",
+  "runtime_file_pins_independently_verified": 2887,
+  "runtime_membership_and_directory_link_check": true,
+  "builder_sha256": "081d69f0217991493638b36d8a442ea62e6946ca26f44388ae1ea08a9e19959c",
+  "smoke_gate": "Pinned PASS_THREE_SOURCE_FAMILIES, exact0/1/21 families,8192each,Dpolicy/nonvalue parity, frozen builder hash matches smoke-tested code",
+  "manifest_review": "35 manifests,7108 unique canonical base shards,58090688rows; current attrs pins/bindings matched readiness independently. Full dense verification remains execution work.",
+  "operational_tests": {
+    "independently_rerun": true,
+    "child_exit7": "PASS: INCOMPLETE, one child, reaped",
+    "STOP_during_child": "PASS: INCOMPLETE, one child, reaped SIGTERM",
+    "RAM_floor_during_child": "PASS: INCOMPLETE, one child, reaped SIGTERM"
+  },
+  "bounds": {
+    "wall_seconds": 57600,
+    "cleanup_reserve_seconds": 30,
+    "affinity": [
+      8,
+      9
+    ],
+    "nice": 19,
+    "threads": 2,
+    "min_free_gib": 150,
+    "min_available_gib": 40,
+    "sequential_builders": 35,
+    "final_schema2_qualification": true,
+    "GPU_hidden": true
+  },
+  "preflight_snapshot": {
+    "available_ram_bytes": 72668721152,
+    "free_disk_bytes": 927691653120,
+    "STOP_absent": true,
+    "output_and_operation_absent": true
+  },
+  "scope": "Single-use full CPU target preparation+storage qualification only; no E training, arena, GPU queue mutation, source overwrite, or production adoption. Partial outputs and incomplete receipts retained on failure; no automatic retries."
+}

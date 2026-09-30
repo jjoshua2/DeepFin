@@ -1,0 +1,350 @@
+{
+  "bytes_actually_read": 4713721,
+  "bytes_read_upper_bound": 8388608,
+  "cohort_manifest_headers_only": true,
+  "cohort_manifest_sha256_verified": false,
+  "roster_sha256": "ca4e61bbae176ac0b6d1f32698aad9de299bc4f48de3035f2a430dac60ccf34c",
+  "sample_zarray_metadata": {
+    "run03": {
+      "cohort": 0,
+      "columns": {
+        "game_id": {
+          "chunks": [
+            512
+          ],
+          "dtype": "<i8",
+          "shape": [
+            8192
+          ]
+        },
+        "has_game_id": {
+          "chunks": [
+            512
+          ],
+          "dtype": "|u1",
+          "shape": [
+            8192
+          ]
+        },
+        "has_ply_index": {
+          "chunks": [
+            512
+          ],
+          "dtype": "|u1",
+          "shape": [
+            8192
+          ]
+        },
+        "legal_mask": {
+          "chunks": [
+            512,
+            1858
+          ],
+          "dtype": "|u1",
+          "shape": [
+            8192,
+            1858
+          ]
+        },
+        "ply_index": {
+          "chunks": [
+            512
+          ],
+          "dtype": "<i4",
+          "shape": [
+            8192
+          ]
+        },
+        "policy_target": {
+          "chunks": [
+            512,
+            1858
+          ],
+          "dtype": "<f2",
+          "shape": [
+            8192,
+            1858
+          ]
+        },
+        "search_wdl": {
+          "chunks": [
+            512,
+            3
+          ],
+          "dtype": "<f2",
+          "shape": [
+            8192,
+            3
+          ]
+        },
+        "x": {
+          "chunks": [
+            512,
+            175,
+            8,
+            8
+          ],
+          "dtype": "<f2",
+          "shape": [
+            8192,
+            175,
+            8,
+            8
+          ]
+        }
+      }
+    },
+    "run06": {
+      "cohort": 1,
+      "columns": {
+        "game_id": {
+          "chunks": [
+            512
+          ],
+          "dtype": "<i8",
+          "shape": [
+            8192
+          ]
+        },
+        "has_game_id": {
+          "chunks": [
+            512
+          ],
+          "dtype": "|u1",
+          "shape": [
+            8192
+          ]
+        },
+        "has_ply_index": {
+          "chunks": [
+            512
+          ],
+          "dtype": "|u1",
+          "shape": [
+            8192
+          ]
+        },
+        "legal_mask": {
+          "chunks": [
+            512,
+            1858
+          ],
+          "dtype": "|u1",
+          "shape": [
+            8192,
+            1858
+          ]
+        },
+        "ply_index": {
+          "chunks": [
+            512
+          ],
+          "dtype": "<i4",
+          "shape": [
+            8192
+          ]
+        },
+        "policy_target": {
+          "chunks": [
+            512,
+            1858
+          ],
+          "dtype": "<f2",
+          "shape": [
+            8192,
+            1858
+          ]
+        },
+        "search_wdl": {
+          "chunks": [
+            512,
+            3
+          ],
+          "dtype": "<f2",
+          "shape": [
+            8192,
+            3
+          ]
+        },
+        "x": {
+          "chunks": [
+            512,
+            175,
+            8,
+            8
+          ],
+          "dtype": "<f2",
+          "shape": [
+            8192,
+            175,
+            8,
+            8
+          ]
+        }
+      }
+    },
+    "run07": {
+      "cohort": 2,
+      "columns": {
+        "game_id": {
+          "chunks": [
+            512
+          ],
+          "dtype": "<i8",
+          "shape": [
+            8192
+          ]
+        },
+        "has_game_id": {
+          "chunks": [
+            512
+          ],
+          "dtype": "|u1",
+          "shape": [
+            8192
+          ]
+        },
+        "has_ply_index": {
+          "chunks": [
+            512
+          ],
+          "dtype": "|u1",
+          "shape": [
+            8192
+          ]
+        },
+        "legal_mask": {
+          "chunks": [
+            512,
+            1858
+          ],
+          "dtype": "|u1",
+          "shape": [
+            8192,
+            1858
+          ]
+        },
+        "ply_index": {
+          "chunks": [
+            512
+          ],
+          "dtype": "<i4",
+          "shape": [
+            8192
+          ]
+        },
+        "policy_target": {
+          "chunks": [
+            512,
+            1858
+          ],
+          "dtype": "<f2",
+          "shape": [
+            8192,
+            1858
+          ]
+        },
+        "search_wdl": {
+          "chunks": [
+            512,
+            3
+          ],
+          "dtype": "<f2",
+          "shape": [
+            8192,
+            3
+          ]
+        },
+        "x": {
+          "chunks": [
+            512,
+            175,
+            8,
+            8
+          ],
+          "dtype": "<f2",
+          "shape": [
+            8192,
+            175,
+            8,
+            8
+          ]
+        }
+      }
+    }
+  },
+  "source_families": {
+    "run03": {
+      "cohorts": [
+        0
+      ],
+      "policy_observations": [
+        "latest-phase"
+      ],
+      "row_provenance": [
+        "absent"
+      ],
+      "rows": 18910484,
+      "shards": 2309
+    },
+    "run06": {
+      "cohorts": [
+        1,
+        3,
+        5,
+        7,
+        9,
+        11,
+        13,
+        15,
+        17,
+        19,
+        21,
+        23,
+        25,
+        27,
+        29,
+        31,
+        33
+      ],
+      "policy_observations": [
+        "phase0"
+      ],
+      "row_provenance": [
+        "row_provenance.npz"
+      ],
+      "rows": 25827015,
+      "shards": 3160
+    },
+    "run07": {
+      "cohorts": [
+        2,
+        4,
+        6,
+        8,
+        10,
+        12,
+        14,
+        16,
+        18,
+        20,
+        22,
+        24,
+        26,
+        28,
+        30,
+        32,
+        34
+      ],
+      "policy_observations": [
+        "phase0"
+      ],
+      "row_provenance": [
+        "row_provenance.npz"
+      ],
+      "rows": 13353189,
+      "shards": 1639
+    }
+  },
+  "status": "METADATA_ONLY_NO_SHARD_PAYLOAD"
+}

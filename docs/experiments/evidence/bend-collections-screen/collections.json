@@ -1,0 +1,344 @@
+{
+  "status": "passed",
+  "scope": "FIFO arrays and ID rotation, not scheduler adoption",
+  "machine": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "compiler_root": "build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "traversal_sha256": {
+    "generic": "6af41fd1d51d805fb1ee0c64acd980b706efd8a73ddd1e62c74795e3239f0efa",
+    "ubsan": "6af41fd1d51d805fb1ee0c64acd980b706efd8a73ddd1e62c74795e3239f0efa"
+  },
+  "traversal_rows_per_mode": 368,
+  "lifo_mutation_rejected": true,
+  "trace_sha256": {
+    "generic": "609ba02bd034ffec7f75d72b2c92970dd702e2faec93c92e76dcc8768f1b2960",
+    "native": "609ba02bd034ffec7f75d72b2c92970dd702e2faec93c92e76dcc8768f1b2960",
+    "ubsan": "609ba02bd034ffec7f75d72b2c92970dd702e2faec93c92e76dcc8768f1b2960"
+  },
+  "trace_rows_per_mode": 6151,
+  "samples": [
+    {
+      "arm": "list",
+      "size": 16,
+      "sample": 0,
+      "milliseconds": 3,
+      "checksum": 3532390336,
+      "warmup": true,
+      "below_20ms": true
+    },
+    {
+      "arm": "queue",
+      "size": 16,
+      "sample": 0,
+      "milliseconds": 0,
+      "checksum": 3532390336,
+      "warmup": true,
+      "below_20ms": true
+    },
+    {
+      "arm": "queue",
+      "size": 16,
+      "sample": 1,
+      "milliseconds": 0,
+      "checksum": 3532390336,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "list",
+      "size": 16,
+      "sample": 1,
+      "milliseconds": 2,
+      "checksum": 3532390336,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "list",
+      "size": 16,
+      "sample": 2,
+      "milliseconds": 2,
+      "checksum": 3532390336,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "queue",
+      "size": 16,
+      "sample": 2,
+      "milliseconds": 0,
+      "checksum": 3532390336,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "queue",
+      "size": 16,
+      "sample": 3,
+      "milliseconds": 0,
+      "checksum": 3532390336,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "list",
+      "size": 16,
+      "sample": 3,
+      "milliseconds": 2,
+      "checksum": 3532390336,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "list",
+      "size": 16,
+      "sample": 4,
+      "milliseconds": 3,
+      "checksum": 3532390336,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "queue",
+      "size": 16,
+      "sample": 4,
+      "milliseconds": 0,
+      "checksum": 3532390336,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "queue",
+      "size": 16,
+      "sample": 5,
+      "milliseconds": 0,
+      "checksum": 3532390336,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "list",
+      "size": 16,
+      "sample": 5,
+      "milliseconds": 2,
+      "checksum": 3532390336,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "list",
+      "size": 256,
+      "sample": 0,
+      "milliseconds": 27,
+      "checksum": 941327040,
+      "warmup": true,
+      "below_20ms": false
+    },
+    {
+      "arm": "queue",
+      "size": 256,
+      "sample": 0,
+      "milliseconds": 0,
+      "checksum": 941327040,
+      "warmup": true,
+      "below_20ms": true
+    },
+    {
+      "arm": "queue",
+      "size": 256,
+      "sample": 1,
+      "milliseconds": 0,
+      "checksum": 941327040,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "list",
+      "size": 256,
+      "sample": 1,
+      "milliseconds": 26,
+      "checksum": 941327040,
+      "warmup": false,
+      "below_20ms": false
+    },
+    {
+      "arm": "list",
+      "size": 256,
+      "sample": 2,
+      "milliseconds": 27,
+      "checksum": 941327040,
+      "warmup": false,
+      "below_20ms": false
+    },
+    {
+      "arm": "queue",
+      "size": 256,
+      "sample": 2,
+      "milliseconds": 0,
+      "checksum": 941327040,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "queue",
+      "size": 256,
+      "sample": 3,
+      "milliseconds": 0,
+      "checksum": 941327040,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "list",
+      "size": 256,
+      "sample": 3,
+      "milliseconds": 27,
+      "checksum": 941327040,
+      "warmup": false,
+      "below_20ms": false
+    },
+    {
+      "arm": "list",
+      "size": 256,
+      "sample": 4,
+      "milliseconds": 26,
+      "checksum": 941327040,
+      "warmup": false,
+      "below_20ms": false
+    },
+    {
+      "arm": "queue",
+      "size": 256,
+      "sample": 4,
+      "milliseconds": 0,
+      "checksum": 941327040,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "queue",
+      "size": 256,
+      "sample": 5,
+      "milliseconds": 0,
+      "checksum": 941327040,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "list",
+      "size": 256,
+      "sample": 5,
+      "milliseconds": 27,
+      "checksum": 941327040,
+      "warmup": false,
+      "below_20ms": false
+    },
+    {
+      "arm": "list",
+      "size": 4096,
+      "sample": 0,
+      "milliseconds": 449,
+      "checksum": 2154819264,
+      "warmup": true,
+      "below_20ms": false
+    },
+    {
+      "arm": "queue",
+      "size": 4096,
+      "sample": 0,
+      "milliseconds": 0,
+      "checksum": 2154819264,
+      "warmup": true,
+      "below_20ms": true
+    },
+    {
+      "arm": "queue",
+      "size": 4096,
+      "sample": 1,
+      "milliseconds": 1,
+      "checksum": 2154819264,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "list",
+      "size": 4096,
+      "sample": 1,
+      "milliseconds": 451,
+      "checksum": 2154819264,
+      "warmup": false,
+      "below_20ms": false
+    },
+    {
+      "arm": "list",
+      "size": 4096,
+      "sample": 2,
+      "milliseconds": 449,
+      "checksum": 2154819264,
+      "warmup": false,
+      "below_20ms": false
+    },
+    {
+      "arm": "queue",
+      "size": 4096,
+      "sample": 2,
+      "milliseconds": 0,
+      "checksum": 2154819264,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "queue",
+      "size": 4096,
+      "sample": 3,
+      "milliseconds": 0,
+      "checksum": 2154819264,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "list",
+      "size": 4096,
+      "sample": 3,
+      "milliseconds": 451,
+      "checksum": 2154819264,
+      "warmup": false,
+      "below_20ms": false
+    },
+    {
+      "arm": "list",
+      "size": 4096,
+      "sample": 4,
+      "milliseconds": 449,
+      "checksum": 2154819264,
+      "warmup": false,
+      "below_20ms": false
+    },
+    {
+      "arm": "queue",
+      "size": 4096,
+      "sample": 4,
+      "milliseconds": 0,
+      "checksum": 2154819264,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "queue",
+      "size": 4096,
+      "sample": 5,
+      "milliseconds": 0,
+      "checksum": 2154819264,
+      "warmup": false,
+      "below_20ms": true
+    },
+    {
+      "arm": "list",
+      "size": 4096,
+      "sample": 5,
+      "milliseconds": 450,
+      "checksum": 2154819264,
+      "warmup": false,
+      "below_20ms": false
+    }
+  ]
+}
