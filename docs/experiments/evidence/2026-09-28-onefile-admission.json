@@ -1,0 +1,43 @@
+{
+  "schema": "onefile_mixed_source_admission_readout_v1",
+  "scope": "one_complete_game_per_source_provisional_zero_credit",
+  "packet_manifest_sha256": "bf5b71af3862161f6a092880d9c585881b2c1470fa19f0023163334a63c1d2a3",
+  "independent_review_gate_sha256": "01c48231a861d179c4bc6344dd7527ab0e24971be7a7cd322493c9a5ec47dc75",
+  "bt4": {
+    "game_id": 1388,
+    "rows": 93,
+    "status": "PASS_PROVISIONAL_ZERO_CREDIT",
+    "outer_wall_seconds": 0.9613905619917205,
+    "terminal_sha256": "35e2464d0392abddb2310b6c0a3feec1c9336e04e321eacd31630dd68e1a1f03",
+    "result_sha256": "9259c77817cbe500d5b8a1d305f863bbf0b1cd71f18c145937e7b469b77148a1"
+  },
+  "ceres": {
+    "game_id": 342,
+    "planned_rows": 115,
+    "status": "HOLD_ZERO_CREDIT",
+    "outer_wall_seconds": 2.320505047988263,
+    "terminal_sha256": "9b57248b28fb4b6eb380c0f0033c4552eac67153348d9104a42053c8618913a9",
+    "stderr_sha256": "d39e1a4e66653a70d648a2cb31913f1d7b12d7f4743f5ff594277ee4977fa46e",
+    "source_contract_finding_sha256": "037db43867b12bf189d5466261ac5701c779b21cf9595b52910d5fd1f6df540e",
+    "failing_predicate": "Ceres row/history/legal context compound predicate",
+    "source_only_likely_cause": "writer compact-policy-index order versus adapter lexical-UCI order",
+    "causal_status": "likely_not_isolated_from_compound_predicate"
+  },
+  "trainer_byte_path": {
+    "source_packet_manifest_sha256": "0fef242de29553ad193f73cbe1dc4cbc0656295c1b589291ce7e7eaf1a19774f",
+    "independent_review_sha256": "7abcd3ce29f538ab197259e31d397e8602a5cb928cbd448fb8adc9d62cb667c8",
+    "synthetic_tests_passed": 6,
+    "canonical_pre_augmentation_bytes_per_row": 44800,
+    "unmirrored_profile": "PASS_SOURCE_ONLY_SYNTHETIC",
+    "every_training_tensor_identity": "HOLD_MIRROR_AUGMENTATION",
+    "actual_row_packer_ingest": "HOLD"
+  },
+  "credit": {
+    "source": 0,
+    "unique": 0,
+    "target": 0,
+    "owner": 0,
+    "pack": 0,
+    "ingest": 0
+  }
+}

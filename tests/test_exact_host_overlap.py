@@ -10,7 +10,9 @@ import pytest
 import torch
 
 from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer
-from chess_anti_engine.train.trainer import Trainer, _SfRebuildCoverageAccumulator
+from chess_anti_engine.train.trainer import (
+    Trainer, _SfRebuildCoverageAccumulator, _TrainBatchIterator,
+)
 from tests.test_game_aware_epoch_replay import _write
 
 
@@ -36,6 +38,32 @@ def _trainer() -> Any:
 
 def _iterate(trainer: Any, buf: Any, count: int) -> Any:
     return trainer._iter_training_batches(buf, batch_size=4, mirror_prob=0.5, count=count)
+
+
+class _OverlapBufferStub:
+    """Transport tests replace sampling but still exercise the guard protocol."""
+
+    exact_without_replacement = True
+    host_batch_overlap = True
+
+    def __init__(self, reserve: int) -> None:
+        self.plan = SimpleNamespace(host_overlap_reserve_bytes=reserve)
+        self.open = False
+        self.aborted = False
+
+    def begin_overlap(self) -> None:
+        assert not self.open
+        assert not self.aborted
+        self.open = True
+
+    def mark_overlap_delivery(self) -> None:
+        assert self.open
+        assert not self.aborted
+
+    def end_overlap(self, *, aborted: bool) -> None:
+        assert self.open
+        self.aborted |= aborted
+        self.open = False
 
 
 def test_real_tensor_and_rng_parity_across_windows(tmp_path: Path) -> None:
@@ -66,9 +94,118 @@ def test_real_tensor_and_rng_parity_across_windows(tmp_path: Path) -> None:
             assert getattr(serial, name).bit_generator.state == getattr(overlap, name).bit_generator.state
     assert serial.receipt()["complete"]
     assert overlap.receipt()["complete"]
+    assert "delivered_batches" not in serial.receipt()
+    assert overlap.receipt()["delivered_batches"] == overlap.num_batches
     assert int(overlap.receipt()["peak_working_set_bytes"]) <= overlap.plan.peak_working_set_bytes
     serial.close()
     overlap.close()
+
+
+def test_guarded_whole_game_5_5_4_delivery_and_close(tmp_path: Path) -> None:
+    path = _write(tmp_path / "data", [
+        [(game, game * 10 + row) for row in range(4) for game in range(8)],
+        [(game, game * 10 + row) for row in range(4, 7) for game in range(8)],
+    ])
+    serial, overlap = _buffer(path, overlap=False), _buffer(path, overlap=True)
+    left, right = _trainer(), _trainer()
+    assert serial.num_batches == overlap.num_batches == 14
+    for count in (5, 5, 4):
+        a = _TrainBatchIterator(lambda n: _iterate(left, serial, n), count)
+        b = _TrainBatchIterator(lambda n: _iterate(right, overlap, n), count)
+        try:
+            for _ in range(count):
+                aa, bb = next(a), next(b)
+                assert aa.keys() == bb.keys()
+                assert all(torch.equal(value, bb[key]) for key, value in aa.items())
+            assert overlap.receipt()["overlap_window_open"]
+            assert not overlap.receipt()["complete"]
+        finally:
+            a.close()
+            b.close()
+        assert not any(t.name.startswith("exact-host") for t in threading.enumerate())
+        for name in ("rng", "_choice_rng", "_row_rng"):
+            assert getattr(serial, name).bit_generator.state == getattr(overlap, name).bit_generator.state
+    receipt = overlap.receipt()
+    assert receipt["batches_realized"] == receipt["delivered_batches"] == 14
+    assert receipt["complete"]
+    assert not receipt["overlap_aborted"]
+    assert receipt["plan_sha256"] == receipt["realized_sha256"]
+    serial.close()
+    overlap.close()
+
+
+def test_guarded_early_close_poisoned_after_completed_prefetch(tmp_path: Path) -> None:
+    path = _write(tmp_path / "data", [[(game, game * 10 + row)
+                                      for row in range(2) for game in range(8)]])
+    buf = _buffer(path, overlap=True)
+    with pytest.raises(RuntimeError, match="outside delivery window"):
+        buf.sample_batch_arrays(4)
+    trainer = _trainer()
+    original = trainer._sample_batch_host
+    second_ready = threading.Event()
+    calls = 0
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        batch = original(*args, **kwargs)
+        if calls == 2:
+            second_ready.set()
+        return batch
+
+    trainer._sample_batch_host = counted
+    it = _TrainBatchIterator(lambda n: _iterate(trainer, buf, n), 3)
+    try:
+        next(it)
+        assert second_ready.wait(10)
+        it.close()
+        receipt = buf.receipt()
+        assert receipt["batches_realized"] == 2
+        assert receipt["delivered_batches"] == it.consumed == 1
+        assert receipt["overlap_aborted"]
+        assert not receipt["complete"]
+        assert not any(t.name.startswith("exact-host") for t in threading.enumerate())
+        retry = _TrainBatchIterator(lambda n: _iterate(_trainer(), buf, n), 1)
+        with pytest.raises(RuntimeError, match="aborted"):
+            next(retry)
+        retry.close()
+    finally:
+        it.close()
+        buf.close()
+
+
+@pytest.mark.parametrize("kind", ["fault", "extra"])
+def test_final_close_checks_source_exhaustion(tmp_path: Path, kind: str) -> None:
+    path = _write(tmp_path / "data", [[(game, game * 10 + row)
+                                      for row in range(2) for game in range(8)]])
+    buf = _buffer(path, overlap=True)
+    trainer = _trainer()
+
+    def source(source_buf: GameAwareEpochBuffer, **_kwargs: Any) -> Any:
+        first = source_buf.sample_batch_arrays(4)
+        yield {"x": torch.from_numpy(first["x"])}
+        if kind == "fault":
+            raise RuntimeError("latent final-yield failure")
+        second = source_buf.sample_batch_arrays(4)
+        yield {"x": torch.from_numpy(second["x"])}
+
+    trainer._iter_exact_overlapped_batches = source
+    it = _TrainBatchIterator(lambda n: _iterate(trainer, buf, n), 1)
+    try:
+        next(it)
+        with pytest.raises(RuntimeError, match=(
+            "latent final-yield failure" if kind == "fault" else "yielded extra batch"
+        )):
+            it.close()  # The normal caller does not request a second batch.
+        receipt = buf.receipt()
+        assert receipt["delivered_batches"] == 1
+        assert receipt["batches_realized"] == (1 if kind == "fault" else 2)
+        assert receipt["overlap_aborted"]
+        assert not receipt["complete"]
+        assert not any(t.name.startswith("exact-host") for t in threading.enumerate())
+    finally:
+        it.close()
+        buf.close()
 
 
 def test_reserved_peak_is_enforced_by_plan_and_runtime(tmp_path: Path) -> None:
@@ -92,6 +229,7 @@ def test_actual_optional_collation_fits_prepared_retention_bound(tmp_path: Path)
     path = _write(tmp_path / "data", [[(i, i) for i in range(4)]])
     buf = _buffer(path, overlap=True)
     trainer = _trainer()
+    buf.begin_overlap()
     host = trainer._sample_batch_host(buf, batch_size=4, mirror_prob=0.5)
     bound = sum(a.nbytes + 8 * a.size for a in host.values())
     tensors = trainer._host_batch_to_tensors(host)
@@ -99,14 +237,14 @@ def test_actual_optional_collation_fits_prepared_retention_bound(tmp_path: Path)
     assert actual <= bound <= buf.plan.host_overlap_reserve_bytes
     assert tensors["wdl_t"].dtype == torch.int64
     assert tensors["x"].dtype == torch.float32
+    buf.end_overlap(aborted=True)  # This direct sample was never delivered.
     buf.close()
 
 
 @pytest.mark.parametrize("fail_second", [False, True])
 def test_close_joins_one_running_future_and_never_schedules_third(fail_second: bool) -> None:
     trainer = _trainer()
-    buf = SimpleNamespace(exact_without_replacement=True, host_batch_overlap=True,
-                          plan=SimpleNamespace(host_overlap_reserve_bytes=1000))
+    buf = _OverlapBufferStub(1000)
     started, release, joined = threading.Event(), threading.Event(), threading.Event()
     calls: list[int] = []
     def prepare(*_args: Any, **_kwargs: Any) -> dict[str, np.ndarray]:
@@ -142,8 +280,7 @@ def test_close_joins_one_running_future_and_never_schedules_third(fail_second: b
 
 def test_producer_exception_propagates_and_does_not_convert_extra_batch() -> None:
     trainer = _trainer()
-    buf = SimpleNamespace(exact_without_replacement=True, host_batch_overlap=True,
-                          plan=SimpleNamespace(host_overlap_reserve_bytes=1000))
+    buf = _OverlapBufferStub(1000)
     calls = 0
     def prepare(*_args: Any, **_kwargs: Any) -> dict[str, np.ndarray]:
         nonlocal calls
@@ -163,11 +300,11 @@ def test_producer_exception_propagates_and_does_not_convert_extra_batch() -> Non
 
 def test_missing_reserve_and_derived_field_overflow_refuse_before_conversion() -> None:
     trainer = _trainer()
-    buf = SimpleNamespace(exact_without_replacement=True, host_batch_overlap=True,
-                          plan=SimpleNamespace(host_overlap_reserve_bytes=0))
+    buf = _OverlapBufferStub(0)
     with pytest.raises(RuntimeError, match="lacks a planned"):
         next(_iterate(trainer, buf, 1))
-    buf.plan.host_overlap_reserve_bytes = 10
+    assert buf.aborted
+    buf = _OverlapBufferStub(10)
     trainer._sample_batch_host = lambda *a, **k: {"x": np.ones(5, dtype=np.float16)}
     trainer._host_batch_to_tensors = lambda _: pytest.fail("must refuse before collation")
     with pytest.raises(RuntimeError, match="exceeds overlap"):
@@ -177,8 +314,7 @@ def test_missing_reserve_and_derived_field_overflow_refuse_before_conversion() -
 def test_transfer_is_retired_before_next_caller_collation(monkeypatch: pytest.MonkeyPatch) -> None:
     trainer = _trainer()
     trainer.device = "cuda"
-    buf = SimpleNamespace(exact_without_replacement=True, host_batch_overlap=True,
-                          plan=SimpleNamespace(host_overlap_reserve_bytes=1000))
+    buf = _OverlapBufferStub(1000)
     events: list[str] = []
     caller = threading.get_ident()
     trainer._sample_batch_host = lambda *a, **k: {"x": np.ones(1, dtype=np.float16)}
@@ -222,6 +358,8 @@ def test_real_cli_two_epoch_weights_match_default(tmp_path: Path) -> None:
         assert sampling["host_overlap_reserve_bytes"] > 0
         assert sampling["peak_working_set_bytes"] <= sampling["max_working_set_bytes"]
         assert sampling["plan_sha256"] == sampling["realized_sha256"]
+        assert sampling["delivered_batches"] == sampling["batches_realized"]
+        assert not sampling["overlap_aborted"]
     assert not any(t.name.startswith("exact-host") for t in threading.enumerate())
 
 
@@ -259,8 +397,7 @@ def test_partial_collation_records_and_retires_without_masking_primary_error(
 ) -> None:
     trainer = _trainer()
     trainer.device = "cuda"
-    buf = SimpleNamespace(exact_without_replacement=True, host_batch_overlap=True,
-                          plan=SimpleNamespace(host_overlap_reserve_bytes=1000))
+    buf = _OverlapBufferStub(1000)
     events: list[str] = []
     def prepare(*_args: Any, **_kwargs: Any) -> dict[str, np.ndarray]:
         events.append("prepare")
@@ -292,8 +429,7 @@ def test_partial_collation_records_and_retires_without_masking_primary_error(
 def test_last_yield_close_propagates_retirement_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     trainer = _trainer()
     trainer.device = "cuda"
-    buf = SimpleNamespace(exact_without_replacement=True, host_batch_overlap=True,
-                          plan=SimpleNamespace(host_overlap_reserve_bytes=1000))
+    buf = _OverlapBufferStub(1000)
     trainer._sample_batch_host = lambda *a, **k: {"x": np.ones(1, dtype=np.float16)}
     trainer._host_batch_to_tensors = lambda batch: {"x": torch.from_numpy(batch["x"])}
     class Event:

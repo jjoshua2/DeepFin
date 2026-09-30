@@ -1,0 +1,59 @@
+{
+  "additional_stage_bytes_read": 22937600,
+  "additional_staged_rows": 512,
+  "all_512_main_snapshot_full_bind_equal": true,
+  "coverage": {
+    "castling:0": 477,
+    "castling:1": 10,
+    "castling:2": 14,
+    "castling:3": 1,
+    "castling:4": 10,
+    "clock:high": 42,
+    "clock:low": 268,
+    "clock:mid": 70,
+    "clock:zero": 132,
+    "color:black": 263,
+    "color:white": 249,
+    "ep:0": 503,
+    "ep:1": 9,
+    "repetition:0": 430,
+    "repetition:1": 82,
+    "source:BT4-v9": 252,
+    "source:Ceres-v8": 260
+  },
+  "full_stage_hash": false,
+  "history_feature_equality_note": "All eight history slots and repetition bytes are included in the exact 137-byte feed equality; true real-history depth was not independently classified.",
+  "joined_feed_sha256": "b9f878a284189324e7a691f64f762ba5faf92399bd8c4d4955bf2c3f75d886a3",
+  "model_gpu_used": false,
+  "oracle_full_bind_seconds": 0.5273239820089657,
+  "sample_indices_sha256": "f88a528afea5672be5f7a4ae5790bfecf34d224a747625daad7002d72fb4333f",
+  "schema": "ceres_feed_512_stratified_cpu_probe_v1",
+  "selected_metadata_bytes_read": 48526774,
+  "tail32_real17_repeat15_sha256": "1f32b58a802a7d1afbf4d6ec436032e58e1e5f26c185a88e2d49d0b1ad0c1d5f",
+  "tail512_real209_repeat303_sha256": "667cbbc7f6b5bcdaa0a8d2c328c5bc1babab7d3b476fe1d5aaa7049cba4ec8c3",
+  "timing_median": {
+    "frozen_snapshot_batch512": 0.05804989198804833,
+    "main_batch512": 0.03961056302068755
+  },
+  "timing_seconds_5_rounds": {
+    "frozen_snapshot_batch512": [
+      0.06188420098624192,
+      0.05841898999642581,
+      0.05804989198804833,
+      0.057874163991073146,
+      0.05646086999331601
+    ],
+    "main_batch512": [
+      0.03961056302068755,
+      0.039846552012022585,
+      0.03962819301523268,
+      0.0393480240018107,
+      0.03924305600230582
+    ]
+  },
+  "uid_last_component_bins": {
+    "0-7": 9,
+    "16+": 493,
+    "8-15": 10
+  }
+}
