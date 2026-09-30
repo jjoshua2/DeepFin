@@ -30,7 +30,9 @@ def test_analyzer_rejects_partly_mating_tied_top_set(monkeypatch: pytest.MonkeyP
 def test_producer_receipt_pins_mate_domain_and_registration() -> None:
     pins = calibration._producer_sha256()
     for module in (sf_policy_rewrite, registration):
-        path = Path(module.__file__).resolve()
+        module_file = module.__file__
+        assert module_file is not None
+        path = Path(module_file).resolve()
         assert pins[str(path)] == file_sha256(path)
 
 
