@@ -89,3 +89,8 @@ They save trainer state but do not persist the exact sampler cursor or prefetch
 state. Packed admission does not qualify exact interrupted-epoch resume; a fresh
 sampling pass still needs explicit corpus, storage and seed admission.
 No existing frozen run is converted by this option.
+
+Root-level `row_provenance.npz` from derivation may be retained as opaque provenance.
+It is covered by the archive content hash and never interpreted as a training
+array. Other auxiliary filenames and nested provenance files remain rejected, as
+do overlays, duplicate names, paths escaping the root and nonregular members.

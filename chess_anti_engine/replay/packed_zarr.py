@@ -68,10 +68,13 @@ def _validate_members(archive: zipfile.ZipFile) -> None:
             or entry.file_size != entry.compress_size
         ):
             raise ValueError(f"unsafe or duplicate packed Zarr member: {name!r}")
-        # Ordinary Zarr v2 files only. In particular, an overlay or base-binding
+        # Ordinary Zarr v2 files plus the root provenance sidecar emitted by
+        # derivation. Its opaque bytes stay covered by the archive hash; it is
+        # never interpreted as a training array. An overlay or base-binding
         # JSON cannot be silently ignored by directory-based overlay discovery.
         if not (
-            parts[-1] in (".zgroup", ".zattrs", ".zarray", ".zmetadata")
+            parts == ["row_provenance.npz"]
+            or parts[-1] in (".zgroup", ".zattrs", ".zarray", ".zmetadata")
             or all(part.isdecimal() for part in parts[-1].split("."))
         ):
             raise ValueError(f"nonordinary packed Zarr member: {name!r}")
