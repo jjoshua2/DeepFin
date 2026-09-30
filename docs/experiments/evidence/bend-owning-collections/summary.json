@@ -1,0 +1,64 @@
+{
+  "status": "passed",
+  "scope": "owning collection microbenchmark, not scheduler adoption",
+  "machine": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "minimum_sample_ms": 50,
+  "compiler_root": "build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\n",
+  "bun": "1.4.2\n",
+  "sources": {
+    "Ring.bend": "ed72e4fc50d0e41b33e8f51a9b4a5691574943f6cd5db01159d40f4ae2377e15",
+    "Queue.bend": "643a330324cfb637b8bacb74d3fad7ac41d9081452bb74253c6592b65b061c9f",
+    "ring_trace.bend": "f14cff5b53ee1326bfdf793b40ba8a7da04ec73af084d5603e55968773172f9b",
+    "owning.bend": "c94f7f0592d1ecf32529dc1b8279a814533d17190d7e6753692f83be0f3432f9",
+    "owning_benchmark.py": "4dbdd3c0b62cf462b49721d684dc5df8c62c4ff4db8375e6f7023419223965a5"
+  },
+  "search_sha256": "1368b2a9b1b74b1064947bb58ac5213fbbb427936b11c1cd20028c963d89e45c",
+  "chess_sha256": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+  "ring_trace_sha256": {
+    "generic": "92f4d447598255f7bdf4c7f5c45fbadfb2e3f90f00b546fd7faf4d650ed3e84e",
+    "native": "92f4d447598255f7bdf4c7f5c45fbadfb2e3f90f00b546fd7faf4d650ed3e84e",
+    "ubsan": "92f4d447598255f7bdf4c7f5c45fbadfb2e3f90f00b546fd7faf4d650ed3e84e"
+  },
+  "ring_rows_per_mode": 37416,
+  "wrong_head_mutation_rejected": true,
+  "timing_summary": {
+    "1": {
+      "reliable": true,
+      "median_ms": {
+        "list": 186.0,
+        "fifo": 282.0,
+        "ring": 225.5
+      },
+      "list_over_fifo": 0.6595744680851063,
+      "fifo_over_ring": 1.2505543237250554
+    },
+    "16": {
+      "reliable": true,
+      "median_ms": {
+        "list": 675.5,
+        "fifo": 185.0,
+        "ring": 235.0
+      },
+      "list_over_fifo": 3.651351351351351,
+      "fifo_over_ring": 0.7872340425531915
+    },
+    "64": {
+      "reliable": true,
+      "median_ms": {
+        "list": 1149.5,
+        "fifo": 145.5,
+        "ring": 169.0
+      },
+      "list_over_fifo": 7.900343642611684,
+      "fifo_over_ring": 0.8609467455621301
+    }
+  },
+  "samples_file": "samples.csv",
+  "source_commit": "c7b00c19a69bdc2242e9f1931695b2bbb73f8a7a",
+  "workflow_run": 35936460996,
+  "artifact_id": 10782673975,
+  "artifact_sha256": "9fdbc4ace8e4a915b5143ec4e5b73442589af602540326fb615302060a3b762a",
+  "raw_report_sha256": "e1c2c4a5a9e519fc37c1a04dfd7ccae3e6ab5923e2a8ee0500e272d3dfa409c1",
+  "python_tests_passed": 61
+}

@@ -1,0 +1,35 @@
+{
+  "wdl_tables": 1000,
+  "dtz_tables": 1000,
+  "elapsed_s": 0.033725801040418446,
+  "rows": [
+    {
+      "fen": "7k/8/8/8/8/8/8/KQ6 w - - 0 1",
+      "valid": true,
+      "wdl": 2,
+      "dtz": 13,
+      "status": 1
+    },
+    {
+      "fen": "7k/8/8/8/8/8/8/KQ6 w - - 98 1",
+      "valid": true,
+      "wdl": 2,
+      "dtz": 13,
+      "status": null
+    },
+    {
+      "fen": "7k/8/8/8/8/8/8/KQ6 b - - 0 1",
+      "valid": true,
+      "wdl": -2,
+      "dtz": -16,
+      "status": -1
+    },
+    {
+      "fen": "7k/8/8/8/8/8/8/KB6 w - - 0 1",
+      "valid": true,
+      "wdl": 0,
+      "dtz": 0,
+      "status": 2
+    }
+  ]
+}

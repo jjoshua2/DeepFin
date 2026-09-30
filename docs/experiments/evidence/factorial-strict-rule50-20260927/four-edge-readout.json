@@ -1,0 +1,195 @@
+{
+  "edges": {
+    "B_A": {
+      "artifact_sha256": {
+        "game_log": "b1bbceff6b808acec097add54e62203f52fde671ab09a3b37f021da903a36e33",
+        "pgn": "4bd927a3399d48d88ed90f204ac5ff83b63ad11a93446c4b30f9c9fe4c4db3d4",
+        "results_jsonl": "c398aa48baca440c858a643281cec0b12491105f178ca26c3197c6fbb055aede"
+      },
+      "candidate": "B",
+      "complete_sha256": "2c760b8542bbc4e7434f62036f4700c4010dc5e5261157ad5a6bcec398109bc2",
+      "elo": 6.786714342897122,
+      "elo_ci95_normal": [
+        -24.718441399442042,
+        38.404172369738674
+      ],
+      "games": 256,
+      "opening_book_sha256": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c",
+      "opening_fen_by_pair_sha256": "5a78e104346bfd43b7b265edc72f8d0c62bd4761e88385fb31bd02512ea865b8",
+      "paired_scores_sha256": "2ecc67548c728a43be728b8add88ab94416aff9269f06d8e97c2ed7e83b3e2fa",
+      "pentanomial": {
+        "DD_WL": 49,
+        "LD_DL": 27,
+        "LL": 10,
+        "WD_DW": 32,
+        "WW": 10
+      },
+      "plan_sha256": "a563a6097d7c5dcf4bbc42c3fd0036efeeac8c3cf20c310ca5cae56438df5445",
+      "reference": "A",
+      "sample_pairs": 128,
+      "score": 0.509765625,
+      "score_ci95_normal": [
+        0.4644872010978817,
+        0.5550440489021182
+      ],
+      "score_se": 0.023101236684754223
+    },
+    "C_A": {
+      "artifact_sha256": {
+        "game_log": "1fe46d4b3c4389103e6526171263b33209dee09133afd5535c907e31fb5311c0",
+        "pgn": "a21cce012e6b365fbcfb06000bc7f4b950d2a8c585119543f8bb6ca0af5a16d4",
+        "results_jsonl": "bba96b525d9a625c8e3c0f5ac845f609bcba30bfadc958fe835e30400f842a08"
+      },
+      "candidate": "C",
+      "complete_sha256": "eea89084b90b4ba43da07808fe8a21c14b4446cbbb390d013568f09f5ab5898e",
+      "elo": 25.83373912806352,
+      "elo_ci95_normal": [
+        -6.280506759170811,
+        58.396044766781095
+      ],
+      "games": 256,
+      "opening_book_sha256": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c",
+      "opening_fen_by_pair_sha256": "5a78e104346bfd43b7b265edc72f8d0c62bd4761e88385fb31bd02512ea865b8",
+      "paired_scores_sha256": "fbb75217015037a49b2d74ba35c86328403b9bbeed4e0e6678f1c547ba839abb",
+      "pentanomial": {
+        "DD_WL": 41,
+        "LD_DL": 30,
+        "LL": 7,
+        "WD_DW": 37,
+        "WW": 13
+      },
+      "plan_sha256": "fdf6ad038dee0174887c0c84938a633a2fe6f20ba9211a39dddc2c2631a23e25",
+      "reference": "A",
+      "sample_pairs": 128,
+      "score": 0.537109375,
+      "score_ci95_normal": [
+        0.49096260858310886,
+        0.5832561414168912
+      ],
+      "score_se": 0.023544268580046507
+    },
+    "D_B": {
+      "artifact_sha256": {
+        "game_log": "7f98e29e5cad2721debb5819cd3b5756e86104f3320f0b75e235f7f8bd86498b",
+        "pgn": "9061ca9e54914b714533144e4ff34cdde97dbaa74029483d911da3b898667796",
+        "results_jsonl": "159794c5c953dd682c8b79dd009bc9ffacc1a63f4a492331d6875262c09e7c78"
+      },
+      "candidate": "D",
+      "complete_sha256": "4536012b630f554995299811accf37279a2aa2452965c65696490b4f284268a7",
+      "elo": 25.83373912806352,
+      "elo_ci95_normal": [
+        -3.73232366616857,
+        55.7789879073324
+      ],
+      "games": 256,
+      "opening_book_sha256": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c",
+      "opening_fen_by_pair_sha256": "5a78e104346bfd43b7b265edc72f8d0c62bd4761e88385fb31bd02512ea865b8",
+      "paired_scores_sha256": "5f65ae5a2f334bb0d17aec343c1dcf2821d1640e70897eab6de37ac328d8672c",
+      "pentanomial": {
+        "DD_WL": 48,
+        "LD_DL": 30,
+        "LL": 4,
+        "WD_DW": 35,
+        "WW": 11
+      },
+      "plan_sha256": "66a6809cf05bb326fe958024332ff88798de20bf382c08303ec1410db5f450c0",
+      "reference": "B",
+      "sample_pairs": 128,
+      "score": 0.537109375,
+      "score_ci95_normal": [
+        0.4946289610839004,
+        0.5795897889160996
+      ],
+      "score_se": 0.021673680569438546
+    },
+    "D_C": {
+      "artifact_sha256": {
+        "game_log": "4c314b64867d57c31a371478518c2dcea03ad6ebb0a25a2e4a69d08a93e8e1ec",
+        "pgn": "90862aa67975f5e044163502e730967cd2a9c7d99df742d2789fe67e3ef1adac",
+        "results_jsonl": "19b17749d3b9cf20c579e8def8f0f22d1b405ccedfe5b9d8b82e932a5155f2a1"
+      },
+      "candidate": "D",
+      "complete_sha256": "26ac96585f88ea7044888dd936eed9df8a7ff17405c92534db6d2c7b03371b81",
+      "elo": 6.786714342897122,
+      "elo_ci95_normal": [
+        -23.558332602182112,
+        37.23591079088503
+      ],
+      "games": 256,
+      "opening_book_sha256": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c",
+      "opening_fen_by_pair_sha256": "5a78e104346bfd43b7b265edc72f8d0c62bd4761e88385fb31bd02512ea865b8",
+      "paired_scores_sha256": "d994f9c9ca8f574f4780176e9546250e4730d9d17046e177447b7d6ed68b1147",
+      "pentanomial": {
+        "DD_WL": 47,
+        "LD_DL": 28,
+        "LL": 9,
+        "WD_DW": 37,
+        "WW": 7
+      },
+      "plan_sha256": "b8d6133331f5b9b2169d6c1b7afce0f602b4e370abf147abd35b2ac2e65a213c",
+      "reference": "C",
+      "sample_pairs": 128,
+      "score": 0.509765625,
+      "score_ci95_normal": [
+        0.4661486975516309,
+        0.5533825524483691
+      ],
+      "score_se": 0.022253534412433218
+    }
+  },
+  "interpretation_limits": [
+    "Only strict six-man rule50 arenas enter this readout; historical tablebase-disabled arenas are excluded.",
+    "Each edge is a 256-game, 128-opening-pair contrast at 400 simulations; these are conditional checkpoint comparisons, not training or production-rate effects.",
+    "Policy/value averages are descriptive head-to-head score contrasts; nonlinearity and opponent dependence prevent an additive factorial Elo decomposition.",
+    "The two heterogeneity contrasts are conditional differences, not a uniquely identified factorial interaction.",
+    "The original training valid_control=false caveat remains; no seed122 or deployment conclusion follows from this readout."
+  ],
+  "joint": {
+    "bootstrap_percentile_method": "linear",
+    "bootstrap_replicates": 20000,
+    "bootstrap_seed": 2026092401,
+    "contrasts": {
+      "policy_average_pp": {
+        "ci95_percentile": [
+          -2.34375,
+          4.19921875
+        ],
+        "estimate": 0.9765625
+      },
+      "policy_heterogeneity_pp": {
+        "ci95_percentile": [
+          -6.0546875,
+          5.859375
+        ],
+        "estimate": 0.0
+      },
+      "value_average_pp": {
+        "ci95_percentile": [
+          0.5859375,
+          6.73828125
+        ],
+        "estimate": 3.7109375
+      },
+      "value_heterogeneity_pp": {
+        "ci95_percentile": [
+          -6.4453125,
+          6.4453125
+        ],
+        "estimate": 0.0
+      }
+    },
+    "edge_order": [
+      "B_A",
+      "D_C",
+      "C_A",
+      "D_B"
+    ],
+    "unit": "shared paired opening ID"
+  },
+  "protocol_sha256": "746f78e57289b922be772cdf9d6e6eb2c738c72ffdf41269d3e8380407abc238",
+  "script_sha256": "93129efc90ae57849a867e8be28c030743e5e5a3885de28e7ea53e82d412f7c1",
+  "shared_opening_alignment": "EXACT",
+  "spec_version": "factorial58-strict-four-edge-readout-v1",
+  "status": "PASS_STRICT_FACTORIAL_FOUR_EDGE_READOUT",
+  "tests_sha256": "7f28bece2b3a8dc1b52072e929a43f8ba9ec3148bfed08da46f19f3c4d56827f"
+}

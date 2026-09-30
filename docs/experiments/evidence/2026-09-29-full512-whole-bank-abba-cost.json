@@ -1,0 +1,100 @@
+{
+  "arm_order": [
+    "S1",
+    "D1",
+    "D2",
+    "S2"
+  ],
+  "arm_seconds": {
+    "D1": 449.8299082769954,
+    "D2": 456.2218466179911,
+    "S1": 251.69761008501519,
+    "S2": 256.2694155019999
+  },
+  "credit": {
+    "ingest": 0,
+    "owner": 0,
+    "pack": 0,
+    "source": 0,
+    "target": 0,
+    "throughput": 0,
+    "training": 0,
+    "unique": 0
+  },
+  "dual_calls_per_D": 3678,
+  "dual_target_sha256": "1415e93b6bd20c2fc803ed9cfa7f5d711781dad4444af17b9d6d15bdb030438b",
+  "early_pair_saving_fraction": 0.4404604819428207,
+  "exact_512_source_crosslink_sha256": "fc6cc68b3a4c508d6b9865c1f97cf64cc6c34759a04eb807afa667e38f1a060f",
+  "final_readback_seconds": 695.714835034014,
+  "full_wall_cap_seconds": 7200,
+  "full_wall_seconds": 2129.953475106013,
+  "independent_full_byte_audit_files": 51,
+  "independent_full_byte_audit_output_bytes": 12572216972,
+  "independent_full_byte_audit_seconds": 690.9775271810067,
+  "independent_full_byte_audit_sha256": "5fd373baf8298ab2baddbac46925703db4463196cfbeffe40e40a709587ac35c",
+  "independent_full_byte_audit_status": "PASS_REGISTERED_ABBA_FULL_BYTE_AUDIT_ZERO_CREDIT",
+  "late_pair_saving_fraction": 0.43827894827539393,
+  "mean_complete_arm_saving_fraction": 0.43936202005823644,
+  "observed_io_cap_bytes": 171798691840,
+  "observed_postcommit_logical_io_bytes": 141761127475,
+  "operator_clean_teardown": true,
+  "operator_exact_parity": true,
+  "operator_packet_sha256": "c99e70587c6c2f9dda81964187aff36eb12b505301b8e19021976481e33cb9e3",
+  "operator_promotion_status": "ADVANCE_PRODUCTION_WEIGHTED_PILOT_ZERO_CREDIT",
+  "output_tree_cap_bytes": 17179869184,
+  "phase_seconds_by_arm": {
+    "D1": {
+      "compact_target_conversion_seconds": 30.742827602021862,
+      "compact_target_write_readback_seconds": 0.6165066980174743,
+      "feed_conversion_seconds": 58.898882083478384,
+      "forensic_feed_head_decode_seconds": 181.4223119839735,
+      "forensic_head_feed_write_seconds": 4.086221527482849,
+      "model_and_session_seconds": 3.987323026987724,
+      "neural_host_inference_seconds": 154.42985600008979
+    },
+    "D2": {
+      "compact_target_conversion_seconds": 31.071660393994534,
+      "compact_target_write_readback_seconds": 0.6345825720054563,
+      "feed_conversion_seconds": 58.518432806333294,
+      "forensic_feed_head_decode_seconds": 182.13267498800997,
+      "forensic_head_feed_write_seconds": 4.384390777937369,
+      "model_and_session_seconds": 4.025142461032374,
+      "neural_host_inference_seconds": 164.34060903982027
+    },
+    "S1": {
+      "compact_target_conversion_seconds": 9.912283092999132,
+      "compact_target_write_readback_seconds": 0.31490296497941017,
+      "feed_conversion_seconds": 28.838030568294926,
+      "forensic_feed_head_decode_seconds": 119.8367822120199,
+      "forensic_head_feed_write_seconds": 1.855963377340231,
+      "model_and_session_seconds": 5.9134016830066685,
+      "neural_host_inference_seconds": 76.73795825941488
+    },
+    "S2": {
+      "compact_target_conversion_seconds": 10.217038115020841,
+      "compact_target_write_readback_seconds": 0.3190680959960446,
+      "feed_conversion_seconds": 29.382753086596495,
+      "forensic_feed_head_decode_seconds": 121.00625786097953,
+      "forensic_head_feed_write_seconds": 1.85473679882125,
+      "model_and_session_seconds": 4.2247542010154575,
+      "neural_host_inference_seconds": 80.7997950182762
+    }
+  },
+  "postcommit_terminal_match": true,
+  "preregistered_min_saving_fraction": 0.15,
+  "rows": 58820,
+  "schema": "full512_whole_bank_abba_cost_public_evidence_v1",
+  "scope": "same frozen 58820-row source-mix bank, batch32, forensic feeds/heads and dense FP16 diagnostic targets; no 500M throughput inference",
+  "selected_calls_per_S": 1839,
+  "selected_target_sha256": "f7b69f71ac5df80d0d87bd68ee4b561179a12e5065f661ee2d2a3e0f3c061cf4",
+  "shared_stage_seconds": 14.838308131002123,
+  "source_review_sha256": "14bbfdcb9f9c5824622f1c7cfe8bf76639f40480c7adba3202dc6500ef4b92d8",
+  "stage_sha256": "ed2c55aab5207fbefde3a0f0e39529a44f5fcbec5e395fa844fe76c4b6598a9f",
+  "status": "PASS_REGISTERED_ABBA_FULL_BYTE_AUDIT_ZERO_CREDIT",
+  "teacher_model_sha256": {
+    "BT4": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+    "Ceres": "44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3"
+  },
+  "terminal_sha256": "90d6f7a20c2c139f3b277e6a128621d5e9288d5b6cf4369519dae293bef0ac0c",
+  "whole_games": 512
+}

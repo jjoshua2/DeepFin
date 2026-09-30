@@ -1,0 +1,21 @@
+{
+  "status": "REGISTERED",
+  "registered_unix": 1790134581.2808404,
+  "queue_before_sha256": "9891f10394aaa520280ed82d62ddfa4abe3274cf3b02ff47e94337ad7e5d8fbe",
+  "queue_after_sha256": "1930c376b6f4b5dcc2d50679e66c9bb12e6192b462d398b3cba6cbd5d4dc253e",
+  "previous_items_unchanged": true,
+  "item": {
+    "id": "factorial58_sffree_20260923_E_D_rule50",
+    "kind": "registered_command",
+    "status": "queued",
+    "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D_rule50_20260923/scheduler_run",
+    "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D_rule50_20260923/registered_command.json",
+    "command_sha256": "5400361b4adeee9dd60178ea71191f9aff545b26b11df7353017c8594159ed03",
+    "max_seconds": 7860,
+    "description": "Reviewed strict six-man search and adjudication; full 256 games plus PGNs required; E/D donor completion checked before execution",
+    "requires_previous_id": "factorial58_sffree_20260922_E",
+    "estimated_active_seconds": 7200
+  },
+  "plan_sha256": "2e21158bb1dba36b2446d60d10f736ca89416328cf104e0649092ab959570d5a",
+  "note": "Serial supervisor waits E; runner independently requires successful complete E and D donor receipts. Second seed remains held."
+}
