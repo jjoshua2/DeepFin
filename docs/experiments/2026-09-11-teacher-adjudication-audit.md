@@ -196,3 +196,65 @@ It is diagnostic output, not a teacher-label or training admission. A failed
 pass leaves its partial bank under `.writing`; only the successful terminal
 summary authenticates a complete bank. The native-WDL/Ceres join remains separate
 work, and no value usefulness or playing-strength claim follows from these fixes.
+
+### Optional authenticated native BT4 value input
+
+`--native-wdl-manifest PATH --expected-native-wdl-manifest-sha256 SHA256`
+adds the existing historical native-WDL bank to a policy-only raw adapter. The
+manifest must admit the complete original G10 cohort through its existing common
+qualification, completed collection receipts and historical producer pins. Its
+source, summary, BT4 model and `/output/wdl` head must match the audit's original
+source and policy teacher. Only selected audit shards undergo payload checks:
+source columns, game/ply identity, exact stored LC0 feed hashes, cached WDL content
+and storage stability. Values are indexed by derived row, preserving the source
+shuffle. A raw bank that also supplies WDL is rejected as ambiguous.
+
+With both qualified Ceres heads present, the optional path banks all six existing
+value losses, their saved final-SF WDL ruler and an explicit inclusion reason.
+The registered temperatures and weights remain fixed: Ceres primary 0.55,
+secondary 1.5, dual 60/40, and the combined value 50% saved SF, 25% native BT4,
+25% Ceres dual. Mate-domain d9 rows remain excluded. Without the new flags,
+existing policy and value behavior and metadata remain unchanged.
+
+This joins already collected values; it performs no inference and grants no
+training admission. Saved deeper-SF agreement measures this ruler's agreement,
+not independent value accuracy or Elo. Native-WDL availability does not make the
+convenience-prefix G10 panel representative. Actual value readouts require a
+separate completed, pinned invocation; this implementation is not a result.
+
+### First-four-shard native-value diagnostic preregistration
+
+The next CPU pass supplies authenticated native BT4 WDL to the already qualified
+first four original run06 G10 shards: 32,768 rows, selected as a convenience
+prefix. The prior policy-only adapter supplied no value array, so its zero value
+counts did not compare teachers. This pass fills that missing input using the
+existing native collection and both saved Ceres heads; it collects no new neural
+inference or Stockfish scores. The original source, shuffle and row namespace
+remain unchanged.
+
+The six fixed predictions are saved SF, native BT4, Ceres primary (temperature
+0.55), Ceres secondary (1.5), their 60/40 dual, and the registered 50% SF / 25%
+BT4 / 25% Ceres-dual blend. Compare Brier loss and cross-entropy against the
+existing saved final-SF WDL ruler on common included rows. Report paired losses,
+all-row inclusion/exclusion counts and ruler depth/reason. Retain each row's
+source-qualified game identity, losses, ruler and inclusion reason for later
+clustered readout; never cluster on bare game ID. Mate-domain d9 rows remain
+excluded under the existing audit semantics. No temperature, mixing-weight or
+sample-selection fitting is part of this pass.
+
+This is a diagnostic of agreement with a censored, SF-derived ruler, not ground
+truth, representative G10 performance or Elo. A lower diagnostic loss neither
+promotes a training recipe nor cancels the registered Ceres anchors. Policy
+outputs are incidental to the required same-row source join; no independent
+policy rerun is being proposed.
+
+The existing owned-process operator runs once with CPUs 2,3, GPU hidden, two
+numeric threads, 8 GiB address-space limit, 150 GiB SSD reserve, 2 GiB sampled
+output cap and a separate analysis lock. The inclusive limit is 15 minutes
+(870-second outer TERM plus 30-second KILL); the child has at most 810 seconds.
+The previous four-shard policy pass took 376.63 seconds with 2,000,152 KiB
+peak RSS; the extra work is selected native-cache/content/feed verification. STOP, resource or
+lineage failure retains failed output and does not trigger an automatic retry
+or expanded budget. Only a terminal-success summary authenticates the new bank.
+The concrete plan is `scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/plan.json`;
+its final runtime commit and plan SHA must be frozen before validation or launch.

@@ -223,3 +223,106 @@ def test_row_bank_distinguishes_sf_margin_from_bt4_top_gap_and_missing_ceres() -
     assert aggregate['policy']['ceres']['missing_policy_rows'] == 1
     assert bank['ranking_best_set_and_all_winner']['300']['inferior_bt4_mass'] == 1
     json.dumps(bank, allow_nan=False)
+
+
+def test_native_wdl_admission_and_actual_feed_guard(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    import zarr
+    from tests.test_g10_native_wdl_reuse import fixture
+    args, _ = fixture(tmp_path, monkeypatch)
+    # The synthetic graph calls its head 'value'; production remains /output/wdl.
+    monkeypatch.setattr(audit, 'NATIVE_WDL_HEAD', 'value')
+    native = audit.NativeWDLManifest(Path(args.native_wdl_manifest),
+        args.expected_native_wdl_manifest_sha256, Path(args.sf_source),
+        args.expected_sf_summary_sha256, args.expected_onnx_sha256)
+    source = Path(args.sf_source)
+    group = zarr.open_group(str(source / 'shard_000000.zarr'), mode='r')
+    x = np.asarray(group['x'][:])
+    values = native.load('shard_000000.zarr', group, x)
+    np.testing.assert_array_equal(values, np.tile([.125, .25, .625], (len(x), 1)))
+    native.guard()
+    corrupt = x.copy()
+    corrupt[:, 104] = 1 - corrupt[:, 104]  # Real history/meta input differs, IDs unchanged.
+    with pytest.raises(ValueError, match='feed identity'):
+        native.load('shard_000000.zarr', group, corrupt)
+    with pytest.raises(ValueError, match='source/model/head'):
+        audit.NativeWDLManifest(Path(args.native_wdl_manifest),
+            args.expected_native_wdl_manifest_sha256, source,
+            args.expected_sf_summary_sha256, 'f' * 64)
+    with pytest.raises(ValueError, match='source/model/head'):
+        audit.NativeWDLManifest(Path(args.native_wdl_manifest),
+            args.expected_native_wdl_manifest_sha256, tmp_path / 'wrong-source',
+            args.expected_sf_summary_sha256, args.expected_onnx_sha256)
+    manifest = json.loads(Path(args.native_wdl_manifest).read_text())
+    historical = Path(next(iter(manifest['invocations'][0]['producer'].values()))['path'])
+    historical.write_text(historical.read_text() + '\n# changed')
+    with pytest.raises(ValueError, match='evidence changed'):
+        native.guard()
+
+
+def test_optional_native_values_reach_real_audit_bank_without_policy_changes(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    import zarr
+    from tests.test_g10_native_wdl_reuse import fixture
+    from tests.test_bt4_derived_wdl_sidecar import Session
+    def distinct_values(_self, _names, feed):
+        n = len(feed['input'])
+        win = np.arange(n) / 8 + .125
+        return [np.column_stack((win, np.full(n, .25), .75 - win)).astype('float16')]
+    monkeypatch.setattr(Session, 'run', distinct_values)
+    args, _ = fixture(tmp_path, monkeypatch)
+    # This shared source fixture is a real derived/joined corpus with a synthetic
+    # G10 admission stamp, not an adaptive-search fixture. Keep its actual d9
+    # ruler; do not pretend the test exercises production adaptive selection.
+    def baseline_ruler(row, legal):
+        audit.adaptive.validate_baseline(row, legal)
+        return audit.tactical._d9_scores(row, legal), 9, 'synthetic_d9_fixture'
+    monkeypatch.setattr(audit.adaptive, 'select', baseline_ruler)
+    monkeypatch.setattr(audit, 'NATIVE_WDL_HEAD', 'value')
+    real_native = audit.NativeWDLManifest
+    # Existing fixtures deliberately use different synthetic policy/value graphs.
+    # Keep real admission/cache/feed validation, supplying its known graph identity.
+    def native_fixture(path, digest, source, summary_sha, _policy_model):
+        return real_native(path, digest, source, summary_sha, args.expected_onnx_sha256)
+    monkeypatch.setattr(audit, 'NativeWDLManifest', native_fixture)
+    source = Path(args.sf_source)
+    cmanifest = tmp_path / 'ceres.json'
+    cmanifest.write_text(json.dumps({'schema': 1, 'source': str(source),
+        'source_summary_sha256': args.expected_sf_summary_sha256, 'entries': []}))
+    # Only the Ceres provider boundary is synthetic; audit geometry and native
+    # original-source qualification run normally against the real tiny corpus.
+    def load_ceres(_self, _shard, group, rows):
+        legal = np.asarray(group['legal_mask'][:]) != 0
+        counts = legal.sum(axis=1)
+        return {'legal_offsets': np.r_[0, np.cumsum(counts)],
+                'legal_indices': np.nonzero(legal)[1],
+                'policy_logits': np.zeros(int(counts.sum()), dtype='float16'),
+                'value_logits': np.tile([1, 0, -1], (rows, 1)).astype('float16'),
+                'value2_logits': np.tile([-1, 0, 1], (rows, 1)).astype('float16')}
+    monkeypatch.setattr(audit.CeresManifest, 'load', load_ceres)
+    manifest = tmp_path / 'adapter.json'
+    from typing import Any
+    options: dict[str, Any] = {'expected_manifest_sha256': audit.file_sha256(manifest),
+               'ceres_manifest_path': cmanifest,
+               'expected_ceres_manifest_sha256': audit.file_sha256(cmanifest)}
+    baseline = audit.audit(manifest, out=tmp_path / 'audit_baseline', **options)
+    changed = audit.audit(manifest, out=tmp_path / 'audit_native',
+        native_wdl_manifest_path=Path(args.native_wdl_manifest),
+        expected_native_wdl_manifest_sha256=args.expected_native_wdl_manifest_sha256, **options)
+    assert baseline['metrics']['policy'] == changed['metrics']['policy']
+    assert all(v['rows'] == 0 for v in baseline['metrics']['value'].values())
+    assert all(v['rows'] == changed['rows'] == 3 for v in changed['metrics']['value'].values())
+    rows = [json.loads(line) for line in (tmp_path / 'audit_native' / audit.ROW_BANK).read_text().splitlines()]
+    assert all(r['value_inclusion'] == 'included' and len(r['value_losses']) == 6 for r in rows)
+    assert all(sum(r['value_ruler_wdl']) == pytest.approx(1) for r in rows)
+    expected = set(changed['metrics']['value'])
+    assert all(set(r['value_losses']) == expected for r in rows)
+    for row in rows:
+        native = zarr.open_group(str(Path(args.wdl) / row['identity']['derived_shard']), mode='r')
+        prediction = np.asarray(native['bt4_wdl_raw'][row['identity']['derived_row']])
+        assert row['value_losses']['bt4_native']['brier'] == pytest.approx(
+            audit._wdl_loss(prediction, np.asarray(row['value_ruler_wdl']))[0])
+    for name, cell in changed['metrics']['value'].items():
+        assert cell['brier_sum'] == pytest.approx(sum(r['value_losses'][name]['brier'] for r in rows))
