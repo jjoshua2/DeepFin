@@ -154,3 +154,45 @@ No single retrospective threshold here is a promotion criterion. Any new policy 
 - The audit uses one-node neural teacher outputs; it does not change live Gumbel search.
 - Original source/history, single-seed and development-panel caveats remain unchanged.
 - Existing CeresB50 and B100CeresV25 remain the clean first Ceres strength anchors after their full original-corpus teacher bank qualifies; this audit informs second-generation recipes rather than silently replacing those registrations.
+
+### Estimator corrections before the first substantive pass
+
+Schema 2 preserves the original Tactical300 preview and selection strata, but
+makes their interpretation explicit. `d9_best_minus_next_lower_cp` is the best
+score minus the next strictly lower score. The separate BT4-top best/worst gap
+fields report both endpoints when neural top probability is tied; neither is a
+renaming of Tactical300's gate.
+
+Each policy cell counts all ordinary rows, unavailable policies, invalid final
+rosters, coverage rows (including zero coverage), zero-coverage rows and regret
+rows separately. Mean coverage uses coverage rows; mean conditional regret uses
+only positive-coverage rows. It is an equal-row mean after each policy is
+renormalized on the saved roster. Compare teachers on the common valid rows
+using the banked paired regret differences; optional Ceres or empty geometric
+support must not silently change the comparison population.
+
+Unknown reversals remain null. Position reversal rates divide by adjudicable
+rows. Routing reports both selection among all ordinary rows and its historical
+`search_fraction` among adjudicable rows. Neither estimates prospective compute
+savings or outcomes for moves never rescored.
+
+Flat ranking counters retain their existential best-set meaning. The nested
+`all_winner` counters conservatively require every tied d9 winner to beat an
+inferior move; any losing winner contradicts that constraint. Missing winner or
+inferior scores remain unscored. Each inferior move's BT4 probability is counted
+once, with confirmed/contradicted/tied/unscored mass at the existing strict
+100/300/500/1000-cp thresholds. Counts and probability mass on missing moves
+remain visible; narrowed final rosters cannot establish their reliability.
+
+`teacher_adjudication_rows.jsonl` banks every authenticated row, including
+explicit mate-domain exclusions. The terminal summary records its count and
+SHA256. Rows carry the qualified source namespace, raw shard/physical row,
+worker/game/ply and input keys, derived location, both SF-gap concepts, absolute
+best score, tied-best cardinality, final depth/reason/mate status, confidence,
+coverage/regret, common-row paired differences, reversal/routing outcomes,
+ranking counts/mass and actual Tactical300 probability mass moved. This compact
+metric bank supports subsequent game-clustered analyses without another raw join.
+It is diagnostic output, not a teacher-label or training admission. A failed
+pass leaves its partial bank under `.writing`; only the successful terminal
+summary authenticates a complete bank. The native-WDL/Ceres join remains separate
+work, and no value usefulness or playing-strength claim follows from these fixes.
