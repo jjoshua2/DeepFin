@@ -5,7 +5,7 @@ label corpus or raw Stockfish source has been scanned by this auditor. Its
 qualification status must not be used until a fresh successful label terminal, the
 independent all-label audit and the paired builder terminal are sealed, and
 this auditor completes every shard and final readback.
-The source pins bind the fresh full07 worker, authorization and builder v8.
+The source pins bind the fresh full07 worker, authorization and builder v9.
 Full04, full05 and full06 labels and receipts are ineligible. Production admission
 still requires a completed full07 label terminal and independently monitored
 all-label audit, followed by a sealed native builder terminal.
@@ -50,7 +50,10 @@ child with a 1,800-second parent watchdog, parent-death termination and its
 own 1,800-second alarm. The parent enforces a sampled 6-GiB child RSS ceiling, 32-GiB
 host available-memory floor, 400-GiB shared-cgroup physical-I/O bound per
 attempt, 1-GiB auditor-output ceiling and 50-GiB free-space floor. The shared
-cgroup counter is physical host I/O, not process logical bytes. The runner
+cgroup counter is physical host I/O, not process logical bytes. A newly visible
+device is charged from zero; a vanished or reversed device holds the run. One
+baseline and prior-sample map span every unit in an attempt. The trace and
+resource receipts retain the baseline and per-device counters. The runner
 holds the existing shared heavy-I/O lease; do not start it while full07 or
 another owner holds that lease. A label index and 384 audit/verify receipt
 pairs are published by fsynced no-replace links. Every accepted unit also has
@@ -74,7 +77,9 @@ SIGKILL before and after the receipt link followed by a fresh-process resume,
 parent-SIGKILL child termination before and after Python watchdog setup,
 a pre-exec child alarm, an actual killed monitor after proof emission
 followed by fresh-process resource acceptance, orphan shard proof readback, and parent-only
-qualification publication outside the auditor checkpoint root.
+qualification publication outside the auditor checkpoint root. Four physical-I/O
+counter cases cover stable, new, vanished and reversed devices, plus a device
+appearing in one unit and disappearing or reversing before the next.
 These tests do not measure production runtime or prove actual WSL power-loss
 behavior. Production execution remains held until plan/source review and the
 shared heavy-I/O lease are explicitly scheduled.

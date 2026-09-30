@@ -41,6 +41,10 @@ UNIT_SECONDS = 1800
 RSS_KIB_MAX = 6 << 20
 AVAILABLE_KIB_MIN = 32 << 20
 PHYSICAL_BYTES_MAX = 400 << 30
+PHYSICAL_SCOPE = (
+    "shared cgroup r+w; new device charged from zero; cached reads omitted; "
+    "not process logical bytes"
+)
 OUTPUT_BYTES_MAX = 1 << 30
 FREE_BYTES_MIN = 50 << 30
 ARTIFACT_ROOT = Path("/home/josh/chess-artifacts")
@@ -62,7 +66,7 @@ EXPECTED_PINS = {
     "injectivity": "2b10f425d98d5f788ec8b06f359094c8cc655749e24d4ef641b9f2b318422b88",
     "roster": "8766e5745a6f36e4ecbed90cc861d012e29f2d21356958fa1477bead4dcc7941",
     "target_scheme": "716ef4da2c928a437ca001f7ea769c8e555091221cb22ca7ee884e5deeaefdfa",
-    "builder_source": "a859bcf2b975aab5c5d10531a48d2984e5378555ec34cf98885491b092680368",
+    "builder_source": "79f916c3e0f957c20d79b431192810363890f8094eed291889518f15c88d5bbf",
     "builder_core": "50af80882449d3fc9626ed91fa9a9e99587cc9f7cc1fcb07046b1bdb35adfaf5",
     "label_worker": "31a7730cac1f9b6b39f01b938ccf6772c895d5a2727f89eb5a969aacec24cf83",
     "label_authorization": "b4806340c7f3a5a61c8eedd0ea4156f99928b494274780ae7877fb072c484dc1",
@@ -543,15 +547,44 @@ def physical_counters() -> dict[str, tuple[int, int]]:
     return result
 
 
-def physical_delta(before: dict[str, tuple[int, int]]) -> int:
-    after = physical_counters()
-    require(set(after) == set(before), "physical-I/O device set changed")
+def physical_map(counters: dict[str, tuple[int, int]]) -> dict[str, dict[str, int]]:
+    return {device: {"rbytes": pair[0], "wbytes": pair[1]}
+            for device, pair in sorted(counters.items())}
+
+
+def parsed_physical_map(value: Any) -> dict[str, tuple[int, int]]:
+    require(isinstance(value, dict) and bool(value),
+            "physical-I/O device map missing")
+    result: dict[str, tuple[int, int]] = {}
+    for device, pair in value.items():
+        require(isinstance(device, str) and bool(device)
+                and isinstance(pair, dict)
+                and set(pair) == {"rbytes", "wbytes"}
+                and type(pair["rbytes"]) is int and type(pair["wbytes"]) is int
+                and pair["rbytes"] >= 0 and pair["wbytes"] >= 0,
+                "physical-I/O device map invalid")
+        result[device] = pair["rbytes"], pair["wbytes"]
+    return result
+
+
+def physical_delta(before: dict[str, tuple[int, int]],
+                   after: dict[str, tuple[int, int]]) -> int:
+    require(before.keys() <= after.keys(), "physical-I/O device vanished")
     total = 0
-    for device, pair in before.items():
-        current = after[device]
+    for device, current in after.items():
+        pair = before.get(device, (0, 0))
         require(current[0] >= pair[0] and current[1] >= pair[1],
                 "physical-I/O counter reversed")
         total += current[0] - pair[0] + current[1] - pair[1]
+    return total
+
+
+def physical_sample(io_state: dict[str, dict[str, tuple[int, int]]],
+                    current: dict[str, tuple[int, int]]) -> int:
+    """Reject changes hidden between polls, then charge from attempt start."""
+    physical_delta(io_state["last"], current)
+    total = physical_delta(io_state["baseline"], current)
+    io_state["last"] = current
     return total
 
 
@@ -612,8 +645,11 @@ def preexec_owned_child(owner_pid: int, seconds: int) -> None:
 
 
 def supervise(command: list[str], root: Path, lease_fd: int,
-              plan_sha: str, name: str) -> None:
-    before = physical_counters()
+              plan_sha: str, name: str,
+              io_state: dict[str, dict[str, tuple[int, int]]] | None = None) -> None:
+    if io_state is None:
+        baseline = physical_counters()
+        io_state = {"baseline": baseline, "last": baseline}
     started = time.monotonic()
     owner_pid = os.getpid()
     process = subprocess.Popen(
@@ -625,7 +661,8 @@ def supervise(command: list[str], root: Path, lease_fd: int,
             while True:
                 code = process.poll()
                 elapsed = time.monotonic() - started
-                physical = physical_delta(before)
+                current_io = physical_counters()
+                physical = physical_sample(io_state, current_io)
                 rss = process_rss_kib(process)
                 maximum_rss = max(maximum_rss, rss)
                 available = memory_available_kib()
@@ -637,7 +674,9 @@ def supervise(command: list[str], root: Path, lease_fd: int,
                           "host_mem_available_kib": available,
                           "output_bytes": output, "disk_free_bytes": free,
                           "shared_host_physical_io_bytes": physical,
-                          "physical_scope": "shared cgroup r+w; cached reads omitted; not process logical bytes"}
+                          "host_io_baseline": physical_map(io_state["baseline"]),
+                          "host_io_devices": physical_map(current_io),
+                          "physical_scope": PHYSICAL_SCOPE}
                 trace.write(canonical(sample))
                 trace.flush()
                 os.fsync(trace.fileno())
@@ -663,9 +702,11 @@ def supervise(command: list[str], root: Path, lease_fd: int,
                             "wall_seconds": round(elapsed, 3),
                             "sampled_peak_child_rss_kib": maximum_rss,
                             "shared_host_physical_io_bytes": physical,
+                            "host_io_baseline": physical_map(io_state["baseline"]),
+                            "host_io_devices_at_exit": physical_map(current_io),
                             "output_bytes_at_exit": output,
                             "disk_free_bytes_at_exit": free,
-                            "physical_scope": "shared cgroup r+w; cached reads omitted; not process logical bytes",
+                            "physical_scope": PHYSICAL_SCOPE,
                         })
                     return
                 time.sleep(5)
@@ -712,7 +753,12 @@ def require_resource(root: Path, plan_sha: str, name: str) -> bool:
             and 0 <= value.get("wall_seconds", UNIT_SECONDS) < UNIT_SECONDS
             and 0 <= value.get("sampled_peak_child_rss_kib", RSS_KIB_MAX) < RSS_KIB_MAX
             and 0 <= value.get("shared_host_physical_io_bytes", PHYSICAL_BYTES_MAX)
-            < PHYSICAL_BYTES_MAX,
+            < PHYSICAL_BYTES_MAX
+            and value.get("physical_scope") == PHYSICAL_SCOPE
+            and physical_delta(
+                parsed_physical_map(value.get("host_io_baseline")),
+                parsed_physical_map(value.get("host_io_devices_at_exit"))) ==
+            value["shared_host_physical_io_bytes"],
             "unit resource receipt differs")
     return True
 
@@ -1013,6 +1059,8 @@ def main() -> None:
     require(args.shard_id is None, "parent cannot take a shard ID")
     with LEASE.open("a+b") as lease:
         fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        baseline_io = physical_counters()
+        io_state = {"baseline": baseline_io, "last": baseline_io}
         require(memory_available_kib() >= AVAILABLE_KIB_MIN,
                 "host free-memory floor at launch")
         require(shutil.disk_usage(args.output.parent).free >= FREE_BYTES_MIN,
@@ -1035,7 +1083,7 @@ def main() -> None:
                 command.extend(("--shard-id", str(shard_id)))
             return command
         supervise(child("labels"), args.output, lease.fileno(), args.plan_sha256,
-                  "label-index")
+                  "label-index", io_state)
         receipt_prefix(args.output, args.plan_sha256,
                        plan["builder_terminal"]["sha256"])
         for shard_id in range(SHARDS):
@@ -1043,14 +1091,14 @@ def main() -> None:
                                     f"audit-{shard_id:06d}"):
                 supervise(child("shard", shard_id), args.output, lease.fileno(),
                           args.plan_sha256,
-                          f"audit-{shard_id:06d}")
+                          f"audit-{shard_id:06d}", io_state)
             if not require_resource(args.output, args.plan_sha256,
                                     f"verify-{shard_id:06d}"):
                 supervise(child("verify", shard_id), args.output, lease.fileno(),
                           args.plan_sha256,
-                          f"verify-{shard_id:06d}")
+                          f"verify-{shard_id:06d}", io_state)
         supervise(child("final"), args.output, lease.fileno(), args.plan_sha256,
-                  "final-readback")
+                  "final-readback", io_state)
         publish_qualification(args.output, plan)
 
 

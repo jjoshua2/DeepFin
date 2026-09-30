@@ -219,6 +219,43 @@ def test_pinned_json_parses_the_exact_hashed_bytes(
     assert path.read_bytes() == raw
 
 
+@pytest.mark.parametrize(
+    ("before", "after", "expected"),
+    [
+        ({"8:0": (10, 20)}, {"8:0": (15, 27)}, 12),
+        ({"8:0": (10, 20)}, {"8:0": (15, 27), "8:1": (4, 6)}, 22),
+        ({"8:0": (10, 20)}, {}, None),
+        ({"8:0": (10, 20)}, {"8:0": (9, 21)}, None),
+    ],
+)
+def test_shared_physical_io_additive_device_accounting(
+    before: dict[str, tuple[int, int]], after: dict[str, tuple[int, int]],
+    expected: int | None,
+) -> None:
+    if expected is None:
+        with pytest.raises(ValueError, match="HOLD"):
+            runner.physical_delta(before, after)
+    else:
+        assert runner.physical_delta(before, after) == expected
+        assert runner.parsed_physical_map(runner.physical_map(after)) == after
+
+
+@pytest.mark.parametrize(
+    "second_unit",
+    [{"8:0": (16, 28)}, {"8:0": (16, 28), "8:1": (3, 7)}],
+)
+def test_physical_meter_refuses_disappearance_or_reversal_between_units(
+    second_unit: dict[str, tuple[int, int]],
+) -> None:
+    baseline = {"8:0": (10, 20)}
+    state = {"baseline": baseline, "last": baseline}
+    assert runner.physical_sample(
+        state, {"8:0": (15, 27), "8:1": (4, 6)}) == 22
+    with pytest.raises(ValueError, match=r"device vanished|counter reversed"):
+        runner.physical_sample(state, second_unit)
+    assert state["last"] == {"8:0": (15, 27), "8:1": (4, 6)}
+
+
 def test_independent_three_row_label_index_and_source_recheck(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -479,7 +516,11 @@ def test_tiny_qualification_publishes_only_final_into_pack_root(
                         "result_sha256": audit.sha256_file(
                             runner.unit_result_path(audit_root, name)),
                         "wall_seconds": 1, "sampled_peak_child_rss_kib": 100,
-                        "shared_host_physical_io_bytes": 100})
+                        "shared_host_physical_io_bytes": 100,
+                        "host_io_baseline": {"8:0": {"rbytes": 10, "wbytes": 20}},
+                        "host_io_devices_at_exit": {
+                            "8:0": {"rbytes": 40, "wbytes": 90}},
+                        "physical_scope": runner.PHYSICAL_SCOPE})
     for name in ("label-index", "audit-000000", "verify-000000"):
         monitored(name)
     candidate = runner.verify_final(audit_root, plan, census, builder)
