@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Whole-board reconstruction](2026-09-24-bend-whole-board-roundtrip.md) | Five source contracts for lossless Board snapshots, coordinate order and injectivity; actual decoder native checks; structural snapshot lowering remains unqualified; modular132/367 |
 | [Occupied decoder and abstract squares](2026-09-24-bend-occupied-decoder.md) | Four universal source laws connect actual occupied decoding to independent local square states; modular127/350; parser and move semantics remain open |
 | [Corrected full58k BT4/Ceres selected targets](2026-09-30-full58820-corrected-selected-targets.md) | Banked CPU reconstruction and independent direct readback of all 58,820 targets; corrected Ceres batch-profile top-1, zero corpus or strength credit |
 | [Ceres active128 frozen-source quality](2026-09-30-ceres-active128-frozen-quality.md) | 52,820 exact shared feeds, corrected FP16 target TV maximum 0.226679 fails the frozen 0.05 policy gate; source and CPU reader timings, no promotion |
