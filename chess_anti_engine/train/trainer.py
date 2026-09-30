@@ -6865,7 +6865,7 @@ class Trainer:
                     )
             group.update(hparams)
 
-    def load(self, path: Path) -> None:
+    def load(self, path: Path, *, exact_resume: bool = False) -> None:
         from chess_anti_engine.model import (
             load_state_dict_tolerant,
             migrate_optimizer_input_plane_state,
@@ -6875,6 +6875,32 @@ class Trainer:
         # Trainer checkpoints include optimizer/scheduler/RNG pickles, so resume needs the
         # full trusted checkpoint payload rather than PyTorch's weights-only loader.
         ckpt = torch.load(str(path), map_location=self.device, weights_only=False)
+        if exact_resume:
+            # Fixed-epoch restart must refuse the warm-start loader's deliberate
+            # partial-model and cold-optimizer fallbacks. Its run spec already
+            # pins the architecture and code, so every trained state must fit.
+            self.model.load_state_dict(
+                align_compile_prefix(ckpt["model"], reference=self.model.state_dict()),
+                strict=True,
+            )
+            self.opt.load_state_dict(ckpt["opt"])
+            self._scheduler.load_state_dict(ckpt["scheduler"])
+            self._peak_lr = float(ckpt["peak_lr"])
+            if not self.load_zclip_state(ckpt["zclip"]):
+                raise ValueError("exact resume could not restore ZClip state")
+            if self._swa_model is None:
+                if "swa_model" in ckpt:
+                    raise ValueError("exact resume checkpoint has unexpected SWA state")
+            else:
+                self._swa_model.load_state_dict(
+                    align_compile_prefix(
+                        ckpt["swa_model"], reference=self._swa_model.state_dict(),
+                    ),
+                    strict=True,
+                )
+            self.step = int(ckpt["step"])
+            self.writer.add_scalar("zclip/restored", 1.0, self.step)
+            return
         load_state_dict_tolerant(self.model, ckpt["model"], label="resume")
         fresh_opt_state = self.opt.state_dict()
         fresh_scheduler_state = self._scheduler.state_dict()
