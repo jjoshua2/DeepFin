@@ -1,5 +1,17 @@
 # Bend migration and proof inventory
 
+## Current computed-fill hosted qualification: September 23, 2026
+
+Hosted run **35896688343**, workflow commit `c118f74d060f9e183f1cac6a212413dc42dd6e97`, passes the complete **98-law / 212-control aggregate**, four native modes, original compiler source/pin gates and unchanged whole-repository lint on source `94e380d218d1713828fd192427282588bf7df910`. The three public laws are the unchanged saved candidate, not three additional laws beyond that candidate. The historical local-only/aggregate-unrun/lint-unqualified statements below remain records of their original commands; these gaps are now closed for the exact hosted candidate. No broader geometry or full-builder theorem is implied. See the dated fill-contents readout and committed hosted reports.
+
+## Local computed-fill contents continuation: September 23, 2026
+
+Three new contents laws and their public consumer pass the pinned source checker; 17 rejection controls pass separately. New native tests pass 452 rows per mode in four builds on actual fills over fresh seeded storage. The parent 95-law/195-control hosted qualification is retained, not rerun or relabeled. Full candidate aggregate and hosted qualification are not claimed; repository lint remains nonzero because its tools are unavailable. This is a local patch, not a published branch or PR.
+
+`contents/bounded_fill_entry` specifies the actual computed value at every valid interior index of a bounded fill; `bounded_zero_fill_read` specifies the full updated-array/read pair using the existing zero-start recurrence. `full_block_entry` obtains complete chess-block budgets from accepted prefix producers rather than caller-supplied expected values. These per-fill results are source-checked. They do not establish loaded stored-header correctness, persistence through all later metadata/extras/block writes, or equality to independent blocker-ray geometry. No production code or additional Python application responsibility moved.
+
+See [the dated contents record](experiments/2026-09-23-bend-fill-contents.md) and its exact execution receipts. Native observations are selected values and metadata, not every returned cell. Source/native/lint statuses are separate; no complete P2 or end-to-end native theorem is claimed.
+
 ## Latest whole-fill interval qualification: September 22, 2026
 
 Hosted run **35790621404**, development workflow `e91f23707a541243b073aca5ecd1e58158039c42`, passes all **95 accepted laws and 195 rejection controls**, four native modes, original compiler source/pin checks and unchanged whole-repository lint on the exact inspected candidate.
