@@ -1,5 +1,19 @@
 # Bend migration and proof inventory
 
+## Initialized attack state reconciliation
+
+The saved local composition is preserved alongside the existing #897 implementation, not silently substituted or counted again. A new native state regression detects returned-table loss after a correct current answer, and unused-slot corruption even when every query answer remains correct. Fresh four-mode native and configured repository lint evidence is in [the reconciliation record](experiments/2026-09-26-bend-attack-state-reconciliation.md). Exact existing three-law/source-control evidence is retained; totals remain modular186/581, not a full aggregate execution. Forward/reverse geometry and castling singleton propagation remain next.
+
+## Initialized attack composition (current increment)
+
+Hosted run **36286418567** passes the complete three-law importing consumer and all nineteen controls in one focused command, three positive control-baseline modules, four native initialization/query modes with all four actual-code corruptions, original compiler source/pin tests and unchanged repository lint on source `715ac8b81d665730e00cc2ca4d956c931bda1876`.
+
+Qualification is modular186/581 with exact183/562 parent evidence retained; the complete aggregate was not run. Earlier imported-binder and resource failures remain historical,not proof passes.
+
+Three new public contracts connect actual initialized six-piece attack queries, attacked, and singleton in_check to independent target-centred geometric masks and a per-square witness scan. Every result retains the complete same initialized array; input mask/read certificates are derived from existing producers. Explicit depth17/full128 blocks/full64 extras/bounded-square conditions remain. Singleton kings are an additional check-law premise, not implied by representation consistency.
+
+Source qualification for this increment is recorded in [the readout](experiments/2026-09-26-bend-initialized-attacked.md); no complete aggregate execution is implied. Universal forward/reverse ray membership and singleton propagation through castling remain separate. Existing proofs and production code are unchanged.
+
 ## P3 non-slider initialization and coordinate geometry
 
 Hosted run **36284142030** passes all three public laws, importing consumer, nineteen controls, four native initialization/query modes, three compiled/executed actual-code corruptions, original compiler checks and unchanged repository lint on source `6fd072fe09f3e507940f3723719588e54b06c062`.
