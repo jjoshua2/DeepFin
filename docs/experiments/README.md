@@ -263,6 +263,7 @@ analysis workflow.
 - [Bounded arena memory and initialization-cost screen](2026-09-24-arena-memory-screen.md): equal-work per-child peak RSS and process timing across capacities; no model/GPU or live-memory budget claim.
 - [Ceres CPU history reductions](2026-09-21-ceres-history-reductions.md) — exact-byte CPU encoder comparison.
 Current evidence correction and scale plan: [September 16 bootstrap audit](2026-09-16-bootstrap-status-audit.md).
+- [2026-09-20: External storage and BT4 labeling efficiency](2026-09-20-storage-loader.md)
 - [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
 
 - [Bounded owning ring and calibrated collection comparison](2026-09-23-bend-owning-collections.md): Search.Tree payloads, layout failure/workaround, and matched-work timings; no scheduler adoption.
