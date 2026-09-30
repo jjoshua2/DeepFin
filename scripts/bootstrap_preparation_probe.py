@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import signal
 import time
+from typing import Any
 
 owner_spec = importlib.util.spec_from_file_location(
     "preparation_overlap_owner", Path(__file__).with_name("bootstrap_preparation_overlap.py")
@@ -65,9 +66,11 @@ def main():
         spec = importlib.util.spec_from_file_location(
             "frozen_probe_preparation", config["prep_runner"]["path"]
         )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("cannot import frozen preparation runner")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        module.HERE = out / "control"
+        setattr(module, "HERE", out / "control")
         probe = {**plan, "cohorts": [{**source, "output": str(out / "targets")}]}
         module.worker(probe, args.worker, 0)
         return
@@ -83,7 +86,7 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
     deadline = time.monotonic() + args.seconds
-    result = {
+    result: dict[str, Any] = {
         "status": "INCOMPLETE",
         "source_index": args.index,
         "rows": source["rows"],
@@ -92,6 +95,8 @@ def main():
     }
     try:
         with owner.stage_lock(out, config, deadline, queued=False) as fd:
+            if fd is None:
+                raise RuntimeError("probe ownership missing")
             for stage in ["seal", "cohort"]:
                 start = time.monotonic()
                 command = [

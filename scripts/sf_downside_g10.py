@@ -29,7 +29,7 @@ def require(condition: bool, message: str) -> None:
 class SelectedG10:
     def __init__(self, args: argparse.Namespace, summary: dict[str, Any],
                  raw_dir: Path, source: Path,
-                 observation: Callable[[dict[str, Any], str], Any]):
+                 observation: Callable[[dict[str, Any], str, str], Any]):
         self.observation = observation
         self.raw_dir, self.source, self.summary = raw_dir, source, summary
         path = Path(args.selected_g10_roster).resolve()
@@ -40,6 +40,11 @@ class SelectedG10:
         self.metadata[manifest_path] = file_sha256(manifest_path)
         manifest = derive.corpus.read_launch_manifest(raw_dir)
         self.config = summary["corpus"]["config_sha256"]
+        self.outcome_mode = derive.corpus_outcome_mode(manifest)
+        require(self.outcome_mode == derive.corpus.outcome_mode_of(summary["corpus"].get(
+                    "outcome_mode", derive.corpus.OUTCOME_MODE_THEORETICAL,
+                )),
+                "selected G10 raw/derived outcome modes differ")
         derive.validate_selection_metadata(
             selection, source_dir=raw_dir, source_config_sha256=self.config,
             source_manifest_sha256=self.metadata[manifest_path],
@@ -174,7 +179,7 @@ class SelectedG10:
                     continue
                 offset, ref = targets[index]
                 require(raw.get("result") is not None, "selected row has no result")
-                obs = self.observation(raw, self.config)
+                obs = self.observation(raw, self.config, self.outcome_mode)
                 require(all(raw[k] == ref[k] for k in ("worker_id", "game_id", "ply", "input_key"))
                         and obs.game == games[offset] and obs.ply == plies[offset]
                         and ref["stored_input_key"] == derive.corpus.input_tensor_key(

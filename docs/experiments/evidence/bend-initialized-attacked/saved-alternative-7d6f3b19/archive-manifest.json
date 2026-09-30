@@ -1,0 +1,26 @@
+{
+  "original_review_zip_sha256": "d051d5b9f0e634958008009382b739effe801b421cdb22a2c95faf8f759b8ceb",
+  "archive_scope": "All 15 saved primary proof/test files, original readout and selected original execution receipts; original full logs, patch and Git bundle remain in the review ZIP. No new law counts.",
+  "files_sha256": {
+    "native/bend_engine/standalone/proofs/attack_composition/consumer.bend": "c3736f9e4c47a06cc38051ff97a5b6b1818eca7377f925b6751a7ed82fff256a",
+    "native/bend_engine/standalone/proofs/attack_composition/Check.bend": "fdbb5fcdaa8957606d6600e5265929c9867fcbe10eb8ca40e3ff35ee415e9f2d",
+    "native/bend_engine/standalone/proofs/attack_composition/Evidence.bend": "11fbf6d0dc250386014ab55473dc273039f8c77e45931f9f50e0e3756716ca6b",
+    "native/bend_engine/standalone/proofs/attack_composition/Spec.bend": "52b10f57bfe6d5830cfc8619ca473c8b9f93c276646ccfa764da21ae6a675804",
+    "native/bend_engine/standalone/proofs/attack_composition/Flow.bend": "d928cac6cbb0dce0a93c0f368422167fbbb440ae804d0115b5c9d3c092bc275f",
+    "native/bend_engine/standalone/proofs/attack_composition/Initialized.bend": "54ae3c8183c1987b1955f6cc6fb5197449f93c892eaf2df1f78cd7af5c139ca6",
+    "native/bend_engine/standalone/proofs/attack_composition/PROOF.bend": "0b375f82dfa5b6120a4a8f4fb0ba848592bdd5faabb763527b8f430efe8b4f12",
+    "native/bend_engine/standalone/proofs/attack_composition/LAWS.bend": "bf052a06ef2fb1a9ab7743b1dd732495ee711ace1939bfa1ff56b24b82219fe5",
+    "native/bend_engine/standalone/proofs/attack_composition/Index.bend": "764bcd2ea073e4cad0f6810575843cdf2f4a26a3d1bccd5077ab04c6f0bf8cbe",
+    "native/bend_engine/standalone/proofs/attack_composition/Queen.bend": "5ac809eaa03a51978081989fa235769bab1bd3e0a533d56e0b17fa42ab4a7e56",
+    "native/bend_engine/standalone/proofs/attack_composition/README.md": "6305cfb410de042ff98b7c105a7f720b17dfec4c21e54ca3f516421c0e5c92cc",
+    "native/bend_engine/standalone/proofs/attack_composition/focused.js": "42096038d8bcdb03e4dde271059eebb8ecf31ed27f1f5da7af3a993a55564ebf",
+    "native/bend_engine/standalone/proofs/attack_composition/Query.bend": "3b3b4272e30b57d889f4df7af01a2d22674da2d67751ef980cac1a32a7874349",
+    "native/bend_engine/standalone/proofs/attack_composition/verify_native.py": "332e9d791e9674bf967226b375d52210458bb6a43367063a0d1c5c9dd887c4ae",
+    "native/bend_engine/standalone/proofs/attack_composition/probe.bend": "0c78064ced52e117bb796f5047ffda03c9cdb3f9f9ac8ec51c92e0bf18777d8e",
+    "readout.md": "5734356ce30172e825077f639fea176e45833ad2c0d85acb5c660c25c3fe7962",
+    "publication-core.json": "61d01eb502107029d2388f1007b25c8432ee7786c24362e173410d5f3aa6fb26",
+    "local-native.json": "23579c0617454e7345a759152f88623edd8f743c53652ff43e6b47fb263edb09",
+    "qualified-focused-receipt.json": "175609ad12819eb9532562545ba6de87c6f87321f364af3d1e8c14bb745dd8b4",
+    "qualified-native-receipt.json": "295290380f457c17534fa488aa18ce689c8713ce7fc5c7656a7b26aa89a4f13d"
+  }
+}

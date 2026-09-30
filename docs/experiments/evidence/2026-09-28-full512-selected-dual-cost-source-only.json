@@ -1,0 +1,47 @@
+{
+  "schema": "full512_selected_dual_cost_source_only_public_v1",
+  "status": "FROZEN_METADATA_AND_SYNTHETIC_STAGE_HOLD_REGISTERED_GPU",
+  "scope": "new_bt4_ceres_generated_data_cost_diagnostic_only",
+  "selected_provisional_winner_rows": 12288,
+  "winner_game_groups": {
+    "total": 108,
+    "BT4-v9": 58,
+    "Ceres-v8": 50
+  },
+  "source_rows": {
+    "BT4-v9": 6144,
+    "Ceres-v8": 6144
+  },
+  "source_by_selected_teacher": {
+    "BT4-v9": {"BT4": 3076, "Ceres": 3068},
+    "Ceres-v8": {"BT4": 3029, "Ceres": 3115}
+  },
+  "planned_batch32_calls": {
+    "fresh_selected_S": 385,
+    "fresh_dual_D": 770,
+    "Ceres_pad_slots": 57,
+    "measured_rate": null
+  },
+  "metadata_roster": {
+    "source_packet_sha256": "0587970c271806b1885506cf5110fc0e679a28e3acc763df2e4659a0d737a860",
+    "selected_jsonl_sha256": "750e864ffdf22795846243bf98144c28b78b667e8e31f6f9c3a8d257e1556444",
+    "call_roster_sha256": "9f2f2a3eed6aca6bff4596686f471a642b02fb32d56104db065a0b4f18e71e41",
+    "independent_review_sha256": "04968adae61f2235c49545687fd0634b9f6a3c916ef16b6708a85ff535908120"
+  },
+  "synthetic_spool_stage": {
+    "packet_sha256": "84c2550b9ca2c1648fd8188fee0fd0e49efcc1eef7634c74b2a55e9efca914e0",
+    "independent_review_sha256": "d26b24a587f26b4c707ad95d03f97b52f191fc6d3aa510d47030fe9ceff17f36",
+    "tests_passed": 12,
+    "registered_spool_scanned": false,
+    "gpu_used": false
+  },
+  "credits": {
+    "source": 0,
+    "target": 0,
+    "owner": 0,
+    "pack": 0,
+    "ingest": 0,
+    "training": 0,
+    "throughput": 0
+  }
+}

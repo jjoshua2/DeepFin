@@ -24,8 +24,6 @@ import sys
 import time
 from typing import Any
 
-import psutil
-
 GIB = 2**30
 
 
@@ -58,11 +56,83 @@ def append(path: Path, data: dict[str, Any]) -> None:
         os.fsync(f.fileno())
 
 
+def available_memory_bytes(proc_root: Path = Path("/proc")) -> int:
+    """Read Linux MemAvailable; unavailable or malformed evidence fails closed."""
+    for line in (proc_root / "meminfo").read_text().splitlines():
+        if line.startswith("MemAvailable:"):
+            fields = line.split()
+            if len(fields) != 3 or fields[2] != "kB":
+                raise RuntimeError("malformed MemAvailable in procfs")
+            value = int(fields[1])
+            require(value >= 0, "negative MemAvailable in procfs")
+            return value * 1024
+    raise RuntimeError("MemAvailable missing from procfs")
+
+
+def _process_identity(pid: int, proc_root: Path) -> tuple[int, int] | None:
+    """Return parent PID and kernel start time; tolerate only process exit."""
+    try:
+        raw = (proc_root / str(pid) / "stat").read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    try:
+        fields = raw.rsplit(") ", 1)[1].split()
+        return int(fields[1]), int(fields[19])
+    except (ValueError, IndexError) as exc:
+        raise RuntimeError(f"malformed process identity for PID {pid}") from exc
+
+
+def process_tree_rss_bytes(
+    root_pid: int, proc_root: Path = Path("/proc")
+) -> int:
+    """Sample the root and descendants, checking identity around each RSS read.
+
+    This is a sampled cap, as with the prior process-tree reader. A process that
+    exits or whose PID is reused contributes nothing; unreadable or malformed
+    live-process evidence raises instead of silently bypassing the resource cap.
+    """
+    table: dict[int, tuple[int, int]] = {}
+    children: dict[int, list[int]] = {}
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        identity = _process_identity(pid, proc_root)
+        if identity is not None:
+            table[pid] = identity
+            children.setdefault(identity[0], []).append(pid)
+    pending = [root_pid]
+    seen: set[int] = set()
+    rss_pages = 0
+    while pending:
+        pid = pending.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        pending.extend(children.get(pid, []))
+        expected = table.get(pid)
+        if expected is None or _process_identity(pid, proc_root) != expected:
+            continue
+        try:
+            fields = (proc_root / str(pid) / "statm").read_text().split()
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        if _process_identity(pid, proc_root) != expected:
+            continue
+        try:
+            pages = int(fields[1])
+        except (ValueError, IndexError) as exc:
+            raise RuntimeError(f"malformed process RSS for PID {pid}") from exc
+        require(pages >= 0, f"negative process RSS for PID {pid}")
+        rss_pages += pages
+    return rss_pages * int(os.sysconf("SC_PAGE_SIZE"))
+
+
 def guard(config: dict[str, Any], deadline: float) -> None:
     require(time.monotonic() < deadline, "wall deadline reached")
     require(not any(Path(p).exists() for p in config["stop_paths"]), "STOP requested")
     require(
-        psutil.virtual_memory().available >= config["memory_floor_gib"] * GIB,
+        available_memory_bytes() >= config["memory_floor_gib"] * GIB,
         "available memory floor reached",
     )
     for p in config["disk_paths"]:
@@ -192,16 +262,10 @@ def run_child(
         try:
             while child.poll() is None:
                 guard(config, deadline)
-                try:
-                    p = psutil.Process(child.pid)
-                    rss = sum(
-                        x.memory_info().rss for x in [p, *p.children(recursive=True)]
-                    )
-                    require(
-                        rss <= config["rss_cap_gib"] * GIB, "process RSS cap reached"
-                    )
-                except psutil.NoSuchProcess:
-                    pass
+                rss = process_tree_rss_bytes(child.pid)
+                require(
+                    rss <= config["rss_cap_gib"] * GIB, "process RSS cap reached"
+                )
                 try:
                     child.wait(timeout=0.5)
                 except subprocess.TimeoutExpired:
@@ -223,9 +287,8 @@ def run_queued(config: dict[str, Any], prefix: list[str], lock_fd: int) -> None:
     spec = importlib.util.spec_from_file_location(
         "_pinned_preparation", config["prep_runner"]["path"]
     )
-    require(
-        spec is not None and spec.loader is not None, "cannot import preparation runner"
-    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot import preparation runner")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     original = module.subprocess
@@ -238,7 +301,7 @@ def run_queued(config: dict[str, Any], prefix: list[str], lock_fd: int) -> None:
             kwargs["pass_fds"] = tuple({*kwargs.get("pass_fds", ()), lock_fd})
             return original.Popen(*args, **kwargs)
 
-    module.subprocess = LockedSubprocess()
+    setattr(module, "subprocess", LockedSubprocess())
     previous = sys.argv
     try:
         sys.argv = [*prefix[1:], "--execute"]
@@ -338,7 +401,8 @@ def run(config: dict[str, Any], ref: dict[str, str], mode: str) -> None:
         with stage_lock(
             state, config, wall + config["handoff_seconds"], queued=True
         ) as fd:
-            require(fd is not None, "queued ownership missing")
+            if fd is None:
+                raise RuntimeError("queued ownership missing")
             run_queued(config, prefix, fd)
         return
     for stage, index in stages(plan, config.get("max_build_rows")):

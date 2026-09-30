@@ -1,0 +1,40 @@
+[
+  {
+    "scope": "benchmark",
+    "gate": "scripts/lint.sh",
+    "ruff": "PASS",
+    "vulture": "PASS",
+    "basedpyright_existing_errors": 14,
+    "introduced_findings": 0,
+    "baseline": "origin/main",
+    "unchanged_files": {
+      "tests/test_adaptive_sf_value.py": true,
+      "tests/test_bt4_policy_mix.py": true,
+      "tests/test_ceres_derived_sidecar.py": true,
+      "tests/test_ceres_onnx_byte_input.py": true,
+      "tests/test_derive_observation_provenance.py": true,
+      "tests/test_sf_allmove_downside.py": true
+    },
+    "raw_log": "/tmp/packed-trainer-final-whole-lint-gate.log",
+    "raw_log_sha256": "7ae451553bb36a65b6ecbd80bd02ed5cdbfca76c45ab754b6dbfd015a8bd44f1"
+  },
+  {
+    "scope": "stack",
+    "gate": "scripts/lint.sh",
+    "ruff": "PASS",
+    "vulture": "PASS",
+    "basedpyright_existing_errors": 14,
+    "introduced_findings": 0,
+    "baseline": "7f2c0ca55cbe0a12b08cc80ab107422f290880da",
+    "unchanged_files": {
+      "tests/test_adaptive_sf_value.py": true,
+      "tests/test_bt4_policy_mix.py": true,
+      "tests/test_ceres_derived_sidecar.py": true,
+      "tests/test_ceres_onnx_byte_input.py": true,
+      "tests/test_derive_observation_provenance.py": true,
+      "tests/test_sf_allmove_downside.py": true
+    },
+    "raw_log": "/tmp/packed-provenance-whole-lint-gate.log",
+    "raw_log_sha256": "e408612a0225f4dff6aa8c978cd439ec1791b1365780e9caa0d7cf6a6972265d"
+  }
+]

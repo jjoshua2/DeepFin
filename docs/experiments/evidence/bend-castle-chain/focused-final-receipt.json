@@ -1,0 +1,14 @@
+{
+  "command": [
+    "../bun",
+    "native/bend_engine/standalone/proofs/castle_chain/focused.js",
+    "../compiler/bend",
+    "--report",
+    "../evidence/focused-final.json"
+  ],
+  "cwd": "/mnt/data/castle-continuation/repo",
+  "exit_code": 0,
+  "timed_out": false,
+  "elapsed_seconds": 61.766847521000045,
+  "sha256": "9f98898d2c67ca1a9184a4050e4ba07ba68e0305055cc211d2e2f23be080b0e5"
+}

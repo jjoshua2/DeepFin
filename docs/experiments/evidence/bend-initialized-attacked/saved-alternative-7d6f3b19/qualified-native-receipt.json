@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python",
+    "/mnt/data/initialized_attack_work/DeepFin/native/bend_engine/standalone/proofs/attack_composition/verify_native.py",
+    "/mnt/data/initialized_attack_work/bend/bend",
+    "--report",
+    "/mnt/data/initialized_attack_work/evidence/qualified-native.json"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 62.113912465999874,
+  "log_sha256": "8437001f4b283ac99d196736f90674312e3b816d26b696a11e16e2f2905489fd",
+  "error": null,
+  "bend_sources_unchanged": true,
+  "original_receipt_sha256": "62b7e36e816b3b3f6c3a09409a7988a7e8be60d1f0c6802269925443e6b69466",
+  "original_full_receipt_in_review_package": true
+}

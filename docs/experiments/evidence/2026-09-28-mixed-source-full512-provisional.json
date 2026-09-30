@@ -1,0 +1,130 @@
+{
+  "cross_source_duplicate_groups": 444,
+  "duplicate_digest_groups": 444,
+  "duplicate_group_composition": {
+    "(1, 1)": 444
+  },
+  "gross_rows": 59264,
+  "gross_rows_by_source": {
+    "BT4-v9": 27562,
+    "Ceres-v8": 31702
+  },
+  "history_variation_groups": 0,
+  "independent_review_sha256": "e76edea75eac7b83aa3d1faa58f7ba966bdaa5552bfd135ce605ed704dca57a5",
+  "index_candidate_sha256": "2ab884436449418a4726a9f6f9f2e2f86024af5ae9ce06fee35f9b58d2c79e1e",
+  "index_self_seal_sha256": "415842a12aca0635dcab707b15440b4342403bb05021fbf507f1cd2b5ba0c73c",
+  "interpreter_sha256": {
+    "BT4-v9": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49",
+    "Ceres-v8": "93a93f4c8af5ae6f127fb0310f923d5fab89eb7257a0b801eec2e44b3f199840"
+  },
+  "limitations": [
+    "candidate replay only",
+    "strict all-attempt source reexecution not run",
+    "physical-call readback not run",
+    "real-row trainer packer parity not proven",
+    "no source/unique/target/pack/ingest/owner credit"
+  ],
+  "outcome_variation_groups": 278,
+  "outcome_variation_pairs": {
+    "0-1 vs 1-0": 166,
+    "0-1 vs 1/2-1/2": 49,
+    "1-0 vs 1/2-1/2": 63
+  },
+  "outcome_variation_winner_source": {
+    "BT4-v9": 131,
+    "Ceres-v8": 147
+  },
+  "output_bytes": 5520318649,
+  "packet_manifest_sha256": "02bc722f45656ad9f63561fa0992ff16ffd29cad33b606d2090f633c4798c7a1",
+  "provisional_winners": 58820,
+  "provisional_winners_by_source": {
+    "BT4-v9": 27327,
+    "Ceres-v8": 31493
+  },
+  "quarantined": 0,
+  "ranked_losers": 444,
+  "ranked_losers_by_source": {
+    "BT4-v9": 235,
+    "Ceres-v8": 209
+  },
+  "reconstruction_sha256": "69ea93abcacabec89fcfa58e8184c87fcc6c6ea3031ba3a1be7abea38ef82f86",
+  "schema": "mixed_source_full512_run03_independent_audit_v1",
+  "spool": {
+    "BT4-v9": {
+      "data_bytes": 1234777600,
+      "data_sha256": "5902b3a8564be7f9642abf6c9397e20b941f8c64e6c5f725b4118d4290280087",
+      "game_roster_sha256": "6870b4ffcaa6aadc38ee07b99275a075637c4f0cadd879a9b8618dc8b24ecbec",
+      "metadata_bytes": 23008452,
+      "metadata_sha256": "d56abe9d50a7bff57a89b51458296ef012dafe495e8d2532744d0f999d2c9b48",
+      "phase1_phase2_match": true
+    },
+    "Ceres-v8": {
+      "data_bytes": 1420249600,
+      "data_sha256": "5ce4352dffd6f2c7ca15041cd456a9ed7cef4110834880b6116cdd87434e5a3f",
+      "game_roster_sha256": "97d1fa7fb506d0ae66ae61fdf3da6cd659c7fc34f93eb33ce77474756c719a4e",
+      "metadata_bytes": 26793273,
+      "metadata_sha256": "7a8ef5a5bfd6d5eeaba67a1aff27379e5ad1ccec8cc3cde78aba98e366457def",
+      "phase1_phase2_match": true
+    }
+  },
+  "stages": {
+    "index": {
+      "cumulative_cpu_seconds": 104.58658700000001,
+      "cumulative_wall_seconds": 189.00968564099458,
+      "gate_sha256": "3b0e665e6d1e42276365f90ae68b08338cfb891513b68ae59c9fd4a78f317a40",
+      "peak_io_bytes": 2862674603,
+      "peak_rss_bytes": 3053441024,
+      "terminal_sha256": "3222753399c21b9cc48e7ceebfbe6a7b7c02dbcae201e2a5c385d9577a9a9e45"
+    },
+    "phase1_bt4": {
+      "cumulative_cpu_seconds": 32.338147,
+      "cumulative_wall_seconds": 76.34482267400017,
+      "gate_sha256": "a7ce87f915fbd271d03ceb111df026401ede1933e626f806c9c9782e6338478b",
+      "peak_io_bytes": 1346007476,
+      "peak_rss_bytes": 655130624,
+      "terminal_sha256": "89f247197beeaaf30fdc787025aedac383b502d18d068a527a01801b2d7901a3"
+    },
+    "phase1_ceres": {
+      "cumulative_cpu_seconds": 80.32761400000001,
+      "cumulative_wall_seconds": 163.7752510989958,
+      "gate_sha256": "7dc7820e13ba5ea771d4d1b9b0d7725e807d163b81d0dfdedac4982fd0c5899a",
+      "peak_io_bytes": 3065693095,
+      "peak_rss_bytes": 347987968,
+      "terminal_sha256": "c97bedb3656444e4a208dada5048f25c614000c2624bafad8ed98479653d0272"
+    },
+    "phase2_bt4": {
+      "cumulative_cpu_seconds": 133.943734,
+      "cumulative_wall_seconds": 265.4059372060001,
+      "gate_sha256": "137fe1070cadb7677563cf45db9e4f8239ed8a54beb9c96d2f946954473b968c",
+      "peak_io_bytes": 1346004273,
+      "peak_rss_bytes": 663736320,
+      "terminal_sha256": "639a481843ebb9fefca643318635abf61b99d8530bf3cdacc6345b9dfe504edb"
+    },
+    "phase2_ceres": {
+      "cumulative_cpu_seconds": 179.312283,
+      "cumulative_wall_seconds": 352.6587506450014,
+      "gate_sha256": "4ff4b8c740f8903f67adf7a764436fd146b8c5c1ff6de0a25755f22532eaeebe",
+      "peak_io_bytes": 3065693059,
+      "peak_rss_bytes": 341848064,
+      "terminal_sha256": "d4898d68738271673d129327d29590de6383c72a3cc40494f6ec6997f77f315a"
+    },
+    "reconstruct": {
+      "cumulative_cpu_seconds": 199.605149,
+      "cumulative_wall_seconds": 373.90847549799946,
+      "gate_sha256": "5b734cdbb2458954956a0b61101914cf8f4587be6c98db56f88528fc3547181d",
+      "peak_io_bytes": 2862562518,
+      "peak_rss_bytes": 3298136064,
+      "terminal_sha256": "55688e9995e507fe658bba458ef21ce63ccf49ffe95a45d44f58762eeeaa81e6"
+    }
+  },
+  "status": "PASS_PROVISIONAL_ZERO_CREDIT",
+  "winner_map_sha256": "4b497d3d15d19ae0ab454329fc1e979ea3f639ac66b42a79949172573dfc77df",
+  "zero_credit": {
+    "ingest": 0,
+    "owner": 0,
+    "pack": 0,
+    "source": 0,
+    "target": 0,
+    "unique": 0
+  }
+}

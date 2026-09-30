@@ -1,0 +1,51 @@
+# Common initialized-table contract; no assumed per-query answers.
+import Base
+import ./Spec.bend as S
+import ../../../legal_probe/Chess.bend as Chess
+
+law initialized_attack_query_matches_geometry:
+  for +d: Nat
+  for +seed: U64
+  for +n: Nat
+  for +extra: Nat
+  for +k: S.Piece
+  for +sq: Nat
+  for +side: Bool
+  for +occ: U64
+  for depth: {d == 17n : Nat}
+  for full: {n == 128n : Nat}
+  for all: {extra == 64n : Nat}
+  for bound: {Nat.is_lt(sq,64n) == True{} : Bool}
+  {Chess.attack(S.tag(k),S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(side),occ) ==
+    (S.init(d,seed,n,extra),S.mask(k,sq,side,occ)) : Array<U64> & U64}
+
+law initialized_attacked_matches_coordinate_witness:
+  for +d: Nat
+  for +seed: U64
+  for +n: Nat
+  for +extra: Nat
+  for +b: Chess.Board
+  for +sq: Nat
+  for +by: Bool
+  for depth: {d == 17n : Nat}
+  for full: {n == 128n : Nat}
+  for all: {extra == 64n : Nat}
+  for bound: {Nat.is_lt(sq,64n) == True{} : Bool}
+  {Chess.attacked(S.init(d,seed,n,extra),b,U32.from_nat(sq),Bool.to_u32(by)) ==
+    (S.init(d,seed,n,extra),S.attacked(b,sq,by)) : Array<U64> & Bool}
+
+law initialized_single_king_check_matches_coordinate_witness:
+  for +d: Nat
+  for +seed: U64
+  for +n: Nat
+  for +extra: Nat
+  for +b: Chess.Board
+  for +sq: Nat
+  for +side: Bool
+  for depth: {d == 17n : Nat}
+  for full: {n == 128n : Nat}
+  for all: {extra == 64n : Nat}
+  for bound: {Nat.is_lt(sq,64n) == True{} : Bool}
+  for one: {U64.and(Chess.get_kings(b),Chess.color(b,Bool.to_u32(side))) == U64.bit(sq) : U64}
+  {Chess.in_check(S.init(d,seed,n,extra),b,Bool.to_u32(side)) ==
+    (S.init(d,seed,n,extra),S.attacked(b,sq,Bool.not(side))) : Array<U64> & Bool}

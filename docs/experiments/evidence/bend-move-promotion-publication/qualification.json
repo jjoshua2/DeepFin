@@ -1,0 +1,43 @@
+{
+  "qualification": "PASS",
+  "run": "36169939079",
+  "source": "36c2ac370a00ea91f8f7e136d0167e0abcc24fd1",
+  "source_tree": "7313cdeed1254f94366fc4385dc95029c1b75f47",
+  "newly_hosted_saved_laws": 9,
+  "newly_hosted_saved_controls": 35,
+  "ordinary_laws": 5,
+  "promotion_laws": 4,
+  "retained_parent_laws": 141,
+  "retained_parent_controls": 401,
+  "modular_laws": 150,
+  "modular_controls": 436,
+  "combined_wrapper_executed": false,
+  "candidate_source_entries": 472,
+  "saved_primary_files": 28,
+  "control_categories": {
+    "ordinary": {
+      "source semantic/refinement": 9,
+      "manifest/import policy": 8,
+      "synthetic output-wrapper unit; not compiler execution": 1
+    },
+    "promotion": {
+      "source semantic/refinement": 8,
+      "manifest/import policy": 8,
+      "synthetic output-wrapper unit; not compiler execution": 1
+    }
+  },
+  "comparisons": {
+    "ordinary": {
+      "focused_equal_except_consumer_seconds": true,
+      "native_equal_except_cc": true,
+      "saved_primary_sources_identical": true
+    },
+    "promotion": {
+      "focused_equal_except_consumer_seconds": true,
+      "native_equal_except_cc": true,
+      "saved_primary_sources_identical": true
+    }
+  },
+  "independent_review": false,
+  "new_mathematical_discoveries_claimed": false
+}

@@ -1,0 +1,46 @@
+{
+  "native_review": "PASS",
+  "compiler_identity": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "rows_per_mode": 1024,
+  "all_keys": 128,
+  "modes": [
+    {
+      "mode": "generic",
+      "rows": 1024,
+      "invalid_rejections": 6,
+      "output_sha256": "051545922146762d9c772fb4c7de6334ed42b4c583c0b9611885dd7b8ed48d86"
+    },
+    {
+      "mode": "ubsan",
+      "rows": 1024,
+      "invalid_rejections": 6,
+      "output_sha256": "051545922146762d9c772fb4c7de6334ed42b4c583c0b9611885dd7b8ed48d86"
+    }
+  ],
+  "actual_lookup_mutation": {
+    "native_wrong_value_rejected": true,
+    "row": 0,
+    "input_key": 0,
+    "input_occupancy": "0",
+    "observed": "0 16843009 16843010",
+    "expected": "0 16843009 16843262",
+    "source_rejection_status": 1,
+    "source_rejection_location": "Route.model",
+    "source_diagnostic_sha256": "6be31abeac7d65a7ba3f412ed32791dd7b70078cb6d4f4defdc647175fc4c51b",
+    "source_diagnostic_bytes": 1455,
+    "original_Chess_sha256": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "mutated_Chess_sha256": "ad4fdc9b5ab441170d0a29b84922a01a8d69c60e644d12a6fbdada3f6e213449"
+  },
+  "source_sha256s": {
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/lookup_review/probe.bend": "e40bd95607b7dbc62db84107d59642b0d589e5d3f18d99e190e5cf24a87691e9",
+    "standalone/proofs/lookup_review/Route.bend": "b2b6293c93eca3be2d91d37dae87437a8a1d213f2fd68ad9582dd31f6b907341"
+  },
+  "driver_sha256": "e4a9c4983cf024ce168e0047818d74f9a610887313e2a4c9db49b6e269caaaff",
+  "scope": "Supplementary actual Chess.slide on one retained Tables.build per execution; generic and UBSan only. Selected queries, not full buffers or an independent source ray theorem.",
+  "cc": "clang version 17.0.0 (https://github.com/swiftlang/llvm-project.git 10999b6d034fe318f3d56c83bddb6572593a8bb0)"
+}

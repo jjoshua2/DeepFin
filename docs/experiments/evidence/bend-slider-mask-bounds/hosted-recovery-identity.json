@@ -1,0 +1,8 @@
+{
+  "patch_sha256": "569a67a46c60aea0c5bc11f82886d4fc80eef629c83c4b33c2678c3c79f5ce52",
+  "patch_bytes": 103636,
+  "original_patch_target": "33c363ba6715956fd9323a6032b1a6c4a2b916fe",
+  "qualification_base": "ef3ded0b652a09918abb1d79467b1ac56a8e1ce5",
+  "transport_repair": "Remove exactly one duplicated Y at byte 2728 of fragment 1; require original fragment and complete patch identities",
+  "proof_source_modified": false
+}

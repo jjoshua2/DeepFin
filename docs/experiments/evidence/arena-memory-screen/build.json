@@ -1,0 +1,24 @@
+{
+  "status": "built",
+  "sha256": {
+    "generated_c": "8f9d1712af22a1ec40914ce2e53e60d5a3fde264b92c34a8561d4c3edb254b72",
+    "binary": "acf5763d9c081b77ef32cef402b1aef88e3213f87734ed4e549329d8e571dc63",
+    "oracle": "5c250c2a6e508af6acdefa294b46558b78376ca9f10783e1f21eebcde7840686",
+    "callback": "062611f98a7661ebebef82b31f1c2d326a2cf1f3376ebc103fab59cbccc67033",
+    "worker": "17adb8be00f86c532b1029a074824c03b3fece5d5a5a1f481029b726f4401029",
+    "worker_header": "79ee5ac5e22040065ed82f82157e7eaf166d163ce640af4768480ee110955f6e",
+    "contract": "36801835341a7a0f04e82a99f61c6631806d67d82f26e380e278e033bd83b40c",
+    "benchmark": "75f8eb83f05c50fbb3b78a1435903cc9733e769d4caea3b39193ee3bc8147c50",
+    "builder": "be7f6bdc881b325f668842232deb78a7193e645d31127f75463235662d4817d4",
+    "parser": "b2ebebcd9102cb63aacffce642243cd12abed14e0387b8f79bd7ff51011ac83f",
+    "semantic_view": "777c0d9acfd4afde01e942f6e0b5e6997cc445665a563f30b70b5db02d60c820",
+    "reference": "ed3d4086cbb19d71549be58de8718ce0ed92018b9a6d1ea0cd4463732b193c57",
+    "oracle_source": "2bf996d3c82a2ecc629c741e8dd7c0e3412145f101c4e3de8c35caa75228622d"
+  },
+  "compiler": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\nUbuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\n",
+  "flags": "-O3 -ffp-contract=off",
+  "program_revision": "de48b98e1e3343033041f622407c0542ea550c03",
+  "batch": 4,
+  "channels": 146,
+  "model": "deterministic callback; no neural model or GPU"
+}

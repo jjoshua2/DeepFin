@@ -1,5 +1,12 @@
 # CPU target preparation during teacher collection
 
+This is an opt-in Linux orchestration tool. Historical configs and receipts are
+not current launch instructions. Before new adoption, requalify the exact pinned
+runner, wrapper, inputs and resource limits against the intended queue. Publishing
+or merging the tool does not change an existing operator descriptor or deployment.
+Memory and process-tree RSS guards use Linux procfs and fail closed if evidence
+is unavailable or malformed; the RSS cap remains sampled, not a kernel quota.
+
 `bootstrap_preparation_overlap.py` permits CPU preparation of already pinned
 teacher cohorts while a GPU collection queue continues. It calls the existing
 preparation worker, preserving all target construction and admission checks.

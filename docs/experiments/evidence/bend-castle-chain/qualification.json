@@ -1,0 +1,28 @@
+{
+  "qualification": "SOURCE_AND_NATIVE_PASS_LINT_UNQUALIFIED",
+  "source_laws": "PASS",
+  "native": "PASS",
+  "repository_lint": "FAILED_MISSING_TOOLS",
+  "hosted_qualification": false,
+  "remote_publication": false,
+  "new_laws": 5,
+  "new_controls": 18,
+  "control_categories": {
+    "source semantic/refinement": 9,
+    "manifest/import policy": 8,
+    "synthetic output-wrapper unit; not compiler execution": 1
+  },
+  "retained_parent_laws": 166,
+  "retained_parent_controls": 487,
+  "modular_laws": 171,
+  "modular_controls": 505,
+  "combined_wrapper_executed": false,
+  "source_dependency_entries": 49,
+  "native_source_entries": 524,
+  "native_filter_exact_lists": true,
+  "native_suffix_exact_lists": true,
+  "native_full_generator_castling_subset_only": true,
+  "native_all_returned_child_boards_checked": true,
+  "independent_review": false,
+  "claim": "Actual full legal_moves flag-2 membership derives a guarded exact producer route and preserves an input-consistent Board. Not semantic king safety or whole legal-move soundness/completeness."
+}

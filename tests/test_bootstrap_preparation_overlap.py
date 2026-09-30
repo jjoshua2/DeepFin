@@ -83,6 +83,7 @@ def crash_parent(state, settings):
     with tool.stage_lock(
         Path(state), settings, time.monotonic() + 30, queued=False
     ) as fd:
+        assert fd is not None
         code = (
             "import time,os; from pathlib import Path; "
             f"Path({str(Path(state) / 'child.pid')!r}).write_text(str(os.getpid())); time.sleep(20)"
@@ -129,6 +130,7 @@ def test_killed_sidecar_parent_cannot_release_live_writer_lock(tmp_path):
 def test_stop_during_worker_cleans_child(tmp_path):
     settings = config(tmp_path)
     with tool.stage_lock(tmp_path, settings, time.monotonic() + 10, queued=False) as fd:
+        assert fd is not None
         code = f"from pathlib import Path; import time; Path({str(tmp_path / 'STOP')!r}).touch(); time.sleep(20)"
         with pytest.raises(RuntimeError, match="STOP"):
             tool.run_child(
@@ -198,6 +200,7 @@ def queued_import_parent(state, settings, runner):
     with tool.stage_lock(
         Path(state), settings, time.monotonic() + 30, queued=True
     ) as fd:
+        assert fd is not None
         tool.run_queued(settings, [sys.executable, runner], fd)
 
 
@@ -268,3 +271,96 @@ def test_build_limit_defers_large_cohort_but_keeps_its_seal():
         ("seal", 2),
         ("seal", 0),
     ]
+
+
+def process_fixture(root: Path, pid: int, parent: int, pages: int) -> None:
+    folder = root / str(pid)
+    folder.mkdir()
+    fields = ["S", str(parent), *(["0"] * 17), str(pid * 100)]
+    (folder / "stat").write_text(f"{pid} (worker with spaces) " + " ".join(fields))
+    (folder / "statm").write_text(f"100 {pages} 0 0 0 0 0")
+
+
+def test_procfs_rss_includes_descendants_and_excludes_unrelated(tmp_path):
+    process_fixture(tmp_path, 10, 1, 3)
+    process_fixture(tmp_path, 11, 10, 5)
+    process_fixture(tmp_path, 12, 11, 7)
+    process_fixture(tmp_path, 20, 1, 1000)
+    assert tool.process_tree_rss_bytes(10, tmp_path) == 15 * os.sysconf("SC_PAGE_SIZE")
+    assert tool.process_tree_rss_bytes(99, tmp_path) == 0
+
+
+def test_procfs_rss_tolerates_exit_but_rejects_malformed_evidence(tmp_path):
+    process_fixture(tmp_path, 10, 1, 3)
+    process_fixture(tmp_path, 11, 10, 5)
+    (tmp_path / "11" / "statm").unlink()
+    assert tool.process_tree_rss_bytes(10, tmp_path) == 3 * os.sysconf("SC_PAGE_SIZE")
+    (tmp_path / "10" / "statm").write_text("malformed")
+    with pytest.raises(RuntimeError, match="malformed process RSS"):
+        tool.process_tree_rss_bytes(10, tmp_path)
+
+
+def test_procfs_rss_rejects_unreadable_evidence(tmp_path, monkeypatch):
+    process_fixture(tmp_path, 10, 1, 3)
+    original = Path.read_text
+
+    def denied(path, *args, **kwargs):
+        if path.name == "statm":
+            raise PermissionError("resource read denied")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    with pytest.raises(PermissionError, match="resource read denied"):
+        tool.process_tree_rss_bytes(10, tmp_path)
+
+
+def test_procfs_rss_does_not_charge_reused_pid(tmp_path, monkeypatch):
+    process_fixture(tmp_path, 10, 1, 3)
+    original = tool._process_identity
+    calls = 0
+
+    def identity(pid, root):
+        nonlocal calls
+        calls += 1
+        return (1, 9999) if calls == 3 else original(pid, root)
+
+    monkeypatch.setattr(tool, "_process_identity", identity)
+    assert tool.process_tree_rss_bytes(10, tmp_path) == 0
+
+
+def test_procfs_available_memory_requires_valid_evidence(tmp_path):
+    info = tmp_path / "meminfo"
+    info.write_text("MemTotal: 2048 kB\nMemAvailable: 1024 kB\n")
+    assert tool.available_memory_bytes(tmp_path) == 1024 * 1024
+    info.write_text("MemTotal: 2048 kB\n")
+    with pytest.raises(RuntimeError, match="MemAvailable missing"):
+        tool.available_memory_bytes(tmp_path)
+    info.write_text("MemAvailable: 1024 MB\n")
+    with pytest.raises(RuntimeError, match="malformed MemAvailable"):
+        tool.available_memory_bytes(tmp_path)
+
+
+def test_guard_enforces_available_memory_floor(tmp_path, monkeypatch):
+    settings = {**config(tmp_path), "memory_floor_gib": 1}
+    monkeypatch.setattr(tool, "available_memory_bytes", lambda: tool.GIB - 1)
+    with pytest.raises(RuntimeError, match="available memory floor"):
+        tool.guard(settings, time.monotonic() + 10)
+
+
+def test_run_child_enforces_rss_cap_and_cleans_worker(tmp_path, monkeypatch):
+    settings = config(tmp_path)
+    monkeypatch.setattr(tool, "process_tree_rss_bytes", lambda _: 2 * tool.GIB)
+    with tool.stage_lock(tmp_path, settings, time.monotonic() + 10, queued=False) as fd:
+        assert fd is not None
+        with pytest.raises(RuntimeError, match="process RSS cap"):
+            tool.run_child(
+                settings,
+                [sys.executable, "-c", "import time; time.sleep(20)"],
+                time.monotonic() + 10,
+                fd,
+                tmp_path / "rss.log",
+            )
+    with (tmp_path / "ownership.lock").open("a") as lock:
+        import fcntl
+
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

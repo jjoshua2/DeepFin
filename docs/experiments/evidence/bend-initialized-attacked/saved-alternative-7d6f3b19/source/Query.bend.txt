@@ -1,0 +1,48 @@
+# Reuse both public initializer contracts on the same full construction.
+import Base
+import ./Spec.bend as S
+import ./Index.bend as I
+import ./Queen.bend as Queen
+import ../builder/LAWS.bend as Slider
+import ../builder/PROOF.bend as SliderProof
+import ../attack_geometry/LAWS.bend as Leaper
+import ../attack_geometry/PROOF.bend as LeaperProof
+import ../attack_geometry/Geometry.bend as G
+import ../../../legal_probe/Chess.bend as Chess
+
+def rook(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+sq: Nat,+side: Bool,+occ: U64,
+  depth: {d == 17n : Nat},full: {n == 128n : Nat},all: {extra == 64n : Nat},bound: {Nat.is_lt(sq,64n) == True{} : Bool}) ->
+  {Chess.attack(3,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(side),occ) ==
+    (S.init(d,seed,n,extra),S.mask(S.Rook{},sq,side,occ)) : Array<U64> & U64}:
+  Slider.full_table_lookup(d,seed,n,sq,extra,0n,occ,I.rook_bound(sq,bound),depth,full,I.extras_bound(extra,all))
+
+def bishop(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+sq: Nat,+side: Bool,+occ: U64,
+  depth: {d == 17n : Nat},full: {n == 128n : Nat},all: {extra == 64n : Nat},+bound: {Nat.is_lt(sq,64n) == True{} : Bool}) ->
+  {Chess.attack(2,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(side),occ) ==
+    (S.init(d,seed,n,extra),S.mask(S.Bishop{},sq,side,occ)) : Array<U64> & U64}:
+  %Equal.sym(U32,U32.add(64,U32.from_nat(sq)),U32.from_nat(Nat.add(64n,sq)),I.bishop_key(sq,bound)) :
+    {Chess.slide(S.init(d,seed,n,extra),_,occ) == (S.init(d,seed,n,extra),S.mask(S.Bishop{},sq,side,occ)) : Array<U64> & U64}
+  Slider.full_table_lookup(d,seed,n,Nat.add(64n,sq),extra,0n,occ,I.bishop_bound(sq,bound),depth,full,I.extras_bound(extra,all))
+
+def queen(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+sq: Nat,+side: Bool,+occ: U64,
+  +depth: {d == 17n : Nat},+full: {n == 128n : Nat},+all: {extra == 64n : Nat},+bound: {Nat.is_lt(sq,64n) == True{} : Bool}) ->
+  {Chess.attack(4,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(side),occ) ==
+    (S.init(d,seed,n,extra),S.mask(S.Queen{},sq,side,occ)) : Array<U64> & U64}:
+  Queen.actual(d,seed,n,extra,sq,side,occ,
+    rook(d,seed,n,extra,sq,side,occ,depth,full,all,bound),
+    bishop(d,seed,n,extra,sq,side,occ,depth,full,all,bound))
+
+def actual(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+k: S.Piece,+sq: Nat,+side: Bool,+occ: U64,
+  depth: {d == 17n : Nat},full: {n == 128n : Nat},all: {extra == 64n : Nat},bound: {Nat.is_lt(sq,64n) == True{} : Bool}) ->
+  {Chess.attack(S.tag(k),S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(side),occ) ==
+    (S.init(d,seed,n,extra),S.mask(k,sq,side,occ)) : Array<U64> & U64}:
+  match k:
+    case S.Pawn{}:
+      match side:
+        case True{}: Leaper.initialized_leaper_query_matches_coordinates(d,seed,n,0,512,extra,G.WhitePawn{},sq,occ,depth,all,bound)
+        case False{}: Leaper.initialized_leaper_query_matches_coordinates(d,seed,n,0,512,extra,G.BlackPawn{},sq,occ,depth,all,bound)
+    case S.Knight{}: Leaper.initialized_leaper_query_matches_coordinates(d,seed,n,0,512,extra,G.Knight{},sq,occ,depth,all,bound)
+    case S.King{}: Leaper.initialized_leaper_query_matches_coordinates(d,seed,n,0,512,extra,G.King{},sq,occ,depth,all,bound)
+    case S.Rook{}: rook(d,seed,n,extra,sq,side,occ,depth,full,all,bound)
+    case S.Bishop{}: bishop(d,seed,n,extra,sq,side,occ,depth,full,all,bound)
+    case S.Queen{}: queen(d,seed,n,extra,sq,side,occ,depth,full,all,bound)

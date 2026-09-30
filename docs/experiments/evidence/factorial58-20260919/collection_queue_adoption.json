@@ -1,0 +1,25 @@
+{
+  "status": "QUEUED_REVIEWED_COLLECTION_AFTER_ACTIVE_TRAINER",
+  "unix": 1789839262.880584,
+  "jobs": [
+    "factorial58_ceres_extra184_run06_g10",
+    "factorial58_ceres_extra184_run07_g10_companion4",
+    "factorial58_ceres_extra512_run06_g10",
+    "factorial58_ceres_extra512_run07_g10_companion4",
+    "factorial58_ceres_block00_run06_g10",
+    "factorial58_ceres_block00_run07_g10_companion4",
+    "factorial58_ceres_block01_run06_g10",
+    "factorial58_ceres_block01_run07_g10_companion4",
+    "factorial58_ceres_block02_run06_g10",
+    "factorial58_ceres_block02_run07_g10_companion4",
+    "factorial58_ceres_remainder_block00_run06_g10",
+    "factorial58_ceres_remainder_block00_run07_g10_companion4",
+    "factorial58_ceres_remainder_block01_run06_g10",
+    "factorial58_ceres_remainder_block01_run07_g10_companion4"
+  ],
+  "rows": 22776111,
+  "shards": 2787,
+  "review": "Independent protocol+source+all294pins+703plans PASS",
+  "active_preserved": "expanded58m_pressure_v1",
+  "fallback": "expanded58m_pressure_followon_v1 remains queued until factorial training descriptors qualified"
+}

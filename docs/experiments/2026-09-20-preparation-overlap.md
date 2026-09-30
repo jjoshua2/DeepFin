@@ -1,5 +1,26 @@
 # Factorial58 CPU preparation overlap
 
+## Publication recovery, 2026-09-30
+
+The observations and adoption receipts below describe the September 20 run, not
+current process status or a new adoption. The original PR was closed without its
+wrapper, tests, operations guide or evidence being present on main. The later
+factorial baseline-A coordinator overlaps preparation with training and retains a
+separate preparation writer wrapper; it does not replace preparation during
+teacher labeling.
+
+Recovery preserves the historical evidence and source ancestry. The wrapper now
+uses fail-closed Linux procfs memory/RSS reads instead of the undeclared psutil
+dependency, with PID-reuse checks and resource-guard regressions. Optional import
+and ownership checks are explicit for current type checking. Resource thresholds,
+whole-stage handoff and inherited writer ownership remain unchanged. GitHub CI
+and a fresh independent review are required for the recovered head; the historical
+validation below does not validate these recovery changes. Existing operator pins
+still identify historical code. No queue change, probe, teacher evaluation,
+training run or deployment is authorized by publishing this record.
+
+## Historical status, 2026-09-20
+
 Status: independently reviewed wrapper adopted; bounded CPU sidecar launched
 2026-09-20. This changes scheduling and storage preparation only. The 58,090,688-row
 cohort roster, teacher recipes, training seed, and frozen producer/runtime are
