@@ -60,6 +60,32 @@ per source-qualified game, preflight memory and target masks, and account for co
 epoch consumption without wrapping or silently truncating. Follow
 [target rebuildability](target_rebuildability.md) for retained observations and identity.
 
+## Resumable fixed replay epochs
+
+`scripts/offline_replay_epoch.py --checkpoint-every-seconds 1200` starts a new
+single-candidate fixed-epoch run with durable trainer and batch-cursor commits.
+`--resume` continues that same output directory; it requires an existing committed
+cursor and does not infer one from `--init-checkpoint`. Omitting both flags retains
+the older fixed-epoch behavior. The new mode pins the effective configuration,
+runner and package code, initial weights, and ordered source-content receipts.
+It saves model, optimizer, scheduler and ZClip state together with NumPy, mask,
+Torch and Python RNG state; a sidecar naming the checkpoint SHA-256 is published
+last. Only complete sidecar generations can be resumed. Two recent committed
+generations are retained, and one process owns the candidate directory at a time.
+
+Automatic source-manifest preparation stops after 30 minutes and is not itself
+resumable. A large campaign must supply a separately qualified, frozen
+`--resume-source-manifest` in the `offline_epoch_sources_v1` format: ordered `train`
+and `eval` arrays of absolute `{path, sha256, bytes}` receipts. Each shard hash
+uses sorted, newline-terminated compact JSON triples
+`[relative_file_name, file_bytes, file_sha256]`; `bytes` is the sum of file sizes.
+Each shard is checked against its receipt before use; restart does not rehash the
+entire corpus.
+The interval is limited to 20 minutes, with a 30-minute post-commit window check.
+This does not interrupt an individual blocked shard load or optimizer call; a
+days-long campaign needs a measured bound or external supervisor for those calls.
+This fixed replay runner is distinct from the game-aware exact-epoch mode below.
+
 ## Uninterrupted offline game epochs
 
 `scripts/lc0_control_train.py --sampling-mode game_epoch --steps 0 --epochs 2`
