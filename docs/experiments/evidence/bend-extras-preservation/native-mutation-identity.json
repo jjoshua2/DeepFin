@@ -1,0 +1,7 @@
+{
+  "mutation": "actual extras knight write into header instead of extras region",
+  "original_Tables_sha256": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+  "mutated_Tables_sha256": "c00128598675608d8111cfc4a72237599c57f35f7aefd805af877d99ddb84abc",
+  "reference_driver_unchanged": true,
+  "production_source_modified": false
+}
