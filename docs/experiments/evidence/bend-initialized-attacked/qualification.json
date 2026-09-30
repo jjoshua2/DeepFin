@@ -1,0 +1,25 @@
+{
+  "qualification": "PASS",
+  "run": "36286418567",
+  "source": "715ac8b81d665730e00cc2ca4d956c931bda1876",
+  "source_tree": "5b3596aaa8f0d8b83e8fea6b39a592fdf3d0e1e1",
+  "new_laws": 3,
+  "new_controls": 19,
+  "control_categories": {
+    "source semantic/refinement": 10,
+    "manifest/import policy": 8,
+    "synthetic output-wrapper unit; not compiler execution": 1
+  },
+  "retained_parent_laws": 183,
+  "retained_parent_controls": 562,
+  "modular_laws": 186,
+  "modular_controls": 581,
+  "combined_wrapper_executed": false,
+  "consumer_and_controls_separate": false,
+  "native_source_entries": 585,
+  "independent_review": false,
+  "universal_forward_reverse_attack_membership": false,
+  "castling_singleton_propagation": false,
+  "earlier_run": 36286189186,
+  "earlier_source_failure": "Imported Routing.rook name collided with local pair binder. Two local binders renamed without changing contracts."
+}
