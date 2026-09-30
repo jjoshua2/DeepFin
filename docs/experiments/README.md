@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Ceres live128 proof-writer A/B/B/A](2026-09-29-ceres-live128-writer-abba.md) | Four full-prefix 128-game arms, exact semantic/all-attempt parity and 8.75% source-stage saving; no full-pipeline or 500M gain claim |
 | [Full 58,820-row BT4/Ceres batch profiles](2026-09-29-full58820-batch-profiles.md) | Separate audited BT4 and Ceres four-arm fixed-input screens: 28.558% and 74.070% call-core savings; numerical quality bounds, no integrated throughput or corpus credit |
 | [D-lite scalar SF value plan](2026-09-29-dlite-scalar-value-plan.md) | Prospective separate value contrast, representative one/eight-engine cost screen and shared CPU/GPU month-budget limits |
 | [Tracked Ceres saved-game source fixture](2026-09-29-ceres-saved-game-source-fixture.md) | Main CPU producer/readback entrypoint exercised on one 47-row saved natural game; complete feature/feed/legal/terminal parity, no generation or throughput credit |
