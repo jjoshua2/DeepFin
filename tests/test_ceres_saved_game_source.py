@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import zipfile
 from dataclasses import replace
 from hashlib import blake2b
 from pathlib import Path
@@ -18,8 +19,16 @@ from chess_anti_engine.encoding.encode import encode_position
 from chess_anti_engine.moves.leela_index import compact_index_for_move, leela_index_for_move
 from chess_anti_engine.source.ceres_saved_game import (
     SavedCeresGame,
+    _zip_json,
     read_saved_game_archive,
     write_saved_game,
+)
+from chess_anti_engine.source.ceres_owner_target import (
+    INPUT_DOMAIN,
+    CeresOwnerSelection,
+    read_ceres_owner_target,
+    reconstruct_ceres_owner_target,
+    reconstruct_ceres_owner_targets,
 )
 
 
@@ -234,3 +243,129 @@ def test_strict_syzygy_rejects_false_adjudication(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="exact strict six-man"):
         write_saved_game(original, tmp_path / "wrong_path", syzygy_path="other:strict",
                          match_tablebase=handle)
+
+
+def _owner_selection(game: SavedCeresGame, index: int) -> CeresOwnerSelection:
+    row = game.rows[index]
+    legal = sorted(row["legal_moves_uci_sorted"])
+    legal_sha = _sha(json.dumps(legal, sort_keys=True, separators=(",", ":")).encode())
+    query = ["lc0_root_legacy_meta", "v2_threats", True, row["root_fen"],
+             row["history_stack_sha256"], legal_sha]
+    consumed = np.ascontiguousarray(game.arrays["x"][index], dtype="<f4").tobytes()
+    root_id = "fp16_fixture" if index < 2 else "fp16_fixture_1"
+    return CeresOwnerSelection(
+        uid=("4" * 64, row["source_namespace"], root_id, row["game_id"], index),
+        source_archive_sha256=game.source_archive_sha256,
+        model_sha256=game.model_sha256,
+        input_digest=_sha(INPUT_DOMAIN + consumed), feed_sha256=row["feed_sha256"],
+        history_stack_sha256=row["history_stack_sha256"],
+        legal_context_sha256=legal_sha,
+        teacher_query_sha256=_sha(json.dumps(query, sort_keys=True,
+                                              separators=(",", ":")).encode()),
+        teacher="Ceres",
+    )
+
+
+def test_saved_owner_target_public_reader_matches_selected_math(tmp_path: Path) -> None:
+    from scripts import ceres_target_mix, ceres_value_mix
+
+    original = _game()
+    arrays = {key: value.copy() for key, value in original.arrays.items()}
+    for index in range(len(original.rows)):
+        lo, hi = arrays["legal_offsets"][index:index + 2]
+        arrays["legal_logits"][lo:hi] = np.linspace(-1.5, 1.25, hi - lo).astype(np.float16)
+        arrays["value"][index] = np.asarray([2., -1., .3], dtype=np.float16)
+        arrays["value2"][index] = np.asarray([-.5, 1., .1], dtype=np.float16)
+    game = replace(original, arrays=arrays)
+    archive = tmp_path / "owner"
+    write_saved_game(game, archive)
+    for index in range(len(game.rows)):
+        selection = _owner_selection(game, index)
+        target = read_ceres_owner_target(
+            archive, selection, source_manifest_sha256="4" * 64,
+            root_id=selection.uid[2])
+        lo, hi = arrays["legal_offsets"][index:index + 2]
+        legal = np.zeros((1, 1858), dtype=np.uint8)
+        dense = np.zeros((1, 1858), dtype=np.float16)
+        legal[0, arrays["legal_compact"][lo:hi]] = 1
+        dense[0, arrays["legal_compact"][lo:hi]] = arrays["legal_logits"][lo:hi]
+        raw_bt4 = legal.astype(np.float64) / legal.sum()
+        policy = ceres_target_mix.policy_target(
+            raw_bt4, dense, legal, bt4_weight=0., bt4_temperature=.5,
+            ceres_temperature=.5)[0].astype(np.float16)
+        wdl = (.6 * ceres_value_mix.softmax(arrays["value"][index:index + 1], .55)
+               + .4 * ceres_value_mix.softmax(
+                   arrays["value2"][index:index + 1], 1.5))[0].astype(np.float16)
+        assert target.policy.tobytes() == policy.tobytes()
+        assert target.wdl.tobytes() == wdl.tobytes()
+        assert target.policy_sha256 == _sha(policy.tobytes())
+        assert target.wdl_sha256 == _sha(wdl.tobytes())
+
+
+def test_saved_owner_target_rejects_wrong_route_and_provenance() -> None:
+    game = _game()
+    selection = _owner_selection(game, 2)
+    context = {"source_manifest_sha256": "4" * 64,
+               "root_id": selection.uid[2]}
+    changes = (
+        ("teacher", "BT4", "route/UID"),
+        ("uid", ("4" * 64, "1" * 64, "wrong_root", 7, 2), "route/UID"),
+        ("uid", ("4" * 64, "1" * 64, "fp16_fixture", 7, 2), "route/UID"),
+        ("source_archive_sha256", "0" * 64, "archive/model"),
+        ("model_sha256", "0" * 64, "archive/model"),
+        ("input_digest", "0" * 64, "input/feed/history"),
+        ("feed_sha256", "0" * 64, "input/feed/history"),
+        ("history_stack_sha256", "0" * 64, "input/feed/history"),
+        ("legal_context_sha256", "0" * 64, "legal/query"),
+        ("teacher_query_sha256", "0" * 64, "legal/query"),
+    )
+    for field, value, message in changes:
+        with pytest.raises(ValueError, match=message):
+            reconstruct_ceres_owner_target(
+                game, replace(selection, **{field: value}), **context)
+
+
+def test_owner_targets_reuse_one_verified_game_and_reject_duplicates() -> None:
+    game = _game()
+    selections = (_owner_selection(game, 0), _owner_selection(game, 1))
+    targets = reconstruct_ceres_owner_targets(
+        game, selections, source_manifest_sha256="4" * 64,
+        root_id="fp16_fixture")
+    assert tuple(target.uid for target in targets) == tuple(s.uid for s in selections)
+    with pytest.raises(ValueError, match="duplicated"):
+        reconstruct_ceres_owner_targets(
+            game, (selections[0], selections[0]),
+            source_manifest_sha256="4" * 64, root_id="fp16_fixture")
+
+
+def test_saved_syzygy_owner_target_uses_strict_public_reader(tmp_path: Path) -> None:
+    game = _syzygy_game()
+    fake = FakeStrictTablebase()
+    archive = tmp_path / "syzygy_owner"
+    write_saved_game(game, archive, syzygy_path="fake:strict",
+                     match_tablebase=_strict_handle(fake))
+    selection = _owner_selection(game, 0)
+    with pytest.raises(ValueError, match="strict six-man"):
+        read_ceres_owner_target(archive, selection, source_manifest_sha256="4" * 64,
+                                root_id="fp16_fixture")
+    target = read_ceres_owner_target(
+        archive, selection, source_manifest_sha256="4" * 64,
+        root_id="fp16_fixture", syzygy_path="fake:strict",
+        match_tablebase=_strict_handle(fake))
+    assert target.uid == selection.uid
+    assert target.policy.shape == (1858,)
+    assert target.wdl.shape == (3,)
+
+
+def test_chunked_source_archive_member_cap(tmp_path: Path) -> None:
+    archive = tmp_path / "chunked.zarr.zip"
+    with zipfile.ZipFile(archive, "w") as stream:
+        stream.writestr("manifest.json", '{}')
+        for index in range(117):
+            stream.writestr(f"x/{index}", b"row")
+    assert _zip_json(archive, "manifest.json", compressed=False) == {}
+    with zipfile.ZipFile(archive, "a") as stream:
+        for index in range(117, 512):
+            stream.writestr(f"x/{index}", b"row")
+    with pytest.raises(ValueError, match="oversized archive member table"):
+        _zip_json(archive, "manifest.json", compressed=False)
