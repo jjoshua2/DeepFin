@@ -338,7 +338,8 @@ def test_run_arena_opt_in_wires_pair_receipts_and_refuses_changed_seal(
         vloss_weight=1, target_batch=1,
     )
     def run(*, games: int = 1152, resume: bool = False,
-            seal: str = "c" * 64) -> dict:
+            seal: str = "c" * 64, validated: bool = True) -> dict:
+        token = durable._validated_source_seal(seal) if validated else None
         return arena.run_arena(
             candidate="candidate.pt", reference="reference.pt",
             games=games, openings_path=None,
@@ -354,8 +355,14 @@ def test_run_arena_opt_in_wires_pair_receipts_and_refuses_changed_seal(
             compile_models=False, eval_max_batch=0,
             max_concurrent_games=2,
             search_candidate=side, search_reference=side,
-            durable_source_seal_sha256=seal, resume=resume,
+            durable_source_seal=token,
+            durable_source_seal_sha256=None if validated else seal,
+            resume=resume,
         )
+    with pytest.raises(SystemExit, match="bare durable_source_seal_sha256"):
+        run(validated=False)
+    with pytest.raises(TypeError, match="must come from validate_source_seal"):
+        durable.ValidatedSourceSeal("c" * 64)
     with pytest.raises(SystemExit, match="durable paired arena requires"):
         run(games=4)
     assert not log_path.exists()
@@ -439,7 +446,7 @@ def test_source_seal_refuses_model_mutation_and_argv_drift(
             config=tmp_path / "production_config", syzygy_path=str(tb_root),
         )
 
-    assert validate(seal_path, seal_sha, argv) == seal_sha
+    assert validate(seal_path, seal_sha, argv).sha256 == seal_sha
     generated = tmp_path / "generated.json"
     generated_sha = durable.prepare_source_seal(
         generated, argv=argv, candidate=tmp_path / "candidate",
@@ -447,7 +454,7 @@ def test_source_seal_refuses_model_mutation_and_argv_drift(
         config=tmp_path / "production_config", catalog_path=catalog_path,
         syzygy_path=str(tb_root),
     )
-    assert validate(generated, generated_sha, argv) == generated_sha
+    assert validate(generated, generated_sha, argv).sha256 == generated_sha
     with pytest.raises(ValueError, match="argv"):
         validate(seal_path, seal_sha, [*argv, "--compile", "off"])
     (tmp_path / "candidate").write_bytes(b"Candidate")  # same path and byte count
@@ -461,7 +468,7 @@ def test_source_seal_refuses_model_mutation_and_argv_drift(
         validate(seal_path, seal_sha, argv)
     tb.write_bytes(b"X" + original_tb[1:])
     os.utime(tb, ns=(tb_stat.st_atime_ns, tb_stat.st_mtime_ns))
-    assert validate(seal_path, seal_sha, argv) == seal_sha, (
+    assert validate(seal_path, seal_sha, argv).sha256 == seal_sha, (
         "same-size, restored-mtime tablebase mutation is intentionally outside "
         "this metadata-only contract"
     )
