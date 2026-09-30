@@ -1,0 +1,98 @@
+{
+  "artifact_sha256": {
+    "bc_corrected_target_direct_audit": "69c7eec1a4f67a7eea46dd31ebf4640c40c6f72af83fc8616cab3d17b8bd4c3a",
+    "bc_corrected_target_receipt": "11b1f64cfb3d327841d05d97bd95bc388f5b721a7cbcd972451262d4d2265c0f",
+    "compact_raw_legal_independent_audit": "341bebb2c59b384e41339bb59e2840fc0552976a158ef78edd4f54db81ed503c",
+    "compact_raw_legal_independent_audit_source": "5480b056c859d624d9059e22bb0672dab1081d7a28ca66cb5650bec42a017ccb",
+    "compact_raw_legal_receipt": "f7d0ceda8c05f0ed013cbc6c5dc58f9110377c4e09bb141f672d14d9cefe0e84",
+    "compact_raw_legal_source": "3dc6549452b2e1f803692052640d2001103944e351be4c6f587d56507d646210",
+    "full_pack_independent_audit": "7f449d7164a52ba508f0f26d7882a8bc113122ad4ab06edb20ee205f797f665d",
+    "full_pack_receipt": "306b96e6db421c39aef24664f828a94d3b8e9ccf36f0f4650dd4e275c00c2a84",
+    "full_pack_source": "4b5894402c9f8a827c5d782b9d0c64ace752fce05dc891776cde4d8d60742e91",
+    "local_bc_loader_screen": "debb975ef2ba4955aecae23123d1c37cf1afc774b893496b7ccdddd59a3815b0",
+    "overlap_summary": "9534b7a45f6958a87858302b2f09d24587e720f9fbf791a885cdcfa1af6052aa",
+    "replay_independent_audit": "828290a4bf7f054c1d21150d5ca762ad1b38e9cffe3c63756fe9dbcb13e46cea",
+    "replay_receipt": "cf169a64c871f3061661d45d681bdeef9c565224666b3a3a84a5ea805933d5c0",
+    "replay_source_packet": "69918e3218e7401cdbeb530c9b32a3c3f626046d000806378792ed95232ec306",
+    "replay_source_review": "5e9067a1b86a58412addee7a5532e5f9d6d04535c43d5eb3a300609c65ce8590",
+    "sf_corrected_target_direct_audit": "536ca386fc1fa696265f45d0a393af8c4bf4e6acff165b7cc41c02081cee1267",
+    "sf_corrected_target_receipt": "e496354c2e16babb3862931ec32cef4b3c6370d2df889fd55654b71764bb6e14",
+    "sf_missing_gpu_packet": "4a655e5bdd0511b59c59ef1a87db1aa45cea88cab6dce179b8865173a92fdcba",
+    "sf_missing_gpu_source_review": "ef9361edf376118ef6b169d21572f1f3c34a8932cc3bd41c931e3607b6ef05bc",
+    "sf_missing_stage_independent_audit": "7c9cc46a475a0ca36651bd74924bc23843742dddd65c7c03e294ff720453a08a",
+    "sf_missing_stage_receipt": "7951c39697c7f4efa1984256c6d93fa57e60ecea77c4256024d3667e97616f56",
+    "sf_raw_head_independent_audit": "f71aff20f56774e3a433ae7e0e7f99823ad577fdb79b2572afa36f46cb45eacd",
+    "sf_raw_head_receipt": "44a67d445c878276a5a2c2b3b0e7ef9e47ebf70715249ca315d265d6059dd37b",
+    "storage_worksheet": "bb908fdc6d8f4d0ad4c4e7657ca2dfc9b531cc1adf41a666145bbe6df59c42f7"
+  },
+  "counts": {
+    "dedup_losers": 575,
+    "gross_rows": 83991,
+    "pack_shards_512": 163,
+    "selected_teacher_rows": {
+      "BT4": 41782,
+      "Ceres": 41634
+    },
+    "sf_gpu_calls": {
+      "B128a": 97,
+      "C512a": 24
+    },
+    "sf_gpu_pad_slots": {
+      "B128a": 40,
+      "C512a": 21
+    },
+    "sf_missing_head_rows": {
+      "BT4": 12376,
+      "Ceres": 12267
+    },
+    "unique_winners": 83416,
+    "whole_source_archive_counts": {
+      "BT4-v9": 256,
+      "Ceres-v8": 32,
+      "SF-d6": 97
+    },
+    "winner_source_rows": {
+      "BT4-v9": 27305,
+      "Ceres-v8": 31468,
+      "SF-d6": 24643
+    }
+  },
+  "limits": [
+    "no source, target, pack, ingest, owner or outcome corpus credit",
+    "no training or playing-strength comparison",
+    "GPU pass covers missing SF-origin heads only; neural-origin heads were banked",
+    "512-row diagnostic ZIP count does not scale as a production file layout",
+    "external storage loader and GPU training throughput unmeasured",
+    "whole source archives include unselected members and losing rows",
+    "compact chosen raw legal-head bank is measured on B/C subset only, with a verbose diagnostic index",
+    "large-shard physical format remains pending"
+  ],
+  "schema": "tri_source_selected_target_pipeline_compact_evidence_v1",
+  "scope": "bounded archived three-source diagnostic, zero corpus credit",
+  "storage_bytes": {
+    "bc_compact_raw_legal_uncompressed_payload": 8468846,
+    "bc_compact_raw_legal_uncompressed_payload_per_row": 144.09415888248006,
+    "bc_compact_raw_legal_verbose_index": 43931297,
+    "bc_compact_raw_legal_zstd5_payload": 5749282,
+    "full_pack": 49581976,
+    "full_pack_output_tree": 118255783,
+    "full_pack_per_winner": 594.3940730795051,
+    "whole_source_archives": 261198561,
+    "whole_source_archives_per_unique_winner": 3131.2765057063393
+  },
+  "verification": {
+    "compact_raw_legal": "PASS_ALL_INDEX_NATIVE_BYTES_AND_TARGETS_DIAGNOSTIC",
+    "full_pack": "PASS_DIAGNOSTIC_FULL_WINNERS_ZERO_CORPUS_CREDIT",
+    "replay": "PASS_DIAGNOSTIC_ZERO_CREDIT",
+    "sf_raw_heads": "PASS_RAW_HEADS_UNADMITTED",
+    "sf_targets": "PASS_CPU_TARGET_BYTES_UNADMITTED"
+  },
+  "wall_seconds": {
+    "full_pack": 137.04914226703113,
+    "full_pack_independent_audit": 118.60696868400555,
+    "sf_missing_gpu": 62.251800397993065,
+    "sf_raw_head_audit": 29.090699958003825,
+    "sf_target_cpu_transform": 34.589887430978706,
+    "source_replay": 937.2094764510111
+  }
+}
