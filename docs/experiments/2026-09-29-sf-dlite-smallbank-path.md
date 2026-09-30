@@ -67,5 +67,5 @@ targets cannot be substituted from the old tensor-only spool. Synthetic tests
 cover B/C/S ply offsets, history/identity/STM/rule50 mismatch, missing raw
 scores, legal-mask and policy-byte preservation, fake-engine option profile,
 ownership/failure cleanup, complete small-bank output and resume refusal.
-Three additional synthetic tests check extractor sampling and receipt,
-index, and proof tampering.
+Four additional synthetic tests check extractor sampling, receipt/index/proof
+tampering, and a rehashed receipt with missing selected history.

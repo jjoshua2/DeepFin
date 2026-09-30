@@ -98,7 +98,7 @@ def test_tampered_proof_and_index_and_terminal_refuse() -> None:
         run((receipt, packed(broken_terminal), index, proofs))
 
 
-def test_missing_selected_game_refuses() -> None:
+def test_winner_index_mismatch_refuses() -> None:
     receipt, terminal, index, proofs = fixture()
     modified = extract.json_object(receipt, "receipt")
     modified["resolution"]["provisional_dedup"]["winners"] = [
@@ -112,3 +112,26 @@ def test_missing_selected_game_refuses() -> None:
     new_terminal["receipt_sha256"] = core.digest(new_receipt)
     with pytest.raises(core.Hold, match="winner/index identity"):
         run((new_receipt, packed(new_terminal), index, proofs))
+
+
+def test_missing_selected_history_refuses_even_with_rehashed_receipt() -> None:
+    receipt, terminal, index, proofs = fixture()
+    _winners, _selected_proofs, manifest = run((receipt, terminal, index, proofs))
+    selected = [extract.json_object(line, "winner") for line in
+                extract.lines(_winners, 2)]
+    source = selected[0]["source"]
+    game = extract.json_object(proofs[source], "game")
+    game["history_chain"]["row_index"] = []
+    changed_proofs = dict(proofs)
+    changed_proofs[source] = packed(game)
+    changed_receipt = extract.json_object(receipt, "receipt")
+    for child in changed_receipt["source_child_results"]:
+        if child["source"] == source:
+            child["proof_sha256"] = core.digest(changed_proofs[source])
+    changed_receipt_raw = packed(changed_receipt)
+    changed_terminal = extract.json_object(terminal, "terminal")
+    changed_terminal["receipt_sha256"] = core.digest(changed_receipt_raw)
+    assert manifest["sample_size"] == 2
+    with pytest.raises(core.Hold, match="all selected complete history proofs"):
+        run((changed_receipt_raw, packed(changed_terminal), index,
+             changed_proofs))
