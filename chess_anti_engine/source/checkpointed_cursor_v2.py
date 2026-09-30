@@ -32,6 +32,8 @@ class GameLocator:
     rows: int
     archive_sha: str
     strict_receipt_sha: str
+    ply_start: int = 0
+    root_prefix_uci: tuple[str, ...] = ()
     actual: object = None
 
 
@@ -66,6 +68,21 @@ class ReplayGameReader:
     def read_game(self, locator: GameLocator) -> tuple[tuple[dict, bytes], ...]:
         wave.need(locator.strict_receipt_sha == self.strict,
                   "strict receipt mismatch")
+        if locator.actual is not None:
+            actual = locator.actual
+            wave.need(
+                all(getattr(actual, name, None) == value for name, value in (
+                    ("source", locator.source),
+                    ("source_manifest_sha", locator.source_manifest_sha),
+                    ("namespace", locator.namespace),
+                    ("root_id", locator.root_id),
+                    ("game_id", locator.game_id),
+                    ("gross_rows", locator.rows),
+                    ("archive_sha", locator.archive_sha),
+                    ("strict_receipt_sha", locator.strict_receipt_sha))) and
+                getattr(actual, "root", {}).get("uci_prefix") ==
+                    list(locator.root_prefix_uci),
+                "pinned adapter locator/root-prefix identity")
         raw = self.snapshot(locator)
         wave.need(type(raw) is bytes and
                   0 < len(raw) <= self.archive_byte_cap and
@@ -108,7 +125,8 @@ class ReplayGameReader:
             wave.need(type(row) is dict and type(native) is bytes and
                       row.get("uid") == [locator.source_manifest_sha,
                                          locator.namespace, locator.root_id,
-                                         locator.game_id, len(answer)],
+                                         locator.game_id,
+                                         locator.ply_start + len(answer)],
                       "literal replay UID/ply sequence")
             answer.append(({**row,
                             "game_proof_sha256": proof["source_proof_sha256"],
@@ -155,6 +173,16 @@ class SourceCursor:
                       type(loc.game_id) is int and 0 <= loc.game_id <= sort.U32 and
                       type(loc.rows) is int and 0 < loc.rows <= MAX_GAME_ROWS,
                       "bounded exact game locator")
+            wave.need(type(loc.ply_start) is int and
+                      0 <= loc.ply_start <= sort.U32 - loc.rows + 1 and
+                      type(loc.root_prefix_uci) is tuple and
+                      len(loc.root_prefix_uci) <= 256 and
+                      all(type(move) is str and 4 <= len(move) <= 5
+                          for move in loc.root_prefix_uci) and
+                      (loc.source != "BT4-v9" or
+                       (bool(loc.root_prefix_uci) and
+                        loc.ply_start == len(loc.root_prefix_uci))),
+                      "source-specific literal UID ply start")
             key = loc.source_manifest_sha, loc.namespace
             wave.need(key not in key_labels or key_labels[key] == loc.source,
                       "conflicting source namespace")
@@ -168,7 +196,9 @@ class SourceCursor:
                              "source_manifest_sha": loc.source_manifest_sha,
                              "namespace": loc.namespace,
                              "root_id": loc.root_id, "game_id": loc.game_id,
-                             "rows": loc.rows, "archive_sha": loc.archive_sha,
+                             "rows": loc.rows, "ply_start": loc.ply_start,
+                             "root_prefix_uci": list(loc.root_prefix_uci),
+                             "archive_sha": loc.archive_sha,
                              "strict_receipt_sha": loc.strict_receipt_sha})
         self.locators = locators
         self.reader = reader
@@ -176,7 +206,7 @@ class SourceCursor:
         self.syzygy_inventory_sha256 = syzygy_inventory_sha256
         self.roster = tuple((a, b, label) for (a, b), label in sorted(key_labels.items()))
         self.identity = wave.sha(wave.canonical({
-            "schema": "source_cursor_roster_v2", "locators": expected,
+            "schema": "source_cursor_roster_v3", "locators": expected,
             "strict_receipt_sha256": strict_receipt_sha256,
             "syzygy_inventory_sha256": syzygy_inventory_sha256,
             "reader_code_sha256": reader_code_sha256}))
@@ -191,7 +221,8 @@ class SourceCursor:
         for ply, (row, native) in enumerate(rows):
             wave.need(type(row) is dict and
                       row.get("uid") == [loc.source_manifest_sha, loc.namespace,
-                                         loc.root_id, loc.game_id, ply] and
+                                         loc.root_id, loc.game_id,
+                                         loc.ply_start + ply] and
                       row.get("source") == loc.source and
                       row.get("syzygy_inventory_sha256") ==
                           self.syzygy_inventory_sha256 and
@@ -240,7 +271,7 @@ class CursorPipeline:
         self.source = source
         self.store = store
         self.root.mkdir(parents=True, exist_ok=True)
-        self.claim = {"schema": "source_cursor_pipeline_claim_v2",
+        self.claim = {"schema": "source_cursor_pipeline_claim_v3",
                       "source_roster_sha256": source.identity,
                       "wave_claim_sha256": wave.sha(store.claim_raw),
                       "code_sha256": wave.file_sha(Path(__file__)),
@@ -284,7 +315,7 @@ class CursorPipeline:
         raw = path.read_bytes()
         receipt = json.loads(raw)
         wave.need(raw == wave.canonical(receipt) and
-                  receipt.get("schema") == "source_cursor_segment_v2" and
+                  receipt.get("schema") == "source_cursor_segment_v3" and
                   receipt.get("claim_sha256") == wave.sha(wave.canonical(self.claim)) and
                   receipt.get("segment") == segment and
                   receipt.get("previous_cursor_receipt_sha256") == previous and
@@ -372,7 +403,7 @@ class CursorPipeline:
                     after_wave_seal(number)
             end = self.source.current
             wave.need(end != start, "cursor did not advance")
-            receipt = {"schema": "source_cursor_segment_v2",
+            receipt = {"schema": "source_cursor_segment_v3",
                        "claim_sha256": wave.sha(wave.canonical(self.claim)),
                        "segment": number, "start": [start.game, start.row,
                                                         start.game_sha256],

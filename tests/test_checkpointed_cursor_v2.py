@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import signal
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,8 @@ SOURCE = "e" * 64
 ROUTE_CODE = "f" * 64
 NAMESPACE = "bt4_run11:" + MANIFEST
 CONTEXT = ("history", "repetition", 0, "legal", "teacher-query")
+PREFIX = ("e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5a4", "g8f6",
+          "e1g1", "f8e7", "f1e1", "b7b5", "a4b3", "d7d6", "c2c3", "e8g8")
 
 
 def _archive(game: int) -> bytes:
@@ -36,7 +39,7 @@ def _locators(*, large: bool = False) -> tuple[cursor.GameLocator, ...]:
     sizes = [256] * 31 + [255, 2, 1, 1] if large else [2, 2]
     return tuple(cursor.GameLocator(
         "BT4-v9", MANIFEST, NAMESPACE, f"root-{index}", index,
-        size, wave.sha(_archive(index)), STRICT)
+        size, wave.sha(_archive(index)), STRICT, len(PREFIX), PREFIX)
         for index, size in enumerate(sizes))
 
 
@@ -75,7 +78,7 @@ def _pipeline(root: Path, *, large: bool = False,
         answer = []
         for ply in range(loc.rows):
             uid = [loc.source_manifest_sha, loc.namespace, loc.root_id,
-                   loc.game_id, ply]
+                   loc.game_id, loc.ply_start + ply]
             native = hashlib.sha256(wave.canonical(uid)).digest()
             if tamper_native and loc.game_id == 0 and ply == 0:
                 native = bytes([native[0] ^ 1]) + native[1:]
@@ -130,9 +133,10 @@ def test_literal_uid_paired_candidate_and_sort(tmp_path: Path) -> None:
     assert len(list(_sort(tmp_path, source).iter_run(runs[0]))) == 4
     notes = list(pipeline.store.iter_rows(0))
     assert notes[0][0]["uid"][1] == NAMESPACE
+    assert notes[0][0]["uid"][4] == 16
     assert notes[0][0]["source"] == "BT4-v9"
     assert candidate.route(notes[0][0]["uid"]) == "Ceres"
-    assert candidate.route(notes[2][0]["uid"]) == "BT4"
+    assert candidate.route(notes[3][0]["uid"]) == "BT4"
     records = (pipeline.root / "candidate_00000000" / "RECORDS.bin").read_bytes()
     assert len(records) == 4 * 100
     for index in range(4):
@@ -209,14 +213,16 @@ def test_source_namespace_native_and_receipt_tamper_refusal(tmp_path: Path) -> N
         _pipeline(tmp_path / "swap", locators=swap)
     namespace = tuple(cursor.GameLocator(
         loc.source, loc.source_manifest_sha, "new-namespace", loc.root_id,
-        loc.game_id, loc.rows, loc.archive_sha, loc.strict_receipt_sha)
+        loc.game_id, loc.rows, loc.archive_sha, loc.strict_receipt_sha,
+        loc.ply_start, loc.root_prefix_uci)
         for loc in locators)
     with pytest.raises(wave.Hold, match=r"cursor/wave source pins|claim/source/config"):
         _pipeline(tmp_path, locators=namespace)
     coordinated = tuple(cursor.GameLocator(
         loc.source, loc.source_manifest_sha, loc.namespace, loc.root_id,
         loc.game_id, loc.rows,
-        wave.sha(_archive(loc.game_id) + b"changed"), loc.strict_receipt_sha)
+        wave.sha(_archive(loc.game_id) + b"changed"), loc.strict_receipt_sha,
+        loc.ply_start, loc.root_prefix_uci)
         for loc in locators)
     with pytest.raises(wave.Hold, match=r"cursor/wave source pins|claim/source/config"):
         _pipeline(tmp_path, locators=coordinated)
@@ -224,13 +230,54 @@ def test_source_namespace_native_and_receipt_tamper_refusal(tmp_path: Path) -> N
         locators[0].source, locators[0].source_manifest_sha,
         locators[0].namespace, "another-root", locators[0].game_id,
         locators[0].rows, locators[0].archive_sha,
-        locators[0].strict_receipt_sha)
+        locators[0].strict_receipt_sha, locators[0].ply_start,
+        locators[0].root_prefix_uci)
     accepted, _ = _pipeline(tmp_path / "reused-game-id",
                             locators=(locators[0], reused_game_id))
     assert accepted.source.total_rows == 4
     with pytest.raises(wave.Hold, match="duplicate literal source-qualified game"):
         _pipeline(tmp_path / "duplicate-game",
                   locators=(locators[0], locators[0]))
+    wrong_ply = cursor.GameLocator(
+        locators[0].source, locators[0].source_manifest_sha,
+        locators[0].namespace, locators[0].root_id, locators[0].game_id,
+        locators[0].rows, locators[0].archive_sha,
+        locators[0].strict_receipt_sha, 0, PREFIX)
+    with pytest.raises(wave.Hold, match="source-specific literal UID ply start"):
+        _pipeline(tmp_path / "wrong-ply", locators=(wrong_ply,))
+    changed_prefix = tuple(cursor.GameLocator(
+        loc.source, loc.source_manifest_sha, loc.namespace, loc.root_id,
+        loc.game_id, loc.rows, loc.archive_sha, loc.strict_receipt_sha,
+        loc.ply_start, ("d2d4", *loc.root_prefix_uci[1:]))
+        for loc in locators)
+    with pytest.raises(wave.Hold, match=r"cursor/wave source pins|claim/source/config"):
+        _pipeline(tmp_path, locators=changed_prefix)
+    actual = SimpleNamespace(
+        source=locators[0].source,
+        source_manifest_sha=locators[0].source_manifest_sha,
+        namespace=locators[0].namespace,
+        root_id=locators[0].root_id,
+        game_id=locators[0].game_id,
+        gross_rows=locators[0].rows,
+        archive_sha=locators[0].archive_sha,
+        strict_receipt_sha=locators[0].strict_receipt_sha,
+        root={"uci_prefix": ["d2d4", *PREFIX[1:]]})
+    with_actual = cursor.GameLocator(
+        locators[0].source, locators[0].source_manifest_sha,
+        locators[0].namespace, locators[0].root_id, locators[0].game_id,
+        locators[0].rows, locators[0].archive_sha,
+        locators[0].strict_receipt_sha, locators[0].ply_start,
+        locators[0].root_prefix_uci, actual)
+    mismatched_actual, _ = _pipeline(tmp_path / "actual-prefix",
+                                     locators=(with_actual,))
+    with pytest.raises(wave.Hold, match="pinned adapter locator/root-prefix identity"):
+        mismatched_actual.wave1()
+    old_claim = json.loads((pipeline.root / "CLAIM.json").read_bytes())
+    old_claim["schema"] = "source_cursor_pipeline_claim_v2"
+    (pipeline.root / "CLAIM.json").write_bytes(wave.canonical(old_claim))
+    with pytest.raises(wave.Hold, match="cursor source/config/code changed"):
+        _pipeline(tmp_path)
+    (pipeline.root / "CLAIM.json").write_bytes(wave.canonical(pipeline.claim))
     path = pipeline.root / "cursor_00000000.json"
     original = path.read_bytes()
     path.write_bytes(original[:-1])
@@ -307,7 +354,7 @@ def test_direct_wave2_refuses_valid_sealed_truncated_last_segment(
     pipeline.store.seal_wave1(0, iter(two_rows), expected_rows=2)
     pipeline.store.compare_wave2(0, iter(two_rows))
     receipt = {
-        "schema": "source_cursor_segment_v2",
+        "schema": "source_cursor_segment_v3",
         "claim_sha256": wave.sha(wave.canonical(pipeline.claim)),
         "segment": 0,
         "start": [0, 0, None], "end": [1, 0, None],

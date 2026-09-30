@@ -6,8 +6,8 @@
   "source_sha256": {
     "chess_anti_engine/source/checkpointed_wave_v2.py": "23f41f865533a60d979bb4c5051f6b3dd7bcdeaf51eea9d7e65641de4cc11e2c",
     "chess_anti_engine/source/checkpointed_candidate_v2.py": "153423c41452cf5e1533f495eac5bda2486243ad4bcfdd0ecf313cbf91a0c1d0",
-    "chess_anti_engine/source/checkpointed_cursor_v2.py": "35faa109555489e74cb1dc774a996686701b3f40bf62901c69afbe50a52ec643",
-    "tests/test_checkpointed_cursor_v2.py": "e7ba5052596485bc05b1b1b139df79924c633a7b2f422f9ed0597fbb6818c336"
+    "chess_anti_engine/source/checkpointed_cursor_v2.py": "45d2eb4c292f9b8e5c19c633557d9dd17c21020577d2932b4d4fe60c6a067ddf",
+    "tests/test_checkpointed_cursor_v2.py": "dc3eab05331ca5031edb4b936cbfab0e01a99e62e87182557c15e8053ef0c413"
   },
   "frozen_reader_sources_reviewed_but_not_run": {
     "adapter_grouped.py": "4f415da2f2f09de0662a4ef7e277ff627704e6eba4ca7e641243bdb322ec695d",
@@ -19,6 +19,7 @@
   "fixture": {
     "rows": 8195,
     "native_bytes_per_row": 32,
+    "bt4_uid_ply_start": 16,
     "game_rows_max": 256,
     "game_rows_pattern": "31x256+255+2+1+1",
     "segment_rows": 8192,
@@ -33,17 +34,18 @@
   "validation": {
     "cursor_tests": 6,
     "existing_sort_tests": 13,
-    "test_status": "PASS_19",
-    "test_log_sha256": "d23c788d6d25bdc5f0974fd770cb9c59eb6747b85171cada1759c4689175fd36",
+    "test_status": "CURRENT_CURSOR_6_PASS_PRIOR_COMBINED_19_PASS",
+    "current_cursor_test_log_sha256": "a22720e7e0f651a2c6eab353df3268a9dfcedd25261110950e6ba13556124616",
+    "prior_combined_test_log_sha256": "d23c788d6d25bdc5f0974fd770cb9c59eb6747b85171cada1759c4689175fd36",
     "whole_repo_ruff": "PASS",
     "whole_repo_vulture": "PASS",
     "basedpyright_python": "3.10",
     "basedpyright_dependency_overlay": "repo Python 3.10 virtualenv plus installed Python 3.10 package paths; no installs or stubs changed",
     "basedpyright_base": {"errors": 439, "warnings": 7, "report_sha256": "d01dd2a89973fcafecb31f8394755734fe04996089d8ea4a991470dac9b79cef"},
-    "basedpyright_candidate": {"errors": 439, "warnings": 7, "report_sha256": "ad039dee02024eb3b80ac8c57de5f27046c21601b701332768d797788e6b3f1e"},
+    "basedpyright_candidate": {"errors": 439, "warnings": 7, "report_sha256": "5bee539372a41317eacb32d6b2a2aaa5e1d49eac4f736d5d9802b7c308d68910"},
     "basedpyright_normalized_candidate_only": 0,
     "basedpyright_normalized_base_only": 0,
-    "basedpyright_comparison_sha256": "0c3060834b61333d02a7fac489b381cfac3b07fd844a164dde3982afc8c45ef0",
+    "basedpyright_comparison_sha256": "49db6bb087a9b341550c108cbc2156a9b6d81851628fd6561d074698893fac0a",
     "ordinary_full_lint_environment": "FAIL_IMPORT_DEPENDENCIES_NOT_RESOLVED_BY_PYRIGHT",
     "ordinary_full_lint_log_sha256": "867a6405e66d6eea5ad190bd5cc0bdfb9e807c6debebcee3ae649d0ccf5caff3"
   },
