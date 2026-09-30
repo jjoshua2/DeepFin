@@ -149,6 +149,21 @@ below 2 GiB as admission guards. The 32 GiB host MemAvailable floor remains;
 summed RSS becomes recorded diagnostic data. The fresh `full04` detach shim
 (SHA-256 `74fc44c30ece016db60c382f49228398da63ecab12f3cf78f7d8c14267e01c77`)
 targets a new output root and requires a new root authorization sealing those
-limits. Six focused CPU memory-meter fixtures pass. This proposal has **not**
-launched or admitted labels; source review, authorization and a dated exact
-launch record must precede any fourth attempt.
+limits. Six focused CPU memory-meter fixtures pass. At this prospective review
+point, source review, authorization and a dated exact launch record were still
+required before a fourth attempt.
+
+Root subsequently reviewed the complete v9 launcher, shim, and public note,
+and independently passed the focused fixtures and a real parent/child memory
+meter check. Root authorized the exact six-worker `full04` command at
+SHA-256 `eb8ec5360f3f355f8e8599273cb16e044074bff9f82204acfede2e1805beec5b`.
+The exact private command and authorization bytes were sealed before launch in
+`operations/sf-dlite-d8-full04-prospective-launch-20260930/MANIFEST.json`
+(SHA-256 `3208e2c1fd6cec928d7388b4d4ac155dd342a018348ba1fca129b2d6e50d345b`).
+After the shared physical-I/O lease was verified free, the detached six-worker
+job launched. Its receipt is
+`labels/sf_dlite_legacy_g10_d8_full04_20260930/LAUNCH-1790796787321325022.json`
+(SHA-256 `60634169db924113b43beb875d3ce33c1f1f25af486380127940b96d238f5717`).
+The first source-bound 165-row block sealed successfully; the campaign is
+**running and unadmitted**. Only a complete terminal and independent all-label
+audit can give its labels or downstream results credit.
