@@ -508,10 +508,11 @@ def test_cleanup_never_signals_reused_group_leader(monkeypatch):
 
     signals = []
     waits = []
-    child = cast(tool.subprocess.Popen, SimpleNamespace(
+    # Deliberate structural test double: no process is launched by this test.
+    child = cast(tool.subprocess.Popen, cast(object, SimpleNamespace(
         pid=12345, _preparation_starttime=111,
         poll=lambda: 0, wait=lambda: waits.append("reaped"),
-    ))
+    )))
     monkeypatch.setattr(tool, "_process_identity", lambda *_: (1, 222))
     monkeypatch.setattr(tool.os, "killpg", lambda *args: signals.append(args))
     tool.terminate(child)
@@ -526,7 +527,7 @@ def test_cleanup_rechecks_identity_before_kill(monkeypatch):
     identity = [111]
     child = cast(tool.subprocess.Popen, SimpleNamespace(
         pid=12345, _preparation_starttime=111, poll=lambda: 0, wait=lambda: None,
-    ))
+    )))
     monkeypatch.setattr(tool, "_process_identity", lambda *_: (1, identity[0]))
 
     def signal_group(pid, sig):
