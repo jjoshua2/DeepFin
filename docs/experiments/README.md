@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [D-lite durable paired arena resume](2026-09-30-dlite-paired-arena-resume.md) | Opt-in source-bound, fsynced 576-pair resume with atomic pair receipts and an outer 55-minute attempt cap; CPU recovery proof only, no strength result |
 | [Persistent Stockfish scalar cost](2026-09-29-sf-scalar-persistent-cost.md) | Frozen 10k-row persistent one-thread d6/d8/d10 cost/agreement screen with cold TT per row/depth and zero corpus/training credit |
 | [Ceres stored-feed-once root preparation](2026-09-29-ceres-root-feedonce.md) | Tracked CPU root binder exercised by saved-game readback, exact 2,022-root replay parity and narrow 16.81% saved-root prep saving; fresh actor adoption pending |
 | [D-lite historical donor adaptation](2026-09-30-sf-dlite-historical-donor-adapter.md) | Main-archived patch against pinned historical game-epoch runtime; exact donor/paired-pack/consumed-batch gates CPU-reviewed, no training or strength credit |

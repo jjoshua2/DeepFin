@@ -45,6 +45,7 @@ is how a reader collapses that: last write wins.
 from __future__ import annotations
 
 import datetime
+import os
 import hashlib
 import json
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
@@ -237,6 +238,7 @@ class GameLogWriter:
         settings: Mapping[str, Any],
         resuming: bool = False,
         info: Mapping[str, Any] | None = None,
+        durable: bool = False,
     ) -> None:
         """``info`` is recorded in the header and NOT fingerprinted.
 
@@ -250,12 +252,21 @@ class GameLogWriter:
         self.driver = driver
         self.settings = dict(settings)
         self.info = dict(info or {})
+        self.durable = durable
         self.fingerprint = settings_fingerprint(self.settings)
         self.games_written = 0
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.repaired_truncated_tail = repair_truncated_tail(self.path)
         had_content = self.path.exists() and self.path.stat().st_size > 0
         self._fh = self.path.open("a", encoding="utf-8")
+        if self.durable:
+            # Also persists repair_truncated_tail's truncate/newline on resume.
+            os.fsync(self._fh.fileno())
+            parent_fd = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
         if not (resuming and had_content):
             self._write({
                 "kind": KIND_HEADER,
@@ -283,6 +294,8 @@ class GameLogWriter:
     def _write(self, row: Mapping[str, Any]) -> None:
         self._fh.write(json.dumps(row, separators=(",", ":")) + "\n")
         self._fh.flush()
+        if self.durable:
+            os.fsync(self._fh.fileno())
 
     def close(self) -> None:
         if not self._fh.closed:
