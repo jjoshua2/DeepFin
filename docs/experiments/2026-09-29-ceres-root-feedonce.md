@@ -45,8 +45,10 @@ CPU-tested adapter but has not yet pinned this tracked binder or run a GPU
 qualification. This readout claims no new generated or corpus-admitted rows,
 no live throughput gain and no 500M completion estimate.
 
-Supporting CPU artifacts on the source host:
-`/tmp/ceres-root-feedonce-actor-v1-20260929/BENCHMARK.json`,
-`/tmp/ceres-root-feedonce-actor-v1-independent-source-review-20260929.json`,
-`/tmp/ceres-root-main-saved32-proof-20260929.json`, and
-`/tmp/ceres-root-batch-convert-screen-20260929.json`.
+The supporting CPU artifacts were private source-host review inputs rather than
+portable repository artifacts: `BENCHMARK.json`, the independent source review,
+the saved32 proof, and the batch-conversion screen. Their former machine-specific
+temporary paths are deliberately not published here. The durable public claim is
+bounded by the pinned source/test identities, archived source ZIP and ordered-root
+receipt above; this record does not imply those private artifacts are retrievable
+from another checkout.
