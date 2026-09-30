@@ -16,6 +16,19 @@ import time
 import zipfile
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.training_host_memory import require_available
+
+
+def current_rss_bytes() -> int:
+    """Read current Linux resident pages; a missing/malformed reading fails closed."""
+    fields = Path("/proc/self/statm").read_text().split()
+    resident_pages = int(fields[1])
+    page_size = int(os.sysconf("SC_PAGE_SIZE"))
+    if resident_pages < 0 or page_size <= 0:
+        raise ValueError("invalid Linux RSS reading")
+    return resident_pages * page_size
+
 
 def digest(arrays: dict[str, Any]) -> str:
     h = hashlib.sha256()
@@ -112,6 +125,25 @@ def abort(output: Path, phase: str, error: BaseException) -> None:
         os._exit(9)
 
 
+def required_path(value: Path | None, message: str) -> Path:
+    if value is None:
+        raise ValueError(message)
+    return value
+
+
+def pid_exists(pid: int) -> bool:
+    """Conservatively retain the predecessor gate, including permission denial."""
+    if pid <= 0:
+        raise ValueError("predecessor PID must be positive")
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("phase", choices=["pack", "measure"])
@@ -126,20 +158,19 @@ def main() -> None:
     p.add_argument("--seconds", type=int, default=1800)
     a = p.parse_args()
     require(1 <= a.seconds <= 1800, "wall bound must be <=30min")
-    import psutil
 
     # Do not stat/resolve/list or check free space on any external path until
     # the competing benchmark has ended. PID reuse conservatively blocks.
     if a.phase == "measure":
         require(
-            a.wait_pid is not None and not psutil.pid_exists(a.wait_pid),
+            a.wait_pid is not None and not pid_exists(a.wait_pid),
             "predecessor still exists; no external access allowed",
         )
         require(
             a.external_output is not None and a.external_copies is not None,
             "external paths required for measurement",
         )
-        require(not a.external_output.exists(), "external output must be fresh")
+        require(not required_path(a.external_output, "external output required").exists(), "external output must be fresh")
         require(a.runtime_head is not None, "expected runtime HEAD required")
         require(
             subprocess.check_output(
@@ -164,7 +195,7 @@ def main() -> None:
     )
     require(a.copies.resolve() != a.output.resolve(), "output overlaps pilot copies")
     require(
-        a.output.resolve().is_relative_to(Path("/home/josh/chess-artifacts")),
+        a.output.resolve().is_relative_to(Path.home() / "chess-artifacts"),
         "local artifact root required",
     )
     os.sched_setaffinity(0, set(sorted(os.sched_getaffinity(0))[:2]))
@@ -186,14 +217,14 @@ def main() -> None:
         require(not (a.output / "measure.json").exists(), "measurement already started")
     disks = [a.output]
     if a.phase == "measure":
-        disks += [a.external_output.parent]
+        disks += [required_path(a.external_output, "external output required").parent]
     started = time.monotonic()
     done = threading.Event()
 
     def guard_once():
         require(time.monotonic() - started <= a.seconds, "wall limit")
-        require(psutil.Process().memory_info().rss <= 16 * 2**30, "RSS limit")
-        require(psutil.virtual_memory().available >= 32 * 2**30, "available RAM floor")
+        require(current_rss_bytes() <= 16 * 2**30, "RSS limit")
+        require_available(32)
         require(
             all(shutil.disk_usage(x).free >= 80 * 2**30 for x in disks), "disk floor"
         )
@@ -209,7 +240,7 @@ def main() -> None:
                 abort(a.output, a.phase, exc)
 
     threading.Thread(target=monitor, daemon=True).start()
-    result = {
+    result: dict[str, Any] = {
         "phase": a.phase,
         "complete": False,
         "scope": "Validated eager decoder only; no sampler integration; uncontrolled caches; fixed-order single pass",
@@ -247,11 +278,11 @@ def main() -> None:
                 [x["shard"] for x in packed["records"]] == [x["shard"] for x in copies],
                 "pack roster differs",
             )
-            a.external_output.mkdir()
+            required_path(a.external_output, "external output required").mkdir()
             result["transfers"] = []
             for entry in packed["records"]:
                 src = a.output / (entry["shard"] + ".zip")
-                dest = a.external_output / src.name
+                dest = required_path(a.external_output, "external output required") / src.name
                 require(sha(src) == entry["archive_sha256"], "local archive changed")
                 start = time.monotonic()
                 shutil.copyfile(src, dest)
@@ -277,7 +308,8 @@ def main() -> None:
             set_nthreads(2)
             for medium, base, archive in [
                 ("nvme", a.copies, a.output),
-                ("external", a.external_copies, a.external_output),
+                ("external", required_path(a.external_copies, "external copies required"),
+                 required_path(a.external_output, "external output required")),
             ]:
                 for layout in ["zarr", "zip", "npz"]:
                     load_seconds = 0.0

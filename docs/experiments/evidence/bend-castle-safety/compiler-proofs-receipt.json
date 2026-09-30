@@ -1,0 +1,11 @@
+{
+  "command": [
+    "bash",
+    "-c",
+    "cd /mnt/data/castle-safety-work/compiler/bend && ../../bun tests/run/u64_proofs.js"
+  ],
+  "status": 0,
+  "elapsed_seconds": 7.0254541060000975,
+  "log_sha256": "b1366bab9cbd545e1ed78212bc36b9e2fa1a5b1646f5bfe9be5779ecc4a3e72d",
+  "log_bytes": 1288
+}

@@ -1,0 +1,48 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "fixture_rows": 152,
+  "protected_in_range_rows": 125,
+  "same_index_rows": 17,
+  "out_of_range_wrapper_rows": 10,
+  "divergence_bits": 17,
+  "allocation_cells": 131072,
+  "observation": "Actual public read-before/write/read-after query values, capacity and masked write address; not every cell",
+  "oracle": "Independent unsigned remainder and query/write value; different in-range indices must preserve the seeded query",
+  "scope": "Complete allocations only. The native probe does not execute proof predicates or internal raw calls, and does not requalify the full table builder.",
+  "modes": [
+    {
+      "mode": "generic",
+      "rows": 152,
+      "invalid_rejections": 6,
+      "output_sha256": "63b2966db40ac2d9ea8fa45aac97e7fb305f692ff656bb8c43d09151ad01ad1b"
+    },
+    {
+      "mode": "portable",
+      "rows": 152,
+      "invalid_rejections": 6,
+      "output_sha256": "63b2966db40ac2d9ea8fa45aac97e7fb305f692ff656bb8c43d09151ad01ad1b"
+    },
+    {
+      "mode": "native",
+      "rows": 152,
+      "invalid_rejections": 6,
+      "output_sha256": "63b2966db40ac2d9ea8fa45aac97e7fb305f692ff656bb8c43d09151ad01ad1b"
+    },
+    {
+      "mode": "ubsan",
+      "rows": 152,
+      "invalid_rejections": 6,
+      "output_sha256": "63b2966db40ac2d9ea8fa45aac97e7fb305f692ff656bb8c43d09151ad01ad1b"
+    }
+  ],
+  "source_sha256s": {
+    "standalone/proofs/normalization/probe.bend": "da2bdd278b0dce0b14fd0590164e00f609677199886e8d7d5c434a3cfd74c4cd",
+    "standalone/proofs/complete/verify_native.js": "81fbfec1315e47d507554026e152039d266c4aa0a62b97f6011e9f13bbcab168",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d"
+  },
+  "bun": "1.4.2",
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)"
+}

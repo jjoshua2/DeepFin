@@ -1,0 +1,9 @@
+{
+  "command": [
+    "/mnt/data/fill-tools/bun",
+    "tests/run/u64_proofs.js"
+  ],
+  "cwd": "/mnt/data/fill-tools/bend",
+  "exit_code": 0,
+  "elapsed_seconds": 17.7965003610002
+}

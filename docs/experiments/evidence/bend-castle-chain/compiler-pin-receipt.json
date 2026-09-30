@@ -1,0 +1,12 @@
+{
+  "command": [
+    "../bun",
+    "test",
+    "native/bend_engine/standalone/verify_compiler.test.js"
+  ],
+  "cwd": "/mnt/data/castle-continuation/repo",
+  "exit_code": 0,
+  "timed_out": false,
+  "elapsed_seconds": 0.07374800600018716,
+  "sha256": "828e6f1fed76e199523e0c27de1034f65e6888b621dc7e47b125b09f155b05e1"
+}

@@ -1,0 +1,40 @@
+{
+  "A1": {
+    "complete_games": 128,
+    "physical_calls": 396,
+    "physical_readback_sha256": "c8571ff1a1d7f5feab9db16abbb06709bda9e5ec74acd9a87285460b485c76b6",
+    "rows": 14253,
+    "source_wall_seconds": 94.73302342600073,
+    "strict_sha256": "6960706ac641e1268e068379ae2c977bc6ac9e8196cad44922f79c1c5304d70c",
+    "worker_summary_sha256": "514a0573e8a722f42db11788b2d1e3e81626c0f99c45145bb3d12a2925a3198b"
+  },
+  "B1": {
+    "A1_cdf": 0.7512698527472834,
+    "B1_cdf": 0.7513958832805707,
+    "game108_common_input_sha256": "35819105411b896da52b1f857c8d3e55e41f1622f0c1b06affb0ad33277114fa",
+    "game108_first_trajectory_divergence_row": 137,
+    "game108_moves": {
+      "A1": "d5c5",
+      "B1": "d5e5"
+    },
+    "game_files_written": 128,
+    "ledger_sealed": false,
+    "mismatched_game_file_hashes": 83,
+    "physical_calls_unsealed": 320,
+    "rows": 14252,
+    "same_rng_draw": 0.7513124896542446
+  },
+  "credit": {
+    "owner": 0,
+    "selected_target": 0,
+    "source": 0
+  },
+  "interpretation": "The scheduler changed physical batch composition, and output values differed at identical source context; one RNG draw crossed the altered policy boundary in game108. The responsible provider kernel was not isolated. ABBA parity failed before B2/A2. No automatic retry, call-count or timestamp throughput promotion.",
+  "roster_sha256": "04e593af3014c4f30a021aeae9b2c8185bc02fc6fba2e7202026ba0c7d956cc2",
+  "schema": "bt4_subset128_v7_abba_failure_public_evidence_v1",
+  "source_forensic_sha256": "53c76c153231f8a3e80d4aa025df26f8d928a08083b11b5fac32f57d43b75d3c",
+  "source_note_sha256": "2865a0e21ed7fbf727b46ceef86c687678368adc7c1299f9a50c08fff2513814",
+  "source_packet_sha256": "19c3c444061b4cb0092eeff95b5e1c4ccfc4aa73d1613e7b2c2de6528a33c2a5",
+  "status": "QUARANTINED_ZERO_CREDIT",
+  "terminal_sha256": "68f70fab70b196ac0b685f719958264c7a846a9855711732948f0cf0a7694867"
+}

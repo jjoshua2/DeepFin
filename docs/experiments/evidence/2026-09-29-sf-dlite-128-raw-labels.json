@@ -1,0 +1,67 @@
+{
+  "schema": "sf_dlite_128_raw_label_diagnostic_v1",
+  "status": "PASS_RAW_SCALAR_DIAGNOSTIC_ZERO_TARGET_CORPUS_CREDIT",
+  "tri_source_replay": {
+    "gross_rows": 83991,
+    "unique_rows": 83416,
+    "receipt_sha256": "cf169a64c871f3061661d45d681bdeef9c565224666b3a3a84a5ea805933d5c0",
+    "terminal_sha256": "e4826f40e05f1ccc05647680aad2e800dfccd3ca7d65317dc9f6a60bf423068e",
+    "wave1_index_sha256": "28b5a4fbf8e48608ff1debbab3ed4617c7cf0d7e0260967023f7ac91ec482dae",
+    "wave1_proof_sha256": {
+      "BT4-v9": "a0c7f552b6d5fbf95651f6d39cab0cfb4ab9d5f7f0a38e29fb0971f79f6fd1a0",
+      "Ceres-v8": "245300bea1462a971154d91ac9a8c86bd1b9b80a2dd210ba4cc96417616b62a1",
+      "SF-d6": "039a3bfd57e272f620e9aebeb840f20379d3274359f246d351ee7c5d6656bacb"
+    },
+    "independent_output_audit_sha256": "828290a4bf7f054c1d21150d5ca762ad1b38e9cffe3c63756fe9dbcb13e46cea"
+  },
+  "metadata_sample": {
+    "distinct_inputs": 128,
+    "source_rows": {"BT4-v9": 42, "Ceres-v8": 50, "SF-d6": 36},
+    "proof_games": 114,
+    "manifest_sha256": "e11a3689884cf25f33c26b17003ab9b0a5e4ab9e2eea98a7771036b5ea8555df",
+    "winners_sha256": "1a0e1febdd1f95f12b924bff28f920bc1c2a003eb2431cc711fe3ace8952d76c",
+    "proofs_sha256": "d3238cd2f478fb500768027d41b522c7de42bad43a02ce05c68246981c01d90b",
+    "independent_metadata_audit_sha256": "aff21773882fa5e958b7d61d026b81c395d5ca0f09568ee49e41eb295dd4016f"
+  },
+  "scalar_labels": {
+    "rows": 128,
+    "depth": 8,
+    "hash_mib": 8,
+    "threads": 1,
+    "persistent_engines": 1,
+    "cold_tt_and_serialized_readyok_per_row": true,
+    "requested_syzygy_50_move_rule": true,
+    "requested_syzygy_probe_limit": 6,
+    "requested_syzygy_retention": true,
+    "qualified_stockfish_sha256": "8d5a930411572b197553f9c4f285373f80f0e878b5b137d16c960d3dccc0d217",
+    "claim_sha256": "3f907c3623597a927fadd01374df6b3556149b486688dd26dea4e62cecba0934",
+    "complete_sha256": "72d6fab27d19264b04bb1c75ed2f9c89a97623cb0ac57bb90ebc5d486cbd6f17",
+    "raw_labels_sha256": "27fb718ac78da3ec3b6c4a974f0d3ed7b99114f14f0e94577f88e5836c15ddf4",
+    "mate_rows": 8,
+    "black_to_move_rows": 68,
+    "final_depth8_reported_tbhits": {
+      "rows_with_nonzero_hits": 20,
+      "total": 560,
+      "maximum_per_search": 57,
+      "root_piece_counts": {"7": 13, "8": 3, "9": 3, "10": 1},
+      "root_ply_min": 75,
+      "root_ply_median": 150,
+      "root_ply_max": 296,
+      "source_rows": {"BT4-v9": 8, "Ceres-v8": 5, "SF-d6": 7}
+    },
+    "independent_raw_audit_sha256": "bcc842d55d0778d10dc27ffdf879d2d183853f85bacde140b0c52560924e065c",
+    "independent_raw_audit_source_sha256": "967321bd503acab5314da5b2167495665c5184e3e7cc7d22a31eb164ff9fdaaf"
+  },
+  "preserved_artifact": {
+    "id": "sf_dlite_128_d8_hash8_20260929_v1",
+    "files": 16,
+    "bytes": 180329907,
+    "manifest_sha256": "bea904db652b94f22e809c49526ae4ef1061338254aeed09dda7a64bd27ed094"
+  },
+  "limits": [
+    "Requested UCI options were observed by the adapter, without independent wire capture or effective-option attestation.",
+    "No selected-neural target attachment, pack, corpus admission, training, throughput or Elo result is claimed.",
+    "All 128 root positions had more than six pieces, but 20 searches reported tablebase hits; no exact tablebase catalog attribution or effective-option attestation is claimed."
+  ],
+  "credit": {"diagnostic_raw_labels": 128, "selected_targets": 0, "pack": 0, "corpus": 0, "training": 0, "elo": 0}
+}

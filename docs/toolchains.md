@@ -10,6 +10,9 @@ Run scripts from the repository root with an installed package or `PYTHONPATH=.`
 Use each command's `--help` for its current arguments; examples below inspect interfaces
 and do not launch experiments.
 
+See [workspace storage](workspace_storage.md) before creating agent workspaces or
+choosing bulk input/output locations.
+
 ## Corpus to offline training
 
 | Stage | Entry point | Contract to preserve |
@@ -56,6 +59,32 @@ and consumed by the replay/training paths. They freeze a corpus census, choose r
 per source-qualified game, preflight memory and target masks, and account for complete
 epoch consumption without wrapping or silently truncating. Follow
 [target rebuildability](target_rebuildability.md) for retained observations and identity.
+
+## Resumable fixed replay epochs
+
+`scripts/offline_replay_epoch.py --checkpoint-every-seconds 1200` starts a new
+single-candidate fixed-epoch run with durable trainer and batch-cursor commits.
+`--resume` continues that same output directory; it requires an existing committed
+cursor and does not infer one from `--init-checkpoint`. Omitting both flags retains
+the older fixed-epoch behavior. The new mode pins the effective configuration,
+runner and package code, initial weights, and ordered source-content receipts.
+It saves model, optimizer, scheduler and ZClip state together with NumPy, mask,
+Torch and Python RNG state; a sidecar naming the checkpoint SHA-256 is published
+last. Only complete sidecar generations can be resumed. Two recent committed
+generations are retained, and one process owns the candidate directory at a time.
+
+Automatic source-manifest preparation stops after 30 minutes and is not itself
+resumable. A large campaign must supply a separately qualified, frozen
+`--resume-source-manifest` in the `offline_epoch_sources_v1` format: ordered `train`
+and `eval` arrays of absolute `{path, sha256, bytes}` receipts. Each shard hash
+uses sorted, newline-terminated compact JSON triples
+`[relative_file_name, file_bytes, file_sha256]`; `bytes` is the sum of file sizes.
+Each shard is checked against its receipt before use; restart does not rehash the
+entire corpus.
+The interval is limited to 20 minutes, with a 30-minute post-commit window check.
+This does not interrupt an individual blocked shard load or optimizer call; a
+days-long campaign needs a measured bound or external supervisor for those calls.
+This fixed replay runner is distinct from the game-aware exact-epoch mode below.
 
 ## Uninterrupted offline game epochs
 
@@ -849,3 +878,32 @@ record the exclusion evidence pins, and completed coverage must equal the audit'
 physical, eligible, no-result and exclusion counts. Use a fresh output directory.
 A filtered corpus needs its own later schedule qualification; this command does
 not reuse a previous corpus's training schedule or allocate training.
+
+### Hourly bootstrap recovery
+
+`lc0_control_train.py` saves full trainer state after its first completed optimizer
+window, then after each `--recovery-checkpoint-seconds` interval (default 3600).
+`--recovery-checkpoint-keep` defaults to two committed snapshots; an in-flight save
+can temporarily require a third checkpoint's disk space. Set the interval to zero
+to disable recovery snapshots. Both single- and multiple-epoch paths use this hook.
+
+Read `OUT/recovery/latest.json` to find committed bundles, newest first. Each holds
+`checkpoint.pt` (model, optimizer, scheduler, global step, peak LR and ZClip),
+`rng.pt`, and a hash-bearing `manifest.json` recording epoch, window, completed rows
+and steps. The bundle and index are durably published before older snapshots are
+removed. Failed saves retain the previous committed recovery point. An interrupted
+save can leave an unindexed bundle; it is not automatically selected.
+
+These are recovery artifacts, not completed-experiment qualifications. Restore all
+trainer state with a compatible continuation driver/`Trainer.load`, then declare a
+fresh sampling seed and budget. Rows from the interrupted epoch may be presented
+again. Saved RNG states are diagnostic/recovery material, but sampler cursors and
+prefetched batches are not restored: **exact interrupted-epoch replay is not
+supported**. This change does not add a resume CLI to the main training driver.
+Normal final loss and corpus guards still decide successful experiment completion.
+Recovery snapshots are retained on failure and prevent accidental output reuse.
+
+Saving waits for a completed training window. The interval can therefore be exceeded
+by one window; forced termination does not guarantee a last-second save. The first
+window snapshot protects early progress without relying on a signal handler racing
+an optimizer update.

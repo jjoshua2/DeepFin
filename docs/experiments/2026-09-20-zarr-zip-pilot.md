@@ -58,3 +58,12 @@ own qualification before any production migration.
 The runtime was frozen at 502cd02e072471c901255f3fdb580d6ea7b826d0; script and loader
 SHA256s are recorded in the decode result. All outputs remain separate pilot
 artifacts. No production sources or queues were changed by this measurement.
+
+## Recovery publication note — 2026-09-30
+
+Recovered from PR #793 with its original measurement and packing receipts intact.
+The local output guard now derives `~/chess-artifacts` from the operator’s home
+rather than naming one account. Linux memory and predecessor-PID guards fail
+closed without an undeclared psutil dependency. Type-narrowing repairs do not
+change the six-case measurement design, byte checks, metrics, or recorded hashes.
+This maintenance work is not a rerun or a new performance qualification.

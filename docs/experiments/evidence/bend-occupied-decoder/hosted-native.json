@@ -1,0 +1,87 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "rows_per_mode": 1920,
+  "square_observation_fields_per_mode": 21120,
+  "cases_by_category": {
+    "all_square_states": 832,
+    "insert_then_decode": 768,
+    "initial": 64,
+    "random_valid": 256
+  },
+  "occupied_rows": 1751,
+  "empty_rows": 169,
+  "all_square_state_combinations": 832,
+  "all_fresh_insert_combinations": 768,
+  "modes": [
+    {
+      "mode": "generic",
+      "rows": 1920,
+      "fields": 21120,
+      "invalid_rejections": 9,
+      "output_sha256": "f1eb0aec05aac221ccc564cbaccab282abe0e75bb83cf2a4deef9cf33844e91d"
+    },
+    {
+      "mode": "portable",
+      "rows": 1920,
+      "fields": 21120,
+      "invalid_rejections": 9,
+      "output_sha256": "f1eb0aec05aac221ccc564cbaccab282abe0e75bb83cf2a4deef9cf33844e91d"
+    },
+    {
+      "mode": "native",
+      "rows": 1920,
+      "fields": 21120,
+      "invalid_rejections": 9,
+      "output_sha256": "f1eb0aec05aac221ccc564cbaccab282abe0e75bb83cf2a4deef9cf33844e91d"
+    },
+    {
+      "mode": "ubsan",
+      "rows": 1920,
+      "fields": 21120,
+      "invalid_rejections": 9,
+      "output_sha256": "f1eb0aec05aac221ccc564cbaccab282abe0e75bb83cf2a4deef9cf33844e91d"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "pawn-tag",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "occupied_inputs_only": true,
+      "diagnostic": "row 0, field 2: all_square_states\n\n1 !== 0\n",
+      "scope": "first generic-mode mismatch, not four-mode mutated qualification"
+    },
+    {
+      "name": "king-fallback",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "occupied_inputs_only": true,
+      "diagnostic": "row 10, field 2: all_square_states\n\n4 !== 5\n",
+      "scope": "first generic-mode mismatch, not four-mode mutated qualification"
+    },
+    {
+      "name": "occupied-intersection",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "occupied_inputs_only": true,
+      "diagnostic": "row 0, field 1: all_square_states\n\n0 !== 1\n",
+      "scope": "first generic-mode mismatch, not four-mode mutated qualification"
+    }
+  ],
+  "source_sha256s": {
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/proofs/decoder/probe.bend": "338f724c4a1ab691bf58724043d6fa0bea5d5bdddca6a5ab4b7cc6ecca28ba20",
+    "standalone/proofs/decoder/verify_native.js": "91c12ff9e048ecf60d8988f8ae202d014291af385a1a54b5114e92eaea851eb9"
+  },
+  "fixture_sha256": "b9b090b26973f76dcce71bb9334642d16d75a819ef38916c50e0d826c82c4205",
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "bun": "1.4.2",
+  "oracle": "Independent 64-square optional (piece-kind,color) values. Candidate uses real Chess.occupied/piece/getters, Position.put/start. No proof predicates or answer labels execute in candidate.",
+  "scope": "Pointwise decoder observations on consistent boards, including raw empty fallback as an explicitly outside-occupied-domain observation. Not legal-game, full-board roundtrip, parser or move qualification."
+}

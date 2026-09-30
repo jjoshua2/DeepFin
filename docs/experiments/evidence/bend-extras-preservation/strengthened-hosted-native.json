@@ -1,0 +1,96 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "full_buffers_per_mode": 5,
+  "cell_comparisons_per_mode": 655360,
+  "source_shapes": "complete depth-17 allocations; five nonzero seeds with five distinct sentinel cells",
+  "scopes": "all header cells, all active extras cells, all logical slider cells and all allocation slack compared",
+  "oracle": "flat arrays and independent signed-coordinate knight/king/pawn steps",
+  "modes": [
+    {
+      "mode": "generic",
+      "full_buffers": 5,
+      "cell_comparisons": 655360,
+      "invalid_rejections": 7,
+      "output_sha256": "0cf635bddb79e02ebb6a9d64e42284129bc699f1214f1a01e7c01b58eb85eef3"
+    },
+    {
+      "mode": "portable",
+      "full_buffers": 5,
+      "cell_comparisons": 655360,
+      "invalid_rejections": 7,
+      "output_sha256": "0cf635bddb79e02ebb6a9d64e42284129bc699f1214f1a01e7c01b58eb85eef3"
+    },
+    {
+      "mode": "native",
+      "full_buffers": 5,
+      "cell_comparisons": 655360,
+      "invalid_rejections": 7,
+      "output_sha256": "0cf635bddb79e02ebb6a9d64e42284129bc699f1214f1a01e7c01b58eb85eef3"
+    },
+    {
+      "mode": "ubsan",
+      "full_buffers": 5,
+      "cell_comparisons": 655360,
+      "invalid_rejections": 7,
+      "output_sha256": "0cf635bddb79e02ebb6a9d64e42284129bc699f1214f1a01e7c01b58eb85eef3"
+    }
+  ],
+  "source_sha256s": {
+    "Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "proofs/extras/probe.bend": "80ede43f67adaee63d98375753ca18c6d3289b9fc05d0da664fdd268bf93cf44",
+    "proofs/extras/verify_native.js": "57cf2317331a1c4bf48da6fbbeaa6e767645f27a46c753fe98cfd644b303f3fb",
+    "proofs/extras/unique_probe.bend": "4eefb729856161457b77b42b257d7140c1677652e5359790de643323ba223200"
+  },
+  "unique_fixture_ranges": [
+    [
+      0,
+      64
+    ],
+    [
+      2,
+      31
+    ],
+    [
+      64,
+      0
+    ]
+  ],
+  "unique_full_buffers_per_mode": 3,
+  "unique_cell_comparisons_per_mode": 393216,
+  "total_full_buffers_per_mode": 8,
+  "total_cell_comparisons_per_mode": 1048576,
+  "unique_initialization": "Every source cell j has high32=0xdeadbeef XOR j and low32=(0x89abcdef+j) modulo 2^32; no shared seed can hide a copy between protected cells",
+  "unique_modes": [
+    {
+      "mode": "generic",
+      "full_buffers": 3,
+      "cell_comparisons": 393216,
+      "output_sha256": "51b2702b6dd1e4cc3823981001b3a8d0d95a15003d5d89ba613ba8bf91d2adbf"
+    },
+    {
+      "mode": "portable",
+      "full_buffers": 3,
+      "cell_comparisons": 393216,
+      "output_sha256": "51b2702b6dd1e4cc3823981001b3a8d0d95a15003d5d89ba613ba8bf91d2adbf"
+    },
+    {
+      "mode": "native",
+      "full_buffers": 3,
+      "cell_comparisons": 393216,
+      "output_sha256": "51b2702b6dd1e4cc3823981001b3a8d0d95a15003d5d89ba613ba8bf91d2adbf"
+    },
+    {
+      "mode": "ubsan",
+      "full_buffers": 3,
+      "cell_comparisons": 393216,
+      "output_sha256": "51b2702b6dd1e4cc3823981001b3a8d0d95a15003d5d89ba613ba8bf91d2adbf"
+    }
+  ],
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "bun": "1.4.2"
+}

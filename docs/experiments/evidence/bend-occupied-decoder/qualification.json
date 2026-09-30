@@ -1,0 +1,22 @@
+{
+  "qualification": "PASS",
+  "run": "36083420058",
+  "source": "4c5232cc1e6fceb8adc66dcc2dd5479b373ead3f",
+  "source_tree": "c6d133f9122ac3438d9b9a7e4560ac03e67dd4e4",
+  "new_laws": 4,
+  "universal_new_laws": 4,
+  "new_controls": 18,
+  "control_categories": {
+    "source semantic/refinement": 9,
+    "manifest/import policy": 8,
+    "synthetic exact-output unit, not compiler execution": 1
+  },
+  "retained_parent_laws": 123,
+  "retained_parent_controls": 332,
+  "modular_laws": 127,
+  "modular_controls": 350,
+  "combined_wrapper_executed": false,
+  "native_source_entries": 404,
+  "independent_review": false,
+  "claim": "Actual occupied kind/color decoding and pointwise abstract-square reconstruction under partition and square bounds; not whole-board bijection or move legality."
+}
