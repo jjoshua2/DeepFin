@@ -1,0 +1,23 @@
+{
+  "schema": "owner_vs_fair_rate_provenance_correction_v1",
+  "status": "PUBLICATION_CORRECTION_ONLY_ZERO_CAPACITY_CREDIT",
+  "sealed_arithmetic_sha256": "30815b773ba0d7d587e2af6ce78c9e033bb3f60433829921e9f160c03918a459",
+  "sealed_packet_manifest_sha256": "f8833f6f57e4898163fe426d4e644c28c0ad0556afa4025a18d3791ea720d3de",
+  "inputs": {
+    "bt4_label_rows_per_second": {
+      "value": 800.19,
+      "status": "ASSUMED_UNVERIFIED_NO_PRODUCING_RECEIPT_PINNED"
+    },
+    "selected_e_trainer_rows_per_second": {
+      "value": 1281.357,
+      "status": "ASSUMED_UNVERIFIED_NO_PRODUCING_RECEIPT_PINNED"
+    }
+  },
+  "dependent_outputs": {
+    "owner_route_label_days": "CONDITIONAL_SENSITIVITY_ON_UNVERIFIED_BT4_LABEL_RATE",
+    "cross_stage_days": "CONDITIONAL_SENSITIVITY_ON_UNVERIFIED_BT4_LABEL_AND_SELECTED_E_TRAINER_RATES",
+    "screen_and_confirmation_training_hours": "CONDITIONAL_SENSITIVITY_ON_UNVERIFIED_SELECTED_E_TRAINER_RATE",
+    "screen_and_confirmation_total_hours": "CONDITIONAL_SENSITIVITY_NOT_A_LAUNCH_OR_RESOURCE_BUDGET"
+  },
+  "correction_scope": "The sealed preregistration packet and ARITHMETIC.json bytes remain immutable historical evidence. This public correction changes only evidentiary status: the two historical rate constants are not authenticated by producing receipts in this publication, so every dependent hour/day figure is conditional arithmetic and cannot authorize resource admission."
+}
