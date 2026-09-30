@@ -19,6 +19,13 @@ owner = importlib.util.module_from_spec(owner_spec)
 owner_spec.loader.exec_module(owner)
 
 
+def require_shared_artifact_output(out: Path) -> None:
+    owner.require(
+        out.resolve().is_relative_to((Path.home() / "chess-artifacts").resolve()),
+        "probe requires shared artifact output",
+    )
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", required=True)
@@ -40,10 +47,7 @@ def main():
         bool(source["ceres_manifest"].get("sha256")), "teacher not already pinned"
     )
     out = Path(args.output).resolve()
-    owner.require(
-        out.is_relative_to(Path("/home/josh/chess-artifacts")),
-        "probe requires shared artifact output",
-    )
+    require_shared_artifact_output(out)
     owner.require(
         all(
             out != Path(c["output"]).resolve()

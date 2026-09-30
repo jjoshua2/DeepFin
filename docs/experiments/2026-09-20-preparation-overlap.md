@@ -22,6 +22,13 @@ validation below does not validate these recovery changes. Existing operator pin
 still identify historical code. No queue change, probe, teacher evaluation,
 training run or deployment is authorized by publishing this record.
 
+Published `adopted.json` and `config.json` copies replace the historical home
+username with `<user>` for this public repository. Their recorded hashes continue
+to identify the original host artifacts, not the redacted publication copies.
+These placeholder paths are not runnable configuration. Original bytes remain in
+the preserved PR history at `fd769e52e0d117436e7312bb2a45e2b3f0caf873`; the compact
+probe and stage-timing receipts are unchanged.
+
 ## Historical status, 2026-09-20
 
 Status: independently reviewed wrapper adopted; bounded CPU sidecar launched
@@ -78,7 +85,7 @@ and arena sequence. [Adoption receipt](artifacts/2026-09-20-preparation-overlap/
 and [exact config](artifacts/2026-09-20-preparation-overlap/config.json) are retained.
 
 Sidecar launch PID 1023632 used CPUs 2–3. Host evidence and append-only stage timings:
-`/home/josh/chess-artifacts/operations/factorial58-preparation-overlap-20260920/`.
+`/home/<user>/chess-artifacts/operations/factorial58-preparation-overlap-20260920/`.
 The live sidecar source was pinned at commit 3995e6471. Its source SHA is
 `6af0b06e16bc704e4406bfe0031ed6da24218716c596e6ea70e6288026d114cf`.
 

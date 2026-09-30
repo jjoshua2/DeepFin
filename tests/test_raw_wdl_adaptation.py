@@ -33,9 +33,9 @@ def run_adapter(path: Path, out: Path) -> None:
     )
 
 
-@pytest.mark.parametrize("three_shards", [False, True])
+@pytest.mark.parametrize(("three_shards", "audited_source"), [(False, False), (True, False), (False, True)])
 def test_real_shuffled_join_native_values_feed_hashes_and_value_consumer(
-    tmp_path: Path, three_shards: bool
+    tmp_path: Path, three_shards: bool, audited_source: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest_path, derived, raw_dir, _manifest = prepare(
         tmp_path, three_shards=three_shards, wdl=True
@@ -147,7 +147,21 @@ def test_real_shuffled_join_native_values_feed_hashes_and_value_consumer(
             pinned(manifest_path)["sha256"],
         ]
     )
+    proof = None
+    if audited_source:
+        # Actual value/array consumer; saved audit validation has its own tests.
+        from scripts import audited_source_admission as audited
+        ref = tmp_path / 'audited.json'
+        ref.write_text('{}')
+        proof = {'qualification': pinned(ref), 'summary_pins': {}, 'baseline_exclusion_pins': [],
+                 'adapter_manifest': pinned(manifest_path), 'wdl_dir': str(out / 'wdl')}
+        monkeypatch.setattr(audited, 'admit', lambda *a: proof)
+        args.audited_source_manifest = ref
+        args.expected_audited_source_manifest_sha256 = pinned(ref)['sha256']
+        args.alpha = .5
     result = value.rewrite(args)
+    if audited_source:
+        assert result['audited_source_admission'] == proof
     assert result["rows"] == 7
     assert result["wdl_adaptation"]["profile"] == reuse.PROFILE
     from chess_anti_engine.replay.shard import load_shard_arrays
@@ -157,7 +171,7 @@ def test_real_shuffled_join_native_values_feed_hashes_and_value_consumer(
         new, _ = load_shard_arrays(Path(args.out) / spec["path"])
         side = zarr.open_group(str(out / "wdl" / spec["path"]), mode="r")
         np.testing.assert_array_equal(
-            new["search_wdl"], value.target(old["search_wdl"], side["bt4_wdl_raw"][:])
+            new["search_wdl"], value.target(old["search_wdl"], side["bt4_wdl_raw"][:], alpha=args.alpha)
         )
         for name in value.ARRAYS - {"search_wdl"}:
             np.testing.assert_array_equal(new[name], old[name])

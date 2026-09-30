@@ -540,3 +540,27 @@ def test_cleanup_rechecks_identity_before_kill(monkeypatch):
     tool.terminate(child)
     assert (12345, signal.SIGTERM) in signals
     assert (12345, signal.SIGKILL) not in signals
+
+
+def test_probe_output_uses_current_operator_shared_root(tmp_path, monkeypatch):
+    from scripts import bootstrap_preparation_probe as probe
+
+    home = tmp_path / "operator"
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+    probe.require_shared_artifact_output(home / "chess-artifacts" / "probe")
+    with pytest.raises(RuntimeError, match="shared artifact output"):
+        probe.require_shared_artifact_output(home / "chess-artifacts-other" / "probe")
+
+
+def test_probe_output_resolves_shared_root_symlink(tmp_path, monkeypatch):
+    from scripts import bootstrap_preparation_probe as probe
+
+    home = tmp_path / "operator"
+    home.mkdir()
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (home / "chess-artifacts").symlink_to(shared, target_is_directory=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+    probe.require_shared_artifact_output(shared / "probe")
+    with pytest.raises(RuntimeError, match="shared artifact output"):
+        probe.require_shared_artifact_output(tmp_path / "outside" / "probe")
