@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 import pytest
 import torch
 
+from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
 from chess_anti_engine.utils import sha256_file
 from scripts.bootstrap_checkpoint_resume import resume_bootstrap
 
@@ -19,7 +21,9 @@ def donor(tmp_path: Path) -> tuple[Any, Path, dict[str, Any]]:
     model(torch.ones(1, 2)).sum().backward()
     opt.step()
     scheduler.step()
-    state: dict[str, Any] = {'model': model.state_dict(), 'opt': opt.state_dict(),
+    model_config = ModelConfig(kind='tiny')
+    state: dict[str, Any] = {'arch': {'_schema_version': ARCH_SCHEMA_VERSION, **asdict(model_config)},
+             'model': model.state_dict(), 'opt': opt.state_dict(),
              'scheduler': scheduler.state_dict(), 'step': 9, 'peak_lr': 0.01,
              'zclip': {'count': 9}, 'opt_param_names': ['weight', 'bias']}
     path = tmp_path / 'donor.pt'
@@ -29,7 +33,7 @@ def donor(tmp_path: Path) -> tuple[Any, Path, dict[str, Any]]:
     schedule = torch.optim.lr_scheduler.StepLR(restored, step_size=2)
     trainer = SimpleNamespace(model=target, opt=restored, _scheduler=schedule,
                               step=0, _peak_lr=0.01, zclip_state_dict=lambda: {'count': 9},
-                              _swa_model=None,
+                              _swa_model=None, _model_config=model_config,
                               _optimizer_param_names=lambda: ['weight', 'bias'],
                               _donor_optimizer_param_names=lambda checkpoint: checkpoint.get('opt_param_names'))
     def load(_path: Path, *, exact_resume: bool = False) -> None:
@@ -102,7 +106,7 @@ def test_real_epoch_continuation_keeps_global_steps_and_each_boundary(tmp_path):
     assert sha256_file(path) == summary['continuation']['sha256']
 
 
-@pytest.mark.parametrize('missing', ['model', 'opt', 'scheduler', 'step', 'peak_lr', 'zclip'])
+@pytest.mark.parametrize('missing', ['model', 'opt', 'scheduler', 'step', 'peak_lr', 'zclip', 'arch'])
 def test_incomplete_checkpoint_is_refused(tmp_path: Path, missing: str) -> None:
     trainer, path, state = donor(tmp_path)
     del state[missing]
@@ -185,3 +189,22 @@ def test_every_epoch_artifact_blocks_output_reuse(tmp_path: Path, name: str) -> 
 
     (tmp_path / name).touch()
     assert name in driver.existing_run_artifacts(tmp_path)
+
+
+def test_same_shaped_architecture_semantics_must_match(tmp_path: Path) -> None:
+    trainer, path, _ = donor(tmp_path)
+    trainer._model_config = replace(trainer._model_config, history_rep_fix=True)
+    with pytest.raises(ValueError, match='identical checkpoint architecture metadata'):
+        resume_bootstrap(trainer, path, sha256_file(path), 9, 102)
+    assert trainer.step == 0
+    assert not trainer.opt.state
+
+
+@pytest.mark.parametrize('version', [None, True, 0, ARCH_SCHEMA_VERSION + 1])
+def test_unsupported_architecture_schema_is_refused(tmp_path: Path, version: Any) -> None:
+    trainer, path, state = donor(tmp_path)
+    state['arch']['_schema_version'] = version
+    torch.save(state, path)
+    with pytest.raises(ValueError, match='supported checkpoint architecture schema'):
+        resume_bootstrap(trainer, path, sha256_file(path), 9, 102)
+    assert trainer.step == 0

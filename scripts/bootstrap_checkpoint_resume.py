@@ -1,11 +1,13 @@
 """Strict bootstrap state restoration followed by explicitly seeded new epochs."""
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import torch
 
+from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
 from chess_anti_engine.train.trainer import strip_compile_prefix
 from chess_anti_engine.utils import sha256_file
 
@@ -41,7 +43,7 @@ def resume_bootstrap(
         raise ValueError("resume checkpoint hash mismatch")
     # Only the explicitly hash-pinned, trusted donor is deserialized.
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
-    required = {"model", "opt", "scheduler", "step", "peak_lr", "zclip"}
+    required = {"model", "opt", "scheduler", "step", "peak_lr", "zclip", "arch"}
     if (
         not isinstance(checkpoint, dict)
         or not required <= checkpoint.keys()
@@ -51,6 +53,17 @@ def resume_bootstrap(
         or expected_step <= 0
     ):
         raise ValueError("resume requires complete checkpoint state and matching positive step")
+    # Shape-compatible changes can alter attention or input-encoding semantics.
+    # The exact Trainer loader assumes callers have pinned this identity.
+    arch = checkpoint["arch"]
+    model_config = trainer._model_config
+    if not isinstance(arch, dict) or not isinstance(model_config, ModelConfig):
+        raise ValueError("resume requires complete checkpoint architecture metadata")
+    version = arch.get("_schema_version")
+    if type(version) is not int or not 0 < version <= ARCH_SCHEMA_VERSION:
+        raise ValueError("resume requires a supported checkpoint architecture schema")
+    if {key: value for key, value in arch.items() if key != "_schema_version"} != asdict(model_config):
+        raise ValueError("resume requires identical checkpoint architecture metadata")
     current = strip_compile_prefix(trainer.model.state_dict())
     donor_model = checkpoint["model"]
     if (

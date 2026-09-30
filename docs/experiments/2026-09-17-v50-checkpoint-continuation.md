@@ -14,11 +14,15 @@ The supported LC0 driver accepts `--resume-checkpoint`,
 `--resume-checkpoint-sha256` and `--resume-step` together, only with
 `--sampling-mode game_epoch`. Use a trusted full-state donor, an empty output
 directory and an explicit `--seed`; `--epochs` means additional complete passes.
-The donor is hash-checked before and after restoration. Model keys/shapes/dtypes,
+The donor is hash-checked before and after restoration. Full current architecture metadata, model keys/shapes/dtypes,
 optimizer parameter identities and restored state must match; cold or partial
 restoration fails. The current trainer's exact loader restores model, optimizer,
 scheduler, ZClip, peak LR, global step and optional SWA state, and equality checks
-verify the result.
+verify the result. Missing or shape-compatible-but-different architecture metadata
+is refused rather than defaulted. The donor format does not establish the full
+training recipe or optimizer implementation identity; use the same qualified
+optimizer implementation and explicitly chosen recipe. No optimizer or recipe
+migration is implied by successful state restoration.
 
 Each intermediate epoch is retained as a pending checkpoint until the final
 realized-loss guards pass, then published and hash-bound in the summary. The
