@@ -70,6 +70,7 @@ from chess_anti_engine.eval.arena_pgn import (
 )
 from chess_anti_engine.eval.arena_durable import (
     DurablePairReceipts,
+    ValidatedSourceSeal,
     file_span,
     validate_source_seal,
 )
@@ -2889,6 +2890,7 @@ def run_arena(
     eval_max_batch: int = DEFAULT_EVAL_MAX_BATCH,
     sprt: SprtSpec | None = None,
     sprt_lookahead_pairs: int | None = None,
+    durable_source_seal: ValidatedSourceSeal | None = None,
     durable_source_seal_sha256: str | None = None,
     pair_receipts_dir: Path | None = None,
 ) -> dict:
@@ -2907,7 +2909,17 @@ def run_arena(
     size, and the deliverable is the H1/H0/INCONCLUSIVE verdict. None leaves
     every byte of the fixed-N path, and of its JSONL record, unchanged.
     """
-    durable = durable_source_seal_sha256 is not None
+    if durable_source_seal_sha256 is not None:
+        raise SystemExit(
+            "bare durable_source_seal_sha256 is refused; pass a ValidatedSourceSeal "
+            "returned by validate_source_seal"
+        )
+    if durable_source_seal is not None and type(durable_source_seal) is not ValidatedSourceSeal:
+        raise SystemExit("durable_source_seal must come from validate_source_seal")
+    durable = durable_source_seal is not None
+    durable_source_seal_sha256 = (
+        durable_source_seal.sha256 if durable_source_seal is not None else None
+    )
     if (durable and (pair_receipts_dir is None or pgn_out is None
                      or game_log_path is None or sprt is not None
                      or sprt_lookahead_pairs is not None
@@ -4402,6 +4414,7 @@ def main() -> None:
     add_common_args(p)
     args = p.parse_args()
 
+    validated_durable_seal: ValidatedSourceSeal | None = None
     durable_args = (
         args.durable_seal, args.durable_seal_sha256, args.pair_receipts_dir,
     )
@@ -4432,7 +4445,7 @@ def main() -> None:
         if skip_next:
             raise SystemExit("durable seal option lacks a value")
         try:
-            validate_source_seal(
+            validated_durable_seal = validate_source_seal(
                 args.durable_seal, args.durable_seal_sha256,
                 argv=frozen_argv, candidate=args.candidate,
                 reference=args.reference, openings=args.openings_fen,
@@ -4584,7 +4597,7 @@ def main() -> None:
         search_reference=side_reference,
         sprt=sprt_spec,
         sprt_lookahead_pairs=args.sprt_lookahead_pairs,
-        durable_source_seal_sha256=args.durable_seal_sha256,
+        durable_source_seal=validated_durable_seal,
         pair_receipts_dir=args.pair_receipts_dir,
     )
 
