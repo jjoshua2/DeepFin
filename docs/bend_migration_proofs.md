@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest P3 initialized parser frontier
+
+Qualification combines the passed four-law/17-control source gate from run36150116903 with fresh native/compiler/lint success in recovery run36150660570, both on exact source tree efa431703a1d47208655595f816a3008d0c4a27a. Published source commit: `be5afc6308d159d52f42b2fcccb59a9c20109b4c`.
+
+The frontier suite derives bounded cursors, empty unvisited squares and board-partition consistency from actual initialized placement traversal. Live typed piece targets are fresh and below64; every Some placement result is consistent. Raw true flags on arbitrary initial states are insufficient, and rejected temporary Boards need not remain consistent. Modular141/401 retains exact parent137/384 rather than executing the whole wrapper.
+
+See [the dated readout](experiments/2026-09-25-bend-parser-frontier.md) for the retained Clang18 warning failure, unchanged-source recovery and counts. Full FEN semantics, exact intended contents, metadata legality, reachability and move operations remain separate. No Python application responsibility moved into Bend.
+
 ## Latest P3 placement-parser prefix foundation
 
 Hosted run **36144541680** passes the five-law focused source gate and all17 controls, four native complete-state modes and both actual-code corruption controls, original compiler source/pin checks and unchanged repository lint on source `c3e1fe63d48790859685dc91eabf9012c2378495`.
