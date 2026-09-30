@@ -1,8 +1,9 @@
 # D-lite scalar value: small-bank executable path
 
-Status: source implementation, synthetic tests, and one independently audited
-128-row d8 scalar diagnostic. No selected-target attachment, pack, training,
-corpus admission or Elo result has been run by this path.
+Status: source implementation, synthetic tests, an independently audited
+128-row d8 scalar diagnostic, and a separate audited 92-row B/C selected-target
+attachment smoke. No full-128 attachment, corpus admission, training or Elo
+result has been run by this path.
 
 The [small-bank adapter](../../scripts/sf_dlite_smallbank.py) accepts at most
 512 uniquely keyed winners and their compact, authenticated tri-source
@@ -36,7 +37,7 @@ audited* selected-neural target route, exact target-byte SHA, matching UID,
 input digest and side-to-move identity, and a legal policy mask. It replaces
 only the three float16 main `search_wdl` values with the float32 blend
 `(SF_D_calibrated + 2 * selected_neural) / 3` rounded once to float16. All
-1,858 policy bytes are copied exactly, and no SF policy/value auxiliary is
+1,858 policy entries (3,716 bytes) are copied exactly, and no SF policy/value auxiliary is
 populated. The chosen target and route need their own source authentication;
 the adapter recomputes the frozen source-independent fair BT4/Ceres route
 from the UID and refuses a conflicting chosen teacher. It still cannot certify
@@ -81,11 +82,28 @@ SHA-256 without embedding source-host paths. The audited scope is the requested
 engine profile and raw labels; there was no independent UCI wire capture,
 effective-option attestation or tablebase catalog attribution. The label pilot
 measured no throughput or Elo and grants no selected-target, pack, corpus or
-training credit.
+training credit by itself.
+
+The separate 92-row B/C attachment smoke joined the sampled 42 BT4 and 50
+Ceres source winners to the independently audited 58,773-row diagnostic pack
+and corrected selected-neural target bank. The preparation verified exact
+winner UID, input digest and bytes, source, chosen-teacher route, packed dense
+policy/WDL SHA, corrected sparse legal policy, and 83 exact game-proof lines.
+The bounded `attach` step completed all 92 rows. Independent readback checked
+every frozen raw scalar label, selected and candidate target hash, unchanged
+3,716-byte policy, and the float32 value blend rounded once to float16. The
+mean per-row maximum absolute WDL-channel change was 0.03688 and the largest
+was 0.20752; these are target differences, not strength estimates. The
+[compact attachment evidence](evidence/2026-09-30-sf-dlite-92-bc-attachment.json)
+pins the selected inputs, candidate output, root audit and durable 11-file
+artifact manifest. Its scope is the B/C sample and exact saved selected-target
+profile. It grants no full-128 target, training, corpus, GPU or Elo credit.
+The remaining 36 sampled SF-source rows have an audited missing-head stage
+bridge, but their chosen BT4/Ceres heads have not been produced.
 
 `inspect` is read-free. The completed `label` invocation used pinned small
 winner/proof JSONL, a qualified Stockfish binary and strict Syzygy directories.
-The separate `attach` step still requires corrected, authenticated selected
+Any further `attach` step still requires corrected, authenticated selected
 target JSONL. Each selected-target line supplies `uid`, `input_digest`, `pov_white`,
 `teacher`, `target_sha256`, `target_hex` (float16 policy then WDL) and
 `legal_mask_hex`. The operator must first extract the small winner/proof bank
