@@ -457,7 +457,8 @@ def _producer_sha256() -> dict[str, str]:
     paths = [Path(__file__).resolve()]
     for module in modules:
         module_file = module.__file__
-        require(module_file is not None, "producer module has no source path")
+        if module_file is None:
+            raise ValueError("producer module has no source path")
         paths.append(Path(module_file).resolve())
     return {str(path): file_sha256(path) for path in paths}
 
