@@ -957,7 +957,10 @@ def _shard_attrs(path: Path) -> dict[str, Any]:
 def _identity_paths(root: Path, allow_packed_zarr: bool) -> list[Path]:
     if not allow_packed_zarr and next(root.glob("shard_*.zarr.zip"), None) is not None:
         raise ValueError("packed shards require --allow-packed-zarr: " + str(root))
-    return packed_zarr.shard_paths(root) if allow_packed_zarr else iter_shard_paths(root)
+    paths = packed_zarr.shard_paths(root) if allow_packed_zarr else iter_shard_paths(root)
+    if not allow_packed_zarr and any(packed_zarr.is_packed(path) for path in paths):
+        raise ValueError("packed shard targets require --allow-packed-zarr: " + str(root))
+    return paths
 
 
 def read_value_stamps(

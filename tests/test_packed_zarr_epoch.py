@@ -290,3 +290,80 @@ def test_qualification_refuses_mismatched_rosters(corpus):
     next(target.glob("*.zip")).unlink()
     with pytest.raises(ValueError, match="rosters"):
         qualify(source, target, {})
+
+
+def test_qualification_memory_guard_preserves_limits(monkeypatch):
+    from scripts import qualify_packed_zarr_epoch as qualification
+    from scripts import training_host_memory as memory
+
+    requested = []
+    monkeypatch.setattr(memory, "require_available", lambda gib: requested.append(gib))
+    monkeypatch.setattr(qualification.os, "sysconf", lambda _: 4096)
+    monkeypatch.setattr(Path, "read_text", lambda _: "0 4194304 0 0 0 0 0")
+    qualification._check_memory()
+    assert requested == [32]
+    monkeypatch.setattr(Path, "read_text", lambda _: "0 4194305 0 0 0 0 0")
+    with pytest.raises(RuntimeError, match="RSS exceeds 16 GiB"):
+        qualification._check_memory()
+
+    def unavailable(_):
+        raise RuntimeError("Linux available memory below 32 GiB")
+
+    monkeypatch.setattr(memory, "require_available", unavailable)
+    with pytest.raises(RuntimeError, match="available memory below 32 GiB"):
+        qualification._check_memory()
+
+
+@pytest.mark.parametrize("statm", ["", "0", "0 invalid", "0 -1"])
+def test_qualification_memory_guard_refuses_unreadable_rss(monkeypatch, statm):
+    from scripts import qualify_packed_zarr_epoch as qualification
+    from scripts import training_host_memory as memory
+
+    monkeypatch.setattr(memory, "require_available", lambda _: 32 * 2**30)
+    monkeypatch.setattr(Path, "read_text", lambda _: statm)
+    with pytest.raises(RuntimeError, match="RSS measurement unavailable"):
+        qualification._check_memory()
+
+
+def test_packed_symlink_alias_requires_opt_in_and_retains_order(corpus, tmp_path, monkeypatch):
+    source, target = corpus
+    aliases = tmp_path / "aliases"
+    aliases.mkdir()
+    for archive in target.glob("*.zarr.zip"):
+        (aliases / archive.name.removesuffix(".zip")).symlink_to(archive)
+    with monkeypatch.context() as guard:
+        guard.setattr(packed, "content_sha256", lambda _: pytest.fail("read before opt-in"))
+        with pytest.raises(ValueError, match="require allow_packed_zarr=True"):
+            buffer(aliases)
+    with pytest.raises(ValueError, match="context"):
+        load_shard_arrays(aliases / "shard_000000.zarr", lazy=True)
+    a = buffer(source)
+    b = buffer(aliases, allow_packed_zarr=True)
+    try:
+        assert a.plan.rows == b.plan.rows == 16
+        for _ in range(a.num_batches):
+            left, right = a.sample_batch_arrays(2), b.sample_batch_arrays(2)
+            assert left.keys() == right.keys()
+            for key in left:
+                np.testing.assert_array_equal(left[key], right[key], err_msg=key)
+    finally:
+        a.close()
+        b.close()
+
+
+def test_qualification_refuses_zip_alias_as_directory_control(corpus, tmp_path):
+    from scripts.qualify_packed_zarr_epoch import qualify
+
+    _, packed_root = corpus
+    aliases = tmp_path / "false-directory-control"
+    aliases.mkdir()
+    for archive in packed_root.glob("*.zarr.zip"):
+        (aliases / archive.name.removesuffix(".zip")).symlink_to(archive)
+    with pytest.raises(ValueError, match="require allow_packed_zarr=True"):
+        qualify(aliases, packed_root, {
+            "batch_size": 2,
+            "seed": 121,
+            "input_planes": 146,
+            "input_history_encoding": "legacy",
+            "history_rep_fix": False,
+        })

@@ -33,8 +33,12 @@ The representation/path-sensitive corpus and plan hashes intentionally differ;
 matching row semantics does not permit replacing storage underneath an old plan.
 
 The complete [raw receipt](artifacts/2026-09-20-packed-zarr/nvme-vs-external.json)
-contains timing precision, plan parameters, paths and fingerprints. The host copy
-is `/home/josh/chess-artifacts/operations/packed-exact-qualification-20260920/nvme-vs-external.json`.
+contains timing precision, plan parameters and fingerprints. Its host-relative
+location is `<artifact-root>/operations/packed-exact-qualification-20260920/nvme-vs-external.json`.
+The published receipt copies redact only the maintainer home-root label; the
+original path-sensitive corpus/plan hashes and all measured values are retained.
+Each copy records its original commit and Git blob identity. The placeholders
+are publication labels, not alternate qualified corpus locations.
 
 A second independent qualification used 32 shards / 262,144 rows at the intended
 batch512, with the same remaining sampler settings:

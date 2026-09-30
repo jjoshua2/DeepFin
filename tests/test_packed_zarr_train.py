@@ -138,3 +138,19 @@ def test_real_cpu_train_preserves_two_epoch_packed_opt_in_and_receipt(tmp_path, 
     assert manifest["progress"]["run_rows_completed"] == 16
     assert manifest["progress"]["run_steps_completed"] == 4
     assert len(manifest["progress"]["corpus_sha256"]) == 64
+
+
+def test_staging_packed_symlink_alias_requires_opt_in(tmp_path):
+    packed = zipped(tmp_path)
+    aliases = tmp_path / "aliases"
+    aliases.mkdir()
+    archive = packed / "shard_000000.zarr.zip"
+    (aliases / "shard_000000.zarr").symlink_to(archive)
+    with pytest.raises(ValueError, match="require --allow-packed-zarr"):
+        train.stage_shards([aliases], tmp_path / "refused-alias")
+    staged = tmp_path / "accepted-alias"
+    assert train.stage_shards([aliases], staged, allow_packed_zarr=True) == 1
+    assert [path.name for path in staged.iterdir()] == ["shard_000000.zarr.zip"]
+    assert (staged / "shard_000000.zarr.zip").resolve() == archive
+    assert train.read_value_stamps([aliases], allow_packed_zarr=True).schemes
+    assert shard_dir_search_wdl_coverage(aliases, allow_packed_zarr=True) == (8, 8)
