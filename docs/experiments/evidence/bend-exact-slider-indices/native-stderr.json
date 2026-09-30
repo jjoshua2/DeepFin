@@ -1,0 +1,5 @@
+{
+  "original_filename": "native.stderr",
+  "original_sha256": "8f7f63fe9b68c0a16ff2fcd8a7fc3c47d9c09f4542b7df6a34958ebc08136746",
+  "raw_text": "PASS native: generic\nPASS native: portable\nPASS native: native\nPASS native: ubsan\n"
+}

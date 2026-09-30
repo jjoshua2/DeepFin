@@ -1,0 +1,17 @@
+{
+  "root_fen": "7k/8/8/8/8/p1b5/PP6/KQ6 w - - 70 1",
+  "allowed_uci": [
+    "b2c3",
+    "b1c1"
+  ],
+  "simulations": 16,
+  "tb_probes": 8,
+  "tb_hits": 8,
+  "actions": [
+    664
+  ],
+  "root_values": [
+    0.9999999998867458
+  ],
+  "scope": "Actual compiled Gumbel search with synthetic zero evaluator and real local Syzygy, no GPU/model qualification"
+}

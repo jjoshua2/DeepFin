@@ -1,0 +1,10 @@
+{
+  "command": [
+    "/mnt/data/header-toolchain/bun",
+    "/mnt/data/header-toolchain/bend/bend2/main.ts",
+    "native/bend_engine/standalone/proofs/extras/consumer.bend"
+  ],
+  "timeout": 30,
+  "exit_code": 0,
+  "elapsed_seconds": 5.285801136999908
+}

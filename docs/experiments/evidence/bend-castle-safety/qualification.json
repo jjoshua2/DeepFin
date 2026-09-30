@@ -1,0 +1,29 @@
+{
+  "qualification": "SOURCE_AND_NATIVE_PASS_LINT_UNQUALIFIED",
+  "source_laws": "PASS",
+  "direct_step_native": "PASS",
+  "paired_generator_native": "PASS",
+  "parent_focused_rerun": "PASS",
+  "repository_lint": "FAILED_MISSING_TOOLS",
+  "hosted_qualification": false,
+  "remote_publication": false,
+  "new_laws": 6,
+  "new_controls": 19,
+  "control_categories": {
+    "source semantic/refinement": 10,
+    "manifest/import policy": 8,
+    "synthetic output-wrapper unit; not compiler execution": 1
+  },
+  "retained_parent_laws": 171,
+  "retained_parent_controls": 505,
+  "modular_laws": 177,
+  "modular_controls": 524,
+  "combined_wrapper_executed": false,
+  "source_dependency_entries": 59,
+  "native_source_entries": 540,
+  "full_generator_formal_pair_equality": true,
+  "native_complete_ordered_generator_parity": true,
+  "native_independent_full_generator_castling_subset_only": true,
+  "independent_review": false,
+  "claim": "Generated castling requires the real current-side child check for every ray mask; whole actual generator equals an explicitly forced-check audit variant including its returned array and ordered list. No independent attack correctness or general legal-move completeness claim."
+}

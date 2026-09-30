@@ -1,0 +1,13 @@
+import Base
+import ./LAWS.bend as Laws
+import ./Query.bend as Query
+import ./Initialized.bend as I
+
+def Laws.initialized_attack_query_matches_geometry(d,seed,n,extra,k,sq,side,occ,depth,full,all,bound):
+  Query.actual(d,seed,n,extra,k,sq,side,occ,depth,full,all,bound)
+
+def Laws.initialized_attacked_matches_coordinate_witness(d,seed,n,extra,b,sq,by,depth,full,all,bound):
+  I.attacked(d,seed,n,extra,b,sq,by,depth,full,all,bound)
+
+def Laws.initialized_single_king_check_matches_coordinate_witness(d,seed,n,extra,b,sq,side,depth,full,all,bound,one):
+  I.checked(d,seed,n,extra,b,sq,side,depth,full,all,bound,one)

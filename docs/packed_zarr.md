@@ -77,6 +77,8 @@ wide inputs/policies remain lazy until the sampler admits the working set.
 The same flag reaches every later exact epoch, and
 `realized_replay_after_guard.applied.allow_packed_zarr` records the realized mode.
 The loss, optimizer, training tensor path and directory-only defaults are unchanged.
-This main-based launcher does not yet expose the frozen runtime's recovery CLI;
-future recovery integration must carry this option into its sampler reconstruction.
+The launcher's rolling recovery checkpoints retain their existing behavior.
+They save trainer state but do not persist the exact sampler cursor or prefetch
+state. Packed admission does not qualify exact interrupted-epoch resume; a fresh
+sampling pass still needs explicit corpus, storage and seed admission.
 No existing frozen run is converted by this option.

@@ -1,0 +1,18 @@
+{
+  "command": [
+    "/mnt/data/initialized_attack_work/bin/bun",
+    "/mnt/data/initialized_attack_work/DeepFin/native/bend_engine/standalone/proofs/attack_composition/focused.js",
+    "/mnt/data/initialized_attack_work/bend/bend",
+    "--report",
+    "/mnt/data/initialized_attack_work/evidence/qualified-focused.json"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 709.657134046,
+  "log_sha256": "8ee1d346d555f6f6786c1963abdc9913c48069ce3c3986ce1bec7e6737406e7b",
+  "error": null,
+  "bend_sources_unchanged": true,
+  "original_receipt_sha256": "29120d757e0b7688b74c8715750a6a5d2cefe66b624fff6b4dc949457dcc08cf",
+  "original_full_receipt_in_review_package": true,
+  "source_consumer_exact_safe_output": true,
+  "consumer_and_controls_executed_together": true
+}

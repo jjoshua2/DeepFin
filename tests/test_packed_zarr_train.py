@@ -104,7 +104,8 @@ def test_zip_coverage_stays_lazy_and_reaches_preflight(tmp_path, monkeypatch):
         train.main(argv(tmp_path, [packed]))
 
 
-def test_real_cpu_train_preserves_two_epoch_packed_opt_in_and_receipt(tmp_path, monkeypatch):
+@pytest.mark.parametrize("host_overlap", [False, True])
+def test_real_cpu_train_preserves_two_epoch_packed_opt_in_and_receipt(tmp_path, monkeypatch, host_overlap):
     packed = zipped(tmp_path)
     plain = source(tmp_path / 'plain')
     calls = []
@@ -115,9 +116,11 @@ def test_real_cpu_train_preserves_two_epoch_packed_opt_in_and_receipt(tmp_path, 
             super().__init__(**kwargs)
 
     monkeypatch.setattr(train, 'GameAwareEpochBuffer', ObservedBuffer)
-    assert train.main([*argv(tmp_path, [plain, packed]), '--epochs', '2']) == 0
+    extra = ["--epoch-host-batch-overlap"] if host_overlap else []
+    assert train.main([*argv(tmp_path, [plain, packed]), '--epochs', '2', *extra]) == 0
     assert len(calls) == 2
     assert all(c['allow_packed_zarr'] is True for c in calls)
+    assert all(c['host_batch_overlap'] is host_overlap for c in calls)
     assert calls[1]['seed'] == calls[0]['seed'] + 1
     summary = json.loads((tmp_path / 'run' / 'summary.json').read_text())
     assert summary['realized_replay_after_guard']['applied']['allow_packed_zarr'] is True
@@ -126,3 +129,12 @@ def test_real_cpu_train_preserves_two_epoch_packed_opt_in_and_receipt(tmp_path, 
     assert summary['steps_realized'] == 8
     assert all(c['shard_dir'] == tmp_path / 'run' / 'staged_shards' for c in calls)
     assert np.isfinite(summary['metrics']['train_time_s'])
+
+    recovery = tmp_path / "run" / "recovery"
+    index = json.loads((recovery / "latest.json").read_text())
+    assert index["snapshots"]
+    manifest = json.loads((recovery / index["snapshots"][0] / "manifest.json").read_text())
+    assert manifest["progress"]["epoch_index"] == 1
+    assert manifest["progress"]["run_rows_completed"] == 16
+    assert manifest["progress"]["run_steps_completed"] == 4
+    assert len(manifest["progress"]["corpus_sha256"]) == 64

@@ -1,0 +1,22 @@
+{
+  "status": "APPROVED_CODE_ONLY_PENDING_QUALIFICATION_AND_PLAN",
+  "independent_tests_passed": 14,
+  "file_sha256": {
+    "scripts/run_packed_trainer_pair.py": "7d64ae4b842e4736e59ac62988423c5050ff18f05c835896eff8ce8f4c1f96cf",
+    "scripts/packed_trainer_probe.py": "66fd4eda6aa02e3214c99cc700ad4849b92873cdefdd3ca4b4a44fa544d397f7",
+    "scripts/run_packed_trainer_preparation.py": "f3662d9a6293187bf9c7a0ed3da68a9322a76041611a2fda1b5cdc43986cf0b0",
+    "tests/test_packed_trainer_pair.py": "be1df0e722623a6e2355ffb86e5519b4d507418fa25b7cbb0edb94f112f8ab72",
+    "tests/test_packed_trainer_probe.py": "af220683d20ef4c7906c2cb8aadb976b160600f4d24a50e34466a91c1e9c1661"
+  },
+  "resolved_findings": [
+    "Pair owns shared GPU flock; child inheritsFD and probe authenticatesinode/flock.",
+    "BT4 prerequisite requiresqueue logged/descriptorbinding/completionPASS/outer0.",
+    "Sourcebytes/ZIPs/stagedrosters authenticatedbefore andaftereacharm.",
+    "HardSIGALRM uses min(45minarm,90minpair)with8secondcleanupreserve."
+  ],
+  "measurement": "Actualtrainersummary optimizer/samplecoverage andfinite loss; matchinginitialweights andorderedremapped gameid/ply; excludeexactfirsttwo88stepwindows, compareactualsamples/train_time ratio>=0.90.",
+  "limits": [
+    "NoGPUqueue orlaunchapproval untilamendedfullstreamqualification PASS andfinalimmutableplan reviewed.",
+    "Oneexternalfirstcacheaffectedpair only; no500Mcoldstorage inference."
+  ]
+}

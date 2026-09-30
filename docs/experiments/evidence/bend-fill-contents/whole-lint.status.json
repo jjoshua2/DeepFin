@@ -1,0 +1,8 @@
+{
+  "command": [
+    "bash",
+    "./scripts/lint.sh"
+  ],
+  "exit_code": 1,
+  "elapsed_seconds": 0.2821319429999676
+}

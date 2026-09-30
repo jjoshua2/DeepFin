@@ -1,0 +1,20 @@
+{
+  "qualification": "PASS_NATIVE_STATE_AND_CONFIGURED_REPOSITORY_LINT",
+  "run": "36289048263",
+  "source": "3a3bdce49916aa52c56cad50f756f50eff694ed9",
+  "retained_source_run": 36286418567,
+  "retained_source_job": 108527941137,
+  "retained_source_files_unchanged": 585,
+  "new_native_script_files": 1,
+  "saved_primary_files_archived": 15,
+  "new_registered_laws": 0,
+  "new_registered_source_controls": 0,
+  "modular_laws": 186,
+  "modular_controls": 581,
+  "full_source_consumer_rerun": false,
+  "full_aggregate_rerun": false,
+  "fresh_original_native_modes": 4,
+  "fresh_table_state_modes": 4,
+  "additional_native_mutations": 2,
+  "independent_review": false
+}

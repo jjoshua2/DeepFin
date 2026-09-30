@@ -89,3 +89,13 @@ including a real two-epoch CPU training run and bad identity/partial-label
 refusals. Root independently reviewed the CLI propagation and found no actionable
 issues. No GPU training or frozen job adoption occurred. Main currently lacks the
 frozen successor's recovery CLI; that integration remains separate.
+
+## September 30 reconciliation
+
+The measurements and test counts above remain historical evidence from their
+original revisions; they are not fresh execution claims for the reconciliation.
+The recovered implementation preserves current main's host-overlap delivery
+accounting and rolling recovery-checkpoint emission. Recovery checkpoints do not
+persist the interrupted exact-sampler cursor or prefetch state. Current validation
+and independent review are recorded on PR #795 before landing; no live inputs,
+training processes or stored corpus bytes are changed by this recovery.

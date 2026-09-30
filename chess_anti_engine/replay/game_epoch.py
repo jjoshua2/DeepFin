@@ -1237,6 +1237,11 @@ class GameAwareEpochBuffer:
                 "or complete ZIP_STORED archive bytes)"
             ))
         self.host_batch_overlap = bool(host_batch_overlap)
+        # A prefetched batch advances the sampler before the trainer sees it.
+        # Keep delivery separate so an aborted overlap cannot look complete.
+        self._overlap_delivered_batches = 0
+        self._overlap_aborted = False
+        self._overlap_window_open = False
         self._batch_size = int(batch_size)
         self._input_planes = required_input_planes
         self._input_history_encoding = required_history_encoding
@@ -1570,6 +1575,28 @@ class GameAwareEpochBuffer:
             )
         return _concat_sparse_batches(parts)
 
+    def begin_overlap(self) -> None:
+        if not self.host_batch_overlap:
+            raise RuntimeError("host-overlap window requires host_batch_overlap")
+        if self._closed or self._overlap_aborted:
+            raise RuntimeError("closed or aborted exact host-overlap buffer cannot be resumed")
+        if self._overlap_window_open:
+            raise RuntimeError("exact host-overlap window is already open")
+        self._overlap_window_open = True
+
+    def mark_overlap_delivery(self) -> None:
+        if self._overlap_aborted or not self._overlap_window_open:
+            raise RuntimeError("delivery outside active exact host-overlap window")
+        if self._overlap_delivered_batches >= self._batch_index:
+            raise RuntimeError("delivery has no sampled exact host-overlap batch")
+        self._overlap_delivered_batches += 1
+
+    def end_overlap(self, *, aborted: bool) -> None:
+        if not self._overlap_window_open:
+            raise RuntimeError("exact host-overlap window is not open")
+        self._overlap_aborted |= bool(aborted)
+        self._overlap_window_open = False
+
     def sample_batch_arrays(
         self, batch_size: int, *, wdl_balance: bool = True,
     ) -> dict[str, np.ndarray]:
@@ -1582,6 +1609,11 @@ class GameAwareEpochBuffer:
         _ = wdl_balance
         if self._closed:
             raise RuntimeError("GameAwareEpochBuffer is closed")
+        if self.host_batch_overlap:
+            if self._overlap_aborted:
+                raise RuntimeError("aborted exact host-overlap buffer cannot be resumed")
+            if not self._overlap_window_open:
+                raise RuntimeError("exact host-overlap sampling outside delivery window")
         if int(batch_size) != self._batch_size:
             raise ValueError(
                 f"epoch was planned for batch_size={self._batch_size}, got {batch_size}",
@@ -1717,7 +1749,7 @@ class GameAwareEpochBuffer:
             and self._next_shard == len(self._records)
             and self._realized_digest.hexdigest() == self.plan.plan_sha256
         )
-        return {
+        receipt = {
             **self.plan.as_dict(),
             "plan_workers": int(self._plan_workers),
             "load_workers": int(self._load_workers),
@@ -1733,8 +1765,23 @@ class GameAwareEpochBuffer:
             "realized_sha256": self._realized_digest.hexdigest(),
             "complete": bool(complete),
         }
+        if self.host_batch_overlap:
+            receipt.update({
+                "delivered_batches": int(self._overlap_delivered_batches),
+                "overlap_aborted": bool(self._overlap_aborted),
+                "overlap_window_open": bool(self._overlap_window_open),
+                "complete": bool(
+                    complete and not self._overlap_aborted
+                    and not self._overlap_window_open
+                    and self._overlap_delivered_batches == self.plan.batches
+                ),
+            })
+        return receipt
 
     def close(self) -> None:
+        if self._overlap_window_open:
+            self._overlap_aborted = True
+            self._overlap_window_open = False
         self._closed = True
         self._chunks.clear()
         self._active.clear()
