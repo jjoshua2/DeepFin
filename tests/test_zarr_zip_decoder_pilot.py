@@ -117,7 +117,7 @@ def test_required_external_path_refuses_missing_value(tmp_path):
     assert required_path(tmp_path, "external output required") == tmp_path
 
 
-@pytest.mark.parametrize("error, expected", [(None, True), (ProcessLookupError, False),
+@pytest.mark.parametrize(("error", "expected"), [(None, True), (ProcessLookupError, False),
                                              (PermissionError, True)])
 def test_predecessor_pid_gate_is_conservative(monkeypatch, error, expected):
     from scripts import benchmark_zarr_zip_decoder as pilot
