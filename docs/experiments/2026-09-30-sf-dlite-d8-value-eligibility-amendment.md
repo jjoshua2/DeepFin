@@ -82,6 +82,22 @@ its exact command record has SHA-256
 The launch receipt at
 `labels/sf_dlite_legacy_g10_d8_full05_20260930/LAUNCH-1790801293986850286.json`
 has SHA-256 `5ba5f55062cb401930a3e6ff682ec78c4366cc06e0d59ec27d04ad5ad0906a0b`.
-At this publication point full05 is **running and unadmitted**. A complete
-full05 terminal and independent all-row label audit remain required before
-building targets.
+Full05 stopped after 453.04 seconds with `FAILED_NO_LABEL_CREDIT`. Its failed
+launch receipt is
+`labels/sf_dlite_legacy_g10_d8_full05_20260930/LAUNCH-1790801293986850286-FAILED.json`
+(SHA-256 `6d3fa62fb97bd915c999d2e11bc4be3e3c0a16f36d44731d7e99d2b6377046bc`).
+The 97 sealed blocks contain 153,419 rows of failed-attempt evidence, with
+**zero admitted label credit**. No independent all-row audit or target pack
+was launched.
+
+Worker 4's fsynced failure trace is
+`labels/sf_dlite_legacy_g10_d8_full05_20260930/worker04/RAW-HOLD-s0040-r0007859-1790801740831764880.json`
+(SHA-256 `021e930b174740a3b0820a0cc1ba2d79c722401109bbf9b9b19d435a1902997c`).
+For source 40, row 7,859, roster index 1,521,098, both non-bound depth-8
+emissions had native WDL `[1000, 0, 0]` and PV first move `d2d6`, matching
+the final best move. The first score, `cp 1927`, calibrated to float32 WDL
+`[0.99998045, 0.000014925688, 0.0000046343962]`; the second, `mate 7`,
+calibrated to `[1, 0, 0]`. Their value bytes differ, so the preregistered
+genuine-value-disagreement gate correctly held. This result does not amend
+the value rule or authorize a sixth campaign. A complete, independently
+audited label root remains required before building targets.
