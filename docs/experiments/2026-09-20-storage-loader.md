@@ -44,9 +44,15 @@ so a storage migration still needs a newly qualified epoch plan.
 
 ## BT4 batch screen
 
-`scripts/bt4_batch_benchmark.py` measures batches128/256/512 on the same closed raw
-shard, checking identity equality and bounded policy/value differences. It records
-inference time and full producer-stage time separately. The placement validator
+`scripts/bt4_batch_benchmark.py` runs one selected batch size (128, 256, or 512)
+on a pinned closed raw shard and records inference time and full producer-stage
+time separately. It saves each batch size's raw policy/WDL arrays and labeled
+sidecar for a separate comparison. `COMPLETE_BATCH` means that worker finished;
+it does not certify cross-batch identity equality or bounded policy/value
+differences. This PR contains no cross-batch comparator or completed matched BT4
+screen receipt. A separately reviewed comparison with declared tolerances is
+required before claiming semantic parity or adopting a larger batch.
+The placement validator
 reuses the strict Ceres contract: CUDA must execute neural kernels; CPU execution
 is restricted to small integer/bool shape work. Merely registering CUDA or seeing
 a CUDA memory-copy event is not accepted as GPU computation.
@@ -169,3 +175,7 @@ home prefix in the prose is published as `~/`; measurements, tensor hashes, and
 frozen receipts are unchanged. The diagnostic scripts now use fail-closed Linux
 memory reads without an undeclared psutil dependency. These maintenance changes
 are not a rerun or a new throughput qualification.
+
+The recovery review also corrected the BT4 description: this repository change
+preserves a per-batch measurement worker, not a cross-batch qualification gate.
+No historical BT4 parity or performance result is inferred from worker completion.
