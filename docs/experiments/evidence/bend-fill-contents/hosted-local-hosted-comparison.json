@@ -1,0 +1,11 @@
+{
+  "comparison": "PASS",
+  "new_control_reports_equal": true,
+  "source_hashes_equal": true,
+  "native_report_equal_except_cc": true,
+  "local_source_execution": "consumer and controls checked separately",
+  "hosted_source_execution": "complete unmodified 98-law aggregate and 212 controls",
+  "new_public_laws": 3,
+  "source_commit": "94e380d218d1713828fd192427282588bf7df910",
+  "native_manifest_entries": 283
+}

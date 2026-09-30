@@ -1,0 +1,109 @@
+{
+  "arena_duration_s": 4559.1,
+  "candidate": {
+    "arm": "E",
+    "checkpoint_sha256": "83e10fb3bcf5d09541b3e8cddfd7c6bfae55865913cbfff095970d7d6a870168",
+    "initial_state_sha256": "4a580089ea387b58c3281862cc9aee79219ed33eec1ccf373ea3b67f71af3c59",
+    "summary_sha256": "aba39e125bf67b2b6dd7e314e4756d549b414756ec51a38ca38ebe2d8e05ada2"
+  },
+  "end_to_end_elapsed_s": 4634.231600997999,
+  "fixed_readout": {
+    "decision": "UNRESOLVED_ON_REUSED_BANK",
+    "elo": -12.370553891789678,
+    "games": 1152,
+    "interpretation": "Conditional on original E and D seed121 checkpoints and this reused 576-opening bank; no training-seed or population claim",
+    "paired_elo_ci95_normal": [
+      -27.176970132890503,
+      2.3910566895768195
+    ],
+    "paired_score_ci95_normal": [
+      0.46096876936445796,
+      0.5034409528577642
+    ],
+    "paired_score_se": 0.010834740687067924,
+    "pairs": 576,
+    "score": 0.4822048611111111
+  },
+  "game_log_sha256": "a072c96b6f9afbddd104ffe9a713163304b07e6f7dee876a9c94ba56138f658c",
+  "games": 1152,
+  "games_verified": 1152,
+  "independent_audit": {
+    "games_replayed": 1152,
+    "natural_without_opening_history": 0,
+    "pairs_recomputed": 576,
+    "sha256": "0cef18ef3c6e1a4ed2833fe20afe27e36010f8dc245f6118868151d44077b836",
+    "status": "PASS_INDEPENDENT_TERMINAL_CONDITIONAL_ONLY",
+    "syzygy_wdl_dtz_terminals_reproven": 591
+  },
+  "launch_decision_sha256": "382571f4daf0ab7420f9260b39ccf4c011fb2c20d2dc6044f615956d3a77e938",
+  "limits": [
+    "one trained seed121 checkpoint pair",
+    "one reused 576-opening development bank",
+    "value recipe reweights BT4 and Ceres while removing SF; no intrinsic SF attribution",
+    "no 500M corpus or training credit"
+  ],
+  "packet_manifest_sha256": "42c6f3b8ef3c06737d3bbd5acb2fb2d81bb5fd6f7fa45b76f33fd3992e9de112",
+  "pairs": 576,
+  "pairs_verified": 576,
+  "pentanomial": {
+    "DD_WL": 227,
+    "LD_DL": 135,
+    "LL": 53,
+    "WD_DW": 122,
+    "WW": 39
+  },
+  "pgn_sha256": "762655017dba01e9502d452c5c81886174341a91fb00c086f3765ceb4aa56480",
+  "plan_sha256": "3eeebb4bba913fc694705536ad7236a7414e5daa55e4d3cc50f1c6d344ad56dc",
+  "reference": {
+    "arm": "D",
+    "checkpoint_sha256": "2aef77229a1aad76ab02a4d640ddfe1d394ee30f329c04bcaa8547a37522c7f2",
+    "initial_state_sha256": "4a580089ea387b58c3281862cc9aee79219ed33eec1ccf373ea3b67f71af3c59",
+    "summary_sha256": "a004f281b2bec41d056bca3d5ec56d8626ccca7c8fdb6e439dfc8f3cde53b405"
+  },
+  "results_jsonl_sha256": "d10778495014625c4dd68a5c3788c1681263269d2c89ab4f23c187e0a965f185",
+  "schema": "e_vs_d_576_strict_compact_evidence_v1",
+  "search": {
+    "candidate_sims": 400,
+    "compiled": "on",
+    "device": "cuda",
+    "max_plies": 1000,
+    "mode": "matched_sims",
+    "opening_plies": 16,
+    "play_temperature": 0.1,
+    "prior_temperature": 1.0,
+    "reference_sims": 400,
+    "seed": 2026092101,
+    "shape": "training"
+  },
+  "secondary_triangle": {
+    "bootstrap_draws": 20000,
+    "bootstrap_seed": 2026092901,
+    "direct_ED_score": 0.4822048611111111,
+    "direct_minus_indirect_score_percentage_points": 0.5208333333333333,
+    "discrepancy_bootstrap_95_score_percentage_points": [
+      -3.1684027777777777,
+      4.296875
+    ],
+    "historical_SD_score": 0.47265625,
+    "historical_SE_score": 0.4956597222222222,
+    "independent_reconciliation_sha256": "298e0f6c5212e6da16cf4e81e4e62c99f6ca24c3d9d9578309390f9d5af703e8",
+    "output_sha256": "a53d8b3eb05aae5d75b9a42c48651116e9b2bd53a296084da9c18809c0ea4c93",
+    "pre_result_spec_sha256": "0c7a888543515040c945dc1709dbf8e9eee8477011e651d762722371a534e7fa",
+    "scope": "secondary_descriptive_only",
+    "v3_gate_manifest_sha256": "e3c9e81dcd33832e6b51570aa03bb03c7635a089a17da0d1bd9456549d7feaf5"
+  },
+  "source_terminal_sha256": "0504e84ac881dac2fca545ab11a47ef2974a9d0542bf08a6755072b0885c7f59",
+  "status": "PASS_E_VS_D_REPLAY_1152_GAME_RULE50_ARENA",
+  "syzygy": {
+    "max_pieces": 6,
+    "protocol": "rule50-aware-root-leaf-and-adjudication-v1",
+    "telemetry": {
+      "dtz_tables_open": 1000,
+      "pairs_completed": 576,
+      "search_hits": 627672,
+      "search_probes": 838286,
+      "wdl_tables_open": 1000
+    }
+  },
+  "truncated": false
+}

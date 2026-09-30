@@ -1,0 +1,13 @@
+{
+  "command": [
+    "../bun",
+    "native/bend_engine/standalone/proofs/castle_safety/verify_native.js",
+    "../compiler/bend",
+    "--report",
+    "../evidence/native.json"
+  ],
+  "status": 0,
+  "elapsed_seconds": 28.741575286000057,
+  "log_sha256": "a2eaff76df62f887401aa57627079b9882bd53fbce4020473a6493e172fbae65",
+  "log_bytes": 5244
+}

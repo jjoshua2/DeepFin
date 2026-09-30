@@ -1,0 +1,268 @@
+"""Current initialized attack composition against independent forward coordinates.
+
+Three complete initialization contexts; six masks including queen, attacked,
+and bounded in_check. The candidate does not execute proof-only geometry.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import random
+import shutil
+import subprocess
+import tempfile
+
+SUITE = Path(__file__).resolve().parent
+ENGINE = SUITE.parents[2]
+MODES = {
+    "generic": [],
+    "portable": ["-DBEND_U64_PORTABLE"],
+    "native": ["-march=native"],
+    "ubsan": ["-fsanitize=undefined", "-fno-sanitize-recover=all"],
+}
+Board = list[tuple[set[int], set[int]]]
+
+
+def run(args: list[str], timeout: int = 180) -> subprocess.CompletedProcess[str]:
+    p = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
+                       env={**os.environ, "BEND_NO_TELEMETRY": "1", "TERM": "dumb"}, check=False)
+    if p.returncode != 0 or p.stderr:
+        raise AssertionError((args[:3], p.returncode, p.stderr[-2000:]))
+    return p
+
+
+def empty() -> Board:
+    return [(set(), set()) for _ in range(64)]
+
+
+def put(board: Board, square: int, kind: int, color: int) -> None:
+    board[square][0].add(kind)
+    board[square][1].add(color)
+
+
+def encode(board: Board, metadata: tuple[int, int, int]) -> list[int]:
+    words = [0] * 8
+    for sq, (kinds, colors) in enumerate(board):
+        for kind in kinds:
+            words[kind] |= 1 << sq
+        for color in colors:
+            words[6 if color == 1 else 7] |= 1 << sq
+    return [z for w in words for z in (w >> 32, w & 0xFFFFFFFF)] + list(metadata)
+
+
+def geometry(board: Board, origin: int, kind: int, color: int) -> set[int]:
+    """Forward geometric attacks. Sliders include and stop at first occupancy."""
+    x, y = origin % 8, origin // 8
+    if kind == 0:
+        offsets = [(dx, 1 if color == 1 else -1) for dx in (-1, 1)]
+    elif kind == 1:
+        offsets = [(dx, dy) for dx in (-2, -1, 1, 2)
+                   for dy in (-2, -1, 1, 2) if abs(dx * dy) == 2]
+    elif kind == 5:
+        offsets = [(dx, dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if dx or dy]
+    else:
+        directions = ([(dx, dy) for dx in (-1, 1) for dy in (-1, 1)] if kind in (2, 4) else [])
+        directions += ([(0, 1), (0, -1), (1, 0), (-1, 0)] if kind in (3, 4) else [])
+        result = set()
+        for dx, dy in directions:
+            xx, yy = x + dx, y + dy
+            while 0 <= xx < 8 and 0 <= yy < 8:
+                sq = yy * 8 + xx
+                result.add(sq)
+                if board[sq][1]:
+                    break
+                xx, yy = xx + dx, yy + dy
+        return result
+    return {(y + dy) * 8 + x + dx for dx, dy in offsets
+            if 0 <= x + dx < 8 and 0 <= y + dy < 8}
+
+
+def attacked(board: Board, target: int, by: int) -> bool:
+    # Forward from candidate attackers, rather than reverse-query mask reduction.
+    return any(by in colors and any(target in geometry(board, sq, k, by) for k in kinds)
+               for sq, (kinds, colors) in enumerate(board))
+
+
+def expected(board: Board, target: int, by: int) -> list[int]:
+    masks = [geometry(board, target, k, 1 - by if k == 0 else by) for k in (0, 1, 5, 3, 2, 4)]
+    words = [sum(1 << sq for sq in m) for m in masks]
+    kings = [sq for sq, (ks, cs) in enumerate(board) if 5 in ks and 1 - by in cs]
+    selected = min(kings) if kings else 64
+    check = int(attacked(board, selected, by)) if kings else 2
+    return [z for w in words for z in (w >> 32, w & 0xFFFFFFFF)] + [int(attacked(board, target, by)), selected, check]
+
+
+def fixtures() -> list[dict]:
+    cases: list[dict] = []
+    seen: set[tuple[int, ...]] = set()
+
+    def add(label: str, b: Board, target: int, by: int,
+            metadata: tuple[int, int, int] | None = None) -> None:
+        inp = [target, by, *encode(b, metadata or (1 - by, 15, 64))]
+        if tuple(inp) in seen:
+            return
+        seen.add(tuple(inp))
+        kings = [sq for sq, (ks, cs) in enumerate(b) if 5 in ks and 1 - by in cs]
+        cases.append({"label": label, "input": inp, "expected": expected(b, target, by),
+                      "singleton_at_target": kings == [target], "king_count": len(kings)})
+
+    # Early witnesses make each behavioral mutation observable in the first batch.
+    for kind, source in ((4, 9), (4, 56), (0, 9), (1, 17), (5, 1)):
+        for by in (0, 1):
+            b = empty(); put(b, 0, 5, 1 - by); put(b, source, kind, by)
+            add("early-witness", b, 0, by)
+    for target in range(64):
+        for by in (0, 1):
+            for kind in range(6):
+                for source in sorted({target, target ^ 17, target ^ 56, (target + 9) % 64}):
+                    b = empty(); put(b, target, 5, 1 - by); put(b, source, kind, by)
+                    add("bounded-square-kind-color", b, target, by)
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)):
+                path = []
+                x, y = target % 8 + dx, target // 8 + dy
+                while 0 <= x < 8 and 0 <= y < 8:
+                    path.append(y * 8 + x); x += dx; y += dy
+                if len(path) >= 2:
+                    for blocker in (0, 1):
+                        b = empty(); put(b, target, 5, 1 - by)
+                        put(b, path[-1], 4, by); put(b, path[0], 0, blocker)
+                        add("first-blocker", b, target, by)
+    rng = random.Random(20260927)
+    for i in range(192):
+        b = empty()
+        for sq in rng.sample(range(64), rng.randrange(0, 40)):
+            put(b, sq, rng.randrange(6), rng.randrange(2))
+        add("mixed-and-raw-metadata", b, rng.randrange(64), rng.randrange(2),
+            (rng.getrandbits(32), rng.getrandbits(32), rng.getrandbits(32)))
+    for i in range(64):
+        # Arbitrary bitboard combinations are inside the attack theorem's domain.
+        b = [(set(k for k in range(6) if rng.randrange(3) == 0),
+              set(c for c in range(2) if rng.randrange(2))) for _ in range(64)]
+        add("overlapping-or-unowned-planes", b, i, i % 2)
+    b = empty(); put(b, 36, 5, 1); put(b, 58, 5, 0); put(b, 42, 1, 0); put(b, 2, 3, 1)
+    add("pinned-knight", b, 36, 0)
+    b = empty(); put(b, 0, 5, 1); put(b, 63, 5, 1); put(b, 53, 1, 0)
+    add("multiple-king-boundary", b, 63, 0)
+    for target in (0, 31, 32, 63):
+        for by in (0, 1):
+            add("empty-king-boundary", empty(), target, by)
+    return cases
+
+
+SEEDS = [(0, 0), (0xFFFFFFFF, 0xFFFFFFFF), (0x12345678, 0x9ABCDEF0)]
+
+
+def observe(binary: Path, cases: list[dict], context: int) -> tuple[list[list[int]], int]:
+    outputs = []
+    sentinels = 0
+    for start in range(0, len(cases), 512):
+        chunk = cases[start:start + 512]
+        args = [str(context), *(str(x) for c in chunk for x in c["input"])]
+        raw = run([str(binary), *args], 90).stdout
+        lines = raw.splitlines()
+        assert len(lines) == len(chunk) + 1, ("record count", start, len(lines))
+        assert lines[-1].split() == ["sentinel", *map(str, SEEDS[context])], lines[-1]
+        sentinels += 1
+        for line in lines[:-1]:
+            fields = line.split()
+            assert fields[0] == "case" and len(fields) == 16, line
+            outputs.append([int(x) for x in fields[1:]])
+    return outputs, sentinels
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("compiler", type=Path)
+    parser.add_argument("--report", type=Path)
+    args = parser.parse_args()
+    compiler = args.compiler.resolve()
+    bun = os.environ.get("BUN", "bun")
+    cc = os.environ.get("CC", "clang")
+    identity = run([bun, str(ENGINE / "standalone/verify_compiler.js"), str(compiler)]).stdout
+    originals = {str(p.relative_to(ENGINE)): hashlib.sha256(p.read_bytes()).hexdigest()
+                 for p in [*SUITE.glob("*.bend"), SUITE / "focused.js", Path(__file__),
+                           ENGINE / "legal_probe/Chess.bend", ENGINE / "standalone/Tables.bend"]}
+    cases = fixtures()
+    exp = [c["expected"] for c in cases]
+    modes, mutations = [], []
+    with tempfile.TemporaryDirectory(prefix="deepfin-attack-witness-") as td:
+        tmp = Path(td)
+
+        def generate(probe: Path, name: str) -> Path:
+            out = tmp / (name + ".c")
+            run([bun, str(compiler / "bend2/main.ts"), str(probe), "-o", str(out)])
+            assert out.is_file()
+            return out
+
+        def build(c: Path, name: str, flags: list[str]) -> Path:
+            binary = tmp / name
+            run([cc, "-std=c11", "-O2", *flags, str(c), "-pthread", "-lm", "-o", str(binary)])
+            return binary
+
+        c = generate(SUITE / "probe.bend", "probe")
+        invalid = [[], ["x"], ["-1"], ["4294967296"], ["3"], ["0", "0"],
+                   ["0", "64", *map(str, cases[0]["input"][1:])],
+                   ["0", str(cases[0]["input"][0]), "2", *map(str, cases[0]["input"][2:])],
+                   ["0", *map(str, cases[0]["input"]), "0"]]
+        for mode, flags in MODES.items():
+            binary = build(c, mode, flags)
+            actual = []
+            sentinel_count = 0
+            for context in range(3):
+                output, sentinels = observe(binary, cases, context)
+                assert output == exp, next((i, a, b) for i, (a, b) in enumerate(zip(output, exp)) if a != b)
+                actual.extend(output)
+                sentinel_count += sentinels
+            for batch in invalid:
+                p = subprocess.run([str(binary), *batch], capture_output=True, text=True, timeout=30, check=False)
+                assert p.returncode == 2 and "invalid" in p.stderr + p.stdout and "runtime error" not in p.stderr
+            digest = hashlib.sha256(json.dumps(actual, separators=(",", ":")).encode()).hexdigest()
+            modes.append({"mode": mode, "rows": len(actual), "output_sha256": digest, "invalid_rejections": len(invalid), "sentinel_reads": sentinel_count})
+            print(f"PASS {mode}: {len(actual)} actual attack/check observations", flush=True)
+        for name, old, new in [
+            ("queen-omits-bishop", "queen_after(sq, occ, slide(table, sq, occ))", "slide(table, sq, occ)"),
+            ("wrong-pawn-direction", "attacked_pawn(b, sq, by, attack(0, table, sq, U32.xor(by, 1), occupied(b)))",
+             "attacked_pawn(b, sq, by, attack(0, table, sq, by, occupied(b)))"),
+            ("lost-returned-table", "(table, Bool.not(U64.is_zero(U64.and(hits, color(b, by)))))",
+             "(Array.new(U64,17n,U64.zero()), Bool.not(U64.is_zero(U64.and(hits, color(b, by)))))"),
+        ]:
+            copy = tmp / name
+            shutil.copytree(ENGINE, copy)
+            chess = copy / "legal_probe/Chess.bend"
+            text = chess.read_text()
+            assert text.count(old) == 1
+            chess.write_text(text.replace(old, new))
+            source = generate(copy / "standalone/proofs/attack_composition/probe.bend", name)
+            binary = build(source, name + "-exe", [])
+            # Read only emitted rows here; the lost-table corruption may also break sentinel state.
+            raw = run([str(binary), "0", *(str(x) for c in cases[:512] for x in c["input"])], 90).stdout
+            lines = raw.splitlines()
+            assert len(lines) == len(cases[:512]) + 1 and lines[-1].startswith("sentinel ")
+            observed = []
+            for line in lines[:-1]:
+                fs = line.split(); assert len(fs) == 16 and fs[0] == "case"
+                observed.append(list(map(int, fs[1:])))
+            mismatch = next((i for i, (a, b) in enumerate(zip(observed, exp[:512])) if a != b), None)
+            assert mismatch is not None, name
+            mutations.append({"name": name, "compiled_and_executed": True, "rejected": True,
+                              "row": mismatch, "observed": observed[mismatch], "expected": exp[mismatch]})
+    for f, digest in originals.items():
+        assert hashlib.sha256((ENGINE / f).read_bytes()).hexdigest() == digest, f
+    assert run([bun, str(ENGINE / "standalone/verify_compiler.js"), str(compiler)]).stdout == identity
+    report = {"native_gate": "PASS", "compiler_identity": identity, "cc": run([cc, "--version"]).stdout,
+              "rows_per_mode": len(cases)*3, "distinct_inputs": len({tuple(c["input"]) for c in cases})*3, "base_board_queries": len(cases), "initializations": 3,
+              "fields_per_mode": len(cases) * 3 * 15, "singleton_at_target": sum(c["singleton_at_target"] for c in cases),
+              "missing_king_diagnostics": sum(c["king_count"] == 0 for c in cases),
+              "multiple_king_diagnostics": sum(c["king_count"] > 1 for c in cases),
+              "fixture_sha256": hashlib.sha256(json.dumps(cases, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+              "modes": modes, "mutations": mutations, "source_sha256s": originals,
+              "scope": "Three complete initializations including two nonzero seeds; six masks, attacked and bounded in_check versus independent forward geometry. Sentinel checks observe one unused slot, not full-array identity. Missing kings skip in_check in the probe; multiple kings use the lowest. No native proof-scan execution or exhaustive games."}
+    if args.report:
+        args.report.write_text(json.dumps(report, indent=2) + "\n")
+
+
+if __name__ == "__main__":
+    main()

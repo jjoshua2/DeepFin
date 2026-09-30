@@ -1,0 +1,12 @@
+{
+  "base": "4e67992355efb3722dc837e482bec3ef67c6deb1",
+  "changed_paths": [
+    "native/bend_engine/standalone/proofs/extras/focused.js",
+    "native/bend_engine/standalone/proofs/extras/unique_probe.bend",
+    "native/bend_engine/standalone/proofs/extras/verify_native.js"
+  ],
+  "source_aggregate_reused_from_run": 35920944024,
+  "source_aggregate_rerun": false,
+  "all_previous_bend_proofs_and_runtime_unchanged": true,
+  "old_native_fixtures_retained": true
+}

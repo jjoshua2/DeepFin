@@ -1,0 +1,13 @@
+{
+  "command": [
+    "../bun",
+    "native/bend_engine/standalone/proofs/castle_safety/focused.js",
+    "../compiler/bend",
+    "--report",
+    "../evidence/focused-final-clean.json"
+  ],
+  "status": 0,
+  "elapsed_seconds": 47.553166703000215,
+  "log_sha256": "93f86ea8355ab18c1f3ad08ac54c9c0903c4817d4de2d8c4e0d8fe23dd7bcba3",
+  "log_bytes": 26146
+}

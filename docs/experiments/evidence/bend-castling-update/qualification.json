@@ -1,0 +1,33 @@
+{
+  "qualification": "PASS",
+  "run": 36218760990,
+  "job": 108339901828,
+  "source": "105b361a4e4a7cc5b1a1a14308c74c310d5a5b9a",
+  "new_laws": 2,
+  "new_controls": 17,
+  "control_categories": {
+    "source semantic/refinement": 8,
+    "manifest/import policy": 8,
+    "synthetic output-wrapper unit; not compiler execution": 1
+  },
+  "retained_parent_laws": 152,
+  "retained_parent_controls": 453,
+  "modular_laws": 154,
+  "modular_controls": 470,
+  "combined_wrapper_executed": false,
+  "native_modes": [
+    "generic",
+    "portable",
+    "native",
+    "ubsan"
+  ],
+  "board_rows_per_mode": 4360,
+  "board_fields_per_mode": 82840,
+  "conditional_preservation_cases": 264,
+  "malformed_rejections_per_mode": 9,
+  "artifact_id": 10899180020,
+  "artifact_zip_sha256": "f7422f561bb20b838d41b419114ce57a55c5a0fd2deedc4666502f2db616b4a8",
+  "focused_report_sha256": "ac66f13579617401d18c9d57e09a675b88703730c3c890c0acd3ed3ae70da303",
+  "native_report_sha256": "2d5585a996f8bf102b195260f2d9a221a7d5b62145179566d8044ce56d3544c9",
+  "independent_review": false
+}

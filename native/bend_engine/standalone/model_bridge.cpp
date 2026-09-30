@@ -1,4 +1,4 @@
-// Fixed CPU tensor execution only. All board/history/encoding, legal masking,
+// CPU F32 / explicit backend-only CUDA BF16 tensor execution. All board/history/encoding, legal masking,
 // probabilities, ticket ownership and search decisions live in Bend.
 #include <ATen/ATen.h>
 #include <ATen/Parallel.h>
@@ -7,6 +7,11 @@
 #include <torch/version.h>
 #include <openssl/evp.h>
 #include "model_contract.h"
+#include "batch_outputs.h"
+#include "dispatch_binding.h"
+#ifdef DEEPFIN_BEND_CUDA_MODEL
+#include "cuda_execution.h"
+#endif
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -28,9 +33,31 @@ static_assert(sizeof(float) == 4 && std::endian::native == std::endian::little);
 struct Runtime {
   std::unique_ptr<torch::inductor::AOTIModelPackageLoader> loader;
   std::filesystem::path workspace;
+  // One synchronous caller owns this input for the lifetime of the bound model.
+  // AOTI output tensors remain loader-owned; results are copied into Bend's
+  // distinct reusable output buffer before either side can reuse its storage.
+  at::Tensor input;
+  std::vector<at::Tensor> inputs;
   int trace = -1;
   uint32_t calls = 0;
+  bool audit = false;
+  bool batch_api = false;
+  bool ready = false;
+#ifdef DEEPFIN_BEND_CUDA_MODEL
+  std::unique_ptr<deepfin_native::CudaExecution> cuda;
+#endif
+  const void* first_input = nullptr;
+  const void* first_output = nullptr;
+  uint32_t input_changes = 0, output_changes = 0, input_tensor_allocations = 0;
   ~Runtime() {
+    if (audit && ready) {
+      std::cerr << "native-buffer-audit calls=" << calls << " input_changes=" << input_changes
+                << " output_changes=" << output_changes << " input_tensor_allocations=" << input_tensor_allocations << '\n';
+    }
+#ifdef DEEPFIN_BEND_CUDA_MODEL
+    if (audit && ready && cuda) std::cerr << cuda->audit() << '\n';
+    cuda.reset(); // drain before any native model or staging storage is released
+#endif
     loader.reset();
     if (trace >= 0) ::close(trace);
     if (!workspace.empty()) { std::error_code ec; std::filesystem::remove_all(workspace, ec); }
@@ -81,7 +108,7 @@ std::string copy_verified(const char* source) {
   if (hex.str() != DEEPFIN_MODEL_SHA256) throw std::runtime_error("bound model package hash mismatch");
   return dest.string();
 }
-void copy_output(const at::Tensor& x, int64_t width, float* destination) {
+void copy_output(const at::Tensor& x, int64_t width, void* destination) {
   if (!x.device().is_cpu() || x.scalar_type() != at::kFloat || x.dim() != 2
       || x.size(0) != 1 || x.size(1) != width)
     throw std::runtime_error("native model output shape/dtype/device mismatch");
@@ -89,38 +116,75 @@ void copy_output(const at::Tensor& x, int64_t width, float* destination) {
   std::memcpy(destination, dense.const_data_ptr(), static_cast<size_t>(width) * sizeof(float));
 }
 }
-extern "C" uint32_t deepfin_model_open() {
+static uint32_t open_model(bool batch_api) {
   try {
-    if (state.loader) throw std::runtime_error("model is already open");
+    if (state.ready || state.loader) throw std::runtime_error("model is already open");
+    if (!batch_api && (DEEPFIN_MODEL_BATCH != 1 || DEEPFIN_MODEL_CUDA))
+      throw std::runtime_error("standalone search requires batch one; use the explicit batch backend");
+    static_assert(DEEPFIN_MODEL_BATCH == 1 || DEEPFIN_MODEL_BATCH == 2 || DEEPFIN_MODEL_BATCH == 4
+                  || DEEPFIN_MODEL_BATCH == 8 || DEEPFIN_MODEL_BATCH == 16);
+    deepfin_native::check_dispatch_binding(std::getenv("DEEPFIN_COHORT_DISPATCH"),
+        std::getenv("DEEPFIN_COHORT_PROFILE_PACKAGE_SHA256"), DEEPFIN_MODEL_SHA256,
+        batch_api, DEEPFIN_MODEL_CUDA);
+    state.batch_api = batch_api;
     if (std::string(TORCH_VERSION) != DEEPFIN_MODEL_TORCH_VERSION)
       throw std::runtime_error("bound package/LibTorch version mismatch");
     const char* source = std::getenv("DEEPFIN_BEND_MODEL_PACKAGE");
     if (!source || !*source) throw std::runtime_error("DEEPFIN_BEND_MODEL_PACKAGE is required; no material fallback");
+    const char* trace = std::getenv("DEEPFIN_BEND_MODEL_TRACE");
+    if (DEEPFIN_MODEL_CUDA) {
+#ifdef DEEPFIN_BEND_CUDA_MODEL
+      state.cuda = std::make_unique<deepfin_native::CudaExecution>(DEEPFIN_MODEL_DEVICE_INDEX,
+          DEEPFIN_MODEL_BATCH, DEEPFIN_MODEL_CHANNELS, trace && *trace);
+#else
+      throw std::runtime_error("CUDA package requires an explicitly CUDA-enabled build; no CPU fallback");
+#endif
+    }
     const auto path = copy_verified(source);
     at::set_num_threads(2);
     at::set_num_interop_threads(1);
-    state.loader = std::make_unique<torch::inductor::AOTIModelPackageLoader>(path);
-    const char* trace = std::getenv("DEEPFIN_BEND_MODEL_TRACE");
+#ifdef DEEPFIN_BEND_CUDA_MODEL
+    if (state.cuda) state.cuda->open(path);
+    else
+#endif
+    {
+      state.loader = std::make_unique<torch::inductor::AOTIModelPackageLoader>(path);
+      state.input = at::empty({DEEPFIN_MODEL_BATCH, DEEPFIN_MODEL_CHANNELS, 8, 8},
+                             at::TensorOptions().dtype(at::kFloat).device(at::kCPU));
+      state.inputs = {state.input};
+    }
+    ++state.input_tensor_allocations;
+    const char* audit = std::getenv("DEEPFIN_BEND_BUFFER_AUDIT");
+    if (audit && *audit && std::strcmp(audit, "0") && std::strcmp(audit, "1"))
+      throw std::runtime_error("DEEPFIN_BEND_BUFFER_AUDIT must be 0 or 1");
+    state.audit = audit && std::strcmp(audit, "1") == 0;
     if (trace && *trace) {
       state.trace = ::open(trace, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
       if (state.trace < 0) throw std::runtime_error("trace destination must be a NEW file");
     }
+    state.ready = true;
     return DEEPFIN_MODEL_PROFILE;
   } catch (const std::exception& error) {
     std::cerr << "native model startup: " << error.what() << '\n'; return 0;
   }
 }
+extern "C" uint32_t deepfin_model_open() { return open_model(false); }
+extern "C" uint32_t deepfin_model_open_batch() { return open_model(true); }
 extern "C" int deepfin_model_run(const float* input, uint32_t count, float* output, uint32_t capacity) {
   try {
-    if (!state.loader || !input || !output || count != DEEPFIN_MODEL_CHANNELS * 64 || capacity != 1861
+    if (!state.loader || state.batch_api || !input || !output || count != DEEPFIN_MODEL_CHANNELS * 64 || capacity != 1861
         || state.calls >= 65536) throw std::runtime_error("native model input/call bound violated");
+    if (state.audit) {
+      if (!state.calls) { state.first_input = input; state.first_output = output; }
+      state.input_changes += state.first_input != input;
+      state.output_changes += state.first_output != output;
+    }
     c10::InferenceMode inference;
-    auto x = at::from_blob(const_cast<float*>(input), {1, DEEPFIN_MODEL_CHANNELS, 8, 8},
-                          at::TensorOptions().dtype(at::kFloat).device(at::kCPU)).clone();
-    auto outputs = state.loader->run({x});
+    std::memcpy(state.input.mutable_data_ptr(), input, static_cast<size_t>(count) * sizeof(float));
+    auto outputs = state.loader->run(state.inputs);
     if (outputs.size() != 2) throw std::runtime_error("expected (policy, wdl) output tuple");
     copy_output(outputs[0], 1858, output);
-    copy_output(outputs[1], 3, output + 1858);
+    copy_output(outputs[1], 3, reinterpret_cast<char*>(output) + 1858 * sizeof(float));
     ++state.calls;
     if (state.trace >= 0) {
       const uint32_t header[] = {0x44464c31, state.calls, count, 1861};
@@ -131,5 +195,64 @@ extern "C" int deepfin_model_run(const float* input, uint32_t count, float* outp
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "native model execution: " << error.what() << '\n'; return 1;
+  }
+}
+
+// Diagnostic/native-batching boundary only; never silently pad a UCI search.
+// The single owner submits logical rows; the bound package always executes its
+// fixed physical batch. Padding is zeroed on EVERY call, including after a full
+// batch. Only logical outputs are published and the caller retains acceptance.
+extern "C" int deepfin_model_run_batch(const float* input, uint32_t rows,
+                                      float* output, uint32_t output_count) {
+  try {
+    constexpr uint32_t stride = DEEPFIN_MODEL_CHANNELS * 64;
+    if (!state.ready || !state.batch_api || !input || !output || !rows
+        || rows > DEEPFIN_MODEL_BATCH || output_count != rows * 1861 || state.calls >= 65536)
+      throw std::runtime_error("native batch row/output/call bound violated");
+    const auto a = reinterpret_cast<uintptr_t>(input), b = reinterpret_cast<uintptr_t>(output);
+    const size_t input_bytes = size_t(rows) * stride * sizeof(float);
+    const size_t output_bytes = size_t(output_count) * sizeof(float);
+    if (a > UINTPTR_MAX - input_bytes || b > UINTPTR_MAX - output_bytes
+        || (a < b + output_bytes && b < a + input_bytes))
+      throw std::runtime_error("native batch buffers overlap");
+    c10::InferenceMode inference;
+#ifdef DEEPFIN_BEND_CUDA_MODEL
+    if (state.cuda) state.cuda->run(input, rows, output);
+    else
+#endif
+    {
+      state.input.zero_();
+      std::memcpy(state.input.mutable_data_ptr(), input, input_bytes);
+      auto outputs = state.loader->run(state.inputs);
+      deepfin_native::copy_batch_outputs(outputs, DEEPFIN_MODEL_BATCH, rows, output);
+    }
+    if (state.audit) {
+      if (!state.calls) { state.first_input = input; state.first_output = output; }
+      state.input_changes += state.first_input != input;
+      state.output_changes += state.first_output != output;
+    }
+    ++state.calls;
+    if (state.trace >= 0) {
+      // v2: sequence, physical batch, real rows, channels, per-row output width.
+      // Capture the actual padded tensor passed to AOTI, not unconsumed host tail.
+#ifdef DEEPFIN_BEND_CUDA_MODEL
+      if (state.cuda) {
+        // v3 stores actual BF16 device-input bits, not their pre-cast F32 values.
+        const uint32_t header[] = {0x44464333, state.calls, DEEPFIN_MODEL_BATCH, rows,
+                                   DEEPFIN_MODEL_CHANNELS, 1861, DEEPFIN_MODEL_DEVICE_INDEX, 16};
+        write_all(state.trace, header, sizeof header);
+        write_all(state.trace, state.cuda->trace_data(), size_t(DEEPFIN_MODEL_BATCH) * stride * 2);
+      } else
+#endif
+      {
+        const uint32_t header[] = {0x44464232, state.calls, DEEPFIN_MODEL_BATCH, rows, DEEPFIN_MODEL_CHANNELS, 1861};
+        write_all(state.trace, header, sizeof header);
+        write_all(state.trace, state.input.const_data_ptr(), size_t(DEEPFIN_MODEL_BATCH) * stride * sizeof(float));
+      }
+      write_all(state.trace, output, output_bytes);
+    }
+    return 0;
+  } catch (const std::exception& error) {
+    std::cerr << "native batch execution: " << error.what() << '\n'; return 1;
   }
 }

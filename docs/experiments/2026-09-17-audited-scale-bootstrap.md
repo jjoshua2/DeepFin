@@ -1,7 +1,31 @@
 # Audited expansion of the35M bootstrap
 
-Status: implementation and CPU preparation plan; no new derivation, materialization,
-prospective union scan or training launched by this change. Independent review pending.
+Status: historical September 17 implementation and CPU preparation plan.
+
+## September 30 implementation recovery
+
+PR [#767](https://github.com/jjoshua2/DeepFin/pull/767) preserves the original
+implementation at `9ecd048d2b63c9bc103adb7ee7a7816c9f354de6`. The earlier
+closure did not mean the complete patch was already on main: the saved-audit
+admission helper and derived-WDL admission route were present, but the value-writer
+binding, fresh-interpreter prospective pass, explicit expansion profile and their
+regressions were absent.
+
+This recovery reconciles those missing pieces with main
+`a6b4e387ee6114827efb973c6e5dd7611aec5b15`, preserving the newer sidecar and
+all unrelated development. The six recovered source/test files were unchanged
+between the original merge base and this main revision. Both histories are
+retained. Original checks below are historical evidence; fresh exact-head CI and
+independent review are recorded on the PR, not inferred from those earlier checks.
+
+The 50–60M profile and its 9h/12h limits remain an explicit historical contract,
+not the default for new training. The [completed 58M factorial record](2026-09-22-factorial-readout-next24h.md)
+already documents later 58,090,688-row arms. The September 17 readiness counts and
+queue plans below describe their original date; they are not current operations
+or new authorization to launch writers, scheduling scans or training. No live
+configuration, frozen runtime, job, model or training result changes here.
+
+## Original September 17 plan and evidence
 
 ## Question and unchanged recipe
 

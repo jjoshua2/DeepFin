@@ -1,0 +1,55 @@
+{
+  "supplementary_geometry": "PASS",
+  "compiler_identity": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "source_sha256s": {
+    "standalone/proofs/geometry_review/Grid.bend": "c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a",
+    "standalone/proofs/geometry_review/Masks.bend": "6cb7c3e645356caf92ca2ca860156da3bcfdb8d6c4c997d04adb992ce0ab0db3",
+    "standalone/proofs/geometry_review/Rays.bend": "f90217fa004d1c221ecf5a83c69167cb7cf3044055ab97d7cf612a5e12400054",
+    "standalone/proofs/geometry_review/Step.bend": "dc3583eed5bf26c025f7a4b606dfc7ed1024bec248e3c3d8ac7686de1e28f8e9",
+    "standalone/proofs/geometry_review/probe.bend": "33a5a16d86169dacb9940074d07eb823586a0575d97a8c6a60422006c18b0d4d",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e"
+  },
+  "modes": [
+    {
+      "mode": "generic",
+      "step_cases": 512,
+      "mask_cases": 128,
+      "output_sha256": "f525ac644dddbcd9a0beef5927fd037763267e7dbfacb8ed2286df45df683bb4"
+    },
+    {
+      "mode": "ubsan",
+      "step_cases": 512,
+      "mask_cases": 128,
+      "output_sha256": "f525ac644dddbcd9a0beef5927fd037763267e7dbfacb8ed2286df45df683bb4"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "offboard-file-admitted",
+      "native_wrong_value_rejected": true,
+      "first_mismatch_row": 56,
+      "observed": "s 7 0 8",
+      "expected": "s 7 0 64",
+      "source_rejection_status": 1,
+      "source_location": "square_7",
+      "diagnostic_sha256": "d50ad86d3aa034ef3aee2179625a5d1fc9e467040251a77425e020322e9062a7",
+      "diagnostic_bytes": 165,
+      "mutated_Tables_sha256": "52c67188d2ac70f221d2a5a74f5bf4593d306986263cc4135f395c11692d106e"
+    },
+    {
+      "name": "terminal-mask-squares-retained",
+      "native_wrong_value_rejected": true,
+      "first_mismatch_row": 512,
+      "observed": "m 0 16843009 16843262",
+      "expected": "m 0 65793 16843134",
+      "source_rejection_status": 1,
+      "source_location": "finite",
+      "diagnostic_sha256": "4b5af94f26000ce0e3b431873ef85f17846c36144ff5b9b13084a999ec5604c1",
+      "diagnostic_bytes": 197,
+      "mutated_Tables_sha256": "57a67968e66cd236698b95264b913a9b4595b484c0da4e515dc616db08c5548a"
+    }
+  ],
+  "scope": "Exhaustive primitive step/mask inputs, not arbitrary-occupancy ray or final lookup proof; no extra public-law/control counts",
+  "driver_sha256": "b55b9d6afa08dbedaf3088e307c0cbe2e1dd927840c81dc913e89b7c67246b96",
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)"
+}

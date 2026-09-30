@@ -1,0 +1,26 @@
+{
+  "base_commit": "f53c908a0af23267f61cee303944d11b878620de",
+  "qualification_run": 36216701536,
+  "qualification_job": 108333965512,
+  "staging_commit": "4c98604cb737872cf4d0909672e66687bd36a2e8",
+  "artifact_id": 10897737515,
+  "artifact_zip_sha256": "c7ecfb78fd0223f762e959031bd3f32de69bd11a4035be2a2834752276270db8",
+  "qualified_patch_sha256": "64016aba402f56cd2543415d027a7ce1d7f0705c3e052d505d088490e7c75fad",
+  "tests": 266,
+  "new_tests": 61,
+  "measured": {
+    "forward_calls": 360,
+    "real_rows": 792,
+    "physical_rows": 1224,
+    "padding_rows": 432
+  },
+  "excluded_warmups": {
+    "forward_calls": 60,
+    "real_rows": 132,
+    "physical_rows": 204,
+    "padding_rows": 72
+  },
+  "runtime_changed": false,
+  "self_review_only": true,
+  "report_sha256": "094cd39de05065465171a7d19edc7a31418fc611991be26c654df8a99215221a"
+}
