@@ -13,6 +13,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [Ceres stored-feed-once root preparation](2026-09-29-ceres-root-feedonce.md) | Tracked CPU root binder exercised by saved-game readback, exact 2,022-root replay parity and narrow 16.81% saved-root prep saving; fresh actor adoption pending |
+| [SF / BT4 / Ceres teacher adjudication](2026-09-11-teacher-adjudication-audit.md) | Broader saved-search audit of policy regret, ranking constraints, routing, optional Ceres complementarity/value calibration and a bounded Ceres-on-G10 selection; no inference/training result |
 | [Promotion and en-passant updates](2026-09-25-bend-special-move-updates.md) | Four new actual special-update contracts plus requalified saved ordinary suite; modular150/436; castling and legal-move conditions remain separate |
 | [Accepted parser frontiers](2026-09-25-bend-parser-frontier.md) | Four actual-source laws derive fresh bounded insertion and accepted-placement consistency; modular141/401 with separate exact-source compiler recovery |
 | [Parser prefix safety](2026-09-25-bend-parser-prefix-safety.md) | Five actual placement-parser laws for prefix composition, sticky invalidity, metadata and typed transitions; modular137/384; parser-wide freshness and full FEN validity remain open |
