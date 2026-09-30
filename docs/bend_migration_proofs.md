@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest P3 board-representation foundation
+
+Hosted run **36080761492** passes all six public laws, importing consumer, seventeen controls, four native modes with full-Board comparisons, two compiled/executed corruption controls, original compiler checks and unchanged whole-repository lint on source `ad0c9e379a0b1bfbb91b7c5d7755e22668bf1004`.
+
+The new board suite defines an independent per-square partition across six kind and two color bitboards: empty or exactly one kind of one color. Actual empty/start boards satisfy it; actual fresh typed insertion preserves it and has an exact complete-Board update theorem. Actual insertion preserves metadata, and metadata writes preserve the partition predicate. Four universal and two closed laws use the real Position/Chess code.
+
+This is deliberately weaker than legal position: no king count, pawn-rank, valid metadata, occupied decoder, FEN freshness/reachability, move application or generation theorem follows. Symbolic raw-square mask semantics are distinguished from the native0..63 insertion domain. Exact-source parent117/315 plus the newly executed6/17 yields modular123/332, not a full combined aggregate run. The FIDE2023 English rules are the pinned future semantic anchor; this invariant is not compliance. See [the readout](experiments/2026-09-24-bend-board-representation.md). Prior P2 results and their closed-builder limitation remain unchanged.
+
 ## Latest full-table public-boundary consolidation
 
 Hosted run **36009970976** passes both uniform full-table laws and importing consumer, all20 classified controls, four native modes, the short-public-builder regression, original compiler source/pin checks and unchanged whole-repository lint on source `12327c34c5279fd41ae66eb10ab42470bb06d199`.
