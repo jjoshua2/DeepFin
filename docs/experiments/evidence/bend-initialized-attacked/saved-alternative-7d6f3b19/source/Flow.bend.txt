@@ -1,0 +1,80 @@
+# Compose actual state-threaded queries using exact pair certificates.
+# Initialized.bend constructs every certificate; public callers do not supply them.
+import Base
+import ./Spec.bend as S
+import ./Evidence.bend as E
+import ../attack_witness/Queries.bend as WQ
+import ../attack_witness/Spec.bend as W
+import ../attack_witness/LAWS.bend as Witness
+import ../attack_witness/PROOF.bend as WitnessProof
+import ../../../legal_probe/Chess.bend as Chess
+
+def bishop(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+by: Bool,+pa: U64,+na: U64,+ka: U64,+ra: U64,
+  e4: E.query(d,seed,n,extra,sq,by,Chess.occupied(b),S.Bishop{})) ->
+  {WQ.bishop(b,Bool.to_u32(by),pa,na,ka,ra,Chess.attack(2,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(by),Chess.occupied(b))) ==
+    (S.init(d,seed,n,extra),W.present(b,Bool.to_u32(by),W.Masks{pa,na,ka,ra,S.mask(S.Bishop{},sq,by,Chess.occupied(b))})) : Array<U64> & Bool}:
+  Equal.cong(Array<U64> & U64,Array<U64> & Bool,r => WQ.bishop(b,Bool.to_u32(by),pa,na,ka,ra,r),
+      Chess.attack(2,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(by),Chess.occupied(b)),(S.init(d,seed,n,extra),S.mask(S.Bishop{},sq,by,Chess.occupied(b))),e4)
+
+def rook(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+by: Bool,+pa: U64,+na: U64,+ka: U64,
+  e3: E.query(d,seed,n,extra,sq,by,Chess.occupied(b),S.Rook{}),e4: E.query(d,seed,n,extra,sq,by,Chess.occupied(b),S.Bishop{})) ->
+  {WQ.rook(b,U32.from_nat(sq),Bool.to_u32(by),pa,na,ka,Chess.attack(3,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(by),Chess.occupied(b))) ==
+    (S.init(d,seed,n,extra),W.present(b,Bool.to_u32(by),W.Masks{pa,na,ka,S.mask(S.Rook{},sq,by,Chess.occupied(b)),S.mask(S.Bishop{},sq,by,Chess.occupied(b))})) : Array<U64> & Bool}:
+  Equal.trans(Array<U64> & Bool,
+    WQ.rook(b,U32.from_nat(sq),Bool.to_u32(by),pa,na,ka,Chess.attack(3,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(by),Chess.occupied(b))),
+    WQ.rook(b,U32.from_nat(sq),Bool.to_u32(by),pa,na,ka,(S.init(d,seed,n,extra),S.mask(S.Rook{},sq,by,Chess.occupied(b)))),
+    (S.init(d,seed,n,extra),W.present(b,Bool.to_u32(by),W.Masks{pa,na,ka,S.mask(S.Rook{},sq,by,Chess.occupied(b)),S.mask(S.Bishop{},sq,by,Chess.occupied(b))})),
+    Equal.cong(Array<U64> & U64,Array<U64> & Bool,r => WQ.rook(b,U32.from_nat(sq),Bool.to_u32(by),pa,na,ka,r),
+      Chess.attack(3,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(by),Chess.occupied(b)),(S.init(d,seed,n,extra),S.mask(S.Rook{},sq,by,Chess.occupied(b))),e3),
+    bishop(d,seed,n,extra,b,sq,by,pa,na,ka,S.mask(S.Rook{},sq,by,Chess.occupied(b)),e4))
+
+def king(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+by: Bool,+pa: U64,+na: U64,
+  e2: E.query(d,seed,n,extra,sq,by,Chess.occupied(b),S.King{}),e3: E.query(d,seed,n,extra,sq,by,Chess.occupied(b),S.Rook{}),e4: E.query(d,seed,n,extra,sq,by,Chess.occupied(b),S.Bishop{})) ->
+  {WQ.king(b,U32.from_nat(sq),Bool.to_u32(by),pa,na,Chess.attack(5,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(by),Chess.occupied(b))) ==
+    (S.init(d,seed,n,extra),W.present(b,Bool.to_u32(by),W.Masks{pa,na,S.mask(S.King{},sq,by,Chess.occupied(b)),S.mask(S.Rook{},sq,by,Chess.occupied(b)),S.mask(S.Bishop{},sq,by,Chess.occupied(b))})) : Array<U64> & Bool}:
+  Equal.trans(Array<U64> & Bool,
+    WQ.king(b,U32.from_nat(sq),Bool.to_u32(by),pa,na,Chess.attack(5,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(by),Chess.occupied(b))),
+    WQ.king(b,U32.from_nat(sq),Bool.to_u32(by),pa,na,(S.init(d,seed,n,extra),S.mask(S.King{},sq,by,Chess.occupied(b)))),
+    (S.init(d,seed,n,extra),W.present(b,Bool.to_u32(by),W.Masks{pa,na,S.mask(S.King{},sq,by,Chess.occupied(b)),S.mask(S.Rook{},sq,by,Chess.occupied(b)),S.mask(S.Bishop{},sq,by,Chess.occupied(b))})),
+    Equal.cong(Array<U64> & U64,Array<U64> & Bool,r => WQ.king(b,U32.from_nat(sq),Bool.to_u32(by),pa,na,r),
+      Chess.attack(5,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(by),Chess.occupied(b)),(S.init(d,seed,n,extra),S.mask(S.King{},sq,by,Chess.occupied(b))),e2),
+    rook(d,seed,n,extra,b,sq,by,pa,na,S.mask(S.King{},sq,by,Chess.occupied(b)),e3,e4))
+
+def knight(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+by: Bool,+pa: U64,
+  e1: E.query(d,seed,n,extra,sq,by,Chess.occupied(b),S.Knight{}),e2: E.query(d,seed,n,extra,sq,by,Chess.occupied(b),S.King{}),e3: E.query(d,seed,n,extra,sq,by,Chess.occupied(b),S.Rook{}),e4: E.query(d,seed,n,extra,sq,by,Chess.occupied(b),S.Bishop{})) ->
+  {WQ.knight(b,U32.from_nat(sq),Bool.to_u32(by),pa,Chess.attack(1,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(by),Chess.occupied(b))) ==
+    (S.init(d,seed,n,extra),W.present(b,Bool.to_u32(by),W.Masks{pa,S.mask(S.Knight{},sq,by,Chess.occupied(b)),S.mask(S.King{},sq,by,Chess.occupied(b)),S.mask(S.Rook{},sq,by,Chess.occupied(b)),S.mask(S.Bishop{},sq,by,Chess.occupied(b))})) : Array<U64> & Bool}:
+  Equal.trans(Array<U64> & Bool,
+    WQ.knight(b,U32.from_nat(sq),Bool.to_u32(by),pa,Chess.attack(1,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(by),Chess.occupied(b))),
+    WQ.knight(b,U32.from_nat(sq),Bool.to_u32(by),pa,(S.init(d,seed,n,extra),S.mask(S.Knight{},sq,by,Chess.occupied(b)))),
+    (S.init(d,seed,n,extra),W.present(b,Bool.to_u32(by),W.Masks{pa,S.mask(S.Knight{},sq,by,Chess.occupied(b)),S.mask(S.King{},sq,by,Chess.occupied(b)),S.mask(S.Rook{},sq,by,Chess.occupied(b)),S.mask(S.Bishop{},sq,by,Chess.occupied(b))})),
+    Equal.cong(Array<U64> & U64,Array<U64> & Bool,r => WQ.knight(b,U32.from_nat(sq),Bool.to_u32(by),pa,r),
+      Chess.attack(1,S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(by),Chess.occupied(b)),(S.init(d,seed,n,extra),S.mask(S.Knight{},sq,by,Chess.occupied(b))),e1),
+    king(d,seed,n,extra,b,sq,by,pa,S.mask(S.Knight{},sq,by,Chess.occupied(b)),e2,e3,e4))
+
+def pawn(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+by: Bool,
+  e0: E.pawn(d,seed,n,extra,b,sq,by),e1: E.query(d,seed,n,extra,sq,by,Chess.occupied(b),S.Knight{}),e2: E.query(d,seed,n,extra,sq,by,Chess.occupied(b),S.King{}),e3: E.query(d,seed,n,extra,sq,by,Chess.occupied(b),S.Rook{}),e4: E.query(d,seed,n,extra,sq,by,Chess.occupied(b),S.Bishop{})) ->
+  {WQ.pawn(b,U32.from_nat(sq),Bool.to_u32(by),Chess.attack(0,S.init(d,seed,n,extra),U32.from_nat(sq),U32.xor(Bool.to_u32(by),1),Chess.occupied(b))) ==
+    (S.init(d,seed,n,extra),W.present(b,Bool.to_u32(by),W.Masks{S.mask(S.Pawn{},sq,Bool.not(by),Chess.occupied(b)),S.mask(S.Knight{},sq,by,Chess.occupied(b)),S.mask(S.King{},sq,by,Chess.occupied(b)),S.mask(S.Rook{},sq,by,Chess.occupied(b)),S.mask(S.Bishop{},sq,by,Chess.occupied(b))})) : Array<U64> & Bool}:
+  Equal.trans(Array<U64> & Bool,
+    WQ.pawn(b,U32.from_nat(sq),Bool.to_u32(by),Chess.attack(0,S.init(d,seed,n,extra),U32.from_nat(sq),U32.xor(Bool.to_u32(by),1),Chess.occupied(b))),
+    WQ.pawn(b,U32.from_nat(sq),Bool.to_u32(by),(S.init(d,seed,n,extra),S.mask(S.Pawn{},sq,Bool.not(by),Chess.occupied(b)))),
+    (S.init(d,seed,n,extra),W.present(b,Bool.to_u32(by),W.Masks{S.mask(S.Pawn{},sq,Bool.not(by),Chess.occupied(b)),S.mask(S.Knight{},sq,by,Chess.occupied(b)),S.mask(S.King{},sq,by,Chess.occupied(b)),S.mask(S.Rook{},sq,by,Chess.occupied(b)),S.mask(S.Bishop{},sq,by,Chess.occupied(b))})),
+    Equal.cong(Array<U64> & U64,Array<U64> & Bool,r => WQ.pawn(b,U32.from_nat(sq),Bool.to_u32(by),r),
+      Chess.attack(0,S.init(d,seed,n,extra),U32.from_nat(sq),U32.xor(Bool.to_u32(by),1),Chess.occupied(b)),(S.init(d,seed,n,extra),S.mask(S.Pawn{},sq,Bool.not(by),Chess.occupied(b))),e0),
+    knight(d,seed,n,extra,b,sq,by,S.mask(S.Pawn{},sq,Bool.not(by),Chess.occupied(b)),e1,e2,e3,e4))
+
+def run(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+by: Bool,cert: E.bundle(d,seed,n,extra,b,sq,by)) ->
+  {WQ.run(S.init(d,seed,n,extra),b,U32.from_nat(sq),Bool.to_u32(by)) == (S.init(d,seed,n,extra),S.attacked(b,sq,by)) : Array<U64> & Bool}:
+  (e0,rest1) = cert
+  (e1,rest2) = rest1
+  (e2,rest3) = rest2
+  (e3,e4) = rest3
+  pawn(d,seed,n,extra,b,sq,by,e0,e1,e2,e3,e4)
+
+def attacked(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+by: Bool,cert: E.bundle(d,seed,n,extra,b,sq,by)) ->
+  {Chess.attacked(S.init(d,seed,n,extra),b,U32.from_nat(sq),Bool.to_u32(by)) == (S.init(d,seed,n,extra),S.attacked(b,sq,by)) : Array<U64> & Bool}:
+  Equal.trans(Array<U64> & Bool,
+    Chess.attacked(S.init(d,seed,n,extra),b,U32.from_nat(sq),Bool.to_u32(by)),WQ.run(S.init(d,seed,n,extra),b,U32.from_nat(sq),Bool.to_u32(by)),
+    (S.init(d,seed,n,extra),S.attacked(b,sq,by)),Witness.actual_attacked_uses_witness_reduction(S.init(d,seed,n,extra),b,U32.from_nat(sq),Bool.to_u32(by)),
+    run(d,seed,n,extra,b,sq,by,cert))

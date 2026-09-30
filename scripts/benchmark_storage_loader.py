@@ -16,6 +16,19 @@ import threading
 import time
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.training_host_memory import require_available
+
+
+def current_rss_bytes() -> int:
+    """Read current Linux resident pages; a missing/malformed reading fails closed."""
+    fields = Path("/proc/self/statm").read_text().split()
+    resident_pages = int(fields[1])
+    page_size = int(os.sysconf("SC_PAGE_SIZE"))
+    if resident_pages < 0 or page_size <= 0:
+        raise ValueError("invalid Linux RSS reading")
+    return resident_pages * page_size
+
 
 def digest(arrays: dict[str, Any]) -> str:
     h = hashlib.sha256()
@@ -70,7 +83,6 @@ def main() -> None:
     os.environ['CUDA_VISIBLE_DEVICES'] = ''
     sys.path.insert(0, str(args.runtime.resolve()))
     import numpy as np
-    import psutil
     import torch
     from numcodecs.blosc import set_nthreads
     from chess_anti_engine.replay.shard import load_shard_arrays
@@ -116,12 +128,11 @@ def main() -> None:
         while not stopped.wait(1):
             try:
                 reason = None
+                require_available(32)
                 if time.monotonic() - started > args.max_seconds:
                     reason = 'wall limit'
-                elif psutil.Process().memory_info().rss > 16 * 2**30:
+                elif current_rss_bytes() > 16 * 2**30:
                     reason = 'RSS limit'
-                elif psutil.virtual_memory().available < 32 * 2**30:
-                    reason = 'memory reserve'
                 elif any(shutil.disk_usage(r).free < 80 * 2**30 for r in (args.local, args.external)):
                     reason = 'disk reserve'
                 elif (args.local / 'STOP').exists():

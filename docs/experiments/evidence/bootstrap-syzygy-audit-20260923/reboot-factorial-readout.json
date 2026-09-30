@@ -1,0 +1,99 @@
+{
+  "E": {
+    "checkpoint": {
+      "path": "/home/josh/chess-artifacts/runs/factorial58_sffree_20260921_E/checkpoint.pt",
+      "sha256": "83e10fb3bcf5d09541b3e8cddfd7c6bfae55865913cbfff095970d7d6a870168"
+    },
+    "ended_utc": "2026-09-23T03:42:03.589772+00:00",
+    "outer_returncode": 0,
+    "receipt_linked_hashes_verified": 105,
+    "receipt_linked_mismatch": 0,
+    "receipt_linked_missing": 0,
+    "receipt_sha256": "300e0c18bb7435cb27068a3fc7050cb943c751eba8e3360f605215597e2d7e21",
+    "rows": 58090688,
+    "seed": 121,
+    "status": "PASS_FACTORIAL58_ARM",
+    "updates": 113459
+  },
+  "E_D_rule50": {
+    "candidate": {
+      "path": "/home/josh/chess-artifacts/runs/factorial58_sffree_20260921_E/checkpoint.pt",
+      "sha256": "83e10fb3bcf5d09541b3e8cddfd7c6bfae55865913cbfff095970d7d6a870168"
+    },
+    "elo_ci95_rederived": [
+      -14.345305884438563,
+      41.67935739536029
+    ],
+    "elo_rederived": 13.578611811075142,
+    "ended_utc": "2026-09-23T04:05:28.227945+00:00",
+    "game_log_sha256": "86bb3fd3a40067075b3c2d23c543f7d7604cb295ae9f3d517afdb91ad5866d61",
+    "game_scores": {
+      "0.0": 73,
+      "0.5": 100,
+      "1.0": 83
+    },
+    "games": 256,
+    "outer_returncode": 0,
+    "paired_se_rederived": 0.020491878124812887,
+    "pairs": 128,
+    "pentanomial": {
+      "DD_WL": 54,
+      "LD_DL": 32,
+      "LL": 3,
+      "WD_DW": 30,
+      "WW": 9
+    },
+    "pgn_sha256": "36fdd84f46bdda66646f790129c8f575070e5e0937583988a443e241d3f6392f",
+    "receipt_linked_hashes_verified": 16,
+    "receipt_linked_mismatch": 0,
+    "receipt_linked_missing": 0,
+    "receipt_sha256": "9bd726f7eda5f09b039d4d79442422bafb23fa40923cd9d36b7746898449f021",
+    "reference": {
+      "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_D/checkpoint.pt",
+      "sha256": "2aef77229a1aad76ab02a4d640ddfe1d394ee30f329c04bcaa8547a37522c7f2"
+    },
+    "score_rederived": 0.51953125,
+    "search_shape": "training",
+    "seed": 2026092101,
+    "sims_per_side": 400,
+    "status": "PASS_FACTORIAL58_256_GAME_RULE50_ARENA",
+    "syzygy_max_pieces": 6,
+    "syzygy_protocol": "rule50-aware-root-leaf-and-adjudication-v1",
+    "syzygy_telemetry": {
+      "dtz_tables_open": 1000,
+      "pairs_completed": 128,
+      "search_hits": 120037,
+      "search_probes": 164767,
+      "wdl_tables_open": 1000
+    }
+  },
+  "audit_kind": "reboot_recovery_readonly_factorial58_first_seed",
+  "decision": "Nonnegative first-seed estimate supports provisional E for lower SF collection cost. Interval spans zero, so this does not prove E stronger or that Stockfish value supervision is generally unnecessary. The second seed is intentionally held; do not release it automatically.",
+  "host_boot_utc": "2026-09-23T10:24:11+00:00",
+  "limitations": [
+    "E/D summaries both mark historical control invalid for changed game_epoch sampler, absent live-config comparison and absent held-out purity receipt; matched E-D contrast remains interpretable conditional on these trained checkpoints.",
+    "Corrected arena is separate from earlier disabled-Syzygy factorial matches; do not pool their results.",
+    "Receipt limits include Syzygy inventory names/sizes rather than table file byte hashes and natural repetition claims depending on pre-opening history."
+  ],
+  "preregistered_rule": {
+    "exact_quote": "A nonnegative estimate\nsupports provisional E with its collection-cost benefit; a negative estimate\nfavors D for this screen. Neither establishes universal teacher usefulness.\nDo not extend the sample to chase significance.",
+    "source": "/tmp/deepfin-sffree-frozen-4ecf7729/docs/experiments/2026-09-21-sffree-targets.md",
+    "source_sha256": "e082f84fae16a6c0b7ea48e16085bdcd26c6fefb4d5c96b210fdc91648e1c96c"
+  },
+  "queue_state": {
+    "D122": "held_pending_first_seed_decision",
+    "E": "logged",
+    "E122": "held_pending_first_seed_decision",
+    "E122_D122": "held_pending_first_seed_decision",
+    "E_D_rule50": "logged",
+    "original_E_D": "held_pending_syzygy_qualification"
+  },
+  "sources": {
+    "E_complete": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/complete.json",
+    "E_outer_terminal": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/scheduler_run/parent_outer_terminal.json",
+    "arena_complete": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D_rule50_20260923/complete.json",
+    "arena_games": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D_rule50_20260923/arena/arena.games.jsonl",
+    "arena_outer_terminal": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D_rule50_20260923/scheduler_run/parent_outer_terminal.json",
+    "queue": "/home/josh/projects/chess/scratchpad/bt4_joint20/autonomous_loop_20260914/queue.json"
+  }
+}

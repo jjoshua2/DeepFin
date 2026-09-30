@@ -1,0 +1,37 @@
+{
+  "supplementary_domain_check": "PASS",
+  "source_sha256": "df2868f0969d88c879ab288d344c3048a07ad7815da09f08e376f7dc4f72133a",
+  "receipt": {
+    "command": [
+      "/mnt/data/ray-continuation/workspace/bun",
+      "/mnt/data/ray-continuation/compiler/bend2/main.ts",
+      "/mnt/data/ray-continuation/repo/native/bend_engine/standalone/proofs/full_domain_review/FullDomain.bend"
+    ],
+    "source_sha256": "df2868f0969d88c879ab288d344c3048a07ad7815da09f08e376f7dc4f72133a",
+    "timeout_seconds": 60,
+    "exit_code": 0,
+    "elapsed_seconds": 0.9095853489998262,
+    "log_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84",
+    "exact_safe_success": true
+  },
+  "mutations": [
+    {
+      "name": "wrong-full-count",
+      "exit_code": 1,
+      "rejected": true,
+      "location": "full_configuration",
+      "diagnostic_sha256": "8aac2b0afb1512c72ae9395b0641b84142525b6fc11672a5019d508f5be9d082",
+      "diagnostic_bytes": 202
+    },
+    {
+      "name": "wrong-selected-key",
+      "exit_code": 1,
+      "rejected": true,
+      "location": "full_configuration",
+      "diagnostic_sha256": "e3f8804b2f73395097f70ac840adc5c5c82da361aae349d56a5dc29688f202d5",
+      "diagnostic_bytes": 198
+    }
+  ],
+  "scope": "Every valid key has the exact selected-key/count/budget mapping into the full128-block/64-square theorem instance. Not another registered lookup law, not a closed literal Tables.build normalization or new native execution.",
+  "initial_missing_prior_proof_import": "First standalone check rejected eight inherited TODO obligations; added explicit existing Sequence PROOF import; no missing proof ignored."
+}

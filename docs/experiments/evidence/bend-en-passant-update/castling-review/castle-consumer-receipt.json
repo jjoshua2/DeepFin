@@ -1,0 +1,11 @@
+{
+  "command": [
+    "/mnt/data/ep-continuation/bun",
+    "/mnt/data/ep-continuation/compiler/bend/bend2/main.ts",
+    "/mnt/data/ep-continuation/repo/native/bend_engine/standalone/proofs/castling_review/consumer.bend"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 8.785378646000026,
+  "raw_text": "All terms check.\n",
+  "log_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+}

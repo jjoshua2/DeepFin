@@ -1,0 +1,267 @@
+{
+  "scope": "Compact index of the unchanged qualification; complete raw reports are in the referenced artifact, not duplicated here.",
+  "qualified_source_commit": "89b348a87f2ac284b399cd6aa1a0d239434dca09",
+  "workflow_run": 35952107892,
+  "artifact_id": 10789521914,
+  "artifact_zip_sha256": "92382893402d205d2898660ce738d81b67604f10cffecf68d2f72cc232b1f4a8",
+  "artifact_report_prefix": "qualification/",
+  "matrix": {
+    "status": "passed",
+    "normal_configurations": 10,
+    "modes_each": 2,
+    "ubsan_configurations": 2,
+    "control_configurations": 4,
+    "all_final_tree_bits_match_serial": true
+  },
+  "completion_wait": {
+    "normal": {
+      "status": "passed",
+      "cases": 12,
+      "assertions": 326
+    },
+    "sanitized": {
+      "status": "passed",
+      "cases": 12,
+      "assertions": 326
+    }
+  },
+  "worker": {
+    "normal": {
+      "status": "passed",
+      "assertions": 1456,
+      "configurations": 10,
+      "reused_calls": 160
+    },
+    "sanitized": {
+      "status": "passed",
+      "assertions": 1456,
+      "configurations": 10,
+      "reused_calls": 160
+    }
+  },
+  "held_controls": {
+    "configurations": 4,
+    "unaffected_trees_bit_identical": true,
+    "invalid_commands_rejected": 6,
+    "failed_batches_rejected": 2,
+    "invalid_flags_rejected": 3,
+    "synchronous_negative_control": true
+  },
+  "deadlines": {
+    "configurations": 4,
+    "cases": [
+      "selective_expiry",
+      "accepted_work_preserved",
+      "expiry_after_eof",
+      "expiry_across_input_backlog",
+      "manual_stop_reason_preserved",
+      "zero_work_pre_gather"
+    ],
+    "expired_fault_controls_per_configuration": 2
+  },
+  "equivalence": {
+    "matrix/c146-b4/wait-equivalence.json": [
+      {
+        "case": "single",
+        "asynchronous": false,
+        "roots": 1,
+        "semantic_sha256": "e5dacee183adc239b4d6c6c2fdc81d36f0a6efe7b324c74d40404ac0a1e050ee",
+        "events": 12,
+        "nodes": 81
+      },
+      {
+        "case": "mixed-three",
+        "asynchronous": false,
+        "roots": 3,
+        "semantic_sha256": "b104e4d748545973137437e3e9bfaf0e90745a63f410d55b648ea8cfdb7402fc",
+        "events": 20,
+        "nodes": 194
+      },
+      {
+        "case": "mixed-sixteen",
+        "asynchronous": false,
+        "roots": 16,
+        "semantic_sha256": "de235449bd7bcf809851a2320238cc366d2fe6ceefb4bfa76956914bbe4523ef",
+        "events": 101,
+        "nodes": 1069
+      },
+      {
+        "case": "neural-cap",
+        "asynchronous": false,
+        "roots": 3,
+        "semantic_sha256": "2153b9bec4fdfb9d215a825adb8bbc67cd5d647c6613389e858f5a1eda3f2569",
+        "events": 21,
+        "nodes": 207
+      },
+      {
+        "case": "terminal-only",
+        "asynchronous": false,
+        "roots": 2,
+        "semantic_sha256": "ff84ec95e04785ddcbbe5f8a4f10d76fce93f589f883b9b10c1265072ab6ec05",
+        "events": 1,
+        "nodes": 2
+      },
+      {
+        "case": "single",
+        "asynchronous": true,
+        "roots": 1,
+        "semantic_sha256": "991ee1a76b1871c1c4fe52bf6de74cacfde19812b6e1608b8231af012855c4c4",
+        "events": 12,
+        "nodes": 81
+      },
+      {
+        "case": "mixed-three",
+        "asynchronous": true,
+        "roots": 3,
+        "semantic_sha256": "5c396d1a09a61d5462502e3cd2b7417804a2702829c2f0c054a8d81bc49c5751",
+        "events": 20,
+        "nodes": 194
+      },
+      {
+        "case": "mixed-sixteen",
+        "asynchronous": true,
+        "roots": 16,
+        "semantic_sha256": "c30f1b8126e3363ff5a5cf44d7204f722debef9280162e6b588b9fe302e1c2b1",
+        "events": 101,
+        "nodes": 1069
+      },
+      {
+        "case": "neural-cap",
+        "asynchronous": true,
+        "roots": 3,
+        "semantic_sha256": "1ebb05899d89e51a176e6607f2fc2303381d97760ed07cddc00e15f0d41e97f6",
+        "events": 21,
+        "nodes": 207
+      },
+      {
+        "case": "terminal-only",
+        "asynchronous": true,
+        "roots": 2,
+        "semantic_sha256": "8123a27025c1bc80d4bd208e6bc20f3bc6903541819bb10d49ea9e4ac33ad9ce",
+        "events": 1,
+        "nodes": 2
+      }
+    ],
+    "matrix/c175-b4/wait-equivalence.json": [
+      {
+        "case": "single",
+        "asynchronous": false,
+        "roots": 1,
+        "semantic_sha256": "e5dacee183adc239b4d6c6c2fdc81d36f0a6efe7b324c74d40404ac0a1e050ee",
+        "events": 12,
+        "nodes": 81
+      },
+      {
+        "case": "mixed-three",
+        "asynchronous": false,
+        "roots": 3,
+        "semantic_sha256": "b104e4d748545973137437e3e9bfaf0e90745a63f410d55b648ea8cfdb7402fc",
+        "events": 20,
+        "nodes": 194
+      },
+      {
+        "case": "mixed-sixteen",
+        "asynchronous": false,
+        "roots": 16,
+        "semantic_sha256": "de235449bd7bcf809851a2320238cc366d2fe6ceefb4bfa76956914bbe4523ef",
+        "events": 101,
+        "nodes": 1069
+      },
+      {
+        "case": "neural-cap",
+        "asynchronous": false,
+        "roots": 3,
+        "semantic_sha256": "2153b9bec4fdfb9d215a825adb8bbc67cd5d647c6613389e858f5a1eda3f2569",
+        "events": 21,
+        "nodes": 207
+      },
+      {
+        "case": "terminal-only",
+        "asynchronous": false,
+        "roots": 2,
+        "semantic_sha256": "ff84ec95e04785ddcbbe5f8a4f10d76fce93f589f883b9b10c1265072ab6ec05",
+        "events": 1,
+        "nodes": 2
+      },
+      {
+        "case": "single",
+        "asynchronous": true,
+        "roots": 1,
+        "semantic_sha256": "991ee1a76b1871c1c4fe52bf6de74cacfde19812b6e1608b8231af012855c4c4",
+        "events": 12,
+        "nodes": 81
+      },
+      {
+        "case": "mixed-three",
+        "asynchronous": true,
+        "roots": 3,
+        "semantic_sha256": "5c396d1a09a61d5462502e3cd2b7417804a2702829c2f0c054a8d81bc49c5751",
+        "events": 20,
+        "nodes": 194
+      },
+      {
+        "case": "mixed-sixteen",
+        "asynchronous": true,
+        "roots": 16,
+        "semantic_sha256": "c30f1b8126e3363ff5a5cf44d7204f722debef9280162e6b588b9fe302e1c2b1",
+        "events": 101,
+        "nodes": 1069
+      },
+      {
+        "case": "neural-cap",
+        "asynchronous": true,
+        "roots": 3,
+        "semantic_sha256": "1ebb05899d89e51a176e6607f2fc2303381d97760ed07cddc00e15f0d41e97f6",
+        "events": 21,
+        "nodes": 207
+      },
+      {
+        "case": "terminal-only",
+        "asynchronous": true,
+        "roots": 2,
+        "semantic_sha256": "8123a27025c1bc80d4bd208e6bc20f3bc6903541819bb10d49ea9e4ac33ad9ce",
+        "events": 1,
+        "nodes": 2
+      }
+    ]
+  },
+  "raw_report_sha256": {
+    "deadlines/c146-normal.json": "8e43f52b54cbdd167cfd8914629ad728ab620c4be209ca0f80b7ad605b7e8fb3",
+    "deadlines/c146-ubsan.json": "9743125e0f59f9bd5b19f8c283a2ee9b0045d445e56fab12c1c6c0c4c611a95a",
+    "deadlines/c175-normal.json": "9601cec2645a8ac0d723436b0366f4a8e85ff5933f53119e8f2b25ee00fe3643",
+    "deadlines/c175-ubsan.json": "bc9b4996b049519de727cf7d66f5a1a5705b43ce738f426bc6f2e475a1dc1c17",
+    "matrix/c146-b1/async.json": "ffb539a01e251253a079bb0a1cd6cd850d41eaa87f7253aeb695590f23486020",
+    "matrix/c146-b1/sync.json": "2b445dc48d101f4186be26a32a41418827e667d0caa9d71d8fd2799cc8ffb513",
+    "matrix/c146-b16/async.json": "f99e2d9a0f26feec333b94f8b53e0bf3ae20e7474a07aac03862f5129e60e564",
+    "matrix/c146-b16/sync.json": "bc56da91024f86a6d81c8c88603c8f34172cc863aa96fab141176675612a7d9e",
+    "matrix/c146-b2/async.json": "210477477f0413e487ff5c076cde299897918ad28c6b7c0c461fbbcec29833a5",
+    "matrix/c146-b2/sync.json": "360095ca64583cd0c571008d9c3a7601fd165cf16890dacee50055b9240c5de3",
+    "matrix/c146-b4/async.json": "e33d432784407d750fce627cae1091c79f4708020d147511a123d1989e6a8737",
+    "matrix/c146-b4/control-ubsan.json": "9e830b26b31159812664efedc43c45855eeaa552ec36c3e366ab8690e3eb4ea1",
+    "matrix/c146-b4/control.json": "cc10b2c8fd13fa0b87303dce30cc9f9c7d977f216bac8d0552e7a91e51762f80",
+    "matrix/c146-b4/sync.json": "a7fffac9a593bee6e1e8f785c7641fda9345c92d85bf98e13e7d868b7cd48e2d",
+    "matrix/c146-b4/ubsan.json": "e33d432784407d750fce627cae1091c79f4708020d147511a123d1989e6a8737",
+    "matrix/c146-b4/wait-equivalence.json": "5d3f245ade072f26d258326c32beb50360b09b58ed214c8b639fa10a01b6a648",
+    "matrix/c146-b8/async.json": "364aa347e1d0663520cd53c480d3d11461311c188f48d5b6ee7e369a45ae65da",
+    "matrix/c146-b8/sync.json": "99780526d35adec00faa9fa08da68b3a9482ed4b9d69baed5ba69795ae85ab99",
+    "matrix/c175-b1/async.json": "18b6a35f53d67c2612e8d9c1d4a0e000e8b46c7abef465b1d5e4b20706d3b18c",
+    "matrix/c175-b1/sync.json": "a1470ee97c6570e85ea2ac31953dafafb5d858e2b30983f6d2d9e0730aa190f4",
+    "matrix/c175-b16/async.json": "bd1778393a979fd6f998984b9dcba4e7fd086ffc5a7b18a20ea73773328371ba",
+    "matrix/c175-b16/sync.json": "f8cae2eb0d460b75fae34470a6fb136fc6df08d04a76dbac608f1dae00d8fe59",
+    "matrix/c175-b2/async.json": "97679eaa9949baaf25ead0c2e60522c5616816fbbfc7af1bcd5fb433fb93820e",
+    "matrix/c175-b2/sync.json": "02920c0a5633093ae7a508389892e0097c4bc6ee50922e70eb6c12274f477225",
+    "matrix/c175-b4/async.json": "bcaa536f2b13f06f584d7b2d2898e66d2081aa200f6fa48c6ba54bd36c35ed30",
+    "matrix/c175-b4/control-ubsan.json": "14ad8b0570cd29a117810d6c813d4897e47b779720208863c1d2b86dfcfabb34",
+    "matrix/c175-b4/control.json": "9e830b26b31159812664efedc43c45855eeaa552ec36c3e366ab8690e3eb4ea1",
+    "matrix/c175-b4/sync.json": "2b178e0c84f1dd657e4f0f06f23326e8308321cc8afb67789cebe606284a389e",
+    "matrix/c175-b4/ubsan.json": "bcaa536f2b13f06f584d7b2d2898e66d2081aa200f6fa48c6ba54bd36c35ed30",
+    "matrix/c175-b4/wait-equivalence.json": "5d3f245ade072f26d258326c32beb50360b09b58ed214c8b639fa10a01b6a648",
+    "matrix/c175-b8/async.json": "f2fc02e4dd2ee749a45ff4580eeab367b17b09a1d7a77d290951d9a04eee7e61",
+    "matrix/c175-b8/sync.json": "fa2c28d378bc7474edf62996475ed093462af5d60bb66cf341612cf6a8c54c8d",
+    "matrix/matrix.json": "0c01b7b82e7aa73bc2c78811e4aad679209e3fe553159cb88cc9bca7ae8068a7",
+    "matrix/worker-normal.json": "26b904b6a6105acc70b6c00552ca093467fa11e260ae20fabda67552247828a3",
+    "matrix/worker-sanitized.json": "26b904b6a6105acc70b6c00552ca093467fa11e260ae20fabda67552247828a3",
+    "wait-normal.json": "e045b8d72dc6d0bbc951b710002c274b85e44b1da5afdf957142a37b8b4d4e97",
+    "wait-sanitized.json": "e045b8d72dc6d0bbc951b710002c274b85e44b1da5afdf957142a37b8b4d4e97"
+  }
+}

@@ -68,7 +68,7 @@ directory-only discovery contract; the bounded retry uses batch256 and separates
 packed decoder measurements from sampler measurements.
 
 Bulk artifacts:
-- NVMe: `/home/josh/chess-artifacts/operations/storage-loader-pilot-v2-20260920/`
+- NVMe: `~/chess-artifacts/operations/storage-loader-pilot-v2-20260920/`
 - External: `/mnt/e/chess_storage_loader_pilot_v2_20260920/`
 
 The complete readout below passed sequence-equivalence checks. Early copy
@@ -161,3 +161,11 @@ inputs. PR #795 now also wires the opt-in through training CLI discovery,
 metadata and label-coverage validation; a real two-epoch CPU test verifies the
 executing path. Full-size GPU training and cold working-set qualification remain
 separate from these CPU results, and the frozen recovery launcher has not adopted it.
+
+## Recovery publication note — 2026-09-30
+
+This dated record and its receipts are recovered from PR #791. The account-specific
+home prefix in the prose is published as `~/`; measurements, tensor hashes, and
+frozen receipts are unchanged. The diagnostic scripts now use fail-closed Linux
+memory reads without an undeclared psutil dependency. These maintenance changes
+are not a rerun or a new throughput qualification.

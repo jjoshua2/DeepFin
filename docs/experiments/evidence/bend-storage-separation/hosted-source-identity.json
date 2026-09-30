@@ -1,0 +1,21 @@
+{
+  "base": "2c807135a17a8abcf478f9b142ac9a860b6111ed",
+  "source": "4a0e442cc701b38a5ccd93938f28e421be5b4f9a",
+  "candidate_tree": "893dfc70e26e2bcba0a1536b1315fe12c306f79a",
+  "changed_files": [
+    "docs/experiments/2026-09-22-bend-storage-separation.md",
+    "native/bend_engine/standalone/proofs/separation/Actual.bend",
+    "native/bend_engine/standalone/proofs/separation/Fill.bend",
+    "native/bend_engine/standalone/proofs/separation/LAWS.bend",
+    "native/bend_engine/standalone/proofs/separation/Model.bend",
+    "native/bend_engine/standalone/proofs/separation/PROOF.bend",
+    "native/bend_engine/standalone/proofs/separation/README.md",
+    "native/bend_engine/standalone/proofs/separation/Spec.bend",
+    "native/bend_engine/standalone/proofs/separation/consumer.bend",
+    "native/bend_engine/standalone/proofs/separation/focused.js",
+    "native/bend_engine/standalone/proofs/separation/verify.js",
+    "native/bend_engine/standalone/proofs/separation/verify_native.js"
+  ],
+  "transfer": "direct Git tree entries, matched against complete locally checked tree",
+  "local_patch_sha256": "4d2177b8c4e0d2f43035740646f3f117334c293a4730f0e0fd0bb5cca09708c4"
+}

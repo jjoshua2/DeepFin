@@ -1,0 +1,12 @@
+{
+  "command": [
+    "/mnt/data/header-toolchain/bun",
+    "native/bend_engine/standalone/proofs/extras/verify_native.js",
+    "/mnt/data/header-toolchain/bend",
+    "--report",
+    "/mnt/data/header-evidence/native.json"
+  ],
+  "timeout": 240,
+  "exit_code": 0,
+  "elapsed_seconds": 10.714175263000016
+}

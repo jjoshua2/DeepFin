@@ -1,0 +1,37 @@
+# Every internal query certificate is discharged here from the actual initializer.
+import Base
+import ./Spec.bend as S
+import ./Evidence.bend as E
+import ./Query.bend as Query
+import ./Flow.bend as Flow
+import ./Check.bend as Check
+import ../../../legal_probe/Chess.bend as Chess
+
+def pawn(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+by: Bool,
+  depth: {d == 17n : Nat},full: {n == 128n : Nat},all: {extra == 64n : Nat},bound: {Nat.is_lt(sq,64n) == True{} : Bool}) ->
+  E.pawn(d,seed,n,extra,b,sq,by):
+  match by:
+    case True{}: Query.actual(d,seed,n,extra,S.Pawn{},sq,False{},Chess.occupied(b),depth,full,all,bound)
+    case False{}: Query.actual(d,seed,n,extra,S.Pawn{},sq,True{},Chess.occupied(b),depth,full,all,bound)
+
+def bundle(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+by: Bool,
+  +depth: {d == 17n : Nat},+full: {n == 128n : Nat},+all: {extra == 64n : Nat},+bound: {Nat.is_lt(sq,64n) == True{} : Bool}) ->
+  E.bundle(d,seed,n,extra,b,sq,by):
+  (pawn(d,seed,n,extra,b,sq,by,depth,full,all,bound),
+  (Query.actual(d,seed,n,extra,S.Knight{},sq,by,Chess.occupied(b),depth,full,all,bound),
+  (Query.actual(d,seed,n,extra,S.King{},sq,by,Chess.occupied(b),depth,full,all,bound),
+  (Query.actual(d,seed,n,extra,S.Rook{},sq,by,Chess.occupied(b),depth,full,all,bound),
+   Query.actual(d,seed,n,extra,S.Bishop{},sq,by,Chess.occupied(b),depth,full,all,bound)))))
+
+def attacked(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+by: Bool,
+  depth: {d == 17n : Nat},full: {n == 128n : Nat},all: {extra == 64n : Nat},bound: {Nat.is_lt(sq,64n) == True{} : Bool}) ->
+  {Chess.attacked(S.init(d,seed,n,extra),b,U32.from_nat(sq),Bool.to_u32(by)) ==
+    (S.init(d,seed,n,extra),S.attacked(b,sq,by)) : Array<U64> & Bool}:
+  Flow.attacked(d,seed,n,extra,b,sq,by,bundle(d,seed,n,extra,b,sq,by,depth,full,all,bound))
+
+def checked(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+side: Bool,
+  depth: {d == 17n : Nat},full: {n == 128n : Nat},all: {extra == 64n : Nat},+bound: {Nat.is_lt(sq,64n) == True{} : Bool},
+  one: {U64.and(Chess.get_kings(b),Chess.color(b,Bool.to_u32(side))) == U64.bit(sq) : U64}) ->
+  {Chess.in_check(S.init(d,seed,n,extra),b,Bool.to_u32(side)) ==
+    (S.init(d,seed,n,extra),S.attacked(b,sq,Bool.not(side))) : Array<U64> & Bool}:
+  Check.actual(d,seed,n,extra,b,sq,side,bundle(d,seed,n,extra,b,sq,Bool.not(side),depth,full,all,bound),bound,one)
