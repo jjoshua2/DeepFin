@@ -5,7 +5,7 @@ label job, selected-target attachment, pack, training, corpus admission or Elo
 result has been run by this path.
 
 The [small-bank adapter](../../scripts/sf_dlite_smallbank.py) accepts at most
-512 uniquely keyed winners and their compact, authenticated tri-source v6
+512 uniquely keyed winners and their compact, authenticated tri-source
 per-game `history_chain` proof lines. It rebuilds each row from the original
 root FEN, 16-ply opening and complete played UCI prefix. It checks exact
 winner UID/input digest, per-row full-stack SHA, side to move and rule50 clock,
@@ -21,8 +21,8 @@ chosen before a run. The sidecar retains raw CP or mate, native UCI WDL,
 nodes, move and **separate historical D-calibrated** WDL. Missing or malformed
 scores fail the complete small-bank attempt; each row also retains its raw
 UCI `info` lines, including the PV/node/WDL emission used for the score,
-so an independent parser can revisit it without re-searching. They never become zero CP or a
-neural-only fallback. The executable uses pinned inputs of at most 16 MiB
+so an independent parser can revisit it without re-searching. Missing scores
+never become zero CP or a neural-only fallback. The executable uses pinned inputs of at most 16 MiB
 each, a cooperative one-hour cap, a 15-second per-search tripwire and a
 64-MiB output cap. It requires a fresh one-shot output directory, writes a
 claim, reopens written bytes and publishes `COMPLETE` only after all rows.
@@ -46,14 +46,26 @@ be corrected before physical attachment. The full D-lite experiment also
 needs a frozen matched training/arena comparison against selected-neural
 control; this slice grants neither training nor playing-strength credit.
 
+The [metadata extractor](../../scripts/sf_dlite_extract128.py) takes a
+separately audited successful tri-source terminal and its exact receipt,
+wave-1 index, and three wave-1 game-proof files. It checks their recorded
+SHA-256 hashes, reconstructs the selected history joins, and freezes 128
+unique winner rows using a sampling domain separate from the replay's
+duplicate-winner rank. It writes only `WINNERS.jsonl`, `PROOFS.jsonl` and a
+metadata manifest; it never reads a tensor spool or source archive. The
+receipt must first pass independent physical audit. A failed or partial replay
+is ineligible, and extraction gives no labels or corpus credit.
+
 `inspect` is read-free. A future bounded physical invocation can run `label`
 with pinned small winner/proof JSONL, qualified Stockfish binary and strict
 Syzygy directories, then `attach` with pinned label and selected-target
 JSONL. Each selected-target line supplies `uid`, `input_digest`, `pov_white`,
 `teacher`, `target_sha256`, `target_hex` (float16 policy then WDL) and
 `legal_mask_hex`. The operator must first extract the small winner/proof bank
-from a successfully audited v6 replay receipt; source proof lines and selected
+from a successfully audited replay receipt; source proof lines and selected
 targets cannot be substituted from the old tensor-only spool. Synthetic tests
 cover B/C/S ply offsets, history/identity/STM/rule50 mismatch, missing raw
 scores, legal-mask and policy-byte preservation, fake-engine option profile,
 ownership/failure cleanup, complete small-bank output and resume refusal.
+Three additional synthetic tests check extractor sampling and receipt,
+index, and proof tampering.
