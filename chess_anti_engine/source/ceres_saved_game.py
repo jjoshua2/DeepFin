@@ -34,6 +34,7 @@ SOURCE_SCHEMA = "ceres_whole_game_legal_raw_zip_shard_v1_unqualified"
 MAX_ROWS = 512
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 MAX_METADATA_BYTES = 8 * 1024 * 1024
+MAX_ZIP_MEMBERS = 512  # 8,192-row source shards have multiple Zarr chunks per array.
 CODEC = Blosc(cname="zstd", clevel=2, shuffle=Blosc.BITSHUFFLE)
 
 
@@ -68,7 +69,7 @@ def _zip_json(path: Path, name: str, *, compressed: bool) -> Any:
     with zipfile.ZipFile(path) as archive:
         members = archive.infolist()
         names = [info.filename for info in members]
-        _need(len(names) <= 64 and len(names) == len(set(names))
+        _need(len(names) <= MAX_ZIP_MEMBERS and len(names) == len(set(names))
               and all(not n.startswith("/") and ".." not in Path(n).parts for n in names),
               "unsafe or oversized archive member table")
         info = archive.getinfo(name)
