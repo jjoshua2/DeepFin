@@ -77,6 +77,13 @@ def qualify(directory: Path, packed: Path, options: dict[str, Any]) -> dict[str,
         or any(not p.name.endswith(".zarr.zip") for p in archives)
     ):
         raise ValueError("qualification requires identical directory/ZIP shard rosters")
+    for path in ordinary:
+        if not path.resolve(strict=True).is_dir():
+            raise ValueError("qualification directory control requires directory shards")
+    for path in archives:
+        target = path.resolve(strict=True)
+        if not target.is_file() or not target.name.endswith(".zarr.zip"):
+            raise ValueError("qualification packed arm requires regular .zarr.zip files")
     results = [
         measure(directory, packed=False, options=options),
         measure(packed, packed=True, options=options),

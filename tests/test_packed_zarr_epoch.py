@@ -359,7 +359,7 @@ def test_qualification_refuses_zip_alias_as_directory_control(corpus, tmp_path):
     aliases.mkdir()
     for archive in packed_root.glob("*.zarr.zip"):
         (aliases / archive.name.removesuffix(".zip")).symlink_to(archive)
-    with pytest.raises(ValueError, match="require allow_packed_zarr=True"):
+    with pytest.raises(ValueError, match="directory control requires directory shards"):
         qualify(aliases, packed_root, {
             "batch_size": 2,
             "seed": 121,
@@ -368,3 +368,49 @@ def test_qualification_refuses_zip_alias_as_directory_control(corpus, tmp_path):
             "history_rep_fix": False,
             "mirror_augmentation": False,
         })
+
+
+@pytest.mark.parametrize("target_kind", ["directory_alias", "directory_named_zip", "non_zip_file_alias"])
+def test_qualification_refuses_nonpacked_target_in_zip_arm(corpus, tmp_path, target_kind):
+    from scripts.qualify_packed_zarr_epoch import qualify
+
+    source, packed_root = corpus
+    false_packed = tmp_path / "false-packed-arm"
+    false_packed.mkdir()
+    for directory in source.glob("*.zarr"):
+        path = false_packed / (directory.name + ".zip")
+        if target_kind == "directory_alias":
+            path.symlink_to(directory)
+        elif target_kind == "directory_named_zip":
+            path.mkdir()
+        else:
+            target = tmp_path / (directory.name + ".data")
+            target.write_bytes((packed_root / (directory.name + ".zip")).read_bytes())
+            path.symlink_to(target)
+    with pytest.raises(ValueError, match="packed arm requires regular .zarr.zip files"):
+        qualify(source, false_packed, {})
+
+
+def test_qualification_retains_matching_directory_and_zip_symlinks(corpus, tmp_path):
+    from scripts.qualify_packed_zarr_epoch import qualify
+
+    source, packed_root = corpus
+    control = tmp_path / "directory-links"
+    packed_links = tmp_path / "zip-links"
+    control.mkdir()
+    packed_links.mkdir()
+    for directory in source.glob("*.zarr"):
+        (control / directory.name).symlink_to(directory)
+        archive = packed_root / (directory.name + ".zip")
+        (packed_links / archive.name).symlink_to(archive)
+    result = qualify(control, packed_links, {
+        "batch_size": 2,
+        "seed": 121,
+        "input_planes": 146,
+        "input_history_encoding": "legacy",
+        "history_rep_fix": False,
+        "mirror_augmentation": False,
+    })
+    assert result["status"] == "PASS_MATCHED_PACKED_ZARR_SAMPLER"
+    assert result["runs"][0]["rows"] == result["runs"][1]["rows"] == 16
+    assert result["runs"][0]["sequence_sha256"] == result["runs"][1]["sequence_sha256"]

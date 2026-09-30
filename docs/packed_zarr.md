@@ -38,7 +38,10 @@ all array accesses inside that context; unmanaged lazy ZIP reads are refused.
 ## Qualification without training adoption
 
 Use separately prepared immutable directory and packed roots with the same shard
-roster and source partitions. The bounded CPU command compares every ordered batch:
+roster and source partitions. Resolved control targets must be directories and
+resolved packed targets must be regular `.zarr.zip` files; aliases cannot make
+both arms read the same representation. Matching-format symlinks are supported.
+The bounded CPU command compares every ordered batch:
 
 ```bash
 python scripts/qualify_packed_zarr_epoch.py \
