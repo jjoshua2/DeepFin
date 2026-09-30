@@ -1,0 +1,63 @@
+{
+  "status": "APPROVED",
+  "plan_sha256": "cc9949d4e4c694111e2f1de1f081325fb469579a90d3e7ca5a9a0607f25f0a15",
+  "scope": "Admission of one immutable external-first actual-trainer GPU pair after successful BT4 predecessor; no immediate launch and no changes to earlier queue items.",
+  "runner_sha256": "a6f9821c9acd06c0bedd103b00c89fd5a863ad20bc1d23cdef395a81ce3c1725",
+  "runtime_commit": "2fc51585955044e85f09e27e704d86787c47e382",
+  "runtime_entries_verified": 2862,
+  "pins_verified": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-registration-20260921/run_packed_trainer_pair.py",
+      "sha256": "a6f9821c9acd06c0bedd103b00c89fd5a863ad20bc1d23cdef395a81ce3c1725"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-registration-20260921/run_packed_trainer_preparation.py",
+      "sha256": "91e04bc58117d187d6028f77fea73672e85f451c170de5f14f737835e5781a09"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-registration-20260921/packed_trainer_probe.py",
+      "sha256": "a8e7ddfedb906b5873d0801ac3298551e9178f8758e9d61216ff51369b49a0a8"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-registration-20260921/config.yaml",
+      "sha256": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2"
+    },
+    {
+      "path": "/usr/bin/python3.10",
+      "sha256": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-20260921/receipt.json",
+      "sha256": "e42f319ccd2c10176979bb6dd6b5217b1c29510814df1ec42f263adb71b832f6"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-requalification-20260921/qualification.json",
+      "sha256": "cf3cb25f01812861fe8076dc61b0decfa92dece56b97379a9e62be8300c9da3f"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-requalification-20260921/complete.json",
+      "sha256": "9d73c8d1a965fec94254bba7bf0795a2931d6a7ff3aed65c70a58d1edd6ae7ef"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/bt4-pipeline-20260921/registered_command.json",
+      "sha256": "2be717bdf04338d03d0c41927bd86f94b1d7631da9dd7275b3c5c31e77583a2b"
+    }
+  ],
+  "independent_tests_passed": 19,
+  "checks": [
+    "Banked direct CLI --help and sibling imports pass from/tmp withnoGPU initialization.",
+    "Allruntimefilebytes/membership/links/HEAD andallplanhelper/config/interpreter/inputreceipt pins verified; allindividualpins below8MiB andplan481210bytes.",
+    "Installed dependency versions matchplan; trainerdriver hash matches frozenruntime.",
+    "CPUouter PASS authenticates exactqualification SHA cf3cb25f01812861fe8076dc61b0decfa92dece56b97379a9e62be8300c9da3f; both1963948rows/256shards/35sources/3836plannedbatches verified.",
+    "Fixed externalZIP thenNVMe, batch512/seed121/oneepoch/two88stepwarmupwindows, initialweights+actualgameplyorder+coverage/finite-loss gates matchprereg.",
+    "Sourcearchive/stagedbindings authenticated beforeandaftereacharm; code/runtimepins recheckedafterarms.",
+    "ExclusiveGPUflock inheritedandchecked byprobe; BT4dependency requiresloggedqueue/descriptorbinding/PASScompletion/outer0.",
+    "Hard2692secondarm/5392secondpair timers retain8secondcleanupreserve; pairlocalINT/TERM/ALRM blocking protectsboundedownedgroupTERM/KILL/reap. OriginalrealSIGALRMcleanup reproducerand3signalregressions pass.",
+    "Livequeue Dlogged,D_Crunning,D_Bqueued,BT4queued; appendnewitemafterBT4 underexistinglock andpreserveallpriorstate."
+  ],
+  "limits": [
+    "ActualGPU results stillfuture; threshold isdescriptive>=0.90 external/NVMe afterexcludingfirsttwo88stepwindows.",
+    "Onefixedordercacheaffectedpair cannotestablishcold500M performance orcausaldiskbottleneck.",
+    "Registereddescriptor mustlaunchthisbankedrunnerwiththisexactplan+reviewpins, max5400seconds, andcompletionPASS_EXACT_PACKED_TRAINER_PAIR."
+  ]
+}

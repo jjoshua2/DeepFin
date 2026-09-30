@@ -15,6 +15,7 @@ from scripts import derive_corpus_targets as derive
 from scripts import sf_policy_rewrite as rewrite
 from tests.test_derive_corpus_targets import (
     CONFIG_SHA,
+    CONFIG_REQUESTED,
     history_row,
     write_corpus,
     write_manifest,
@@ -31,19 +32,35 @@ def raw_row(**kwargs: Any) -> dict[str, Any]:
     return row
 
 
-def fixture(tmp_path: Path) -> tuple[Path, Path, list[dict[str, Any]]]:
+def fixture(tmp_path: Path, *, strict: bool = False) -> tuple[Path, Path, list[dict[str, Any]]]:
     rows = [raw_row(game_id=i) for i in range(7)]
+    requested = {**CONFIG_REQUESTED, 'outcome_mode': 'rule50_match_v1'} if strict else None
+    config_sha = derive.corpus.stamp_sha256(requested) if requested else CONFIG_SHA
+    if strict:
+        for row in rows:
+            row['run']['outcome_mode'] = 'rule50_match_v1'
+            row['run']['config_sha256'] = config_sha
     rows[2]["result"] = None
     # Distinct scores on each row make a wrong within-shard join observable.
     for i, row in enumerate(rows):
         for line in row["phases"][0]["per_depth"][0]["lines"]:
             line[2] = float(line[2]) * (i + 1) + 0.0000000123
     raw = write_corpus(
-        tmp_path, rows, row_schema=3, staircase=[{"depth": 9, "width": "all"}]
+        tmp_path, rows, row_schema=3, staircase=[{"depth": 9, "width": "all"}],
+        config_sha=config_sha, config_requested=requested,
     )
     source = tmp_path / "derived"
     run(raw, source, "--limit", "7", temp=0.0005, rows_per_shard=4)
     return raw, source, rows
+
+
+def test_strict_outcome_source_rewrite_preserves_mode(tmp_path: Path) -> None:
+    raw, source, _ = fixture(tmp_path, strict=True)
+    out = tmp_path / 'strict_rewrite'
+    assert rewrite.rewrite(args(raw, source, out))['rows'] == 6
+    for shard in out.glob('shard_*.zarr'):
+        group: Any = zarr.open_group(str(shard), mode='r')
+        assert group.attrs['derive_outcome_mode'] == 'rule50_match_v1'
 
 
 def args(raw: Path, source: Path, out: Path, *extra: str) -> Any:

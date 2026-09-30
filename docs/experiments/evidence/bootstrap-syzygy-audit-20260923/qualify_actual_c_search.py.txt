@@ -1,0 +1,23 @@
+import json,time
+from pathlib import Path
+import chess,numpy as np,torch
+from chess_anti_engine.mcts.gumbel import GumbelConfig
+from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+from chess_anti_engine.moves import POLICY_SIZE,move_to_index
+from chess_anti_engine.tablebase import open_strict_match_tablebase,SyzygyProbe
+class ZeroEvaluator:
+ def evaluate_encoded(self,x,relations=None):
+  return np.zeros((len(x),POLICY_SIZE),np.float32),np.zeros((len(x),3),np.float32)
+torch.set_num_threads(2)
+b=chess.Board('7k/8/8/8/8/p1b5/PP6/KQ6 w - - 70 1')
+p='/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6'
+tb=open_strict_match_tablebase(p,max_pieces=6)
+try:
+ probe=SyzygyProbe(p,max_pieces=6,rule50_aware=True,tablebase=tb)
+ allowed={move_to_index(chess.Move.from_uci(m),b) for m in ['b2c3','b1c1']}
+ result=run_gumbel_root_many_c(None,[b],device='cpu',rng=np.random.default_rng(19),cfg=GumbelConfig(input_extra_features='v1',simulations=16,topk=2,temperature=0,add_noise=False),evaluator=ZeroEvaluator(),allowed_root_indices_batch=[allowed],allow_terminal_root_shortcuts=False,tb_probe=probe,return_diagnostics=True)
+ receipt={'root_fen':b.fen(),'allowed_uci':['b2c3','b1c1'],'simulations':16,'tb_probes':probe.probes,'tb_hits':probe.hits,'actions':[int(a) for a in result[1]],'root_values':[float(a) for a in result[2]],'scope':'Actual compiled Gumbel search with synthetic zero evaluator and real local Syzygy, no GPU/model qualification'}
+ assert probe.probes>0 and probe.hits>0
+ Path('/tmp/actual-syzygy-c-search-20260923.json').write_text(json.dumps(receipt,indent=2)+'\n')
+ print(json.dumps(receipt,indent=2))
+finally:tb.close()

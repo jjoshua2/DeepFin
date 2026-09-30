@@ -12,7 +12,12 @@ Term job_load_run(Env e, Term *f, IoWork *w) {
     uint64_t *words = io_mem(calloc(LEGAL_TABLE_WORDS, sizeof(uint64_t)));
     legal_make_tables(words);
     Term zero[2] = {0, 0};
-    Term a = blk_new(e, false, 17, 1, 2, zero);
+    /* Array length is 2^table_log2 U64s; derive it from LEGAL_TABLE_WORDS. */
+    u32 table_log2 = 0;
+    while ((1u << table_log2) < (u32)LEGAL_TABLE_WORDS) table_log2++;
+    if ((1u << table_log2) != (u32)LEGAL_TABLE_WORDS)
+        err_fail("attack-table size is not a power of two");
+    Term a = blk_new(e, false, table_log2, 1, 2, zero);
     if (err_seen(e.mem)) err_fail("attack-table allocation failed");
     for (u32 i = 0; i < LEGAL_TABLE_WORDS; i++) {
         blk_write(e.mem, false, term_loc(a), 2*i, (u32)words[i]);

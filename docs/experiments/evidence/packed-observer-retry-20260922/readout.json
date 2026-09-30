@@ -1,0 +1,51 @@
+{
+  "sources": {
+    "storage_failure": {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-pair-20260921/complete.json",
+      "sha256": "2880b678684ad4d98a05e4bc44fd9edc2f873f9217c048f3e2ad218768054759"
+    },
+    "storage_log": {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-pair-20260921/external_zip.log",
+      "sha256": "8632b643686671ed820eb1ca18a85b5da6593836d5075d3bd29cda8ee065388c"
+    },
+    "bt4_complete": {
+      "path": "/home/josh/chess-artifacts/operations/bt4-pipeline-20260921/complete.json",
+      "sha256": "c847af6a19782976b1ec94c6e5e064847d9070592d49ccfca39e919e49f50370"
+    }
+  },
+  "failure_seconds": 125.22850444505457,
+  "cause": "Observer expected ply; actual persisted field ply_index. First batch rejected before optimizer update. No storage performance verdict.",
+  "bt4": {
+    "status": "PASS_EXACT_BT4_PIPELINE_SCREEN",
+    "medians": {
+      "A": {
+        "producer_seconds": 11.2448940485192,
+        "verification_seconds": 8.087191045982763,
+        "producer_and_verification_seconds": 19.332085094501963,
+        "session_setup_seconds": 1.5172406354977284,
+        "session_run_seconds": 2.5135741844424047,
+        "worker_seconds": 22.234519162011566
+      },
+      "B": {
+        "producer_seconds": 8.46736620151205,
+        "verification_seconds": 4.993481644487474,
+        "producer_and_verification_seconds": 13.460847845999524,
+        "session_setup_seconds": 1.5152377295016777,
+        "session_run_seconds": 2.516032788378652,
+        "worker_seconds": 15.966265447001206
+      },
+      "C": {
+        "producer_seconds": 7.427752229501493,
+        "verification_seconds": 5.040036711492576,
+        "producer_and_verification_seconds": 12.467788940994069,
+        "session_setup_seconds": 1.4556356825050898,
+        "session_run_seconds": 2.6268434225348756,
+        "worker_seconds": 14.917134263989283
+      }
+    },
+    "prefetch_over_optimized_serial": 1.0796499611683574,
+    "optimized_serial_over_original": 1.4361714295914378,
+    "prefetch_decision": "PASS_5_PERCENT_SCREEN",
+    "scope": "One banked shard, warm sessions, two observations per variant; no fleet/500M extrapolation."
+  }
+}
