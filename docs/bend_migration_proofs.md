@@ -1,5 +1,102 @@
 # Bend migration and proof inventory
 
+## Latest P3 board-representation foundation
+
+Hosted run **36080761492** passes all six public laws, importing consumer, seventeen controls, four native modes with full-Board comparisons, two compiled/executed corruption controls, original compiler checks and unchanged whole-repository lint on source `ad0c9e379a0b1bfbb91b7c5d7755e22668bf1004`.
+
+The new board suite defines an independent per-square partition across six kind and two color bitboards: empty or exactly one kind of one color. Actual empty/start boards satisfy it; actual fresh typed insertion preserves it and has an exact complete-Board update theorem. Actual insertion preserves metadata, and metadata writes preserve the partition predicate. Four universal and two closed laws use the real Position/Chess code.
+
+This is deliberately weaker than legal position: no king count, pawn-rank, valid metadata, occupied decoder, FEN freshness/reachability, move application or generation theorem follows. Symbolic raw-square mask semantics are distinguished from the native0..63 insertion domain. Exact-source parent117/315 plus the newly executed6/17 yields modular123/332, not a full combined aggregate run. The FIDE2023 English rules are the pinned future semantic anchor; this invariant is not compliance. See [the readout](experiments/2026-09-24-bend-board-representation.md). Prior P2 results and their closed-builder limitation remain unchanged.
+
+## Latest full-table public-boundary consolidation
+
+Hosted run **36009970976** passes both uniform full-table laws and importing consumer, all20 classified controls, four native modes, the short-public-builder regression, original compiler source/pin checks and unchanged whole-repository lint on source `12327c34c5279fd41ae66eb10ab42470bb06d199`.
+
+The builder suite removes selected-key-dependent before/after parameters from the full-table interface and exposes both Nat and actual U32 keys. It reuses the independent-ray result and full-domain certificates. The symbolic table construction is identical for every key; complete returned-array equality, arbitrary seed/occupancy,depth17 and128-block certificates remain explicit.
+
+The actual zero-argument Tables.build body is linked by a separate fail-closed source-token recipe guard and native public-builder mutation test. This guard is not a source equality witness; closed literal builder normalization remains unqualified. Modular117/315 includes4 new semantic,7 recipe,8 policy and1 synthetic controls, not20 semantic theorem rejections. The full combined wrapper was not executed. See [the dated readout](experiments/2026-09-24-bend-full-table-boundary.md) for exact scope and receipts. P3-P7 remain separate; no application responsibility newly moved into Bend.
+
+## Latest independent ray and initialized-lookup refinement
+
+Hosted run **36002630448** passes all five new public contracts/importing consumer, all19 controls, four native ray modes, four actual initialized-lookup modes, original compiler source/pin checks and unchanged whole-repository lint on source `58c9136bccdf6667a36776fb48480eab7ebfe5a2`.
+
+Current P2 source progress now includes independent geometric attack correctness, not only equality to the production slider definition. The five ray contracts prove full seven-step geometric coverage, arbitrary-occupancy/accumulator production ray refinement, unmasked and actual-relevant-mask slider refinement, and the complete returned-pair result for the actual initialized table/extras pipeline. The caller supplies only supported square/key/budget and symbolic depth conditions; actual shape, headers, data and index certificates are produced by existing proofs.
+
+The independent attack definition uses explicit natural file/rank paths and first-blocker inclusion. Structural proofs derive preservation of all interior occupancy observations; actual full-mask identity and the terminal-path lemma connect masking to that definition. All old accepted statements/gates remain unchanged. Qualification is modular115 laws/295 controls, not a freshly executed full chain. Historical notes below calling the independent geometry connection wholly open are superseded within this bounded source pipeline.
+
+No separate closed normalization of the huge literal Tables.build expression, native lowering/allocation/lifetime proof, or whole-chess legality/search/model theorem follows. P3-P7 and remaining application migration stay open. See [the current readout](experiments/2026-09-24-bend-independent-rays.md) and compact receipts for domains, independent reference checks, failures and trust boundaries.
+
+## Latest public lookup and independent geometry qualification
+
+Hosted run **35996797725** passes the four preserved public laws, all16 controls, four native modes, original compiler source/pin gates, unchanged repository lint and the two archived independent step/mask checks on source `12134356d6e09f303c256a76f83439204292897a`. The four contracts are certified_header_route, selected_state_is_masked, initialized_indexed_lookup and initialized_masked_lookup. They retain actual affine buffers and obtain header/data/index/shape certificates from earlier producers. Caller bounds and symbolic depth=17 remain explicit.
+
+Modular coverage is110 laws/276 controls, not a newly executed full aggregate. The exact saved supplementary Step.actual and Masks.actual are now rechecked hosted: actual movement agrees with independent coordinates, and full relevant masks agree with independent ray interiors. These two statements do not increase the four public-law count. Arbitrary-occupancy blocker traversal and terminal-edge irrelevance remain open. See [the current record](experiments/2026-09-24-bend-lookup-publication.md) and committed reports. Historical local-only and supplementary-only lookup status below is superseded only within this stated scope. No additional application responsibility moves into Bend.
+
+## Supplementary actual lookup composition, distinct from public-law counts
+
+A newly source-checked derived composition now connects actual `Chess.slide` on the initialized table/extras pipeline to the actual `Tables.slider` value on `occupancy & actual_relevant_mask`, returning the complete final array. The stored-header and stored-data producers discharge the intermediate certificates; callers supply only the bounded table/extras budgets and symbolic allocation depth equal to17, with arbitrary seed and occupancy. Exact reproducible source text, four successful checker receipts and the native reproduction driver are archived in [the supplementary record](experiments/evidence/bend-stored-data/supplementary/README.md).
+
+This is not an extra registered LAWS obligation or an inflated 106-law/260-control aggregate. Local generic and UBSan execution of actual `Tables.build` followed by 1,024 `Chess.slide` queries per mode agrees with an independent ray reference; six invalid requests per mode and a shifted actual lookup are rejected. The same shifted lookup is rejected by the source routing lemma. These query tests are separate from the four-mode full-buffer qualification.
+
+Earlier statements that actual lookup composition is entirely unfinished are superseded only by this checked supplementary source-to-source result. Promotion into the public gate and independent relevant-mask/blocker-ray geometry remain open; native comparisons do not prove that geometry. No production, compiler or prior proof source changes.
+
+## Latest computed-data persistence qualification
+
+Hosted qualification **35954718944**, workflow commit `eab56eba6394388e8b0cd52f4796989921e85943`, passes the three new public laws/importing consumer, all seventeen controls, four native modes and the late-write regression, original compiler checks and unchanged whole-repository lint on source `1ee5d0534a3ac8c2ed3514141f0e89be58ef500b`.
+
+Current P2 progress includes `data/later_tables_preserve_data`, `data/stored_data_after_tables` and `data/stored_data_after_extras`. These prove complete returned-pair preservation and the computed actual slider value after later metadata, other blocks and extras, under complete depth17 shape, bounded block/relative-index and extras budgets. Allocation supplies shape in the pipeline contract; no desired initial data or per-write correctness witness is assumed.
+
+The new three-law consumer and seventeen controls executed separately. Parent103/243 is retained on exact logical sources, yielding modular106/260 coverage, not a new full aggregate execution. Historical statements below that final computed-data persistence is wholly unproved are superseded by these specific contracts. Actual Chess lookup composition and independently specified blocker rays remain open. No application responsibility moves from Python. See [the dated record](experiments/2026-09-23-bend-stored-data.md) and committed reports.
+
+## Current stored-header qualification: September23,2026
+
+Hosted modular qualification **35938924299**, workflow `493367c64aa2c304143a88b00ab5cf84ad779756`, freshly passes three public header laws, seventeen rejection controls, four native modes, original compiler source/pin checks and unchanged whole-repository lint on source `eceb6329cbc000469884513c660c2a615060f83b`. The exact-source parent100-law/226-control result is retained and verified, not rerun.
+
+`headers/own_block_header` promotes the checked one-block header theorem. `stored_header_after_tables` proves the selected actual mask or widened certified prefix survives every later table iteration. `stored_header_after_extras` derives shape from allocation and composes final extras preservation. Every contract returns the complete final array, not just a scalar. Bounds are explicit and satisfiable; expected initial header values are not assumed. These establish stored-header values, not independent relevant-mask geometry or final slider-data contents. Earlier statements that all stored-header correctness remains open are superseded within this bounded domain. See the dated stored-header readout and exact modular evidence.
+
+## Extras native coverage reinforcement: September 23, 2026
+
+Native-fixture reinforcement run **35924465983** on source `3c52e6469b3ba9cf133077f73d8f96ca8dcc76cd` passes the unchanged two-law consumer and all 14 controls, eight full buffers / 1,048,576 cell comparisons per mode, the protected-cell-copy regression, 12 compiler-pin checks and unchanged whole-repository lint. Full source aggregate100/226 was completed in run35920944024 on the same unchanged logical proof sources, not rerun for native-only changes. The added distinct-cell fixtures close a documented copy-corruption blind spot while preserving all old cases. Stored headers and independent blocker-ray refinement remain separate.
+
+## Current extras-preservation hosted qualification: September 23, 2026
+
+Hosted run **35920944024**, workflow commit `3ae0ffe92b941c2c6145f71d788bfa48d8f36695`, passes the full **100-law / 226-control aggregate**, four native modes, original compiler source/pin gates and unchanged whole-repository lint on exact source `c60a5e83958acef579f50593e970d40b1a0019e9`. These are the unchanged saved two laws, not additional contracts beyond that candidate. Historical local-only/full-aggregate-unrun/lint-unqualified statements below retain their original context; these gaps are now closed for the exact hosted candidate. Stored headers and full independent ray lookup remain separate P2 obligations. See the dated extras readout and committed hosted evidence.
+
+## Local extras-stage preservation — September 23, 2026
+
+Two new source laws and their importing consumer pass; all 14 focused rejection
+controls and four full-buffer native modes pass. The complete 100-law aggregate
+is **not run**, hosted qualification is not performed, and whole-repository lint
+fails because its tools are absent. This remains a local patch based on #861,
+not a new remote branch or PR. Parent98-law/212-control evidence remains retained.
+
+`extras/bounded_extras_read` preserves the complete final read pair outside
+[256,512) for complete depth17 arrays, n+k<=64 and q<131072.
+`extras/table_pipeline_extras_read` derives the complete shape from actual
+allocation and the actual prior table loop; depth stays symbolic with d=17.
+Neither law assumes the desired query value or that prior headers are correct.
+
+This closes the final-extras preservation obligation for incoming header and
+slider values, not the remaining stored-header/other-block/independent-ray
+contracts. The actual full pipeline can specialize the symbolic theorem;
+fully expanded closed consumer attempts remain documented as unqualified drafts.
+See [the dated record](experiments/2026-09-23-bend-extras-preservation.md), source
+identities and retained failures. No production logic, old laws or compiler input
+changed; no Python application responsibility moved. No native allocation/lifetime,
+model/GPU or performance guarantee is implied.
+
+## Current computed-fill hosted qualification: September 23, 2026
+
+Hosted run **35896688343**, workflow commit `c118f74d060f9e183f1cac6a212413dc42dd6e97`, passes the complete **98-law / 212-control aggregate**, four native modes, original compiler source/pin gates and unchanged whole-repository lint on source `94e380d218d1713828fd192427282588bf7df910`. The three public laws are the unchanged saved candidate, not three additional laws beyond that candidate. The historical local-only/aggregate-unrun/lint-unqualified statements below remain records of their original commands; these gaps are now closed for the exact hosted candidate. No broader geometry or full-builder theorem is implied. See the dated fill-contents readout and committed hosted reports.
+
+## Local computed-fill contents continuation: September 23, 2026
+
+Three new contents laws and their public consumer pass the pinned source checker; 17 rejection controls pass separately. New native tests pass 452 rows per mode in four builds on actual fills over fresh seeded storage. The parent 95-law/195-control hosted qualification is retained, not rerun or relabeled. Full candidate aggregate and hosted qualification are not claimed; repository lint remains nonzero because its tools are unavailable. This is a local patch, not a published branch or PR.
+
+`contents/bounded_fill_entry` specifies the actual computed value at every valid interior index of a bounded fill; `bounded_zero_fill_read` specifies the full updated-array/read pair using the existing zero-start recurrence. `full_block_entry` obtains complete chess-block budgets from accepted prefix producers rather than caller-supplied expected values. These per-fill results are source-checked. They do not establish loaded stored-header correctness, persistence through all later metadata/extras/block writes, or equality to independent blocker-ray geometry. No production code or additional Python application responsibility moved.
+
+See [the dated contents record](experiments/2026-09-23-bend-fill-contents.md) and its exact execution receipts. Native observations are selected values and metadata, not every returned cell. Source/native/lint statuses are separate; no complete P2 or end-to-end native theorem is claimed.
+
 ## Latest whole-fill interval qualification: September 22, 2026
 
 Hosted run **35790621404**, development workflow `e91f23707a541243b073aca5ecd1e58158039c42`, passes all **95 accepted laws and 195 rejection controls**, four native modes, original compiler source/pin checks and unchanged whole-repository lint on the exact inspected candidate.

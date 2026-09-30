@@ -1,0 +1,63 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "distinct_rows": 7008,
+  "ray_rows": 4960,
+  "unmasked_slider_rows": 1024,
+  "masked_slider_rows": 1024,
+  "ray_domains": 512,
+  "chess_keys": 128,
+  "first_blocker_positions": 1456,
+  "modes": [
+    {
+      "mode": "generic",
+      "rows": 7008,
+      "invalid_rejections": 9,
+      "output_sha256": "c50da4a94410288cb78ede92d6c6f7c472819779092d572d18f681ad5ef933e7"
+    },
+    {
+      "mode": "portable",
+      "rows": 7008,
+      "invalid_rejections": 9,
+      "output_sha256": "c50da4a94410288cb78ede92d6c6f7c472819779092d572d18f681ad5ef933e7"
+    },
+    {
+      "mode": "native",
+      "rows": 7008,
+      "invalid_rejections": 9,
+      "output_sha256": "c50da4a94410288cb78ede92d6c6f7c472819779092d572d18f681ad5ef933e7"
+    },
+    {
+      "mode": "ubsan",
+      "rows": 7008,
+      "invalid_rejections": 9,
+      "output_sha256": "c50da4a94410288cb78ede92d6c6f7c472819779092d572d18f681ad5ef933e7"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "ignore-blocker",
+      "rejected": true,
+      "kind": "generic wrong-value rejection after successful compilation and execution",
+      "diagnostic": "ray/slider row 2\n\n'0 254' !== '0 2'\n"
+    },
+    {
+      "name": "omit-blocker",
+      "rejected": true,
+      "kind": "generic wrong-value rejection after successful compilation and execution",
+      "diagnostic": "ray/slider row 2\n\n'0 0' !== '0 2'\n"
+    }
+  ],
+  "source_sha256s": {
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/ray/probe.bend": "b1e228ce96054c26db5687e499955d985927843dfc78ecd41eb944ac31195af8",
+    "standalone/proofs/ray/verify_native.js": "605e967b2ca5bec5ef804e354763686f5cc67970c892d2dcbee97a5b5691b08b"
+  },
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "bun": "1.4.2",
+  "scope": "Actual Tables.ray and masked/unmasked Tables.slider; no proof predicates or candidate input from reference. All first-blocker positions plus off-ray noise, nonzero accumulators and selected full occupancies. Repeated modes, not exhaustive U64 pairs or new allocation/lifetime evidence."
+}

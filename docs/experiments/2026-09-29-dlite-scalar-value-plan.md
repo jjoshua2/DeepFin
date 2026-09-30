@@ -23,7 +23,9 @@ This is a matched selected-route comparison. Its chosen-teacher policy equals th
 D/E neural policy mixture in expectation, not historical per-row policy bytes. Keep
 the position bank, row order, neural labels, chosen-teacher route, main policy,
 loss masks, initial weights and training schedule identical. The control uses the
-selected neural value. The candidate uses, before final storage rounding:
+authenticated stored float16 selected-neural value. The candidate widens that
+same stored value to float32, blends it with the float32 D-calibrated scalar
+value, then rounds the resulting main WDL once to float16:
 
 ```text
 q_control = q_chosen
@@ -32,9 +34,10 @@ q_candidate = (1/3) q_SF_scalar + (2/3) q_chosen
 
 With a source-independent fair BT4/Ceres route, the candidate has equal-thirds
 teacher weights in expectation. It is not the exact per-row three-teacher average;
-selected targets introduce sampling variation. Soft cross-entropy is linear in its
-target before nonlinear target transformations, masking or rounding. Preserve the
-existing selected route and record these differences rather than claiming byte
+selected targets introduce sampling variation, and the chosen neural value was
+already rounded once before the candidate blend. Soft cross-entropy is linear in
+its target before nonlinear target transformations, masking or rounding. Preserve
+the existing selected route and record these differences rather than claiming byte
 identity. A treatment that averages both neural teachers would add label cost and
 change the comparison.
 
