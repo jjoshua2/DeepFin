@@ -1,0 +1,31 @@
+--- a/fresh_source_child.py
++++ b/fresh_source_child.py
+@@ -11,0 +12 @@
++import math
+@@ -40,0 +42,22 @@
++
++
++def checked_actor_phases(schedule_result: object, actor_wall: float) -> dict[str, float]:
++    """Persist existing ScheduleReceipt timers without changing the actor."""
++    phases = {
++        'root_and_outcome': schedule_result.root_and_outcome_seconds,
++        'infer_cpu_encode_gather': schedule_result.infer_and_encode_seconds,
++        'bound_session_call_host_wall': schedule_result.session_run_seconds,
++        'actor_choice_and_apply': schedule_result.actor_choice_and_apply_seconds,
++        'sink_and_readback_including_final_tail': schedule_result.sink_and_readback_seconds,
++    }
++    need(type(actor_wall) is float and math.isfinite(actor_wall) and actor_wall > 0
++         and type(schedule_result.actor_wall_seconds) is float
++         and math.isfinite(schedule_result.actor_wall_seconds)
++         and abs(schedule_result.actor_wall_seconds - actor_wall) <= max(1.0, actor_wall * 0.01)
++         and all(type(value) is float and math.isfinite(value) and value >= 0
++                 for value in phases.values()),
++         'nonfinite/negative actor phase or wall mismatch')
++    residual = actor_wall - sum(phases.values())
++    need(-0.01 <= residual <= max(1.0, actor_wall * 0.05),
++         'fresh actor observed phase residual exceeds five percent')
++    return {**phases, 'residual': residual}
+@@ -191,0 +215 @@
++        phases = checked_actor_phases(schedule_result, actor_wall)
+@@ -216,0 +241 @@
++            phase_seconds=phases,
