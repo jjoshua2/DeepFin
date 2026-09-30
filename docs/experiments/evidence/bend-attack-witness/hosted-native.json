@@ -1,0 +1,165 @@
+{
+  "native_gate": "PASS",
+  "compiler_identity": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\n",
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\n",
+  "rows_per_mode": 14090,
+  "distinct_inputs": 14090,
+  "fields_per_mode": 183170,
+  "singleton_at_target": 13697,
+  "missing_king_diagnostics": 80,
+  "multiple_king_diagnostics": 232,
+  "fixture_sha256": "5f036d55949fdc44851b2fe70a875a71b2dbce7e13551e1285146b50007c4cc9",
+  "modes": [
+    {
+      "mode": "generic",
+      "rows": 14090,
+      "output_sha256": "23a0a9c3c1dd9fddc82f2832150c1bd0e01e40f20b519033ce4ff7d16955a4ec",
+      "invalid_rejections": 7
+    },
+    {
+      "mode": "portable",
+      "rows": 14090,
+      "output_sha256": "23a0a9c3c1dd9fddc82f2832150c1bd0e01e40f20b519033ce4ff7d16955a4ec",
+      "invalid_rejections": 7
+    },
+    {
+      "mode": "native",
+      "rows": 14090,
+      "output_sha256": "23a0a9c3c1dd9fddc82f2832150c1bd0e01e40f20b519033ce4ff7d16955a4ec",
+      "invalid_rejections": 7
+    },
+    {
+      "mode": "ubsan",
+      "rows": 14090,
+      "output_sha256": "23a0a9c3c1dd9fddc82f2832150c1bd0e01e40f20b519033ce4ff7d16955a4ec",
+      "invalid_rejections": 7
+    }
+  ],
+  "mutations": [
+    {
+      "name": "wrong-attacker-color",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "row": 4,
+      "observed": [
+        0,
+        512,
+        0,
+        132096,
+        0,
+        770,
+        16843009,
+        16843262,
+        0,
+        512,
+        0,
+        0,
+        0
+      ],
+      "expected": [
+        0,
+        512,
+        0,
+        132096,
+        0,
+        770,
+        16843009,
+        16843262,
+        0,
+        512,
+        1,
+        0,
+        1
+      ]
+    },
+    {
+      "name": "omitted-knight",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "row": 22,
+      "observed": [
+        0,
+        512,
+        0,
+        132096,
+        0,
+        770,
+        16843009,
+        16843262,
+        2151686160,
+        134480384,
+        0,
+        0,
+        0
+      ],
+      "expected": [
+        0,
+        512,
+        0,
+        132096,
+        0,
+        770,
+        16843009,
+        16843262,
+        2151686160,
+        134480384,
+        1,
+        0,
+        1
+      ]
+    },
+    {
+      "name": "wrong-pawn-direction",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "row": 4,
+      "observed": [
+        0,
+        512,
+        0,
+        132096,
+        0,
+        770,
+        16843009,
+        16843262,
+        0,
+        512,
+        0,
+        0,
+        0
+      ],
+      "expected": [
+        0,
+        512,
+        0,
+        132096,
+        0,
+        770,
+        16843009,
+        16843262,
+        0,
+        512,
+        1,
+        0,
+        1
+      ]
+    }
+  ],
+  "source_sha256s": {
+    "standalone/proofs/attack_witness/Spec.bend": "08ba67468406ab7edd96828f562e6b17dfd6e31a9ecfaaf4a535401dfe270a33",
+    "standalone/proofs/attack_witness/LAWS.bend": "d5b2582a3fc0c004f42a2ce5a264b70d55e4dee2c9e3c856a69dc690d1614f72",
+    "standalone/proofs/attack_witness/probe.bend": "4957453e4f513896e1e8c98b8bb41c94516b667efaef98ced701a596a4a44182",
+    "standalone/proofs/attack_witness/Queries.bend": "f478f8538ea0228f2e71731f890c2d056ff37bdd0d363a77b6600b0bbf0fc2fc",
+    "standalone/proofs/attack_witness/Flow.bend": "bfc7376b4bb2b47e84d03a2814aef745101fcb3570c7622a667dc0a8cce4c6fd",
+    "standalone/proofs/attack_witness/King.bend": "516d18ec38b0c293cbdc6ce3bf2dd7e71a967f4723acfbabe1e141ea931ee6d5",
+    "standalone/proofs/attack_witness/Bits.bend": "d5aedea8fdcebf2b1a1114e287ddeaebc91e1c810f00a30750053b68cc42b69a",
+    "standalone/proofs/attack_witness/consumer.bend": "106163c8e6bf77020b4e7cb950fed5e9ce3295478f46c18319e3c6e6bb8a9fa4",
+    "standalone/proofs/attack_witness/Reduction.bend": "62c6d9fe0a1a65f9ae5ce191fbaeef83a33c5c43333e49d6dd660ff9c088cea4",
+    "standalone/proofs/attack_witness/PROOF.bend": "17880c6d8d2c19b9d64ec049039b21c8ab94df780de74f3b6c367c7b69b62b0e",
+    "standalone/proofs/attack_witness/focused.js": "64385f2a4e78bcf6356bb4d6c8c6fc6be356e3747888b805a6fdaef565821c4a",
+    "standalone/proofs/attack_witness/verify_native.py": "1244bea5156f61362383953a201ed29ca177cc7f55870c4765d6d6ec106d2f84",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e"
+  },
+  "scope": "Actual Tables.build, reverse mask queries, attacked and bounded in_check versus independent forward coordinate attacks; no native proof-scan execution or exhaustive game coverage."
+}

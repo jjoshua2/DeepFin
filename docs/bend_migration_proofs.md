@@ -1,5 +1,17 @@
 # Bend migration and proof inventory
 
+## Hosted attack-witness qualification
+
+Hosted run **36281112782** passes all three public laws and the importing consumer, nineteen classified controls, four native coordinate-reference modes, three actual-code corruption checks, original compiler source/pin tests and unchanged repository lint on source `9213c3458023f75e814b566d593f3364b6070464`.
+
+Modular180/543 retains exact177/524 parent evidence; no complete aggregate run. The actual reduction and singleton-king selection are now connected to independent per-square witnesses over actual retrieved masks. Universal initialized-mask coordinate geometry and legal king safety remain separate obligations. See [the current readout](experiments/2026-09-26-bend-attack-witness.md). Historical local status below is superseded only by these exact-source hosted receipts.
+
+## Latest P3 attack witnesses and singleton king selection
+
+Three new public contracts connect the actual attack-query callbacks to a per-square owned-piece witness scan and connect actual in_check to the specified square under an explicit singleton-owned-king premise. Complete result pairs are retained. The masks still come from actual Chess.attack; universal coordinate correctness of those masks is not silently assumed or claimed. See [the readout](experiments/2026-09-26-bend-attack-witness.md).
+
+Local3-law/19-control and four-mode native checks passed. Modular180/543 retains the exact177/524 parent; the full wrapper did not run. Hosted qualification is pending and local repository lint lacks tools. No production behavior or Python application ownership changed.
+
 ## Latest P3 generated castling mandatory-check proof
 
 Six source contracts now establish that generated castling cannot use the optimized
