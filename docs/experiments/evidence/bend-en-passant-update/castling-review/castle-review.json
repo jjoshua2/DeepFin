@@ -1,0 +1,94 @@
+{
+  "supplementary_castling": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "new_registered_laws": 0,
+  "source_consumer": "PASS",
+  "source_consumer_seconds": 8.796399375,
+  "board_rows_per_mode": 4360,
+  "distinct_input_pairs": 4360,
+  "board_fields_per_mode": 82840,
+  "consistent_input_cases": 4360,
+  "consistent_output_cases": 4175,
+  "conditional_preservation_cases": 264,
+  "cases_by_operation": {
+    "all_raw_pairs": 4096,
+    "conditional_route": 256,
+    "blocked_rook_target": 4,
+    "empty_source": 4
+  },
+  "fixture_sha256": "a133e150d52fd2ba4de989641de71f8251b0a88c1507ed70cfaec6386ac75b99",
+  "modes": [
+    {
+      "mode": "generic",
+      "board_rows": 4360,
+      "board_fields": 82840,
+      "invalid_rejections": 9,
+      "output_sha256": "54a64d1f1021eb892853f42241552727fda47f492be4c7a1f7289a8b8df61547"
+    },
+    {
+      "mode": "ubsan",
+      "board_rows": 4360,
+      "board_fields": 82840,
+      "invalid_rejections": 9,
+      "output_sha256": "54a64d1f1021eb892853f42241552727fda47f492be4c7a1f7289a8b8df61547"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "actual-omits-rook",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "message": "actual-omits-rook row 0 (blocked_rook_target) field 7\n\n0 !== 32\n",
+      "actual": 0,
+      "expected": 32,
+      "source_status": 1,
+      "source_location": "Actual.unfold",
+      "diagnostic_sha256": "cf30312985e7fa19b3f6059dc50b3957ebcfbed44bbde46a25d23514512cffec",
+      "old_consumers_passed": [
+        "move_update",
+        "promotion",
+        "en_passant"
+      ]
+    },
+    {
+      "name": "actual-chooses-wrong-rook",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "message": "actual-chooses-wrong-rook row 0 (blocked_rook_target) field 7\n\n160 !== 32\n",
+      "actual": 160,
+      "expected": 32,
+      "source_status": 1,
+      "source_location": "Actual.unfold",
+      "diagnostic_sha256": "390e1b3c0f076ea2df2ce5e016568d4a0cbf14eea8a2e35272d84fd3669f95fb",
+      "old_consumers_passed": [
+        "move_update",
+        "promotion",
+        "en_passant"
+      ]
+    }
+  ],
+  "premise_rejection": {
+    "name": "missing-rook-target-freshness",
+    "rejected": true,
+    "source_status": 1,
+    "location": "Preserve.actual",
+    "diagnostic_sha256": "935650ce0905e63759bc2ad4ea7010da579afff634b9dbdaaf2054d532ac6737"
+  },
+  "source_sha256s": {
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/castling_review/probe.bend": "9d2c29059245e7827bd4e9544930273a046dc3878be64f9c0c20493cb09e9bfd",
+    "standalone/proofs/castling_review/verify_review.js": "add30bb0efc517fd384c866301577c1912285a2dd27a1d29ad9e11a5c93b04d2",
+    "standalone/proofs/castling_review/Actual.bend": "fe3cd9b30a9b1334d65116f783e55e0a3c4b4c657eb7d236c0c72422fa82b5ab",
+    "standalone/proofs/castling_review/Fresh.bend": "a74efdb25443e2191b00782c6a9fbf28fa3578a341b930aa7860e91595898604",
+    "standalone/proofs/castling_review/Route.bend": "bdc3b458d9288576d2307238aa25c9f8732db742b9aa677653f366d2b08be7e4",
+    "standalone/proofs/castling_review/Preserve.bend": "f6699f74ab216df9f2f0f57923796703ff1859811e5e61d83fa6de4067f8fee7",
+    "standalone/proofs/castling_review/consumer.bend": "54879ee3052811ef3f9039ff1f730830e937701edecfebbebe22450e8bcd6161"
+  },
+  "cc": "clang version 17.0.0 (https://github.com/swiftlang/llvm-project.git 10999b6d034fe318f3d56c83bddb6572593a8bb0)",
+  "scope": "Exact actual flag2/promotion0 raw update; conditional partition preservation for four coordinate routes with initially empty rook destination. No legal castling, source-king/rook, rights, path clearance or king-safety theorem. Generic/UBSan only; repeated raw fixtures, no exhaustive Board coverage."
+}

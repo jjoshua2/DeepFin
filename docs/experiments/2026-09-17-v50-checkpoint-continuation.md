@@ -1,5 +1,40 @@
 # V50 bootstrap checkpoint continuation through four total epochs
 
+## September 30 recovery of the reusable tooling
+
+This record and its pinned operation scripts below are historical evidence, not
+current queue or process status. Recovering this branch launches no training,
+labeling, arena or supervisor job. The September 19
+[disk-full recovery correction](https://github.com/jjoshua2/DeepFin/pull/764#issuecomment-5739201360)
+supersedes earlier running/queued statements: the successful first 50M checkpoint
+was preserved, while an interrupted follow-on lost updates before its next epoch
+checkpoint.
+
+The supported LC0 driver accepts `--resume-checkpoint`,
+`--resume-checkpoint-sha256` and `--resume-step` together, only with
+`--sampling-mode game_epoch`. Use a trusted full-state donor, an empty output
+directory and an explicit `--seed`; `--epochs` means additional complete passes.
+The donor is hash-checked before and after restoration. Model keys/shapes/dtypes,
+optimizer parameter identities and restored state must match; cold or partial
+restoration fails. The current trainer's exact loader restores model, optimizer,
+scheduler, ZClip, peak LR, global step and optional SWA state, and equality checks
+verify the result.
+
+Each intermediate epoch is retained as a pending checkpoint until the final
+realized-loss guards pass, then published and hash-bound in the summary. The
+continuation receipt distinguishes added steps from cumulative optimizer steps.
+Output reuse checks include every numbered epoch checkpoint. Current rolling
+recovery checkpoints, overlay qualification and all corpus/value guards remain
+enabled. This starts explicitly seeded new epochs; it does not replay an
+interrupted sampler cursor or claim uninterrupted RNG equivalence. The separate
+fixed-epoch offline runner's exact-resume mode in
+[PR #952](https://github.com/jjoshua2/DeepFin/pull/952) is a different entry point.
+
+Validation of the recovered implementation is tracked in PR #764; historical
+validation and runtime observations below retain their original scope.
+
+## Original September 17 registration and observations
+
 Status: the three-additional-epoch continuation is running. Its first 528 additional optimizer updates completed successfully (cumulative step at least 69,502); no completed additional epoch or playing-strength result is claimed.
 
 The completed 35M V50 donor trained once on 35,314,577 rows and saved step 68,974. This experiment tests whether substantially longer training on the same data yields useful checkpoints before changing corpus size or recipe. The donor is `runs/combined35m_v50_seed101/checkpoint.pt`, SHA256 `6d36f93d040c8babed040159419279af62a444f6466f42b720e12bb72d67ab02`.

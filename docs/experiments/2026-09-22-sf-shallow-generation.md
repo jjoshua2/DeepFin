@@ -1,5 +1,9 @@
 # Full-width Stockfish d8 versus d6 generation screen — September 22
 
+Earlier d8/G10 generation and matched-row value-cost measurements are recorded
+in the [September 20 benchmark](2026-09-20-sf-generation-throughput.md). Their
+workloads and rates are not pooled with this screen.
+
 Depth 6 yielded **65.07 eligible rows/s**, versus **33.50 rows/s** at depth 8 (1.943×) in one short fixed-order CPU screen. This measures newly generated self-play using the existing full-width generator. Both arms score every legal move; root-only or teacher-neutral generation was not measured. The result does not establish equal target quality or playing strength.
 
 ## Preregistered procedure

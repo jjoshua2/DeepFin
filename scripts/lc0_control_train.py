@@ -158,6 +158,7 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import math
 import sys
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
@@ -324,7 +325,7 @@ def min_budget_for_mid_tolerance(window: int) -> int:
 # The artifacts a completed (or half-completed) run leaves behind. `--out-dir`
 # reuse is refused when any of these is present -- see `existing_run_artifacts`.
 RUN_ARTIFACTS = ("checkpoint.pt", "checkpoint_mid.pt", "summary.json",
-                 "checkpoint_epoch1.pt", "checkpoint_epoch1.pending.pt")
+                 "checkpoint_epoch1.pt", "checkpoint_epoch1.pending.pt", "recovery")
 
 
 def existing_run_artifacts(out_dir: Path) -> list[str]:
@@ -455,6 +456,7 @@ def mid_step_on_epoch_boundary(*, endpoints: tuple[int, ...], frac: float) -> in
 
 def checkpoint_identities(
     *, last: Path, mid: Path | None, epoch_one: Path | None = None,
+    additional_epochs: Sequence[Path] = (),
 ) -> tuple[str, list[dict[str, Any]]]:
     """``(run_id, [{role, path, sha256}])`` — THIS trajectory's identity.
 
@@ -491,6 +493,9 @@ def checkpoint_identities(
     if epoch_one is not None:
         entries.append({"role": "epoch1", "path": str(epoch_one.resolve()),
                         "sha256": sha256_file(epoch_one)})
+    for epoch, path in enumerate(additional_epochs, start=2):
+        entries.append({"role": f"epoch{epoch}", "path": str(path.resolve()),
+                        "sha256": sha256_file(path)})
     fingerprint = "|".join(
         f"{entry['role']}:{entry['sha256']}"
         for entry in sorted(entries, key=lambda e: str(e["role"]))
@@ -1591,7 +1596,7 @@ def _scalar_metric_record(metrics: Any) -> dict[str, Any]:
 def _train_multiple_game_epochs(
     trainer: Trainer, first: GameAwareEpochBuffer, *, buffer_kwargs: dict[str, Any],
     epochs: int, seed: int, batch_size: int, window_steps: int,
-    epoch_one_pending: Path,
+    epoch_one_pending: Path, recovery: Any = None,
 ) -> tuple[Any, int, list[dict[str, Any]], dict[str, Any]]:
     """Uninterrupted trajectory; fresh sampling order, continuous augmentation RNG."""
     buf = first
@@ -1601,6 +1606,7 @@ def _train_multiple_game_epochs(
     records: list[dict[str, Any]] = []
     windows: list[dict[str, Any]] = []
     steps_done = 0
+    rows_done = 0
     metrics: Any = None
     try:
         for epoch_index in range(epochs):
@@ -1634,6 +1640,14 @@ def _train_multiple_game_epochs(
                     "steps_requested": requested, "steps_cumulative": steps_done,
                     "epoch_steps_cumulative": epoch_steps, **values,
                 })
+                rows_done += int(values["train_samples_seen"])
+                if recovery is not None:
+                    recovery.maybe_save(trainer, progress={
+                        "epoch_index": epoch_index + 1, "epoch_seed": seed + epoch_index,
+                        "window_index": len(windows), "window_steps": requested,
+                        "epoch_steps_completed": epoch_steps, "run_steps_completed": steps_done,
+                        "run_rows_completed": rows_done, "corpus_sha256": corpus_sha,
+                    }, metrics=values, sampler_rng=buf.rng)
                 print(f"[train] epoch {epoch_index + 1}/{epochs}, "
                       f"{epoch_steps}/{epoch_batches} steps; total {steps_done}", flush=True)
             receipt = dict(buf.receipt())
@@ -1900,7 +1914,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, default=Path("configs/lc0_positive_control.yaml"))
     parser.add_argument("--shards", type=Path, nargs="+", required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--resume-checkpoint", type=Path)
+    parser.add_argument("--resume-checkpoint", type=Path,
+                        help="Trusted full-state donor for explicitly seeded new game epochs.")
     parser.add_argument("--resume-checkpoint-sha256")
     parser.add_argument("--resume-step", type=int)
     parser.add_argument(
@@ -2034,9 +2049,26 @@ def main(argv: list[str] | None = None) -> int:
              "recorded as not a valid control: nothing then ties the trained "
              "corpus to the held-out purity check.",
     )
+    parser.add_argument("--recovery-checkpoint-seconds", type=float, default=3600,
+                        help="Save full recovery state after the first window, then hourly; 0 disables.")
+    parser.add_argument("--recovery-checkpoint-keep", type=int, default=2)
     parser.add_argument("--overlay-storage-qualification", type=Path)
     parser.add_argument("--expected-overlay-storage-qualification-sha256")
     args = parser.parse_args(argv)
+    if args.resume_checkpoint is not None:
+        if (
+            args.sampling_mode != "game_epoch"
+            or args.resume_checkpoint_sha256 is None
+            or len(args.resume_checkpoint_sha256) != 64
+            or any(ch not in "0123456789abcdef" for ch in args.resume_checkpoint_sha256)
+            or args.resume_step is None
+            or args.resume_step <= 0
+        ):
+            parser.error("bootstrap resume requires game_epoch, checkpoint SHA256 and positive expected step")
+    elif args.resume_checkpoint_sha256 is not None or args.resume_step is not None:
+        parser.error("resume identity requires --resume-checkpoint")
+    if not math.isfinite(args.recovery_checkpoint_seconds) or args.recovery_checkpoint_seconds < 0 or args.recovery_checkpoint_keep < 1:
+        parser.error("recovery interval must be finite/nonnegative and keep positive")
     if args.epoch_host_batch_overlap and args.sampling_mode != "game_epoch":
         raise SystemExit("--epoch-host-batch-overlap requires --sampling-mode game_epoch")
     overlay_ref = None
@@ -2044,13 +2076,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.overlay_storage_qualification is not None or args.expected_overlay_storage_qualification_sha256 is not None:
         if (args.overlay_storage_qualification is None
                 or args.expected_overlay_storage_qualification_sha256 is None
-                or args.sampling_mode != "game_epoch" or len(args.shards) != 1):
-            parser.error("overlay qualification requires both receipt pins, game_epoch and exactly one corpus")
-        from chess_anti_engine.replay.target_overlay import verify_qualification
+                or args.sampling_mode != "game_epoch"):
+            parser.error("overlay qualification requires both receipt pins and game_epoch")
+        from chess_anti_engine.replay.target_overlay import qualified_paths
         overlay_ref = {"path": str(args.overlay_storage_qualification.resolve()),
                        "sha256": args.expected_overlay_storage_qualification_sha256}
-        overlay_qualification = verify_qualification(overlay_ref, Path(args.shards[0]))
-        overlay_seal = BaseSeal(overlay_qualification["base_seal"])
+        overlay_paths = [path for root in args.shards for path in iter_shard_paths(Path(root))]
+        _, overlay_seal = qualified_paths(overlay_ref, overlay_paths)
     if args.epochs < 1 or (args.epochs > 1 and (
         args.sampling_mode != "game_epoch" or args.steps != 0
     )):
@@ -2165,18 +2197,20 @@ def main(argv: list[str] | None = None) -> int:
 
     model_cfg = model_config_from_flat_config(cfg)
     model = build_model(model_cfg)
+    # Bank the actual pre-optimizer initialization for matched recipe comparisons.
+    from scripts.bootstrap_initial_state import record_initial_state
+    record_initial_state(model, out_dir / "initial_state.json", seed=int(args.seed))
   # ⚑ model_config is not decoration: the trainer derives its input-history
   # encoding from it, and without it `select_input_history_arrays` refuses
   # every LC0-root row in the corpus. Same construction as tune/trainable.py.
     trainer = Trainer(model, model_config=model_cfg, **kwargs)
     continuation = None
     if args.resume_checkpoint is not None:
-        if args.sampling_mode != "game_epoch" or not args.resume_checkpoint_sha256 or args.resume_step is None:
-            raise SystemExit("bootstrap resume requires game_epoch, checkpoint SHA256 and expected step")
         from scripts.bootstrap_checkpoint_resume import resume_bootstrap
-        continuation = resume_bootstrap(trainer, args.resume_checkpoint, args.resume_checkpoint_sha256, args.resume_step, int(args.seed))
-    elif args.resume_checkpoint_sha256 is not None or args.resume_step is not None:
-        raise SystemExit("resume identity requires --resume-checkpoint")
+        continuation = resume_bootstrap(
+            trainer, args.resume_checkpoint, args.resume_checkpoint_sha256,
+            args.resume_step, int(args.seed),
+        )
   # ⚑ Unique STORAGE, not sum(numel) over the state_dict: the 16
   # `layer_smolgens.N.gen_weight.weight` keys are one shared tensor (CLAUDE.md).
     params = unique_storage_param_count(model)
@@ -2436,6 +2470,9 @@ def main(argv: list[str] | None = None) -> int:
     if planned_problems:
         print("⚑⚑ --allow-invalid-control: THIS RUN IS NOT A VALID CONTROL and "
               "its artifact cannot be quoted:\n  " + "\n  ".join(planned_problems))
+    from scripts.bootstrap_recovery import RollingRecoveryCheckpoints
+    recovery = RollingRecoveryCheckpoints(out_dir / "recovery",
+        interval_seconds=args.recovery_checkpoint_seconds, keep=args.recovery_checkpoint_keep)
     train_window_metrics: list[dict[str, Any]] = []
     multi_sampling_receipt: dict[str, Any] | None = None
     with CaptureRealizedLosses(
@@ -2482,10 +2519,11 @@ def main(argv: list[str] | None = None) -> int:
             metrics, steps_done, train_window_metrics, multi_sampling_receipt = _train_multiple_game_epochs(
                 trainer, buf, buffer_kwargs=epoch_buffer_kwargs, epochs=args.epochs,
                 seed=int(args.seed), batch_size=batch_size, window_steps=window_steps,
-                epoch_one_pending=out_dir / "checkpoint_epoch1.pending.pt",
+                epoch_one_pending=out_dir / "checkpoint_epoch1.pending.pt", recovery=recovery,
             )
         else:
             steps_done = 0
+            rows_done = 0
             for window_index in range(n_windows):
                 this_window = min(int(window_steps), int(args.steps) - steps_done)
                 if this_window <= 0:
@@ -2501,6 +2539,14 @@ def main(argv: list[str] | None = None) -> int:
                     "steps_cumulative": int(steps_done),
                     **_scalar_metric_record(metrics),
                 })
+                rows_done += int(getattr(metrics, "train_samples_seen", 0))
+                recovery.maybe_save(trainer, progress={
+                    "epoch_index": 1, "epoch_seed": int(args.seed),
+                    "window_index": window_index + 1, "window_steps": this_window,
+                    "epoch_steps_completed": steps_done, "run_steps_completed": steps_done,
+                    "run_rows_completed": rows_done,
+                    "corpus_sha256": getattr(getattr(buf, "plan", None), "corpus_sha256", None),
+                }, metrics=_scalar_metric_record(metrics), sampler_rng=getattr(buf, "rng", None))
                 if n_windows > 1:
                     # flush=True is load-bearing: stdout redirected to a file is
                     # 8KB block-buffered, and at ~60 bytes/line ~136 windows sat
@@ -2590,6 +2636,13 @@ def main(argv: list[str] | None = None) -> int:
     print("\n[guard] PASS: no SF-to-outcome leak, no all-outcome value target, "
           "and no outcome-borne categorical rebuild on any observed step")
 
+    if continuation is not None:
+        if trainer.step != continuation["step_start"] + int(steps_done):
+            raise RuntimeError("continuation global step accounting differs")
+        continuation.update(
+            step_end=trainer.step, additional_epochs=args.epochs,
+            additional_steps=int(steps_done),
+        )
     ckpt = out_dir / "checkpoint.pt"
     trainer.save(ckpt)
     epoch_one = None
@@ -2609,6 +2662,9 @@ def main(argv: list[str] | None = None) -> int:
     run_id, checkpoint_records = checkpoint_identities(
         last=ckpt, mid=mid_ckpt if mid.saved_at_step is not None else None,
         epoch_one=epoch_one,
+        additional_epochs=tuple(
+            out_dir / f"checkpoint_epoch{epoch}.pt" for epoch in range(2, args.epochs)
+        ),
     )
   # ⚑ THE SAME FUNCTION THE LAUNCH REFUSAL CALLED, with the ONE input that could
   # not be known in advance replaced by its realized value. Two copies of this
@@ -2643,10 +2699,6 @@ def main(argv: list[str] | None = None) -> int:
             "intervention, not a valid continuation of replacement-sampled "
             "control results",
         )
-    if continuation is not None:
-        if trainer.step != continuation["step_start"] + int(steps_done):
-            raise RuntimeError("continuation global step accounting differs")
-        continuation.update(step_end=trainer.step, additional_epochs=args.epochs, additional_steps=int(steps_done))
     summary = {
         "continuation": continuation,
         "additional_epoch_checkpoints": additional_epoch_checkpoints,

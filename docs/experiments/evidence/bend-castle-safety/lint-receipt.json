@@ -1,0 +1,10 @@
+{
+  "command": [
+    "bash",
+    "scripts/lint.sh"
+  ],
+  "status": 1,
+  "elapsed_seconds": 0.032632571000021926,
+  "log_sha256": "075f269264e3508474d7b1d8537ac148a8c7b09c2625c0f158c7f9cbabe359dc",
+  "log_bytes": 270
+}

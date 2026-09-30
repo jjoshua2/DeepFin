@@ -1,0 +1,32 @@
+{
+  "bridge_jsonl_sha256": "f90b0bc630ef17fb0fca169b00f18208d866abb3ac95781c469594e6682dc0d8",
+  "candidate_rows": 59264,
+  "credit": {
+    "ingest": 0,
+    "owner": 0,
+    "pack": 0,
+    "source": 0,
+    "target": 0,
+    "unique": 0
+  },
+  "frozen_route_teacher_counts": {
+    "BT4": 29427,
+    "Ceres": 29393
+  },
+  "gpu_used": false,
+  "independent_readback_sha256": "001fc50296876e91d22c499390065c7b8e04447b289d7606555f0ffa75c31c23",
+  "limitations": "Cached metadata-only winner re-ranking and route join; no selected-terminal rule50 WDL+DTZ, actual trainer parity, owner byte proof, full target readback or pack/ingest credit.",
+  "outcome_divergent_duplicate_groups": 278,
+  "packet_manifest_sha256": "0beb11230eea4834ea41a4b5a7aaaa474a3ca6e99aed05a28d3a14ab14857560",
+  "payload_spools_reauthenticated": false,
+  "peak_child_io_chars": 2872926123,
+  "peak_child_rss_bytes": 412430336,
+  "provisional_unique_winners": 58820,
+  "ranked_losers": 444,
+  "result_sha256": "b4c65f6b8db5df61edcedb6bee78ef2a994dd358f0de4af99bdd126905e135ad",
+  "schema": "full512_selected_target_winner_bridge_public_evidence_v1",
+  "selected_teacher_bytes_qualified": 0,
+  "status": "PASS_BRIDGE_METADATA_ZERO_CREDIT",
+  "terminal_sha256": "92ef9c1f6a263d9c5ddd969764d36249eb97be0e35788388c3cc80a8c93f0493",
+  "trainer_parity_sample_members": 1024
+}

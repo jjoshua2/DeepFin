@@ -1,0 +1,76 @@
+{
+  "full_receipts_sha256": "367579a0454af564cd630baa4985ea9912973c637ae48e9b8ad4c56485ac3078",
+  "scope": "Historical local construction and supplementary driver failures; full receipts and raw logs in conversation review ZIP. Not accepted proof rejection controls.",
+  "failures": [
+    {
+      "exit_code": null,
+      "stopped": "Stopped after positive consumer rejected a computed product destructuring at parse time. This draft control gate is not qualification.",
+      "name": "controls-corrected.status.json",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "log_bytes": 0
+    },
+    {
+      "exit_code": null,
+      "stopped": "Stopped before completion after positive consumer found a Type-vs-Data duplication error in Stored.first. Two earlier Preserve mutation checks passed; no complete control gate claimed.",
+      "name": "controls-final.status.json",
+      "log_sha256": "774d463bef5d02519ab978541899103e8ac9ce4ef354de5deef0ba27723ab8ca",
+      "log_bytes": 108
+    },
+    {
+      "exit_code": 1,
+      "elapsed_seconds": 324.00186870899995,
+      "name": "index-draft.status.json",
+      "log_sha256": "3c3b97b752f0f4867e70542a69983397af8ddd3e6a75f59f90042e017cc033c7",
+      "log_bytes": 250
+    },
+    {
+      "exit_code": 1,
+      "elapsed_seconds": 0.050159918999952424,
+      "name": "lint-local.status.json",
+      "log_sha256": "d7a52e7c555cce9ff4ea34eb6c981c31d0693f0c7495ed19e838097de2aa6112",
+      "log_bytes": 274
+    },
+    {
+      "exit_code": 1,
+      "elapsed_seconds": 0.8750862270001107,
+      "name": "lookup-native-review.status.json",
+      "log_sha256": "ae2f9c5b9f9e48daba4b0be97144d50239840a1f73fac64b13c03796f33c7256",
+      "log_bytes": 718
+    },
+    {
+      "exit_code": 1,
+      "elapsed_seconds": 7.368221175000144,
+      "name": "lookup-portable-final.status.json",
+      "log_sha256": "f5b4ed3479c4526eb887a8f2d2eece48c44988d5535b93a820b5f56f5e0855b7",
+      "log_bytes": 970
+    },
+    {
+      "exit_code": 1,
+      "elapsed_seconds": 0.6223413000002438,
+      "name": "lookup-portable-review.status.json",
+      "log_sha256": "bb666b8af711f4e6a6587b23628079ba86304bfc08f472d0f6a22e931365671f",
+      "log_bytes": 866
+    },
+    {
+      "exit_code": 1,
+      "elapsed_seconds": 0.4349889299999177,
+      "name": "public-corrected.status.json",
+      "log_sha256": "5e3ed9469cb4ee47ad6a383a1c1fa024c3efdbff87c8329615aa3e9f258dfa5f",
+      "log_bytes": 325
+    },
+    {
+      "exit_code": null,
+      "stopped": "Draft consumer stopped after Index.key_valid failed separately on an explicitly duplicated proof binder. No consumer success claimed.",
+      "name": "public-draft.status.json",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "log_bytes": 0
+    },
+    {
+      "exit_code": 1,
+      "elapsed_seconds": 320.419088901,
+      "name": "public-final.status.json",
+      "log_sha256": "58dc27ff0ae4f9cf17e85433ee80f239f41c8f8165d28d06a2fce47d746bddeb",
+      "log_bytes": 6821935
+    }
+  ]
+}

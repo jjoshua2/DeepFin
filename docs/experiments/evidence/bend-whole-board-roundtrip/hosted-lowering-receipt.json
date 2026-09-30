@@ -1,0 +1,17 @@
+{
+  "status": "UNQUALIFIED_NATIVE_LOWERING",
+  "command": [
+    "bun",
+    ".compiler/bend2/main.ts",
+    "native/bend_engine/standalone/proofs/abstraction/lowering-probe.bend",
+    "-o",
+    "/home/runner/work/_temp/whole-board-evidence/structural-snapshot.c"
+  ],
+  "exit_code": 1,
+  "elapsed_seconds": 6.962921674,
+  "source_sha256": "e3e5b55bc07b0448afd48dd3546a6eea21dbfba0bf00711f440f5fd1aa7522a7",
+  "diagnostic_sha256": "24327744ceeba270df22ccfa2f63ee95da2b33049b9cf3b82a168ec737e3d631",
+  "raw_text": "Error: an arity over 255\n",
+  "not_a_negative_control": true,
+  "not_native_snapshot_execution": true
+}

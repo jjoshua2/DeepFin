@@ -1,0 +1,22 @@
+{
+  "status": "RECONCILED_TWO_COMPLETED_ARENAS",
+  "checked_utc": "2026-09-21T15:12:17.722358+00:00",
+  "changes": [
+    {
+      "id": "factorial58_B_A_400sims",
+      "previous_status": "failed",
+      "receipt": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/arenas/B_A/complete.json",
+      "sha256": "d6248daad78f7c2a6950f74c9dcd8b8e24b21761f6abb11ae430aeb7c9259490",
+      "reason": "Registered completion path remained at old location after plan relocation; independent bank and donor validation passed."
+    },
+    {
+      "id": "factorial58_C_A_400sims",
+      "previous_status": "failed",
+      "receipt": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/arenas/C_A/complete.json",
+      "sha256": "c1275f7c34aaf737e7ed56d6ae4cb8f675da9193fd51ec9f489027527981c34c",
+      "reason": "Registered completion path remained at old location after plan relocation; independent bank and donor validation passed."
+    }
+  ],
+  "active_and_queued_preserved": true,
+  "gpu_jobs_launched": 0
+}

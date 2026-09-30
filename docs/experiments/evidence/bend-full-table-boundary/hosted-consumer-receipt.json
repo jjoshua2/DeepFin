@@ -1,0 +1,11 @@
+{
+  "command": [
+    "bun",
+    ".compiler/bend2/main.ts",
+    "native/bend_engine/standalone/proofs/builder/consumer.bend"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 623.4330480360001,
+  "sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84",
+  "exact_safe_success": true
+}

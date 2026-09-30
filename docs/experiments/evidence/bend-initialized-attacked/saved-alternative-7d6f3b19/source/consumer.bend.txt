@@ -1,0 +1,64 @@
+import Base
+import ./PROOF.bend as Proof
+import ./LAWS.bend as Laws
+import ./Spec.bend as S
+import ../../Position.bend as Position
+import ../../../legal_probe/Chess.bend as Chess
+
+# Every public contract is used on fully symbolic actual inputs.
+def all_queries(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+k: S.Piece,+sq: Nat,+side: Bool,+occ: U64,
+  depth: {d == 17n : Nat},full: {n == 128n : Nat},all: {extra == 64n : Nat},bound: {Nat.is_lt(sq,64n) == True{} : Bool}) ->
+  {Chess.attack(S.tag(k),S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(side),occ) ==
+    (S.init(d,seed,n,extra),S.mask(k,sq,side,occ)) : Array<U64> & U64}:
+  Laws.initialized_attack_query_matches_geometry(d,seed,n,extra,k,sq,side,occ,depth,full,all,bound)
+
+def all_attacked(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+by: Bool,
+  depth: {d == 17n : Nat},full: {n == 128n : Nat},all: {extra == 64n : Nat},bound: {Nat.is_lt(sq,64n) == True{} : Bool}) ->
+  {Chess.attacked(S.init(d,seed,n,extra),b,U32.from_nat(sq),Bool.to_u32(by)) ==
+    (S.init(d,seed,n,extra),S.attacked(b,sq,by)) : Array<U64> & Bool}:
+  Laws.initialized_attacked_matches_coordinate_witness(d,seed,n,extra,b,sq,by,depth,full,all,bound)
+
+def all_single_king_checks(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+side: Bool,
+  depth: {d == 17n : Nat},full: {n == 128n : Nat},all: {extra == 64n : Nat},bound: {Nat.is_lt(sq,64n) == True{} : Bool},
+  one: {U64.and(Chess.get_kings(b),Chess.color(b,Bool.to_u32(side))) == U64.bit(sq) : U64}) ->
+  {Chess.in_check(S.init(d,seed,n,extra),b,Bool.to_u32(side)) ==
+    (S.init(d,seed,n,extra),S.attacked(b,sq,Bool.not(side))) : Array<U64> & Bool}:
+  Laws.initialized_single_king_check_matches_coordinate_witness(d,seed,n,extra,b,sq,side,depth,full,all,bound,one)
+
+# Nonvacuous independent geometry examples. These do not normalize the huge builder.
+def knight_board() -> Chess.Board:
+  Position.put(1,False{},17,Position.put(5,True{},0,Position.empty()))
+
+def knight_witness() -> {S.attacked(knight_board(),0n,False{}) == True{} : Bool}:
+  {==}
+
+def knight_not_white() -> {S.attacked(knight_board(),0n,True{}) == False{} : Bool}:
+  {==}
+
+def knight_single_king() ->
+  {U64.and(Chess.get_kings(knight_board()),Chess.color(knight_board(),1)) == U64.bit(0n) : U64}:
+  {==}
+
+def black_pawn_witness() ->
+  {S.attacked(Position.put(0,False{},9,Position.empty()),0n,False{}) == True{} : Bool}:
+  {==}
+
+def white_pawn_witness() ->
+  {S.attacked(Position.put(0,True{},9,Position.empty()),18n,True{}) == True{} : Bool}:
+  {==}
+
+def blocked_queen_board() -> Chess.Board:
+  Position.put(4,False{},56,Position.put(0,True{},24,Position.put(5,True{},0,Position.empty())))
+
+def first_blocker_stops_queen() -> {S.attacked(blocked_queen_board(),0n,False{}) == False{} : Bool}:
+  {==}
+
+# An arbitrary uninitialized table is not admitted by the public initializer contract.
+def uninitialized_knight_mask_is_zero() ->
+  {Chess.attack(1,Array.new(U64,0n,U64.zero()),0,0,U64.zero()) ==
+    (Array.new(U64,0n,U64.zero()),U64.zero()) : Array<U64> & U64}:
+  {==}
+
+def independent_corner_knight_is_nonzero() ->
+  {U64.is_zero(S.mask(S.Knight{},0n,False{},U64.zero())) == False{} : Bool}:
+  {==}

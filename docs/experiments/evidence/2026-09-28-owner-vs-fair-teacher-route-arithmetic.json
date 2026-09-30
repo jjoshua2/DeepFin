@@ -1,0 +1,45 @@
+{
+  "confirmation_10m_ideal_gpu_hours": {
+    "128_pair_screen_arena": 0.38472222222222224,
+    "576_pair_arena": 1.7312500000000002,
+    "cumulative_total": 35.455159233709104,
+    "fresh_union_labels_total_including_screen": 8.923574210765763,
+    "one_m_screen_trainings": 0.43356812781727155,
+    "source_total_including_screen_rows": 19.64636339473113,
+    "two_10m_trainings": 4.335681278172715
+  },
+  "inputs": {
+    "bt4_label_rows_per_second": 800.19,
+    "bt4_source_plus_readback_rows_per_second": 172.079,
+    "ceres_label_rows_per_second": 329.64,
+    "ceres_source_plus_readback_rows_per_second": 119.989,
+    "legacy_e_rows_assumed": 58090688,
+    "new_rows": 441909312,
+    "new_rows_per_source": 147303104,
+    "selected_e_trainer_rows_per_second": 1281.357
+  },
+  "primary_current_new_thirds": {
+    "fair_half_owner_label_days": 7.302612111223041,
+    "fair_perfect_overlap_days": 30.551693944388482,
+    "fair_serial_days": 35.93569394438848,
+    "fair_to_owner_extra_saving_ideal_days": 3.6513060556115207,
+    "no_owner_label_days": 10.95391816683456,
+    "owner_all_neural_label_days": 3.6513060556115207,
+    "owner_perfect_overlap_days": 26.90038788877696,
+    "owner_serial_days": 32.28438788877696
+  },
+  "schema": "owner_vs_fair_teacher_route_prereg_v2_arithmetic",
+  "screen_1m_ideal_gpu_hours": {
+    "128_pair_arena": 0.38472222222222224,
+    "fresh_union_labels": 0.8923574210765763,
+    "source": 1.9646363394731134,
+    "total": 3.675284110589184,
+    "two_trainings": 0.43356812781727155
+  },
+  "separate_final_500m_thirds": {
+    "fair_to_owner_extra_label_ideal_days": 4.131284356836002,
+    "new_bt4_rows": 166666666.66666666,
+    "new_ceres_rows": 166666666.66666666
+  },
+  "source_evidence_sha256": "2eedf4491751bde83c0414081ddc7113e59d0ae776d691598a8280404c69ce2b"
+}

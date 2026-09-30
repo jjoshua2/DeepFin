@@ -1,0 +1,20 @@
+{
+  "qualification": "PASS_SOURCE_ONLY",
+  "run": 36219695972,
+  "job": 108342486509,
+  "source": "4f3f40c9a98ddac838bd851ddf7fe821e8cfbfe2",
+  "new_laws": 6,
+  "new_controls": 0,
+  "retained_parent_laws": 154,
+  "retained_parent_controls": 470,
+  "modular_laws": 160,
+  "modular_controls": 470,
+  "combined_wrapper_executed": false,
+  "source_link_anchor_count": 8,
+  "fresh_native_execution": false,
+  "historical_legal_probe_rerun": false,
+  "historical_probe_boundary": "compiler source fingerprint mismatch; preserved",
+  "artifact_id": 10898586940,
+  "artifact_zip_sha256": "3de32e8fb5fe0aca48d60c41684f8ee0d5b062d74b639c4c52e8d55bd0ee5d7a",
+  "independent_review": false
+}

@@ -1,0 +1,46 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "fixture_rows": 74,
+  "in_range_rows": 64,
+  "out_of_range_wrapper_rows": 10,
+  "raw_internal_routines": "Source-checked only; exploratory direct native lowering failed with open Array element type. Public wrappers are tested here.",
+  "allocation_cells": 131072,
+  "observation": "initial and post-write query, reported capacity and masked write address; not every returned cell",
+  "oracle": "Independent unsigned arithmetic modulo 131072 and expected seed/write value",
+  "modes": [
+    {
+      "mode": "generic",
+      "rows": 74,
+      "invalid_rejections": 6,
+      "output_sha256": "8d1c4b88ed54862d8f22e6fe0d1872c2e7766fb81b2b60bcf4ae91d1fbeb00e7"
+    },
+    {
+      "mode": "portable",
+      "rows": 74,
+      "invalid_rejections": 6,
+      "output_sha256": "8d1c4b88ed54862d8f22e6fe0d1872c2e7766fb81b2b60bcf4ae91d1fbeb00e7"
+    },
+    {
+      "mode": "native",
+      "rows": 74,
+      "invalid_rejections": 6,
+      "output_sha256": "8d1c4b88ed54862d8f22e6fe0d1872c2e7766fb81b2b60bcf4ae91d1fbeb00e7"
+    },
+    {
+      "mode": "ubsan",
+      "rows": 74,
+      "invalid_rejections": 6,
+      "output_sha256": "8d1c4b88ed54862d8f22e6fe0d1872c2e7766fb81b2b60bcf4ae91d1fbeb00e7"
+    }
+  ],
+  "source_sha256s": {
+    "standalone/proofs/normalization/probe.bend": "da2bdd278b0dce0b14fd0590164e00f609677199886e8d7d5c434a3cfd74c4cd",
+    "standalone/proofs/normalization/verify_native.js": "bff3c343defd7ef25ed4f05658e94a767db6382008eb9a479a717d46fdb852b7",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d"
+  },
+  "bun": "1.4.2",
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)"
+}

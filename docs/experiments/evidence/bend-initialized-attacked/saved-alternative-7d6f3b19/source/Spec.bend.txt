@@ -1,0 +1,46 @@
+# Independent reverse-query geometry; no actual attack/query call supplies an answer.
+import Base
+import ../attack_geometry/Geometry.bend as G
+import ../ray/Spec.bend as R
+import ../attack_witness/Spec.bend as W
+import ../../../legal_probe/Chess.bend as Chess
+import ../builder/Spec.bend as Build
+
+type Piece is Data:
+  Pawn{}
+  Knight{}
+  Bishop{}
+  Rook{}
+  Queen{}
+  King{}
+
+def tag(k: Piece) -> U32:
+  match k:
+    case Pawn{}: 0
+    case Knight{}: 1
+    case Bishop{}: 2
+    case Rook{}: 3
+    case Queen{}: 4
+    case King{}: 5
+
+def init(d: Nat,seed: U64,n: Nat,extra: Nat) -> Array<U64>:
+  Build.run(d,seed,n,extra,0n)
+
+def mask(k: Piece,+sq: Nat,side: Bool,+occ: U64) -> U64:
+  match k:
+    case Pawn{}: G.mask(Bool.pick(G.Leaper,side,G.WhitePawn{},G.BlackPawn{}),sq)
+    case Knight{}: G.mask(G.Knight{},sq)
+    case Bishop{}: R.rays(Nat.add(64n,sq),occ)
+    case Rook{}: R.rays(sq,occ)
+    case Queen{}: U64.or(R.rays(sq,occ),R.rays(Nat.add(64n,sq),occ))
+    case King{}: G.mask(G.King{},sq)
+
+def masks(+sq: Nat,+by: Bool,+occ: U64) -> W.Masks:
+  W.Masks{mask(Pawn{},sq,Bool.not(by),occ),mask(Knight{},sq,by,occ),mask(King{},sq,by,occ),
+    mask(Rook{},sq,by,occ),mask(Bishop{},sq,by,occ)}
+
+def occupied(+b: Chess.Board) -> U64:
+  U64.or(Chess.get_white(b),Chess.get_black(b))
+
+def attacked(+b: Chess.Board,sq: Nat,+by: Bool) -> Bool:
+  W.present(b,Bool.to_u32(by),masks(sq,by,occupied(b)))

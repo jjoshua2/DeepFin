@@ -1,0 +1,19 @@
+{
+  "base_commit": "40803892f3204a54a33a87e2e7b25fa48fed2e1a",
+  "proof_gate": "PASS",
+  "new_laws": 8,
+  "aggregate_laws": 56,
+  "new_controls": 17,
+  "inherited_controls": 55,
+  "total_controls": 72,
+  "native_gate": "PASS",
+  "native_rows_per_mode": 2070,
+  "native_modes": 4,
+  "invalid_requests_per_mode": 5,
+  "compiler_source": "PASS",
+  "compiler_pin_tests": "12 pass, 0 fail",
+  "whole_repository_lint": "UNQUALIFIED (command failed)",
+  "remote_publication": false,
+  "independent_review": false,
+  "runtime_source_changed": false
+}
