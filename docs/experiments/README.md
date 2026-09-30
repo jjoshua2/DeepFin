@@ -12,7 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
-| [Packed Zarr exact-sampler qualification](2026-09-20-packed-zarr-exact.md) | 131,072 identical ordered rows at batch256; external ZIP consumer12.537s vs NVMe directory10.953s; opt-in ordinary reader, no live adoption |
+| [Audited 50M bootstrap expansion](2026-09-17-audited-scale-bootstrap.md) | Historical saved-audit V50 and explicit 50–60M contract; missing source binding and isolated scheduler recovered with both histories, no new experiment or training launch |
 | [Ceres direct-compact synthetic sink](2026-09-30-ceres-direct-compact-synthetic-sink.md) | 26-arm tiny full-head synthetic CPU screen: noisy +2.000% median sink-wall saving, semantic ZIP parity, no live adoption or measured production gain |
 | [Ceres owner target and compact-order correction](2026-09-30-ceres-owner-target-and-compact-order.md) | CPU source-game target reconstruction, one real selected-row overlap and a zero-credit diagnostic legal-order fix; no saved-call or production gain claim |
 | [Persistent Stockfish scalar cost](2026-09-29-sf-scalar-persistent-cost.md) | Frozen 10k-row persistent one-thread d6/d8/d10 cost/agreement screen with cold TT per row/depth and zero corpus/training credit |
@@ -135,6 +135,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Bend subset source laws](2026-09-21-bend-subset-source-laws.md) | Eight initial production-step laws with negative controls and independent native table checks; full P1 ordering/refinement still open |
 | [Bend-owned native neural leaves](2026-09-21-bend-native-leaf.md) | Actual search inputs and legal priors in Bend, native model execution without Python runtime; CPU fixture only |
 | [Bend policy/input composition](2026-09-21-bend-policy-composition.md) | Recovered Bend policy vocabulary paired with complete input from one Game; no inference or Python runtime |
+| [Packed Zarr exact-sampler qualification](2026-09-20-packed-zarr-exact.md) | 131,072 identical ordered rows at batch256; external ZIP consumer12.537s vs NVMe directory10.953s; opt-in ordinary reader, no live adoption |
 | [Bend complete feature inputs](2026-09-20-bend-classical-encoding.md) | Complete 146/175-plane inputs authored in Bend, exact C parity and current U64 compiler; no model/policy execution |
 | [Bend neural history encoding](2026-09-20-bend-history-encoding.md) | Bend-authored 112-plane history/metadata block with exact Python/C comparisons; partial input, no neural inference |
 | [Bend-owned draw rules](2026-09-20-bend-owned-draws.md) | Standalone native history identity and automatic root/leaf draws, no Python runtime; claims/encoding remain separate |
