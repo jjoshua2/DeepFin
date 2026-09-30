@@ -1,0 +1,12 @@
+{
+  "Generated.bend": {
+    "before": "83d6e9e58cceb7b26837ca6900ce9715a686bdefb72108e19cfc8ea4bcbc9bdb",
+    "after": "15b691b2f161bf46df7545a428d13603f02c241d9327905a69c9cb626f7c4076",
+    "change": "remove one trailing blank line; no term change"
+  },
+  "Mask.bend": {
+    "before": "1f7fe4f541ef69ab9944ed55390b05af29738729877c9d4e9175125d7b6cd35a",
+    "after": "108eaa37cb91769fff5a051e526513356b12af67811a69c83937e7dcb7d9ff91",
+    "change": "remove one trailing blank line; no term change"
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "artifact_sha256": {
+    "cost_ranked_plan": "89b298aad54d64d7f3434b847532587121edacd987c61eceffb65a5cfe18262a",
+    "paired_wave_v2_producer": "73428706c2be0fe54b50bd6bd91492fc94e9ac0a21062f1cf39fc953e6da0698",
+    "paired_wave_v2b_fixture": "f7536b0292512df855a852746649b9309485536a0d9d3390015ed2ec0861ef47",
+    "paired_wave_v2b_receipt": "2bd7f8270aec89e605d81be138c198c2640364034ddf9acf22ec60ec7f7e85ab",
+    "prior_v2_archive_failure_witness": "b04f99010673c404bcbd0511aa49d32a72811aecc8e3c437f677890e742e255b",
+    "proposed_external_join_design": "30dbd5b8e7f730c460d8634c39b3734d53246be31e6cfc87e54e12db863c3461",
+    "proposed_external_join_fixture_plan": "c0e3619fcf148f885ffc367c436e97ba0e3598d6aab2678a1b1e3b40db8905d8",
+    "real_slice_claim": "248644c5a0c8d3a43844ed2d89157dd236b561320cc69d63597d04f0a9a62905",
+    "real_slice_compressed_data": "856577ccbbad280c0116c55dd97ce899c6e73af9737fc4006a7efca560564b58",
+    "real_slice_direct_audit": "99b6473381ed776a17460400eac3a250bb95571c14985d8fb68ee8060c6b7f46",
+    "real_slice_direct_audit_source": "3bc7527754e1f95c7b15d8886983331fa28c775ea59bb1366c79ea22ac991370",
+    "real_slice_frame_index": "d06c4786348d4d0cd11519ba1dd292e93d950a84336e5d0f5aa129ffc216c49b",
+    "real_slice_preflight": "0a84fbe6edb65f7395146fd45738011e712c36124ce362b6ffdf5823f8455e88",
+    "real_slice_producer": "a023908a3ccee20b27a682e4f08b84997876a43ccd638f741f10bc0eb10d86ac",
+    "real_slice_receipt": "5702feab50397b253a4474d2e7e693a26c8b301ead96a645911b610a2fefc8ca"
+  },
+  "limits": [
+    "one BT4-v9 gross-candidate source slice only; Ceres, SF and second wave unmeasured",
+    "84.77x ratio covers compressed DATA only; retained subtotal excludes UID/context/provenance/proof metadata, claims, receipts, archived proofs and original source bank",
+    "synthetic 64-byte-row compression cannot predict 44,800-byte source compression",
+    "current strict replay source child is not restartable from an archive/game cursor",
+    "current global UID/digest/winner/game-ID/target maps and monolithic JSON receipt are not 500M-ready",
+    "100-byte fixed-record external-sort format is a proposal, not implemented producer behavior",
+    "no external-drive loader, GPU training, corpus admission or playing-strength measurement"
+  ],
+  "real_bt4_slice": {
+    "author_cpu_seconds": 2.391851419,
+    "author_peak_rss_bytes": 171544576,
+    "author_wall_seconds": 2.416580964998502,
+    "compressed_data_bytes": 4329582,
+    "data_frame_index_subtotal_bytes": 4330862,
+    "data_only_ratio": 84.76605824765532,
+    "frame_index_bytes": 1280,
+    "frames": 16,
+    "full_history_proof_bridge_sha256": "b6321d7f01ee639a6d124ff48494f7b21cbf433b8a48778a66bf02edb00b78c1",
+    "gross_candidate_rows": 8192,
+    "internal_frame_rows": 512,
+    "native_plain_bytes": 367001600,
+    "output_hash_readback_bytes": 4330862,
+    "process_logical_io_bytes": null,
+    "process_logical_io_status": "UNAVAILABLE_KERNEL_PROC_PID_IO",
+    "source_application_read_bytes": 491891352,
+    "source_ordinal_start": 0,
+    "source_slice_sha256": "e568c9cb23a1aebb942c9ce65a1af6534f24acb84528cc8bd8a284c515e07aae",
+    "status": "PASS_ALL_8192_NATIVE_ROWS_16_FRAMES_AND_PROOF_TEACHER_JOIN",
+    "subtotal_bytes_per_gross_row": 528.669677734375,
+    "teacher_counts": {
+      "BT4": 4146,
+      "Ceres": 4046
+    },
+    "teacher_route_sha256": "daa16e004449d578558c96bc93f314aba2cdeaf094adb30d94ed7c9ee58d1d13"
+  },
+  "schema": "tri_source_storage_checkpoints_readout_v1",
+  "scope": "CPU-only synthetic checkpoint fixture and one banked BT4 gross-candidate compression slice; zero corpus/target/throughput credit",
+  "source_identity_sha256": {
+    "canonical_digest_source": "8fe68950ed63c3a00d26194664281866c0c61735dc7c7dcf13b90289faff69ce",
+    "full_wave1_index": "28b5a4fbf8e48608ff1debbab3ed4617c7cf0d7e0260967023f7ac91ec482dae",
+    "full_wave1_spool_claim": "a088e6aef94effb115f90e48731e4d1052d81d0ad76cbd023796e3d88199ec60",
+    "replay_receipt": "cf169a64c871f3061661d45d681bdeef9c565224666b3a3a84a5ea805933d5c0",
+    "strict_syzygy_inventory": "bd5a1d1171db38a442d8eefb62a39717e968a17b9c7672f79daa3abc0fdbb921",
+    "teacher_route_contract": "0d4e29bf13b9cb6c1a7f3fe3bf0d83ae37e8ca90a1b6bcff4d1afd2e845e99c8",
+    "wave1_bt4_game_proof": "a0c7f552b6d5fbf95651f6d39cab0cfb4ab9d5f7f0a38e29fb0971f79f6fd1a0"
+  },
+  "synthetic_fixture": {
+    "cross_segment_later_uid_rank_winner_ordinal": 8192,
+    "first_seal_exit": -9,
+    "first_seal_resume": "SKIPPED_VERIFIED",
+    "metadata_json_bytes_first_8192": 4544340,
+    "row_bytes": 64,
+    "row_index_bytes_first_8192": 131072,
+    "rows": 8193,
+    "segments": 2,
+    "status": "PASS_SYNTHETIC_ONLY",
+    "tampered_comparison_digest_refused": true,
+    "tampered_comparison_link_refused": true,
+    "truncated_comparison_refused": true
+  }
+}

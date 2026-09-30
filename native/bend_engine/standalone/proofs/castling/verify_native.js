@@ -1,0 +1,143 @@
+// Opt-in actual flag-two execution. The reference is outside the candidate.
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {createHash} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import {PIN,verifyCompiler} from '../../verify_compiler.js';
+const args=process.argv.slice(2);
+assert.ok(args.length===1||(args.length===3&&args[1]==='--report'),'usage: verify_native.js COMPILER [--report FILE]');
+const compiler=path.resolve(args[0]),identity=verifyCompiler(compiler),suite=import.meta.dirname;
+const engine=path.resolve(suite,'../../..'),cc=process.env.CC||'clang';
+const temp=fs.mkdtempSync(path.join(os.tmpdir(),'deepfin-castling-native-'));
+const sha=x=>createHash('sha256').update(x).digest('hex');
+const tracked=['legal_probe/Chess.bend','bitboard_probe/Sliders.bend','standalone/Position.bend','standalone/Text.bend',
+ 'standalone/proofs/castling/probe.bend','standalone/proofs/castling/verify_native.js',...['Actual','Fresh','Route','Preserve','consumer'].map(x=>'standalone/proofs/castling/'+x+'.bend')];
+const hashes=()=>Object.fromEntries(tracked.map(f=>[f,sha(fs.readFileSync(path.join(engine,f)))]));
+const before=hashes();
+function invoke(cmd,argv,timeout=120000){
+ const r=spawnSync(cmd,argv.map(String),{encoding:'utf8',timeout,maxBuffer:32<<20,env:{...process.env,TERM:'dumb',BEND_NO_TELEMETRY:'1'}});
+ assert.equal(r.error,undefined,String(r.error));assert.equal(r.signal,null);return r;
+}
+function run(cmd,argv){const r=invoke(cmd,argv);assert.equal(r.status,0,(r.stderr+r.stdout).slice(-3500));assert.equal(r.stderr,'','unexpected compiler/native diagnostic');return r.stdout;}
+const empty=()=>Array.from({length:64},()=>({kinds:new Set(),colors:new Set()}));
+const clone=a=>a.map(x=>({kinds:new Set(x.kinds),colors:new Set(x.colors)}));
+function put(a,sq,kind,color){a[sq]={kinds:new Set([kind]),colors:new Set([color])};}
+function consistent(a){return a.every(x=>(!x.kinds.size&&!x.colors.size)||(x.kinds.size===1&&x.colors.size===1));}
+function encode(a,meta){
+ const planes=Array(8).fill(0n);
+ a.forEach((x,i)=>{const bit=1n<<BigInt(i);for(const k of x.kinds)planes[k]|=bit;for(const c of x.colors)planes[c===1?6:7]|=bit;});
+ return [...planes.flatMap(x=>[Number(x>>32n),Number(x&0xffffffffn)]),...meta];
+}
+const corner=new Map([[0,2],[7,1],[56,8],[63,4]]);
+function reference(a,meta,src,dst){
+ // Square sets model the raw update. Metadata mirrors current API behavior,
+ // not independently justified chess metadata or legal castling rights.
+ const originalKind=[0,1,2,3,4].find(k=>a[src].kinds.has(k))??5;
+ const out=clone(a);
+ // The bounded coordinate formula follows the raw API, not legal castling.
+ const rookFrom=dst%8===6?dst+1:(dst-2)>>>0,rookTo=Math.floor((src+dst)/2);
+ for(const sq of [src,dst,rookFrom])if(sq<64)out[sq]={kinds:new Set(),colors:new Set()};
+ const white=meta[0]===1;put(out,dst,originalKind,white?1:0);
+ out[rookTo].kinds.add(3);out[rookTo].colors.add(white?1:0);
+ const lost=(corner.get(src)||0)|(corner.get(dst)||0)|(originalKind===5?(white?3:12):0);
+ const ep=originalKind===0&&((src^dst)===16)?Math.floor((src+dst)/2):64;
+ return {board:out,meta:[(meta[0]^1)>>>0,(meta[1]&~lost)>>>0,ep]};
+}
+const fixtures=[],counts={all_raw_pairs:0,conditional_route:0,blocked_rook_target:0,empty_source:0};
+let consistentInputs=0,conditionalInputs=0,consistentOutputs=0;
+const routes=[[4,6],[4,2],[60,62],[60,58]];
+function add(category,a,meta,src,dst){
+ const wasGood=consistent(a),mid=Math.floor((src+dst)/2);
+ const holds=wasGood&&routes.some(x=>x[0]===src&&x[1]===dst)&&!a[mid].colors.size;
+ const out=reference(a,meta,src,dst);
+ if(wasGood)consistentInputs++;
+ if(holds){assert.ok(consistent(out.board));conditionalInputs++;}
+ if(consistent(out.board))consistentOutputs++;
+ fixtures.push({category,input:[0,src,dst,0,...encode(a,meta)],expected:encode(out.board,out.meta)});counts[category]++;
+}
+for(let src=0;src<64;src++)for(let dst=0;dst<64;dst++){
+ const a=empty(),side=(src^dst)&1,rf=dst%8===6?dst+1:(dst-2)>>>0;
+ if(rf<64)put(a,rf,3,side);put(a,src,(src+dst)%6,side);
+ put(a,(src+13)%64,2,1-side);add('all_raw_pairs',a,[side,15,64],src,dst);
+}
+let seed=0x6a039e71;
+function random(){seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed;}
+for(const [src,dst] of routes){
+ const mid=(src+dst)/2;
+ for(let i=0;i<64;i++){
+  const a=empty();for(let sq=0;sq<64;sq++){const v=random()%13;if(v&&sq!==mid)put(a,sq,(v-1)%6,v>6?1:0);}
+  add('conditional_route',a,[random(),random(),random()],src,dst);
+ }
+ const a=empty(),side=src===4?1:0,rf=dst%8===6?dst+1:dst-2;
+ put(a,src,5,side);put(a,rf,3,side);put(a,mid,2,1-side);
+ const out=reference(a,[side,15,64],src,dst);assert.ok(consistent(a)&&!consistent(out.board));
+ add('blocked_rook_target',a,[side,15,64],src,dst);
+ add('empty_source',empty(),[side,15,64],src,dst);
+}
+assert.equal(fixtures.length,4360);
+const distinct=new Set(fixtures.map(x=>JSON.stringify(x.input)));
+const malformed=[],base=fixtures[0].input;
+for(const [i,val] of [[0,'1'],[1,'64'],[2,'64'],[3,'1'],[4,'-1'],[4,'4294967296'],[4,'x']]){
+ const a=base.map(String);a[i]=val;malformed.push(a);
+}
+malformed.push(base.slice(1).map(String));malformed.push(Array.from({length:65},()=>base).flat().map(String));
+function compare(raw,rows,label){
+ const lines=raw.trimEnd().split('\n');assert.equal(lines.length,rows.length,label+': row count');
+ for(let i=0;i<rows.length;i++){
+  const got=lines[i].split(' ').map(Number);assert.equal(got.length,19,label+': full Board fields');
+  for(let j=0;j<19;j++)assert.equal(got[j],rows[i].expected[j],`${label} row ${i} (${rows[i].category}) field ${j}`);
+ }
+}
+try{
+ const cli=path.join(compiler,'bend2/main.ts'),c=path.join(temp,'probe.c');
+ const sourceStarted=performance.now();const sourceText=run(process.execPath,[cli,path.join(suite,'consumer.bend')]);assert.equal(sourceText.trim(),'All terms check.');const sourceSeconds=(performance.now()-sourceStarted)/1000;
+ run(process.execPath,[cli,path.join(suite,'probe.bend'),'-o',c]);
+ const modes=[];
+ for(const [mode,flags] of [['generic',[]],['portable',['-DBEND_U64_PORTABLE']],['native',['-march=native']],['ubsan',['-fsanitize=undefined','-fno-sanitize-recover=all']]]){
+  const exe=path.join(temp,mode);
+  run(cc,['-std=c11','-O1','-ffp-contract=off','-Werror=shift-count-overflow',...flags,c,'-pthread','-lm','-o',exe]);
+  const h=createHash('sha256');let rows=0;
+  for(let i=0;i<fixtures.length;i+=64){
+   const batch=fixtures.slice(i,i+64),raw=run(exe,['--threads','1',...batch.flatMap(x=>x.input)]);
+   compare(raw,batch,`${mode} batch ${i}`);h.update(raw);rows+=batch.length;
+  }
+  for(const bad of malformed){const r=invoke(exe,['--threads','1',...bad]);assert.equal(r.status,2);assert.match(r.stdout+r.stderr,/invalid castling/);}
+  modes.push({mode,board_rows:rows,board_fields:rows*19,invalid_rejections:malformed.length,output_sha256:h.digest('hex')});
+  console.error(`PASS ${mode}: ${rows} complete Boards and ${malformed.length} malformed requests`);
+ }
+ const mutations=[];
+ for(const [name,needle,replacement] of [
+  ['actual-omits-rook','+rook_to = select_u64(castle, U64.bit(U32.to_nat(U32.div(U32.add(src, dst), 2))), U64.zero())','+rook_to = select_u64(castle, U64.zero(), U64.zero())'],
+  ['actual-chooses-wrong-rook','rook_from = Bool.pick(U32, U32.is_eq(U32.and(dst, 7), 6), U32.inc(dst), U32.sub(dst, 2))','rook_from = Bool.pick(U32, U32.is_eq(U32.and(dst, 7), 6), dst, U32.sub(dst, 2))']]){
+  const copy=path.join(temp,name);fs.cpSync(engine,copy,{recursive:true});const chess=path.join(copy,'legal_probe/Chess.bend');
+  const text=fs.readFileSync(chess,'utf8');assert.equal(text.split(needle).length,2);fs.writeFileSync(chess,text.replace(needle,replacement));
+  const proof=invoke(process.execPath,[cli,path.join(copy,'standalone/proofs/castling/Actual.bend')]);
+  const diagnostic=(proof.stdout+proof.stderr).trim();assert.equal(proof.status,1);assert.match(diagnostic,/expected[\s\S]*observed/);assert.match(diagnostic,/Location: unfold\b/);
+  assert.doesNotMatch(diagnostic,/a defined name|no such file|a decreasing self-call|more than once|RangeError|Maximum call stack|Segmentation fault/);
+  const oldConsumers=[];
+  for(const suite of ['move_update','promotion','en_passant']){const result=run(process.execPath,[cli,path.join(copy,'standalone/proofs',suite,'consumer.bend')]);assert.equal(result.trim(),'All terms check.');oldConsumers.push(suite);}
+  const mc=path.join(temp,name+'.c'),exe=path.join(temp,name+'.bin');
+  run(process.execPath,[cli,path.join(copy,'standalone/proofs/castling/probe.bend'),'-o',mc]);
+  run(cc,['-std=c11','-O1','-ffp-contract=off','-Werror=shift-count-overflow',mc,'-pthread','-lm','-o',exe]);
+  const batch=fixtures.filter(x=>x.category==='blocked_rook_target'),raw=run(exe,['--threads','1',...batch.flatMap(x=>x.input)]);
+  let rejection;try{compare(raw,batch,name);}catch(e){rejection=e;}
+  assert.ok(rejection instanceof assert.AssertionError,`${name}: expected wrong-value rejection`);
+  mutations.push({name,rejected:true,compiled_and_executed:true,message:rejection.message,actual:rejection.actual,expected:rejection.expected,source_status:proof.status,source_location:'Actual.unfold',diagnostic_sha256:sha(diagnostic),old_consumers_passed:oldConsumers});
+ }
+ // Dropping the input rook-target condition must not discharge preservation.
+ const unchecked=path.join(temp,'missing-rook-freshness');fs.cpSync(engine,unchecked,{recursive:true});
+ const pf=path.join(unchecked,'standalone/proofs/castling/Preserve.bend');const original=fs.readFileSync(pf,'utf8');
+ const from='fresh: {B.fresh_mask(b,R.rook(r)) == True{} : Bool}';assert.equal(original.split(from).length,2);
+ fs.writeFileSync(pf,original.replace(from,'fresh: {True{} == True{} : Bool}'));
+ const pr=invoke(process.execPath,[cli,pf]),pd=(pr.stdout+pr.stderr).trim();assert.equal(pr.status,1);assert.match(pd,/expected[\s\S]*observed/);assert.match(pd,/Location: actual\b/);
+ assert.doesNotMatch(pd,/a defined name|no such file|a decreasing self-call|more than once|RangeError|Maximum call stack|Segmentation fault/);
+ assert.deepEqual(hashes(),before);assert.deepEqual(verifyCompiler(compiler),identity);
+ const report={native_gate:'PASS',compiler_revision:PIN.revision,...identity,new_registered_laws:2,source_consumer:'PASS',source_consumer_seconds:sourceSeconds,
+  board_rows_per_mode:fixtures.length,distinct_input_pairs:distinct.size,board_fields_per_mode:fixtures.length*19,consistent_input_cases:consistentInputs,consistent_output_cases:consistentOutputs,conditional_preservation_cases:conditionalInputs,
+  cases_by_operation:counts,fixture_sha256:sha(JSON.stringify(fixtures)),modes,mutations,premise_rejection:{name:'missing-rook-target-freshness',rejected:true,source_status:pr.status,location:'Preserve.actual',diagnostic_sha256:sha(pd)},source_sha256s:before,
+  cc:run(cc,['--version']).split('\n')[0],
+  scope:'Exact actual flag2/promotion0 raw update; conditional partition preservation for four coordinate routes with initially empty rook destination. No legal castling, source-king/rook, rights, path clearance or king-safety theorem. Generic/UBSan only; repeated raw fixtures, no exhaustive Board coverage.'};
+ const encoded=JSON.stringify(report,null,2)+'\n';if(args[2])fs.writeFileSync(args[2],encoded);console.log(encoded.trimEnd());
+}finally{fs.rmSync(temp,{recursive:true,force:true});}

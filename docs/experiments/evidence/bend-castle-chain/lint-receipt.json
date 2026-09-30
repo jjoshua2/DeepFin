@@ -1,0 +1,10 @@
+{
+  "command": [
+    "./scripts/lint.sh"
+  ],
+  "cwd": "/mnt/data/castle-continuation/repo",
+  "exit_code": 1,
+  "timed_out": false,
+  "elapsed_seconds": 0.06561752100014928,
+  "sha256": "d7a52e7c555cce9ff4ea34eb6c981c31d0693f0c7495ed19e838097de2aa6112"
+}

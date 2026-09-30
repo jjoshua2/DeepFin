@@ -1,0 +1,13 @@
+{
+  "command": [
+    "../bun",
+    "native/bend_engine/standalone/proofs/castle_safety/verify_forced.js",
+    "../compiler/bend",
+    "--report",
+    "../evidence/forced-native.json"
+  ],
+  "status": 0,
+  "elapsed_seconds": 43.169071697999925,
+  "log_sha256": "2e9da665803694bcb8e9712a544c4935a95564d4a733748cf02c3dfd59106181",
+  "log_bytes": 7677
+}

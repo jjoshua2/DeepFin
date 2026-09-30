@@ -1,0 +1,21 @@
+{
+  "qualification": "PASS",
+  "run": "36249795989",
+  "source": "f3e5db1fb2e7b671fcfefaf7ea03d52b0f88a536",
+  "source_tree": "563ea10bf7464e5edd6af5ce8d8094a9dcf234a2",
+  "new_laws": 6,
+  "new_controls": 17,
+  "control_categories": {
+    "source semantic/refinement": 8,
+    "manifest/import policy": 8,
+    "synthetic output-wrapper unit; not compiler execution": 1
+  },
+  "retained_parent_laws": 160,
+  "retained_parent_controls": 470,
+  "modular_laws": 166,
+  "modular_controls": 487,
+  "combined_wrapper_executed": false,
+  "native_source_entries": 511,
+  "independent_review": false,
+  "claim": "Actual castle_side output provenance and guard-derived representation preservation for newly emitted move values; not full legal_moves or semantic king safety."
+}
