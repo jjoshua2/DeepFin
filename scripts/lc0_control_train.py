@@ -2206,6 +2206,8 @@ def main(argv: list[str] | None = None) -> int:
     trainer = Trainer(model, model_config=model_cfg, **kwargs)
     continuation = None
     if args.resume_checkpoint is not None:
+        assert args.resume_checkpoint_sha256 is not None
+        assert args.resume_step is not None
         from scripts.bootstrap_checkpoint_resume import resume_bootstrap
         continuation = resume_bootstrap(
             trainer, args.resume_checkpoint, args.resume_checkpoint_sha256,

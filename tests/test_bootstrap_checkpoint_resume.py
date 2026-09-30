@@ -19,7 +19,7 @@ def donor(tmp_path: Path) -> tuple[Any, Path, dict[str, Any]]:
     model(torch.ones(1, 2)).sum().backward()
     opt.step()
     scheduler.step()
-    state = {'model': model.state_dict(), 'opt': opt.state_dict(),
+    state: dict[str, Any] = {'model': model.state_dict(), 'opt': opt.state_dict(),
              'scheduler': scheduler.state_dict(), 'step': 9, 'peak_lr': 0.01,
              'zclip': {'count': 9}, 'opt_param_names': ['weight', 'bias']}
     path = tmp_path / 'donor.pt'
