@@ -13,6 +13,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [Ceres stored-feed-once root preparation](2026-09-29-ceres-root-feedonce.md) | Tracked CPU root binder exercised by saved-game readback, exact 2,022-root replay parity and narrow 16.81% saved-root prep saving; fresh actor adoption pending |
+| [Ordinary moves and promotions](2026-09-25-bend-move-promotion-publication.md) | Publishes both saved suites unchanged; fresh9-law/35-control qualification and complete native Board updates; modular150/436,not move legality |
+| [Ceres fixed32 WSL recovery](2026-09-30-ceres-wsl-recovery.md) | Resumed exact chunks 0–6 after WSL crash; first new chunk 7 source, strict, ledger and archive PASS with zero admission; current boot uses bounded shared physical I/O telemetry |
 | [SF / BT4 / Ceres teacher adjudication](2026-09-11-teacher-adjudication-audit.md) | Broader saved-search audit of policy regret, ranking constraints, routing, optional Ceres complementarity/value calibration and a bounded Ceres-on-G10 selection; no inference/training result |
 | [Promotion and en-passant updates](2026-09-25-bend-special-move-updates.md) | Four new actual special-update contracts plus requalified saved ordinary suite; modular150/436; castling and legal-move conditions remain separate |
 | [Accepted parser frontiers](2026-09-25-bend-parser-frontier.md) | Four actual-source laws derive fresh bounded insertion and accepted-placement consistency; modular141/401 with separate exact-source compiler recovery |
