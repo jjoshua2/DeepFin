@@ -111,7 +111,8 @@ class RawInputs:
             self.sources[str(source_dir)] = spec, receipts
             self.pins.extend([item['manifest'], item['receipts']])
 
-    def get(self, ref: dict[str, Any]) -> tuple[Any, np.ndarray]:
+    def authenticate_ref(self, ref: dict[str, Any]) -> None:
+        """Authenticate one provenance reference against its selected source."""
         key = str(ref['source_dir']), str(ref['source_shard'])
         require(key[0] in self.sources, 'row provenance source has no explicit raw mapping')
         spec, receipts = self.sources[key[0]]
@@ -119,6 +120,11 @@ class RawInputs:
                 ref['source_namespace'] == namespace(spec.corpus_dir, str(spec.manifest['config_sha256'])),
                 'source namespace/config mismatch')
         require(key[1] in receipts and Path(key[1]).name == key[1], 'raw shard absent from pinned closed receipts')
+
+    def get(self, ref: dict[str, Any]) -> tuple[Any, np.ndarray]:
+        self.authenticate_ref(ref)
+        key = str(ref['source_dir']), str(ref['source_shard'])
+        spec, receipts = self.sources[key[0]]
         if key in self.cache:
             self.cache.move_to_end(key)
             return self.cache[key]

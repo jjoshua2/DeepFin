@@ -1,0 +1,147 @@
+{
+  "status": "APPROVED",
+  "scope": "Exact five-item outcomes-independent E121/E_D/D122/E122/E122_D122 queue admission; only E121 can currently preflight toready.",
+  "entries": {
+    "E": {
+      "plan": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/plan.json",
+        "sha256": "a4e69f181281d6b77f4ae7c67af010762bcf318af6988b9ecd6b4b7317060bdf"
+      },
+      "descriptor": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/registered_command.json",
+        "sha256": "ac2cde06eeb4b3daa6db9c0d32ddcbf9a2fd7b13744aa38bae2e8216d6ded20c"
+      },
+      "runner_sha256": "43c5f3a1fa440a21d63dd01063f366393a2e09d3d2078167d6e9d9eda37b1eec",
+      "proposed_queue_item": {
+        "id": "factorial58_sffree_20260922_E",
+        "kind": "registered_command",
+        "status": "queued",
+        "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/scheduler_run",
+        "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/registered_command.json",
+        "command_sha256": "ac2cde06eeb4b3daa6db9c0d32ddcbf9a2fd7b13744aa38bae2e8216d6ded20c",
+        "max_seconds": 79800,
+        "description": "Full fresh exact58M epoch, no clock-truncated epoch",
+        "requires_previous_id": null,
+        "estimated_active_seconds": 47000
+      }
+    },
+    "E_D": {
+      "plan": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/plan.json",
+        "sha256": "77d6aefeb0c75eeb283cadb0a719ee24ba68a72339623f44314572a07d428b9d"
+      },
+      "descriptor": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/registered_command.json",
+        "sha256": "7551fa839591910903bfade62e9fcdc057835c68c125e4a9369965c533850596"
+      },
+      "runner_sha256": "b198fd17b1914c835ad983c1d30aca4a8638ac2c96e4580e8387100c27650f67",
+      "proposed_queue_item": {
+        "id": "factorial58_sffree_20260922_E_D",
+        "kind": "registered_command",
+        "status": "queued",
+        "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/scheduler_run",
+        "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/registered_command.json",
+        "command_sha256": "7551fa839591910903bfade62e9fcdc057835c68c125e4a9369965c533850596",
+        "max_seconds": 3660,
+        "description": "Full registered256game128pair400sim match; incomplete bank invalid",
+        "requires_previous_id": "factorial58_sffree_20260922_E",
+        "estimated_active_seconds": 1800
+      }
+    },
+    "D122": {
+      "plan": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/plan.json",
+        "sha256": "b0195ee5adcf150c2233f6f9e8fc3c96c419883b400d277040d91a7401b3b1a4"
+      },
+      "descriptor": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/registered_command.json",
+        "sha256": "a4a6004e64c127108823cf1c923bd859a61c7ef1b5191942d2d800a7cbfa52de"
+      },
+      "runner_sha256": "63fa147ea61c72026720e29aba310571295bf64c5390ed742d8096d92078e7a6",
+      "proposed_queue_item": {
+        "id": "factorial58_sffree_20260922_D122",
+        "kind": "registered_command",
+        "status": "queued",
+        "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/scheduler_run",
+        "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/registered_command.json",
+        "command_sha256": "a4a6004e64c127108823cf1c923bd859a61c7ef1b5191942d2d800a7cbfa52de",
+        "max_seconds": 79800,
+        "description": "Full fresh exact58M epoch, no clock-truncated epoch",
+        "requires_previous_id": "factorial58_sffree_20260922_E_D",
+        "estimated_active_seconds": 47000
+      }
+    },
+    "E122": {
+      "plan": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/plan.json",
+        "sha256": "b315d0c34b74ddf2d7c8a5c49aa9822c7e1da8ecb2e472c2d6804971923acf0e"
+      },
+      "descriptor": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/registered_command.json",
+        "sha256": "7217ef61ffa53f1b02c1366e0acb3c8e2bae753d5ceba7bb90c062667ebef442"
+      },
+      "runner_sha256": "63fa147ea61c72026720e29aba310571295bf64c5390ed742d8096d92078e7a6",
+      "proposed_queue_item": {
+        "id": "factorial58_sffree_20260922_E122",
+        "kind": "registered_command",
+        "status": "queued",
+        "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/scheduler_run",
+        "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/registered_command.json",
+        "command_sha256": "7217ef61ffa53f1b02c1366e0acb3c8e2bae753d5ceba7bb90c062667ebef442",
+        "max_seconds": 79800,
+        "description": "Full fresh exact58M epoch, no clock-truncated epoch",
+        "requires_previous_id": "factorial58_sffree_20260922_D122",
+        "estimated_active_seconds": 47000
+      }
+    },
+    "E122_D122": {
+      "plan": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/plan.json",
+        "sha256": "256ef65a17b39293a1ebc674519fdcad1e5b71d3616eff77bb3455a5e38a703c"
+      },
+      "descriptor": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/registered_command.json",
+        "sha256": "2f85d7d3fe60beb7dcdd25cd2e8e7b682369da90352595f949231fa9f7e8ba17"
+      },
+      "runner_sha256": "4c1810642656e83d8d531b24baea38979f224b74983b02e586127f06d27d258a",
+      "proposed_queue_item": {
+        "id": "factorial58_sffree_20260922_E122_D122",
+        "kind": "registered_command",
+        "status": "queued",
+        "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/scheduler_run",
+        "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/registered_command.json",
+        "command_sha256": "2f85d7d3fe60beb7dcdd25cd2e8e7b682369da90352595f949231fa9f7e8ba17",
+        "max_seconds": 3660,
+        "description": "Full registered256game128pair400sim match; incomplete bank invalid",
+        "requires_previous_id": "factorial58_sffree_20260922_E122",
+        "estimated_active_seconds": 1800
+      }
+    }
+  },
+  "queue_items_file": "/tmp/factorial-next24h-reviewed-queue-items-20260922.json",
+  "queue_items_sha256": "e3b1177ceafe7b84ace9bdd4e7f1e11f927940df0129956a5240ae9830cac20a",
+  "checks": [
+    "Final E121 full independent CPU preflight passes; previous superseded approval hashes must notbeused.",
+    "Allfive descriptor/plan/runtime/localhelper pins andDAG links independently verified; top-level pins<=8MiB; openingbook retained insidearena plan; completions/outputnamespaces correct.",
+    "Final training+arena gates require exact113459updates/full58090688rows/no continuation/zero samegame repeats/planned-realized schedule equality, completewindow count andfinite loss/policy_loss/wdl_loss. Newgates validatedagainstactualcompletedDsummary.",
+    "E121/E_Dcleanup masksINT/TERM duringownedchildreap/leaserelease/receiptwrite; samefix propagatedto122.",
+    "D122/E122 commanddiff is onlyseed121->122 plusoutput; frozenruntime/env/budget identical; D122usesDqualification, E122usescompletedEqualification.",
+    "D122establishesfreshseed122tensoranchor; E122requirescompletedD122outer0/checkpoint/summary/init andmustmatchanchor. Nooutcome-dependentselection.",
+    "Actual synthetic122admission harness independentlypasses14checks, includingDvsErootselection, matchinganchor, wrongseed/updatecount/repeats/schedule/runtime/command/status andincompleteprerequisitearena/outerfailure.",
+    "E122_D122400sim256gamepairedarena usesseed2026092201, binds bothfuture122plans, receipts andinitialtensors; allfuturegatesfailclosed."
+  ],
+  "bounds": {
+    "training_active_seconds": 72000,
+    "training_whole_active_seconds": 72600,
+    "disk_pause_seconds": 7200,
+    "outer_training_seconds": 79800,
+    "arena_inner_seconds": 3600,
+    "arena_outer_seconds": 3660,
+    "nominal_total_estimated_active_seconds": 144600
+  },
+  "limits": [
+    "Estimate141000training+3600arena=144600seconds~40.17hoursbacklog; doesnotpromisecompletionwithin24h.",
+    "Operatorrequires estimated_active_seconds; proposeditems usecorrectkey. requires_previous_id ismetadata; actualrunneradmission enforcesdependencyreceipts.",
+    "Append/updateunderexistingqueuelock, retainactivework/historicalfailedjobs; resetawaitingreviewitems onlyifdescriptorsmatchtheseexacthashes."
+  ]
+}
