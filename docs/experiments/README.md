@@ -13,6 +13,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [Ceres stored-feed-once root preparation](2026-09-29-ceres-root-feedonce.md) | Tracked CPU root binder exercised by saved-game readback, exact 2,022-root replay parity and narrow 16.81% saved-root prep saving; fresh actor adoption pending |
+| [Corrected full58k BT4/Ceres selected targets](2026-09-30-full58820-corrected-selected-targets.md) | Banked CPU reconstruction and independent direct readback of all 58,820 targets; corrected Ceres batch-profile top-1, zero corpus or strength credit |
 | [Ceres active128 frozen-source quality](2026-09-30-ceres-active128-frozen-quality.md) | 52,820 exact shared feeds, corrected FP16 target TV maximum 0.226679 fails the frozen 0.05 policy gate; source and CPU reader timings, no promotion |
 | [Board partition and fresh insertion](2026-09-24-bend-board-representation.md) | Six source contracts for actual board consistency, exact insertion and metadata framing; modular123/332; move legality and reachability remain open |
 | [Full-table boundary](2026-09-24-bend-full-table-boundary.md) | Two uniform full-table lookup laws, separate public-builder recipe guard and late-block omission regression; modular117/315; no closed-builder equality claim |
@@ -40,6 +41,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [SF-free BT4+Ceres targets](2026-09-21-sffree-targets.md) | Reviewed E builder and three real source families qualified; bounded full 58M CPU preparation launched; training pending |
 | [58M policy/value teacher factorial](2026-09-19-58m-policy-value-factorial.md) | Reviewed pipeline queued:22.78M missing Ceres labels, target overlays, four fresh58M arms and four direct matches; active continuation preserved; no factorial results |
 | [B100 Tactical300 policy transfer](2026-09-11-b100-tactical300-transfer.md) | Candidate sparse SF mass-transfer policy tooling with mandatory deeper-SF calibration before materialization or training |
+| [Tactical300 saved-depth diagnostic](2026-09-11-tactical300-calibration.md) | Provenance-gated d9/BT4 disagreements against saved d10/d12; diagnostic tooling only, not a published-transfer calibration or training admission |
 | [Ceres saved Syzygy source fixture](2026-09-29-ceres-saved-syzygy-source-fixture.md) | Tracked CPU producer/readback reproves two saved six-man WDL/DTZ game results; zero generated-row credit |
 | [Ceres saved32 proof-reuse writer ABBA](2026-09-29-ceres-saved32-writer-abba.md) | Eight CPU arms: same 4,751 decoded rows and publication records, 34.48% faster saved32 writer interval; no live source-generation gain |
 | [Ceres selected-label guard cadence](2026-09-27-ceres-selected-guard-cadence.md) | Four-arm selected-4K GPU A/B/A/B: exact target parity and 17.76% lower arm wall; no production or 500M throughput claim |
