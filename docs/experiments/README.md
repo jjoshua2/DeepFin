@@ -12,6 +12,12 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Ceres direct-compact synthetic sink](2026-09-30-ceres-direct-compact-synthetic-sink.md) | 26-arm tiny full-head synthetic CPU screen: noisy +2.000% median sink-wall saving, semantic ZIP parity, no live adoption or measured production gain |
+| [Persistent Stockfish scalar cost](2026-09-29-sf-scalar-persistent-cost.md) | Frozen 10k-row persistent one-thread d6/d8/d10 cost/agreement screen with cold TT per row/depth and zero corpus/training credit |
+| [Ceres stored-feed-once root preparation](2026-09-29-ceres-root-feedonce.md) | Tracked CPU root binder exercised by saved-game readback, exact 2,022-root replay parity and narrow 16.81% saved-root prep saving; fresh actor adoption pending |
+| [D-lite historical donor adaptation](2026-09-30-sf-dlite-historical-donor-adapter.md) | Main-archived patch against pinned historical game-epoch runtime; exact donor/paired-pack/consumed-batch gates CPU-reviewed, no training or strength credit |
+| [Initialized attack composition](2026-09-26-bend-initialized-attacked.md) | Three source contracts composing initialized six-piece masks, attacked and singleton in_check; complete-array results; target-centred geometry, not complete castling legality |
+| [Attack state reconciliation](2026-09-26-bend-attack-state-reconciliation.md) | Preserves all15 saved alternative files; catches delayed and unused-slot table loss; no duplicate public-law counts |
 | [Initialized non-slider geometry](2026-09-26-bend-initialized-leaper-geometry.md) | Three source contracts connect coordinate masks to actual extras storage and initialized pawn/knight/king queries; full attacked composition remains separate |
 | [Attack witnesses and king selection](2026-09-26-bend-attack-witness.md) | Actual attack aggregation equals per-square witnesses; explicit singleton-king in_check bridge; mask geometry remains separate; modular180/543 |
 | [Generated castling mandatory checks](2026-09-26-bend-castle-safety.md) | Six source laws prove required child-check execution and complete generator equivalence to explicit forced castling checks; four-mode native qualification; modular177/524, lint unqualified |
@@ -22,6 +28,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Public en-passant updates](2026-09-25-bend-en-passant-update.md) | Two actual flag1 update/partition laws promoted unchanged,17 controls and four native modes; modular152/453,not move legality |
 | [Ordinary moves and promotions](2026-09-25-bend-move-promotion-publication.md) | Publishes both saved suites unchanged; fresh9-law/35-control qualification and complete native Board updates; modular150/436,not move legality |
 | [Ceres fixed32 WSL recovery](2026-09-30-ceres-wsl-recovery.md) | Resumed exact chunks 0–6 after WSL crash; first new chunk 7 source, strict, ledger and archive PASS with zero admission; current boot uses bounded shared physical I/O telemetry |
+| [Ceres fixed32 source timing observation](2026-09-30-ceres-source-phase-observation.md) | Closed run-8 phase evidence, one independently replayed ZIP shard, and a CPU-checked observation-only successor patch; no live change or corpus credit |
 | [SF / BT4 / Ceres teacher adjudication](2026-09-11-teacher-adjudication-audit.md) | Broader saved-search audit of policy regret, ranking constraints, routing, optional Ceres complementarity/value calibration and a bounded Ceres-on-G10 selection; no inference/training result |
 | [Promotion and en-passant updates](2026-09-25-bend-special-move-updates.md) | Four new actual special-update contracts plus requalified saved ordinary suite; modular150/436; castling and legal-move conditions remain separate |
 | [Accepted parser frontiers](2026-09-25-bend-parser-frontier.md) | Four actual-source laws derive fresh bounded insertion and accepted-placement consistency; modular141/401 with separate exact-source compiler recovery |
@@ -41,6 +48,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Ceres live128 proof-writer A/B/B/A](2026-09-29-ceres-live128-writer-abba.md) | Four full-prefix 128-game arms, exact semantic/all-attempt parity and 8.75% source-stage saving; no full-pipeline or 500M gain claim |
 | [Full 58,820-row BT4/Ceres batch profiles](2026-09-29-full58820-batch-profiles.md) | Separate audited BT4 and Ceres four-arm fixed-input screens: 28.558% and 74.070% call-core savings; numerical quality bounds, no integrated throughput or corpus credit |
 | [D-lite scalar SF value plan](2026-09-29-dlite-scalar-value-plan.md) | Prospective separate value contrast, representative one/eight-engine cost screen and shared CPU/GPU month-budget limits |
+| [Selected-E D-lite value preregistration](sf_dlite_selected_e_value_prereg_20260930.md) | Frozen 2.5M-row value-only contrast, direct depth-12 target audit, matched donor adaptation and 576-pair strength decision; no training or Elo result |
+| [D-lite depth-8 label operations](2026-09-30-sf-dlite-d8-label-operations.md) | Three bounded full-label attempts stopped at conservative RSS guards; failed roots and sealed prefixes preserved with zero label, target, training or Elo credit |
 | [D-lite small-bank scalar path](2026-09-29-sf-dlite-smallbank-path.md) | Audited 128-row d8 raw labels and 92-row B/C selected-value attachment smoke; no full-128 target, corpus, training or Elo credit |
 | [Tracked Ceres saved-game source fixture](2026-09-29-ceres-saved-game-source-fixture.md) | Main CPU producer/readback entrypoint exercised on one 47-row saved natural game; complete feature/feed/legal/terminal parity, no generation or throughput credit |
 | [Ceres stored-feed batch conversion](2026-09-29-ceres-stored-feed-batch.md) | CPU-only exact-byte feed proof on eight archived calls plus 512 stratified rows; 77.875% narrow conversion-stage reduction, no integrated throughput credit |
