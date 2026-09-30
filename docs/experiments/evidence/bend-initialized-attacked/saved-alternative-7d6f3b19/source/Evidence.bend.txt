@@ -1,0 +1,19 @@
+# Internal proof parameters, discharged by actual initialization at the public boundary.
+import Base
+import ./Spec.bend as S
+import ../../../legal_probe/Chess.bend as Chess
+
+def query(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+sq: Nat,+side: Bool,+occ: U64,+k: S.Piece) -> Type:
+  {Chess.attack(S.tag(k),S.init(d,seed,n,extra),U32.from_nat(sq),Bool.to_u32(side),occ) ==
+    (S.init(d,seed,n,extra),S.mask(k,sq,side,occ)) : Array<U64> & U64}
+
+def pawn(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+by: Bool) -> Type:
+  {Chess.attack(0,S.init(d,seed,n,extra),U32.from_nat(sq),U32.xor(Bool.to_u32(by),1),Chess.occupied(b)) ==
+    (S.init(d,seed,n,extra),S.mask(S.Pawn{},sq,Bool.not(by),Chess.occupied(b))) : Array<U64> & U64}
+
+def bundle(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+sq: Nat,+by: Bool) -> Type:
+  pawn(d,seed,n,extra,b,sq,by) &
+  (query(d,seed,n,extra,sq,by,Chess.occupied(b),S.Knight{}) &
+  (query(d,seed,n,extra,sq,by,Chess.occupied(b),S.King{}) &
+  (query(d,seed,n,extra,sq,by,Chess.occupied(b),S.Rook{}) &
+   query(d,seed,n,extra,sq,by,Chess.occupied(b),S.Bishop{}))))
