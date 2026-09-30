@@ -106,6 +106,35 @@ def test_corrupted_or_extra_frame_refuses_even_with_rewritten_receipt(
         frames.pack_frame(source, root, spec)
 
 
+def test_oversized_expansion_refuses_even_with_rewritten_receipt(tmp_path: Path) -> None:
+    source, spec = _block(tmp_path, 0, 1)
+    root = tmp_path / "frames"
+    frames.pack_frame(source, root, spec)
+    oversized = zstd.ZstdCompressor().compress(b"x" * (frames.MAX_RAW_BYTES + 1))
+    _frame_path(root, 0).write_bytes(oversized)
+    _rewrite_receipt(root, 0, oversized)
+    with pytest.raises(frames.FrameError, match="Zstd content size"):
+        frames.pack_frame(source, root, spec)
+
+
+def test_forged_small_content_size_refuses_before_expansion() -> None:
+    compressed = zstd.ZstdCompressor(write_checksum=True).compress(b"x" * 100_000)
+    assert compressed[4] & 0xE0 == 0xA0  # Four-byte content size, single segment.
+    forged = compressed[:5] + (1).to_bytes(4, "little") + compressed[9:]
+    assert zstd.get_frame_parameters(forged).content_size == 1
+    with pytest.raises(frames.FrameError):
+        frames._decode(forged, 1)
+
+
+def test_oversized_window_header_refuses_before_decompression() -> None:
+    compressed = zstd.ZstdCompressor(write_checksum=True).compress(b"x" * 100_000)
+    assert compressed[4] & 0x20  # Single-segment frame has no window descriptor.
+    forged = compressed[:4] + bytes([compressed[4] & ~0x20, 0x80]) + compressed[5:]
+    assert zstd.get_frame_parameters(forged).window_size > frames.MAX_RAW_BYTES
+    with pytest.raises(frames.FrameError, match="Zstd window cap"):
+        frames._decode(forged, 100_000)
+
+
 def test_changed_source_schema_or_code_claim_refuses(tmp_path: Path,
                                                       monkeypatch: pytest.MonkeyPatch) -> None:
     source, spec = _block(tmp_path, 0, 3)

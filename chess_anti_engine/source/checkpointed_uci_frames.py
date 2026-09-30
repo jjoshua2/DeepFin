@@ -158,6 +158,9 @@ def _claim(spec: FrameSpec) -> dict[str, Any]:
         "write_content_size": True,
         "write_checksum": True,
         "write_dict_id": False,
+        "decoder_max_window_bytes": MAX_RAW_BYTES,
+        "decoder_max_output_bytes": MAX_RAW_BYTES,
+        "decoder_allow_extra_data": False,
         "max_rows": MAX_ROWS,
         "max_raw_bytes": MAX_RAW_BYTES,
     }
@@ -176,14 +179,20 @@ def _receipt(claim: dict[str, Any], frame: bytes) -> dict[str, Any]:
 
 
 def _decode(frame: bytes, expected_raw_bytes: int) -> bytes:
+    _need(type(expected_raw_bytes) is int and
+          0 < expected_raw_bytes <= MAX_RAW_BYTES,
+          "decoded byte cap")
     _need(0 < len(frame) <= MAX_FRAME_BYTES, "compressed frame byte cap")
     try:
-        size = zstd.frame_content_size(frame)
-        _need(size == expected_raw_bytes, "Zstd content size")
-        decoder = zstd.ZstdDecompressor().decompressobj()
-        raw = decoder.decompress(frame)
-        _need(decoder.eof and not decoder.unused_data and
-              not decoder.unconsumed_tail, "trailing or truncated Zstd frame")
+        header = zstd.get_frame_parameters(frame)
+        _need(header.content_size == expected_raw_bytes, "Zstd content size")
+        _need(header.window_size <= MAX_RAW_BYTES, "Zstd window cap")
+        raw = zstd.ZstdDecompressor(
+            max_window_size=MAX_RAW_BYTES // 1024,
+        ).decompress(
+            frame, max_output_size=MAX_RAW_BYTES,
+            read_across_frames=False, allow_extra_data=False,
+        )
     except zstd.ZstdError as exc:
         raise FrameError("corrupt Zstd frame") from exc
     _need(len(raw) == expected_raw_bytes, "decoded byte count")
