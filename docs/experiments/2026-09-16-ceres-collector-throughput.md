@@ -28,7 +28,7 @@ The complete pilot has a 900-second bound, collection allocations of 380 and 300
 
 Require bitwise equality of every payload array and matching source hashes. Record wall rows/sec, synchronous inference time, first-call CUDA provider proof and sampled NVML utilization. The four-shard arm runs first; this is a bounded engineering comparison, not a randomized estimate of the causal effect of grouping.
 
-Descriptor: `~/scratchpad/bt4_joint20/takeover_20260916/ceres_throughput/pilot_v1/registered_command.json`, SHA256 `c8d4b979d56854f4b5ede827ff525efd678a58201548edfed9de88242ead81d1`.
+Descriptor: `~/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_throughput/pilot_v1/registered_command.json`, SHA256 `c8d4b979d56854f4b5ede827ff525efd678a58201548edfed9de88242ead81d1`.
 
 ## Completed results
 
