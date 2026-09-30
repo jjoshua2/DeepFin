@@ -13,6 +13,11 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [Ceres owner target and compact-order correction](2026-09-30-ceres-owner-target-and-compact-order.md) | CPU source-game target reconstruction, one real selected-row overlap and a zero-credit diagnostic legal-order fix; no saved-call or production gain claim |
+| [Persistent Stockfish scalar cost](2026-09-29-sf-scalar-persistent-cost.md) | Frozen 10k-row persistent one-thread d6/d8/d10 cost/agreement screen with cold TT per row/depth and zero corpus/training credit |
+| [Ceres stored-feed-once root preparation](2026-09-29-ceres-root-feedonce.md) | Tracked CPU root binder exercised by saved-game readback, exact 2,022-root replay parity and narrow 16.81% saved-root prep saving; fresh actor adoption pending |
+| [D-lite historical donor adaptation](2026-09-30-sf-dlite-historical-donor-adapter.md) | Main-archived patch against pinned historical game-epoch runtime; exact donor/paired-pack/consumed-batch gates CPU-reviewed, no training or strength credit |
+| [Initialized attack composition](2026-09-26-bend-initialized-attacked.md) | Three source contracts composing initialized six-piece masks, attacked and singleton in_check; complete-array results; target-centred geometry, not complete castling legality |
+| [Attack state reconciliation](2026-09-26-bend-attack-state-reconciliation.md) | Preserves all15 saved alternative files; catches delayed and unused-slot table loss; no duplicate public-law counts |
 | [Initialized non-slider geometry](2026-09-26-bend-initialized-leaper-geometry.md) | Three source contracts connect coordinate masks to actual extras storage and initialized pawn/knight/king queries; full attacked composition remains separate |
 | [Attack witnesses and king selection](2026-09-26-bend-attack-witness.md) | Actual attack aggregation equals per-square witnesses; explicit singleton-king in_check bridge; mask geometry remains separate; modular180/543 |
 | [Generated castling mandatory checks](2026-09-26-bend-castle-safety.md) | Six source laws prove required child-check execution and complete generator equivalence to explicit forced castling checks; four-mode native qualification; modular177/524, lint unqualified |
