@@ -1,0 +1,33 @@
+{
+  "base": "d8de6e46fd04c4b34385d754224df37722a6a118",
+  "candidate_tree": "1b7a58263f7f5c17c8acb88b9426bfe05b73279f",
+  "patch_sha256": "d1dc1397b645af0647010e003791c94bec360ef6f31dd7a897a7ed103faf0c4f",
+  "changed_files": [
+    "docs/experiments/2026-09-22-bend-fill-intervals.md",
+    "docs/experiments/evidence/bend-fill-intervals/local-consumer-first.log.json",
+    "docs/experiments/evidence/bend-fill-intervals/local-consumer-first.status.json",
+    "docs/experiments/evidence/bend-fill-intervals/local-controls-final.json",
+    "docs/experiments/evidence/bend-fill-intervals/local-controls-first.log.json",
+    "docs/experiments/evidence/bend-fill-intervals/local-local-lint.log.json",
+    "docs/experiments/evidence/bend-fill-intervals/local-native.json",
+    "docs/experiments/evidence/bend-fill-intervals/local-source-formatting.json",
+    "docs/experiments/evidence/bend-fill-intervals/native-overrun-mutation.json",
+    "native/bend_engine/standalone/proofs/fill_interval/Actual.bend",
+    "native/bend_engine/standalone/proofs/fill_interval/Arithmetic.bend",
+    "native/bend_engine/standalone/proofs/fill_interval/Block.bend",
+    "native/bend_engine/standalone/proofs/fill_interval/Certified.bend",
+    "native/bend_engine/standalone/proofs/fill_interval/Clear.bend",
+    "native/bend_engine/standalone/proofs/fill_interval/LAWS.bend",
+    "native/bend_engine/standalone/proofs/fill_interval/Naturals.bend",
+    "native/bend_engine/standalone/proofs/fill_interval/PROOF.bend",
+    "native/bend_engine/standalone/proofs/fill_interval/README.md",
+    "native/bend_engine/standalone/proofs/fill_interval/Spec.bend",
+    "native/bend_engine/standalone/proofs/fill_interval/Sum.bend",
+    "native/bend_engine/standalone/proofs/fill_interval/consumer.bend",
+    "native/bend_engine/standalone/proofs/fill_interval/focused.js",
+    "native/bend_engine/standalone/proofs/fill_interval/probe.bend",
+    "native/bend_engine/standalone/proofs/fill_interval/verify.js",
+    "native/bend_engine/standalone/proofs/fill_interval/verify_native.js"
+  ],
+  "source_entries": 269
+}
