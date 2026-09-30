@@ -527,6 +527,22 @@
     "threads_per_engine": 1,
     "trial_hash_mib": 8
   },
-  "schema": "sf_scalar_persistent_cost_readout_evidence_v1",
+  "queued100_correctness": {
+    "source_manifest_sha256": "a5ecb97ecb6e6f7b657e7f3f8659aeacba446dca19915ec98cfc0171ef8eab4f",
+    "physical_manifest_sha256": "4b78c68ae068df3a08aaa3d07ca6da95ccf6dd86203180a07f178a10ad2ffa71",
+    "plan_sha256": "2c9e085b2efcfc0e23fbbccb0eb009eb32aaeccb0637d637c48b23defb57f396",
+    "roster_sha256": "81335c027137b7368ed9be46ca5cab322e68eb3c286cc0c6aecec3ff24b28e70",
+    "frozen_hash8_control_sha256": "912b92366c62d125276413dd36e7fd1c77b4baaebc876475433290a1597b1e9e",
+    "complete_sha256": "d3f50350e6eba2dfd52201a63e3bc332014b9985cbfe01e3c52b31de54e703dc",
+    "independent_audit_sha256": "0edf9d97b786356ec996ac0e511216d0d5c57990b1c84c9b8536fda017928fd2",
+    "rows": 100,
+    "depths": [6, 8, 10],
+    "observations_per_route": 300,
+    "score_dictionary_differences": 0,
+    "independently_checked_raw_observations": 600,
+    "independent_d_calibration_tolerance": 0.000001,
+    "scope": "Serial versus queued readyok protocol and frozen Hash8 control numerical parity on exact100 rows; elapsed_seconds_safety_only is not a throughput measurement; zero corpus or strength credit"
+  },
+  "schema": "sf_scalar_persistent_cost_readout_evidence_v2",
   "status": "COST_AND_PROXY_SCREEN_ZERO_CORPUS_ELO_CREDIT"
 }
