@@ -14,7 +14,6 @@ import os
 import stat
 import zipfile
 from dataclasses import dataclass
-from hashlib import blake2b
 from pathlib import Path
 from typing import Any, cast
 
@@ -24,10 +23,9 @@ import numpy as np
 import zarr
 from numcodecs import Blosc
 
-from chess_anti_engine.encoding.ceres_tpg import stored_x_to_ceres_tpg_bytes
 from chess_anti_engine.encoding.encode import encode_position
-from chess_anti_engine.moves.leela_index import compact_index_for_move, leela_index_for_move
 from chess_anti_engine.selfplay.bt4_outcome import decide_bt4_outcome
+from chess_anti_engine.source.ceres_root_input import bind_undecided_ceres_root
 
 ARRAY_NAMES = ("x", "value", "value2", "legal_offsets", "legal_compact",
                "legal_leela", "legal_logits")
@@ -174,8 +172,6 @@ def _check_game(
         board.push_uci(uci)
         history.append(uci)
     _need(board.fen() == meta["initial_fen"], "initial history/FEN mismatch")
-    feeds = stored_x_to_ceres_tpg_bytes(
-        arrays["x"], input_history_encoding="lc0_root_legacy_meta", history_rep_fix=True)
     for i, row in enumerate(rows):
         if is_syzygy:
             assert syzygy_path is not None
@@ -191,33 +187,35 @@ def _check_game(
         expected_x = encode_position(
             board, input_history_encoding="lc0_root_legacy_meta",
             input_extra_features="v2_threats",
-        ).astype(np.float16)
-        _need(np.array_equal(x, expected_x)
+        )
+        prepared = bind_undecided_ceres_root(
+            board, expected_x, slot_id=meta["game_id"], ply_index=i,
+            input_history_encoding="lc0_root_legacy_meta",
+            input_extra_features="v2_threats", history_rep_fix=True)
+        _need(np.array_equal(x, prepared.x_stored)
               and row["row_index"] == i and row["ply_index"] == i
               and row["game_id"] == meta["game_id"]
               and row["source_namespace"] == meta["source_namespace"]
               and row["source_shard"] == meta["source_shard"]
-              and row["root_fen"] == board.fen()
+              and row["root_fen"] == prepared.fen
               and row["pov_white"] is bool(board.turn)
               and row["history_stack_sha256"] == _sha(_canonical(history))
-              and row["x_stored_sha256"] == _sha(x.tobytes())
-              and row["stored_input_key"] == blake2b(
-                  np.ascontiguousarray(x, dtype=np.float32).tobytes(),
-                  digest_size=16).hexdigest()
-              and row["feed_sha256"] == _sha(feeds[i].tobytes()),
+              and row["x_stored_sha256"] == prepared.x_stored_sha256
+              and row["stored_input_key"] == prepared.stored_input_key
+              and row["feed_sha256"] == prepared.feed_sha256,
               f"saved game row/input/history/feed mismatch at {i}")
         lo, hi = map(int, offsets[i:i + 2])
         moves = row["legal_moves_uci_sorted"]
+        sorted_legal = sorted(zip(prepared.legal_moves, prepared.compact_indices,
+                                  prepared.leela_indices, strict=True),
+                              key=lambda item: item[1])
         _need(len(moves) == hi - lo and len(set(moves)) == len(moves)
-              and set(moves) == {move.uci() for move in board.legal_moves}
+              and moves == [move.uci() for move, _, _ in sorted_legal]
               and 0 <= row["played_sorted_index"] < len(moves)
               and moves[row["played_sorted_index"]] == row["played_move_uci"],
               f"saved game legal moves differ at {i}")
-        parsed = [chess.Move.from_uci(uci) for uci in moves]
-        compact = np.asarray([compact_index_for_move(board, move) for move in parsed],
-                             dtype=np.uint16)
-        leela = np.asarray([leela_index_for_move(board, move) for move in parsed],
-                           dtype=np.uint16)
+        compact = np.asarray([index for _, index, _ in sorted_legal], dtype=np.uint16)
+        leela = np.asarray([index for _, _, index in sorted_legal], dtype=np.uint16)
         _need(np.array_equal(compact, arrays["legal_compact"][lo:hi])
               and np.array_equal(leela, arrays["legal_leela"][lo:hi])
               and bool(np.all(np.diff(compact.astype(np.int32)) > 0)),
