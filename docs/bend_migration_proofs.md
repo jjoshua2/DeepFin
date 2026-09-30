@@ -1,5 +1,43 @@
 # Bend migration and proof inventory
 
+## Latest P3 ordinary, promotion and en-passant updates
+
+Hosted run **36160654909** passed both focused source gates, all35 controls across them, both four-mode native suites and four behavioral mutations, original compiler checks and unchanged repository lint on source `1c45eae81922a6364cc98b01163e279036d799b9`.
+
+The saved five ordinary-update contracts are now hosted-qualified with four new typed-promotion and en-passant contracts. Exact complete Board updates and partition preservation use real Chess.make_move, clearing and insertion producers. Typed promotion means tags1..4/flag0; en-passant means flag1/promotion0 with the actual destination XOR8 capture mask. Legal sources, pawn ranks, victim conditions, king safety, metadata correctness and castling remain separate. Modular150/436 combines newly executed9/35 with exact retained141/401, not a full aggregate run. No application code migrated from Python. See [the dated record](experiments/2026-09-25-bend-special-move-updates.md).
+
+## Latest P3 initialized parser frontier
+
+Qualification combines the passed four-law/17-control source gate from run36150116903 with fresh native/compiler/lint success in recovery run36150660570, both on exact source tree efa431703a1d47208655595f816a3008d0c4a27a. Published source commit: `be5afc6308d159d52f42b2fcccb59a9c20109b4c`.
+
+The frontier suite derives bounded cursors, empty unvisited squares and board-partition consistency from actual initialized placement traversal. Live typed piece targets are fresh and below64; every Some placement result is consistent. Raw true flags on arbitrary initial states are insufficient, and rejected temporary Boards need not remain consistent. Modular141/401 retains exact parent137/384 rather than executing the whole wrapper.
+
+See [the dated readout](experiments/2026-09-25-bend-parser-frontier.md) for the retained Clang18 warning failure, unchanged-source recovery and counts. Full FEN semantics, exact intended contents, metadata legality, reachability and move operations remain separate. No Python application responsibility moved into Bend.
+
+## Latest P3 placement-parser prefix foundation
+
+Hosted run **36144541680** passes the five-law focused source gate and all17 controls, four native complete-state modes and both actual-code corruption controls, original compiler source/pin checks and unchanged repository lint on source `c3e1fe63d48790859685dc91eabf9012c2378495`.
+
+The parser suite proves full-Layout concatenation composition, rejection after invalid prefixes, validity of every prefix of an accepted traversal, unchanged metadata and exact typed piece transitions. It refers to the actual Position parser, not just a surrogate model. All five laws are universal over their stated raw input domains.
+
+Qualification is modular137/384 with exact132/367 parent evidence retained; the full aggregate did not run. This is not parser-wide freshness, partition preservation, six-field FEN validity, legal reachability or rollback of raw rejected layouts. The consumer explicitly preserves the rejected-input mutation counterexample. Next is cursor/address separation on accepted paths. See [the readout](experiments/2026-09-25-bend-parser-prefix-safety.md). Prior snapshot lowering and closed-builder limits remain unchanged; no application responsibility moved from Python.
+
+## Latest P3 whole-board abstraction and ordering
+
+Hosted run **36085950814** passes the five-law focused source gate and all17 controls, four native actual-observation modes and both corruption checks, original compiler source/pin tests and unchanged repository lint on source `92737251af190ebddba5b83d146e462ae1049ec6`. The separately reproduced structural snapshot C-lowering limitation remains unresolved.
+
+The abstraction suite now reconstructs the complete actual consistent Board, including eight bitboards and all three metadata fields, from64 independent square observations. Equal snapshots identify equal consistent Boards; every bounded snapshot square agrees with the existing actual-square abstraction. This closes the pointwise-to-whole-Board left-inverse step, not unrestricted Snapshot bijection or legal-position validity. The explicit empty-square law from the saved alternate decode candidate is retained as a checked consequence.
+
+Source qualification is modular132/367 with the exact127/350 parent retained; the full wrapper was not executed. Native tests reconstruct actual decoder observations externally, not by running structural Spec.observe/restore. The direct structural probe still fails the pinned compiler C-lowering arity limit and is explicitly unqualified. See [the dated readout](experiments/2026-09-24-bend-whole-board-roundtrip.md). Parser freshness and removal/move invariants are the next P3 obligations; no application responsibility moved from Python.
+
+## Latest P3 occupied-decoder correspondence
+
+Hosted run **36083420058** passes all four universal laws, importing consumer, eighteen classified controls, four native modes and three actual corruption witnesses, original compiler checks and unchanged whole-repository lint on source `4c5232cc1e6fceb8adc66dcc2dd5479b373ead3f`.
+
+The decoder suite projects the existing global partition to every bounded square, proves independent classify/encode reconstruction of all eight kind/color bits, and connects actual Chess.piece/occupied/white observations to that abstract cell. Raw decoding requires actual occupancy; the explicit guarded observation is proof-only, not a production API change. Initial-board consistency and fresh-insertion producers are consumed without assumed answer tags.
+
+All four new contracts are universal. Exact-source parent123/332 plus freshly executed4/18 gives modular127/350 coverage, not an executed full chain. Nine semantic, eight policy and one synthetic controls remain classified. This advances pointwise abstract-square correspondence only: whole-board bijection, parser freshness, valid metadata, removal/moves and legality remain separate. See [the readout](experiments/2026-09-24-bend-occupied-decoder.md) and committed receipts. Existing P2 boundary limitations are unchanged; no Python application responsibility newly moved.
+
 ## Latest P3 board-representation foundation
 
 Hosted run **36080761492** passes all six public laws, importing consumer, seventeen controls, four native modes with full-Board comparisons, two compiled/executed corruption controls, original compiler checks and unchanged whole-repository lint on source `ad0c9e379a0b1bfbb91b7c5d7755e22668bf1004`.
