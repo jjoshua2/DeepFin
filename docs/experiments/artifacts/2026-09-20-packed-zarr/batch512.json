@@ -2,7 +2,7 @@
   "status": "PASS_MATCHED_PACKED_ZARR_SAMPLER",
   "runs": [
     {
-      "root": "/home/josh/chess-artifacts/operations/packed-exact-qualification-20260920/batch512/directory",
+      "root": "<artifact-root>/operations/packed-exact-qualification-20260920/batch512/directory",
       "packed_opt_in": false,
       "plan": {
         "mode": "game_epoch",
@@ -83,5 +83,10 @@
     }
   ],
   "scope": "Exact sampler only; fixed order, uncontrolled caches; no trainer/GPU or live adoption",
-  "elapsed_seconds": 55.96906063403003
+  "elapsed_seconds": 55.96906063403003,
+  "publication": {
+    "note": "Only the maintainer home-root label is redacted. Measurements and original path-sensitive corpus/plan hashes are unchanged; this is not a new qualification.",
+    "source_commit": "3f003637584b5ee5ab08b03fb301cc1ae1b19756",
+    "source_git_blob": "9fa1a0c73d10cc60f8a0a2ec6c686f4142b5f4cc"
+  }
 }

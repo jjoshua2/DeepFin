@@ -38,7 +38,10 @@ all array accesses inside that context; unmanaged lazy ZIP reads are refused.
 ## Qualification without training adoption
 
 Use separately prepared immutable directory and packed roots with the same shard
-roster and source partitions. The bounded CPU command compares every ordered batch:
+roster and source partitions. Resolved control targets must be directories and
+resolved packed targets must be regular `.zarr.zip` files; aliases cannot make
+both arms read the same representation. Matching-format symlinks are supported.
+The bounded CPU command compares every ordered batch:
 
 ```bash
 python scripts/qualify_packed_zarr_epoch.py \
@@ -58,9 +61,13 @@ The report includes separate planning time, batch waits, consumer wall time,
 digest overhead, plan identities and matching ordered tensor hashes. This is a
 fixed-order, cache-affected exact-sampler measurement, not cold-disk bandwidth or
 full training throughput; mirror/collation execution is not exercised. The CLI
-uses two allowed CPU cores, nice19, no GPU, a 16GiB RSS cap and 32GiB host-memory
-reserve. It observes `STOP` beside the fresh result file. No corpus files are
-written, and a matching result does not adopt the format in a live job.
+is Linux-only and uses two allowed CPU cores, nice19 and no GPU. It samples
+process RSS from `/proc/self/statm` and host `MemAvailable` from `/proc/meminfo`
+every 0.5 seconds, stopping above 16GiB RSS or below 32GiB available host memory.
+Unavailable or malformed measurements fail closed. These sampled limits are not
+a hard allocation cap or a cgroup-aware memory guarantee. It observes `STOP`
+beside the fresh result file. No corpus files are written, and a matching result
+does not adopt the format in a live job.
 
 ## Offline training CLI
 
@@ -77,8 +84,10 @@ wide inputs/policies remain lazy until the sampler admits the working set.
 The same flag reaches every later exact epoch, and
 `realized_replay_after_guard.applied.allow_packed_zarr` records the realized mode.
 The loss, optimizer, training tensor path and directory-only defaults are unchanged.
-This main-based launcher does not yet expose the frozen runtime's recovery CLI;
-future recovery integration must carry this option into its sampler reconstruction.
+The launcher's rolling recovery checkpoints retain their existing behavior.
+They save trainer state but do not persist the exact sampler cursor or prefetch
+state. Packed admission does not qualify exact interrupted-epoch resume; a fresh
+sampling pass still needs explicit corpus, storage and seed admission.
 No existing frozen run is converted by this option.
 
 Root-level `row_provenance.npz` from derivation may be retained as opaque provenance.

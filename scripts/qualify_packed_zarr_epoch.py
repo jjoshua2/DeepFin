@@ -77,6 +77,13 @@ def qualify(directory: Path, packed: Path, options: dict[str, Any]) -> dict[str,
         or any(not p.name.endswith(".zarr.zip") for p in archives)
     ):
         raise ValueError("qualification requires identical directory/ZIP shard rosters")
+    for path in ordinary:
+        if not path.resolve(strict=True).is_dir():
+            raise ValueError("qualification directory control requires directory shards")
+    for path in archives:
+        target = path.resolve(strict=True)
+        if not target.is_file() or not target.name.endswith(".zarr.zip"):
+            raise ValueError("qualification packed arm requires regular .zarr.zip files")
     results = [
         measure(directory, packed=False, options=options),
         measure(packed, packed=True, options=options),
@@ -93,6 +100,19 @@ def qualify(directory: Path, packed: Path, options: dict[str, Any]) -> dict[str,
         "runs": results,
         "scope": "Exact sampler only; fixed order, uncontrolled caches; no trainer/GPU or live adoption",
     }
+
+
+def _check_memory() -> None:
+    """Keep the Linux RSS cap and host reserve without optional dependencies."""
+    from scripts.training_host_memory import require_available
+
+    require_available(32)
+    fields = Path("/proc/self/statm").read_text().split()
+    page_bytes = os.sysconf("SC_PAGE_SIZE")
+    if len(fields) < 2 or not fields[1].isdecimal() or page_bytes <= 0:
+        raise RuntimeError("qualification RSS measurement unavailable")
+    if int(fields[1]) * page_bytes > 16 * 2**30:
+        raise RuntimeError("qualification RSS exceeds 16 GiB")
 
 
 def main() -> None:
@@ -128,7 +148,6 @@ def main() -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     os.sched_setaffinity(0, sorted(os.sched_getaffinity(0))[:2])
     os.nice(19)
-    import psutil
     from numcodecs.blosc import set_nthreads
 
     set_nthreads(2)
@@ -136,10 +155,9 @@ def main() -> None:
     done = threading.Event()
 
     def check():
+        _check_memory()
         if (
             time.monotonic() - start > a.seconds
-            or psutil.Process().memory_info().rss > 16 * 2**30
-            or psutil.virtual_memory().available < 32 * 2**30
             or (a.result.parent / "STOP").exists()
         ):
             raise RuntimeError("qualification time/memory/STOP limit")

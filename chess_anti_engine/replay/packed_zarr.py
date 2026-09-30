@@ -22,7 +22,7 @@ _NAME = re.compile(r"shard_(\d+)\.zarr(?:\.zip)?\Z")
 
 
 def is_packed(path: Path) -> bool:
-    return path.name.endswith(SUFFIX)
+    return path.name.endswith(SUFFIX) or path.resolve().name.endswith(SUFFIX)
 
 
 def shard_paths(root: Path) -> list[Path]:

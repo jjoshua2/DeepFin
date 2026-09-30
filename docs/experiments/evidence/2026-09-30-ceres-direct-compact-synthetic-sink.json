@@ -1,0 +1,186 @@
+{
+  "archive_bytes_per_arm": [
+    47210
+  ],
+  "arm_count": 26,
+  "artifact_root": "operations/ceres-direct-compact-synthetic-record-20260930",
+  "artifact_seal_sha256": "c5fb0199f4b16e3d140c0d7e086298d2bef3d60553e5de60b59ed818dea5a12b",
+  "benchmark_sha256": "9c640a9586a94df7c74f405b58677d633fc84637a09636e0c9644369f37d6804",
+  "component_medians": {
+    "accept_seconds": {
+      "baseline_median_seconds": 0.019830000497677247,
+      "candidate_median_seconds": 0.019174142496922286,
+      "median_difference_seconds": 0.0006558580007549608
+    },
+    "flush_seconds": {
+      "baseline_median_seconds": 0.043105554999783635,
+      "candidate_median_seconds": 0.04346993350009143,
+      "median_difference_seconds": -0.00036437850030779373
+    },
+    "independent_readback_seconds": {
+      "baseline_median_seconds": 0.02772180049942108,
+      "candidate_median_seconds": 0.027515357000083895,
+      "median_difference_seconds": 0.0002064434993371833
+    },
+    "ledger_phase.external_verify": {
+      "baseline_median_seconds": 0.0,
+      "candidate_median_seconds": 0.0,
+      "median_difference_seconds": 0.0
+    },
+    "ledger_phase.fast_observe": {
+      "baseline_median_seconds": 0.0002267774980282411,
+      "candidate_median_seconds": 0.0002315184974577278,
+      "median_difference_seconds": -4.740999429486692e-06
+    },
+    "ledger_seconds": {
+      "baseline_median_seconds": 0.00034129400046367664,
+      "candidate_median_seconds": 0.00034707300073932856,
+      "median_difference_seconds": -5.779000275651924e-06
+    },
+    "phase.accept_replay_charge": {
+      "baseline_median_seconds": 0.0022213419961190084,
+      "candidate_median_seconds": 0.002152831497369334,
+      "median_difference_seconds": 6.85104987496743e-05
+    },
+    "phase.collect": {
+      "baseline_median_seconds": 0.011590451002120972,
+      "candidate_median_seconds": 0.01136363849400368,
+      "median_difference_seconds": 0.00022681250811729115
+    },
+    "phase.flush_aggregate": {
+      "baseline_median_seconds": 0.0007733804995950777,
+      "candidate_median_seconds": 0.0007718260021647438,
+      "median_difference_seconds": 1.5544974303338677e-06
+    },
+    "phase.flush_manifest_archive_hash": {
+      "baseline_median_seconds": 0.000930804000745411,
+      "candidate_median_seconds": 0.0009183955007756595,
+      "median_difference_seconds": 1.2408499969751574e-05
+    },
+    "phase.flush_member_hash": {
+      "baseline_median_seconds": 0.0020856234987149946,
+      "candidate_median_seconds": 0.0020503829982772004,
+      "median_difference_seconds": 3.524050043779425e-05
+    },
+    "phase.flush_rename": {
+      "baseline_median_seconds": 0.0002027395003096899,
+      "candidate_median_seconds": 0.00020082900300621986,
+      "median_difference_seconds": 1.910497303470038e-06
+    },
+    "phase.flush_verify": {
+      "baseline_median_seconds": 0.027052288998675067,
+      "candidate_median_seconds": 0.027307968499371782,
+      "median_difference_seconds": -0.00025567950069671497
+    },
+    "phase.flush_zip_write": {
+      "baseline_median_seconds": 0.01134404099866515,
+      "candidate_median_seconds": 0.01132316700204683,
+      "median_difference_seconds": 2.0873996618320234e-05
+    },
+    "phase.stored_feed_check": {
+      "baseline_median_seconds": 0.005738123496485059,
+      "candidate_median_seconds": 0.005551233000005595,
+      "median_difference_seconds": 0.00018689049647946376
+    },
+    "sink_wall_seconds": {
+      "baseline_median_seconds": 0.06309679449987016,
+      "candidate_median_seconds": 0.06299457000022812,
+      "median_difference_seconds": 0.00010222449964203406
+    }
+  },
+  "credit": {
+    "Elo": 0,
+    "corpus": 0,
+    "production_speedup": 0,
+    "target": 0,
+    "training": 0
+  },
+  "date": "2026-09-30",
+  "discard_metadata_sha256": [
+    "606dcec6181952e363c2c6e88c3911e597d0bcadb17f77dd861dae57b1a6efd4"
+  ],
+  "module_origins": {
+    "actor_game": "code/archived_scheduler/actor_game.py",
+    "fixture": "code/synthetic_fixture_v1/synthetic_screen.py",
+    "trajectory_digest": "code/archived_scheduler/trajectory_digest.py"
+  },
+  "output_tree_bytes": 1398699,
+  "pairs": [
+    {
+      "baseline_sink_seconds": 0.0637626764982997,
+      "block": 1,
+      "candidate_sink_seconds": 0.06149044850099017,
+      "fraction_saved": 0.035635706060270535
+    },
+    {
+      "baseline_sink_seconds": 0.06412473449927347,
+      "block": 2,
+      "candidate_sink_seconds": 0.061788615999830654,
+      "fraction_saved": 0.03643084868397056
+    },
+    {
+      "baseline_sink_seconds": 0.06259040299846674,
+      "block": 3,
+      "candidate_sink_seconds": 0.06578403399907984,
+      "fraction_saved": -0.05102429202590897
+    },
+    {
+      "baseline_sink_seconds": 0.06288110599962238,
+      "block": 4,
+      "candidate_sink_seconds": 0.08186608150026586,
+      "fraction_saved": -0.30191860017152844
+    },
+    {
+      "baseline_sink_seconds": 0.08057790800012299,
+      "block": 5,
+      "candidate_sink_seconds": 0.06299457000022812,
+      "fraction_saved": 0.218215369898509
+    },
+    {
+      "baseline_sink_seconds": 0.06528723199880915,
+      "block": 6,
+      "candidate_sink_seconds": 0.06500221450005483,
+      "fraction_saved": 0.0043655932412560074
+    }
+  ],
+  "peak_rss_bytes": "not recorded; 2 GiB cap enforced",
+  "raw_trajectory_sha256": [
+    "d1bcdd4f11c2e2db80554a48105b1978ab4517c480e31694d826bca054f886bd",
+    "13c61dae5e3c0b13febaf736495b28db6abc4d48263fdb68a24d7dae5791fc98",
+    "44cf0ec84112a36150d53f00d88b186560459c894622627bab680c0776e7442d",
+    "978105a745ec53ea7f4f83aeac7a4dbadd7781b5bf03e858f7c34c381b469d6c",
+    "5db5414779f23974db6004b53fc95848d5d4b858f0dc1c8a9e5df2d62ac08b4b",
+    "0ad6eecbf4be91513a8c6fd9f82c894ad8711859bd16fc763cdde0b516d132f7",
+    "bab55ca164109960b465907327921a22031882ca423375b748a9e80e0bb8b184",
+    "15dc988cc9cba3178715aaee948bca982c4239664c6a6c03b9e2687998a00b2d",
+    "34ffebed0603842aef46ac74e49aaef2b7aba1c77a5d91e6e64b0fce81fff7e5"
+  ],
+  "run01": "fixture version mismatch before first timed arm; preserved; no live Ceres bug",
+  "run08_context": {
+    "all_sink_eliminated_chunk_fraction_ceiling": 0.16057374941122457,
+    "all_sink_eliminated_source_fraction_ceiling": 0.22006912902511264,
+    "chunk_seconds": 935.80692077,
+    "sink_seconds": 150.26602599301168,
+    "source_seconds": 682.812835488
+  },
+  "schema": "ceres_direct_compact_synthetic_sink_readout_v1",
+  "scope": "same nine synthetic full-head records and 32 accepted rows per arm; no real strict/physical call ledger",
+  "shape_extrapolation_only": {
+    "illustrative_chunk_fraction_saved": 0.003211579305083358,
+    "illustrative_source_fraction_saved": 0.004401525548579897,
+    "median_synthetic_sink_fraction_saved": 0.020000649650763272,
+    "representative_throughput_qualified": false
+  },
+  "source_sha256": {
+    "code/archived_scheduler/actor_game.py": "b05b8f93c8e5254a23a6c57db0bd688964d9b2e6d318fd817495b8025e3a234a",
+    "code/archived_scheduler/bank_writer.py": "e1cff041847f6b744cd487ccf0493f9b5ed4276adc648a865bd94567f46c08e4",
+    "code/archived_scheduler/trajectory_digest.py": "40fb7a6522f3c4e81ad7ad3f9552dfed13a3817a03537f3cab29fdcdfd2efff2",
+    "code/compact_candidate_v1/compact_bank_writer.py": "271ed923ca8ff3b4e72685abad8d7c638439a9428f6192072446a8985c96e70c",
+    "code/compact_candidate_v1/memory_queue.py": "e844e425c0026f393107c701f88003bb010dee49669850fd72a3c4265b43a192",
+    "code/protocol_v2/baseline_instrumented.py": "bfea960e6df93816161ab598b92c039fb9fa6ecd7313654ebcaa3c59b7a0ce95",
+    "code/run08/memory_queue.py": "22c13154e58f64223497a9f99fde78af721293c95cdbd3e09e223b8819adcde6",
+    "code/synthetic_fixture_v1/synthetic_screen.py": "0f13cc509dfd443e36e8550fc39e42c64b3fe45a9cd13d028fc08567cb239929"
+  },
+  "status": "SYNTHETIC_CPU_ONLY_NO_LIVE_ADOPTION",
+  "timed_blocks": 6
+}

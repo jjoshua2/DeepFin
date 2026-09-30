@@ -1,0 +1,176 @@
+{
+  "focused_gate": "PASS",
+  "controls_gate": "PASS",
+  "consumer": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "new_law_count": 4,
+  "new_laws": [
+    "promotion_choice_roundtrip",
+    "promotion_choices_exact",
+    "promotion_make_move_exact_update",
+    "promotion_make_move_preserves_representation"
+  ],
+  "inherited_gate_run": false,
+  "consumer_seconds": 2.2706299390000004,
+  "negative_controls": [
+    {
+      "name": "actual-move-ignores-promotion",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Actual.bend",
+      "diagnostic_sha256": "99f97a8cbfe365d133486ee444d98870837e394ea2f6f9909dd0da858e5f193d",
+      "diagnostic_bytes": 17915,
+      "excerpt": "U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 1, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(bi, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 2, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(r, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 3, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(q, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 4, 5))))), 5)), Bool.pick(U32, Cmp.is_eq(U32.cmp(turn, 1)), 3, 12), 0)))), Bool.pick(U32, Bool.and(Cmp.is_eq(U32.cmp(Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(p, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 0, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(n, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 1, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(bi, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 2, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(r, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 3, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(q, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 4, 5))))), 0)), Cmp.is_eq(U32.cmp(U32.xor(src, dst), 16))), U32.div(U32.add(src, dst), 2), 64)}\nContext:\n- p      : U64\n- n      : U64\n- bi     : U64\n- r      : U64\n- q      : U64\n- k      : U64\n- w      : U64\n- bl     : U64\n- turn   : U32\n- rights : U32\n- ep     : U32\n- src    : U32\n- dst    : U32\n- c      : Spec.Choice\nLocation: unfold\n20 |   match b:\n21>|     case Chess.Board{p,n,bi,r,q,k,w,bl,turn,rights,ep}: {==}\n22 |"
+    },
+    {
+      "name": "actual-move-forces-queen",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Actual.bend",
+      "diagnostic_sha256": "0266b43413d88ffb24f27e8a73b0567b0a3d948f5b67079eba3a178a2bbe7fdb",
+      "diagnostic_bytes": 18371,
+      "excerpt": "U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 1, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(bi, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 2, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(r, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 3, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(q, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 4, 5))))), 5)), Bool.pick(U32, Cmp.is_eq(U32.cmp(turn, 1)), 3, 12), 0)))), Bool.pick(U32, Bool.and(Cmp.is_eq(U32.cmp(Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(p, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 0, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(n, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 1, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(bi, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 2, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(r, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 3, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(q, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 4, 5))))), 0)), Cmp.is_eq(U32.cmp(U32.xor(src, dst), 16))), U32.div(U32.add(src, dst), 2), 64)}\nContext:\n- p      : U64\n- n      : U64\n- bi     : U64\n- r      : U64\n- q      : U64\n- k      : U64\n- w      : U64\n- bl     : U64\n- turn   : U32\n- rights : U32\n- ep     : U32\n- src    : U32\n- dst    : U32\n- c      : Spec.Choice\nLocation: unfold\n20 |   match b:\n21>|     case Chess.Board{p,n,bi,r,q,k,w,bl,turn,rights,ep}: {==}\n22 |"
+    },
+    {
+      "name": "actual-generator-omits-queen",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Encoding.bend",
+      "diagnostic_sha256": "04c79105b950ce88fe1b155d348ca64990f06764cd1ced22757977225b869964",
+      "diagnostic_bytes": 652,
+      "excerpt": "Error:\n- expected : ../../../legal_probe/Chess.Ply{src, dst, 1, 0} <> ../../../legal_probe/Chess.Ply{src, dst, 2, 0} <> ../../../legal_probe/Chess.Ply{src, dst, 3, 0} <> tail\n- observed : ../../../legal_probe/Chess.Ply{src, dst, 1, 0} <> ../../../legal_probe/Chess.Ply{src, dst, 2, 0} <> ../../../legal_probe/Chess.Ply{src, dst, 3, 0} <> ../../../legal_probe/Chess.Ply{src, dst, 4, 0} <> tail\nContext:\n- src  : U32\n- dst  : U32\n- flag : U32\n- tail : List<&2, ../../../legal_probe/Chess.Ply>\nLocation: generated\n29 |   {Chess.put_move(True{},src,dst,flag,tail) == List.append(&2,Chess.Ply,S.choices(src,dst),tail) : List<&2,Chess.Ply>}:\n30>|   {==}\n31 |"
+    },
+    {
+      "name": "actual-generator-duplicates-knight",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Encoding.bend",
+      "diagnostic_sha256": "88f190344c189ffff21b33ef555cf6c178406ac7175e3178ceca765044695a8b",
+      "diagnostic_bytes": 702,
+      "excerpt": "Error:\n- expected : ../../../legal_probe/Chess.Ply{src, dst, 1, 0} <> ../../../legal_probe/Chess.Ply{src, dst, 1, 0} <> ../../../legal_probe/Chess.Ply{src, dst, 3, 0} <> ../../../legal_probe/Chess.Ply{src, dst, 4, 0} <> tail\n- observed : ../../../legal_probe/Chess.Ply{src, dst, 1, 0} <> ../../../legal_probe/Chess.Ply{src, dst, 2, 0} <> ../../../legal_probe/Chess.Ply{src, dst, 3, 0} <> ../../../legal_probe/Chess.Ply{src, dst, 4, 0} <> tail\nContext:\n- src  : U32\n- dst  : U32\n- flag : U32\n- tail : List<&2, ../../../legal_probe/Chess.Ply>\nLocation: generated\n29 |   {Chess.put_move(True{},src,dst,flag,tail) == List.append(&2,Chess.Ply,S.choices(src,dst),tail) : List<&2,Chess.Ply>}:\n30>|   {==}\n31 |"
+    },
+    {
+      "name": "actual-generator-drops-tail",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Encoding.bend",
+      "diagnostic_sha256": "4dea0168d502b58134dec7f1688b95f999a9601d662fd66fd295751b78d5067f",
+      "diagnostic_bytes": 690,
+      "excerpt": "Error:\n- expected : [../../../legal_probe/Chess.Ply{src, dst, 1, 0}, ../../../legal_probe/Chess.Ply{src, dst, 2, 0}, ../../../legal_probe/Chess.Ply{src, dst, 3, 0}, ../../../legal_probe/Chess.Ply{src, dst, 4, 0}]\n- observed : ../../../legal_probe/Chess.Ply{src, dst, 1, 0} <> ../../../legal_probe/Chess.Ply{src, dst, 2, 0} <> ../../../legal_probe/Chess.Ply{src, dst, 3, 0} <> ../../../legal_probe/Chess.Ply{src, dst, 4, 0} <> tail\nContext:\n- src  : U32\n- dst  : U32\n- flag : U32\n- tail : List<&2, ../../../legal_probe/Chess.Ply>\nLocation: generated\n29 |   {Chess.put_move(True{},src,dst,flag,tail) == List.append(&2,Chess.Ply,S.choices(src,dst),tail) : List<&2,Chess.Ply>}:\n30>|   {==}\n31 |"
+    },
+    {
+      "name": "rook-choice-misencoded",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Encoding.bend",
+      "diagnostic_sha256": "37c107a99385cf8e6eeeb95095ff12338affc55f83b6e87709a8671e6be40d80",
+      "diagnostic_bytes": 180,
+      "excerpt": "Error:\n- expected : Some{Spec.Bishop{}}\n- observed : Some{Spec.Rook{}}\nLocation: roundtrip\n 9 |     case S.Bishop{}: {==}\n10>|     case S.Rook{}: {==}\n11 |     case S.Queen{}: {==}"
+    },
+    {
+      "name": "promotion-does-not-toggle-turn",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Actual.bend",
+      "diagnostic_sha256": "35ebf8b13492eb9c275ce8d3e81fca202212774976e1823231b58925d9d6aa85",
+      "diagnostic_bytes": 18636,
+      "excerpt": "U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 1, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(bi, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 2, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(r, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 3, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(q, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 4, 5))))), 5)), Bool.pick(U32, Cmp.is_eq(U32.cmp(turn, 1)), 3, 12), 0)))), Bool.pick(U32, Bool.and(Cmp.is_eq(U32.cmp(Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(p, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 0, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(n, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 1, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(bi, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 2, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(r, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 3, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(q, U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 4, 5))))), 0)), Cmp.is_eq(U32.cmp(U32.xor(src, dst), 16))), U32.div(U32.add(src, dst), 2), 64)}\nContext:\n- p      : U64\n- n      : U64\n- bi     : U64\n- r      : U64\n- q      : U64\n- k      : U64\n- w      : U64\n- bl     : U64\n- turn   : U32\n- rights : U32\n- ep     : U32\n- src    : U32\n- dst    : U32\n- c      : Spec.Choice\nLocation: unfold\n20 |   match b:\n21>|     case Chess.Board{p,n,bi,r,q,k,w,bl,turn,rights,ep}: {==}\n22 |"
+    },
+    {
+      "name": "omit-consistency-premise",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "PROOF.bend",
+      "diagnostic_sha256": "d7ba99e83c5af6244772e33e964047970c0f60e31861e00585a96d2e5fd18b0a",
+      "diagnostic_bytes": 438,
+      "excerpt": "Error:\n- expected : {../board/Spec.valid(b) == True{} : Bool}\n- observed : {True{} == True{} : Bool}\nContext:\n- b      : ../../../legal_probe/Chess.Board\n- src    : U32\n- dst    : U32\n- choice : Spec.Choice\n- good   : {True{} == True{} : Bool}\nLocation: LAWS.promotion_make_move_preserves_representation\n15 | def Laws.promotion_make_move_preserves_representation(b,src,dst,choice,good):\n16>|   Actual.preserves(b,src,dst,choice,good)\n17 |"
+    },
+    {
+      "name": "missing-law",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-laws-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-consumer-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "proof-hole",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "foreign-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "symlink-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "warning-on-zero-exit",
+      "rejected": true,
+      "kind": "synthetic output-wrapper unit; not compiler execution"
+    }
+  ],
+  "source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/board/Actual.bend": "c27ac87812368df1f565cfd2f0406a28ceaf212f4f1cd93d9e3c0f4f28ac4b5b",
+    "standalone/proofs/board/LAWS.bend": "d4e846830b6b2cb244ad3b2f3a6bc33e50132f71cd79b083824efc1c2fd42f21",
+    "standalone/proofs/board/PROOF.bend": "e1072ffc1f8eab14a9d3fa40fe37e65daf3e7c193512a433465b0e402cd2a5d8",
+    "standalone/proofs/board/Rows.bend": "5a03bfbd266f4ef984127a86a9007a5e73a79e135a43acc6e90ce47bb831a342",
+    "standalone/proofs/board/Spec.bend": "d0e60648dc7a0b803fa715c05c53ad92274657995a994996470afb7fc45f581a",
+    "standalone/proofs/board/Words.bend": "614c05950398a65d56d5c4953882ec3c7952236b71029624ccabc5db2bd94fff",
+    "standalone/proofs/move_update/Clear.bend": "d17e4cfa8bab35d0a97b01723c8967b554fe54204f51d1e30c2302c5e9de82c9",
+    "standalone/proofs/move_update/Core.bend": "03622895c74c320c298f5ffde8be5bb866c395be90fb51d7fd38dc0ad3987034",
+    "standalone/proofs/move_update/Ordinary.bend": "6ebcad3f9b60661ef8ba7053e5e369d94cb3820556709bb64bcbf104e499f4ad",
+    "standalone/proofs/move_update/Rows.bend": "664efb66f2afd0fe4287060ba808f34510cdac51190ee9ad6ad916527f3470e6",
+    "standalone/proofs/move_update/Selection.bend": "3e4def8b492e0136265d3da5155a4bada2d87e30b3bfef8949f2ce00c3554ee8",
+    "standalone/proofs/move_update/Spec.bend": "45dfe5836c7f0656cc8d76a63f1bf59e7c24d0c6b8d0ef9aad6808712695e901",
+    "standalone/proofs/move_update/Words.bend": "932612b475100accde1d82fdb27cd39686ce49e171ddc0fe72039f20b49de64b",
+    "standalone/proofs/promotion/Actual.bend": "5b420e12a41f2237ba2f954fe1515a6c4653a3937935e36ddb6fdad605ba2d42",
+    "standalone/proofs/promotion/Encoding.bend": "167d3aed732b5495a95c732d433975cece6293371efdfdf16efd1e270b41a133",
+    "standalone/proofs/promotion/LAWS.bend": "279235f5fd9706c74cce47a16ec73c6fec12a30e40ca566f253296ffa6e6ca7f",
+    "standalone/proofs/promotion/PROOF.bend": "35a41e1bb51f81f90d89ecae66931bcb00538ad3bcde498607a27eadf726d669",
+    "standalone/proofs/promotion/Spec.bend": "8c57db8af0a2c7428754864740762e80b284a6fd2e038445f52936f97fceea12",
+    "standalone/proofs/promotion/choices_probe.bend": "e57903d49f4f8ef7ae69adbfe8bd5d31391a20b4056c38fd3e569bce26f0c28e",
+    "standalone/proofs/promotion/consumer.bend": "525aa9b397907921a63b29af5959c82a7f21874ca1a2a41c376cb706368aea96",
+    "standalone/proofs/promotion/focused.js": "736f799ebaa2110d50b22ae713784aebc52cfdf3fde4ba8391f639f51beff7ba",
+    "standalone/proofs/promotion/probe.bend": "3da2878ff168b72c75bb24ed19a125f4730b0083aff5411fcf9f6023756e5e2d",
+    "standalone/proofs/promotion/verify.js": "c192b22e0c447f9b4ae9af6a75eb5e5efd5f0146d88475bab174aa8dd2d81cde",
+    "standalone/proofs/promotion/verify_native.js": "ca257dc5ab24d8d84b783f066a84f6586c67f8e66d79e5c5574db0c38087896d",
+    "standalone/proofs/ray/Algebra.bend": "9b654dc68a5bb5c1d47232e2be23200eebcbd1bfa6b071a5bee60d7c7077ab69",
+    "standalone/proofs/ray/Frame.bend": "eacd6b86d18f3ead0dd56f4843f36b134b5c61630ae16fc6147dae7be8f8ccc9",
+    "standalone/proofs/ray/Grid.bend": "c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a",
+    "standalone/proofs/ray/Masking.bend": "c129c86d11aeda8ccc417f57906ebddbf8607550e8fe6bc881df89254d235149",
+    "standalone/proofs/ray/Path.bend": "92595303f046ac947264f179a3489b40cd7822b674807511d846955eda6269ad",
+    "standalone/proofs/ray/Rays.bend": "f90217fa004d1c221ecf5a83c69167cb7cf3044055ab97d7cf612a5e12400054",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "scope": "Typed knight/bishop/rook/queen promotions: exact generator list and complete flag-zero make_move update/partition. No legal-move, EP/castling, or independently valid-metadata theorem."
+}

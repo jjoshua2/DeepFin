@@ -22,7 +22,7 @@ mkdir -p "$BUILD_DIR"
 GENERATED="$BUILD_DIR/probe.generated.c"
 BINARY="$BUILD_DIR/deepfin_bend_chess_probe"
 
-echo "bend probe: $("$BEND_BIN" --version 2>/dev/null || echo unknown)"
+echo "bend probe: $("$BEND_BIN" version 2>/dev/null || echo unknown)"
 echo "bend probe: generating C -> $GENERATED"
 "$BEND_BIN" "$PROBE_DIR/main.bend" -o "$GENERATED"
 

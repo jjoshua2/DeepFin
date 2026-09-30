@@ -1,0 +1,23 @@
+{
+  "positions": 10,
+  "exact_children": 137,
+  "searched_roots": 51,
+  "rejected_transactions": 23,
+  "perft_counts": [
+    8902,
+    97862,
+    43238
+  ],
+  "partial_line_ready_and_single_stop": true,
+  "observed_stop_seconds": 0.010093326999992769,
+  "real_uci_client_moves": [
+    "b1a3",
+    "a7a5",
+    "a1b1",
+    "a5a4",
+    "b1a1",
+    "a8a5",
+    "a1b1",
+    "a5b5"
+  ]
+}

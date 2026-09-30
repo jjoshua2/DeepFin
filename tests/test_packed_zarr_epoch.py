@@ -171,10 +171,11 @@ def test_archive_members_refused(corpus, name):
 
 
 @pytest.mark.parametrize("kind", ["symlink", "compressed"])
-def test_special_or_recompressed_members_refused(corpus, kind):
+@pytest.mark.parametrize("member", ["extra/0", "row_provenance.npz"])
+def test_special_or_recompressed_members_refused(corpus, kind, member):
     _, target = corpus
     path = next(target.glob("*.zip"))
-    entry = zipfile.ZipInfo("extra/0")
+    entry = zipfile.ZipInfo(member)
     if kind == "symlink":
         entry.create_system = 3
         entry.external_attr = (stat.S_IFLNK | 0o777) << 16
@@ -321,3 +322,127 @@ def test_root_provenance_is_preserved_hashed_and_not_a_tensor(corpus):
             handle.writestr("row_provenance.npz", b"duplicate")
     with pytest.raises(ValueError, match="duplicate"):
         packed.content_sha256(archive)
+
+
+def test_qualification_memory_guard_preserves_limits(monkeypatch):
+    from scripts import qualify_packed_zarr_epoch as qualification
+    from scripts import training_host_memory as memory
+
+    requested = []
+    monkeypatch.setattr(memory, "require_available", requested.append)
+    monkeypatch.setattr(qualification.os, "sysconf", lambda _: 4096)
+    monkeypatch.setattr(Path, "read_text", lambda _: "0 4194304 0 0 0 0 0")
+    qualification._check_memory()
+    assert requested == [32]
+    monkeypatch.setattr(Path, "read_text", lambda _: "0 4194305 0 0 0 0 0")
+    with pytest.raises(RuntimeError, match="RSS exceeds 16 GiB"):
+        qualification._check_memory()
+
+    def unavailable(_):
+        raise RuntimeError("Linux available memory below 32 GiB")
+
+    monkeypatch.setattr(memory, "require_available", unavailable)
+    with pytest.raises(RuntimeError, match="available memory below 32 GiB"):
+        qualification._check_memory()
+
+
+@pytest.mark.parametrize("statm", ["", "0", "0 invalid", "0 -1"])
+def test_qualification_memory_guard_refuses_unreadable_rss(monkeypatch, statm):
+    from scripts import qualify_packed_zarr_epoch as qualification
+    from scripts import training_host_memory as memory
+
+    monkeypatch.setattr(memory, "require_available", lambda _: 32 * 2**30)
+    monkeypatch.setattr(Path, "read_text", lambda _: statm)
+    with pytest.raises(RuntimeError, match="RSS measurement unavailable"):
+        qualification._check_memory()
+
+
+def test_packed_symlink_alias_requires_opt_in_and_retains_order(corpus, tmp_path, monkeypatch):
+    source, target = corpus
+    aliases = tmp_path / "aliases"
+    aliases.mkdir()
+    for archive in target.glob("*.zarr.zip"):
+        (aliases / archive.name.removesuffix(".zip")).symlink_to(archive)
+    with monkeypatch.context() as guard:
+        guard.setattr(packed, "content_sha256", lambda _: pytest.fail("read before opt-in"))
+        with pytest.raises(ValueError, match="require allow_packed_zarr=True"):
+            buffer(aliases)
+    with pytest.raises(ValueError, match="context"):
+        load_shard_arrays(aliases / "shard_000000.zarr", lazy=True)
+    a = buffer(source)
+    b = buffer(aliases, allow_packed_zarr=True)
+    try:
+        assert a.plan.rows == b.plan.rows == 16
+        for _ in range(a.num_batches):
+            left, right = a.sample_batch_arrays(2), b.sample_batch_arrays(2)
+            assert left.keys() == right.keys()
+            for key in left:
+                np.testing.assert_array_equal(left[key], right[key], err_msg=key)
+    finally:
+        a.close()
+        b.close()
+
+
+def test_qualification_refuses_zip_alias_as_directory_control(corpus, tmp_path):
+    from scripts.qualify_packed_zarr_epoch import qualify
+
+    _, packed_root = corpus
+    aliases = tmp_path / "false-directory-control"
+    aliases.mkdir()
+    for archive in packed_root.glob("*.zarr.zip"):
+        (aliases / archive.name.removesuffix(".zip")).symlink_to(archive)
+    with pytest.raises(ValueError, match="directory control requires directory shards"):
+        qualify(aliases, packed_root, {
+            "batch_size": 2,
+            "seed": 121,
+            "input_planes": 146,
+            "input_history_encoding": "legacy",
+            "history_rep_fix": False,
+            "mirror_augmentation": False,
+        })
+
+
+@pytest.mark.parametrize("target_kind", ["directory_alias", "directory_named_zip", "non_zip_file_alias"])
+def test_qualification_refuses_nonpacked_target_in_zip_arm(corpus, tmp_path, target_kind):
+    from scripts.qualify_packed_zarr_epoch import qualify
+
+    source, packed_root = corpus
+    false_packed = tmp_path / "false-packed-arm"
+    false_packed.mkdir()
+    for directory in source.glob("*.zarr"):
+        path = false_packed / (directory.name + ".zip")
+        if target_kind == "directory_alias":
+            path.symlink_to(directory)
+        elif target_kind == "directory_named_zip":
+            path.mkdir()
+        else:
+            target = tmp_path / (directory.name + ".data")
+            target.write_bytes((packed_root / (directory.name + ".zip")).read_bytes())
+            path.symlink_to(target)
+    with pytest.raises(ValueError, match=r"packed arm requires regular \.zarr\.zip files"):
+        qualify(source, false_packed, {})
+
+
+def test_qualification_retains_matching_directory_and_zip_symlinks(corpus, tmp_path):
+    from scripts.qualify_packed_zarr_epoch import qualify
+
+    source, packed_root = corpus
+    control = tmp_path / "directory-links"
+    packed_links = tmp_path / "zip-links"
+    control.mkdir()
+    packed_links.mkdir()
+    for directory in source.glob("*.zarr"):
+        (control / directory.name).symlink_to(directory)
+        archive = packed_root / (directory.name + ".zip")
+        (packed_links / archive.name).symlink_to(archive)
+    result = qualify(control, packed_links, {
+        "batch_size": 2,
+        "seed": 121,
+        "input_planes": 146,
+        "input_history_encoding": "legacy",
+        "history_rep_fix": False,
+        "mirror_augmentation": False,
+    })
+    assert result["status"] == "PASS_MATCHED_PACKED_ZARR_SAMPLER"
+    assert result["runs"][0]["rows"] == result["runs"][1]["rows"] == 16
+    assert result["runs"][0]["sequence_sha256"] == result["runs"][1]["sequence_sha256"]

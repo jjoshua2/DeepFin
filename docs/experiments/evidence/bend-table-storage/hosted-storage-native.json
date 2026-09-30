@@ -1,0 +1,58 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "fixture_rows": 1096,
+  "cases_by_operation": {
+    "array_set": 705,
+    "fill": 384,
+    "tables": 4,
+    "extras": 3
+  },
+  "chess_fill_keys": 128,
+  "full_array_cells": 109354,
+  "distinct_indices_aliasing_rows": 249,
+  "input_array_shapes": "Complete binary arrays only; arbitrary/ragged arrays covered by source laws, not native fixtures",
+  "oracle": "Independent flat array, unsigned index masking, signed-coordinate rays and compact scatter successor",
+  "modes": [
+    {
+      "mode": "generic",
+      "fixture_rows": 1096,
+      "full_array_cells": 109354,
+      "invalid_rejections": 7,
+      "output_sha256": "1a584b59c30cdf714de9485d86de4be04ffb06e682ad2717c6e6814ad964254d"
+    },
+    {
+      "mode": "portable",
+      "fixture_rows": 1096,
+      "full_array_cells": 109354,
+      "invalid_rejections": 7,
+      "output_sha256": "1a584b59c30cdf714de9485d86de4be04ffb06e682ad2717c6e6814ad964254d"
+    },
+    {
+      "mode": "native",
+      "fixture_rows": 1096,
+      "full_array_cells": 109354,
+      "invalid_rejections": 7,
+      "output_sha256": "1a584b59c30cdf714de9485d86de4be04ffb06e682ad2717c6e6814ad964254d"
+    },
+    {
+      "mode": "ubsan",
+      "fixture_rows": 1096,
+      "full_array_cells": 109354,
+      "invalid_rejections": 7,
+      "output_sha256": "1a584b59c30cdf714de9485d86de4be04ffb06e682ad2717c6e6814ad964254d"
+    }
+  ],
+  "source_sha256s": {
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/storage/probe.bend": "cdedd4e7858f3ffba635b3f5a8878af3081f2d461680df371674a9089d41061d",
+    "standalone/proofs/storage/verify_native.js": "ee3141b09cd8a9278661c5a7273b8f55f05a47b281e2b7b995e3d1f9535cad65"
+  },
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "bun": "1.4.2",
+  "scope": "Actual Array.new/set/get/size, Tables.fill/tables/extras on bounded fixtures; NOT prefix source proof, allocator lifetime, complete engine or performance"
+}

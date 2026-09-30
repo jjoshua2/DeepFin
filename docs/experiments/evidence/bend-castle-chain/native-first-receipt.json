@@ -1,0 +1,14 @@
+{
+  "command": [
+    "../bun",
+    "native/bend_engine/standalone/proofs/castle_chain/verify_native.js",
+    "../compiler/bend",
+    "--report",
+    "../evidence/native-first.json"
+  ],
+  "cwd": "/mnt/data/castle-continuation/repo",
+  "exit_code": 0,
+  "timed_out": false,
+  "elapsed_seconds": 37.34968502200013,
+  "sha256": "e5daf0c402325129c6175c4329554428c159663136ffce96cb64ba67a6add7c6"
+}
