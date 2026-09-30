@@ -1,0 +1,81 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "rows_per_mode": 1295,
+  "fields_per_mode": 89355,
+  "distinct_inputs": 1295,
+  "categories": {
+    "invalid_seed": 3,
+    "empty_layout": 16,
+    "start_layout": 44,
+    "one_piece": 768,
+    "malformed_layout": 126,
+    "character_boundary": 264,
+    "cursor_boundary": 72,
+    "arbitrary_seed": 2
+  },
+  "accepted_final_rows": 830,
+  "invalid_prefix_rows": 382,
+  "modes": [
+    {
+      "mode": "generic",
+      "rows": 1295,
+      "observed_fields": 89355,
+      "invalid_rejections": 9,
+      "output_sha256": "7e26d5895d0edb38e67ae66775411f9228988308cedba97f1374fad63b08fcb2"
+    },
+    {
+      "mode": "portable",
+      "rows": 1295,
+      "observed_fields": 89355,
+      "invalid_rejections": 9,
+      "output_sha256": "7e26d5895d0edb38e67ae66775411f9228988308cedba97f1374fad63b08fcb2"
+    },
+    {
+      "mode": "native",
+      "rows": 1295,
+      "observed_fields": 89355,
+      "invalid_rejections": 9,
+      "output_sha256": "7e26d5895d0edb38e67ae66775411f9228988308cedba97f1374fad63b08fcb2"
+    },
+    {
+      "mode": "ubsan",
+      "rows": 1295,
+      "observed_fields": 89355,
+      "invalid_rejections": 9,
+      "output_sha256": "7e26d5895d0edb38e67ae66775411f9228988308cedba97f1374fad63b08fcb2"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "revive-invalid-digit",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "diagnostic": "row 0, field 25, invalid_seed\n\n1 !== 0\n",
+      "scope": "First generic-mode mismatched actual state; remaining corrupted modes not run"
+    },
+    {
+      "name": "discard-characters",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "diagnostic": "row 0, field 23, invalid_seed\n\n0 !== 8\n",
+      "scope": "First generic-mode mismatched actual state; remaining corrupted modes not run"
+    }
+  ],
+  "source_sha256s": {
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/proofs/parser/probe.bend": "33a09546e0c9792bed5108faf41a96adad38199a7fdc3d7704ed050bbc03ae92",
+    "standalone/proofs/parser/verify_native.js": "8443cf93e7e0c222ae92dac1d82e6d396b62eb60c3d8286a0c1251e726eb86e0"
+  },
+  "fixture_sha256": "f766aa2a5395de3b594c2f3a1f671a026eaebacf47f55789dbd20a4480a9d2ad",
+  "native_domain": "IO Unicode strings without embedded NUL; combined length<=512, initial file0..9/rank0..8; arbitrary U32 metadata; three fixed Board seeds. Source laws cover arbitrary Strings/Layout values.",
+  "oracle": "Independent square kind/color sets plus character cursor interpreter; compares entire prefix, split suffix and concatenated Layout states, result acceptance and metadata. No proof code runs in candidate.",
+  "scope": "Placement-layout traversal and acceptance safety, not all-field FEN validation, parser-wide freshness, legal boards or rollback of rejected raw layouts.",
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "bun": "1.4.2"
+}
