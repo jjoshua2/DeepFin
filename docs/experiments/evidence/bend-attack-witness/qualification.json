@@ -1,0 +1,22 @@
+{
+  "qualification": "PASS",
+  "run": "36281112782",
+  "source": "9213c3458023f75e814b566d593f3364b6070464",
+  "source_tree": "23d9532ad9a933febbd9ec892f5d63d879d85049",
+  "new_laws": 3,
+  "new_controls": 19,
+  "control_categories": {
+    "source semantic/refinement": 10,
+    "manifest/import policy": 8,
+    "synthetic output-wrapper unit; not compiler execution": 1
+  },
+  "retained_parent_laws": 177,
+  "retained_parent_controls": 524,
+  "modular_laws": 180,
+  "modular_controls": 543,
+  "combined_wrapper_executed": false,
+  "native_source_entries": 553,
+  "independent_review": false,
+  "universal_table_geometry_proved": false,
+  "claim": "Actual attack-mask aggregation equals an independent per-square witness scan, and in_check uses that scan under an explicit singleton owned-king premise. Mask geometry and legal king safety remain separate."
+}

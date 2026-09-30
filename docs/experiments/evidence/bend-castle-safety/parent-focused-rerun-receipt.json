@@ -1,0 +1,13 @@
+{
+  "command": [
+    "../bun",
+    "native/bend_engine/standalone/proofs/castle_chain/focused.js",
+    "../compiler/bend",
+    "--report",
+    "../evidence/parent-focused.json"
+  ],
+  "status": 0,
+  "elapsed_seconds": 44.27588835199981,
+  "log_sha256": "898d713245a09b1781fe8bb611eb49de3f25ed49ddafc65178c6634f32ad8200",
+  "log_bytes": 23635
+}

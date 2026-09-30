@@ -1,5 +1,120 @@
 # Bend migration and proof inventory
 
+## P3 non-slider initialization and coordinate geometry
+
+Hosted run **36284142030** passes all three public laws, importing consumer, nineteen controls, four native initialization/query modes, three compiled/executed actual-code corruptions, original compiler checks and unchanged repository lint on source `6fd072fe09f3e507940f3723719588e54b06c062`.
+
+Completed qualification is modular183/562 with exact180/543 parent evidence retained; the full aggregate did not run. See the dated record for scope and executed receipts.
+
+The new `proofs/attack_geometry` suite targets the missing initialized pawn, knight
+and king mask connection: actual mask computation, persistence through the complete
+extras loop, and complete returned-pair correctness for typed `Chess.attack` after
+actual allocation and a preceding table loop. Independent natural file/rank targets
+and structural accumulation supply geometry; initial masks are not assumed correct.
+
+The three public statements retain explicit depth17/full64/square bounds. Earlier
+initialized-slider, attack-witness reduction and mandatory-check-path results remain
+unchanged. Complete initialized `attacked` composition, forward/reverse attack
+membership and singleton conditions through castling remain next. See [the dated
+record](experiments/2026-09-26-bend-initialized-leaper-geometry.md) for completed
+qualification and its limits. No production application responsibility changed.
+
+
+## Hosted attack-witness qualification
+
+Hosted run **36281112782** passes all three public laws and the importing consumer, nineteen classified controls, four native coordinate-reference modes, three actual-code corruption checks, original compiler source/pin tests and unchanged repository lint on source `9213c3458023f75e814b566d593f3364b6070464`.
+
+Modular180/543 retains exact177/524 parent evidence; no complete aggregate run. The actual reduction and singleton-king selection are now connected to independent per-square witnesses over actual retrieved masks. Universal initialized-mask coordinate geometry and legal king safety remain separate obligations. See [the current readout](experiments/2026-09-26-bend-attack-witness.md). Historical local status below is superseded only by these exact-source hosted receipts.
+
+## Latest P3 attack witnesses and singleton king selection
+
+Three new public contracts connect the actual attack-query callbacks to a per-square owned-piece witness scan and connect actual in_check to the specified square under an explicit singleton-owned-king premise. Complete result pairs are retained. The masks still come from actual Chess.attack; universal coordinate correctness of those masks is not silently assumed or claimed. See [the readout](experiments/2026-09-26-bend-attack-witness.md).
+
+Local3-law/19-control and four-mode native checks passed. Modular180/543 retains the exact177/524 parent; the full wrapper did not run. Hosted qualification is pending and local repository lint lacks tools. No production behavior or Python application ownership changed.
+
+## Latest P3 generated castling mandatory-check proof
+
+Six source contracts now establish that generated castling cannot use the optimized
+unchecked branch: its owned king source is in `own & (rays | kings)` for every ray mask.
+The actual fast step equals the complete current-side child-check operation. A sixth
+whole-generator theorem proves complete array-and-ordered-list equality to an audit
+variant explicitly forcing flag2 through full checks, without extra input premises.
+
+Final new6/19 and unchanged parent5/18 focused gates pass. Four native modes pass the
+direct-step independent reference and complete actual/audit generator parity. The latter
+retains an independent castling-only move-set oracle for full generation; equal complete
+noncastling output is not independent noncastling legality qualification. Modular177/524,
+not a full aggregate run. Local only; unchanged repository lint fails for missing tools.
+See [the readout](experiments/2026-09-26-bend-castle-safety.md) for exact domains/receipts.
+
+Mandatory execution is now source-proved; independent start/transit/destination attack
+semantics, valid rights history/metadata, reachability and full legal-generation
+soundness/completeness remain distinct. No application responsibility moved into Bend.
+
+
+## Latest P3 full-generator castling provenance (local)
+
+Five public source laws now extend actual ordinary-scan tag exclusion and full/fast
+filter member provenance through both castling-side calls into `Chess.legal_moves`.
+A flag-2 member of the initialized full generator has an exact guarded side certificate;
+applying it to a consistent input Board preserves representation. The caller no longer
+supplies absence from an arbitrary input tail. The general suffix law separately
+preserves an old-member alternative for arbitrary lists.
+
+The final local focused gate passed all five laws and 18 controls. Four native modes
+passed 1,062 requests, exact filter/suffix lists, the ordered castling subset of full
+legal_moves, and 9,241 complete child Boards per mode. No independent oracle for the
+whole noncastling move set is claimed. Four destination-only attacked castles are
+rejected by the actual final generator. Original compiler source/pin gates passed.
+
+Qualification is modular171/505 with exact parent166/487 retained, not a full wrapper
+execution. Whole-repository lint failed because its three tools are missing. No new
+hosted qualification or remote publication is claimed. Semantic king safety, attack
+correctness, rights history, metadata validity and whole legal-move soundness/completeness
+remain distinct. See [the dated record](experiments/2026-09-26-bend-castle-chain.md).
+
+
+## Latest P3 actual castling output provenance
+
+Hosted run **36249795989** passes all six public laws, importing consumer, seventeen classified controls, four native producer modes, three compiled/executed actual-code corruptions, original compiler source/pin checks and unchanged repository lint on source `f3e5db1fb2e7b671fcfefaf7ea03d52b0f88a536`.
+
+The actual castle_side output-list theorem now replaces the previously missing producer-output connection: unchanged caller tail or one exact guarded move prepended, with new-member guard/coordinate derivation. The guard supplies independent rook-landing freshness; composing the existing public castling-update law proves consistency after applying a new member to a consistent Board. Arbitrary old tail moves are excluded by the membership corollaries, not silently assumed valid.
+
+Source arrays remain actual affine inputs; positive list observation is not table preservation, while false-guard rejection preserves the entire pair. Modular166/487 retains exact160/470 parent evidence; no full aggregate run. Current native tables/producer pass852 requests across four modes without changing historical probe pins. Full legal_moves provenance, semantic king safety, rights history, metadata legality and generation completeness remain separate. See [the dated readout](experiments/2026-09-26-bend-castle-emission.md).
+
+## Latest P3 castling producer geometry
+
+Hosted run **36219695972** passes six universal route/mask geometry laws, exact source-link checks against the actual `Chess.castle_side` expressions, the current compiler source/pin gates and unchanged repository lint on source `4f3f40c9a98ddac838bd851ddf7fe821e8cfbfe2`.
+
+The new laws prove that all four orthodox producer routes use the expected king source/destination and rook source, that the king transit square is exactly the rook landing square, and that both transit/rook-landing and king destination lie inside the producer's `between` mask. These are the formal geometry needed to derive the castling-update freshness premise from the actual producer guard.
+
+This is **not yet** a theorem that every flag-two member of `legal_moves` satisfies the guard, nor a king-safety soundness/completeness theorem. The actual source linkage is enforced by exact source anchors, not by replacing `castle_side` with a shadow implementation. Coverage is modular **160 laws/470 controls**; no new negative controls were added in this increment and the full aggregate did not run.
+
+The historical `legal_probe` was deliberately not rerun on the newer standalone compiler: its own compiler fingerprint rejected that attempt before execution, and that boundary is preserved rather than bypassed. Prior castling parity remains historical evidence on its original pin. See [the dated readout](experiments/2026-09-26-bend-castle-producer-geometry.md).
+
+
+## Latest P3 castling update qualification
+
+Hosted run **36218760990** passes the durable public castling gate on source `105b361a4e4a7cc5b1a1a14308c74c310d5a5b9a`: two registered laws, importing consumer, all17 controls, generic/portable/native-target/UBSan native checks, original compiler source/pin checks and unchanged repository lint.
+
+The public contracts prove complete actual flag2/promotion0 Board-update equality for arbitrary raw Board/U32 coordinates and partition preservation for the four orthodox coordinate routes when the input Board is consistent and the rook landing square is initially empty. That premise is necessary for the raw operation: the preserved blocked-rook-target example is a consistent input whose raw result is inconsistent. The theorem is therefore not legal-castling validation.
+
+Coverage is modular **154 laws/470 controls**, retaining exact-source parent152/453; the complete154-law wrapper did not run. King/rook existence, turn, rights, other path clearance, attack-free king traversal, king safety, metadata legality, reachability and move-generation soundness/completeness remain open. See [the dated readout](experiments/2026-09-26-bend-castling-update.md).
+
+
+## Supplementary castling update and conditional preservation
+
+New locally checked derived statements establish the complete actual flag2/promotion0 update for arbitrary raw Boards and coordinates, plus partition preservation on the four orthodox coordinate routes when the initial rook destination is empty. A checked counterexample shows why that premise cannot simply be dropped. All four exact king/rook examples and generic/UBSan full-Board reference checks pass; actual rook-placement/source corruptions fail both new source and native checks while prior flag0/flag1 consumers pass.
+
+These are archived supplementary results, not additional registered laws or part of the hosted152/453 en-passant gate. They do not establish king/rook existence, castling rights, remaining path clearance, check or king safety. See [the exact sources and receipts](experiments/evidence/bend-en-passant-update/castling-review/README.md). Deliberate public-suite promotion and legal-producer connections remain next; no production logic changed.
+
+## Latest P3 en-passant update qualification
+
+Hosted run **36216251656** passes both public en-passant laws and importing consumer, all17 controls, four native modes and both actual capture corruptions, original compiler source/pin checks and unchanged whole-repository lint on source `59acb49cb4395884741803b448842d2100054b1d`.
+
+Both public contracts retain the complete actual flag1/promotion0 Board update and partition preservation under input consistency. Removal includes source,destination and destination XOR8. These promote the earlier supplementary proofs unchanged; they do not certify source-pawn/rank/history,EP metadata or king safety. Qualification is modular152/453 with the exact150/436 parent retained,not a full aggregate run. See [the dated readout](experiments/2026-09-25-bend-en-passant-update.md). Castling and legal-producer connections remain next; no Python application responsibility moved into Bend.
+
+
 ## Supplementary en-passant update refinement
 
 Two newly source-checked derived statements now cover actual flag1/promotion0 make_move: exact complete-Board update and partition preservation. A structural mask identity connects removal of source,destination and destination XOR8 to existing deletion/fresh-insertion producers. Caller input consistency is required only for preservation; legal EP,pawn/source/rank/history conditions and king safety remain unproved here. Exact archived sources and the portable driver are in [the supplementary record](experiments/evidence/bend-move-promotion-publication/en-passant-review/README.md).

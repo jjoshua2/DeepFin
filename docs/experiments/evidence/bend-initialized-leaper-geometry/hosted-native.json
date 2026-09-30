@@ -1,0 +1,125 @@
+{
+  "native_gate": "PASS",
+  "compiler_identity": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\n",
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\n",
+  "rows_per_mode": 3072,
+  "distinct_inputs": 3072,
+  "fields_per_mode": 6144,
+  "masks_per_initialization": 256,
+  "initializations": 4,
+  "occupancies_per_mask": 3,
+  "fixture_sha256": "5b9a4e957ef8105a5d45fcb881ecce9fee32f05169f6a6d5cfd33497bc76edb1",
+  "modes": [
+    {
+      "mode": "generic",
+      "rows": 3072,
+      "invalid_rejections": 9,
+      "output_sha256": "196c32dfc7bf4e5ffe3c007713e76922f8ff7bed18fb2360b8cd6afccf3c8b9d"
+    },
+    {
+      "mode": "portable",
+      "rows": 3072,
+      "invalid_rejections": 9,
+      "output_sha256": "196c32dfc7bf4e5ffe3c007713e76922f8ff7bed18fb2360b8cd6afccf3c8b9d"
+    },
+    {
+      "mode": "native",
+      "rows": 3072,
+      "invalid_rejections": 9,
+      "output_sha256": "196c32dfc7bf4e5ffe3c007713e76922f8ff7bed18fb2360b8cd6afccf3c8b9d"
+    },
+    {
+      "mode": "ubsan",
+      "rows": 3072,
+      "invalid_rejections": 9,
+      "output_sha256": "196c32dfc7bf4e5ffe3c007713e76922f8ff7bed18fb2360b8cd6afccf3c8b9d"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "wrong-king-query-slot",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "row": 192,
+      "input": [
+        0,
+        1,
+        0,
+        0,
+        0
+      ],
+      "observed": [
+        0,
+        132096
+      ],
+      "expected": [
+        0,
+        770
+      ]
+    },
+    {
+      "name": "shifted-black-pawn-storage",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "row": 597,
+      "input": [
+        0,
+        3,
+        7,
+        0,
+        0
+      ],
+      "observed": [
+        0,
+        2
+      ],
+      "expected": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "reversed-white-pawn-storage",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "row": 384,
+      "input": [
+        0,
+        2,
+        0,
+        0,
+        0
+      ],
+      "observed": [
+        0,
+        0
+      ],
+      "expected": [
+        0,
+        512
+      ]
+    }
+  ],
+  "source_sha256s": {
+    "standalone/proofs/attack_geometry/LAWS.bend": "71dbf86928d2046ba0ad1ceafc5c7bfb3b8adc480e15a7a4bf22a0a88e9b4d18",
+    "standalone/proofs/attack_geometry/probe.bend": "8b6871e08cc41f762c4499e2bdb8e215a6ff9b64454121d6c362ef64f9043be9",
+    "standalone/proofs/attack_geometry/Query.bend": "5a2328820a107e06a7c8c7abf2dd89e1d324b084d0305ca824279dec4d87e79c",
+    "standalone/proofs/attack_geometry/Computed.bend": "5d398e12a923e8586f712134daa7175cf7e271e768272707aa1d0bc3277096d9",
+    "standalone/proofs/attack_geometry/Geometry.bend": "fcc6a928ae24e7956e3f60d40b9489ccc3c8eeef081560c84d62c146123ee4ab",
+    "standalone/proofs/attack_geometry/Full.bend": "45e5c4f68813cb0c1ce737d3116c45ebd303836b070d7212035a716faf2a95a7",
+    "standalone/proofs/attack_geometry/Initialized.bend": "230cfb8a2be7c03b48d43cb7b57cea6f02cfd02e8e92b85d20a750368d9d7c1b",
+    "standalone/proofs/attack_geometry/Facts.bend": "b5f224dcf96ac0c84910be57773f002cfb9c08e7f10f74d1b2b91992143f03d9",
+    "standalone/proofs/attack_geometry/Memory.bend": "a8707b136badd9d105abeca6ea913f2b5cff60b7e2b1f6ba09acf03c8a6a55a1",
+    "standalone/proofs/attack_geometry/Slots.bend": "900b1916c6bab03b21ab138c3089aa26308896285c79d252c363bb9d0d1c38fa",
+    "standalone/proofs/attack_geometry/Stored.bend": "95d75d7b23a0cf99cd9d307cf31da7e729927cce30c687bd83303600aca07326",
+    "standalone/proofs/attack_geometry/consumer.bend": "cd7b2dbd3bc3b5726f4c9ff7231d77b0841276190bc0e1fc6c31e9b652b0b947",
+    "standalone/proofs/attack_geometry/PROOF.bend": "3d4f372f6b773846c7bed4d3968db4aa8a010342cb417360f13a1627828b682c",
+    "standalone/proofs/attack_geometry/Loop.bend": "60f85ba81eea650ff1a63cc6cb68836c3f8d50043784815b40873a9c4ca1b71f",
+    "standalone/proofs/attack_geometry/One.bend": "1edcac55e703269f16c71c580f60f4922ed50f0c71de613d4386111e36eabded",
+    "standalone/proofs/attack_geometry/focused.js": "a2c87b408d9dd41127c6ba71f0d18affd2c3efe0e56cf51bbc09902c2874d4d1",
+    "standalone/proofs/attack_geometry/verify_native.py": "af7eddd02d01334814260029b99a3c873d5bd6f07d47f46a21e592319affb728",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e"
+  },
+  "scope": "Actual initialization and leaper Chess.attack versus independent coordinates; selected mask queries, not full-buffer/native lifetime proof. Full builder, nonzero seed, partial preceding table loop and planted last-slot sentinel; no proof/model execution."
+}
