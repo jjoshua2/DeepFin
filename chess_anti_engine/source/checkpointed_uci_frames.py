@@ -21,6 +21,7 @@ import zstandard as zstd
 MAX_ROWS = 2048
 MAX_RAW_BYTES = 8 << 20
 MAX_FRAME_BYTES = MAX_RAW_BYTES + (128 << 10)
+MAX_META_BYTES = 16 << 10
 LEVEL = 3
 SCHEMA = "sf_raw_uci_frame_v1"
 _FILES = {".lock", "CLAIM.json", "FRAME.zst", "RECEIPT.json"}
@@ -57,6 +58,8 @@ def _fsync_dir(path: Path) -> None:
 
 
 def _atomic_new(path: Path, data: bytes) -> None:
+    if path.suffix == ".json":
+        _need(len(data) <= MAX_META_BYTES, "metadata byte cap")
     _need(not path.exists(), f"sealed file already exists: {path.name}")
     fd, name = tempfile.mkstemp(prefix=f".{path.name}.part-", dir=path.parent)
     try:
@@ -73,7 +76,10 @@ def _atomic_new(path: Path, data: bytes) -> None:
 
 def _load_canonical(path: Path) -> dict[str, Any]:
     _need(path.is_file() and not path.is_symlink(), f"missing or linked {path.name}")
-    data = path.read_bytes()
+    with path.open("rb") as source:
+        data = source.read(MAX_META_BYTES + 1)
+        _need(len(data) <= MAX_META_BYTES and source.read(1) == b"",
+              "metadata byte cap")
     try:
         value = json.loads(data)
     except (UnicodeError, json.JSONDecodeError) as exc:

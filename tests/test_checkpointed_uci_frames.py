@@ -151,6 +151,16 @@ def test_unsealed_owned_stage_recovers_but_foreign_file_refuses(tmp_path: Path) 
         frames.pack_frame(source, root, spec)
 
 
+def test_oversized_receipt_refuses_before_parsing(tmp_path: Path) -> None:
+    source, spec = _block(tmp_path, 0, 1)
+    root = tmp_path / "frames"
+    frames.pack_frame(source, root, spec)
+    receipt = root / "block-000000000" / "RECEIPT.json"
+    receipt.write_bytes(b" " * (frames.MAX_META_BYTES + 1))
+    with pytest.raises(frames.FrameError, match="metadata byte cap"):
+        frames.pack_frame(source, root, spec)
+
+
 def test_actual_sigkill_after_first_seal_then_resume(tmp_path: Path) -> None:
     sources = [_block(tmp_path, i, 32)[0] for i in range(2)]
     root = tmp_path / "frames"
