@@ -250,7 +250,7 @@ def first_depth_score(lines: list[str], depth: int, parsed: Any) -> dict[str, An
     raise ValueError("requested raw depth absent")
 
 
-def search_one(searcher: corpus.StaircaseSearcher, row: dict[str, Any], depth: int, arm: int) -> dict[str, Any]:
+def search_one(searcher: Any, row: dict[str, Any], depth: int, arm: int) -> dict[str, Any]:
     history = corpus.RowHistory(row["fen"], row["history_root_fen"], tuple(row["history_uci"]), row["history_root_reason"])
     board = chess.Board(history.root_fen)
     for token in history.uci:
@@ -285,7 +285,8 @@ def rss_bytes(pids: list[int]) -> int:
     for pid in pids:
         status = Path(f"/proc/{pid}/status").read_text()
         match = re.search(r"^VmRSS:\s*(\d+) kB$", status, re.MULTILINE)
-        require(match is not None, "live RSS unavailable")
+        if match is None:
+            raise ValueError("live RSS unavailable")
         total += int(match[1]) * 1024
     return total
 
@@ -300,13 +301,21 @@ def load_roster(path: Path, plan: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def run_depth_pass(plan: dict[str, Any], rows: list[dict[str, Any]],
-                   searchers: list[corpus.StaircaseSearcher], arm: int, depth: int,
+                   searchers: list[Any], arm: int, depth: int,
                    out: Path, deadline: float) -> dict[str, Any]:
     """An inclusive observed wall for one depth on every row, one owner/lane."""
     require(depth in DEPTHS and len(searchers) == arm, "depth pass geometry differs")
     began = time.monotonic()
     output = out / f"arm{arm}_d{depth}.jsonl"
-    sums = Counter()
+    sums: dict[str, float] = {
+        "serialization_seconds": 0.0,
+        "reset_seconds": 0.0,
+        "search_seconds": 0.0,
+        "parse_seconds": 0.0,
+        "absolute_q_error_sum": 0.0,
+        "same_move": 0.0,
+        "rows": 0.0,
+    }
     with output.open("xb") as f, ThreadPoolExecutor(max_workers=arm) as pool:
         for base in range(0, len(rows), 16):
             require(time.monotonic() < deadline, "run wall cap")
@@ -423,10 +432,12 @@ def main() -> None:
     if args.mode == "inspect":
         print(json.dumps({"status": "SOURCE_VALID_NOT_LAUNCHED", "rows": plan["rows"]}))
     elif args.mode == "prepare":
-        require(args.out is not None and args.roster is None, "prepare args differ")
+        if args.out is None or args.roster is not None:
+            raise ValueError("prepare args differ")
         prepare(plan, args.out)
     else:
-        require(args.out is not None and args.roster is not None, "run args missing")
+        if args.out is None or args.roster is None:
+            raise ValueError("run args missing")
         run(plan, args.roster, args.out)
 
 
