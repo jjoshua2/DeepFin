@@ -92,10 +92,15 @@ native legal logits and value heads for 58,773 winners. Its legal-head payload
 was 8,468,846 bytes (144.09 bytes/row) before compression and 5,749,282
 bytes (97.82 bytes/row) at zstd level 5. Its verbose JSON row index was a
 further 43,931,297 bytes (747.47 bytes/row), so the two retained files
-totaled 49,680,579 bytes (845.30 bytes/row). The producer reconstructed the
-same corrected FP16 target bytes for every row; independent compact-bank
-readback is a separate gate. The index is a diagnostic provenance format,
-not a scale-ready compact index.
+totaled 49,680,579 bytes (845.30 bytes/row). An independent full-row parser
+checked every UID, offset and sorted legal header against the original raw
+head tapes, matched native legal logits and value bytes, rederived every
+corrected FP16 target, and verified compressed-payload equality. The index
+is a diagnostic provenance format, not a scale-ready compact index. A
+production index should carry compact
+winner ordinal, chosen teacher and block offsets, while source and query
+provenance remain keyed once in the source roster rather than duplicated in
+every raw-head entry.
 
 A worksheet's roughly 2.17 TB conditional subtotal extrapolates current
 whole archives, the earlier B/C selected-ZIP rate and measured metadata
@@ -113,8 +118,9 @@ is qualified by this pack.
 ## Decision and evidence
 
 The decision for this slice is **pipeline qualification PASS, corpus admission
-HOLD**. Exact source replay, selected-target bytes and physical trainer-format
-arrays each have independent all-row checks. No matched training run or arena
+HOLD**. Exact source replay, selected-target bytes, physical trainer-format
+arrays and the B/C compact raw-head diagnostic each have independent all-row
+checks. No matched training run or arena
 used this pack, so no Elo or source-mixture strength conclusion follows. The
 next production gates are a durable compact raw observation format, a larger
 shard and actual external-loader screen, and an independently registered

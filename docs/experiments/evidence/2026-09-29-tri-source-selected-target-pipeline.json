@@ -2,6 +2,8 @@
   "artifact_sha256": {
     "bc_corrected_target_direct_audit": "69c7eec1a4f67a7eea46dd31ebf4640c40c6f72af83fc8616cab3d17b8bd4c3a",
     "bc_corrected_target_receipt": "11b1f64cfb3d327841d05d97bd95bc388f5b721a7cbcd972451262d4d2265c0f",
+    "compact_raw_legal_independent_audit": "341bebb2c59b384e41339bb59e2840fc0552976a158ef78edd4f54db81ed503c",
+    "compact_raw_legal_independent_audit_source": "5480b056c859d624d9059e22bb0672dab1081d7a28ca66cb5650bec42a017ccb",
     "compact_raw_legal_receipt": "f7d0ceda8c05f0ed013cbc6c5dc58f9110377c4e09bb141f672d14d9cefe0e84",
     "compact_raw_legal_source": "3dc6549452b2e1f803692052640d2001103944e351be4c6f587d56507d646210",
     "full_pack_independent_audit": "7f449d7164a52ba508f0f26d7882a8bc113122ad4ab06edb20ee205f797f665d",
@@ -63,7 +65,7 @@
     "external storage loader and GPU training throughput unmeasured",
     "whole source archives include unselected members and losing rows",
     "compact chosen raw legal-head bank is measured on B/C subset only, with a verbose diagnostic index",
-    "compact raw bank independent readback and large-shard physical format remain pending"
+    "large-shard physical format remains pending"
   ],
   "schema": "tri_source_selected_target_pipeline_compact_evidence_v1",
   "scope": "bounded archived three-source diagnostic, zero corpus credit",
@@ -79,7 +81,7 @@
     "whole_source_archives_per_unique_winner": 3131.2765057063393
   },
   "verification": {
-    "compact_raw_legal": "MEASURED_COMPACT_RAWLEGAL_BC_SUBSET_ZERO_CREDIT; independent readback pending",
+    "compact_raw_legal": "PASS_ALL_INDEX_NATIVE_BYTES_AND_TARGETS_DIAGNOSTIC",
     "full_pack": "PASS_DIAGNOSTIC_FULL_WINNERS_ZERO_CORPUS_CREDIT",
     "replay": "PASS_DIAGNOSTIC_ZERO_CREDIT",
     "sf_raw_heads": "PASS_RAW_HEADS_UNADMITTED",
