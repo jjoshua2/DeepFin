@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import chess
 import numpy as np
@@ -20,8 +21,9 @@ OPENING = ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "f8c5",
            "f1e1", "f8e8", "b1d2", "c6b8"]
 
 
-def fixture(*, row_index: int = 0, source: str = "Ceres-v8"):
-    game = {"uid_prefix": ["a" * 64, source, "root", 7],
+def fixture(*, row_index: int = 0, source: str = "Ceres-v8") -> tuple[
+        dlite.PreparedRow, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    game: dict[str, Any] = {"uid_prefix": ["a" * 64, source, "root", 7],
             "source_proof_sha256": "b" * 64,
             "uid_ply_offset": 16 if source == "BT4-v9" else 0,
             "root_start_fen": chess.STARTING_FEN,
@@ -143,7 +145,7 @@ def test_v6_compact_chain_adapter_exact_row_and_duplicate_refusal() -> None:
                    "input_digest": proof["input_digest"],
                    "history_stack_sha256": proof["full_history_sha256"],
                    "pov_white": proof["pov_white"], "rule50": proof["rule50"]}
-    report = {"source": "BT4-v9", "game_id": 7, "root_id": "root",
+    report: dict[str, Any] = {"source": "BT4-v9", "game_id": 7, "root_id": "root",
               "history_chain": {"schema": "tri_source_full_game_history_chain_v1",
                                 "root_start_fen": game["root_start_fen"],
                                 "opening_uci": game["opening_uci"],
@@ -241,7 +243,8 @@ def test_engine_ownership_and_no_partial_success(tmp_path: Path) -> None:
     assert engine.resets == 1
     engine = FakeEngine()
     class FailingSearcher(FakeSearcher):
-        def stream(self, _history, *, depth: int, multipv: int) -> list[str]:
+        def stream(self, history, *, depth: int, multipv: int) -> list[str]:
+            assert history.fen == row.history.fen
             assert depth == 8
             assert multipv == 1
             return []

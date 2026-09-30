@@ -58,12 +58,12 @@ def canonical(value: Any) -> bytes:
 
 
 def uid_of(value: Any) -> tuple[str, str, str, int, int]:
-    need(type(value) is list and len(value) == 5 and
-         all(type(x) is str and bool(x) for x in value[:3]) and
-         HEX64.fullmatch(value[0]) is not None and
-         all(type(x) is int and x >= 0 for x in value[3:]),
-         "source-qualified winner UID")
-    return tuple(value)  # type: ignore[return-value]
+    if (type(value) is not list or len(value) != 5 or
+            not all(type(x) is str and bool(x) for x in value[:3]) or
+            HEX64.fullmatch(value[0]) is None or
+            not all(type(x) is int and x >= 0 for x in value[3:])):
+        raise Hold("source-qualified winner UID")
+    return value[0], value[1], value[2], value[3], value[4]
 
 
 def selected_teacher(uid: tuple[str, str, str, int, int]) -> str:
@@ -118,17 +118,19 @@ def prepare_row(winner: dict[str, Any], proof: dict[str, Any],
     need(game.get("uid_prefix") == list(uid[:4]), "game/row source identity")
     row_index = proof.get("row_index")
     offset = game.get("uid_ply_offset")
-    need(type(row_index) is int and row_index >= 0 and
-         type(offset) is int and offset in (0, 16) and
-         uid[4] == row_index + offset, "game/row ply identity")
+    if (type(row_index) is not int or row_index < 0 or
+            type(offset) is not int or offset not in (0, 16) or
+            uid[4] != row_index + offset):
+        raise Hold("game/row ply identity")
     opening = game.get("opening_uci")
     played = game.get("played_uci")
-    need(type(opening) is list and type(played) is list and
-         all(type(m) is str for m in opening + played) and
-         row_index < len(played) and len(opening) == 16,
-         "complete selected-game history")
+    if (type(opening) is not list or type(played) is not list or
+            not all(type(m) is str for m in opening + played) or
+            row_index >= len(played) or len(opening) != 16):
+        raise Hold("complete selected-game history")
     root_fen = game.get("root_start_fen")
-    need(type(root_fen) is str and bool(root_fen), "history root FEN")
+    if type(root_fen) is not str or not root_fen:
+        raise Hold("history root FEN")
     try:
         board = chess.Board(root_fen)
         need(board.is_valid(), "valid game root")
@@ -146,9 +148,9 @@ def prepare_row(winner: dict[str, Any], proof: dict[str, Any],
          "full history stack SHA")
     pov_white = proof.get("pov_white")
     rule50 = proof.get("rule50")
-    need(type(pov_white) is bool and pov_white == bool(board.turn) and
-         type(rule50) is int and rule50 == board.halfmove_clock,
-         "side-to-move/rule50 orientation")
+    if (type(pov_white) is not bool or pov_white != bool(board.turn) or
+            type(rule50) is not int or rule50 != board.halfmove_clock):
+        raise Hold("side-to-move/rule50 orientation")
     if "fen" in proof:
         need(proof["fen"] == board.fen(), "source row FEN")
     context = winner.get("context")
@@ -174,13 +176,16 @@ def prepare_v6_winner(winner: dict[str, Any], game_line: bytes) -> PreparedRow:
         report = json.loads(game_line)
     except (UnicodeError, ValueError) as error:
         raise Hold("v6 game proof JSON") from error
-    need(type(report) is dict, "v6 game proof object")
+    if type(report) is not dict:
+        raise Hold("v6 game proof object")
     chain = report.get("history_chain")
-    need(type(chain) is dict and
-         chain.get("schema") == "tri_source_full_game_history_chain_v1" and
-         type(chain.get("row_index")) is list and
-         0 < len(chain["row_index"]) <= 512,
-         "complete bounded v6 history chain")
+    if type(chain) is not dict:
+        raise Hold("complete bounded v6 history chain")
+    row_index = chain.get("row_index")
+    if (chain.get("schema") != "tri_source_full_game_history_chain_v1" or
+            type(row_index) is not list or
+            not 0 < len(row_index) <= 512):
+        raise Hold("complete bounded v6 history chain")
     uid = uid_of(winner.get("uid"))
     source = winner.get("source")
     need(source in ("BT4-v9", "Ceres-v8", "SF-d6") and
@@ -188,11 +193,11 @@ def prepare_v6_winner(winner: dict[str, Any], game_line: bytes) -> PreparedRow:
          str(report.get("root_id")) == uid[2] and
          report.get("source", source) == source,
          "v6 source/game/root join")
-    matching = [entry for entry in chain["row_index"]
+    matching = [entry for entry in row_index
                 if type(entry) is dict and entry.get("uid") == list(uid)]
     need(len(matching) == 1 and
-         len({tuple(uid_of(entry.get("uid"))) for entry in chain["row_index"]})
-         == len(chain["row_index"]), "unique v6 row proof")
+         len({tuple(uid_of(entry.get("uid"))) for entry in row_index})
+         == len(row_index), "unique v6 row proof")
     entry = matching[0]
     offset = 16 if source == "BT4-v9" else 0
     proof_sha = digest(game_line)
@@ -235,9 +240,10 @@ def _score(lines: list[str], depth: int, board: chess.Board) -> dict[str, Any]:
              move == block.lines[0].move and nodes == block.lines[0].nodes and
              move in {m.uci() for m in board.legal_moves},
              "raw scalar score/move differs")
-        need(native is not None and len(native) == 3 and
-             all(type(x) is int and x >= 0 for x in native) and sum(native) == 1000,
-             "native UCI WDL unavailable/malformed")
+        if (native is None or len(native) != 3 or
+                not all(type(x) is int and x >= 0 for x in native) or
+                sum(native) != 1000):
+            raise Hold("native UCI WDL unavailable/malformed")
         need(type(nodes) is int and nodes > 0 and
              math.isfinite(block.lines[0].effective_cp),
              "scalar nodes/effective CP unavailable")
@@ -289,7 +295,7 @@ def label_bank(rows: list[PreparedRow], *, depth: int, stockfish: Path,
          0 < len(rows) <= 512 and len({r.uid for r in rows}) == len(rows) and
          type(max_wall_seconds) is int and 0 < max_wall_seconds <= 3600,
          "bounded unique small-bank geometry")
-    need(isinstance(stockfish, Path) and stockfish.is_file() and not stockfish.is_symlink() and
+    need(stockfish.is_file() and not stockfish.is_symlink() and
          0 < stockfish.stat().st_size <= 256 << 20 and
          _sha_field(stockfish_sha256, "engine binary") == file_digest(stockfish),
          "qualified Stockfish binary bytes")
@@ -345,22 +351,26 @@ def attach_main_wdl(row: PreparedRow, label: dict[str, Any],
     need(selected.get("target_sha256") == digest(target),
          "selected target byte pin")
     need(type(legal_mask) is np.ndarray and legal_mask.shape == (POLICY_WIDTH,) and
-         legal_mask.dtype == np.uint8 and np.isin(legal_mask, (0, 1)).all() and
+         legal_mask.dtype == np.uint8 and bool(np.isin(legal_mask, (0, 1)).all()) and
          bool(legal_mask.any()), "selected legal mask")
     policy = np.frombuffer(target[:POLICY_WIDTH * 2], dtype="<f2")
     chosen = np.frombuffer(target[POLICY_WIDTH * 2:], dtype="<f2")
-    need(np.isfinite(policy).all() and np.isfinite(chosen).all() and
+    need(bool(np.isfinite(policy).all() and np.isfinite(chosen).all() and
          np.all(policy >= 0) and np.all(chosen >= 0) and
          np.all(policy[legal_mask == 0] == 0) and
          abs(float(policy.sum(dtype=np.float32)) - 1) <= .005 and
-         abs(float(chosen.sum(dtype=np.float32)) - 1) <= .005,
+         abs(float(chosen.sum(dtype=np.float32)) - 1) <= .005),
          "selected policy/value/mask")
     score = label.get("score")
-    need(type(score) is dict, "missing scalar score")
+    if type(score) is not dict:
+        raise Hold("missing scalar score")
     cp, mate = score.get("cp"), score.get("mate")
-    need((type(cp) is int and mate is None) or
-         (cp is None and type(mate) is int), "missing scalar CP/mate")
-    effective = float(cp if cp is not None else mate_to_effective_cp(mate))
+    if type(cp) is int and mate is None:
+        effective = float(cp)
+    elif cp is None and type(mate) is int:
+        effective = float(mate_to_effective_cp(mate))
+    else:
+        raise Hold("missing scalar CP/mate")
     native = score.get("native_wdl_permille")
     board = chess.Board(row.history.fen)
     need(type(score.get("nodes")) is int and score["nodes"] > 0 and
@@ -374,7 +384,8 @@ def attach_main_wdl(row: PreparedRow, label: dict[str, Any],
     sf = cp_to_wdl(cp, mate, slope=0.006, draw_width_cp=120.0)
     observed = score.get("d_style_wdl")
     need(type(observed) is list and len(observed) == 3 and
-         all(type(x) in (int, float) and math.isfinite(x) for x in observed) and
+         all((type(x) is int or type(x) is float) and
+             math.isfinite(float(x)) for x in observed) and
          np.allclose(np.asarray(observed, dtype=np.float32), sf, rtol=0, atol=1e-7),
          "historical D-calibrated scalar value")
     raw_lines = label.get("raw_info_lines")
@@ -383,7 +394,7 @@ def attach_main_wdl(row: PreparedRow, label: dict[str, Any],
          score == _score(raw_lines, label["depth"], board),
          "raw UCI info/parsed score parity")
     mixed = (sf.astype(np.float32) + 2 * chosen.astype(np.float32)) / 3
-    need(np.isfinite(mixed).all() and abs(float(mixed.sum()) - 1) <= .005,
+    need(bool(np.isfinite(mixed).all()) and abs(float(mixed.sum()) - 1) <= .005,
          "finite D-lite main WDL")
     candidate = target[:POLICY_WIDTH * 2] + mixed.astype("<f2").tobytes()
     need(candidate[:POLICY_WIDTH * 2] == target[:POLICY_WIDTH * 2],

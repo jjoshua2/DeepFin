@@ -64,9 +64,12 @@ def load_small_bank(winners: bytes, proofs: bytes) -> list[core.PreparedRow]:
     proof_by_uid: dict[tuple[str, str, str, int, int], bytes] = {}
     for line, game in proof_lines:
         chain = game.get("history_chain")
-        core.need(type(chain) is dict and type(chain.get("row_index")) is list,
-                  "v6 history proof schema")
-        for entry in chain["row_index"]:
+        if type(chain) is not dict:
+            raise core.Hold("v6 history proof schema")
+        row_index = chain.get("row_index")
+        if type(row_index) is not list:
+            raise core.Hold("v6 history proof schema")
+        for entry in row_index:
             uid = core.uid_of(entry.get("uid"))
             core.need(uid not in proof_by_uid, "duplicate proof UID")
             proof_by_uid[uid] = line

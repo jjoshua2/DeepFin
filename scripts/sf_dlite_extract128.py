@@ -31,6 +31,18 @@ def need(ok: bool, why: str) -> None:
     core.need(ok, why)
 
 
+def object_value(value: Any, why: str) -> dict[str, Any]:
+    if type(value) is not dict:
+        raise core.Hold(why)
+    return value
+
+
+def list_value(value: Any, why: str) -> list[Any]:
+    if type(value) is not list:
+        raise core.Hold(why)
+    return value
+
+
 def read_pinned(path: Path, sha256: str, maximum: int) -> bytes:
     core._sha_field(sha256, "extract input")
     need(path.is_file() and not path.is_symlink() and
@@ -54,8 +66,7 @@ def json_object(raw: bytes, why: str) -> dict[str, Any]:
         value = json.loads(raw)
     except (UnicodeError, ValueError) as error:
         raise core.Hold(why) from error
-    need(type(value) is dict, why)
-    return value
+    return object_value(value, why)
 
 
 def lines(raw: bytes, maximum: int) -> list[bytes]:
@@ -88,26 +99,25 @@ def extract_metadata(*, receipt_raw: bytes, terminal_raw: bytes,
          terminal.get("receipt_sha256") == core.digest(receipt_raw) and
          receipt.get("credit") == terminal.get("credit") == ZERO,
          "terminal complete zero-credit receipt binding")
-    resolution = receipt.get("resolution")
-    need(type(resolution) is dict, "resolution")
-    same = resolution.get("two_pass_readback")
-    dedup = resolution.get("provisional_dedup")
-    need(type(same) is dict and type(dedup) is dict and
-         same.get("rows") == expected_gross and
+    resolution = object_value(receipt.get("resolution"), "resolution")
+    same = object_value(resolution.get("two_pass_readback"),
+                        "two-pass readback")
+    dedup = object_value(resolution.get("provisional_dedup"),
+                         "provisional dedup")
+    winners = list_value(dedup.get("winners"), "dedup winners")
+    need(same.get("rows") == expected_gross and
          same.get("index_sha256") == core.digest(index_raw) and
          dedup.get("gross_rows") == expected_gross and
-         type(dedup.get("winners")) is list and
-         dedup.get("unique_rows") == len(dedup["winners"]) and
-         len(dedup["winners"]) >= sample_size,
+         dedup.get("unique_rows") == len(winners) and
+         len(winners) >= sample_size,
          "complete wave index/dedup receipt")
     index = lines(index_raw, expected_gross)
     need(len(index) == expected_gross, "gross wave index rows")
-    winners = dedup["winners"]
     ranked: list[tuple[tuple[bytes, bytes], dict[str, Any]]] = []
     seen_inputs: set[str] = set()
     seen_uids: set[tuple[str, str, str, int, int]] = set()
     for winner in winners:
-        need(type(winner) is dict, "winner object")
+        winner = object_value(winner, "winner object")
         uid = core.uid_of(winner.get("winner_uid"))
         digest = core._sha_field(winner.get("input_digest"), "winner input")
         ordinal = winner.get("winner_ordinal")
@@ -132,15 +142,16 @@ def extract_metadata(*, receipt_raw: bytes, terminal_raw: bytes,
              "selected winner/index identity")
         selected_uid.add(uid)
         selected_index_lines.append(index[ordinal])
-    child_results = receipt.get("source_child_results")
-    need(type(child_results) is list, "child proof receipts")
+    child_results = list_value(receipt.get("source_child_results"),
+                               "child proof receipts")
     proof_pins: dict[str, str] = {}
     for item in child_results:
-        need(type(item) is dict, "child result")
+        item = object_value(item, "child result")
         if item.get("wave") == 1:
             source = item.get("source")
-            need(source in SOURCE_PROOFS and source not in proof_pins,
-                 "unique wave1 child proof")
+            if (type(source) is not str or source not in SOURCE_PROOFS or
+                    source in proof_pins):
+                raise core.Hold("unique wave1 child proof")
             proof_pins[source] = core._sha_field(item.get("proof_sha256"),
                                                  "child proof")
     need(set(proof_pins) == set(SOURCE_PROOFS) and
@@ -153,12 +164,13 @@ def extract_metadata(*, receipt_raw: bytes, terminal_raw: bytes,
         need(core.digest(raw) == proof_pins[source], "wave1 proof SHA")
         for line in lines(raw, 256):
             game = json_object(line, "game proof JSON")
-            chain = game.get("history_chain")
-            need(type(chain) is dict and type(chain.get("row_index")) is list,
-                 "history-chain game proof")
+            chain = object_value(game.get("history_chain"),
+                                 "history-chain game proof")
+            row_index = list_value(chain.get("row_index"),
+                                   "history-chain game proof")
             matches = []
-            for entry in chain["row_index"]:
-                need(type(entry) is dict, "row proof entry")
+            for entry in row_index:
+                entry = object_value(entry, "row proof entry")
                 uid = core.uid_of(entry.get("uid"))
                 if uid in selected_uid:
                     need(uid not in found, "duplicate selected proof UID")
