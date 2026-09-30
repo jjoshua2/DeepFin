@@ -38,7 +38,7 @@
       "status": "CONDITIONAL_SENSITIVITY_ON_UNVERIFIED_RATE_REFERENCES"
     }
   },
-  "limitations": "No exact owner-output target parity, post-dedup source shares, source-matched-route strength, sustained source rate, perfect readback overlap, or external first-read proof is measured. The 800.19 BT4 label-rate input and the inherited 39.587/34.203 baselines (which depend on an unauthenticated 1281.357 trainer reference) are assumed/unverified in this publication.",
+  "limitations": "No exact owner-output target parity, post-dedup source shares, source-matched-route strength, sustained source rate, perfect readback overlap, or external first-read proof is measured. The 800.19 BT4 label-rate input and the inherited 39.587/34.203 baselines (which depend on an unauthenticated 1281.357 trainer reference) are assumed/unverified in this publication. The 800.19 BT4 label-rate input and the inherited 39.587/34.203 baselines (which depend on an unauthenticated 1281.357 trainer reference) are assumed/unverified in this publication.",
   "bt4_selected_label_rows_per_second_reference_status": "ASSUMED_UNVERIFIED_NO_PRODUCING_RECEIPT_PINNED",
   "baseline_status": "CONDITIONAL_ON_UNVERIFIED_1281.357_TRAINER_AND_800.19_BT4_LABEL_REFERENCES",
   "trainer_rows_per_second_reference": 1281.357,
