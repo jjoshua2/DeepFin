@@ -455,7 +455,10 @@ def _raw_rows(path: Path, offsets: set[int]) -> dict[int, dict[str, Any]]:
 def _producer_sha256() -> dict[str, str]:
     modules = (adaptive, adapter, mix, sf_rewrite, registration)
     paths = [Path(__file__).resolve()]
-    paths.extend(Path(module.__file__).resolve() for module in modules)
+    for module in modules:
+        module_file = module.__file__
+        require(module_file is not None, "producer module has no source path")
+        paths.append(Path(module_file).resolve())
     return {str(path): file_sha256(path) for path in paths}
 
 
