@@ -1,0 +1,17 @@
+{
+  "verification": "PASS",
+  "qualified_evidence_commit": "885b363fbc532673575c72e180b32e03aef36f8d",
+  "qualified_evidence_tree": "f2e8851fdd299da77a7eb7aec9b9ad46d36b5bd9",
+  "tracked_paths": 3562,
+  "native_manifest_matches": 367,
+  "all_primary_files_match_local_final_candidate": true,
+  "controls_equal_except_final_EOF_cleanup": [
+    "/source_sha256s/standalone/proofs/ray/Algebra.bend"
+  ],
+  "native_ray_report_matches_local_except_cc": true,
+  "native_lookup_report_matches_prior_except_cc": true,
+  "safe_source_consumer": true,
+  "source_only_patch_sha256": "b364f599776dc662970f57c6e7e98c15e3d95235adc06676cb3ada0ef9ed34f2",
+  "artifact_id": 10809054000,
+  "artifact_zip_sha256": "842bb78052e9c6a3b66138ae7f29c5bc0d7f4c5634a12f718c1f2cb2ba493099"
+}

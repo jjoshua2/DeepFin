@@ -1,5 +1,15 @@
 # Bend migration and proof inventory
 
+## Latest independent ray and initialized-lookup refinement
+
+Hosted run **36002630448** passes all five new public contracts/importing consumer, all19 controls, four native ray modes, four actual initialized-lookup modes, original compiler source/pin checks and unchanged whole-repository lint on source `58c9136bccdf6667a36776fb48480eab7ebfe5a2`.
+
+Current P2 source progress now includes independent geometric attack correctness, not only equality to the production slider definition. The five ray contracts prove full seven-step geometric coverage, arbitrary-occupancy/accumulator production ray refinement, unmasked and actual-relevant-mask slider refinement, and the complete returned-pair result for the actual initialized table/extras pipeline. The caller supplies only supported square/key/budget and symbolic depth conditions; actual shape, headers, data and index certificates are produced by existing proofs.
+
+The independent attack definition uses explicit natural file/rank paths and first-blocker inclusion. Structural proofs derive preservation of all interior occupancy observations; actual full-mask identity and the terminal-path lemma connect masking to that definition. All old accepted statements/gates remain unchanged. Qualification is modular115 laws/295 controls, not a freshly executed full chain. Historical notes below calling the independent geometry connection wholly open are superseded within this bounded source pipeline.
+
+No separate closed normalization of the huge literal Tables.build expression, native lowering/allocation/lifetime proof, or whole-chess legality/search/model theorem follows. P3-P7 and remaining application migration stay open. See [the current readout](experiments/2026-09-24-bend-independent-rays.md) and compact receipts for domains, independent reference checks, failures and trust boundaries.
+
 ## Latest public lookup and independent geometry qualification
 
 Hosted run **35996797725** passes the four preserved public laws, all16 controls, four native modes, original compiler source/pin gates, unchanged repository lint and the two archived independent step/mask checks on source `12134356d6e09f303c256a76f83439204292897a`. The four contracts are certified_header_route, selected_state_is_masked, initialized_indexed_lookup and initialized_masked_lookup. They retain actual affine buffers and obtain header/data/index/shape certificates from earlier producers. Caller bounds and symbolic depth=17 remain explicit.
