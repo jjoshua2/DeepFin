@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest P3 occupied-decoder correspondence
+
+Hosted run **36083420058** passes all four universal laws, importing consumer, eighteen classified controls, four native modes and three actual corruption witnesses, original compiler checks and unchanged whole-repository lint on source `4c5232cc1e6fceb8adc66dcc2dd5479b373ead3f`.
+
+The decoder suite projects the existing global partition to every bounded square, proves independent classify/encode reconstruction of all eight kind/color bits, and connects actual Chess.piece/occupied/white observations to that abstract cell. Raw decoding requires actual occupancy; the explicit guarded observation is proof-only, not a production API change. Initial-board consistency and fresh-insertion producers are consumed without assumed answer tags.
+
+All four new contracts are universal. Exact-source parent123/332 plus freshly executed4/18 gives modular127/350 coverage, not an executed full chain. Nine semantic, eight policy and one synthetic controls remain classified. This advances pointwise abstract-square correspondence only: whole-board bijection, parser freshness, valid metadata, removal/moves and legality remain separate. See [the readout](experiments/2026-09-24-bend-occupied-decoder.md) and committed receipts. Existing P2 boundary limitations are unchanged; no Python application responsibility newly moved.
+
 ## Latest P3 board-representation foundation
 
 Hosted run **36080761492** passes all six public laws, importing consumer, seventeen controls, four native modes with full-Board comparisons, two compiled/executed corruption controls, original compiler checks and unchanged whole-repository lint on source `ad0c9e379a0b1bfbb91b7c5d7755e22668bf1004`.
