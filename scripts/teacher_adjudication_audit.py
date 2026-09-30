@@ -331,7 +331,7 @@ def _update_position_strata(
     aggregate: dict[str, Any],
     strata: list[str],
     *,
-    reversal: bool,
+    reversal: bool | None,
     bt4_regret: float | None,
 ) -> None:
     for name in strata:
@@ -339,13 +339,16 @@ def _update_position_strata(
             name,
             {
                 "rows": 0,
+                "reversal_rows": 0,
                 "reversals": 0,
                 "regret_rows": 0,
                 "bt4_regret_sum_cp": 0.0,
             },
         )
         cell["rows"] += 1
-        cell["reversals"] += int(reversal)
+        if reversal is not None:
+            cell["reversal_rows"] += 1
+            cell["reversals"] += int(reversal)
         if bt4_regret is not None and math.isfinite(bt4_regret):
             cell["regret_rows"] += 1
             cell["bt4_regret_sum_cp"] += bt4_regret
@@ -604,7 +607,7 @@ def analyze_row(
     _update_position_strata(
         aggregate,
         _position_strata(board, raw_row),
-        reversal=bool(reversal),
+        reversal=reversal,
         bt4_regret=(
             None if bt4_metric is None else bt4_metric["conditional_regret_cp"]
         ),
@@ -708,7 +711,9 @@ def finalize(aggregate: dict[str, Any]) -> dict[str, Any]:
         )
     for cell in result["position_strata"].values():
         cell["reversal_rate"] = (
-            cell["reversals"] / cell["rows"] if cell["rows"] else None
+            cell["reversals"] / cell["reversal_rows"]
+            if cell["reversal_rows"]
+            else None
         )
         cell["mean_bt4_regret_cp"] = (
             cell["bt4_regret_sum_cp"] / cell["regret_rows"]
