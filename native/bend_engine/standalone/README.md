@@ -9,6 +9,10 @@ model through native LibTorch/AOTI. That product additionally needs the package
 and native libraries, but still no Python runtime. Model math and training are
 not yet Bend-authored; the old Python tools remain external migration references.
 
+**Optional CPU async mode:** the native neural product accepts
+`DEEPFIN_BEND_ASYNC=1` for pending-forward stop/readiness and separate physical
+retirement. Synchronous remains default. See [lifecycle and full engine checks](../async_probe/README.md#full-engine-integration-pr4b).
+
 ## Ownership, not just a wrapper
 
 | Responsibility | Implementation |
@@ -477,16 +481,44 @@ reference, and subsequent selected paths/result counts/best moves to diagnostic
 PUCT. It does not inspect every final tree field or prove all possible positions.
 All verifiers/exporters are external, not launched by the engine.
 
-Limits remain deliberate: synchronous CPU batch-one forwards are **not
-preemptible**. `isready`, `stop`, `quit` and time limits can wait for a forward,
-encoding, or blocked diagnostic output. No hard-stop latency guarantee is made.
-Policy maps are currently rebuilt per leaf, and tensor lists are copied across
-the boundary; no speed claim or optimized memory/batching claim is implied.
+Limits remain deliberate: CPU batch-one forwards themselves are not preemptible.
+In default synchronous mode, readiness/stop/deadlines may wait for a forward. In
+opt-in async mode they are processed while the copied forward runs, but encoding,
+selection and blocked diagnostic output can still delay them. Quit joins physical
+work. No hard-stop latency guarantee is made. Policy maps and packed buffers are
+now reused as described below; legal entries/history inputs remain leaf-specific.
 The backend has a 65,536-forward process limit. No CUDA, batched scheduler,
 subtree reuse, production Gumbel parity, trained-model strength or training
 migration is established. Existing material-mode regressions and perft depths
 remain unchanged; new native tests and model export are opt-in only.
 
+## Neural-work instrumentation
+
+Every completed search reports `deepfin.neural-work.v1` counters. `go evals N`
+selects a real-neural-row budget; `go movetime MS` selects a wall-time budget;
+append `profile` for optional CPU phase clocks. See
+[measurement definitions and paired benchmark](../../../docs/neural_work.md)
+for limits, missing backend measurements and the `verify_work.py` opt-in checks.
+
+### Reusable native model storage
+
+The neural application carries one linear cache across searches and position
+changes: immutable policy maps and 16,384/2,048-element F32 input/output workspaces.
+Legal entries and the entire logical input are rebuilt for every selected leaf;
+input capacity is cleared before reuse. Native transport uses the checked compiler's
+packed scalar-array layout, not linked float lists. The synchronous LibTorch bridge
+allocates its input tensor once and copies into it; AOTI internals may still allocate.
+This is **not zero-copy**, concurrent inference, or a CUDA optimization.
+
+Detailed `native_path`/`native_reply` notices are off by default. Enable them with
+`DEEPFIN_BEND_NATIVE_DIAGNOSTICS=1` for the external neural verifier. Raw model traces
+remain separately opt-in with `DEEPFIN_BEND_MODEL_TRACE`. Optional
+`DEEPFIN_BEND_BUFFER_AUDIT=1` reports input/output address changes and bridge
+input-tensor allocations on stderr at shutdown. Only `0` and `1` are accepted for
+these Boolean settings; there is no silent typo fallback.
+
+See [reuse qualification](../../../docs/experiments/2026-09-22-native-buffer-reuse.md)
+for the bounded tests, evidence, and remaining allocation/copy costs.
 
 ## Source-proof coverage
 

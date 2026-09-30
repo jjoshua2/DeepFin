@@ -1,0 +1,15 @@
+{
+  "verdict": "PASS_EXACT_PARITY_SMALL_CPU_DIAGNOSTIC",
+  "runner_commit": "44010d78cc31deaa3c3517b3fe20f5ea8f495ad0",
+  "independent_tests": "10 passed via /usr/bin/python3, cores16-17, two threads, CUDA hidden",
+  "independent_receipt_check": "All four complete plans, roster, all decoded shape/dtype/byte hashes and ordered target hashes identical. Recomputed arm times from individual receipts.",
+  "source_diff": "Only chess_anti_engine/replay/target_overlay.py differs in chess_anti_engine package between frozen control/candidate commits.",
+  "limits": "Eight B shards, warm bounded diagnostic, synthetic row census; E concurrently active. No full trainer or external-drive performance claim.",
+  "files_sha256": {
+    "arm_0.json": "70d1eb5d462e97a6431ae4822cc987b07601f7993990d15601700277e33ff5b0",
+    "arm_3.json": "6ce8197fba7e2060e37a51f5af862600a553af58583a9e014577d623819d7b9f",
+    "arm_2.json": "78854d4f894636370a4f0d32f6622c87352a1d9f4de148f8e7ad6d53459d2d96",
+    "arm_1.json": "6d75d8d20db3bb31b784e2107c51d8c37672e7da20f725ca25043306747d2464",
+    "summary.json": "478c632924b021aade755b48f41c3f8dabd681673a81484dcf79dfce2d15226f"
+  }
+}

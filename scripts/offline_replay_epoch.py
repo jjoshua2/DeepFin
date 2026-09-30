@@ -9,11 +9,14 @@ where generating fresh games would confound the comparison.
 from __future__ import annotations
 
 import argparse
+import copy
 import dataclasses
+from hashlib import sha256
 import json
 import math
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -67,6 +70,11 @@ from chess_anti_engine.train.trainer import (
     trainer_kwargs_from_config,
 )
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+from chess_anti_engine.utils.atomic import atomic_write_text
+from scripts.offline_epoch_resume import (
+    EpochResume, candidate_lock, mask_state, restore_mask, restore_numpy,
+    source_identity,
+)
 
 
 def _limit_shards(shard_paths: list[Path], args: argparse.Namespace) -> list[Path]:
@@ -994,15 +1002,20 @@ def _load_eval_arrs(
     shard_paths: list[Path],
     model_cfg: ModelConfig,
     args: argparse.Namespace,
+    verify_shard: Callable[[Path], None] | None = None,
 ) -> dict[str, np.ndarray]:
     eval_chunks: list[dict[str, np.ndarray]] = []
     eval_left = int(args.eval_positions)
     for shard in shard_paths:
         if eval_left <= 0:
             break
+        if verify_shard is not None:
+            verify_shard(shard)
         try:
             arrs, _meta = load_shard_arrays(shard, lazy=False)
         except Exception as exc:
+            if verify_shard is not None:
+                raise ValueError(f"resumable eval shard load failed: {shard}") from exc
             print(json.dumps({
                 "event": "eval_shard_skip",
                 "path": str(shard),
@@ -1076,18 +1089,57 @@ def _model_config_from_offline_config(cfg: dict[str, Any]) -> ModelConfig:
     )
 
 
+def _resume_science(candidate: str, cfg: dict[str, Any],
+                    args: argparse.Namespace) -> dict[str, Any]:
+    excluded = {"out_dir", "report_every_shards", "checkpoint_every_seconds",
+                "resume", "resume_source_manifest"}
+    settings = {key: value for key, value in vars(args).items()
+                if key not in excluded}
+    root = Path(__file__).resolve().parents[1]
+    return {
+        "candidate": candidate,
+        "effective_config": cfg,
+        "settings": settings,
+        "source": source_identity(Path(__file__).resolve(),
+                                  Path(__file__).with_name("offline_epoch_resume.py"),
+                                  root / "chess_anti_engine",
+                                  Path(args.config).resolve(strict=True),
+                                  Path(args.init_checkpoint).resolve(strict=True)
+                                  if args.init_checkpoint else None),
+    }
+
+
 def _train_candidate(
     *,
     candidate: str,
     cfg: dict[str, Any],
     shard_paths: list[Path],
-    eval_arrs: dict[str, np.ndarray],
+    eval_arrs: dict[str, np.ndarray] | None,
     args: argparse.Namespace,
 ) -> dict[str, Any]:
     run_dir = Path(args.out_dir) / candidate
     run_dir.mkdir(parents=True, exist_ok=True)
 
     model_cfg = _model_config_from_offline_config(cfg)
+    resumable = bool(args.resume or args.checkpoint_every_seconds > 0)
+    resume = None
+    if resumable:
+        interval = float(args.checkpoint_every_seconds or 1200)
+        resume = EpochResume(
+            run_dir, science=_resume_science(candidate, cfg, args),
+            train_paths=shard_paths, eval_paths=_eval_shard_paths(args),
+            interval_seconds=interval, resume=bool(args.resume),
+            source_manifest=(Path(args.resume_source_manifest).resolve(strict=True)
+                             if args.resume_source_manifest else None),
+        )
+        complete = resume.completed_result()
+        if complete is not None:
+            return complete
+        eval_arrs = _load_eval_arrs(
+            shard_paths=_eval_shard_paths(args), model_cfg=model_cfg,
+            args=args, verify_shard=resume.verify_shard,
+        )
+    assert eval_arrs is not None
     trainer, optimizer, scope = _build_trainer_for_candidate(
         candidate=candidate,
         cfg=cfg,
@@ -1118,18 +1170,72 @@ def _train_candidate(
     vr_dropped = 0
     stop = False
     shard_i = 0
+    cursor: dict[str, Any] | None = None
+    if resume is not None:
+        if args.resume:
+            cursor = resume.load(trainer, rng, mask_rng)
+            steps = int(cursor["steps"])
+            positions = int(cursor["positions"])
+            skipped_shards = int(cursor["skipped_shards"])
+            vr_seen = int(cursor["vr_seen"])
+            vr_dropped = int(cursor["vr_dropped"])
+            shard_i = int(cursor["shard_i"])
+            if trainer.step != int(cursor["base_trainer_step"]) + steps:
+                raise ValueError("resume Trainer step and consumed batch cursor differ")
+            stop = max_steps > 0 and steps >= max_steps
+        else:
+            cursor = {
+                "epoch": 0, "shard_pos": 0, "batch_start": 0,
+                "steps": 0, "positions": 0, "skipped_shards": 0,
+                "vr_seen": 0, "vr_dropped": 0, "shard_i": 0,
+                "base_trainer_step": trainer.step,
+                "epoch_rng_before": None, "shard_rng_before": None,
+                "mask_rng_before": None, "order_sha256": None,
+                "keep_sha256": None,
+            }
+            resume.commit(trainer, cursor=cursor, rng=rng, mask_rng=mask_rng)
     for epoch in range(n_epochs):
       if stop:
           break
+      if cursor is not None and epoch < int(cursor["epoch"]):
+          continue
       # Reshuffle shard order each epoch (rng advances) so the second pass is
       # not a byte-identical replay of the first.
+      epoch_rng_before = copy.deepcopy(rng.bit_generator.state) if resume else None
+      replay_epoch = (cursor is not None and bool(args.resume)
+                      and epoch == int(cursor["epoch"])
+                      and cursor["epoch_rng_before"] is not None)
+      post_step_rng = None
+      if replay_epoch:
+          assert cursor is not None
+          post_step_rng = copy.deepcopy(rng.bit_generator.state)
+          before = cursor["epoch_rng_before"]
+          assert before is not None
+          restore_numpy(rng, before)
       perm = rng.permutation(len(shard_paths))
+      if replay_epoch:
+          assert cursor is not None
+          assert post_step_rng is not None
+          epoch_rng_before = cursor["epoch_rng_before"]
+          restore_numpy(rng, post_step_rng)
       epoch_shards = [shard_paths[int(i)] for i in perm]
-      for shard in epoch_shards:
-        shard_i += 1
+      for shard_pos, shard in enumerate(epoch_shards):
+        if cursor is not None and epoch == int(cursor["epoch"]) \
+                and shard_pos < int(cursor["shard_pos"]):
+            continue
+        replay_shard = (cursor is not None and bool(args.resume)
+                        and epoch == int(cursor["epoch"])
+                        and shard_pos == int(cursor["shard_pos"])
+                        and int(cursor["batch_start"]) > 0)
+        if not replay_shard:
+            shard_i += 1
+        if resume is not None:
+            resume.verify_shard(shard)
         try:
             arrs, _meta = load_shard_arrays(shard, lazy=False)
         except Exception as exc:
+            if resume is not None:
+                raise ValueError(f"resumable shard load failed: {shard}") from exc
             skipped_shards += 1
             print(json.dumps({
                 "event": "train_shard_skip",
@@ -1153,6 +1259,15 @@ def _train_candidate(
             upgrade_v1_planes=bool(args.replay_upgrade_v1_planes),
         )
         arrs = _convert_policy_targets(arrs, policy_encoding=model_cfg.policy_encoding)
+        replay_rng = copy.deepcopy(rng.bit_generator.state) if replay_shard else None
+        replay_mask = mask_state(mask_rng) if replay_shard else None
+        mask_rng_before = mask_state(mask_rng) if resume is not None else None
+        if replay_shard:
+            assert cursor is not None
+            mask_rng_before = cursor["mask_rng_before"]
+            assert mask_rng_before is not None
+            restore_mask(mask_rng, mask_rng_before)
+        keep_sha = None
         if vr_mode != "control":
             n_pre = int(np.asarray(arrs["x"]).shape[0])
             keep = _value_redundancy_keep_mask(
@@ -1164,12 +1279,34 @@ def _train_candidate(
                 soft_keep_prob=float(args.vr_soft_keep_prob),
                 mask_rng=mask_rng,
             )
-            vr_seen += n_pre
-            vr_dropped += int(n_pre - int(keep.sum()))
+            keep_sha = sha256(keep.tobytes()).hexdigest()
+            if not replay_shard:
+                vr_seen += n_pre
+                vr_dropped += int(n_pre - int(keep.sum()))
             if not keep.all():
                 if not keep.any():
+                    if resume is not None:
+                        assert cursor is not None
+                        cursor = {
+                            "epoch": epoch, "shard_pos": shard_pos + 1,
+                            "batch_start": 0, "steps": steps, "positions": positions,
+                            "skipped_shards": skipped_shards, "vr_seen": vr_seen,
+                            "vr_dropped": vr_dropped, "shard_i": shard_i,
+                            "base_trainer_step": cursor["base_trainer_step"],
+                            "epoch_rng_before": epoch_rng_before,
+                            "shard_rng_before": None, "mask_rng_before": None,
+                            "order_sha256": None, "keep_sha256": None,
+                        }
+                        if resume.due():
+                            resume.commit(trainer, cursor=cursor, rng=rng, mask_rng=mask_rng)
                     continue  # whole shard dropped (degenerate) → skip
                 arrs = _slice_arrays(arrs, np.nonzero(keep)[0])
+        if replay_shard:
+            assert cursor is not None
+            if keep_sha != cursor["keep_sha256"]:
+                raise ValueError("resume current shard keep mask changed")
+            assert replay_mask is not None
+            restore_mask(mask_rng, replay_mask)
         n = int(np.asarray(arrs["x"]).shape[0])
         weights = _compute_sample_weights(
             arrs,
@@ -1177,6 +1314,12 @@ def _train_candidate(
             power=float(args.sample_weight_power),
             cap=float(args.sample_weight_cap),
         )
+        shard_rng_before = copy.deepcopy(rng.bit_generator.state) if resume else None
+        if replay_shard:
+            assert cursor is not None
+            shard_rng_before = cursor["shard_rng_before"]
+            assert shard_rng_before is not None
+            restore_numpy(rng, shard_rng_before)
         if weights is None:
             # Uniform baseline: one pass over a shuffled shard (byte-identical
             # to the pre-reweighting behavior).
@@ -1186,12 +1329,47 @@ def _train_candidate(
             # distribution. Same step/position budget per shard as the baseline,
             # only the composition is biased toward high-signal rows.
             order = rng.choice(n, size=n, replace=True, p=weights)
-        for start in range(0, n, int(args.batch_size)):
+        order_sha = sha256(order.tobytes()).hexdigest() if resume else None
+        if replay_shard:
+            assert cursor is not None
+            assert replay_rng is not None
+            if order_sha != cursor["order_sha256"]:
+                raise ValueError("resume current shard order changed")
+            restore_numpy(rng, replay_rng)
+        if replay_shard:
+            assert cursor is not None
+            first_batch = int(cursor["batch_start"])
+        else:
+            first_batch = 0
+        if first_batch < 0 or first_batch >= n or first_batch % int(args.batch_size):
+            raise ValueError("resume batch cursor is outside the current shard")
+        for start in range(first_batch, n, int(args.batch_size)):
             idx = order[start:start + int(args.batch_size)]
             batch = _slice_arrays(arrs, idx)
             last_metrics = trainer.train_steps(_as_replay_buffer(_FixedBatch(batch, rng)), batch_size=int(idx.shape[0]), steps=1)
             steps += 1
             positions += int(idx.shape[0])
+            if resume is not None:
+                next_start = start + int(args.batch_size)
+                assert cursor is not None
+                cursor = {
+                    "epoch": epoch, "shard_pos": (shard_pos if next_start < n
+                                                    else shard_pos + 1),
+                    "batch_start": next_start if next_start < n else 0,
+                    "steps": steps, "positions": positions,
+                    "skipped_shards": skipped_shards, "vr_seen": vr_seen,
+                    "vr_dropped": vr_dropped, "shard_i": shard_i,
+                    "base_trainer_step": cursor["base_trainer_step"],
+                    "epoch_rng_before": epoch_rng_before,
+                    "shard_rng_before": shard_rng_before if next_start < n else None,
+                    "mask_rng_before": mask_rng_before if next_start < n else None,
+                    "order_sha256": order_sha if next_start < n else None,
+                    "keep_sha256": keep_sha if next_start < n else None,
+                }
+                if trainer.step != int(cursor["base_trainer_step"]) + steps:
+                    raise ValueError("Trainer step and consumed batch cursor differ")
+                if resume.due():
+                    resume.commit(trainer, cursor=cursor, rng=rng, mask_rng=mask_rng)
             if max_steps > 0 and steps >= max_steps:
                 stop = True
                 break
@@ -1238,12 +1416,17 @@ def _train_candidate(
       # The final epoch's weights are saved below as the canonical trainer.pt.
       if epoch < n_epochs - 1:
           trainer.save(run_dir / f"trainer_epoch{epoch + 1}.pt")
+          if resume is not None and resume.due():
+              assert cursor is not None
+              resume.commit(trainer, cursor=cursor, rng=rng, mask_rng=mask_rng)
           print(json.dumps({
               "event": "epoch_done", "candidate": candidate,
               "epoch": epoch + 1, "steps": steps, "positions": positions,
           }), flush=True)
 
     eval_steps = max(1, int(args.eval_steps))
+    if resume is not None and cursor is not None and steps != resume.last_commit_step:
+        resume.commit(trainer, cursor=cursor, rng=rng, mask_rng=mask_rng)
     eval_metrics = trainer.eval_steps(
         _as_replay_buffer(_ArraySampler(eval_arrs, np.random.default_rng(int(args.seed) + 999))),
         batch_size=int(args.batch_size),
@@ -1287,6 +1470,8 @@ def _train_candidate(
         **{f"eval_{k}": v for k, v in dataclasses.asdict(eval_metrics).items()},
     }
     trainer.save(run_dir / "trainer.pt")
+    if resume is not None:
+        resume.result(out)
     return out
 
 
@@ -1666,6 +1851,21 @@ def main() -> None:
         default="",
         help="Optional Trainer.save() checkpoint to load before streaming the replay epoch.",
     )
+    ap.add_argument(
+        "--checkpoint-every-seconds", type=float, default=0.0,
+        help="Opt into exact fixed-epoch cursor checkpoints; 0 keeps the legacy runner."
+             " Positive values must be <=1200 (20 minutes).",
+    )
+    ap.add_argument(
+        "--resume", action="store_true",
+        help="Continue only from an exact committed fixed-epoch trainer and cursor."
+             " Never treats --init-checkpoint as a resume cursor.",
+    )
+    ap.add_argument(
+        "--resume-source-manifest", default="",
+        help="Optional prequalified ordered shard-hash manifest for a new resumable run;"
+             " avoids an initial full corpus scan. Each shard is verified before use.",
+    )
     ap.add_argument("--lr", type=float, default=None)
     ap.add_argument(
         "--w-future",
@@ -2014,6 +2214,15 @@ def main() -> None:
     )
     ap.add_argument("--no-amp", action="store_true")
     args = ap.parse_args()
+    if args.resume or args.checkpoint_every_seconds > 0:
+        if args.live_follow:
+            raise SystemExit("fixed-epoch --resume/checkpointing is unavailable with --live-follow")
+        if len(args.candidates) != 1:
+            raise SystemExit("resumable fixed-epoch runs require exactly one candidate")
+        if not args.resume and not 0 < args.checkpoint_every_seconds <= 1200:
+            raise SystemExit("new resumable runs need --checkpoint-every-seconds in (0,1200]")
+        if args.resume and args.checkpoint_every_seconds < 0:
+            raise SystemExit("--checkpoint-every-seconds cannot be negative")
     if float(args.global_board_adapter_init_rms_ratio) > 0.0:
         if args.init_checkpoint:
             raise SystemExit("--global-board-adapter-init-rms-ratio is only valid for fresh-init runs")
@@ -2218,27 +2427,40 @@ def main() -> None:
         }),
         flush=True,
     )
-    with results_path.open("a", encoding="utf-8") as fh:
-        for candidate in args.candidates:
-            if args.live_follow:
-                row = _train_candidate_live_follow(
-                    candidate=candidate,
-                    cfg=cfg,
-                    model_cfg=model_cfg,
-                    args=args,
-                )
-            else:
-                eval_arrs = _load_eval_arrs(shard_paths=shard_paths, model_cfg=model_cfg, args=args)
-                row = _train_candidate(
-                    candidate=candidate,
-                    cfg=cfg,
-                    shard_paths=shard_paths,
-                    eval_arrs=eval_arrs,
-                    args=args,
-                )
-            fh.write(json.dumps(row, sort_keys=True) + "\n")
-            fh.flush()
-            print(json.dumps({"event": "candidate_done", **row}), flush=True)
+    resumable = bool(args.resume or args.checkpoint_every_seconds > 0)
+    if resumable and results_path.exists() and not args.resume:
+        raise SystemExit("new resumable run requires no existing results.jsonl")
+    if resumable:
+        candidate = args.candidates[0]
+        with candidate_lock(out_dir / candidate):
+            row = _train_candidate(
+                candidate=candidate, cfg=cfg, shard_paths=shard_paths,
+                eval_arrs=None, args=args,
+            )
+            atomic_write_text(results_path, json.dumps(row, sort_keys=True) + "\n")
+        print(json.dumps({"event": "candidate_done", **row}), flush=True)
+    else:
+        with results_path.open("a", encoding="utf-8") as fh:
+            for candidate in args.candidates:
+                if args.live_follow:
+                    row = _train_candidate_live_follow(
+                        candidate=candidate,
+                        cfg=cfg,
+                        model_cfg=model_cfg,
+                        args=args,
+                    )
+                else:
+                    eval_arrs = _load_eval_arrs(shard_paths=shard_paths, model_cfg=model_cfg, args=args)
+                    row = _train_candidate(
+                        candidate=candidate,
+                        cfg=cfg,
+                        shard_paths=shard_paths,
+                        eval_arrs=eval_arrs,
+                        args=args,
+                    )
+                fh.write(json.dumps(row, sort_keys=True) + "\n")
+                fh.flush()
+                print(json.dumps({"event": "candidate_done", **row}), flush=True)
 
 
 if __name__ == "__main__":

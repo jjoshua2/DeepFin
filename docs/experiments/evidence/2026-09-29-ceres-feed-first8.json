@@ -1,0 +1,59 @@
+{
+  "call_feed_sha256": [
+    "136a20d8bacb12c5c15aae8f3ec986f164af3b26348b1e582d51adfb900fd991",
+    "f27696bd434b6ba1f352195c487002d291d27c7fb159e0398b24363822459a50",
+    "75ff752361eafcdbbd11d5b50c066ca5fc95b802163aaed9f8b6be6273b248d9",
+    "08abff2dac0ae1a6bab5921064b96411d089974b1106f497917ff7ed73334649",
+    "2c93538dff005917b9b78c3127e026472baeaaea4e83d439c29efd5147234dc5",
+    "a5ab1b3d9bede4952f4b974c78ca180d55290e8d4b13b60bd7d0b4c4d9b41c90",
+    "1e07522bcf380fc441e27013ce514a0e7f7086aa6b485a9d1ca88dbdb86837d9",
+    "0f023c98743e25bf0bd49b3bf1c3975f0c787df18e41d37af2ff40541d06f627"
+  ],
+  "calls": [
+    920,
+    921,
+    922,
+    923,
+    924,
+    925,
+    926,
+    927
+  ],
+  "median_8_call_seconds": {
+    "ceres_only_batch32": 0.049158761015860364,
+    "ceres_only_per_row": 0.09658755201962776,
+    "old_full_bind": 0.22219095399486832
+  },
+  "model_gpu_used": false,
+  "readback_equal": true,
+  "rows": 256,
+  "saved_feed_bytes_read": 2244608,
+  "saving_batch_vs_old": 0.7787544446251591,
+  "schema": "ceres_feed_conversion_first8_cpu_probe_v1",
+  "speedup_batch_vs_old": 4.519864809513438,
+  "stage_full_hash_performed": false,
+  "staged_bytes_read": 11468800,
+  "timing_seconds_5_rounds": {
+    "ceres_only_batch32": [
+      0.04938292899169028,
+      0.049158761015860364,
+      0.04916275100549683,
+      0.0490888710191939,
+      0.04898027199669741
+    ],
+    "ceres_only_per_row": [
+      0.1044811479805503,
+      0.09851174100185744,
+      0.09600001401850022,
+      0.09637032300815918,
+      0.09658755201962776
+    ],
+    "old_full_bind": [
+      0.22219095399486832,
+      0.2262102020031307,
+      0.22293110899045132,
+      0.22175761699327268,
+      0.22046912301448174
+    ]
+  }
+}

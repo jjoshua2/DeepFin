@@ -1,0 +1,59 @@
+{
+  "schema": "full58820_corrected_banked_selected_targets_public_evidence_v1",
+  "status": "PASS_CPU_TARGET_BYTES_UNADMITTED",
+  "credit": 0,
+  "frozen_input": {
+    "rows": 58820,
+    "bridge_sha256": "f90b0bc630ef17fb0fca169b00f18208d866abb3ac95781c469594e6682dc0d8",
+    "stage_sha256": "ed2c55aab5207fbefde3a0f0e39529a44f5fcbec5e395fa844fe76c4b6598a9f",
+    "corrected_row_bind_sha256": "25ce194942230c9b8b6a3f79f1d4a7475a7f24be591f649803d067248cd0c915",
+    "compact_order_correction_manifest_sha256": "165a7ecf15ae1be80b8e284f1610fdf3b4f5f114dee4387948a9d78d169f6b96",
+    "raw_head_banks": {
+      "B128a": {
+        "teacher": "BT4",
+        "batch": 128,
+        "heads_sha256": "4087320aab0deffefd1eba63efcd2f3cf236f0415b89f6d93355dc4e2dfd8303",
+        "job_receipt_sha256": "abcbd88c0e3fe5b3ef4b4b4336ce8927e3374d16da9c62f62953a67779acc99d",
+        "prior_independent_bank_audit_sha256": "2d4a9d3471a0198dbff0ea071bc63836fdd1229f213811ab67b377ca6ef9cff6"
+      },
+      "C512a": {
+        "teacher": "Ceres",
+        "batch": 512,
+        "heads_sha256": "4795dc6e5c37fed558ce9c43b8f65955dd554b5a17c9fe174146a7144098a702",
+        "job_receipt_sha256": "30eb8d0413197693848f6e2f10d315c19f03bf081696c2e6e10c888fb529b5b7",
+        "prior_independent_bank_audit_sha256": "cefb946fcb9b5ad0cf5dd507c8c4efb15e07eef51e6b3d9ea5da9a818ae5f856",
+        "completed_terminal_sha256": "144d1bec3ec06f1e3a6d4bb2aecd87acbd01fb026da98ea7c4d7de5639261200"
+      }
+    }
+  },
+  "target_output": {
+    "status": "CPU_RETRANSFORMED_UNADMITTED",
+    "rows": 58820,
+    "teacher_rows": {"BT4": 29427, "Ceres": 29393},
+    "bytes": 108837591,
+    "targets_sha256": "beff46ac8464a3a3da6c278221b2951f818f2cc2af2a83ea714d49d939f4da10",
+    "producer_sha256": "c0e6f05f3ff1d1acee3b0690f67495ab16486c7c4c923e418ac9648c50307ee8",
+    "producer_receipt_sha256": "11b1f64cfb3d327841d05d97bd95bc388f5b721a7cbcd972451262d4d2265c0f",
+    "independent_all_row_direct_readback_sha256": "69c7eec1a4f67a7eea46dd31ebf4640c40c6f72af83fc8616cab3d17b8bd4c3a",
+    "operator_result_sha256": "a1822b3f6410bf121f6da2ea6a40b1f05ec9ffbeafb77002314588513f109de6"
+  },
+  "ceres_corrected_numerical_profile": {
+    "sample_rows": 4096,
+    "paired_comparisons": 8192,
+    "sample_indices_sha256": "bdaa911debf32e7f2d9da473ad24324e56941568c919602fac422c12a122ac18",
+    "baseline_batch": 32,
+    "candidate_batch": 512,
+    "old_board_order_top1_agreement": 0.99560546875,
+    "old_board_order_top1_disagreements": 36,
+    "corrected_compact_top1_agreement": 0.99609375,
+    "corrected_compact_top1_disagreements": 32,
+    "policy_tv": {"mean": 0.002303759945789352, "p99": 0.013068130314350137, "max": 0.026916921138763428},
+    "calibrated_wdl_tv": {"mean": 0.0003643846794147976, "p99": 0.004377536773681641, "max": 0.0169525146484375},
+    "frozen_thresholds": {"top1_agreement_min": 0.99, "policy_tv_p99_max": 0.02, "policy_tv_max": 0.05, "wdl_tv_p99_max": 0.01, "wdl_tv_max": 0.05},
+    "frozen_thresholds_pass": true,
+    "independent_direct_quality_receipt_sha256": "e20637c1fda24fad6657c33242bd60e8769e9b0e382f95c78e45db1bf0cc2322",
+    "raw_comparisons_rows": 8192,
+    "raw_comparisons_sha256": "76dc96cf9a64f79002e4ec815843a14d4cc2474cd5327fdd170af927126af0c5"
+  },
+  "scope": "Frozen banked raw heads and CPU target bytes only; physical source, pack, trainer, throughput and strength admission remain separate."
+}
