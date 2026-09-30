@@ -1,5 +1,14 @@
 # Bend migration and proof inventory
 
+## Latest P3 castling update qualification
+
+Hosted run **36218760990** passes the durable public castling gate on source `105b361a4e4a7cc5b1a1a14308c74c310d5a5b9a`: two registered laws, importing consumer, all17 controls, generic/portable/native-target/UBSan native checks, original compiler source/pin checks and unchanged repository lint.
+
+The public contracts prove complete actual flag2/promotion0 Board-update equality for arbitrary raw Board/U32 coordinates and partition preservation for the four orthodox coordinate routes when the input Board is consistent and the rook landing square is initially empty. That premise is necessary for the raw operation: the preserved blocked-rook-target example is a consistent input whose raw result is inconsistent. The theorem is therefore not legal-castling validation.
+
+Coverage is modular **154 laws/470 controls**, retaining exact-source parent152/453; the complete154-law wrapper did not run. King/rook existence, turn, rights, other path clearance, attack-free king traversal, king safety, metadata legality, reachability and move-generation soundness/completeness remain open. See [the dated readout](experiments/2026-09-26-bend-castling-update.md).
+
+
 ## Supplementary castling update and conditional preservation
 
 New locally checked derived statements establish the complete actual flag2/promotion0 update for arbitrary raw Boards and coordinates, plus partition preservation on the four orthodox coordinate routes when the initial rook destination is empty. A checked counterexample shows why that premise cannot simply be dropped. All four exact king/rook examples and generic/UBSan full-Board reference checks pass; actual rook-placement/source corruptions fail both new source and native checks while prior flag0/flag1 consumers pass.
