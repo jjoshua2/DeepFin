@@ -1,0 +1,128 @@
+{
+  "status": "VALUE_TRAINING_COMPLETE_FIRST_MATCH_LAUNCHED",
+  "references": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/host_operator_v1/terminal.json",
+      "sha256": "855bf89a0765196bc1686e7b8813ab15a6abf5a8f64b64ba7f26039592da5eaa"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/training/complete.json",
+      "sha256": "1a089b82f9bbfd174edece45d069d9ad688f86a90a58ce5ed100d7ca1e68f867"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/training/training.complete.json",
+      "sha256": "a33e56a55154ba287d1c2426078d33c6cee343c4cc324ac865c5d93804058d7a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/training/realized_schedule.json",
+      "sha256": "e3279b80e14e0ce0483f4482f6adeaf0e7cd024e7830dc6ff6fa77f85a6e876a"
+    },
+    {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_ceres_value25_epoch_v1/summary.json",
+      "sha256": "b5d55d54a44235d8496b79bc1eab985682d7ad77c3eb3e8ad8de6a0cc27e2167"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/training_completion_independent_review.json",
+      "sha256": "d3ffd0822e01d9a6e9ec8d2797c203a7d24ac907ca564eed72169d527e754286"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/cpu_final_bindings_independent_review.json",
+      "sha256": "81f7d3d88421062d13f953980808615e1946b26a44bf8bc6ee43ff36622bc651"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/match_B100_v1/cpu_operator.json",
+      "sha256": "bd4f97ee678dbc49fe1225ea762608f8977a740c98efb4635be867c587ce06e7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/match_B100V50_v1/cpu_operator.json",
+      "sha256": "72a7454e072dc7e224b17e3e9af489189dfb6f5e4608bd7337a92698e5d117ac"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/match_B100_v1/prepared.json",
+      "sha256": "a794e23088cc1360fb534f4b10226e8764ffe8477875daace2f5a6ed8febcc33"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/match_B100_v1/prepared_independent_review.json",
+      "sha256": "a76a606223e47e608ccb79f1238c996b08039fec1998506bd41f014da416c880"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/match_B100_v1/cpu_operator_terminal.json",
+      "sha256": "3d71726ec1cb0e6ecfcccb4183c13beb58d2ad677be43e7a0ef5ad583caca2d4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/match_B100_v1/arena_operator.json",
+      "sha256": "223101ff3f0fbd1139dc4230a384722b944ed81e83705e5bc493e6b84da10a53"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/match_B100_v1/arena_operator/started.json",
+      "sha256": "c1c0bc69cdca2c6711294df0aaa2fd52675ebe89b75e0815cde8e42b62fbc0b9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/match_B100_v1/arena_operator/lease_acquired.json",
+      "sha256": "a181a15e6d34c0ad61d5a856a16aa561e477000639194e1610164a199f0da819"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/match_B100_v1/arena_process_launch_snapshot.json",
+      "sha256": "8e0f123bc22a79a4e04fc709ab22d3c48273a8ec494a47039b789c82ec267eb7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/match_B100V50_v1/prepared.json",
+      "sha256": "730fc65769e554f691523c997e415086eedb46c45c8d1dca68d7aa2b42d687b5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/match_B100V50_v1/prepared_independent_review.json",
+      "sha256": "cf00ef4e0034f0ef9394225ac9419091888d57ab91c9ad0d93da5156cb93635b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/match_B100V50_v1/arena_operator.json",
+      "sha256": "5702dd54236fb8332634fae0e450629312da858b1521814a22427b4a9b21c0be"
+    }
+  ],
+  "checkpoint": {
+    "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_ceres_value25_epoch_v1/checkpoint.pt",
+    "role": "B100CeresV25",
+    "sha256": "3e2653d08ac736f5164e49f83def95cb49a208ba7d02a63384600f71e55f5167"
+  },
+  "rows": 18910484,
+  "updates": 36935,
+  "windows": 420,
+  "batch_size": 512,
+  "seed": 0,
+  "training_charge_seconds": 10028.654690534022,
+  "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+  "physical_plan_sha256": "2b5beb0be1a56dc184a4ea26dc74fcd55705ba147e85fd5a3be30a0298e033b3",
+  "historical_valid_control": false,
+  "historical_validity_problems": [
+    "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+    "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+    "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+  ],
+  "matches": {
+    "simulations_each": 400,
+    "games_each": 256,
+    "pairs_each": 128,
+    "search_priors_each": 1.0,
+    "controls": [
+      "B100",
+      "B100V50"
+    ],
+    "both_required_regardless_first_outcome": true,
+    "launch_observed": true,
+    "second_launch_observed": false
+  },
+  "scope": "Completed training and actual first arena launch after lease wait; no value playing result. Second registered comparison remains required regardless first outcome.",
+  "first_launch": {
+    "operator_started_unix": 1789224750.096203,
+    "arena_started_unix": 1789224996.789623,
+    "lease_wait_seconds": 246.6877632800024,
+    "parent_process_session": 75727,
+    "actual_observed_command_matches_requested": true,
+    "parent_preflight_observation": {
+      "standalone_exit_code": 1,
+      "gpu_used_mib": 8883,
+      "gpu_utilization_percent": 96,
+      "scope": "Before launcher; existing raw BT4 labeling owned same advisory GPU lease. No jobs interrupted; unchanged launcher queued using existing lease wait."
+    },
+    "outcome_polled": false
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "status": "DRAFT_NOT_ADMITTED_NO_QUEUE",
+  "training_plan": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-draft-20260921/E/plan.json",
+    "sha256": "a0732a11afaf4ffa1161504967d3384d18a5dd57e7169c912e732ab1865c0e30"
+  },
+  "training_runner": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-draft-20260921/E/run.py",
+    "sha256": "bed53fd17941d2290e999f76d67ba381c6e905ef497a71dace99e81cb7bf7986"
+  },
+  "admission": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-draft-20260921/E/admission.py",
+    "sha256": "40a1bac9d3adaa0b910d5fbd84f9fbc7603dcdceda4b8738b73f916682a07e71"
+  },
+  "arena_draft": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-draft-20260921/E_D/plan.json",
+    "sha256": "c65fffdee1471f30465087c5b7776007b7047a792fed5cfc7b5345662f94cf2d"
+  },
+  "source_D_plan": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/plan.json",
+    "sha256": "5bfaaa0f0f0ffd3aced5818fea805d80175a9ee4f0b4942b1122aa09d2bb6324"
+  },
+  "runtime": "/tmp/deepfin-factorial58-runtime",
+  "runtime_head": "502cd02e072471c901255f3fdb580d6ea7b826d0",
+  "config_sha256": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+  "initial_tensor_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf",
+  "known_builder_plan": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/full_cpu_plan.json",
+    "sha256": "c0e137a3ec1a64bd6bc1fd2d0345901b18d4c2408923c302869cb710cdd40cdc"
+  },
+  "missing_future_pins": [
+    "preparation_complete",
+    "qualified",
+    "D_complete",
+    "D_terminal",
+    "D_checkpoint",
+    "D_C_complete",
+    "D_C_terminal",
+    "D_B_complete",
+    "D_B_terminal"
+  ],
+  "checks": {
+    "same_D_training_command_except_output": true,
+    "same_D_environment": true,
+    "same_D_runtime_no_loader_patch": true,
+    "draft_execute_refuses_before_gpu": true,
+    "frozen_status_alone_cannot_bypass_missing_pins": true,
+    "no_training_started_receipt": true,
+    "no_training_output": true,
+    "queue_changed": false
+  },
+  "training_contract": {
+    "rows": 58090688,
+    "shards": 7108,
+    "cohorts": 35,
+    "seed": 121,
+    "batch_size": 512,
+    "epochs": 1,
+    "steps": 113459,
+    "training_seconds": 72000,
+    "pause_seconds": 7200,
+    "internal_seconds": 72600,
+    "gpu_lock": "/home/josh/projects/chess/scratchpad/gpu0_experiment.lock"
+  },
+  "comparison": {
+    "candidate": "E",
+    "reference": "D",
+    "games": 256,
+    "pairs": 128,
+    "sims": 400,
+    "prior_temperature": 1,
+    "seed": 2026092101
+  },
+  "review_status": "DRAFT_REQUIRES_INDEPENDENT_REVIEW_AND_FINAL_PIN_FREEZE"
+}

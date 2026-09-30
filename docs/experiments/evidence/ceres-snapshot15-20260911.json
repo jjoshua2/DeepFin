@@ -1,0 +1,69 @@
+{
+  "status": "PASS_COMPLETED_CHUNKS_SNAPSHOT",
+  "reviewed_unix": 1789168343.2433796,
+  "reviewed_utc": "2026-09-11T23:12:23.243380Z",
+  "recovery": {
+    "shards": 2016,
+    "rows": 16515072,
+    "newly_payload_verified_chunks": 20,
+    "reused_qualified_chunks": 106,
+    "scope": "Only terminal-success receipts frozen at this audit start; excludes other roots and in-progress or failed chunks."
+  },
+  "recovery_shards": "48..2063",
+  "prior_other_roots": {
+    "shards": "0..47 and final2308",
+    "shard_count": 49,
+    "rows": 396564
+  },
+  "total_qualified_rows": 16911636,
+  "total_qualified_shards": 2065,
+  "expected_rows": 18910484,
+  "percent_qualified": 89.42994795902632,
+  "full_bank_complete": false,
+  "training_or_strength_result": false,
+  "snapshot_audit_terminal": {
+    "session": 19685,
+    "returncode": 0,
+    "evidence": "Parent-observed terminal success; observer2496 closed"
+  },
+  "collection_last_observation": {
+    "time_utc": "2026-09-11T23:00:00Z",
+    "driver_pid": 276374,
+    "child_pid": 554254,
+    "range": "2064..2079",
+    "status": "running at that observation; not counted by snapshot15",
+    "evidence": "Parent host-process observation, not a continuous liveness claim"
+  },
+  "publication_checks": {
+    "snapshot_and_prior_pins": "matched",
+    "terminal_chunk_receipt_hashes_checked": 126,
+    "prior_chunk_reviews_reused_unchanged": 106,
+    "new_chunk_reviews": 20,
+    "coverage": "distinct contiguous2016shards, sum16515072rows",
+    "scope": "Compact receipt metadata only; no repeated saved-array verification or source scan"
+  },
+  "pins": {
+    "completed_snapshot_15.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/remaining_collection_v2/completed_snapshot_15.json",
+      "sha256": "ca515de4a06cb2c60bb5ee822643eb81bca7409aa40c5a8071b17eaf353ab48c"
+    },
+    "completed_snapshot_14.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/remaining_collection_v2/completed_snapshot_14.json",
+      "sha256": "d9a4bcd2b1b81e1baf856165cd616cc56fc77f5d3b4f091a389bc115ddda6ba6"
+    },
+    "audit_completed.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/remaining_collection_v2/audit_completed.py",
+      "sha256": "d5d409d083bb35ffb5b2be61aa56ce168464ab7217cda970d1090fc544adbd17"
+    },
+    "audit_saved_chunk.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/remaining_collection_v2/audit_saved_chunk.py",
+      "sha256": "c38b1fa61bc458a1e81ee1ee2ca5503f499f6d4c980c2a83e8f41a1b85e627f5"
+    }
+  },
+  "limitations": [
+    "Original features not reconstructed; saved source/feed proof inherited from producer.",
+    "Prior qualification reuse relies on unchanged local filesystem metadata and trusted monotonic wall-clock history.",
+    "First-call provider profile and endpoint library observations do not continuously profile every inference call.",
+    "No model loading, GPU queries, inference, relabeling, running-job changes or automatic polling."
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "credit": {
+    "ingest": 0,
+    "owner": 0,
+    "pack": 0,
+    "source": 0,
+    "target": 0,
+    "throughput": 0,
+    "unique": 0
+  },
+  "frozen_outcome_divergent_pairs_synthetic": 278,
+  "gpu_or_model_opened": false,
+  "independent_review_sha256": "d7d3556eba5822d801be3d04df8526772f8c04a984dffdb39fd4217f29eed1af",
+  "packet_manifest_sha256": "7858d0acc17caf6987537ccbef703fe4c6922fb29008fce6e7e9481d381d2c2d",
+  "real_pack_rows_verified": 0,
+  "registered_rows_opened": false,
+  "schema": "full512_selected_pack_schema_guard_v3_public_evidence_v1",
+  "source_ply_domains": {
+    "BT4-v9": "physical board ply from 16",
+    "Ceres-v8": "game-local ply from 0"
+  },
+  "status": "PASS_SOURCE_ONLY_SCHEMA_HOLD_REAL_PACK_AND_TRAINER",
+  "synthetic_tests_passed": 12,
+  "training_outcome_independence": "HOLD_CURRENT_DEFAULT_WDL_BALANCED_SAMPLER",
+  "validation_sha256": "50d47d50cc7487bcdff25cf1bdb121c20aa6433c1013a1c46e7b34a2703c4a5e"
+}

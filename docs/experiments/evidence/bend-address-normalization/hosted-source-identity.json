@@ -1,0 +1,23 @@
+{
+  "base": "fa1afc75ee652d5b13f5788abfc36d9545010df9",
+  "source": "a26e59f7168519c7de9720b9edb7967ef0650d97",
+  "candidate_tree": "166ca47788da93ad29a9c5da7b3668fb35f89c94",
+  "changed_files": [
+    "docs/experiments/2026-09-22-bend-address-normalization.md",
+    "docs/experiments/evidence/bend-address-normalization/local-raw-native-lowering-failure.json",
+    "native/bend_engine/standalone/proofs/normalization/Actual.bend",
+    "native/bend_engine/standalone/proofs/normalization/Bound.bend",
+    "native/bend_engine/standalone/proofs/normalization/Compare.bend",
+    "native/bend_engine/standalone/proofs/normalization/LAWS.bend",
+    "native/bend_engine/standalone/proofs/normalization/Mask.bend",
+    "native/bend_engine/standalone/proofs/normalization/PROOF.bend",
+    "native/bend_engine/standalone/proofs/normalization/README.md",
+    "native/bend_engine/standalone/proofs/normalization/consumer.bend",
+    "native/bend_engine/standalone/proofs/normalization/focused.js",
+    "native/bend_engine/standalone/proofs/normalization/probe.bend",
+    "native/bend_engine/standalone/proofs/normalization/verify.js",
+    "native/bend_engine/standalone/proofs/normalization/verify_native.js"
+  ],
+  "production_changed": false,
+  "transfer": "Direct Git tree entries; full candidate tree matches local index including preserved final parent note"
+}

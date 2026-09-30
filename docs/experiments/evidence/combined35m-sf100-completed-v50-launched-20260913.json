@@ -1,0 +1,425 @@
+{
+  "status": "SF100_COMPLETE_V50_HOST_LAUNCHED_NO_PLAYING_RESULT",
+  "references": {
+    "SF100_host_terminal": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_SF100/host_preparation_v1/actual_terminal.json",
+      "sha256": "a874f0db895e27ae01eff54e98bbe35058db88e83ab3356dd55342ae3bc9eb03"
+    },
+    "SF100_coordinator_complete": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_SF100/training/complete.json",
+      "sha256": "49c97baf407aee650795b44369c9358eb13bbd0f9a06fd114ed5e6f3909327d1"
+    },
+    "SF100_training_receipt": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_SF100/training/training.complete.json",
+      "sha256": "389b0680b92747a7005fdbb095060c1bc902989540537fe73e0a6c77a8e36d8b"
+    },
+    "SF100_summary": {
+      "path": "/home/josh/projects/chess/runs/combined35m_sf100_seed101/summary.json",
+      "sha256": "b55a8250a2743b97b437e507463ab1ca025ad6965ca68437fc3024d0bdf75bfc"
+    },
+    "SF100_training_process": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_SF100/training/training/process.json",
+      "sha256": "ad43117ebe58cec1626b895da493399165e44f4462ddb291118ff96a7784176f"
+    },
+    "SF100_completion_process": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_SF100/training/completion/process.json",
+      "sha256": "2da3b08c487e593b2b0c0f8b5969f954f48e17db5456a52e9328582f25af6ffb"
+    },
+    "SF100_independent_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_SF100/independent_completed_review.json",
+      "sha256": "b3af82d533e9b62ee71b9f820abed8ab7afb0a152ee21bf7201ac111915a5ab1"
+    },
+    "V50_manifest": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/host_preparation_v1/manifest.final.json",
+      "sha256": "64f0f16e91c2c5c507770c023078ec430ac3e50c853f43b8e4d99c19f8550d87"
+    },
+    "V50_host_plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/host_preparation_v1/host_plan.final.json",
+      "sha256": "05b69535a8967b9d05b4c47ded602d5fdbd0478d610069eaa53c1a388fa3582a"
+    },
+    "V50_launch_command": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/host_preparation_v1/launch_command.txt",
+      "sha256": "fbb5805c35a748d80bed4f0c9cb2b3e5a5cc17b510b9af0bb12992a002e42902"
+    },
+    "V50_actual_launch": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/host_preparation_v1/actual_launch.json",
+      "sha256": "cd8b0fe924befeb881bcdc43d81b142e39569915e561bdf06f0c99c99e09275e"
+    },
+    "V50_default_validation": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/host_preparation_v1/default_validation.json",
+      "sha256": "57e3b4256ed13c93ced11707205378b781be304dae2051efc3058c99b046b62d"
+    },
+    "V50_independent_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/host_preparation_v1/independent_final_review.json",
+      "sha256": "6c4f7dcf27df808e776577b72f6a92f9d280146d085cc4d7f8b6e5d2df0adb55"
+    }
+  },
+  "SF100_host_terminal": {
+    "started_unix": 1789278452.6798022,
+    "ended_unix": 1789292746.6755662,
+    "returncode": 0
+  },
+  "SF100_host_elapsed_seconds": 14293.995764017105,
+  "SF100_training_charge_seconds": 14209.244426205005,
+  "SF100_CPU_completion_seconds": 80.36764638999739,
+  "SF100_completed_receipt": {
+    "actual_game_columns_verified": true,
+    "actual_staging_sha256": "2132bc419bfb3ae2dace14345f0485319c7e656b51d9671fb19d978c7aaa66cb",
+    "actual_staging_verified": true,
+    "canonical_plan_sha256": "ca3922c459b321dd5e890f8b3e21f6fee6a24aa6c7f0d76653165616aeca67bd",
+    "checkpoint": {
+      "path": "/home/josh/projects/chess/runs/combined35m_sf100_seed101/checkpoint.pt",
+      "role": "Combined35M_SF100",
+      "sha256": "633a03e7d2f0e0abc5d4e925025eb70598d25e3bcb1a2d87922c87d5b949f942"
+    },
+    "code_pins": {
+      "/tmp/deepfin-combined-training/scripts/bt4_direct_screen.py": "bef13f1f763f7d38632f333dfa7d8ddbd738fa5c84de2e5ea44bbbad139af789",
+      "/tmp/deepfin-combined-training/scripts/bt4_one_epoch_screen.py": "8603ec38f584c2bad122da4c98904e31aa969a2696ef3ef7c2a3f80a060cff88",
+      "/tmp/deepfin-combined-training/scripts/combined_corpus_schedule.py": "a871fbe867f5afef9b0a110c2521a247de61e47117f9db4d6bbaadee924de9f8",
+      "/tmp/deepfin-combined-training/scripts/combined_corpus_train.py": "87ed234c2861920e96427010833a3c5c55fa3d3c136655f3957426647ed15acb",
+      "/tmp/deepfin-combined-training/scripts/training_host_memory.py": "94e074f17104bc1aa3ca9b6be99f715d9a906ff3e5546892ffe94612fd21dfdc"
+    },
+    "complete": true,
+    "corpus_manifest": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/manifest.draft.json",
+      "sha256": "18830f7e403035cb8b0a2303d5c3877a792e7f3d28e894a2d1bd0680a49fcec6"
+    },
+    "historical_valid_control": false,
+    "historical_validity_problems": [
+      "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+      "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+      "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+    ],
+    "input_pins": {
+      "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+      "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+      "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337"
+    },
+    "opening_panel": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/opening_panel.json",
+      "sha256": "14470ee9bcf5fdfc822bb19988941ecf4bbe2a1ea739d46487d3663b1735340c"
+    },
+    "physical_plan_sha256": "2e7c431d6c34e9847e5b60eda16199334a9891f81db9edf6acb90b1d0f7c8c8a",
+    "preregistration": {
+      "path": "/tmp/deepfin-combined35m-fixed-panel/docs/experiments/2026-09-13-combined35m-value-transfer.md",
+      "sha256": "c7cf784fd3fa7b6403a0fb44a9a7ff30487709490ffc48a7ead1c694707c08eb"
+    },
+    "profile": "combined35m_value_seed101",
+    "proof": "Exact actual staged-link order and frozen trainer physical plan/realization equal the admitted prospective arm; canonical identity is inherited from its game-column proof. No feature/target revalidation.",
+    "prospective": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/prospective.json",
+      "sha256": "00c28c92a530eb56d5051bb3606ecff6516eb580f94325c8da7fd16ccd692bb9"
+    },
+    "role": "Combined35M_SF100",
+    "run": "/home/josh/projects/chess/runs/combined35m_sf100_seed101",
+    "runtime_manifest": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json",
+      "sha256": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df"
+    },
+    "schema": 1,
+    "selected_subset_qualification": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v2/qualification.json",
+      "sha256": "fb72304dccd0cb277d3fcc80b57287964723760fcca5ddcd0bbc6b917039d8b7"
+    },
+    "summary_sha256": "b55a8250a2743b97b437e507463ab1ca025ad6965ca68437fc3024d0bdf75bfc",
+    "training_charge_seconds": 14209.244426205005,
+    "training_process": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_SF100/training/training/process.json",
+      "sha256": "ad43117ebe58cec1626b895da493399165e44f4462ddb291118ff96a7784176f"
+    }
+  },
+  "SF100_training_summary": {
+    "steps": 68974,
+    "steps_realized": 68974,
+    "seed": 101,
+    "train_window_steps": 88,
+    "train_windows": 784,
+    "batch_size": 512,
+    "configured_batch_size": 512,
+    "warmup_steps": 1000,
+    "run_id": "d3dac19df91169dd6b8dcb6d85e1fbd39cd3d592aa69d352f0b9dc34baf2d8d6",
+    "checkpoints": [
+      {
+        "role": "mid",
+        "path": "/home/josh/projects/chess/runs/combined35m_sf100_seed101/checkpoint_mid.pt",
+        "sha256": "fd1ceffd0c36f714a1443909a7c4929a293acb41ac08650cd75f51e5a596ee42"
+      },
+      {
+        "role": "last",
+        "path": "/home/josh/projects/chess/runs/combined35m_sf100_seed101/checkpoint.pt",
+        "sha256": "633a03e7d2f0e0abc5d4e925025eb70598d25e3bcb1a2d87922c87d5b949f942"
+      }
+    ],
+    "trainable_params": 61444448,
+    "sampling": {
+      "mode": "game_epoch",
+      "rows_planned": 35314577,
+      "batches_planned": 68974,
+      "full_batches_planned": 68863,
+      "ragged_batches_planned": 111,
+      "min_batch_rows_planned": 511,
+      "shards": 4321,
+      "sources": 21,
+      "games": 182188,
+      "game_identity": "resolved_shard_parent+game_id",
+      "row_order": "seeded_shuffle_within_shard_game_segments",
+      "batch_size": 512,
+      "seed": 101,
+      "plan_sha256": "2e7c431d6c34e9847e5b60eda16199334a9891f81db9edf6acb90b1d0f7c8c8a",
+      "plan_workers": 2,
+      "load_workers": 2,
+      "rows_realized": 35314577,
+      "batches_realized": 68974,
+      "same_game_repeats_max": 0,
+      "peak_decoded_rows": 218911,
+      "peak_decoded_shards": 39,
+      "decoded_rows_resident": 0,
+      "realized_sha256": "2e7c431d6c34e9847e5b60eda16199334a9891f81db9edf6acb90b1d0f7c8c8a",
+      "complete": true
+    },
+    "valid_control": false,
+    "validity_problems": [
+      "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+      "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+      "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+    ],
+    "compute_loss_calls": 68974,
+    "metrics": {
+      "loss": 1.6956073198999677,
+      "policy_loss": 1.4418462565967014,
+      "soft_policy_loss": 0.0,
+      "future_policy_loss": 0.0,
+      "wdl_loss": 0.2537610645805086,
+      "sf_move_loss": 0.0,
+      "sf_move_acc": 0.0,
+      "sf_eval_loss": 0.0,
+      "categorical_loss": 0.0,
+      "volatility_loss": 0.0,
+      "sf_volatility_loss": 0.0,
+      "moves_left_loss": 0.0,
+      "blended_wdl_loss": 0.2537610645805086,
+      "wdl_onehot_loss": 1.293897555555616,
+      "channel_balance": 0.0,
+      "sf_search_agree_frac": 0.0,
+      "sf_search_disagree_sf_low_frac": 0.0,
+      "sf_search_disagree_sf_high_frac": 0.0,
+      "wdl_terminal_outcome_frac": 0.0,
+      "wdl_terminal_outcome_rows": 0.0,
+      "sf_move_acc_top5": 0.0,
+      "policy_own_acc_top1": 0.7804305283757339,
+      "policy_own_acc_top5": 0.9912776069331842,
+      "policy_own_acc_rows": 35770.0,
+      "policy_future_acc_top1": 0.0,
+      "policy_future_acc_top5": 0.0,
+      "policy_future_acc_rows": 0.0,
+      "train_time_s": 13.952940629002114,
+      "opt_step_time_s": 4.330618333937309,
+      "train_steps_done": 70,
+      "train_samples_seen": 35770,
+      "batch_prefetch_wait_s": 0.5109689829696435,
+      "fwd_loss_s": 2.7226913630220224,
+      "bwd_s": 0.6412561129473033,
+      "gradnorm_zclip_s": 5.611867836014426,
+      "opt_step_s": 4.329754712998692,
+      "pipeline_other_s": 0.13640162105002673,
+      "gpu_fwd_loss_s": 2.708571643829345,
+      "gpu_bwd_s": 4.281382057189941,
+      "gpu_gradnorm_zclip_s": 2.04247772026062,
+      "gpu_opt_step_s": 4.315860515594482,
+      "aurora_uw_floor": 0.0,
+      "aurora_uw_lr": 6.000000000000001e-05,
+      "aurora_uw_count": 48.0,
+      "aurora_uw_ratio_min": 0.8259047269821167,
+      "aurora_uw_ratio_p10": 0.8866404294967651,
+      "aurora_uw_ratio_median": 0.949004054069519,
+      "aurora_uw_ratio_p90": 1.0315173864364624,
+      "aurora_uw_scale_max": 1.0,
+      "aurora_uw_floored_frac": 0.0,
+      "aurora_uw_effective_ratio_min": 4.9554280849406496e-05,
+      "aurora_uw_effective_ratio_median": 5.6940240028779954e-05,
+      "adamw_foreach_buckets": 2.0,
+      "adamw_foreach_params": 431.0,
+      "adamw_loop_params": 0.0,
+      "adamw_foreach_recoveries": 0.0,
+      "aurora_polar_steps_configured": 8.0,
+      "aurora_polar_sv_samples": 2.0,
+      "aurora_polar_sv_errors": 0.0,
+      "aurora_polar_sv_ratio_square": 0.0005633330260835404,
+      "aurora_polar_sv_ratio_rect": 0.14258121110769106,
+      "aurora_polar_orth_err_square": 0.2809393440696426,
+      "aurora_polar_orth_err_rect": 0.04356161753699062,
+      "policy_loss_selfplay": 1.4418462565967014,
+      "policy_loss_curriculum": 0.0,
+      "wdl_loss_selfplay": 0.2537610645805086,
+      "wdl_loss_curriculum": 0.0,
+      "frac_is_selfplay": 1.0,
+      "frac_tagged": 1.0,
+      "soft_mask_kept_frac": 1.0,
+      "m_sf_own": 0.0,
+      "m_sf_own_regret": 0.0,
+      "has_sf_p0_frac": 0.0,
+      "has_sf_p0_regret_frac": 0.0,
+      "sf_own_regret_gated_frac": 0.0,
+      "m_sf_policy_floor": 0.0,
+      "sf_policy_floor_binds_frac": 0.0,
+      "sf_policy_floor_member_count_raw": 0.0,
+      "sf_policy_floor_requested_mass": 0.0,
+      "sf_policy_floor_truncated_frac": 0.0,
+      "sf_policy_floor_member_count_applied": 0.0,
+      "sf_policy_floor_applied_mass": 0.0,
+      "m_sf_shape": 0.0,
+      "sf_shape_active_frac": 0.0,
+      "sf_shape_h_sf_given_s": 0.0,
+      "sf_shape_h_ours_given_s": 0.0,
+      "sf_shape_entropy_gap": 0.0,
+      "sf_shape_sharper_frac": 0.0,
+      "sf_shape_regret_cp_given_s": 0.0,
+      "sf_shape_h_ours_full_legal": 0.0,
+      "sf_shape_surfaced_moves": 0.0,
+      "sf_shape_surfaced_mass": 0.0,
+      "sf_shape_p_sf_best": 0.0,
+      "policy_support_h_ours": 1.4404630000343994,
+      "policy_support_h_target": 1.24784725574198,
+      "policy_support_gap": -0.19261576114235426,
+      "policy_support_size": 25.941123846798995,
+      "policy_tail_mass_ours": 6.5020219153920664e-09,
+      "sf_labelled_no_multipv_frac": 0.0,
+      "sf_multipv_checked_frac": 0.0,
+      "sf_wdl_degenerate_frac": 0.0,
+      "sf_wdl_orphaned_frac": 0.0,
+      "sf_wdl_effective_frac": 0.0,
+      "search_wdl_effective_frac": 1.0,
+      "sf_eval_pv_orphan_frac": 0.0,
+      "sf_eval_pv_checked_frac": 0.0,
+      "sf_rebuild_policy_frac": 0.0,
+      "sf_rebuild_wdl_frac": 0.0,
+      "sf_rebuild_masked_frac": 0.0,
+      "sf_rebuild_masked_p0_frac": 0.0,
+      "sf_rebuild_masked_volatility_frac": 0.0,
+      "policy_loss_phase_open": 1.1816247412136622,
+      "policy_loss_phase_mid": 1.4871985929352896,
+      "policy_loss_phase_end": 1.5590561168534416,
+      "wdl_loss_phase_open": 0.45125257117407663,
+      "wdl_loss_phase_mid": 0.19387129225901195,
+      "wdl_loss_phase_end": 0.18117192472730365,
+      "wdl_loss_phase_n_open": 9128.0,
+      "wdl_loss_phase_n_mid": 10428.0,
+      "wdl_loss_phase_n_end": 16214.0,
+      "policy_loss_phase_n_open": 9128.0,
+      "policy_loss_phase_n_mid": 10428.0,
+      "policy_loss_phase_n_end": 16214.0,
+      "wdl_brier": 0.0,
+      "wdl_ece": 0.0,
+      "eval_rows": 0,
+      "grad_norm_mean": 1.487440551178796,
+      "grad_norm_median": 1.3448312878608704,
+      "grad_norm_p95": 2.6131844520568848,
+      "grad_norm_max": 3.1996965408325195,
+      "grad_clip_rate": 0.14285714285714285,
+      "grad_adaptive_clip_rate": 0.14285714285714285,
+      "grad_adaptive_bound_rate": 0.14285714285714285,
+      "grad_hard_clip_rate": 0.0,
+      "grad_norm_samples": 70,
+      "grad_norm_aurora": 0.4093434934105192,
+      "grad_norm_adamw": 1.487440551178796,
+      "grad_nonfinite_skip_rate": 0.0,
+      "opt_lr_mean": 0.0005297057754524298,
+      "opt_lr_max": 0.0006000000000000001,
+      "batches_drawn": 70.0,
+      "transient_cuda_retry_batches": 0.0
+    },
+    "realized": {
+      "sf_wdl_frac (realized)": 0.0,
+      "search_wdl_frac (realized)": 1.0,
+      "game_frac (intended outcome share)": 0.0,
+      "sf_effective_frac (labelled sf mass)": 0.0,
+      "search_effective_frac (labelled search mass)": 1.0,
+      "leaked_from_sf": 0.0,
+      "leaked_from_search": 0.0,
+      "leaked_to_outcome": 0.0,
+      "outcome_borne_frac (game_frac + leak)": 0.0
+    },
+    "realized_categorical": {
+      "rebuild_categorical_target (realized)": 1.0,
+      "categorical blend_frac": 0.69,
+      "categorical search_blend_frac": 0.31,
+      "categorical_target column present": 0.0,
+      "rebuild applies to this batch": 0.0,
+      "sf_labelled_frac": 0.0,
+      "search_labelled_frac": 1.0,
+      "categorical outcome_borne_frac": 0.0
+    },
+    "selected_subset": {
+      "allow_partial_corpus": true,
+      "partial": true,
+      "flagged_finalized_G10_shards": 2012,
+      "all_flagged_finalized": true,
+      "full_record_in_pinned_summary": true
+    }
+  },
+  "V50_actual_launch": {
+    "started_unix": 1789293027.4542456,
+    "started_utc": "2026-09-13T09:50:27.454253+00:00",
+    "command_sha256": "fbb5805c35a748d80bed4f0c9cb2b3e5a5cc17b510b9af0bb12992a002e42902",
+    "manifest_sha256": "64f0f16e91c2c5c507770c023078ec430ac3e50c853f43b8e4d99c19f8550d87"
+  },
+  "V50_default_command": {
+    "execute": false,
+    "command": [
+      "/usr/bin/python3",
+      "scripts/lc0_control_train.py",
+      "--config",
+      "configs/lc0_positive_control.yaml",
+      "--shards",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/control",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run06_g10",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run06_g10",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run06_g10",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4",
+      "--out-dir",
+      "/home/josh/projects/chess/runs/combined35m_v50_seed101",
+      "--steps",
+      "0",
+      "--batch-size",
+      "512",
+      "--sampling-mode",
+      "game_epoch",
+      "--epoch-plan-workers",
+      "2",
+      "--epoch-load-workers",
+      "2",
+      "--seed",
+      "101",
+      "--device",
+      "cuda",
+      "--train-window-steps",
+      "88",
+      "--allow-invalid-control",
+      "--allow-partial-corpus"
+    ]
+  },
+  "V50_launch_resources": {
+    "source": "Parent launch-time observation; not a current/peak claim",
+    "available_memory_gib": 83,
+    "swap_used_gib": 0,
+    "free_disk_gib": 195,
+    "GPU_compute_apps": "none"
+  },
+  "scope": "Only completed SF100 and immutable V50 launch/default metadata. No checkpoint read/hash, active job polling, repeated game-column verification, corpus admission or tests. V50 host launch is not a completed training step/epoch. No Elo or promotion claim."
+}

@@ -1,0 +1,707 @@
+{
+  "status": "BOTH_TRAINING_ARMS_COMPLETE_CPU_PACKAGE_PASS_ARENA_HOST_LAUNCHED_NO_RESULTS",
+  "references": {
+    "v50_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/independent_completed_review.json",
+      "sha256": "1d106a4deec13c875f7f8dd5202d2eaa8ca88866abaa425d01e37aeeada015c9"
+    },
+    "cpu_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/independent_actual_cpu_review.json",
+      "sha256": "cb0a0fe1371f5b98fbe9730cfe920addd567383dd1329a6a8864be7666133d1e"
+    },
+    "arena_launch": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/arena_actual_launch.json",
+      "sha256": "72c7ad97a692df73393189958690c9bddb87e9780838452be5d7fb6574e7587f"
+    },
+    "cpu_terminal": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/cpu_actual_terminal.json",
+      "sha256": "6ac5deb67b678b7e312f9ea98f2ae25134f882aca7683b5a923921d7373deb08"
+    },
+    "adapter_manifest": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/adapter_manifest.final.json",
+      "sha256": "9652fd3ece8a56f1323ecec83c4b5a0e618aada3243a03b35d77fa6d46d47a7c"
+    },
+    "prepared": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/prepared_pair/prepared.json",
+      "sha256": "a00afe1f26c1b14cdd0d2144709fe6a9abdd871b1d04dfaceebb955ce5cf846c"
+    }
+  },
+  "v50_review": {
+    "status": "PASS_INDEPENDENT_COMPLETED_METADATA_REVIEW",
+    "role": "Combined35M_V50",
+    "refs": {
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/training/complete.json": "4bd8e964b05a7d0bba9e0cbf02f570c59a73c484e5b24ecb0574f678f34bcb4e",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/training/training.complete.json": "3a8294c3637b4790ecb496d3eb3f22ae7ee11f5e55d07a4274660522d7281a54",
+      "/home/josh/projects/chess/runs/combined35m_v50_seed101/summary.json": "2052c938f287786132275c15ed62171611507f20220c89de8ac630e58dd9e4f8",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_SF100/training/training.complete.json": "389b0680b92747a7005fdbb095060c1bc902989540537fe73e0a6c77a8e36d8b",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/prospective.json": "00c28c92a530eb56d5051bb3606ecff6516eb580f94325c8da7fd16ccd692bb9",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v2/qualification.json": "fb72304dccd0cb277d3fcc80b57287964723760fcca5ddcd0bbc6b917039d8b7",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/training/training/process.json": "3e32fc433c970fafa56a70679accf4adc529413962727e4e08ccfce58b4848b7",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/host_preparation_v1/actual_terminal.json": "cd5f45fcd2b99e4b0940bedbfbec4b51e58cd3e78eca3e99412d33dde1c7c36a",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/training/completion/process.json": "4f79bf867690dc3f41abb3f91fb6782384e5ffbf1cbab5f1cfaad60f6f48213a",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/training/manifest.json": "bf0a8493e7354b6ebe5a843dd6fd905332d5a5d1973641edfc25ab22055e5dce"
+    },
+    "rows": 35314577,
+    "shards": 4321,
+    "roots": 21,
+    "updates": 68974,
+    "windows": 784,
+    "final_window_updates": 70,
+    "seed": 101,
+    "plan_load_workers": [
+      2,
+      2
+    ],
+    "training_seconds": 14248.788776115005,
+    "host_seconds": 14323.274579048157,
+    "completion_verifier_seconds": 71.32259646599414,
+    "checkpoint_from_receipt": {
+      "path": "/home/josh/projects/chess/runs/combined35m_v50_seed101/checkpoint.pt",
+      "role": "Combined35M_V50",
+      "sha256": "6d36f93d040c8babed040159419279af62a444f6466f42b720e12bb72d67ab02"
+    },
+    "canonical_plan_sha256": "ca3922c459b321dd5e890f8b3e21f6fee6a24aa6c7f0d76653165616aeca67bd",
+    "physical_plan_sha256": "16aef536a523ccd5acafaac6e1df0da24e7761893bac76578fd04e4196972480",
+    "actual_staging_sha256": "1045bc8e73e64e70836c7c54fc207272514da9bd7ce548e732728b641aa01dd1",
+    "findings": [],
+    "historical_valid_control": false,
+    "historical_validity_problems": [
+      "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+      "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+      "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+    ],
+    "scope": "Compared actual completed receipt, summary, process, stored game-column proof and staging-roster hash with admitted prospective metadata and SF100 common contract. No model, corpus, game-column or staging-link reads; no verifier rerun. Launch-manifest predecessor bound separately; completed receipt has no previous_training field. No strength inference."
+  },
+  "cpu_review": {
+    "status": "PASS_INDEPENDENT_ACTUAL_CPU_PACKAGE_REVIEW",
+    "refs": {
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/prepared_pair/prepared.json": "a00afe1f26c1b14cdd0d2144709fe6a9abdd871b1d04dfaceebb955ce5cf846c",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/adapter_manifest.final.json": "9652fd3ece8a56f1323ecec83c4b5a0e618aada3243a03b35d77fa6d46d47a7c",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/prepared_pair/observed.json": "4d7fe2e909b78729e3c516a2f82bdf311f702ab45ee7cfca0ff5563c8c155c6c",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/prepared_pair/request.json": "0a0cf91dabf774fa7d024b889201ef1599960bc736c44b2807c20c9df1fe79c4",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/prepared_pair/cpu_process/process.json": "fd63ba5c49ad98ab4264d74dd0085220cebdd597416c2234c989bf9259d27357",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/cpu_actual_terminal.json": "6ac5deb67b678b7e312f9ea98f2ae25134f882aca7683b5a923921d7373deb08",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/cpu_actual_launch.json": "df52d2a2e9ec2b5d74df1f5e5192522c6e87ae376257652a908620bbcd734b41",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/training/training.complete.json": "3a8294c3637b4790ecb496d3eb3f22ae7ee11f5e55d07a4274660522d7281a54",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_SF100/training/training.complete.json": "389b0680b92747a7005fdbb095060c1bc902989540537fe73e0a6c77a8e36d8b",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/opening_panel.json": "14470ee9bcf5fdfc822bb19988941ecf4bbe2a1ea739d46487d3663b1735340c",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/recipe_lookahead_adoption_v1/runtime_identity.json": "3197e5b8c54db34def8071f275b3a926160b86adae1b716240c17ba75df1ca1e",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/recipe_lookahead_adoption_v1/runtime_qualification.json": "8db2ca4cc98f50db23b0675a2c63e44d6a19407f43ac871b359228f117808f1a",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df"
+    },
+    "prepared_sha256": "a00afe1f26c1b14cdd0d2144709fe6a9abdd871b1d04dfaceebb955ce5cf846c",
+    "manifest_sha256": "9652fd3ece8a56f1323ecec83c4b5a0e618aada3243a03b35d77fa6d46d47a7c",
+    "host_seconds": 68.7046480178833,
+    "cpu_stage_seconds": 64.31997110998782,
+    "games": 512,
+    "pairs": 256,
+    "sims": 400,
+    "seed": 20260913,
+    "models": {
+      "Combined35M_V50": {
+        "dynamic_relations": false,
+        "parameters": 61444448,
+        "architecture_sha256": "2944501f56ea5d8b43310b2e00f182294375ae9cdfc52c43da5abaf9ca38bf5e"
+      },
+      "Combined35M_SF100": {
+        "dynamic_relations": false,
+        "parameters": 61444448,
+        "architecture_sha256": "2944501f56ea5d8b43310b2e00f182294375ae9cdfc52c43da5abaf9ca38bf5e"
+      }
+    },
+    "cuda_initialized": false,
+    "uncapped_leaf_rows": 2048,
+    "findings": [],
+    "scope": "Actual CPU process completed; pinned checkpoints checked through genuine completion receipts, observed regenerated panel equals immutable pretraining panel, settings/runtime and exact prepared command match reviewed adapter. Generic process complete:false staging field does not override process_complete:true/exit0. Original runtime qualification bridge retained. No model/book/native payload reads or probe repeats by reviewer. Arena host command still requires parent final prepared hash and actual deadline binding; no launch or outcomes claimed."
+  },
+  "arena_launch": {
+    "started_unix": 1789308109.686644,
+    "started_utc": "2026-09-13T14:01:49.686701+00:00",
+    "command": [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      "--kill-after=30s",
+      "12000s",
+      "/usr/bin/nice",
+      "-n",
+      "19",
+      "/usr/bin/ionice",
+      "-c",
+      "3",
+      "/usr/bin/time",
+      "-v",
+      "-o",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/arena_resources.txt",
+      "/usr/bin/python3",
+      "/tmp/deepfin-combined-arena-host/scripts/combined_corpus_arena.py",
+      "--manifest",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/adapter_manifest.final.json",
+      "--expected-manifest-sha256",
+      "9652fd3ece8a56f1323ecec83c4b5a0e618aada3243a03b35d77fa6d46d47a7c",
+      "--execute",
+      "--expected-prepared-sha256",
+      "a00afe1f26c1b14cdd0d2144709fe6a9abdd871b1d04dfaceebb955ce5cf846c",
+      "--deadline-unix",
+      "1789320109.686644"
+    ],
+    "manifest_sha256": "9652fd3ece8a56f1323ecec83c4b5a0e618aada3243a03b35d77fa6d46d47a7c",
+    "prepared_sha256": "a00afe1f26c1b14cdd0d2144709fe6a9abdd871b1d04dfaceebb955ce5cf846c",
+    "inclusive_seconds": 12030
+  },
+  "cpu_terminal": {
+    "started_unix": 1789307712.8044937,
+    "started_utc": "2026-09-13T13:55:12.804592+00:00",
+    "manifest_sha256": "9652fd3ece8a56f1323ecec83c4b5a0e618aada3243a03b35d77fa6d46d47a7c",
+    "command": [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      "--kill-after=30s",
+      "570s",
+      "/usr/bin/taskset",
+      "-c",
+      "6,7",
+      "/usr/bin/nice",
+      "-n",
+      "19",
+      "/usr/bin/ionice",
+      "-c",
+      "3",
+      "/usr/bin/time",
+      "-v",
+      "-o",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/cpu_resources.txt",
+      "/usr/bin/python3",
+      "/tmp/deepfin-combined-arena-host/scripts/combined_corpus_arena.py",
+      "--manifest",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/adapter_manifest.final.json",
+      "--expected-manifest-sha256",
+      "9652fd3ece8a56f1323ecec83c4b5a0e618aada3243a03b35d77fa6d46d47a7c",
+      "--prepare",
+      "--deadline-unix",
+      "1789308282.8044937"
+    ],
+    "inclusive_seconds": 600,
+    "returncode": 0,
+    "elapsed_seconds": 68.7046480178833,
+    "ended_unix": 1789307781.5091422
+  },
+  "adapter_manifest": {
+    "runtime": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/recipe_lookahead_adoption_v1/runtime_identity.json",
+      "sha256": "3197e5b8c54db34def8071f275b3a926160b86adae1b716240c17ba75df1ca1e"
+    },
+    "live_config": {
+      "path": "/tmp/deepfin-ordered-arena-lookahead-runtime/configs/pbt2_small.yaml",
+      "sha256": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624"
+    },
+    "book": {
+      "path": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+      "sha256": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c"
+    },
+    "sprt_lookahead_pairs": 64,
+    "schema": 1,
+    "profile": "combined35m_value_seed101",
+    "candidate": {
+      "path": "/home/josh/projects/chess/runs/combined35m_v50_seed101/checkpoint.pt",
+      "role": "Combined35M_V50",
+      "sha256": "6d36f93d040c8babed040159419279af62a444f6466f42b720e12bb72d67ab02"
+    },
+    "reference": {
+      "path": "/home/josh/projects/chess/runs/combined35m_sf100_seed101/checkpoint.pt",
+      "role": "Combined35M_SF100",
+      "sha256": "633a03e7d2f0e0abc5d4e925025eb70598d25e3bcb1a2d87922c87d5b949f942"
+    },
+    "candidate_training": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/training/training.complete.json",
+      "sha256": "3a8294c3637b4790ecb496d3eb3f22ae7ee11f5e55d07a4274660522d7281a54"
+    },
+    "reference_training": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_SF100/training/training.complete.json",
+      "sha256": "389b0680b92747a7005fdbb095060c1bc902989540537fe73e0a6c77a8e36d8b"
+    },
+    "opening_panel": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/opening_panel.json",
+      "sha256": "14470ee9bcf5fdfc822bb19988941ecf4bbe2a1ea739d46487d3663b1735340c"
+    },
+    "preregistration": {
+      "path": "/tmp/deepfin-combined35m-fixed-panel/docs/experiments/2026-09-13-combined35m-value-transfer.md",
+      "sha256": "c7cf784fd3fa7b6403a0fb44a9a7ff30487709490ffc48a7ead1c694707c08eb"
+    },
+    "state": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/prepared_pair",
+    "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/Combined35M_V50_SF100_fixed400_run01",
+    "stop_paths": [
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/STOP",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/STOP",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/STOP"
+    ],
+    "code_pins": {
+      "/tmp/deepfin-combined-arena-host/scripts/combined_corpus_arena.py": "91598080e6f5964f0ea2da20b3a010cecee8dc9adc4ce8d293afcdce7678132c",
+      "/tmp/deepfin-combined-arena-host/scripts/combined_corpus_arena_probe.py": "26b2b09c62707f99e5a608a70e880610aa5fb09d5ea4b8281275feb1ed8c90f4",
+      "/tmp/deepfin-combined-arena-host/scripts/bt4_recipe_screen.py": "ea815de4d674817581780612c0890777ced772c21857d45d575f7d8eb4f3f5bc",
+      "/tmp/deepfin-combined-arena-host/scripts/bt4_package_readout.py": "fd59ec383f3f9c09033c8fd1ce320ac6109366bfb0c6660aad27da2e0ac19d93",
+      "/tmp/deepfin-combined-arena-host/scripts/bt4_direct_screen.py": "bef13f1f763f7d38632f333dfa7d8ddbd738fa5c84de2e5ea44bbbad139af789",
+      "/tmp/deepfin-combined-arena-host/scripts/training_host_memory.py": "94e074f17104bc1aa3ca9b6be99f715d9a906ff3e5546892ffe94612fd21dfdc",
+      "/tmp/deepfin-combined-arena-host/scripts/bt4_recipe_readout.py": "f3dc91bf4b485121cb51af2a0964bd3b50932cdaa130c79f22c7d6365370afaa",
+      "/tmp/deepfin-combined-arena-host/scripts/combined_corpus_train.py": "87ed234c2861920e96427010833a3c5c55fa3d3c136655f3957426647ed15acb",
+      "/tmp/deepfin-combined-arena-host/scripts/combined_corpus_schedule.py": "a871fbe867f5afef9b0a110c2521a247de61e47117f9db4d6bbaadee924de9f8",
+      "/tmp/deepfin-combined-arena-host/scripts/bt4_one_epoch_screen.py": "df19ba4126a90e2257724965d897ced7342130c1ac3d0acc4c927dd0abda0ea0"
+    },
+    "training_verifier": {
+      "path": "/tmp/deepfin-combined-training/scripts/combined_corpus_train.py",
+      "sha256": "87ed234c2861920e96427010833a3c5c55fa3d3c136655f3957426647ed15acb"
+    }
+  },
+  "prepared": {
+    "status": "CPU_PREPARED_NOT_LAUNCHED",
+    "manifest": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/adapter_manifest.final.json",
+      "sha256": "9652fd3ece8a56f1323ecec83c4b5a0e618aada3243a03b35d77fa6d46d47a7c"
+    },
+    "runtime_root": "/tmp/deepfin-ordered-arena-lookahead-runtime",
+    "runtime": {
+      "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+      "executable": "/usr/bin/python3",
+      "torch": "2.11.0+cu128",
+      "cuda": "12.8",
+      "numpy": "1.26.2",
+      "native_extensions": {
+        "chess_anti_engine.encoding._features_ext": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+        "chess_anti_engine.encoding._lc0_ext": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+        "chess_anti_engine.mcts._mcts_tree": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so",
+        "chess_anti_engine.nnue._nnue_ext": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so"
+      },
+      "native_extension_sha256": {
+        "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c",
+        "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df",
+        "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so": "9d8cc4ba5ab20e78cfc0d183c62801765002ca49d56dbf10010f16a95291e01d",
+        "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so": "c5ce10c2ac0210e825be7f0ad14fe575a6d89745bcb5c3ffcdc24e3f381e4082"
+      }
+    },
+    "input_stamps": {
+      "/tmp/deepfin-combined-arena-host/scripts/combined_corpus_train.py": [
+        2096,
+        17257657,
+        23836,
+        1789293272710223089,
+        1789293272710223089
+      ],
+      "/home/josh/projects/chess/runs/combined35m_v50_seed101/checkpoint.pt": [
+        2096,
+        17258587,
+        665664973,
+        1789307273111821316,
+        1789307273327821279
+      ],
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/prospective.json": [
+        2096,
+        81100409,
+        3800591,
+        1789273889905546845,
+        1789273889905546845
+      ],
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/opening_panel.json": [
+        2096,
+        81100382,
+        105069,
+        1789272680736129130,
+        1789272680736129130
+      ],
+      "/home/josh/projects/chess/runs/combined35m_sf100_seed101/summary.json": [
+        2096,
+        17247750,
+        5108129,
+        1789292661362326330,
+        1789292661362326330
+      ],
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json": [
+        2096,
+        81354195,
+        7513,
+        1788711782055247397,
+        1788711782055247397
+      ],
+      "/tmp/deepfin-ordered-arena-lookahead-runtime/scripts/arena_standard.py": [
+        2096,
+        14692074,
+        211752,
+        1788893122926510266,
+        1788893122926510266
+      ],
+      "/home/josh/projects/chess/runs/combined35m_sf100_seed101/checkpoint.pt": [
+        2096,
+        17244611,
+        665664973,
+        1789292659994326574,
+        1789292660246326529
+      ],
+      "/tmp/deepfin-combined-arena-host/scripts/bt4_one_epoch_screen.py": [
+        2096,
+        17257628,
+        57241,
+        1789293272706223089,
+        1789293272706223089
+      ],
+      "/tmp/deepfin-combined-arena-host/scripts/bt4_recipe_screen.py": [
+        2096,
+        17257634,
+        23800,
+        1789293502171025545,
+        1789293502171025545
+      ],
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/training/training/process.json": [
+        2096,
+        81100678,
+        12542,
+        1789307278919081564,
+        1789307278919081564
+      ],
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/recipe_lookahead_adoption_v1/runtime_identity.json": [
+        2096,
+        71590601,
+        2758,
+        1788893600998277257,
+        1788893600998277257
+      ],
+      "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so": [
+        2096,
+        9748799,
+        198944,
+        1788374223000000000,
+        1788374231332258135
+      ],
+      "/tmp/deepfin-combined35m-fixed-panel/docs/experiments/2026-09-13-combined35m-value-transfer.md": [
+        2096,
+        10984186,
+        17608,
+        1789275594052517882,
+        1789275594052517882
+      ],
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/selected_subset_preflight_v2/qualification.json": [
+        2096,
+        81100445,
+        1072198,
+        1789275171769309567,
+        1789275171769309567
+      ],
+      "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/eval/sprt.py": [
+        2096,
+        14691564,
+        20854,
+        1788893122936214610,
+        1788893122936214610
+      ],
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/manifest.draft.json": [
+        2096,
+        81100363,
+        114040,
+        1789272306662808152,
+        1789272306662808152
+      ],
+      "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so": [
+        2096,
+        9748800,
+        612568,
+        1788374225000000000,
+        1788374231332558372
+      ],
+      "/tmp/deepfin-combined-arena-host/scripts/combined_corpus_arena_probe.py": [
+        2096,
+        17255206,
+        4443,
+        1789294133065208340,
+        1789294133065208340
+      ],
+      "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so": [
+        2096,
+        9748801,
+        954392,
+        1788374229000000000,
+        1788374231333006229
+      ],
+      "/tmp/deepfin-combined-training/scripts/combined_corpus_train.py": [
+        2096,
+        11051839,
+        23836,
+        1789274463967347885,
+        1789274463967347885
+      ],
+      "/tmp/deepfin-combined-arena-host/scripts/training_host_memory.py": [
+        2096,
+        17257803,
+        2573,
+        1789293272734223084,
+        1789293272734223084
+      ],
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_SF100/training/training.complete.json": [
+        2096,
+        81100688,
+        955367,
+        1789292745702312616,
+        1789292745702312616
+      ],
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_SF100/training/training/process.json": [
+        2096,
+        71287701,
+        12630,
+        1789292665813085169,
+        1789292665813085169
+      ],
+      "/tmp/deepfin-combined-arena-host/scripts/combined_corpus_arena.py": [
+        2096,
+        17258330,
+        17690,
+        1789294266794900709,
+        1789294266794900709
+      ],
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/training/training.complete.json": [
+        2096,
+        73618756,
+        955357,
+        1789307349851809428,
+        1789307349851809428
+      ],
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/recipe_lookahead_adoption_v1/runtime_qualification.json": [
+        2096,
+        71590598,
+        6285,
+        1788893600997902340,
+        1788893600997902340
+      ],
+      "/tmp/deepfin-combined-arena-host/scripts/bt4_package_readout.py": [
+        2096,
+        17257629,
+        15801,
+        1789293272706223089,
+        1789293272706223089
+      ],
+      "/tmp/deepfin-combined-arena-host/scripts/combined_corpus_schedule.py": [
+        2096,
+        17257656,
+        19115,
+        1789293272710223089,
+        1789293272710223089
+      ],
+      "/tmp/deepfin-combined-arena-host/scripts/bt4_direct_screen.py": [
+        2096,
+        17257624,
+        23108,
+        1789293272702223090,
+        1789293272702223090
+      ],
+      "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip": [
+        2096,
+        9044020,
+        9663653,
+        1780003887951973399,
+        1780003887951973399
+      ],
+      "/tmp/deepfin-combined-arena-host/scripts/bt4_recipe_readout.py": [
+        2096,
+        17257633,
+        36225,
+        1789293272706223089,
+        1789293272706223089
+      ],
+      "/home/josh/projects/chess/runs/combined35m_v50_seed101/summary.json": [
+        2096,
+        17258589,
+        5109222,
+        1789307274147733224,
+        1789307274147733224
+      ],
+      "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so": [
+        2096,
+        9748803,
+        644144,
+        1788374231000000000,
+        1788374231333618294
+      ],
+      "/tmp/deepfin-ordered-arena-lookahead-runtime/configs/pbt2_small.yaml": [
+        2096,
+        14691776,
+        78557,
+        1788893074307575927,
+        1788893074307575927
+      ]
+    },
+    "contract_template": {
+      "schema": 1,
+      "profile": "combined35m_value_seed101",
+      "candidate": {
+        "path": "/home/josh/projects/chess/runs/combined35m_v50_seed101/checkpoint.pt",
+        "role": "Combined35M_V50",
+        "sha256": "6d36f93d040c8babed040159419279af62a444f6466f42b720e12bb72d67ab02"
+      },
+      "reference": {
+        "path": "/home/josh/projects/chess/runs/combined35m_sf100_seed101/checkpoint.pt",
+        "role": "Combined35M_SF100",
+        "sha256": "633a03e7d2f0e0abc5d4e925025eb70598d25e3bcb1a2d87922c87d5b949f942"
+      },
+      "candidate_prior_temperature": 1.0,
+      "reference_prior_temperature": 1.0,
+      "sims": 400,
+      "pairs": 256,
+      "seed": 20260913,
+      "settings": {
+        "mode": "matched_sims",
+        "candidate": "/home/josh/projects/chess/runs/combined35m_v50_seed101/checkpoint.pt",
+        "reference": "/home/josh/projects/chess/runs/combined35m_sf100_seed101/checkpoint.pt",
+        "games": 512,
+        "seed": 20260913,
+        "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "openings_kind": "book",
+        "opening_plies": 16,
+        "sims_candidate": 400,
+        "sims_reference": 400,
+        "ms_per_move": null,
+        "max_plies": 300,
+        "temperature": 0.1,
+        "gumbel_add_noise": true,
+        "search_candidate": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "search_reference": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "volatility_candidate": null,
+        "uci_args": "",
+        "syzygy": "",
+        "syzygy_max_pieces": 0
+      },
+      "execution": {
+        "loop": "rolling",
+        "compile": "on",
+        "eval_max_batch": 4096,
+        "max_concurrent_games": 128,
+        "max_seconds": 7140.0
+      },
+      "opening_panel": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/opening_panel.json",
+        "sha256": "14470ee9bcf5fdfc822bb19988941ecf4bbe2a1ea739d46487d3663b1735340c"
+      },
+      "training": {
+        "candidate_training": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/training/training.complete.json",
+          "sha256": "3a8294c3637b4790ecb496d3eb3f22ae7ee11f5e55d07a4274660522d7281a54"
+        },
+        "reference_training": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_SF100/training/training.complete.json",
+          "sha256": "389b0680b92747a7005fdbb095060c1bc902989540537fe73e0a6c77a8e36d8b"
+        }
+      },
+      "bank": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Combined35M_V50_SF100_fixed400_run01/arena.games.jsonl"
+      },
+      "process": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Combined35M_V50_SF100_fixed400_run01/process.json"
+      },
+      "results_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Combined35M_V50_SF100_fixed400_run01/arena.results.jsonl"
+    },
+    "command": [
+      "/usr/bin/python3",
+      "scripts/arena_standard.py",
+      "--candidate",
+      "/home/josh/projects/chess/runs/combined35m_v50_seed101/checkpoint.pt",
+      "--reference",
+      "/home/josh/projects/chess/runs/combined35m_sf100_seed101/checkpoint.pt",
+      "--games",
+      "512",
+      "--mode",
+      "matched_sims",
+      "--sims",
+      "400",
+      "--seed",
+      "20260913",
+      "--openings",
+      "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+      "--opening-plies",
+      "16",
+      "--max-plies",
+      "300",
+      "--temperature",
+      "0.1",
+      "--search-shape",
+      "training",
+      "--cand-gumbel",
+      "policy_temp=1.0",
+      "--ref-gumbel",
+      "policy_temp=1.0",
+      "--compile",
+      "on",
+      "--device",
+      "cuda",
+      "--max-concurrent-games",
+      "128",
+      "--eval-max-batch",
+      "4096",
+      "--max-seconds",
+      "7140.0",
+      "--syzygy-max-pieces",
+      "0",
+      "--games-out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Combined35M_V50_SF100_fixed400_run01/arena.games.jsonl",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Combined35M_V50_SF100_fixed400_run01/arena.results.jsonl"
+    ],
+    "observed": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/prepared_pair/observed.json",
+      "sha256": "4d7fe2e909b78729e3c516a2f82bdf311f702ab45ee7cfca0ff5563c8c155c6c"
+    },
+    "request": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/arena_preparation_v1/prepared_pair/request.json",
+      "sha256": "0a0cf91dabf774fa7d024b889201ef1599960bc736c44b2807c20c9df1fe79c4"
+    }
+  },
+  "parent_launch_resource_snapshot": {
+    "available_memory_GiB_approx": 83,
+    "swap_used_GiB": 0,
+    "free_disk_GiB_approx": 193,
+    "gpu_compute_apps": "none before launch",
+    "scope": "Parent-reported launch snapshot, not ongoing or peak usage"
+  },
+  "scope": "Completed metadata and immutable host launch only. No model, corpus, book, game bank or active job reads. Checkpoint hashes inherited from genuine completed receipts. Historical validity caveats remain; no playing-strength result."
+}

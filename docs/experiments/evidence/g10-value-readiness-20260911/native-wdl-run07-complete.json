@@ -1,0 +1,177 @@
+{
+  "scope": "Completed original run07 common-large native BT4 WDL and saved-output qualification; not consumer or training admission",
+  "rows": 2008952,
+  "shards": 246,
+  "last_shard_rows": 1912,
+  "prior_direct_rows": 2539395,
+  "all_direct_g10_native_rows": 4548347,
+  "run06_large_rows": 2013019,
+  "two_increment_rows": 526376,
+  "source": {
+    "profile": "frozen-g10-common-derived-v1",
+    "qualification": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_v1/run07_g10_companion4/common_input_qualification.json",
+      "sha256": "c6dba2abf68436401a7707888fd15b0983fb447a1a122b8149a7efcb1f776a2a"
+    },
+    "source_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_v1/run07_g10_companion4/derived",
+    "raw_source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+    "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+    "summary_pins": {
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_v1/run07_g10_companion4/derived/derive_targets_summary.json": "f829403ac21d9fd353d9d0d9e978ff375947b76c54466421532ffbe1fc9c9eda",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_v1/run07_g10_companion4/bt4/bt4_policy_sidecar_summary.json": "76799a77dd19ecade9b06a7f48693501ccc9cd4a103411808f3d717ef37ef4ab",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_v1/run07_g10_companion4/rank/sf_d9_rank_sidecar_summary.json": "ad92e0aea78a0c979d2580fffcdef59b0fe5a96788b096a25077f89999ea437e"
+    },
+    "selected_raw_inventory_sha256": "2849345ce7942ca6dc51b9e15a7ac8d06bd086cd776225d85733772a486562f1",
+    "source_qualified_input_sequence_sha256": "7279a802ccb703729d805d386d7008d6cea0ffb6cd9dadfbde443629085a443e",
+    "derived_storage_identity": "50b7254fcf8d2b1d966b98cec3165b7bb0a7933fac5c4672f70473de27b0a077",
+    "source_selection": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/source_shards.json",
+      "sha256": "8129dad2f860df173dd7784586762c4f75c43b7356af9c92f8029c78a3e1b81b"
+    }
+  },
+  "output": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_run07_large_complete_v1/run07_g10_companion4",
+  "collection_terminal": {
+    "session": 84632,
+    "observer": 596,
+    "exit_code": 0,
+    "tool_chunk": "d76f02",
+    "whole_seconds": 1182.654896736145,
+    "complete_sha256": "83e38ad8950424303b8a921dbda85ea47029e4a6d1f3434b87e4138903ffd6d9"
+  },
+  "qualification_terminal": {
+    "session": 27457,
+    "observer": 599,
+    "exit_code": 0,
+    "tool_chunk": "a56c5e",
+    "time": "wall_seconds=18.04 max_rss_kib=50356",
+    "receipt_sha256": "2e7f731e5d4933e4d5c186a854ec73d9f9388368b5259f48fd5afe83e0ace335"
+  },
+  "saved_array_bytes_decoded": 128572928,
+  "WDL_values": {
+    "native_dtype": "float32",
+    "finite_and_range_valid": true,
+    "max_abs_unit_mass_error": 1.4831312000751495e-07,
+    "min": 1.726961151859996e-08,
+    "max": 0.9999998807907104,
+    "normalized_rounding_tolerance": 2e-06
+  },
+  "invocation": {
+    "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_run07_large_complete_v1/run07_g10_companion4/invocations/1789196478524699604/completed.json",
+    "sha256": "cbc33a40663f772dd6c4f6aa2ee0a923f1c701d43444460719beb1eaec975a54",
+    "bytes": 121767
+  },
+  "actual_parsed_arguments": {
+    "path": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_run07_large_complete_v1/run07_g10_companion4/invocations/1789196478524699604/started.json",
+    "sha256": "958014c042bdcd94ab67c6ed4c88e69b45f3710270162cf847d54eaed26d15a6",
+    "bytes": 1653
+  },
+  "preflight": {
+    "observed_unix": 1789196475.5332706,
+    "gpu_mib_used_free_utilization": [
+      3348,
+      28843,
+      6
+    ],
+    "compute_apps": "",
+    "disk_free_gib": 279.4185371398926,
+    "memory_kib": {
+      "MemAvailable": 58173488,
+      "SwapFree": 325148
+    },
+    "policy_materializer_status": "RUNNING",
+    "plan_sha256": "bfe125d623d3822ae079917c332c76254c0803ac31cce4028e739ded7bd289e5",
+    "lease": "No standalone probe repeated; unchanged runner/producer enforce actual lease as authorized."
+  },
+  "pins": {
+    "plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run07_large_complete_v1/plan.json",
+      "sha256": "bfe125d623d3822ae079917c332c76254c0803ac31cce4028e739ded7bd289e5"
+    },
+    "run_slice.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run07_large_complete_v1/run_slice.py",
+      "sha256": "310a4b10f933b630d6aca280c862f8863a276bc1103c2325693d856b998d7b17"
+    },
+    "validation.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run07_large_complete_v1/validation.json",
+      "sha256": "3ff288ceceb33f60f52ef8793219f13324975234306ac3e954193011d8b59dec"
+    },
+    "validation_final_delta.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run07_large_complete_v1/validation_final_delta.json",
+      "sha256": "d84dcc3f10e02ca659f7bd7ec9cb49220466287c7b6b3d448ea5ab405e10b45e"
+    },
+    "independent_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run07_large_complete_v1/independent_review.json",
+      "sha256": "60dad7b099abecb20dd8444f4e8116e90d0faec3d07c8c7755b7f50d74c1a408"
+    },
+    "complete.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run07_large_complete_v1/complete.json",
+      "sha256": "83e38ad8950424303b8a921dbda85ea47029e4a6d1f3434b87e4138903ffd6d9"
+    },
+    "terminal.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run07_large_complete_v1/terminal.json",
+      "sha256": "761a5fea6774f03ea45ca271811ae35831e9c4d80325180ff57bdf2d463b5c35"
+    },
+    "preflight_attempt1.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run07_large_complete_v1/preflight_attempt1.json",
+      "sha256": "e4e5bea7a967202456a259f8dfbaba3e3335eec47c3608b1be004282b8ebc5e3"
+    },
+    "preflight_attempt2.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run07_large_complete_v1/preflight_attempt2.json",
+      "sha256": "9284deacb0bb514a3897d49133c15962b1c309b3f656f75c72fc775c99a3aa1b"
+    },
+    "lease_owner_probe.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run07_large_complete_v1/lease_owner_probe.json",
+      "sha256": "f58ed5f3bb8d1ee9ecd4be7a8cb63a37021c2ea61902482b968fc6427d9fa369"
+    },
+    "independent_completed_review/check.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run07_large_complete_v1/independent_completed_review/check.py",
+      "sha256": "1bea4e017f75d5279de23aa61dc4b230097394415a0f07757b156df8067460c2"
+    },
+    "independent_completed_review/preparation_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run07_large_complete_v1/independent_completed_review/preparation_review.json",
+      "sha256": "b1948e501e6e13a4fa82977fd83a291699b8ad78e8d250a3b5becb439c67b800"
+    },
+    "independent_completed_review/receipt.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run07_large_complete_v1/independent_completed_review/receipt.json",
+      "sha256": "2e7f731e5d4933e4d5c186a854ec73d9f9388368b5259f48fd5afe83e0ace335"
+    },
+    "independent_completed_review/independent_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run07_large_complete_v1/independent_completed_review/independent_review.json",
+      "sha256": "77f37cc6261b58f3de06cdc2aaf89ae37eb0ce0d53ff96754c075213716e9d85"
+    }
+  },
+  "lease_history": {
+    "attempt1": {
+      "status": "NOT_LAUNCHED_LEASE_BUSY",
+      "tool_chunk": "28c27c",
+      "error": "BlockingIOError errno11 from advisory LOCK_EX|LOCK_NB before GPU query",
+      "followup": "Host lslocks/fuser found no persistent owner; preserve attempt and use one fresh preflight, no bypass."
+    },
+    "attempt2": {
+      "status": "NOT_LAUNCHED_LEASE_BUSY",
+      "tool_chunk": "940e84",
+      "error": "BlockingIOError errno11 at advisory GPU LOCK_EX|LOCK_NB before GPU query",
+      "owner_metadata": {
+        "inode": 81348917,
+        "proc_locks_pid": 681005,
+        "tool_chunk": "0f49a9",
+        "next_pid_read": "PID absent in tool d5d11a"
+      },
+      "action": "Parent notified; no further retries or bypass, plan remains prepared."
+    },
+    "same_call_probe": {
+      "observed_unix": 1789196390.979966,
+      "probe_pid": 681796,
+      "probe_ppid": 681792,
+      "lock_key": "08:30:81348917",
+      "status": "FREE_ACQUIRED_AND_RELEASED"
+    },
+    "conclusion": "Two advisory preflights found a transient busy lease; cause unresolved. Later same-call probe acquired/released it. One unchanged actual collector attempt then succeeded with mandatory lease checks intact."
+  },
+  "consumer_boundary": "One complete output namespace fits the existing historical-reader directory requirement, but a complete provenance manifest/admission and actual writer content/feed checks have not been run for this cohort.",
+  "limits": [
+    "No teacher-quality/strength result, target rewrite or training admission.",
+    "Earlier run06 malformed adaptive-SF baseline not repaired.",
+    "No old arrays rescanned for publication; all prior qualifications reused as pinned evidence."
+  ]
+}

@@ -1,0 +1,182 @@
+{
+  "schema": 1,
+  "status": "SOFTSF_COPY_RECLAIM_COMPLETE_H20_COPY_LAUNCHED",
+  "softsf_archive": {
+    "pool": "qtemp_0.0005_hist_20m_softsf_cp10",
+    "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_softsf_cp10",
+    "source_deleted": false,
+    "plan_sha256": "caa1d8ef2b99cf32383a1bc0a42dd57d1ed726f3051f9f648e6adb1c90093ce5",
+    "started_unix": 1789343881.8190613,
+    "mount": {
+      "target": "/mnt/e",
+      "source": "E:\\",
+      "fstype": "9p",
+      "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+    },
+    "resources": {
+      "local_free_bytes": 193064042496,
+      "available_RAM_bytes": 82859274240
+    },
+    "references": {
+      "observed_source_references": [],
+      "other_user_processes_not_inspected": [
+        1,
+        9,
+        12,
+        13,
+        894,
+        895,
+        1939,
+        1940,
+        407219,
+        407220
+      ],
+      "same_user_processes_not_inspected": [
+        30
+      ],
+      "complete_process_visibility": false,
+      "scope": "Copy only; source retained and stability independently checked. Not source-removal qualification."
+    },
+    "inventory": {
+      "entries": 713331,
+      "logical_file_bytes": 9997708660
+    },
+    "tar_bytes": 11356651520,
+    "verified_members": 713331,
+    "tar_sha256": "ddf7dd24425364679e62bdeaff1b63e49cb9b9695c7de6d757bcf138815e39b0",
+    "source_manifest_sha256": "f02995d8cac3a5ab94630536b42d176862da6c4e7cf2c1b7d497e28b408ceccd",
+    "rsync_command": [
+      "/usr/bin/rsync",
+      "--no-whole-file",
+      "--partial-dir=.qtemp_0.0005_hist_20m_softsf_cp10.partial",
+      "--bwlimit=16384",
+      "--fsync",
+      "--",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_cold_archive_v1/staging/qtemp_0.0005_hist_20m_softsf_cp10/qtemp_0.0005_hist_20m_softsf_cp10.tar",
+      "/mnt/e/chess_derived_archive_20260908/SoftSF10_v1/qtemp_0.0005_hist_20m_softsf_cp10.tar"
+    ],
+    "rsync_exit_code": 0,
+    "external_tar_sha256": "ddf7dd24425364679e62bdeaff1b63e49cb9b9695c7de6d757bcf138815e39b0",
+    "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE",
+    "finished_unix": 1789346338.3658512,
+    "external_archive": "/mnt/e/chess_derived_archive_20260908/SoftSF10_v1/qtemp_0.0005_hist_20m_softsf_cp10.tar",
+    "external_size": 11356651520,
+    "external_mtime_ns": 1789345983633909000,
+    "limitations": [
+      "Source retained; removal requires separate parent verification.",
+      "Observed fd/cwd consumers rejected; inaccessible process IDs disclosed. Not deletion qualification.",
+      "File mode/uid/gid/mtime and all contents verified; GNU tar captures ACL/xattrs but these are not independently compared."
+    ]
+  },
+  "reclamation": {
+    "status": "COMPLETE_EXACT_SHARD_RECLAMATION_SUMMARIES_RETAINED",
+    "started_unix": 1789347285.1094716,
+    "ended_unix": 1789347323.0595264,
+    "deadline_unix": 1789349085.073821,
+    "removed_shards": 2309,
+    "list_sha256": "903c55eddc9a551a0a8cc56e8c9cfb55a1afe91b5c85dc74f9449702537fbba2",
+    "script_sha256": "1507e68a5f84635fef75b86ca159f6783f9bf92ec5f3c4dbdf6fadcebd5fb7c1",
+    "archive_current_stat": {
+      "st_dev": 75,
+      "st_ino": 281474978208074,
+      "st_mode": 33279,
+      "st_uid": 1000,
+      "st_gid": 1000,
+      "st_size": 11356651520,
+      "st_mtime_ns": 1789345983633909000,
+      "st_ctime_ns": 1789345985345169100
+    },
+    "retained_summaries": [
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_softsf_cp10/sf_policy_rewrite_summary.json",
+        "sha256": "cead18347ff448e6f18caefd6cbfe26a5366f868a4f23c696a15958e8bf52276",
+        "stat": {
+          "st_dev": 2096,
+          "st_ino": 14684696,
+          "st_mode": 33188,
+          "st_uid": 1000,
+          "st_gid": 1000,
+          "st_size": 61150943,
+          "st_mtime_ns": 1788892522792868410,
+          "st_ctime_ns": 1788892522860868391
+        }
+      },
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_softsf_cp10/derive_targets_summary.json",
+        "sha256": "be4bc2b477574d0a1e0d72ef52d45273170964669253bec5d9f08a0f7fcaabc3",
+        "stat": {
+          "st_dev": 2096,
+          "st_ino": 14684697,
+          "st_mode": 33188,
+          "st_uid": 1000,
+          "st_gid": 1000,
+          "st_size": 1032207,
+          "st_mtime_ns": 1788892522874054732,
+          "st_ctime_ns": 1788892522874054732
+        }
+      }
+    ],
+    "filesystem_free_before_bytes": 186730074112,
+    "filesystem_free_after_bytes": 199039860736,
+    "filesystem_free_delta_bytes": 12309786624,
+    "prior_allocated_shard_bytes": 12485857280,
+    "space_limit": "Free-space delta is a concurrent whole-filesystem observation, not isolated attribution to this removal. Prior allocated sum is separate.",
+    "no_resume": true
+  },
+  "reclamation_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_cold_archive_v1/reclamation_execution_v1/independent_completed_review.json",
+    "sha256": "7998947673c7e0fdd892178b0a0193d7df1b0d1daec2e5d8b4495f6514aa2bc8"
+  },
+  "h20_launch": {
+    "started_unix": 1789347361.0998867,
+    "argv": [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      "--kill-after=30s",
+      "10770s",
+      "/usr/bin/python3.10",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/H20T05_cold_archive_v1/run_registered.py",
+      "--plan-sha256",
+      "53cb29e3443cdcbd66f15fba8b32a527392153fee7c6ba269150bb70b5bfaf9b",
+      "--deadline",
+      "1789358161.0998867"
+    ],
+    "free_bytes": 199012872192,
+    "available_ram_bytes": 86348681216
+  },
+  "h20_launch_snapshot": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/H20T05_cold_archive_v1/parent_launch_publication_snapshot.json",
+    "sha256": "b6716748d86b28f056e0d6441df4ce7970cf23518e232707c47fac77ce54bed5"
+  },
+  "refs": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_cold_archive_v1/outer_terminal.json",
+      "sha256": "11386dfd28cb015f10105a6ae352b5ddad973449849690ebdfaa121bf57d9f20"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_cold_archive_v1/independent_completed_review.json",
+      "sha256": "2d372541ba789961430cd07eedef45e1849e9689f50479ebceeee0ab4941ea11"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_cold_archive_v1/reclamation_preparation_v1/independent_reclaimer_review.json",
+      "sha256": "bb98ac1dfe35057002bb6c070caa684c4ce80ac68533fd37c2cd6d6c03670669"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/H20T05_cold_archive_v1/plan.json",
+      "sha256": "53cb29e3443cdcbd66f15fba8b32a527392153fee7c6ba269150bb70b5bfaf9b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/H20T05_cold_archive_v1/operator_command.json",
+      "sha256": "8b6a088e1f38ef1a6b8fbeee9edf55d472d7cf00ae10ba2d412c0876a9163ee6"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/H20T05_cold_archive_v1/independent_preparation_review.json",
+      "sha256": "756b2307f3a56a8844e5718633d68cfe2488286903b662df54b00650fa5482dd"
+    }
+  ],
+  "limits": [
+    "No H20 completion claimed; source retained during copy",
+    "All runs/checkpoints/rawteachers and neighboring corpora retained; only exact SoftSF shard directories removed",
+    "Concurrent free-space delta is not isolated freed allocation"
+  ]
+}

@@ -1,0 +1,780 @@
+{
+  "status": "COMPLETED_RAW_AUDIT_AND_CERES_PREFIX_NOT_TRAINING_ADMISSION",
+  "raw_audit": {
+    "terminal": {
+      "returncode": 0,
+      "ended_unix": 1789326439.011217,
+      "elapsed_seconds": 1300.441965341568
+    },
+    "counts": {
+      "physical_rows": 1527153,
+      "eligible_rows": 1517925,
+      "no_result_rows": 9198,
+      "required_baseline_rejected_rows": 30,
+      "policy_rejected_rows": 30,
+      "value_rejected_rows": 30,
+      "whole_shard_collateral_eligible_rows": 105839,
+      "whole_shard_retained_rows": 1412086
+    },
+    "semantics": "phase0 uniform-d9 policy; original composite latest-phase d9 value. Policy and composite-value counters overlap; value validator also requires phase0. No scores repaired or adaptive targets selected.",
+    "diagnostic_bytes": 5178177,
+    "independent_completed_review": {
+      "status": "PASS_COMPACT_BASELINE_ELIGIBILITY_REVIEW_NOT_DERIVATION",
+      "reviewer": "archive_review",
+      "reviewed_unix": 1789326563.7904446,
+      "pins": {
+        "plan.json": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/plan.json",
+          "sha256": "fed9cd4ecb929e324d5212a56a0c23953ff68eb4b0d4fb8612e02147dde3e7be"
+        },
+        "manifest.json": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/manifest.json",
+          "sha256": "5a6a8a519060028c1df648e5396e9ef235c41eb5d4537a850a65f15ab7438e68"
+        },
+        "command.txt": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/command.txt",
+          "sha256": "bd11684da75244c91c09bc99480ce0d1d9839d0c14c711587d887e85f3ef4dfa"
+        },
+        "outer_started.json": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/outer_started.json",
+          "sha256": "cf0d39aa28998edfd632cdd707cb41c20822bfbb103eadc5291c4a7f52acbb4d"
+        },
+        "outer_terminal.json": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/outer_terminal.json",
+          "sha256": "ea49c3970dcc9b03fe4bbc9dfdd943a2eb12ad8ef3dd1b9858f88f163731d629"
+        },
+        "execution/complete.json": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/execution/complete.json",
+          "sha256": "35cd58ca358bbfc7dd4fdc0496a6a0ac93d5d7862dad11172ea5a8f39f3f648a"
+        },
+        "execution/rejected.jsonl": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/execution/rejected.jsonl",
+          "sha256": "0298f3bf7fb426d31e54d161bba62ccded50a810af74fdee3d06763738c5b40d"
+        }
+      },
+      "counts": {
+        "physical_rows": 1527153,
+        "eligible_rows": 1517925,
+        "no_result_rows": 9198,
+        "required_baseline_rejected_rows": 30,
+        "policy_rejected_rows": 30,
+        "value_rejected_rows": 30,
+        "whole_shard_collateral_eligible_rows": 105839,
+        "whole_shard_retained_rows": 1412086
+      },
+      "diagnostic_records": 9228,
+      "required_exclusion_count": 30,
+      "affected_shards": 13,
+      "whole_shard_collateral_eligible_rows": 105839,
+      "defect_interpretation": "All30 result-bearing exclusions have phase0_support:CorpusIntegrityError and value invalid_roster. Phase0 block metadata/ranks/scores validation had passed, then selected support failed; classify invalid phase0 legal-move support, not later-phase-only corruption. Compact diagnostics do not preserve offending move lists, so duplicate versus illegal/missing replacement moves cannot be resolved here. Composite baseline also requires phase0, so its rejection adds no independent later-phase localization.",
+      "verified": [
+        "184 shard receipt order/source hashes/raw row counts exactly equal frozen completed raw collection; all per-shard counters sum to whole counts.",
+        "9228 diagnostic identities unique by source namespace/shard/physical row; all source/config/worker/hash fields match shard record; all per-shard diagnostic counts reconcile.",
+        "9198 no-result diagnostics have no policy/value baseline error. Remaining30 all share phase0 support/value roster failure;22run06 and8run07 across13shards.",
+        "Physical1527153 = eligible1517925 + noresult9198 + required30. Whole-shard retained1412086 + collateral105839 = eligible1517925.",
+        "Outerexit0 in1300.441965s within1800, startup88646012928availablebytes;diagnostics5178177bytes below512MiB. No actual audit peak-memory claim."
+      ],
+      "minimal_row_filter_scope": {
+        "decision": "Evidence supports exact exclusion of30 additional result-bearing rows, preserving105839eligible rows otherwise lost by whole-shard exclusion; retain historical no-result drops separately. This review does not execute or implement a filter.",
+        "required_binding": "Pin reviewed audit report+diagnostics+collection and each raw source hash; key by source namespace/shard/zero-based physical source_row and verify worker/game_id/ply/input identity during actual derivation. Never filter by bare game_id, shard basename alone, or mutable inventory.",
+        "required_behavior": "Any new identity fault or unlisted baseline defect must remain fatal; do not repair scores, deduplicate moves, or silently bless old comparisons. Propagate exact kept-row alignment into SF/B100/native/Ceres joins.",
+        "expected_retained_if_only_registered_drops": 1517925
+      },
+      "required_rows": [
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 230737,
+          "no_result": false,
+          "ply": 23,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8258,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 4076,
+          "source_sha256": "d4558b4182d675d77138f633b84e6c686f4bfc518f4533bc6bc787d6b3353ada",
+          "source_shard": "w01-00453.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 231301,
+          "no_result": false,
+          "ply": 253,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8209,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 5533,
+          "source_sha256": "12a655d5afd92dea9d5491024c375b3790c2801f0bf712f1302e1a029c89fcaf",
+          "source_shard": "w01-00454.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 231301,
+          "no_result": false,
+          "ply": 255,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8209,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 5535,
+          "source_sha256": "12a655d5afd92dea9d5491024c375b3790c2801f0bf712f1302e1a029c89fcaf",
+          "source_shard": "w01-00454.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 231301,
+          "no_result": false,
+          "ply": 257,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8209,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 5537,
+          "source_sha256": "12a655d5afd92dea9d5491024c375b3790c2801f0bf712f1302e1a029c89fcaf",
+          "source_shard": "w01-00454.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 231301,
+          "no_result": false,
+          "ply": 267,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8209,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 5547,
+          "source_sha256": "12a655d5afd92dea9d5491024c375b3790c2801f0bf712f1302e1a029c89fcaf",
+          "source_shard": "w01-00454.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 231301,
+          "no_result": false,
+          "ply": 269,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8209,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 5549,
+          "source_sha256": "12a655d5afd92dea9d5491024c375b3790c2801f0bf712f1302e1a029c89fcaf",
+          "source_shard": "w01-00454.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 231301,
+          "no_result": false,
+          "ply": 277,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8209,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 5557,
+          "source_sha256": "12a655d5afd92dea9d5491024c375b3790c2801f0bf712f1302e1a029c89fcaf",
+          "source_shard": "w01-00454.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+          "eligible": false,
+          "game_id": 67176,
+          "no_result": false,
+          "ply": 224,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8266,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_id": "run07_g10_companion4",
+          "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+          "source_row": 2628,
+          "source_sha256": "c605bd845ca9ae5d34c1329d7fbabb7dbe0960b9c70296bba24f026aa3f9989c",
+          "source_shard": "w00-00394.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 0
+        },
+        {
+          "config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+          "eligible": false,
+          "game_id": 67176,
+          "no_result": false,
+          "ply": 228,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8266,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_id": "run07_g10_companion4",
+          "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+          "source_row": 2632,
+          "source_sha256": "c605bd845ca9ae5d34c1329d7fbabb7dbe0960b9c70296bba24f026aa3f9989c",
+          "source_shard": "w00-00394.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 0
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 233113,
+          "no_result": false,
+          "ply": 287,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8261,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 1609,
+          "source_sha256": "89ab400484c069b16d43cc93df6a67246f3a6d6fb804b3593c3a63bd54d11c08",
+          "source_shard": "w01-00458.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 233113,
+          "no_result": false,
+          "ply": 291,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8261,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 1613,
+          "source_sha256": "89ab400484c069b16d43cc93df6a67246f3a6d6fb804b3593c3a63bd54d11c08",
+          "source_shard": "w01-00458.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 233113,
+          "no_result": false,
+          "ply": 293,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8261,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 1615,
+          "source_sha256": "89ab400484c069b16d43cc93df6a67246f3a6d6fb804b3593c3a63bd54d11c08",
+          "source_shard": "w01-00458.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 233113,
+          "no_result": false,
+          "ply": 295,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8261,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 1617,
+          "source_sha256": "89ab400484c069b16d43cc93df6a67246f3a6d6fb804b3593c3a63bd54d11c08",
+          "source_shard": "w01-00458.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 233113,
+          "no_result": false,
+          "ply": 297,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8261,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 1619,
+          "source_sha256": "89ab400484c069b16d43cc93df6a67246f3a6d6fb804b3593c3a63bd54d11c08",
+          "source_shard": "w01-00458.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 233113,
+          "no_result": false,
+          "ply": 299,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8261,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 1621,
+          "source_sha256": "89ab400484c069b16d43cc93df6a67246f3a6d6fb804b3593c3a63bd54d11c08",
+          "source_shard": "w01-00458.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 233113,
+          "no_result": false,
+          "ply": 301,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8261,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 1623,
+          "source_sha256": "89ab400484c069b16d43cc93df6a67246f3a6d6fb804b3593c3a63bd54d11c08",
+          "source_shard": "w01-00458.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 233113,
+          "no_result": false,
+          "ply": 303,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8261,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 1625,
+          "source_sha256": "89ab400484c069b16d43cc93df6a67246f3a6d6fb804b3593c3a63bd54d11c08",
+          "source_shard": "w01-00458.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 233113,
+          "no_result": false,
+          "ply": 309,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8261,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 1631,
+          "source_sha256": "89ab400484c069b16d43cc93df6a67246f3a6d6fb804b3593c3a63bd54d11c08",
+          "source_shard": "w01-00458.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 233485,
+          "no_result": false,
+          "ply": 72,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8261,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 8046,
+          "source_sha256": "89ab400484c069b16d43cc93df6a67246f3a6d6fb804b3593c3a63bd54d11c08",
+          "source_shard": "w01-00458.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+          "eligible": false,
+          "game_id": 69388,
+          "no_result": false,
+          "ply": 45,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8422,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_id": "run07_g10_companion4",
+          "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+          "source_row": 1872,
+          "source_sha256": "d836851dddacd048e9cb2f64d43c06176c989a26387e00c17eeb8f21fb76283a",
+          "source_shard": "w00-00407.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 0
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 240024,
+          "no_result": false,
+          "ply": 80,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8227,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 1800,
+          "source_sha256": "639102d7ced2067d8616aa5025107e31230fe0ce4dcbaffdf7083329024f87f0",
+          "source_shard": "w00-00471.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 0
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 242520,
+          "no_result": false,
+          "ply": 226,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8329,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 1750,
+          "source_sha256": "e00bd0f1c2d8dc7a32a61070be8b09cfbd31be11dd6ffe4763935bd6d4222af3",
+          "source_shard": "w00-00476.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 0
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 247908,
+          "no_result": false,
+          "ply": 159,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8386,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 6955,
+          "source_sha256": "d2508d0651626c8851728799ef25f9c991bbd9901c6d4fbb2df1d44c47f4f748",
+          "source_shard": "w00-00486.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 0
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 249684,
+          "no_result": false,
+          "ply": 294,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8274,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 2436,
+          "source_sha256": "fb1d2976190741b709a7bcbaf33576bceaa0fdd2806222c642dd47f7f7a86b03",
+          "source_shard": "w00-00490.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 0
+        },
+        {
+          "config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+          "eligible": false,
+          "game_id": 73400,
+          "no_result": false,
+          "ply": 244,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8332,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_id": "run07_g10_companion4",
+          "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+          "source_row": 6278,
+          "source_sha256": "ca2195824c2d2f6c5be413add3acf30cb0603a79f2da506d9a2daab476be6a28",
+          "source_shard": "w00-00430.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 0
+        },
+        {
+          "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+          "eligible": false,
+          "game_id": 251449,
+          "no_result": false,
+          "ply": 43,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8443,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_id": "run06_g10",
+          "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+          "source_row": 5231,
+          "source_sha256": "c5b41f61e5fb6395577be29a4d35aed4a38bed5f4fc0ba8c655cf19ab68b8326",
+          "source_shard": "w01-00494.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 1
+        },
+        {
+          "config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+          "eligible": false,
+          "game_id": 74840,
+          "no_result": false,
+          "ply": 45,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8249,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_id": "run07_g10_companion4",
+          "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+          "source_row": 3447,
+          "source_sha256": "99c19d384e927b1764f95cc8b93ffa3c748e31ba2b42f02faf25c5447c6144b1",
+          "source_shard": "w00-00439.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 0
+        },
+        {
+          "config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+          "eligible": false,
+          "game_id": 75640,
+          "no_result": false,
+          "ply": 185,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8213,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_id": "run07_g10_companion4",
+          "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+          "source_row": 1513,
+          "source_sha256": "3dba07cb02f6f43edd66a1e3e9f0aff82d120df921314de3d048e7a8cb922d24",
+          "source_shard": "w00-00444.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 0
+        },
+        {
+          "config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+          "eligible": false,
+          "game_id": 75640,
+          "no_result": false,
+          "ply": 187,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8213,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_id": "run07_g10_companion4",
+          "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+          "source_row": 1515,
+          "source_sha256": "3dba07cb02f6f43edd66a1e3e9f0aff82d120df921314de3d048e7a8cb922d24",
+          "source_shard": "w00-00444.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 0
+        },
+        {
+          "config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+          "eligible": false,
+          "game_id": 75640,
+          "no_result": false,
+          "ply": 193,
+          "policy_error": "phase0_support:CorpusIntegrityError",
+          "rows": 8213,
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_id": "run07_g10_companion4",
+          "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+          "source_row": 1521,
+          "source_sha256": "3dba07cb02f6f43edd66a1e3e9f0aff82d120df921314de3d048e7a8cb922d24",
+          "source_shard": "w00-00444.jsonl.zst",
+          "value_error": "invalid_roster",
+          "worker": 0
+        }
+      ],
+      "limits": [
+        "No raw payload/arrays/models/rescan or validator/test repeat.",
+        "Eligibility is not derivation, output qualification or training admission.",
+        "No publication or relaunch performed by this review."
+      ]
+    }
+  },
+  "ceres": {
+    "terminal": {
+      "returncode": 0,
+      "ended_unix": 1789326306.8088048,
+      "elapsed_seconds": 923.1456525325775
+    },
+    "independent_completed_review": {
+      "status": "PASS_COMPACT_COLLECTION_COMPLETION_NOT_FULL_COHORT_ADMISSION",
+      "reviewer": "archive_review",
+      "reviewed_unix": 1789326626.9130356,
+      "pins": {
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000000/completed.json": "465b37878eee93351d54478370f003aa085cee4bdc3a193ac6b082c4d09f5665",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000000/invocations/1789325386604561442/completed.json": "a9be88d399550a52348c626c4bcaf9bab99ce1152833ee248b6855cf30201cd1",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000001/completed.json": "4b428af6731964cc2c4c2314f1b9ee8a1dafe9b906ccbc76527bebf8058e4552",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000001/invocations/1789325450390962713/completed.json": "8701c707a8eca53beb542c9fb4e68ca12651b081379a70f2e6d4fa757e0c243f",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000002/completed.json": "3b13798e16d1f66f1566c0996d8b9a4cb9f727fb655170c22f5a1834569264c2",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000002/invocations/1789325510248463512/completed.json": "80a7a1b0d06b12a04898f6eb77f50848879cd4493dfe2b37cfd12662b8761167",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000003/completed.json": "ebc4669ef99b8199df57dc6b5d5a0514d79e62728e695bd2d972d31f8013fd76",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000003/invocations/1789325566400947771/completed.json": "8f8028c1d0d69c93c2c5d45f470e49efb1055da1d78f42c507cc41a264d74eeb",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000004/completed.json": "a23612c39596ac52d31a07064a7c0f2cdbf0d5628c17f1672ee928a97404269c",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000004/invocations/1789325622570399260/completed.json": "620a9a797da03ae1f92f6182b52e56e36b1512234501833e5e5cd1f0aabed575",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000005/completed.json": "e205886baf19bdd37118708fe911da81dba075770849588eb76e54bc022c1a52",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000005/invocations/1789325681486374865/completed.json": "b705423d26acb5f4c5f31dcd1e2cf944d838261ca681a0535f259674a23a1d0c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000006/completed.json": "a770e3a4746ee6186abd69a8cb574dfc1ffb8f836fed6de1c7580e11d5313368",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000006/invocations/1789325742475958910/completed.json": "6c16720260e14973868a46d0e9812edb9c46b773169547f8e24f92e8e1c1deed",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000007/completed.json": "3b284bb7276571a359cc7778565488fe461b8361fb6876f9849488e2892c2d65",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000007/invocations/1789325803456019030/completed.json": "5640ee6942bc4902013372a6a124e19cee0ed46d43c86ebe34b0c5b533b85dae",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000008/completed.json": "a36235f45990ab94df5b6898349058454c7d7f42b1f5a19cc905ee40e2e1a923",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000008/invocations/1789325861765218134/completed.json": "5f46f8559a8e8a08a892685b35dc595fa106442bca5d5ae45e5d38c31704df41",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000009/completed.json": "14425d1cf3c84433a6c13d4ba80b6ac129f86b4962b6b3af657a62a43978dabe",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000009/invocations/1789325923931424742/completed.json": "f90c676d53930a16a3482aa11d6e325c94389c02e68aa740fd2222d5af4ffce8",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000010/completed.json": "fbe73dd204a350c3c0950ff0697296994fe4c3757c17c6a9a758a92f514e72d8",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000010/invocations/1789325983810980581/completed.json": "ceb86a409623909abf1d3f8a6887febdfacfce2d898d099c90cc728e87ee6d23",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000011/completed.json": "4ee32610caf4cb1782b93e172bab3daf2c12b4a927dbb79e1fe4201a9aa2f49b",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000011/invocations/1789326040540351600/completed.json": "eab9a147705e467aa07556729c24083404f4ec95b7638c2d187d48c3f22abb27",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000012/completed.json": "39fd09ddaa012adcbb291047d9a7e08f7ea1b7d2df7b80dfa2c9bad8d4fb320f",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000012/invocations/1789326103001374236/completed.json": "d0605e21b36cf3288b48783a1a876a28f6f410a7662d4ce009cdc378f886345c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000013/completed.json": "ee59ace5ab0549da352f962fe3aeb97de8bf72c9cd00488e9d66e5702e3361d1",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000013/invocations/1789326161587823407/completed.json": "d2e12a2672f9da8cf4f3a216b18a9fea46ffb441e5eea026e0448b7b3d82a7bf",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000014/completed.json": "51f137ba6f04df2b007cf021bf68dfca51630bf015b589eb092a39f927b77825",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000014/invocations/1789326217322621995/completed.json": "081b83e2b519ff65700450a50001516b7fb7758bfcc49a5f208b4fc32722db35",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/shard000015/completed.json": "50c2a692f0e54bc90acf0169a8f4b49c166f6b4a2b88ace29f7de346134c193b",
+        "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_batchv3_run06_prefix16_v1/shard000015/invocations/1789326275752679654/completed.json": "063c3161895d5bd14c84620fbd2993a50345a2b3f6b67e5c56b306a50c15fef8",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/driver.plan.json": "07b4295f42d987dcf3c9d7b66e44550734f72fc1654f7296874a096fdfbc289b",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/run_chunk.py": "29865ce46b4ab0d4b58cb273a72f1562a493b69192722b3accb238ac596b82a0",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/command.sh": "eb1541c8a12090e518692d21de43c82f075c95750fb98544e5a247626d8f6d99",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/outer_started.json": "03541b2f697adae30fb58ee7536a9f9ac24d11e6c12395b13c5e52db1303a498",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/outer_terminal.json": "cb9b6cb7aee5020bc7cf4b83c3076d289ea180038dd3eb32cf2f12b58b77cbea",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/driver/manifest.json": "40303fa6073e81c9fd7529814b11a486e47f34f0fd502bf7f532a3ebf207c664"
+      },
+      "actual": {
+        "rows": 131072,
+        "shards": 16,
+        "range": "0..15 of33",
+        "padding_rows": 0,
+        "fixed32_calls": 4096,
+        "outer_seconds": 923.1456525325775,
+        "driver_seconds": 923.0651458119974,
+        "exit_code": 0,
+        "sampled_device_peak_MiB": 5182
+      },
+      "verified": [
+        "All16 owned chunks exit0 within180s and completion hashes agree between driver/wrapper/actual invocation. Exact8192rows/256calls each and frozen source selection/qualification retained.",
+        "Actual namespace records fixed32 CUDA+CPU provider, ORT8GiB threads2/1 and policy/value/value2 raw output contract; no native blending or parity claim.",
+        "Whole923.145653s within3600 including30s gaps; recorded samples remain below8GiB device threshold.",
+        "No saved-array audit or full-cohort consumer qualification executed by this review."
+      ],
+      "limits": [
+        "131072-row collected prefix evidence only; existing fully qualified Ceres coverage total is not automatically increased by this review.",
+        "No model/array/content hashes or tests/inference/defaults repeated; compact receipts only.",
+        "Sampled peak is not instantaneous maximum or hard GPU/RSS ceiling.",
+        "No publication or new collection queued."
+      ]
+    }
+  },
+  "references": {
+    "audit/outer_terminal.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/outer_terminal.json",
+      "sha256": "ea49c3970dcc9b03fe4bbc9dfdd943a2eb12ad8ef3dd1b9858f88f163731d629"
+    },
+    "audit/execution/complete.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/execution/complete.json",
+      "sha256": "35cd58ca358bbfc7dd4fdc0496a6a0ac93d5d7862dad11172ea5a8f39f3f648a"
+    },
+    "audit/independent_completed_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/independent_completed_review.json",
+      "sha256": "849feebbbdfa883362a0aad1406b08ebf731df5cdf294ec18edaa331f392920b"
+    },
+    "ceres/outer_terminal.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/outer_terminal.json",
+      "sha256": "cb9b6cb7aee5020bc7cf4b83c3076d289ea180038dd3eb32cf2f12b58b77cbea"
+    },
+    "ceres/driver/manifest.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/driver/manifest.json",
+      "sha256": "40303fa6073e81c9fd7529814b11a486e47f34f0fd502bf7f532a3ebf207c664"
+    },
+    "ceres/independent_completed_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/independent_completed_review.json",
+      "sha256": "e52e39ea8c7e766a1e872fcf8c326e5c22f5a45fc833f4e31a86476422a66349"
+    },
+    "remaining17/outer_started.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/outer_started.json",
+      "sha256": "0e896351a16d5e27404237e674c12cf0e739467a277ee6c512636a84a1866d7d"
+    },
+    "remaining17/driver.plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/driver.plan.json",
+      "sha256": "8deb02170c5c073bb03a81ac5eb31e92d7658c5c24231f92b04e89a25c65f4ba"
+    },
+    "remaining17/command.sh": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/command.sh",
+      "sha256": "50c8f252a54be5920fd7076c8686f078b44fd25952c0e7d7bc8d3e2c63f6967c"
+    },
+    "remaining17/independent_preparation_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/independent_preparation_review.json",
+      "sha256": "89d2809dca28e8e3b67648392bb7520398110c7e88d72ef363fa18fb2610c0f7"
+    }
+  },
+  "no_repeated_payload_checks": true,
+  "remaining17_launch": {
+    "status": "ACTUALLY_LAUNCHED_NO_COMPLETION_CLAIM",
+    "outer_started": {
+      "started_unix": 1789326734.655655,
+      "available_ram_bytes": 88902627328,
+      "free_disk_bytes": 192645062656,
+      "compute_apps_before_launch": "",
+      "driver_plan_sha256": "8deb02170c5c073bb03a81ac5eb31e92d7658c5c24231f92b04e89a25c65f4ba"
+    },
+    "planned_rows": 132844,
+    "planned_shards": 17,
+    "planned_padding_rows": 20,
+    "planned_fixed32_calls": 4152,
+    "whole_seconds": 1800,
+    "command": "set -euo pipefail\nunset PYTHONOPTIMIZE PYTHONHOME LD_PRELOAD\nexec timeout --signal=TERM --kill-after=30s 1770s /usr/bin/python3 /tmp/deepfin-ceres-collection-batches-pr/scripts/ceres_collection_batches.py --plan /home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/driver.plan.json --expected-plan-sha256 8deb02170c5c073bb03a81ac5eb31e92d7658c5c24231f92b04e89a25c65f4ba --execute\n",
+    "independent_preparation_review": {
+      "status": "PASS_INDEPENDENT_REMAINING_PREFIX_PREPARATION",
+      "reviewer": "archive_review",
+      "reviewed_unix": 1789326697.2757018,
+      "pins": {
+        "driver.plan.json": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/driver.plan.json",
+          "sha256": "8deb02170c5c073bb03a81ac5eb31e92d7658c5c24231f92b04e89a25c65f4ba"
+        },
+        "command.sh": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/command.sh",
+          "sha256": "50c8f252a54be5920fd7076c8686f078b44fd25952c0e7d7bc8d3e2c63f6967c"
+        },
+        "run_chunk.py": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/run_chunk.py",
+          "sha256": "6d95eaa5e115f596e628f42be3edb67576eb8ace495c33bafbb213d154a80618"
+        },
+        "wrapper.diff": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/wrapper.diff",
+          "sha256": "1c11dc2d9556d8e096ff24f981001d400605e7097a3f48766c067a3dd06ef97c"
+        },
+        "readiness.json": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/readiness.json",
+          "sha256": "0319dd019b643743a45e89d20a6b63e240d0178e02cde5208e3f498142749bb1"
+        },
+        "README.md": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_remaining17_v1/README.md",
+          "sha256": "74cbe3ad3ff4016a35685b79f8983702cbfd90764adfd273c0f02b9bc7211fe2"
+        }
+      },
+      "findings": [],
+      "verified": [
+        "Exact17 single-shard indices16..32 disjoint from completed0..15;132844real rows,last1772plus20padding,4152fixed32calls.",
+        "Wrapper delta only description/allowed range/final shard row count; qualified e9c1b74 runtime/head/model/library/package and source qualification identities unchanged. Existing common small pins compared to reviewed prefix pins; new and driverpins hashed only.",
+        "Exact180s perchunk and30s gaps retained but1800whole governs;17maxima+pauses exceed allocation, so no guaranteed full completion and failure/prefix evidence stays preserved.",
+        "SameCPU2,3/threads2/48startup32periodic/150disk/ORT8GiB/sampledevice8GiB/RSS12GiB/128MiB perchunk and owned cleanup/STOP. Outer1770TERM30KILL includes1800 allocation.",
+        "Recorded17range/defaultPASS reviewed, no repeat execution. No consumer/training admission or parity claim."
+      ],
+      "limits": [
+        "Parent owns actual resources/launch/terminal; no payload/model/default/import/test/jobs repeated.",
+        "Prior923.145653-second prefix time supports estimate only, not guaranteed remaining runtime.",
+        "Completed prefix untouched; no automatic resume/retry or whole-cohort qualification assumed."
+      ]
+    }
+  }
+}

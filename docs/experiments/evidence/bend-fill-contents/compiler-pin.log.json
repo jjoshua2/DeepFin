@@ -1,0 +1,5 @@
+{
+  "original_filename": "compiler-pin.log",
+  "original_sha256": "61c00c69ec7ff15d5cec87c6f6111860309736ed6840c8943ccc2ea8c7ec9366",
+  "raw_text": "bun test v1.4.2 (744846f84)\n\nnative/bend_engine/standalone/verify_compiler.test.js:\n(pass) fetch and source verifier share the exact documented U64 pin [0.36ms]\n(pass) fingerprint is independent of checkout location [9.53ms]\n(pass) nested effects and core inputs all count [1.04ms]\n(pass) core mutation changes fingerprint [1.81ms]\n(pass) effect mutation changes fingerprint [24.18ms]\n(pass) extra effects are not silently ignored [4.00ms]\n(pass) renaming unchanged effect bytes changes the fingerprint [3.09ms]\n(pass) missing core input is rejected [2.27ms]\n(pass) core symlinks are rejected [1.03ms]\n(pass) effect directory symlinks are rejected [0.90ms]\n(pass) mismatched source fails without mutating the checkout [1.78ms]\n(pass) build derives revision and revision-keyed cache from the pin reader [0.49ms]\n\n 12 pass\n 0 fail\n 19 expect() calls\nRan 12 tests across 1 file. [187.00ms]\n"
+}

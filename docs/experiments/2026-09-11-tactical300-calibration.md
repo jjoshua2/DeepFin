@@ -1,4 +1,4 @@
-# Tactical300 retrospective BT4-vs-deeper-SF calibration
+# Tactical300 saved-depth diagnostic — not transfer calibration
 
 Registered September 11, 2026. This record is stacked on the Tactical300 mechanism
 PR and must complete before any real Tactical300 corpus is materialized or trained.
@@ -11,13 +11,13 @@ That is not automatically true. A one-node neural policy can encode strategic
 information that a shallow search has not resolved, and the existing G10 evidence
 already shows that deeper saved searches often change the preferred move set.
 
-The calibration asks the specific retrospective question needed for this recipe:
+The diagnostic asks the specific retrospective question needed for this recipe:
 
 > When d9 Stockfish strongly prefers one move/set, but B100's one-node BT4 policy
 > prefers a different move/set, how often does the already-recorded d10/d12 search
 > subsequently score the BT4 choice above the d9 choice?
 
-This is a calibration of an intervention, not a claim that d10/d12 is ground truth.
+This is a retrospective diagnostic of an intervention hypothesis, not a calibration of the published transfer and not a claim that d10/d12 is ground truth. The receipt is deliberately unbound from `sf_policy_rewrite`; it cannot authorize or parameterize that transfer.
 
 ## Inputs and provenance
 
@@ -152,11 +152,11 @@ this same cohort and call the selected rule confirmed.
 
 ## Implementation boundary
 
-This stacked PR adds only the calibration analyzer, focused synthetic tests and this
+This stacked PR adds only the diagnostic analyzer, focused synthetic tests and this
 registration. It does **not** run the full diagnostic, rewrite Tactical300 targets,
 train a model, launch an arena, alter Gumbel search or change live configuration.
 
-The completed output is a fresh directory containing `tactical300_calibration.json`.
+The completed output is a fresh directory containing `tactical300_calibration.json`. Its decision explicitly records `published_transfer_calibrated=false`; this branch does not claim that the published transfer was calibrated.
 The receipt binds the adapter manifest, derived summary, teacher identity, selected
 shards, raw verification receipts, row-identity digest, threshold/confidence/depth
 aggregates, decision and producer hashes.

@@ -1,0 +1,45 @@
+{
+  "credit": {
+    "ingest": 0,
+    "owner": 0,
+    "pack": 0,
+    "source": 0,
+    "target": 0,
+    "throughput": 0,
+    "unique": 0
+  },
+  "gpu_used": false,
+  "registered_capture_launched": false,
+  "registered_plan_rerun": false,
+  "schema": "physical_call_subset_selector_v4_source_only_public_evidence_v1",
+  "source_contract": {
+    "bt4": "physical ledger ply_index is board.ply after authenticated 16-ply opening",
+    "ceres": "physical ledger ply_index is game-local published row index"
+  },
+  "status": "PASS_SOURCE_ONLY_SELECTOR_FIX_HOLD_REGISTERED_PLAN_AND_CAPTURE",
+  "synthetic_tests_passed": 16,
+  "target_rows": {
+    "bt4": 93,
+    "ceres": 115
+  },
+  "v3_plan_attempt": {
+    "capture_launched": false,
+    "observed_refusal": "target game ply duplicate/missing-range",
+    "registered_neighbor_payload_opened": false,
+    "status": "HOLD_ZERO_CREDIT_NO_FROZEN_PLAN"
+  },
+  "v4_independent_review_gate_sha256": "74db64155ab73b7bbdf4de68555b351ec21c7d7170c69119cb3d0aca6fe995de",
+  "v4_independent_review_note_sha256": "2955a0bc252beb2912912425f8c925779a802c7eebbdbc2d3730731a8448b9c6",
+  "v4_metadata_preflight_target_ply_bounds": {
+    "bt4": [
+      16,
+      108
+    ],
+    "ceres": [
+      0,
+      114
+    ]
+  },
+  "v4_packet_manifest_sha256": "719310dec71989f2e3b3c2e87f63dca4a8e7e728a6ecda908678703adc4a11c5",
+  "v4_validation_sha256": "ced9f3ab662e0079940ffb53a3a8c54901051c69243e306c3ff154dd96814f99"
+}

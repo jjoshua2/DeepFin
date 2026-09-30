@@ -1,0 +1,230 @@
+{
+  "status": "LAUNCHED_NOT_COMPLETED",
+  "launch_utc": "2026-09-12T21:35:03.551635+00:00",
+  "parent_session": 99876,
+  "sole_observer": 141,
+  "rows_planned": 16142014,
+  "shards_planned": 1980,
+  "cohorts_planned": 19,
+  "existing_B100_rows_preserved": 262079,
+  "recipe": "Original SF source; legal-normalized global arithmetic B100 alpha1, BT4 temperature0.5; original values/history retained. No new native labels/value blend/training.",
+  "runtime_commit": "6b91f5873a6f4e45a3e2aa72f8bcb45381aec90f",
+  "resource_limits": {
+    "whole_seconds": 14400,
+    "cpu_affinity": [
+      6,
+      7
+    ],
+    "threads": 2,
+    "gpu_hidden": true,
+    "address_space_gib": 4,
+    "minimum_available_gib": 32,
+    "minimum_free_gib": 150,
+    "output_cap_gib": 32,
+    "qualification_and_cleanup_reserve_seconds": 300
+  },
+  "cost": {
+    "prior_rows": 262079,
+    "prior_B100_seconds": 104.01,
+    "prior_B100_max_rss_kib": 1005600,
+    "prior_B100_files": 9347,
+    "prior_B100_logical_bytes": 181253370,
+    "prior_B100_allocated_bytes": 214499328,
+    "output_metadata_scan_seconds": 0.31131887435913086,
+    "scaled_seconds": 6406.201474135662,
+    "scaled_output_logical_bytes": 11163788155.812485,
+    "scaled_output_allocated_bytes": 13211478811.986431,
+    "limitation": "One real same-recipe cohort; sequential linear extrapolation, not measured 19-cohort throughput or guarantee. Concurrent SF generation/downside IO can change elapsed time."
+  },
+  "parent_preflight_observation": {
+    "linux_mem_available_gib_approx": 83,
+    "swap_used_gib": 0,
+    "disk_free_gib_approx": 242,
+    "scope": "Parent preflight report at launch; neither a measured peak nor independent repeat query"
+  },
+  "references": {
+    "plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/plan.json",
+      "sha256": "83bb91be4ae43af15f439a02e99506d68bb26f2a3e30196954eb5049cbcbaaed"
+    },
+    "operator": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/run.py",
+      "sha256": "d2af13cd672aa27eb7ee0c3a1210f0d2beeee1604b041b38f175d098ba6b7d9e"
+    },
+    "commands": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/commands.json",
+      "sha256": "2979948bed34b5e79afca42366885110a1e5cc85662b7a6f4f42210d30d20e38"
+    },
+    "proposal": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/proposal.json",
+      "sha256": "add043c17f26994dfb1ae4286dd5f8f09c3ed581111eb0a8d82f98715d6228f5"
+    },
+    "default_validation": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/preparation_validation_final.json",
+      "sha256": "648cbe0a67538e40a05985bc1ed7c9b3ab0f13722d59255d8255816b31733b35"
+    },
+    "independent_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/independent_preparation_review.json",
+      "sha256": "9be84baf4b169f890f095cf55ecf858f78e790c46f8775c2be24761d541c1a6c"
+    },
+    "immutable_launch_snapshot": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/launch_publication_snapshot.json",
+      "sha256": "28bf686e3aa67b1faef5e5719f5185afee42a823278d832b2371ef4554e1daa6"
+    }
+  },
+  "cohorts": [
+    {
+      "name": "G10_common_batch_v3__run06_g10",
+      "rows": 263916,
+      "shards": 33,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_batch_v3__run06_g10"
+    },
+    {
+      "name": "G10_common_batch_v3__run07_g10_companion4",
+      "rows": 264629,
+      "shards": 33,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4"
+    },
+    {
+      "name": "G10_common_increment_v1__run07_g10_companion4",
+      "rows": 264297,
+      "shards": 33,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4"
+    },
+    {
+      "name": "G10_common_large_v1__run06_g10",
+      "rows": 2013019,
+      "shards": 246,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_v1/run06_g10/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_v1/run06_g10/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_large_v1__run06_g10"
+    },
+    {
+      "name": "G10_common_large_v1__run07_g10_companion4",
+      "rows": 2008952,
+      "shards": 246,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_v1/run07_g10_companion4/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_v1/run07_g10_companion4/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4"
+    },
+    {
+      "name": "G10_common_next96_v1__run06_g10",
+      "rows": 790282,
+      "shards": 97,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next96_v1/run06_g10/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next96_v1/run06_g10/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_next96_v1__run06_g10"
+    },
+    {
+      "name": "G10_common_next96_v1__run07_g10_companion4",
+      "rows": 792643,
+      "shards": 97,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next96_v1/run07_g10_companion4/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next96_v1/run07_g10_companion4/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4"
+    },
+    {
+      "name": "G10_common_next_distinct2_v1__run06_g10",
+      "rows": 921494,
+      "shards": 113,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next_distinct2_v1/run06_g10/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next_distinct2_v1/run06_g10/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10"
+    },
+    {
+      "name": "G10_common_next_distinct2_v1__run07_g10_companion4",
+      "rows": 925311,
+      "shards": 113,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next_distinct2_v1/run07_g10_companion4/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next_distinct2_v1/run07_g10_companion4/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4"
+    },
+    {
+      "name": "G10_common_next_distinct_v1__run06_g10",
+      "rows": 923911,
+      "shards": 113,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next_distinct_v1/run06_g10/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next_distinct_v1/run06_g10/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10"
+    },
+    {
+      "name": "G10_common_next_distinct_v1__run07_g10_companion4",
+      "rows": 921653,
+      "shards": 113,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next_distinct_v1/run07_g10_companion4/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next_distinct_v1/run07_g10_companion4/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4"
+    },
+    {
+      "name": "G10_common_parallel_next_v2__run06_g10",
+      "rows": 527604,
+      "shards": 65,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10"
+    },
+    {
+      "name": "G10_common_parallel_next_v2__run07_g10_companion4",
+      "rows": 525414,
+      "shards": 65,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4"
+    },
+    {
+      "name": "G10_common_parallel_v1__run06_g10",
+      "rows": 528983,
+      "shards": 65,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_parallel_v1__run06_g10"
+    },
+    {
+      "name": "G10_common_parallel_v1__run07_g10_companion4",
+      "rows": 528343,
+      "shards": 65,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4"
+    },
+    {
+      "name": "G10_common_worker03_tail111_v1__run06_g10",
+      "rows": 914832,
+      "shards": 112,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker03_tail111_v1/run06_g10/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker03_tail111_v1/run06_g10/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10"
+    },
+    {
+      "name": "G10_tail111_run07_recovery_v1__run07_g10_companion4",
+      "rows": 915453,
+      "shards": 112,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_tail111_run07_recovery_v1/run/run07_g10_companion4/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_tail111_run07_recovery_v1/run/run07_g10_companion4/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4"
+    },
+    {
+      "name": "G10_worker01_postderive_recovery_v1__run06_g10",
+      "rows": 1054312,
+      "shards": 129,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10"
+    },
+    {
+      "name": "G10_worker01_postderive_recovery_v1__run07_g10_companion4",
+      "rows": 1056966,
+      "shards": 130,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run07_g10_companion4/derived",
+      "sidecar": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run07_g10_companion4/bt4",
+      "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4"
+    }
+  ],
+  "limits": "No completed policy corpus, value product, training admission or strength result. Only parent owns active completion observer; no additional producer or array scan for publication."
+}

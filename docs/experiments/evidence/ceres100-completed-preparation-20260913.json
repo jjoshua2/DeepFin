@@ -1,0 +1,241 @@
+{
+  "status": "COMPLETE_MATERIALIZATION_AND_CORPUS_QUALIFICATION_NOT_TRAINING",
+  "references": {
+    "materialization_plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/plan.json",
+      "sha256": "1ccd6f8d5d224858c0cfbfd994b27f2ab5a6ae2561b8328f5f6cf7a9cb9f700a"
+    },
+    "materialization_status": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/execution/status.json",
+      "sha256": "190ea65e8c3855254e260f443c36d54e1974b2085ed7dc03f3c6b1d79bf092f1"
+    },
+    "materialization_terminal": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/actual_terminal.json",
+      "sha256": "14695a53b49c95a8686b1019c56a08fd072a8c5666f4bda579423fcb679466ad"
+    },
+    "materialization_resources": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/resources.txt",
+      "sha256": "3a48a7bad356a38b2eb9828bb72a8762b377423df3a6b9e940081c773bcbb066"
+    },
+    "qualification_plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/qualification_v1/plan.json",
+      "sha256": "45833bab2d4883325ac6a351055cd80f6ea6316465f79d44deba5e4ee39cb91a"
+    },
+    "qualification": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/qualification_v1/dataset_qualification.json",
+      "sha256": "172b060b560b26b42eff483db85c12489ea689e8c003243191805b33625c5bb8"
+    },
+    "qualification_terminal": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/qualification_v1/actual_terminal.json",
+      "sha256": "1f04ef0ffae11c27bfe91c56fb95fb5853c1de5d50ed65e42ad80ad226590a7a"
+    },
+    "qualification_resources": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/qualification_v1/resources.txt",
+      "sha256": "49c3fe486fbe5929511f28d42731b1e43e5f1e87a0efbf66f6ba6d7fd6cdbae6"
+    },
+    "rewrite_summary": {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05/ceres_target_mix_summary.json",
+      "sha256": "b640508c736e60868f332c6461a01972af35e5724e2efcbb242d823701fbc866"
+    },
+    "independent_completed_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/independent_completed_review.json",
+      "sha256": "fe239b214fd3f579c86c4c75c80064dd6ede14706b4eeb126c6279fd901f57ce"
+    }
+  },
+  "actual_materialization_terminal": {
+    "started_utc": "2026-09-13T06:13:33.883234+00:00",
+    "command_sha256": "26bbe50c6d19a27d9a2539973ce13976cef27cdd92bd89f5a4e8fa8580242c2b",
+    "plan_sha256": "1ccd6f8d5d224858c0cfbfd994b27f2ab5a6ae2561b8328f5f6cf7a9cb9f700a",
+    "independent_review_sha256": "c34ff5025bb9ed5bd2de27162329436163fc2af5798b870e55c72eb1dbfb5e47",
+    "inclusive_seconds": 25197,
+    "exit_code": 0,
+    "ended_utc": "2026-09-13T09:08:37.660504+00:00",
+    "elapsed_seconds": 10503.777304649353
+  },
+  "actual_qualification_terminal": {
+    "started_utc": "2026-09-13T09:29:08.107320+00:00",
+    "command_sha256": "d4fa8876a1a66afe0b4ec272aae2ba735909edd06e20e7420ede1c9145f04163",
+    "max_seconds": 600,
+    "exit_code": 0,
+    "elapsed_seconds": 264.0614757537842,
+    "ended_utc": "2026-09-13T09:33:32.168794+00:00"
+  },
+  "qualification": {
+    "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05",
+    "derive_summary": {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05/derive_targets_summary.json",
+      "sha256": "6844ed432c09cf03f112cffa3452e3315e5f5de832837de4b8fbe022713de095"
+    },
+    "elapsed_seconds": 261.7175428519986,
+    "inspector_sha256": "f93272ac8ae2c793d93d9db3065060708b47eac055217dabc9fd8129d9b443d5",
+    "materialization_status": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/execution/status.json",
+      "sha256": "190ea65e8c3855254e260f443c36d54e1974b2085ed7dc03f3c6b1d79bf092f1"
+    },
+    "plan_sha256": "45833bab2d4883325ac6a351055cd80f6ea6316465f79d44deba5e4ee39cb91a",
+    "profile": "Ceres100",
+    "rewrite_summary": {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05/ceres_target_mix_summary.json",
+      "sha256": "b640508c736e60868f332c6461a01972af35e5724e2efcbb242d823701fbc866"
+    },
+    "rows": 18910484,
+    "schema": 1,
+    "scope": "Actual attrs/layouts and stable producer-bound storage identities. Payload and history checks inherited from pinned completed producer; no payload reread.",
+    "shards": 2309,
+    "source": {
+      "derive_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m"
+    },
+    "status": "PASS_REGISTERED_CORPUS_QUALIFICATION"
+  },
+  "full_aggregate_producer_summary": {
+    "algorithm": "separately-normalized-probability-mixture-float16-v1",
+    "bt4_lineage": {
+      "full_historical_input_provenance": "inherited_from_pinned_collection",
+      "full_input_digest_verified_shards": 0,
+      "mode": "legacy-root-position-v1",
+      "remap": {
+        "blobs": {
+          "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+          "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+          "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+        },
+        "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+        "dirty": false
+      },
+      "root_position_and_history_regime_verified": true,
+      "summary": {
+        "path": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json",
+        "sha256": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3"
+      }
+    },
+    "complete": true,
+    "kind": "bt4-ceres-policy",
+    "manifest_sha256": "2eed622b9e9af1907d7aea36fbeeb22bbb33344b4dcde16e2eac336e7861fada",
+    "max_stored_mass_error": 0.00042724609375,
+    "max_stored_total_variation": 0.0002075328771593776,
+    "mutated_arrays": [
+      "policy_target"
+    ],
+    "producer_sha256": {
+      "/tmp/deepfin-ceres100-materialization-runtime/chess_anti_engine/encoding/ceres_tpg.py": "ea0bc14c31eedd18abe67b9b90287b2d1b20245ec42aed4faa0d69d21df229b0",
+      "/tmp/deepfin-ceres100-materialization-runtime/chess_anti_engine/encoding/lc0.py": "a20b56a7c0666e134791855c0f124a66504013983f8f97948539a015dac9c3ee",
+      "/tmp/deepfin-ceres100-materialization-runtime/chess_anti_engine/eval/rvg_surgery.py": "7a0e4469ccf7534e34bfd00e06208c7e142fb0c42ef9c4c4ec1116eec641aa20",
+      "/tmp/deepfin-ceres100-materialization-runtime/chess_anti_engine/moves/leela_index.py": "ac8f6f07dc1ce8e382de1d94ce4053f92b9cf3bc0eefe730d7fd0763ca11e1cd",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/adapt_raw_bt4_sidecars.py": "86c7b78eb5a767c97873bc9881874cd6c93d88634ba298f3246b8ec2fa0c649f",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_derived_wdl_sidecar.py": "8ba98f8d49d642ff7defff457e4dc9426f4e096ee7a1747a257abce62f9ccd1e",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_policy_dump.py": "d6b62559952aee3b0baeeadfdb584aeb9a6fd88b0d2285ab162ee39776be2cf8",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_policy_mix.py": "931a7b83a85182d76a8aeff3515b41235df7f975f750bcea5c011b81009a0d47",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_raw_corpus_sidecar.py": "65d476618b2cf752b28547322935cf6d4eef37922337ba360d4546989ea850b9",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_value_rewrite.py": "4da01a1695b1950d8006519c37f8db4c7a31e1021e0f49328692f4b4dc9b7c88",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/ceres_derived_sidecar.py": "2631fb48fef7820084879bf9371b22842a949d252525b2c79d2c51ab65645597",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/ceres_selected_bank.py": "1f1468bf0b29b88edcab8e1b0ea8d6945ced1d59f9e37bfb69f1129e99492aed",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/ceres_target_mix.py": "edbcfaa9a1524e3ce02868ad20c0cbe6c85e71ea25ff03bb228364f232babeb7",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/raw_wdl_adaptation.py": "11b8732b5abbedd5f96aeb5dfabc542519cd76fc7f69c28adb61556e85035cb6",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/sf_d9_rank_sidecar.py": "53c2d1d1638c9e0646e68430c56a413c2b0b78a5ca815996eda770eecd8d3def",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/sf_policy_rewrite.py": "f2926d10ca695d2cbbcd12f03a26cee23529f6e798e9a3585148392858fda176"
+    },
+    "rows": 18910484,
+    "schema": 1,
+    "shards": 2309,
+    "source_dir": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+    "source_summary_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "status": "COMPLETE",
+    "support_lost_move_entries": 1495,
+    "teachers": {
+      "bt4": {
+        "model_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+        "policy_output": "/output/policy",
+        "providers": [
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "ceres": {
+        "backend": {
+          "batch_size": 32,
+          "execution": "sequential",
+          "input": [
+            "squares_byte",
+            "uint8",
+            [
+              64,
+              137
+            ]
+          ],
+          "native_dtype": "float16",
+          "numpy": "2.2.6",
+          "onnxruntime": "1.29.0",
+          "optimization": "extended",
+          "outputs": [
+            "policy",
+            "value",
+            "value2"
+          ],
+          "provider_options": {
+            "arena_extend_strategy": "kSameAsRequested",
+            "device_id": 0,
+            "gpu_mem_limit": 8589934592,
+            "use_tf32": 0
+          },
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "remainder": "repeat_last_real",
+          "threads": [
+            2,
+            1
+          ],
+          "value_interpretation": "primary raw logits; optional secondary raw logits; no native blend",
+          "value_order": [
+            "win",
+            "draw",
+            "loss"
+          ],
+          "value_pov": "side_to_move"
+        },
+        "model_sha256": "44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3",
+        "profile": "ceres-c3-fixed32-compact-v2"
+      }
+    },
+    "temperatures": {
+      "bt4": 0.5,
+      "ceres": 0.5
+    },
+    "unchanged_arrays": [
+      "game_id",
+      "has_game_id",
+      "has_is_network_turn",
+      "has_is_selfplay",
+      "has_legal_mask",
+      "has_ply_index",
+      "has_policy",
+      "has_search_wdl",
+      "is_network_turn",
+      "is_selfplay",
+      "legal_mask",
+      "ply_index",
+      "priority",
+      "search_wdl",
+      "wdl_target",
+      "x"
+    ],
+    "weights": {
+      "bt4": 0.0,
+      "ceres": 1.0
+    }
+  },
+  "output_proof_count": 2309,
+  "runtime_commit": "49906329aeef9ad48a09298db0dc9bb15af84e55",
+  "materialization_max_rss_kib": 994156,
+  "qualification_max_rss_kib": 383120,
+  "sampled_output_allocated_bytes": 14527434752,
+  "limitations": [
+    "1495 positive legal move entries lost support at float16 storage; this is not a row count or error rate.",
+    "No PR707 batching adoption; exact original16producer file hashes retained.",
+    "Observed2h55m versus earlier5.57h is not a causal speedup benchmark.",
+    "No prospective training schedule, trained endpoint or playing result; no GPU training/evaluation allocation.",
+    "Native Ceres numerical parity and inherited legacy BT4 full-input provenance limitations remain."
+  ]
+}
