@@ -7,6 +7,7 @@ from pathlib import Path
 import signal
 import sys
 import time
+from typing import Any, cast
 
 import pytest
 
@@ -435,11 +436,15 @@ def test_cleanup_failure_cannot_unlock_surviving_inherited_writer(tmp_path, monk
         raise RuntimeError("injected cleanup failure")
 
     monkeypatch.setattr(tool, "terminate", failed_cleanup)
+
+    def run_under_lock():
+        with tool.stage_lock(tmp_path, settings, time.monotonic() + 60, queued=True) as fd:
+            assert fd is not None
+            tool.run_queued(settings, [sys.executable, str(runner)], fd)
+
     try:
         with pytest.raises(RuntimeError, match="child cleanup failed"):
-            with tool.stage_lock(tmp_path, settings, time.monotonic() + 60, queued=True) as fd:
-                assert fd is not None
-                tool.run_queued(settings, [sys.executable, str(runner)], fd)
+            run_under_lock()
         with (
             (tmp_path / "ownership.lock").open("a") as lock,
             pytest.raises(BlockingIOError),
@@ -450,9 +455,9 @@ def test_cleanup_failure_cannot_unlock_surviving_inherited_writer(tmp_path, monk
             terminate(child)
 
 
-def valid_bound_inputs(tmp_path):
+def valid_bound_inputs(tmp_path) -> tuple[dict[str, Any], dict[str, Any]]:
     runner = {"path": str(tmp_path / "preparation" / "run.py"), "sha256": "a" * 64}
-    settings = {
+    settings: dict[str, Any] = {
         "python": sys.executable, "prep_runner": runner,
         "rss_cap_gib": 32, "memory_floor_gib": 32, "disk_floor_gib": 80,
         "stage_seconds": 1, "handoff_seconds": 2, "sidecar_seconds": 90,
@@ -460,7 +465,7 @@ def valid_bound_inputs(tmp_path):
         "stop_paths": [str(tmp_path / "preparation" / "STOP"), str(tmp_path / "STOP")],
         "disk_paths": [str(tmp_path)],
     }
-    plan = {
+    plan: dict[str, Any] = {
         "python": sys.executable, "pins": [runner], "max_seconds": 100,
         "process_memory_cap_gib": 32, "available_memory_floor_gib": 32,
         "disk_floor_gib": 80, "cohorts": [{"output": str(tmp_path / "targets")}],
@@ -496,3 +501,40 @@ def test_frozen_plan_requires_finite_original_bounds(tmp_path, name):
     plan[name] = float("inf")
     with pytest.raises(RuntimeError, match="plan." + name + " must be finite"):
         tool.validate_config(settings, plan)
+
+
+def test_cleanup_never_signals_reused_group_leader(monkeypatch):
+    from types import SimpleNamespace
+
+    signals = []
+    waits = []
+    child = cast(tool.subprocess.Popen, SimpleNamespace(
+        pid=12345, _preparation_starttime=111,
+        poll=lambda: 0, wait=lambda: waits.append("reaped"),
+    ))
+    monkeypatch.setattr(tool, "_process_identity", lambda *_: (1, 222))
+    monkeypatch.setattr(tool.os, "killpg", lambda *args: signals.append(args))
+    tool.terminate(child)
+    assert signals == []
+    assert waits == ["reaped"]
+
+
+def test_cleanup_rechecks_identity_before_kill(monkeypatch):
+    from types import SimpleNamespace
+
+    signals = []
+    identity = [111]
+    child = cast(tool.subprocess.Popen, SimpleNamespace(
+        pid=12345, _preparation_starttime=111, poll=lambda: 0, wait=lambda: None,
+    ))
+    monkeypatch.setattr(tool, "_process_identity", lambda *_: (1, identity[0]))
+
+    def signal_group(pid, sig):
+        signals.append((pid, sig))
+        if sig == signal.SIGTERM:
+            identity[0] = 222
+
+    monkeypatch.setattr(tool.os, "killpg", signal_group)
+    tool.terminate(child)
+    assert (12345, signal.SIGTERM) in signals
+    assert (12345, signal.SIGKILL) not in signals

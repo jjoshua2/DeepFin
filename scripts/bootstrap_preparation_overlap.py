@@ -212,26 +212,48 @@ def stage_lock(state: Path, config: dict[str, Any], deadline: float, *, queued: 
             yield lock.fileno()
 
 
-def terminate(child: subprocess.Popen) -> None:
-    """Clean the entire owned group, even if its leader exited first."""
+def track_child(child: subprocess.Popen) -> None:
+    """Bind future group cleanup to the just-spawned leader's kernel identity."""
+    identity = _process_identity(child.pid, Path("/proc"))
+    if identity is None:
+        raise RuntimeError("cannot establish spawned process identity")
+    setattr(child, "_preparation_starttime", identity[1])
+
+
+def owned_group_present(child: subprocess.Popen) -> bool:
+    expected = getattr(child, "_preparation_starttime", None)
+    if expected is None:
+        raise RuntimeError("process group cleanup lacks spawn identity")
+    current = _process_identity(child.pid, Path("/proc"))
+    # A reused leader PID names a different group. Never signal that group.
+    if current is not None and current[1] != expected:
+        return False
     try:
-        os.killpg(child.pid, signal.SIGTERM)
+        os.killpg(child.pid, 0)
     except ProcessLookupError:
-        child.wait()
-        return
+        return False
+    return True
+
+
+def signal_owned_group(child: subprocess.Popen, sig: signal.Signals) -> None:
+    if owned_group_present(child):
+        try:
+            os.killpg(child.pid, sig)
+        except ProcessLookupError:
+            pass
+
+
+def terminate(child: subprocess.Popen) -> None:
+    """TERM/KILL only this spawn's group, including after its leader exits."""
+    signal_owned_group(child, signal.SIGTERM)
     until = time.monotonic() + 20
     while time.monotonic() < until:
         child.poll()
-        try:
-            os.killpg(child.pid, 0)
-        except ProcessLookupError:
+        if not owned_group_present(child):
             break
         time.sleep(0.05)
     else:
-        try:
-            os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        signal_owned_group(child, signal.SIGKILL)
     child.wait()
 
 
@@ -260,6 +282,7 @@ def run_child(
             start_new_session=True,
             pass_fds=(lock_fd,),
         )
+        track_child(child)
         try:
             while child.poll() is None:
                 guard(config, deadline)
@@ -300,8 +323,15 @@ def run_queued(config: dict[str, Any], prefix: list[str], lock_fd: int) -> None:
             return getattr(original, name)
 
         def Popen(self, *args, **kwargs):
+            # Retire empty completed groups between stages instead of keeping
+            # stale numeric group IDs throughout the long coordinator run.
+            children[:] = [
+                child for child in children
+                if child.poll() is None or owned_group_present(child)
+            ]
             kwargs["pass_fds"] = tuple({*kwargs.get("pass_fds", ()), lock_fd})
             child = original.Popen(*args, **kwargs)
+            track_child(child)
             children.append(child)
             return child
 
