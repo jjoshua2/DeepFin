@@ -1,0 +1,21 @@
+{
+  ".github/workflows/bend-live.yml": "1da5580da37d9b0022ba11de7db41bcc875854e35aadf8b5c06b21c0885326bc",
+  "docs/experiments/2026-09-26-measured-live-dispatch.md": "b06ab77b60a9c7c50db4143fc541d219e53a9861ba6a97af7312b6dfb1901485",
+  "docs/experiments/README.md": "27a548bc17eecdde921a86e505ae2313602a292716867f7f0073288b7af08e02",
+  "native/bend_engine/multi_root/AsyncRun.bend": "572e1850e4d31a736034521c72da089abc5c1a6fc480a08b56bdce7d3f8c0688",
+  "native/bend_engine/multi_root/Dispatch.bend": "30b33415fe0e925099fb7a1d1823a87eecb6d459763d64cca2efb8feda74b36e",
+  "native/bend_engine/multi_root/DispatchRun.bend": "e5e035c60544eb8450831193947e736452a164627c487a4db3d2beb0a823448e",
+  "native/bend_engine/multi_root/LIVE.md": "49b42171709b9e757d925f7afcd2b0fbf47a7563647a70a8a55144602d7daf64",
+  "native/bend_engine/multi_root/LiveRun.bend": "65b6e2c6813132a27340fec03b00c183ae8eeaea1e2e6b2cc0032d8ea3287e9d",
+  "native/bend_engine/multi_root/dispatch_probe.bend": "0386d079cfdafebfa8d3a314cef804a6b93649c4725a8db92adcaa2ff04f75a5",
+  "native/bend_engine/multi_root/main.bend": "2ef63df8a11caecd880fa82644375a631574b11261e2af95c861a0a673980d20",
+  "native/bend_engine/multi_root/qualify_dispatch.sh": "054012db873b55c17ccce83fe4790ed90fec62c751909b87cedc840d874c8daa",
+  "native/bend_engine/multi_root/verify_dispatch.py": "6dd07381af488b4696c54002a9b3890a7111be2f99d1003be1a44a79a25f3b0d",
+  "native/bend_engine/multi_root/verify_dispatch_model.py": "f89b0211a9d747821d26347196d63cbd071f27ca0399fbe0cecae80eace328ed",
+  "native/bend_engine/multi_root/verify_live_model.py": "cdf5153056cc9094c93de6e6eea36c5e7fd9c10a9d64d9f676f1738d66f6bf7c",
+  "native/bend_engine/service_profile/dispatch.py": "8fdba5bbe9282e9358d6bed7ec63bb85f20e7e325ac717de807f60d1bfe16720",
+  "native/bend_engine/standalone/dispatch_binding.h": "5b03fbca70ab5e6f6492dc315d78f200f861555ab486e10c357c520d8509899a",
+  "native/bend_engine/standalone/dispatch_binding_test.cpp": "81dc7c5d64296582b963552ea0a1f424b6fec55cae6d73de76cc57261bd34e1c",
+  "native/bend_engine/standalone/model_bridge.cpp": "6990ccb54bfdf179a222decf4f6fffff4b91c38448b8e9d6139213fa8eb00046",
+  "tests/test_bend_dispatch.py": "92ab0d977b0a24b2125a72de046017fd5ff2f28bf32fd4bd43d5c95e96ffd046"
+}

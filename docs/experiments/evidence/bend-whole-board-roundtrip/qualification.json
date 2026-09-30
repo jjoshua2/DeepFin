@@ -1,0 +1,24 @@
+{
+  "qualification": "PASS_WITH_EXPLICIT_LOWERING_LIMIT",
+  "run": "36085950814",
+  "source": "92737251af190ebddba5b83d146e462ae1049ec6",
+  "source_tree": "a88dfe56fbef013fb9e52bd68582a3212e5b9561",
+  "new_laws": 5,
+  "new_controls": 17,
+  "control_categories": {
+    "source semantic/refinement": 8,
+    "manifest/import policy": 8,
+    "synthetic exact-output unit, not compiler execution": 1
+  },
+  "retained_parent_laws": 127,
+  "retained_parent_controls": 350,
+  "modular_laws": 132,
+  "modular_controls": 367,
+  "combined_wrapper_executed": false,
+  "native_source_entries": 416,
+  "structural_snapshot_native_lowering": false,
+  "actual_board_decoder_observation_native_gate": "PASS",
+  "source_closure_and_control_records_match_local": true,
+  "native_report_matches_local_except_cc": true,
+  "independent_review": false
+}

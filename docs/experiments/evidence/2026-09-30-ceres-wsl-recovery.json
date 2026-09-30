@@ -1,0 +1,92 @@
+{
+  "chunk7": {
+    "accepted_rows": 128857,
+    "accepted_unique_feed_inputs": 126665,
+    "across_chunk_duplicate_feed_inputs": 0,
+    "archived_shards": 16,
+    "artifact_role": "fresh24h attempt8 chunk0007 local receipt and external raw-shard bank",
+    "calls": 4144,
+    "child_sha256": "2cb692f96473141d14e6c312668008cc9a0bbb251006c97c25187e7d34b4aa38",
+    "child_status": "PASS_C3_ARCHIVE_SOURCE_CHILD",
+    "chunk_wall_seconds": 935.80692077,
+    "complete_sha256": "1e0d15e2cecdf8112e13982c20bcde61045d81fc439cf609f5400595d2c8626a",
+    "completed_games": 1024,
+    "corpus_admission_credit": 0,
+    "cumulative_unique_feed_inputs": 1010546,
+    "digest_index_sha256": "d4df8b1f063542dbb6dce526741d4114fe6bc33309957b6062f78d72be20f21d",
+    "discarded_games": 0,
+    "external_bank_bytes": 95616197,
+    "label_credit": 0,
+    "ledger_sha256": "a8caa0c5d5d48ac411f9760d5ed5734526c360735e25e1400b871f1c5e776fef",
+    "ledger_status": "PASS_CERES_FRESH_CHUNK_PHYSICAL_LEDGER_ZERO_CREDIT",
+    "local_bytes": 26023771,
+    "natural_games": 509,
+    "padding_rows": 3751,
+    "physical_rows": 132608,
+    "provider_proof_sha256": "3f3f29f4e235bb4bb4461c79c5b695acc231d41e4681d7a33bbd60cad43f42ee",
+    "readback_seconds": 251.81416688699983,
+    "source_seconds": 682.812835488,
+    "static_reopen": "PASS 16 archive SHA plus child strict ledger accepted-index pins; separate replay pending",
+    "status": "PASS_FRESH_CHUNK_COMPLETE_ZERO_CORPUS_CREDIT",
+    "strict_sha256": "a4891cb281c45751f1e0edade60d463eae86ebfaf15315093e3d4b13ee630a45",
+    "strict_status": "PASS_CERES_FRESH_CHUNK_STRICT_ALL_ATTEMPTS_ZERO_CREDIT",
+    "syzygy_games": 515,
+    "training_ready": false,
+    "within_chunk_duplicate_feed_inputs": 2192
+  },
+  "date": "2026-09-30",
+  "host": {
+    "boot_id": "a75fff00-9402-4d55-b673-5e7f52d362f1",
+    "chunk_seconds_cap": 3600,
+    "host_physical_cap_bytes": 1099511627776,
+    "io_accounting": "host_shared_cgroup_physical_io_v1",
+    "io_path": "/sys/fs/cgroup/io.stat",
+    "kernel_release": "6.18.40.1-microsoft-standard-WSL2",
+    "logical_io_chars_available": false,
+    "proc_self_io_available": false,
+    "readback_seconds_cap": 1200,
+    "source_seconds_cap": 1800
+  },
+  "interruption": {
+    "artifact_role": "fresh24h attempt6 chunk0007 partial local and external roots preserved",
+    "partial_chunk_index": 7,
+    "run06_chunk_complete": false,
+    "run06_claim_sha256": "db311826eccbbac447ef51b77d9e297bd11c2bf40d6138ad3562a692956f88b8",
+    "run07_chunk_root_created": false,
+    "run07_failed_sha256": "9fab6493948f50e7cf5b7be0ef27dbba6ae0d06fd5f8aa5b34db49d275ee155c"
+  },
+  "next_resume_builder": {
+    "attempt_cap": 64,
+    "quiet_gpu_guard": "PASS refused held canonical flock before creating output root",
+    "scope": "run08-to-run09 only; later restarts need another reviewed seal",
+    "sha256": "0b4f1ba61502ec43baa1c7ba6e5cf93d128d7c59549045dd090142ee80f0ad0c",
+    "status": "CPU_STAGED_HOLD_UNTIL_RUN08_STOPS_AND_EXACT_NEXT_SOURCE_REVIEW"
+  },
+  "prior_completed_prefix": {
+    "accepted_rows": 899815,
+    "attempts": [
+      2,
+      4,
+      4,
+      4,
+      4,
+      5,
+      5
+    ],
+    "chunks": 7,
+    "last_index": 6,
+    "packet_sha256": "5836aaa0783c887b37e4a6b395a3c4eb4ff279643442acc8abe7e12329835126",
+    "unique_feed_inputs": 883881
+  },
+  "run08": {
+    "artifact_role": "fresh24h attempt8 packet, independent source review and driver claim",
+    "attempt_number": 8,
+    "claim_sha256": "8a7e3ef12e70619d644ca78956c7cc0bcfa760885114b31d6bff55de450ec5b6",
+    "credit": 0,
+    "first_chunk_index": 7,
+    "packet_manifest_sha256": "621839235e941ccd9e9e23949d19594a6d85aeeceda8d267179e9a07ea2b9975",
+    "source_review_sha256": "8eb252c8049a9b141641373ead5afb9202242cca4548b3d36c92ac6df20168df"
+  },
+  "schema": "ceres_wsl_reboot_recovery_readout_v1",
+  "status": "SOURCE_ONLY_ZERO_ADMISSION"
+}

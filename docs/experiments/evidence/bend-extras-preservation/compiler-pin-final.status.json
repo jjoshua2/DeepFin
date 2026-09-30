@@ -1,0 +1,10 @@
+{
+  "command": [
+    "/mnt/data/header-toolchain/bun",
+    "test",
+    "native/bend_engine/standalone/verify_compiler.test.js"
+  ],
+  "timeout": 30,
+  "exit_code": 0,
+  "elapsed_seconds": 0.06699808500002291
+}

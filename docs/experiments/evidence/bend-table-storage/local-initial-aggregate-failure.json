@@ -1,0 +1,17 @@
+{
+  "command": [
+    "/mnt/data/prefix-compiler/bun",
+    "native/bend_engine/standalone/proofs/storage/verify.js",
+    "/mnt/data/prefix-compiler/bend",
+    "--report",
+    "/mnt/data/storage-evidence/local-proofs.json"
+  ],
+  "exit_code": 1,
+  "elapsed_seconds": 471.5534922889999,
+  "scope": "Initial local aggregate before disposable fixture-copy fix; this is a failed result, not final qualification",
+  "preserved_prior_gate": "56 laws and 72 controls passed before the new fixture import failure",
+  "failure": "missing earlier layout/Spec.bend in disposable storage mutation tree; correctly refused as an ordinary proof rejection",
+  "fix": "final verify.js copies the full prior proof directory; implementation and accepted laws unchanged",
+  "original_log_sha256": "d1c2096b7797f9d2cc00f59706a84976df96d3ab4fe054c3a834cbf0e2b90736",
+  "raw_text": "PASS: unchanged 56-law parent, all 72 inherited controls\nPASS: eight actual-array laws and importing consumer\nPASS rejection: set-is-noop\nPASS rejection: swap-leaf-retains-old-value\nPASS rejection: read-duplicates-returned-leaf\nPASS rejection: swap-discards-sibling\nPASS rejection: read-selects-wrong-child\nPASS rejection: fill-writes-wrong-value\nPASS rejection: fill-writes-next-address\n55 |   if(base){const c=path.join(d.e,'compiler');fs.mkdirSync(c);\n56 |     for(const f of ['bend.ts','comp.ts','base.bend','main.ts'])fs.copyFileSync(path.join(compiler,'bend2',f),path.join(c,f));\n57 |     d.base=path.join(c,'base.bend');checker=path.join(c,'main.ts');}\n58 |   edit(d);const r=invoke(path.join(d.s,entry),checker);\n59 |   assert.equal(r.status,1,`${name}: must reject\\n${r.text}`);\n60 |   assert.match(r.text,/expected[\\s\\S]*observed/,`${name}: not an ordinary proof rejection\\n${r.text}`);\n              ^\nAssertionError: fill-base-case-destroys-storage: not an ordinary proof rejection\nError:\n- message  : no such file: /tmp/deepfin-storage-laws-OYqQmV/fill-base-case-destroys-storage/standalone/proofs/storage/../layout/Spec.bend\nLocation:\n5 | import ../../Subsets.bend as Subsets\n6>| import ../layout/Spec.bend as Layout\n7 | import ./Observe.bend as O\n generatedMessage: false,\n     actual: \"Error:\\n- message  : no such file: /tmp/deepfin-storage-laws-OYqQmV/fill-base-case-destroys-storage/standalone/proofs/storage/../layout/Spec.bend\\nLocation:\\n5 | import ../../Subsets.bend as Subsets\\n6>| import ../layout/Spec.bend as Layout\\n7 | import ./Observe.bend as O\",\n   expected: /expected[\\s\\S]*observed/,\n   operator: \"match\",\n       diff: \"simple\",\n       code: \"ERR_ASSERTION\"\n\n      at reject (/mnt/data/prefix-work/native/bend_engine/standalone/proofs/storage/verify.js:60:10)\n\nBun v1.4.2 (Linux x64)\n"
+}

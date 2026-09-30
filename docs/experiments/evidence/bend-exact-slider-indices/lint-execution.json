@@ -1,0 +1,9 @@
+{
+  "returncode": 1,
+  "timeout": false,
+  "command": [
+    "bash",
+    "scripts/lint.sh"
+  ],
+  "elapsed_seconds": 0.01599258400005965
+}

@@ -1,0 +1,10 @@
+{
+  "native/bend_engine/service_profile/qualify.py": "f1ed2f47a2fe236ca88f5e7bbb7d56940af9bad5179b873eae1af3cd0e48f3bc",
+  "native/bend_engine/service_profile/build.sh": "41f5fed006e27b0b678d01fa874eccedb16869d40edbaa2f2ec0f36ace390492",
+  "native/bend_engine/service_profile/profile.py": "a6286f6fc24efa332c09ab2d2e8a33e4c59e8fc77f068806876c60eebe68aab0",
+  "native/bend_engine/service_profile/probe.cpp": "60eed40b62f2e51e7f119016a02b0d0953a38268dc910a7e2f811d55061a522e",
+  "native/bend_engine/service_profile/README.md": "c75387eff927d6610f1f5fa07d4f2ca97b521839b09e7775efb8d5a718b68722",
+  "native/bend_engine/service_profile/fake_backend.cpp": "ca462bc1df540cc223a55c11f396e30e288f2109bb356c232c4f98af09ef3ca0",
+  "tests/test_bend_service_profile.py": "a6f322baef62e37a21423279ffc5558235adb1ee92aeb58c6b1987b2ddbcc4c4",
+  "docs/experiments/2026-09-25-native-service-profile.md": "3921ec104b94b45d0effa99a372b9e089a57fddecd60562e6dc21e71835d85bf"
+}

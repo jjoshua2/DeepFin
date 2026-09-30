@@ -1,0 +1,165 @@
+{
+  "proof_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "aggregate_law_count": 83,
+  "new_law_count": 4,
+  "new_laws": [
+    "allocation_complete",
+    "table_pipeline_complete",
+    "bounded_complete_routes",
+    "bounded_other_index_write"
+  ],
+  "inherited_law_count": 79,
+  "inherited_negative_controls": 140,
+  "negative_controls": [
+    {
+      "name": "incomplete-shape-specification",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Actual.bend"
+    },
+    {
+      "name": "cross-branch-is-not-separated",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Core.bend"
+    },
+    {
+      "name": "right-query-not-rebased",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Core.bend"
+    },
+    {
+      "name": "equal-indices-admitted",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "PROOF.bend"
+    },
+    {
+      "name": "inclusive-bound-admits-alias",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "PROOF.bend"
+    },
+    {
+      "name": "capacity-alone-is-insufficient",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "PROOF.bend"
+    },
+    {
+      "name": "actual-allocation-ragged",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Actual.bend"
+    },
+    {
+      "name": "actual-table-zero-case-destroys-shape",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Actual.bend"
+    },
+    {
+      "name": "omitted-law",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "omitted-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-laws-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-consumer-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "proof-hole",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "foreign-witness",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "symlinked-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe-paths",
+      "rejected": true,
+      "kind": "policy and exact output",
+      "raw_cli_status": 0
+    }
+  ],
+  "source_sha256s": {
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/proofs/complete/Actual.bend": "886085f42339740a6e256870c95926cc10bf4c79f25c099f6c99fe529b7e3a8f",
+    "standalone/proofs/complete/Arithmetic.bend": "c4b7782e23bd4ef391ecb077188cebe4e69b1118354c2caa67b0fb8808ab070c",
+    "standalone/proofs/complete/Core.bend": "6777539abbbca8491c88918bd67b2bf359920868f810d95a95f920e2877a5166",
+    "standalone/proofs/complete/LAWS.bend": "3e2e0e6f7222fea474de1e80be392f552b79e21e568c3e4ba286cc2e10b268af",
+    "standalone/proofs/complete/PROOF.bend": "d82abe5819dcb1224567b0523f8614b5d42c02a8cff7a346712bbddd993e41d1",
+    "standalone/proofs/complete/Spec.bend": "575e52b214b72045071683268b7edadecb363923f9173776402e179c2304ba77",
+    "standalone/proofs/complete/consumer.bend": "8a84ee050fc31e26382f6755e6b797ffd451d322749317dba549bf8a9c74f249",
+    "standalone/proofs/complete/focused.js": "f895cf3855fc5f7ba742d6132c3593a2d11d57889a6a72a71b351545f447a7e3",
+    "standalone/proofs/complete/verify.js": "d3e62e518e259c0450371730b8504723ce4b79797cf5ebfdcdd47764e937039b",
+    "standalone/proofs/complete/verify_native.js": "81fbfec1315e47d507554026e152039d266c4aa0a62b97f6011e9f13bbcab168",
+    "standalone/proofs/index/Bits.bend": "1fe9e204243efe2e651e14ec3db15f2ea2141ee7febf639fb0a7a8e4b5bc8afb",
+    "standalone/proofs/layout/Spec.bend": "a08495ab3c27218154f6fd79091cd98b48e44d04d8f8b032e4f68f76531dcc89",
+    "standalone/proofs/normalization/Actual.bend": "f0463c77910df7f1b5700c78bba498aff1dbf5a820964813988d69f79b38d84b",
+    "standalone/proofs/normalization/Bound.bend": "a9095d3ba9a4c44f354a79d066bd2f5a895960043bc3ce0619a4110586aa8254",
+    "standalone/proofs/normalization/Compare.bend": "620a62659f35af28a0490d45dfd0dd65f1b4b0ee9209b3c9d0469936c9790ea3",
+    "standalone/proofs/normalization/Mask.bend": "f394654bc462b3e0a3cb38da297f90990535f605c0f7716cf1b6e5c2e2f5337a",
+    "standalone/proofs/normalization/probe.bend": "da2bdd278b0dce0b14fd0590164e00f609677199886e8d7d5c434a3cfd74c4cd",
+    "standalone/proofs/separation/Actual.bend": "b96b6a911f64b5fbec48c7acd3874e1bcbf7e49ba9422bf900742f33168190e4",
+    "standalone/proofs/separation/Model.bend": "bbb1b65365edad902ce88522fea8c7dd2763a26bacb58fd2acf62967ae4d40f8",
+    "standalone/proofs/separation/Spec.bend": "8afa6d10a68644534ce3a200fe46259e28f3c75b9acb9fdf9532a8c58f83a64f",
+    "standalone/proofs/storage/Build.bend": "4859dd6c15f0ec33c63607cba33fa4891e32d671fb2d17c6b0f04476376905ae",
+    "standalone/proofs/storage/Model.bend": "147b9fa371bb6066e1adcbe70bb85aab9ca931eb6465af49626c633ea23bca5a",
+    "standalone/proofs/storage/Observe.bend": "51d1b811b9ed4933db9672d0348490e2e017110460dd473d33a0fe6bde6b292b",
+    "standalone/proofs/storage/Read.bend": "4df305d3b934e27d4c12e3049f337b1ae5312bb1ff428b98b048c4d9b2fbfaa1",
+    "standalone/proofs/storage/Refinement.bend": "73da23ca26992ca657505a4daeacdbbfe3f9004943bd14948af15c47a7ba8647",
+    "standalone/proofs/storage/Representation.bend": "1703fb62ab133fbfd4fa8155fa59dc19d1fa87ce2d838c92453eed516fbc9e2d",
+    "standalone/proofs/storage/Roundtrip.bend": "05d00fbc9089cb176c434c8042e2220344ce643c8dcd1c2155c623d195d43a54",
+    "standalone/proofs/storage/Write.bend": "a12f1778b8d176939174df2050e8ae00c03f20af55eeae3fc7c5744abe47ca41",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "inherited_source_sha256s": {
+    "standalone/proofs/index/Bits.bend": "1fe9e204243efe2e651e14ec3db15f2ea2141ee7febf639fb0a7a8e4b5bc8afb",
+    "standalone/proofs/normalization/Actual.bend": "f0463c77910df7f1b5700c78bba498aff1dbf5a820964813988d69f79b38d84b",
+    "standalone/proofs/normalization/Bound.bend": "a9095d3ba9a4c44f354a79d066bd2f5a895960043bc3ce0619a4110586aa8254",
+    "standalone/proofs/normalization/Compare.bend": "620a62659f35af28a0490d45dfd0dd65f1b4b0ee9209b3c9d0469936c9790ea3",
+    "standalone/proofs/normalization/LAWS.bend": "d732723fd651d5e012fe7b54619c9d1262960c11fe285b94c4a23813b71b6d0c",
+    "standalone/proofs/normalization/Mask.bend": "f394654bc462b3e0a3cb38da297f90990535f605c0f7716cf1b6e5c2e2f5337a",
+    "standalone/proofs/normalization/PROOF.bend": "051fb396282f7aaed34d92d0609204e5c486278e5308080a1c67b8cc2e6396d4",
+    "standalone/proofs/normalization/consumer.bend": "c02544876bd0b7018e02fe4d5eb9486539678b6334ccef4edb3bf92415e894b5",
+    "standalone/proofs/normalization/focused.js": "0c60ef780b735f67279fd55030793192b47a6e630ddc16ed7358442d438d1b64",
+    "standalone/proofs/normalization/probe.bend": "da2bdd278b0dce0b14fd0590164e00f609677199886e8d7d5c434a3cfd74c4cd",
+    "standalone/proofs/normalization/verify.js": "f07e8567c0fd0b387ea7f26568abf36ccea503ffc2894f9a5ca100d916ae7654",
+    "standalone/proofs/normalization/verify_native.js": "bff3c343defd7ef25ed4f05658e94a767db6382008eb9a479a717d46fdb852b7",
+    "standalone/proofs/separation/Spec.bend": "8afa6d10a68644534ce3a200fe46259e28f3c75b9acb9fdf9532a8c58f83a64f",
+    "standalone/proofs/storage/Observe.bend": "51d1b811b9ed4933db9672d0348490e2e017110460dd473d33a0fe6bde6b292b",
+    "standalone/proofs/storage/Read.bend": "4df305d3b934e27d4c12e3049f337b1ae5312bb1ff428b98b048c4d9b2fbfaa1",
+    "standalone/proofs/storage/Representation.bend": "1703fb62ab133fbfd4fa8155fa59dc19d1fa87ce2d838c92453eed516fbc9e2d",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "consumer": "PASS",
+  "scope": "Complete depth-17 shape plus distinct bounded indices proves actual normalized-route separation and full returned-pair write framing. Real allocation and table/extras loops supply shape; prefix-plus-index bounds, fill-clear certificates and final geometry remain separate."
+}

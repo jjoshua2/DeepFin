@@ -1,0 +1,29 @@
+import Base
+import ./Path.bend as P
+import ./Frame.bend as Frame
+
+# Arbitrary paths/occupancies; input certifies only interior bit observations.
+def use_terminal_irrelevance(+xs: List<&2,Nat>,+a: U64,+b: U64,
+  e: {P.agree(xs,a,b) == True{} : Bool}) -> {P.attack(xs,a) == P.attack(xs,b) : U64}:
+  Frame.interior_only(xs,a,b,e)
+
+# A terminal-only blocker leaves all attacks intact.
+def last_square_may_differ() ->
+  {P.attack(1n <> 2n <> 3n <> Nil{},U64.zero()) ==
+    P.attack(1n <> 2n <> 3n <> Nil{},U64.bit(3n)) : U64}:
+  Frame.interior_only(1n <> 2n <> 3n <> Nil{},U64.zero(),U64.bit(3n),{==})
+
+# On a one-square ray, occupancy is unrestricted and irrelevant.
+def singleton_any_occupancy(+sq: Nat,+a: U64,+b: U64) ->
+  {P.attack(sq <> Nil{},a) == P.attack(sq <> Nil{},b) : U64}:
+  Frame.interior_only(sq <> Nil{},a,b,{==})
+
+# Include the first blocker and stop before subsequent squares.
+def blocker_included() ->
+  {P.attack(1n <> 2n <> 3n <> Nil{},U64.bit(2n)) == U64.or(U64.bit(1n),U64.bit(2n)) : U64}:
+  {==}
+
+# Removing an interior blocker is not permitted by the lemma's premise.
+def interior_difference_rejected() ->
+  {P.agree(1n <> 2n <> 3n <> Nil{},U64.zero(),U64.bit(2n)) == False{} : Bool}:
+  {==}

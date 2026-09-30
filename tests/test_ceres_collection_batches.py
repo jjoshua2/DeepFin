@@ -976,6 +976,21 @@ def test_ceres_invocation_rejects_missing_ambiguous_or_stale(
     assert manifest["completed_chunks"] == []
 
 
+@pytest.mark.parametrize('batch', [64, 128, 256, 512])
+def test_completion_uses_explicit_batched_namespace(batch):
+    payload = completion_payload(0, 1, batch + 1, batch - 1)
+    payload['profile'] = 'ceres-c3-batched-compact-v1'
+    namespace: dict[str, Any] = {'profile': payload['profile'], 'backend': {'batch_size': batch}}
+    payload['namespace'] = namespace
+    payload['collection_counts']['calls'] = 2
+    chunk = {'id': 'dynamic', 'expected_rows': batch + 1, 'max_shards': 1, 'start_shard': 0,
+             'expected_padding_rows': batch - 1}
+    tool.validate_completion_body(chunk, payload)
+    namespace['backend']['batch_size'] = 32
+    with pytest.raises(ValueError, match='batch/profile'):
+        tool.validate_completion_body(chunk, payload)
+
+
 def test_zero_pause_still_checks_resources_without_sleep(monkeypatch):
     calls = []
     monkeypatch.setattr(tool.time, "sleep", lambda _: pytest.fail("zero pause slept"))

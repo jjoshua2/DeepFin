@@ -1,0 +1,32 @@
+{
+  "supplementary_p3_preconditions": "PASS",
+  "closed_source_facts": 3,
+  "source_sha256": "13c09343be832cbaa2d5ad516dacccb8777743cc2f2e2142a0e258a045db46f7",
+  "safe_success_log_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84",
+  "controls": [
+    {
+      "name": "decoder-not-empty-tag",
+      "status": 1,
+      "rejected": true,
+      "location": "empty_square_decoder_fallback",
+      "elapsed_seconds": 0.5808614729999135,
+      "diagnostic_sha256": "db104102ec76b9a036fc43213d30f4de2d2822eb6e42cffc7def8d3656ce6dc5"
+    },
+    {
+      "name": "insertion-not-unconditional-color-disjointness",
+      "status": 1,
+      "rejected": true,
+      "location": "both_colors_can_be_set",
+      "elapsed_seconds": 0.5426464910001414,
+      "diagnostic_sha256": "2bdf6fc305d76b53f9bfbc7af660890b83327c1fc7ab62044d05b46d60188a81"
+    }
+  ],
+  "registered_counts_changed": false,
+  "production_bug_claimed": false,
+  "new_native_execution": false,
+  "actual_source_hashes": {
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6"
+  },
+  "scope": "Closed representation-domain counterexamples only. No universal board invariant, FIDE-rule or move-legality proof."
+}

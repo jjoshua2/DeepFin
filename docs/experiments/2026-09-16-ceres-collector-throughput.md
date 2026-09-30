@@ -1,5 +1,17 @@
 # Ceres collection throughput: zero pauses and grouped sessions
 
+Historical record for 2026-09-16–17, recovered on 2026-09-30. The readouts below
+retain their original sequence, including intermediate pending and queued states;
+those states do not describe today's jobs. The final recorded state is qualification
+of the 527,604-row partial01 union and a queued 2,643,373-row continuation, not proof
+that the continuation subsequently ran. No new experiment, training, inference or
+production adoption is reported by this recovery.
+
+The zero-pause implementation and its resource/process guards are already on main
+through [PR #762](https://github.com/jjoshua2/DeepFin/pull/762). This recovery restores only
+the missing dated record and compact evidence; current main's runtime and tests are
+retained unchanged. See [recovery provenance](#recovery-provenance-2026-09-30).
+
 Status: the bounded fixed32 pilot completed with bitwise-equivalent outputs. Group4 was adopted for the next two cohorts; the first production group completed successfully. Batch512 has since been characterized and selected for a fresh streaming check; its numerical differences are recorded below.
 
 ## Why change orchestration
@@ -16,7 +28,7 @@ The complete pilot has a 900-second bound, collection allocations of 380 and 300
 
 Require bitwise equality of every payload array and matching source hashes. Record wall rows/sec, synchronous inference time, first-call CUDA provider proof and sampled NVML utilization. The four-shard arm runs first; this is a bounded engineering comparison, not a randomized estimate of the causal effect of grouping.
 
-Descriptor: `/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_throughput/pilot_v1/registered_command.json`, SHA256 `c8d4b979d56854f4b5ede827ff525efd678a58201548edfed9de88242ead81d1`.
+Descriptor: `~/scratchpad/bt4_joint20/takeover_20260916/ceres_throughput/pilot_v1/registered_command.json`, SHA256 `c8d4b979d56854f4b5ede827ff525efd678a58201548edfed9de88242ead81d1`.
 
 ## Completed results
 
@@ -62,3 +74,41 @@ All 13 batch512 groups of partial01 completed, adding 412,916 rows. The first CP
 A fresh CPU-only qualifier bound all 101 actually observed Python module hashes to the frozen runtime and passed the full 527,604-row, 65-shard union: 51 new shards plus 14 retained old shards. No inference was repeated. The failed lane and original qualifier are preserved. The remaining 2,643,373 rows in cohorts 08/11/12 have fresh prepared plans with the expanded module pins; they follow the independent 35M training continuation. See the [qualification recovery evidence](evidence/2026-09-17-ceres-partial01-recovery.json).
 
 The corrected remaining-label queue was adopted after independent review: 83 groups and 2,643,373 rows, with a 13,100-second cap including cleanup. It will start after the active V50 continuation releases the GPU. The [queue adoption evidence](evidence/2026-09-17-ceres-remaining-adoption.json) records the exact descriptor and preserved row counts.
+
+## Recovery provenance (2026-09-30)
+
+Recovered from [PR #760's preserved source head `7b4b37b53a266c3086b38d6e648f23030d3df82f`](https://github.com/jjoshua2/DeepFin/commit/7b4b37b53a266c3086b38d6e648f23030d3df82f).
+The original [record](https://github.com/jjoshua2/DeepFin/blob/7b4b37b53a266c3086b38d6e648f23030d3df82f/docs/experiments/2026-09-16-ceres-collector-throughput.md)
+is Git blob `3a45d5641ed716b1ea7698d9e81d725692366393`. Its measurement text is retained;
+this recovery adds historical framing/provenance and shortens its single prose
+home-directory path to `~/projects/chess/...`. The descriptor SHA256 and its
+historical identity are unchanged; the original path remains in the pinned source.
+
+All seven JSON files reuse their original Git blob objects, byte for byte, including
+paths, timestamps, statuses, source identities and embedded hashes. Historical paths
+inside these frozen receipts identify the original artifacts; they are not portable
+command defaults. The existing repository policy already covers frozen evidence
+paths, so no check or exemption was changed. The Git blob IDs below identify the
+published receipt files; their embedded SHA256 fields identify the external source
+artifacts, not necessarily these compact summaries.
+
+| Original receipt | Git blob ID (SHA-1) | Why it is retained |
+| --- | --- | --- |
+| [2026-09-16-ceres-collector-throughput.json](evidence/2026-09-16-ceres-collector-throughput.json) | `1a4e17b54793d1bbf7187a9a13dd84cbb05faeb6` | Saved block09 timing decomposition; the 1.99× pause subtraction remains a projection |
+| [2026-09-16-ceres-grouped-pilot.json](evidence/2026-09-16-ceres-grouped-pilot.json) | `dbe0eee6544bd53346f50b8b47c310f8addcc8bc` | Ordered fixed32 group4/group8 pilot, bitwise comparisons and provider/utilization evidence |
+| [2026-09-16-ceres-group4-adoption.json](evidence/2026-09-16-ceres-group4-adoption.json) | `8dd9e1f76bb402c7525ac39e3182e6c46d36cbb6` | First production group only; explicitly does not qualify the full cohort |
+| [2026-09-16-ceres-batch512.json](evidence/2026-09-16-ceres-batch512.json) | `9a497d1f6343233947687c31f31f5a0a65c7c37c` | Precomputed-feed timing and complete failed numerical-equivalence metrics |
+| [2026-09-16-ceres-batch512-streaming.json](evidence/2026-09-16-ceres-batch512-streaming.json) | `f42c53b4dfff03ecc35a03b1bff5841226bfd6bc` | First useful streaming group, source/shard identities, backend and stage timings |
+| [2026-09-17-ceres-partial01-recovery.json](evidence/2026-09-17-ceres-partial01-recovery.json) | `87370947dca66dee62f54462e83537f99b8c8eae` | Completed partial01 union and CPU module-pin qualification recovery without recollection |
+| [2026-09-17-ceres-remaining-adoption.json](evidence/2026-09-17-ceres-remaining-adoption.json) | `ebbb738b149ae57f7ffe70db80718c0e7c99c568` | Historical queued continuation descriptor and retained/new row accounting; no completion claim |
+
+The reconciliation retains both the source-branch history and main revision
+`48c5a684faf2e6ea0d7415d67c7f8c9710ef91f3`. It preserves main's later implementation and
+all existing index entries. The seven receipts and this record were absent from
+that main tree. The recovery verifies their published Git identities and internal
+readout consistency; it does not re-open external banks, recompute their hashes,
+repeat the original measurements, or establish current availability of those banks.
+Historical validation and independent-review statements above are the original
+record's claims, not tests rerun on 2026-09-30. No local test suite was run for this
+connector-only documentation recovery; current GitHub Actions results are reported
+on [PR #760](https://github.com/jjoshua2/DeepFin/pull/760) for its recovered head.

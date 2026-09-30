@@ -1,0 +1,14 @@
+{
+  "pid": 1755363,
+  "argv": [
+    "/usr/bin/python3",
+    "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/full_cpu_run.py",
+    "--plan",
+    "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/full_cpu_plan.json",
+    "--sha256",
+    "c0e137a3ec1a64bd6bc1fd2d0345901b18d4c2408923c302869cb710cdd40cdc",
+    "--execute"
+  ],
+  "started_unix": 1790035855.4567442,
+  "plan_sha256": "c0e137a3ec1a64bd6bc1fd2d0345901b18d4c2408923c302869cb710cdd40cdc"
+}

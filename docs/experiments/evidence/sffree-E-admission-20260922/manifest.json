@@ -1,0 +1,165 @@
+{
+  "status": "FROZEN_OPERATION_SOURCE_SNAPSHOT",
+  "files": [
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/plan.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E/plan.json",
+      "sha256": "a4e69f181281d6b77f4ae7c67af010762bcf318af6988b9ecd6b4b7317060bdf"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/admission.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E/admission.py",
+      "sha256": "40a1bac9d3adaa0b910d5fbd84f9fbc7603dcdceda4b8738b73f916682a07e71"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/queue_item.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E/queue_item.json",
+      "sha256": "97b365952b524cfa33ae1630cf1e8ff24cf572a0cef127ecdcd1d982e8d08a64"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/disk_pause.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E/disk_pause.py",
+      "sha256": "905ccacc06282a0975fb392a65948dc80d4c152a63d684a452e19cfc1c7ebf01"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/registered_command.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E/registered_command.json",
+      "sha256": "ac2cde06eeb4b3daa6db9c0d32ddcbf9a2fd7b13744aa38bae2e8216d6ded20c"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/run.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E/run.py",
+      "sha256": "43c5f3a1fa440a21d63dd01063f366393a2e09d3d2078167d6e9d9eda37b1eec"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/plan.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E_D/plan.json",
+      "sha256": "77d6aefeb0c75eeb283cadb0a719ee24ba68a72339623f44314572a07d428b9d"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/queue_item.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E_D/queue_item.json",
+      "sha256": "a7a3a55ca4badfbcbf72693f7b19e2ef51a484be3e575108262246224dd4fdef"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/registered_command.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E_D/registered_command.json",
+      "sha256": "7551fa839591910903bfade62e9fcdc057835c68c125e4a9369965c533850596"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/run.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E_D/run.py",
+      "sha256": "b198fd17b1914c835ad983c1d30aca4a8638ac2c96e4580e8387100c27650f67"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/plan.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/D122/plan.json",
+      "sha256": "b0195ee5adcf150c2233f6f9e8fc3c96c419883b400d277040d91a7401b3b1a4"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/admission.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/D122/admission.py",
+      "sha256": "17b236c35569ea4f3c1c31083954c8118cc0582c1e2328bd4334e4a0af5f2c32"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/admission121.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/D122/admission121.py",
+      "sha256": "40a1bac9d3adaa0b910d5fbd84f9fbc7603dcdceda4b8738b73f916682a07e71"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/queue_item.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/D122/queue_item.json",
+      "sha256": "63cb1baa46a7b968563a45b8feb4d42d310cf4d0159ed650cbc1f58a19562d3d"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/disk_pause.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/D122/disk_pause.py",
+      "sha256": "905ccacc06282a0975fb392a65948dc80d4c152a63d684a452e19cfc1c7ebf01"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/registered_command.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/D122/registered_command.json",
+      "sha256": "a4a6004e64c127108823cf1c923bd859a61c7ef1b5191942d2d800a7cbfa52de"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/run.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/D122/run.py",
+      "sha256": "63fa147ea61c72026720e29aba310571295bf64c5390ed742d8096d92078e7a6"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/plan.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E122/plan.json",
+      "sha256": "b315d0c34b74ddf2d7c8a5c49aa9822c7e1da8ecb2e472c2d6804971923acf0e"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/admission.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E122/admission.py",
+      "sha256": "17b236c35569ea4f3c1c31083954c8118cc0582c1e2328bd4334e4a0af5f2c32"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/admission121.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E122/admission121.py",
+      "sha256": "40a1bac9d3adaa0b910d5fbd84f9fbc7603dcdceda4b8738b73f916682a07e71"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/queue_item.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E122/queue_item.json",
+      "sha256": "4973efb9f7d3c67d96cb0e9b3ccf27dd56e552ff632dcd4d91d2998b943371e4"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/disk_pause.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E122/disk_pause.py",
+      "sha256": "905ccacc06282a0975fb392a65948dc80d4c152a63d684a452e19cfc1c7ebf01"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/registered_command.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E122/registered_command.json",
+      "sha256": "7217ef61ffa53f1b02c1366e0acb3c8e2bae753d5ceba7bb90c062667ebef442"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/run.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E122/run.py",
+      "sha256": "63fa147ea61c72026720e29aba310571295bf64c5390ed742d8096d92078e7a6"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/plan.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E122_D122/plan.json",
+      "sha256": "256ef65a17b39293a1ebc674519fdcad1e5b71d3616eff77bb3455a5e38a703c"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/queue_item.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E122_D122/queue_item.json",
+      "sha256": "af7736308dbcfde103f8f8affb568603878593393a8e0c97cdd8d6a97ff84b35"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/registered_command.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E122_D122/registered_command.json",
+      "sha256": "2f85d7d3fe60beb7dcdd25cd2e8e7b682369da90352595f949231fa9f7e8ba17"
+    },
+    {
+      "source": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/run.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E122_D122/run.py",
+      "sha256": "4c1810642656e83d8d531b24baea38979f224b74983b02e586127f06d27d258a"
+    },
+    {
+      "source": "/tmp/test_seed122_admission_20260922.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/test_seed122_admission_20260922.py",
+      "sha256": "4a5e93de979164e2f22807ff5aa4bd7a959e2c40fd88b247e4037edbf740ab2c"
+    },
+    {
+      "source": "/tmp/seed122-admission-tests-20260922.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/seed122-admission-tests-20260922.json",
+      "sha256": "5f1e285d7b42c8f8782ff9ba0c5bfbc3086fdf0ce365a835bc4a22f8f355d69b"
+    },
+    {
+      "source": "/tmp/verify_E_descriptors_20260922.py",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/verify_E_descriptors_20260922.py",
+      "sha256": "7a583138312df0a2518fd4350e35f726f2a9b0eee513c0a13269f5af68aa7108"
+    },
+    {
+      "source": "/tmp/E-final-descriptors-preflight-20260922.json",
+      "snapshot": "docs/experiments/evidence/sffree-E-admission-20260922/E-final-descriptors-preflight-20260922.json",
+      "sha256": "8ed725d6235031ea1adc3719d68ff445f61a3d0c3e4037d8ea220d6e3a725b1e"
+    }
+  ]
+}
