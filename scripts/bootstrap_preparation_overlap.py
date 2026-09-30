@@ -15,6 +15,7 @@ import fcntl
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -202,13 +203,13 @@ def stage_lock(state: Path, config: dict[str, Any], deadline: float, *, queued: 
                 break
             except BlockingIOError:
                 time.sleep(0.25)
-        try:
-            if not queued and request.exists():
-                yield None
-            else:
-                yield lock.fileno()
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+        # Closing only this descriptor preserves an inherited writer's lock.
+        # LOCK_UN would unlock the shared open-file description in every child,
+        # even when cleanup raised or an imported coordinator returned early.
+        if not queued and request.exists():
+            yield None
+        else:
+            yield lock.fileno()
 
 
 def terminate(child: subprocess.Popen) -> None:
@@ -292,6 +293,7 @@ def run_queued(config: dict[str, Any], prefix: list[str], lock_fd: int) -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     original = module.subprocess
+    children: list[subprocess.Popen] = []
 
     class LockedSubprocess:
         def __getattr__(self, name):
@@ -299,7 +301,9 @@ def run_queued(config: dict[str, Any], prefix: list[str], lock_fd: int) -> None:
 
         def Popen(self, *args, **kwargs):
             kwargs["pass_fds"] = tuple({*kwargs.get("pass_fds", ()), lock_fd})
-            return original.Popen(*args, **kwargs)
+            child = original.Popen(*args, **kwargs)
+            children.append(child)
+            return child
 
     setattr(module, "subprocess", LockedSubprocess())
     previous = sys.argv
@@ -308,6 +312,14 @@ def run_queued(config: dict[str, Any], prefix: list[str], lock_fd: int) -> None:
         module.main()
     finally:
         sys.argv = previous
+        cleanup_errors = []
+        for child in reversed(children):
+            try:
+                terminate(child)
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+        if cleanup_errors:
+            raise RuntimeError("queued preparation child cleanup failed") from cleanup_errors[0]
 
 
 def stages(
@@ -332,7 +344,26 @@ def stages(
     ]
 
 
+def finite_bound(value: Any, name: str, *, positive: bool) -> None:
+    require(
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+        and (value > 0 if positive else value >= 0),
+        f"{name} must be finite and {'positive' if positive else 'nonnegative'}",
+    )
+
+
 def validate_config(config: dict[str, Any], plan: dict[str, Any]) -> None:
+    for name in ("stage_seconds", "handoff_seconds", "sidecar_seconds", "queued_seconds",
+                 "rss_cap_gib"):
+        finite_bound(config[name], name, positive=True)
+    for name in ("memory_floor_gib", "disk_floor_gib"):
+        finite_bound(config[name], name, positive=False)
+    for name in ("max_seconds", "process_memory_cap_gib"):
+        finite_bound(plan[name], "plan." + name, positive=True)
+    for name in ("available_memory_floor_gib", "disk_floor_gib"):
+        finite_bound(plan[name], "plan." + name, positive=False)
     require(config["python"] == plan["python"], "interpreter differs")
     require(config["prep_runner"] in plan["pins"], "runner not pinned by frozen plan")
     require(config["rss_cap_gib"] <= plan["process_memory_cap_gib"], "RSS cap relaxed")

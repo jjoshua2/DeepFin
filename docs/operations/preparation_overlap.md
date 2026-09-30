@@ -21,7 +21,10 @@ The queued actor publishes a permanent handoff request and waits for the current
 whole stage. The sidecar finishes its stage and starts no further stage. They
 share one never-replaced flock inode. Every writer inherits the lock descriptor,
 including the original coordinator's workers that start a new session. A killed
-supervisor therefore cannot release ownership while its writer survives. Never
+supervisor therefore cannot release ownership while its writer survives. The
+queued wrapper tracks and cleans every spawned worker group on both return and
+exception, including after its leader exits. Parent descriptor closure cannot
+unlock a surviving inherited writer if cleanup fails. Never
 remove lock/request files to force a restart; inspect surviving processes first.
 
 Use a measured stage timeout and an equal or longer handoff allowance. Increase
@@ -49,7 +52,9 @@ Config fields are explicit: pinned `prep_plan` and `prep_runner`, `python`,
 `stop_paths`, destination `disk_paths`, `memory_floor_gib`, `rss_cap_gib`,
 `disk_floor_gib`, `stage_seconds`, `handoff_seconds`, `sidecar_seconds`, and
 `queued_seconds`. Resource validation rejects relaxed original bounds; queued
-seconds must equal original preparation seconds plus the handoff allowance.
+seconds must equal original preparation seconds plus the handoff allowance. Time
+budgets and RSS caps must be finite and positive; RAM/disk floors must be finite
+and nonnegative. Nonfinite JSON numbers cannot disable a bound.
 
 A `max_build_rows` limit can leave unusually large cohort builds to the final
 coordinator while still sealing every base. The sidecar starts no further stage

@@ -13,7 +13,10 @@ Recovery preserves the historical evidence and source ancestry. The wrapper now
 uses fail-closed Linux procfs memory/RSS reads instead of the undeclared psutil
 dependency, with PID-reuse checks and resource-guard regressions. Optional import
 and ownership checks are explicit for current type checking. Resource thresholds,
-whole-stage handoff and inherited writer ownership remain unchanged. GitHub CI
+whole-stage handoff and inherited writer ownership remain required. Recovery
+review also requires cleanup of every queued child group before returning, while
+closing only the parent's ownership descriptor preserves a surviving writer's lock
+if cleanup fails. Time/resource bounds reject nonfinite values. GitHub CI
 and a fresh independent review are required for the recovered head; the historical
 validation below does not validate these recovery changes. Existing operator pins
 still identify historical code. No queue change, probe, teacher evaluation,

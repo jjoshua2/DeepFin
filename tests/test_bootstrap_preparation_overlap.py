@@ -364,3 +364,135 @@ def test_run_child_enforces_rss_cap_and_cleans_worker(tmp_path, monkeypatch):
         import fcntl
 
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+@pytest.mark.parametrize("outcome", ["return", "raise", "leader_exit"])
+def test_queued_return_and_error_reap_owned_writer_groups(tmp_path, outcome):
+    import fcntl
+
+    runner = tmp_path / "prep.py"
+    ready = tmp_path / "writer.pid"
+    child_code = (
+        "import os,time; from pathlib import Path; "
+        + ("pid=os.fork(); os._exit(0) if pid else None; " if outcome == "leader_exit" else "")
+        + f"Path({str(ready)!r}).write_text(str(os.getpid())); time.sleep(30)"
+    )
+    runner.write_text(
+        "import subprocess,sys,time\nfrom pathlib import Path\n"
+        "def main():\n"
+        f" p=subprocess.Popen([sys.executable, '-c', {child_code!r}], start_new_session=True)\n"
+        " end=time.monotonic()+5\n"
+        f" while not Path({str(ready)!r}).exists():\n"
+        "  assert time.monotonic()<end\n"
+        "  time.sleep(.01)\n"
+        + (" p.wait(timeout=5)\n" if outcome == "leader_exit" else "")
+        + (" raise RuntimeError('coordinator failed')\n" if outcome == "raise" else "")
+    )
+    settings = {**config(tmp_path), "prep_runner": {"path": str(runner)}}
+    try:
+        with tool.stage_lock(tmp_path, settings, time.monotonic() + 60, queued=True) as fd:
+            assert fd is not None
+            if outcome == "raise":
+                with pytest.raises(RuntimeError, match="coordinator failed"):
+                    tool.run_queued(settings, [sys.executable, str(runner)], fd)
+            else:
+                tool.run_queued(settings, [sys.executable, str(runner)], fd)
+        # A live writer keeps an inherited descriptor, including after its
+        # new-session leader exits. Acquiring a distinct description proves
+        # cleanup finished before ownership became available.
+        with (tmp_path / "ownership.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        if ready.exists():
+            try:
+                os.kill(int(ready.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_cleanup_failure_cannot_unlock_surviving_inherited_writer(tmp_path, monkeypatch):
+    import fcntl
+
+    runner = tmp_path / "prep.py"
+    ready = tmp_path / "writer.pid"
+    runner.write_text(
+        "import subprocess,sys,time\nfrom pathlib import Path\n"
+        "def main():\n"
+        " subprocess.Popen([sys.executable, '-c', "
+        + repr(f"import os,time; from pathlib import Path; Path({str(ready)!r}).write_text(str(os.getpid())); time.sleep(30)")
+        + "],start_new_session=True)\n"
+        " end=time.monotonic()+5\n"
+        f" while not Path({str(ready)!r}).exists():\n"
+        "  assert time.monotonic()<end\n"
+        "  time.sleep(.01)\n"
+    )
+    settings = {**config(tmp_path), "prep_runner": {"path": str(runner)}}
+    children = []
+    terminate = tool.terminate
+
+    def failed_cleanup(child):
+        children.append(child)
+        raise RuntimeError("injected cleanup failure")
+
+    monkeypatch.setattr(tool, "terminate", failed_cleanup)
+    try:
+        with pytest.raises(RuntimeError, match="child cleanup failed"):
+            with tool.stage_lock(tmp_path, settings, time.monotonic() + 60, queued=True) as fd:
+                assert fd is not None
+                tool.run_queued(settings, [sys.executable, str(runner)], fd)
+        with (
+            (tmp_path / "ownership.lock").open("a") as lock,
+            pytest.raises(BlockingIOError),
+        ):
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        for child in children:
+            terminate(child)
+
+
+def valid_bound_inputs(tmp_path):
+    runner = {"path": str(tmp_path / "preparation" / "run.py"), "sha256": "a" * 64}
+    settings = {
+        "python": sys.executable, "prep_runner": runner,
+        "rss_cap_gib": 32, "memory_floor_gib": 32, "disk_floor_gib": 80,
+        "stage_seconds": 1, "handoff_seconds": 2, "sidecar_seconds": 90,
+        "queued_seconds": 102,
+        "stop_paths": [str(tmp_path / "preparation" / "STOP"), str(tmp_path / "STOP")],
+        "disk_paths": [str(tmp_path)],
+    }
+    plan = {
+        "python": sys.executable, "pins": [runner], "max_seconds": 100,
+        "process_memory_cap_gib": 32, "available_memory_floor_gib": 32,
+        "disk_floor_gib": 80, "cohorts": [{"output": str(tmp_path / "targets")}],
+    }
+    return settings, plan
+
+
+@pytest.mark.parametrize("name", [
+    "stage_seconds", "handoff_seconds", "sidecar_seconds", "queued_seconds",
+    "rss_cap_gib", "memory_floor_gib", "disk_floor_gib",
+])
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan"), -1, True])
+def test_config_requires_finite_resource_and_time_bounds(tmp_path, name, value):
+    settings, plan = valid_bound_inputs(tmp_path)
+    tool.validate_config(settings, plan)
+    settings[name] = value
+    with pytest.raises(RuntimeError, match=name + " must be finite"):
+        tool.validate_config(settings, plan)
+
+
+def test_infinite_handoff_and_queued_allowance_are_refused(tmp_path):
+    settings, plan = valid_bound_inputs(tmp_path)
+    settings.update(handoff_seconds=float("inf"), queued_seconds=float("inf"))
+    with pytest.raises(RuntimeError, match="handoff_seconds must be finite"):
+        tool.validate_config(settings, plan)
+
+
+@pytest.mark.parametrize("name", [
+    "max_seconds", "process_memory_cap_gib", "available_memory_floor_gib", "disk_floor_gib",
+])
+def test_frozen_plan_requires_finite_original_bounds(tmp_path, name):
+    settings, plan = valid_bound_inputs(tmp_path)
+    plan[name] = float("inf")
+    with pytest.raises(RuntimeError, match="plan." + name + " must be finite"):
+        tool.validate_config(settings, plan)
