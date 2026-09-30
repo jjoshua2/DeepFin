@@ -25,6 +25,23 @@ CATALOG_STATUS = "PASS_METADATA_INVENTORY_ONLY"
 RECEIPT_SCHEMA = "arena_durable_pair_receipt_v1"
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 
+_VALIDATED_SEAL_CAPABILITY = object()
+
+
+class ValidatedSourceSeal:
+    """Capability returned only after the complete durable source seal validates."""
+
+    __slots__ = ("sha256",)
+
+    def __init__(self, sha256: str, *, _capability: object | None = None) -> None:
+        if _capability is not _VALIDATED_SEAL_CAPABILITY or not _SHA.fullmatch(sha256):
+            raise TypeError("ValidatedSourceSeal must come from validate_source_seal")
+        self.sha256 = sha256
+
+
+def _validated_source_seal(sha256: str) -> ValidatedSourceSeal:
+    return ValidatedSourceSeal(sha256, _capability=_VALIDATED_SEAL_CAPABILITY)
+
 
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -196,7 +213,7 @@ def validate_source_seal(
     path: Path, expected_sha: str, *, argv: list[str],
     candidate: str, reference: str, openings: Path, config: Path,
     syzygy_path: str,
-) -> str:
+) -> ValidatedSourceSeal:
     """Read a frozen manifest and validate every cheap per-attempt input.
 
     Tablebase file *metadata* is sealed by the catalog's own hash. Per attempt
@@ -277,7 +294,7 @@ def validate_source_seal(
     if _sha(catalog_raw) != tablebase["sha256"]:
         raise ValueError("tablebase metadata inventory bytes changed")
     _validate_tablebase_catalog(json.loads(catalog_raw), syzygy_path)
-    return expected_sha
+    return _validated_source_seal(expected_sha)
 
 
 def prepare_source_seal(
