@@ -1,8 +1,8 @@
 # D-lite scalar value: small-bank executable path
 
-Status: source implementation and synthetic tests only. No mixed-source scalar
-label job, selected-target attachment, pack, training, corpus admission or Elo
-result has been run by this path.
+Status: source implementation, synthetic tests, and one independently audited
+128-row d8 scalar diagnostic. No selected-target attachment, pack, training,
+corpus admission or Elo result has been run by this path.
 
 The [small-bank adapter](../../scripts/sf_dlite_smallbank.py) accepts at most
 512 uniquely keyed winners and their compact, authenticated tri-source
@@ -56,10 +56,37 @@ metadata manifest; it never reads a tensor spool or source archive. The
 receipt must first pass independent physical audit. A failed or partial replay
 is ineligible, and extraction gives no labels or corpus credit.
 
-`inspect` is read-free. A future bounded physical invocation can run `label`
-with pinned small winner/proof JSONL, qualified Stockfish binary and strict
-Syzygy directories, then `attach` with pinned label and selected-target
-JSONL. Each selected-target line supplies `uid`, `input_digest`, `pov_white`,
+The successful tri-source v8 replay produced 83,991 gross rows and 83,416
+unique inputs. Its terminal, receipt, wave-1 index and three game-proof files
+passed independent output audit. The extractor froze 128 distinct inputs from
+the unique-winner receipt (42 BT4, 50 Ceres, 36 SF) and 114 complete game
+proofs. A separate audit recomputed the sample hash rank across all 83,416
+winners, matched the selected raw index/proof lines, and replayed all selected
+histories, side-to-move and rule50 joins.
+
+The first physical scalar diagnostic then ran one persistent, qualified
+retained-tablebase Stockfish binary at fixed d8, Hash8 and one thread on those
+128 rows. It requested strict six-man Syzygy, the 50-move rule, probe limit 6,
+tablebase retention and a cold TT with serialized `readyok` for every row. The
+complete record contains 128 raw UCI score streams, including eight mate
+scores. An independent parser checked every exact depth-8 CP/mate, native WDL,
+node count and legal PV, rebuilt each full position and verified the saved
+D-calibrated values to 1e-6. Every sampled root had more than six pieces, but
+20 final depth-8 UCI lines reported nonzero `tbhits` (560 in total, at most 57
+in one search): 13 of those roots had seven pieces, three had eight, three had
+nine and one had ten. Their board plies ranged from 75 to 296 (median 150).
+The [compact evidence](evidence/2026-09-29-sf-dlite-128-raw-labels.json) pins
+the replay, extraction, raw labels, audits and durable artifact manifest by
+SHA-256 without embedding source-host paths. The audited scope is the requested
+engine profile and raw labels; there was no independent UCI wire capture,
+effective-option attestation or tablebase catalog attribution. The label pilot
+measured no throughput or Elo and grants no selected-target, pack, corpus or
+training credit.
+
+`inspect` is read-free. The completed `label` invocation used pinned small
+winner/proof JSONL, a qualified Stockfish binary and strict Syzygy directories.
+The separate `attach` step still requires corrected, authenticated selected
+target JSONL. Each selected-target line supplies `uid`, `input_digest`, `pov_white`,
 `teacher`, `target_sha256`, `target_hex` (float16 policy then WDL) and
 `legal_mask_hex`. The operator must first extract the small winner/proof bank
 from a successfully audited replay receipt; source proof lines and selected
