@@ -7,16 +7,18 @@ Larger batches reduced measured label-call work on the same 58,820-row roster. B
 | BT4: B32a, B128a, B128b, B32b | 37.315552, 26.625312, 26.724909, 37.360918 | 37.338235 → 26.675110 s | 28.558% |
 | Ceres: C32a, C512a, C512b, C32b | 156.517484, 38.798012, 38.899173, 143.121593 | 149.819539 → 38.848593 s | 74.070% |
 
-Both paired savings were positive: BT4 28.648% and 28.468%; Ceres 75.212% and 72.821%. Each arm processed 58,820 fixed rows with a shape-matched warmup. BT4 used a short final call; Ceres repeated the last real feed to fill its physical tail. The independent audits reopened all raw-head files, checked their full-file hashes, geometry and finite values, and reproduced the fixed 4,096-row quality sample with the pinned target math. Repeated runs at the **same** batch profile produced identical raw bytes. This is an independent process and byte readback, while the target math is shared with the screen rather than independently reimplemented.
+Both paired savings were positive: BT4 28.648% and 28.468%; Ceres 75.212% and 72.821%. Each arm processed 58,820 fixed rows with a shape-matched warmup. BT4 used a short final call; Ceres repeated the last real feed to fill its physical tail. The original independent audits reopened all raw-head files, checked their full-file hashes, geometry and finite values, and reproduced the fixed 4,096-row quality sample with the screen's target math. Repeated runs at the **same** batch profile produced identical raw bytes. A later [direct compact-order readback](2026-09-30-full58820-corrected-selected-targets.md) corrected the Ceres top-1 count below without changing either raw-head bank or the measured call times.
 
 | Numerical check, batch candidate versus batch 32 | BT4 batch 128 | Ceres batch 512 |
 | --- | ---: | ---: |
-| Legal-policy top-1 agreement | 100% | 99.5605% |
+| Legal-policy top-1 agreement | 100% | 99.609375% |
 | Legal-policy total variation, p99 / max | 0 / 0.000000119 | 0.013068 / 0.026917 |
 | Training WDL total variation, p99 / max | 0 / 0 | 0.004378 / 0.016953 |
 | Frozen numerical-profile budget | Pass | Pass |
 
 The sample is 4,096 rows and 8,192 paired comparisons per teacher. The training WDL is native for BT4 and combines two value heads for Ceres. Ceres has nonzero policy and WDL differences; its batch-512 output is an allowed numerical variant, not a byte-preserving replacement for batch 32. Reported policy-TV maxima for the endgame, high rule-50 and mate-in-one slices remain below the overall policy-TV maximum budget; subgroup top-1 and WDL quantiles were not separately assessed. Mate-in-one coverage does not establish behavior for longer mate sequences.
+
+**Compact-order correction, 2026-09-30.** The first Ceres quality conversion paired board-order legal logits with compact-sorted legal slots. On the same frozen sample, a direct raw-head-to-compact reconstruction changes Ceres top-1 disagreement from 36/8,192 (99.560546875% agreement) to 32/8,192 (99.609375%). Policy-TV p99/max remains 0.013068130314350137 / 0.026916921138763428; calibrated WDL-TV p99/max remains 0.004377536773681641 / 0.0169525146484375. The frozen numerical-profile budget still passes. These are paired numerical-profile facts, not a strength readout. The original raw quality audit remains historical evidence of the mistaken mapping; the corrected direct audit and all 8,192 pair records are pinned in the [correction record](2026-09-30-full58820-corrected-selected-targets.md).
 
 **Execution and credit boundary.** The BT4 quartet came from the interrupted v5 run03. Its four BT4 jobs finished, but the attempted C32a worker then failed at import, leaving the run's `FAILED_ZERO_CREDIT` receipt. The BT4 result is therefore an independently audited completed-quartet diagnostic, not a completed eight-arm run. A later v6 run04 repaired the Ceres worker import environment and completed **only** the Ceres quartet with a `COMPLETE_BATCH_PROFILE_ZERO_CREDIT` terminal. The two quartets have separate source packets, output roots and audits; there is no combined eight-arm terminal.
 
