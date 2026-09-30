@@ -1,5 +1,36 @@
 # Bend migration and proof inventory
 
+## Extras native coverage reinforcement: September 23, 2026
+
+Native-fixture reinforcement run **35924465983** on source `3c52e6469b3ba9cf133077f73d8f96ca8dcc76cd` passes the unchanged two-law consumer and all 14 controls, eight full buffers / 1,048,576 cell comparisons per mode, the protected-cell-copy regression, 12 compiler-pin checks and unchanged whole-repository lint. Full source aggregate100/226 was completed in run35920944024 on the same unchanged logical proof sources, not rerun for native-only changes. The added distinct-cell fixtures close a documented copy-corruption blind spot while preserving all old cases. Stored headers and independent blocker-ray refinement remain separate.
+
+## Current extras-preservation hosted qualification: September 23, 2026
+
+Hosted run **35920944024**, workflow commit `3ae0ffe92b941c2c6145f71d788bfa48d8f36695`, passes the full **100-law / 226-control aggregate**, four native modes, original compiler source/pin gates and unchanged whole-repository lint on exact source `c60a5e83958acef579f50593e970d40b1a0019e9`. These are the unchanged saved two laws, not additional contracts beyond that candidate. Historical local-only/full-aggregate-unrun/lint-unqualified statements below retain their original context; these gaps are now closed for the exact hosted candidate. Stored headers and full independent ray lookup remain separate P2 obligations. See the dated extras readout and committed hosted evidence.
+
+## Local extras-stage preservation — September 23, 2026
+
+Two new source laws and their importing consumer pass; all 14 focused rejection
+controls and four full-buffer native modes pass. The complete 100-law aggregate
+is **not run**, hosted qualification is not performed, and whole-repository lint
+fails because its tools are absent. This remains a local patch based on #861,
+not a new remote branch or PR. Parent98-law/212-control evidence remains retained.
+
+`extras/bounded_extras_read` preserves the complete final read pair outside
+[256,512) for complete depth17 arrays, n+k<=64 and q<131072.
+`extras/table_pipeline_extras_read` derives the complete shape from actual
+allocation and the actual prior table loop; depth stays symbolic with d=17.
+Neither law assumes the desired query value or that prior headers are correct.
+
+This closes the final-extras preservation obligation for incoming header and
+slider values, not the remaining stored-header/other-block/independent-ray
+contracts. The actual full pipeline can specialize the symbolic theorem;
+fully expanded closed consumer attempts remain documented as unqualified drafts.
+See [the dated record](experiments/2026-09-23-bend-extras-preservation.md), source
+identities and retained failures. No production logic, old laws or compiler input
+changed; no Python application responsibility moved. No native allocation/lifetime,
+model/GPU or performance guarantee is implied.
+
 ## Current computed-fill hosted qualification: September 23, 2026
 
 Hosted run **35896688343**, workflow commit `c118f74d060f9e183f1cac6a212413dc42dd6e97`, passes the complete **98-law / 212-control aggregate**, four native modes, original compiler source/pin gates and unchanged whole-repository lint on source `94e380d218d1713828fd192427282588bf7df910`. The three public laws are the unchanged saved candidate, not three additional laws beyond that candidate. The historical local-only/aggregate-unrun/lint-unqualified statements below remain records of their original commands; these gaps are now closed for the exact hosted candidate. No broader geometry or full-builder theorem is implied. See the dated fill-contents readout and committed hosted reports.
