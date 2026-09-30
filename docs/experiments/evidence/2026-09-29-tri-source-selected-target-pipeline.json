@@ -2,6 +2,8 @@
   "artifact_sha256": {
     "bc_8192_zip_producer": "2f8b33b1b627432b65afe57d6d1eafcaec505735e19d434df37074b9befb52f4",
     "bc_8192_zip_receipt": "4cf609d225edb34b2e2afb37a9bcf698bdfa60c871107af4323e4d0e2121e03e",
+    "bc_8192_zip_root_direct_audit": "d84eabb1c5e8692bd602cffc6bbfa1c7706432455360ef09db8eb09c5b754645",
+    "bc_8192_zip_root_direct_audit_source": "e2033e1cc620fd6930d50f08f2f6d45a3cf1b66a2ca257aaae94b12a601883ef",
     "bc_8192_zip_self_audit": "3d902826836e69d6e9f3bd29b007d87eb41c5da3d9f25675215e7f88a98d7fcd",
     "bc_8192_zip_self_audit_source": "7b3b6e9d43307cbd23780593e4fc6f43166ff720196d3d8f434b446f5f0f5bd1",
     "bc_compact_binary_producer": "8d07354fe30ad14d6a9884a3686a52592f8bdc3fe34917cd53a4a1f255b6f195",
@@ -77,11 +79,11 @@
     "external storage loader and GPU training throughput unmeasured",
     "whole source archives include unselected members and losing rows",
     "compact chosen raw legal-head bank is measured on B/C subset only, with a verbose diagnostic index",
-    "larger-shard physical format measured on B/C subset; independent and external-loader qualification pending",
+    "larger-shard physical format independently audited on B/C subset; external-loader qualification pending",
     "compact binary and 8192-row ZIP follow-ups cover only the 58773-row B/C subset",
     "compact binary subtotal excludes final receipt, proof copies and source bank",
     "compact binary prefix table and completed-segment resume require scaling work",
-    "8192-row ZIP independent audit and external-drive loader screen remain pending",
+    "8192-row ZIP direct chunk bytes independently audited; production CPU collate checked by author; external-drive loader screen pending",
     "process logical I/O unavailable on reboot kernel; no zero-I/O claim"
   ],
   "schema": "tri_source_selected_target_pipeline_compact_evidence_v1",
@@ -103,7 +105,7 @@
     "whole_source_archives_per_unique_winner": 3131.2765057063393
   },
   "verification": {
-    "bc_8192_zip_independent": "PENDING",
+    "bc_8192_zip_independent": "PASS_ALL_58773_ROWS_15_ARRAYS_DIRECT_CHUNK_BYTES",
     "bc_8192_zip_self": "PASS_ALL_15_ARRAYS_ALL_58773_ROWS_CPU_COLLATE",
     "bc_compact_binary_root": "PASS_ALL_58773_ORDINAL_UID_NATIVE_PAYLOAD_BYTES",
     "compact_raw_legal": "PASS_ALL_INDEX_NATIVE_BYTES_AND_TARGETS_DIAGNOSTIC",

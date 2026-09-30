@@ -119,8 +119,10 @@ containers. Their internal Zarr chunks remain 512 rows. The eight ZIPs total
 immediately after sealing the first container, resume retained it and sealed
 the other seven. A separate self-authored readback matched all 15 stored
 arrays over all 58,773 rows and matched all 115 corresponding CPU collation
-batches through the production loader. An independent review of the larger
-ZIPs remains pending. Applying only the container geometry to 500M rows
+batches through the production loader. An independently authored direct-chunk
+parser then matched all 15 arrays over all 58,773 rows in 1,725 chunk
+comparisons, without importing the producer or production loader. Applying
+only the container geometry to 500M rows
 would yield about 61,036 physical ZIPs; external-drive loading, training
 throughput and the full three-source mix remain unmeasured.
 
@@ -147,8 +149,8 @@ arrays and the B/C compact raw-head diagnostic each have independent all-row
 checks. No matched training run or arena
 used this pack, so no Elo or source-mixture strength conclusion follows. The
 next production gates are a scalable compact raw observation reader and resume
-path, independent larger-ZIP review, an actual external-loader screen, and an
-independently registered matched training/arena comparison on a representative
+path, an actual external-loader screen, and an independently registered
+matched training/arena comparison on a representative
 unique-position bank.
 
 The [compact evidence manifest](evidence/2026-09-29-tri-source-selected-target-pipeline.json)
