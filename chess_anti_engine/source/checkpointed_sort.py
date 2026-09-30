@@ -603,17 +603,19 @@ class CheckpointedSort:
         for index in range(count):
             expected_names.add(f"part_{index:08d}.jsonl")
             expected_names.add(f"part_{index:08d}.receipt.json")
-        if (path / "RUN.json").exists():
+        final = path / "RUN.json"
+        if final.exists():
             expected_names.add("RUN.json")
         unsealed = {f"part_{count:08d}.jsonl",
                     f".part_{count:08d}.jsonl.part",
                     f".part_{count:08d}.receipt.json.part"}
         if not require_final:
+            if not final.exists():
+                unsealed.add(".RUN.json.part")
             for name in all_names & unsealed:
                 (path / name).unlink()  # only the next owned unsealed part
             all_names -= unsealed
         _need(all_names == expected_names, "sort run file membership")
-        final = path / "RUN.json"
         if require_final or final.exists():
             _need(final.exists() and count > 0, "final sort run receipt")
             final_raw = final.read_bytes()

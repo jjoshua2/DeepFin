@@ -201,6 +201,61 @@ def test_stable_same_key_merge_kill_resume_and_group_bound(tmp_path: Path) -> No
         store.verify_run(final)
 
 
+def test_final_receipt_stage_sigkill_resume_preserves_parts(tmp_path: Path) -> None:
+    store = cs.CheckpointedSort(
+        tmp_path / "runs", source_sha256=SOURCE, config_sha256=CONFIG,
+        kind="digest", row_cap=2, byte_cap=2048, fanin=2)
+    inputs = [store.seal_source_run(
+        f"source_{index}", [cs.SortEntry(DIGEST, index, (0, index))],
+        source_identity_sha256=str(index) * 64)
+        for index in range(2)]
+    child = """import os, signal, sys
+from pathlib import Path
+from chess_anti_engine.source import checkpointed_sort as cs
+old_atomic = cs._atomic_bytes
+def kill_at_final(path, data):
+    if path.name == 'RUN.json':
+        stage = path.with_name('.RUN.json.part')
+        with stage.open('xb') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.kill(os.getpid(), signal.SIGKILL)
+    old_atomic(path, data)
+cs._atomic_bytes = kill_at_final
+root = Path(sys.argv[1])
+store = cs.CheckpointedSort(root, source_sha256='a'*64,
+    config_sha256='b'*64, kind='digest', row_cap=2, byte_cap=2048, fanin=2)
+store.merge_run('merged', [root/'source_0', root/'source_1'])
+"""
+    code = cs.run_owned_cpu(
+        [sys.executable, "-c", child, str(store.root)],
+        log_path=tmp_path / "final_kill.log", timeout_seconds=30)
+    assert code == -signal.SIGKILL
+    run = store.root / "merged"
+    assert (run / ".RUN.json.part").is_file()
+    assert not (run / "RUN.json").exists()
+    receipts = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in run.glob("part_*.receipt.json")}
+    assert len(receipts) == 1
+
+    assert store.merge_run("merged", inputs) == run
+    assert not (run / ".RUN.json.part").exists()
+    assert {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in run.glob("part_*.receipt.json")} == receipts
+    final_sha = hashlib.sha256((run / "RUN.json").read_bytes()).hexdigest()
+    assert store.merge_run("merged", inputs) == run
+    assert hashlib.sha256((run / "RUN.json").read_bytes()).hexdigest() == final_sha
+
+    # A scratch file alongside an already sealed final receipt is not owned
+    # recovery state.
+    stage = run / ".RUN.json.part"
+    stage.write_bytes(b"unexpected")
+    with pytest.raises(cs.CheckpointError, match="file membership"):
+        store.verify_run(run)
+    assert stage.read_bytes() == b"unexpected"
+
+
 def test_duplicate_digest_group_accumulator_does_not_grow_with_members() -> None:
     def peak_for(count: int) -> int:
         losers = 0
