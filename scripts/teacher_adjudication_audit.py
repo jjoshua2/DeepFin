@@ -378,6 +378,59 @@ def _deeper_reversal(
     return max(final_scores.values()) > best_d9
 
 
+def _ranking_outcomes(
+    move: str, d9_best: set[str], final: dict[str, float] | None,
+) -> tuple[str, str]:
+    """Return existential and all-winner outcomes; absent scores stay unknown."""
+    if final is None or move not in final or not d9_best <= set(final):
+        return 'unscored', 'unscored'
+
+    def compare(winner: float) -> str:
+        return 'confirmed' if winner > final[move] else 'contradicted' if winner < final[move] else 'ties'
+
+    return (compare(max(final[item] for item in d9_best)),
+            compare(min(final[item] for item in d9_best)))
+
+
+def policy_complementarity(
+    d9: dict[str, float], d9_best: set[str], final: dict[str, float] | None,
+    mapping: dict[str, int], bt4: np.ndarray, cpolicy: np.ndarray,
+) -> dict[str, Any]:
+    """Raw teacher mass on the same >300cp set; never renormalize a roster."""
+    legal = np.zeros_like(bt4, dtype=bool)
+    legal[list(mapping.values())] = True
+    arithmetic = arithmetic_mix(bt4, cpolicy, legal)
+    policies = {'bt4': bt4, 'ceres': cpolicy, 'arithmetic50': arithmetic}
+    partitions: dict[str, Any] = {
+        name: {'moves': 0, **dict.fromkeys(policies, 0.0)}
+        for name in ('confirmed', 'contradicted', 'ties', 'unavailable')}
+    observations = []
+    for move, index in sorted(mapping.items(), key=lambda item: item[1]):
+        score = d9[move]
+        flagged = max(d9.values()) - score > 300.0
+        outcome = _ranking_outcomes(move, d9_best, final)[1] if flagged else None
+        if outcome == 'unscored':
+            outcome = 'unavailable'
+        masses = {name: float(policy[index]) for name, policy in policies.items()}
+        if flagged:
+            assert outcome is not None
+            cell = partitions[outcome]
+            cell['moves'] += 1
+            for name, mass in masses.items():
+                cell[name] += mass
+        final_score = None if final is None else final.get(move)
+        observations.append({
+            'policy_index': index, 'move': move, 'd9_effective_cp': score,
+            'd9_mate_domain': abs(score) > sf_wdl.SF_CP_CLAMP_CP,
+            'final_effective_cp': final_score,
+            'final_mate_domain': None if final_score is None else abs(final_score) > sf_wdl.SF_CP_CLAMP_CP,
+            'bt4_probability': masses['bt4'], 'ceres_probability': masses['ceres'],
+            'inferior_gt300': flagged, 'all_winner_outcome': outcome})
+    totals = {name: sum(cell[name] for cell in partitions.values()) for name in policies}
+    return {'threshold_cp': 300, 'partitions': partitions, 'flagged_mass': totals,
+            'move_observations': observations}
+
+
 def _update_ranking(
     aggregate: dict[str, Any], d9: dict[str, float], d9_best: set[str],
     final: dict[str, float] | None, move_mass: dict[str, float] | None = None,
@@ -400,13 +453,7 @@ def _update_ranking(
             row['constraints'] += 1
             conservative = row['all_winner']
             conservative['constraints'] += 1
-            if final is None or move not in final or not d9_best <= set(final):
-                existential = outcome = 'unscored'
-            else:
-                def compare(winner: float, other: float) -> str:
-                    return 'confirmed' if winner > other else 'contradicted' if winner < other else 'ties'
-                existential = compare(max(final[item] for item in d9_best), final[move])
-                outcome = compare(min(final[item] for item in d9_best), final[move])
+            existential, outcome = _ranking_outcomes(move, d9_best, final)
             row[existential] += 1
             conservative[outcome] += 1
             conservative[outcome + '_bt4_mass'] += mass
@@ -714,6 +761,7 @@ def analyze_row(
                             'bt4_top_probability': bt4_top_probability, 'bt4_entropy': entropy(bt4),
                             'ceres_present': ceres_bank is not None, 'policy': {}, 'paired_regret_delta_cp': {},
                             'position_strata': _position_strata(board, raw_row)}
+    bank['policy_complementarity_gt300'] = None
     if bank_value_details:
         bank['value_inclusion'] = 'mate_domain_d9'
     ordinary = not any(abs(score) > sf_wdl.SF_CP_CLAMP_CP for score in d9.values())
@@ -781,6 +829,7 @@ def analyze_row(
     pair["bt4_entropy_sum"] += entropy(bt4)
     pair["ceres_entropy_sum"] += entropy(cpolicy)
 
+    bank['policy_complementarity_gt300'] = policy_complementarity(d9, d9_best, final, mapping, bt4, cpolicy)
     bank['ceres_top_probability'] = max(float(cpolicy[index]) for index in mapping.values())
     bank['ceres_entropy'] = entropy(cpolicy)
     bank['neural_js'] = js_divergence(bt4, cpolicy, legal)
