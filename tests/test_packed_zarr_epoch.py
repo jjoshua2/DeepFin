@@ -297,7 +297,7 @@ def test_qualification_memory_guard_preserves_limits(monkeypatch):
     from scripts import training_host_memory as memory
 
     requested = []
-    monkeypatch.setattr(memory, "require_available", lambda gib: requested.append(gib))
+    monkeypatch.setattr(memory, "require_available", requested.append)
     monkeypatch.setattr(qualification.os, "sysconf", lambda _: 4096)
     monkeypatch.setattr(Path, "read_text", lambda _: "0 4194304 0 0 0 0 0")
     qualification._check_memory()
@@ -387,7 +387,7 @@ def test_qualification_refuses_nonpacked_target_in_zip_arm(corpus, tmp_path, tar
             target = tmp_path / (directory.name + ".data")
             target.write_bytes((packed_root / (directory.name + ".zip")).read_bytes())
             path.symlink_to(target)
-    with pytest.raises(ValueError, match="packed arm requires regular .zarr.zip files"):
+    with pytest.raises(ValueError, match=r"packed arm requires regular \.zarr\.zip files"):
         qualify(source, false_packed, {})
 
 
