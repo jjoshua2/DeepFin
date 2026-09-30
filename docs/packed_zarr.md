@@ -58,9 +58,13 @@ The report includes separate planning time, batch waits, consumer wall time,
 digest overhead, plan identities and matching ordered tensor hashes. This is a
 fixed-order, cache-affected exact-sampler measurement, not cold-disk bandwidth or
 full training throughput; mirror/collation execution is not exercised. The CLI
-uses two allowed CPU cores, nice19, no GPU, a 16GiB RSS cap and 32GiB host-memory
-reserve. It observes `STOP` beside the fresh result file. No corpus files are
-written, and a matching result does not adopt the format in a live job.
+is Linux-only and uses two allowed CPU cores, nice19 and no GPU. It samples
+process RSS from `/proc/self/statm` and host `MemAvailable` from `/proc/meminfo`
+every 0.5 seconds, stopping above 16GiB RSS or below 32GiB available host memory.
+Unavailable or malformed measurements fail closed. These sampled limits are not
+a hard allocation cap or a cgroup-aware memory guarantee. It observes `STOP`
+beside the fresh result file. No corpus files are written, and a matching result
+does not adopt the format in a live job.
 
 ## Offline training CLI
 
