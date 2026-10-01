@@ -1,0 +1,24 @@
+import Base
+import ./Spec.bend as S
+import ./Finish.bend as F
+import ./Checks.bend as Checks
+import ../board/Spec.bend as B
+import ../castling/Route.bend as R
+import ../castle_emission/Spec.bend as E
+import ../../../legal_probe/Chess.bend as Chess
+import ./LAWS.bend as Laws
+
+def Laws.transit_preserves_moving_king_singleton(b,r,good,one):
+  F.transit(b,r,good,one)
+
+def Laws.castle_preserves_moving_king_singleton(b,r,good,one,fresh):
+  F.castle(b,r,good,one,fresh)
+
+def Laws.guard_supplies_castling_singleton(b,ks,good,one,guard):
+  Checks.guarded_singleton(b,ks,good,one,guard)
+
+def Laws.guarded_checks_target_original_side_king(table,b,ks,stage,good,one,guard):
+  Checks.guarded_check(table,b,ks,stage,good,one,guard)
+
+def Laws.move_flips_valid_side(b,m,white,valid):
+  Checks.valid_side(b,m,white,valid)

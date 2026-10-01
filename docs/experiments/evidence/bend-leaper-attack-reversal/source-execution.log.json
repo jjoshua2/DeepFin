@@ -1,0 +1,4 @@
+{
+  "sha256": "2984c07745995f009fd8667f832e21b310646ee87ae9095d59e608e1d97804a5",
+  "raw_text": "PASS complete two-law consumer\nPASS control pawn-reversal-must-change-color\nPASS control king-edge-correspondence\nPASS control actual-knight-offset\nPASS control source-bound-required\nPASS control target-bound-required\nPASS control public-mask-must-use-reversed-kind\nPASS control reflection-high-limb-not-low\nPASS control computed-zero-is-not-geometry\n"
+}

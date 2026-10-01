@@ -144,6 +144,8 @@ def test_changed_source_schema_or_code_claim_refuses(tmp_path: Path,
         frames.pack_frame(source, root, replace(spec, schema_sha256="d" * 64))
     with pytest.raises(frames.FrameError, match="claim changed"):
         frames.pack_frame(source, root, replace(spec, source_sha256="e" * 64))
+    with pytest.raises(frames.FrameError, match="claim changed"):
+        frames.pack_frame(source, root, replace(spec, config_sha256="d" * 64))
     original = frames._claim
     monkeypatch.setattr(frames, "_claim", lambda s: {
         **original(s), "code_sha256": "f" * 64,
@@ -292,3 +294,193 @@ def test_live_writer_lock_is_nonblocking(tmp_path: Path) -> None:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         with pytest.raises(frames.FrameError, match="already has a writer"):
             frames.pack_frame(source, root, spec)
+
+
+@pytest.mark.parametrize("limit", ["rows", "bytes"])
+def test_actual_maximum_block_roundtrips(tmp_path: Path, limit: str) -> None:
+    if limit == "rows":
+        raw = _rows(frames.MAX_ROWS)
+        rows = frames.MAX_ROWS
+    else:
+        prefix, suffix = b'{"uci_raw":"', b'"}\n'
+        raw = prefix + b"x" * (frames.MAX_RAW_BYTES - len(prefix) - len(suffix)) + suffix
+        rows = 1
+    source = tmp_path / "boundary.jsonl"
+    source.write_bytes(raw)
+    spec = frames.FrameSpec(SOURCE, SCHEMA, CONFIG, hashlib.sha256(raw).hexdigest(),
+                            0, rows, len(raw))
+    root = tmp_path / "frames"
+    receipt, reused = frames.pack_frame(source, root, spec)
+    assert not reused
+    assert receipt["raw_bytes"] == len(raw)
+    assert receipt["rows"] == rows
+    assert zstd.ZstdDecompressor().decompress(_frame_path(root, 0).read_bytes()) == raw
+    assert frames.pack_frame(source, root, spec) == (receipt, True)
+
+
+@pytest.mark.parametrize("limit", ["rows", "bytes"])
+def test_actual_oversized_input_refuses_without_a_seal(tmp_path: Path, limit: str) -> None:
+    raw = b"{}\n" * (frames.MAX_ROWS + 1) if limit == "rows" else b"x" * (frames.MAX_RAW_BYTES + 1)
+    source = tmp_path / "oversized.jsonl"
+    source.write_bytes(raw)
+    spec = frames.FrameSpec(SOURCE, SCHEMA, CONFIG, hashlib.sha256(raw).hexdigest(),
+                            0, frames.MAX_ROWS if limit == "rows" else 1,
+                            min(len(raw), frames.MAX_RAW_BYTES))
+    root = tmp_path / "frames"
+    with pytest.raises(frames.FrameError, match="row count|input block exceeds byte cap"):
+        frames.pack_frame(source, root, spec)
+    assert not (root / "block-000000000" / "RECEIPT.json").exists()
+
+
+def test_actual_oversized_frame_refuses_before_decode(tmp_path: Path) -> None:
+    source, spec = _block(tmp_path, 0, 1)
+    root = tmp_path / "frames"
+    frames.pack_frame(source, root, spec)
+    oversized = b"x" * (frames.MAX_FRAME_BYTES + 1)
+    _frame_path(root, 0).write_bytes(oversized)
+    _rewrite_receipt(root, 0, oversized)
+    with pytest.raises(frames.FrameError, match="compressed frame byte cap"):
+        frames.pack_frame(source, root, spec)
+
+
+@pytest.mark.parametrize("field", ["checksum", "content-size"])
+def test_frame_recipe_header_refuses_even_with_rewritten_receipt(
+    tmp_path: Path, field: str,
+) -> None:
+    source, spec = _block(tmp_path, 0, 1)
+    root = tmp_path / "frames"
+    frames.pack_frame(source, root, spec)
+    altered = zstd.ZstdCompressor(
+        write_checksum=field != "checksum", write_content_size=field != "content-size",
+    ).compress(source.read_bytes())
+    _frame_path(root, 0).write_bytes(altered)
+    _rewrite_receipt(root, 0, altered)
+    with pytest.raises(frames.FrameError, match="Zstd checksum/dictionary contract|Zstd content size"):
+        frames.pack_frame(source, root, spec)
+
+
+@pytest.mark.parametrize(("filename", "field", "replacement", "sealed"), [
+    ("CLAIM.json", "write_checksum", 1, True),
+    ("CLAIM.json", "threads", False, True),
+    ("RECEIPT.json", "rows", True, True),
+    ("CLAIM.json", "write_checksum", 1, False),
+    ("CLAIM.json", "threads", False, False),
+])
+def test_metadata_type_changes_cannot_preserve_a_seal_or_claim(
+    tmp_path: Path, filename: str, field: str, replacement: object, sealed: bool,
+) -> None:
+    source, spec = _block(tmp_path, 0, 1)
+    root = tmp_path / "frames"
+    frames.pack_frame(source, root, spec)
+    directory = _frame_path(root, 0).parent
+    path = directory / filename
+    value = json.loads(path.read_bytes())
+    value[field] = replacement
+    path.write_bytes((json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode())
+    if not sealed:
+        (directory / "RECEIPT.json").unlink()
+    original_frame = _frame_path(root, 0).read_bytes()
+    with pytest.raises(frames.FrameError, match="claim changed|receipt mismatch"):
+        frames.pack_frame(source, root, spec)
+    assert _frame_path(root, 0).read_bytes() == original_frame
+
+
+@pytest.mark.parametrize("unexpected", ["symlink", "directory"])
+def test_unsealed_cleanup_preflights_all_stage_files(
+    tmp_path: Path, unexpected: str,
+) -> None:
+    source, spec = _block(tmp_path, 0, 2)
+    root = tmp_path / "frames"
+    frames.pack_frame(source, root, spec)
+    directory = _frame_path(root, 0).parent
+    (directory / "RECEIPT.json").unlink()
+    owned = directory / ".FRAME.zst.part-owned"
+    owned.write_bytes(b"owned partial")
+    foreign = directory / ".RECEIPT.json.part-foreign"
+    if unexpected == "symlink":
+        foreign.symlink_to(source)
+    else:
+        foreign.mkdir()
+    original_frame = _frame_path(root, 0).read_bytes()
+    with pytest.raises(frames.FrameError, match="unexpected or linked stage file"):
+        frames.pack_frame(source, root, spec)
+    assert owned.read_bytes() == b"owned partial"
+    assert _frame_path(root, 0).read_bytes() == original_frame
+    assert source.read_bytes() == _rows(2)
+
+
+def test_unclaimed_frame_stage_is_retained_and_refused(tmp_path: Path) -> None:
+    source, spec = _block(tmp_path, 0, 1)
+    root = tmp_path / "frames"
+    directory = root / "block-000000000"
+    directory.mkdir(parents=True)
+    stage = directory / ".FRAME.zst.part-foreign"
+    stage.write_bytes(b"unclaimed")
+    with pytest.raises(frames.FrameError, match="frame without source claim"):
+        frames.pack_frame(source, root, spec)
+    assert stage.read_bytes() == b"unclaimed"
+    assert not (directory / "CLAIM.json").exists()
+
+
+def test_resume_resyncs_existing_directory_ancestry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, spec = _block(tmp_path, 0, 1)
+    root = tmp_path / "frames"
+    directory = root / "block-000000000"
+    directory.mkdir(parents=True)
+    synced: list[Path] = []
+    original = frames._fsync_dir
+
+    def record_sync(path: Path) -> None:
+        synced.append(path)
+        original(path)
+
+    monkeypatch.setattr(frames, "_fsync_dir", record_sync)
+    frames.pack_frame(source, root, spec)
+    assert synced[:3] == [tmp_path, root, directory]
+
+
+def test_dictionary_header_refuses_before_decompression() -> None:
+    frame = zstd.ZstdCompressor(write_checksum=True).compress(b"x" * 100_000)
+    assert frame[4] & 0x20  # This fixture uses the single-segment header.
+    assert frame[4] & 3 == 0
+    forged = frame[:4] + bytes([frame[4] | 1, 1]) + frame[5:]
+    assert zstd.get_frame_parameters(forged).dict_id == 1
+    with pytest.raises(frames.FrameError, match="Zstd checksum/dictionary contract"):
+        frames._decode(forged, 100_000)
+
+
+@pytest.mark.parametrize("same_claim", [True, False])
+def test_torn_claim_stage_requires_matching_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, same_claim: bool,
+) -> None:
+    source, spec = _block(tmp_path, 0, 1)
+    root = tmp_path / "frames"
+    directory = root / "block-000000000"
+    original = os.replace
+
+    def interrupt_claim_write(src: str, dst: Path) -> None:
+        if dst.name == "CLAIM.json":
+            # Preserve the real mkstemp name, but simulate a torn initial write.
+            stage = Path(src)
+            stage.write_bytes(stage.read_bytes()[:15])
+            raise OSError("interrupted claim publication")
+        original(src, dst)
+
+    monkeypatch.setattr(os, "replace", interrupt_claim_write)
+    with pytest.raises(OSError, match="interrupted claim publication"):
+        frames.pack_frame(source, root, spec)
+    monkeypatch.setattr(os, "replace", original)
+    stage = next(directory.glob(".CLAIM.json.part-*"))
+    assert not (directory / "CLAIM.json").exists()
+    if same_claim:
+        receipt, reused = frames.pack_frame(source, root, spec)
+        assert receipt["rows"] == 1
+        assert not reused
+        assert not stage.exists()
+    else:
+        with pytest.raises(frames.FrameError, match="unowned claim stage"):
+            frames.pack_frame(source, root, replace(spec, source_sha256="e" * 64))
+        assert stage.read_bytes() == frames._canonical(frames._claim(spec))[:15]
+        assert not (directory / "CLAIM.json").exists()

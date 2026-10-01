@@ -1,0 +1,66 @@
+import Base
+import ./Algebra.bend as A
+import ./Rows.bend as Rows
+import ../board/Spec.bend as B
+import ../decoder/Spec.bend as D
+import ../decoder/Projection.bend as P
+import ../decoder/Bits.bend as Bits
+import ../ray/Frame.bend as F
+import ../../../legal_probe/Chess.bend as Chess
+
+def clear_words(+n: Nat,+p: Word(n),+kn: Word(n),+b: Word(n),+r: Word(n),+q: Word(n),+k: Word(n),+w: Word(n),+bl: Word(n),+m: Word(n),
+  +good: {B.words(n,p,kn,b,r,q,k,w,bl) == True{} : Bool},+fresh: {B.fresh_words(n,w,bl,m) == True{} : Bool}) ->
+  {Word.and(n,k,m) == Word.zero(n) : Word(n)}:
+  match n:
+    case 0n: {==}
+    case 1n+t:
+      match p kn b r q k w bl m:
+        case WCon{+ph,+pt} WCon{+nh,+nt} WCon{+bh,+bt} WCon{+rh,+rt} WCon{+qh,+qt} WCon{+kh,+kt} WCon{+wh,+wt} WCon{+blh,+blt} WCon{+mh,+mt}:
+          A.join_word(t,Bool.and(kh,mh),Word.and(t,kt,mt),False{},Word.zero(t),
+            Rows.fresh_king(B.Row{ph,nh,bh,rh,qh,kh,wh,blh},mh,
+              F.left(B.row_valid(B.Row{ph,nh,bh,rh,qh,kh,wh,blh}),B.words(t,pt,nt,bt,rt,qt,kt,wt,blt),good),
+              F.left(Bool.not(Bool.and(mh,Bool.or(wh,blh))),B.fresh_words(t,wt,blt,mt),fresh)),
+            clear_words(t,pt,nt,bt,rt,qt,kt,wt,blt,mt,
+              F.right(B.row_valid(B.Row{ph,nh,bh,rh,qh,kh,wh,blh}),B.words(t,pt,nt,bt,rt,qt,kt,wt,blt),good),
+              F.right(Bool.not(Bool.and(mh,Bool.or(wh,blh))),B.fresh_words(t,wt,blt,mt),fresh)))
+
+def fresh_no_kings(+board: Chess.Board,+mask: U64,+good: {B.valid(board) == True{} : Bool},+fresh: {B.fresh_mask(board,mask) == True{} : Bool}) ->
+  {U64.and(Chess.get_kings(board),mask) == U64.zero() : U64}:
+  match board mask:
+    case Chess.Board{U64{U32{+pl},U32{+ph}},U64{U32{+knl},U32{+knh}},U64{U32{+bl},U32{+bh}},U64{U32{+rl},U32{+rh}},U64{U32{+ql},U32{+qh}},U64{U32{+kl},U32{+kh}},U64{U32{+wl},U32{+wh}},U64{U32{+bll},U32{+blh}},turn,rights,ep} U64{U32{+ml},U32{+mh}}:
+      A.join64(Word.and(32n,kl,ml),Word.and(32n,kh,mh),Word.zero(32n),Word.zero(32n),
+        clear_words(32n,pl,knl,bl,rl,ql,kl,wl,bll,ml,F.left(B.words(32n,pl,knl,bl,rl,ql,kl,wl,bll),B.words(32n,ph,knh,bh,rh,qh,kh,wh,blh),good),F.left(B.fresh_words(32n,wl,bll,ml),B.fresh_words(32n,wh,blh,mh),fresh)),
+        clear_words(32n,ph,knh,bh,rh,qh,kh,wh,blh,mh,F.right(B.words(32n,pl,knl,bl,rl,ql,kl,wl,bll),B.words(32n,ph,knh,bh,rh,qh,kh,wh,blh),good),F.right(B.fresh_words(32n,wl,bll,ml),B.fresh_words(32n,wh,blh,mh),fresh)))
+
+def get_left(+n: Nat,+a: Word(n),+b: Word(n),+i: Nat,e: {Bits.get(n,Word.and(n,a,b),i) == True{} : Bool}) ->
+  {Bits.get(n,a,i) == True{} : Bool}:
+  match n:
+    case 0n: e
+    case 1n+t:
+      match a b i:
+        case WCon{ah,at} WCon{bh,bt} 0n: F.left(ah,bh,e)
+        case WCon{ah,at} WCon{bh,bt} 1n+j: get_left(t,at,bt,j,e)
+
+def choose_left(+al: Word(32n),+ah: Word(32n),+bl: Word(32n),+bh: Word(32n),+i: Nat,low: Bool,
+  e: {Bool.pick(Bool,low,Bits.get(32n,Word.and(32n,al,bl),i),Bits.get(32n,Word.and(32n,ah,bh),Nat.sub(i,32n))) == True{} : Bool}) ->
+  {Bool.pick(Bool,low,Bits.get(32n,al,i),Bits.get(32n,ah,Nat.sub(i,32n))) == True{} : Bool}:
+  match low:
+    case True{}: get_left(32n,al,bl,i,e)
+    case False{}: get_left(32n,ah,bh,Nat.sub(i,32n),e)
+
+def get64_left(+a: U64,+b: U64,+i: Nat,e: {Bits.get64(U64.and(a,b),i) == True{} : Bool}) ->
+  {Bits.get64(a,i) == True{} : Bool}:
+  match a b:
+    case U64{U32{al},U32{ah}} U64{U32{bl},U32{bh}}:
+      choose_left(al,ah,bl,bh,i,Nat.is_lt(i,32n),e)
+
+def test_left(+a: U64,+b: U64,+i: Nat,+bound: {Nat.is_lt(i,64n) == True{} : Bool},e: {U64.test_bit(U64.and(a,b),i) == True{} : Bool}) ->
+  {U64.test_bit(a,i) == True{} : Bool}:
+  Equal.trans(Bool,U64.test_bit(a,i),Bits.get64(a,i),True{},Bits.test64(a,i,bound),
+    get64_left(a,b,i,Equal.trans(Bool,Bits.get64(U64.and(a,b),i),U64.test_bit(U64.and(a,b),i),True{},
+      Equal.sym(Bool,U64.test_bit(U64.and(a,b),i),Bits.get64(U64.and(a,b),i),Bits.test64(U64.and(a,b),i,bound)),e)))
+
+def actual_king_decoder(+b: Chess.Board,+sq: U32,+bound: {Nat.is_lt(U32.to_nat(sq),64n) == True{} : Bool},
+  good: {B.valid(b) == True{} : Bool},present: {U64.test_bit(Chess.get_kings(b),U32.to_nat(sq)) == True{} : Bool}) ->
+  {Chess.piece(b,sq) == 5 : U32}:
+  Rows.tag(D.row(b,sq),P.valid(b,sq,good,bound),present)

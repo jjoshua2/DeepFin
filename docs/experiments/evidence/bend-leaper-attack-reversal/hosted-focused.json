@@ -1,0 +1,248 @@
+{
+  "focused_gate": "PASS",
+  "new_laws": 2,
+  "new_controls": 17,
+  "consumer": {
+    "args": [
+      "bun",
+      "--smol",
+      "/home/runner/work/DeepFin/DeepFin/.compiler/bend2/main.ts",
+      "/home/runner/work/DeepFin/DeepFin/native/bend_engine/standalone/proofs/attack_reversal/consumer.bend"
+    ],
+    "exit_code": 0,
+    "stdout": "All terms check.\n",
+    "stderr": "",
+    "seconds": 29.063710044000004
+  },
+  "negative_controls": [
+    {
+      "name": "pawn-reversal-must-change-color",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "standalone/proofs/attack_reversal/WhitePawn.bend",
+      "result": {
+        "args": [
+          "bun",
+          "--smol",
+          "/home/runner/work/DeepFin/DeepFin/.compiler/bend2/main.ts",
+          "/tmp/leaper-control-aafq4els/engine/standalone/proofs/attack_reversal/WhitePawn.bend"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "Error:\n- expected : 0n\n- observed : 16n\nContext:\n- bound : {True{} == True{} : Bool}\n- e     : {True{} == True{} : Bool}\nLocation: rows\n 8 |   match src:\n 9>|     case 0n: (e => Inr{Inl{{==}}},(e => D.impossible(S.member(0n,G.targets(G.reverse(G.WhitePawn{}),64n)),0n,e),Unit{}))\n10 |     case 1n: (e => Inr{Inl{{==}}},(e => Inl{{==}},Unit{}))\n",
+        "seconds": 0.4639675489999888
+      }
+    },
+    {
+      "name": "king-edge-correspondence",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "standalone/proofs/attack_reversal/King.bend",
+      "result": {
+        "args": [
+          "bun",
+          "--smol",
+          "/home/runner/work/DeepFin/DeepFin/.compiler/bend2/main.ts",
+          "/tmp/leaper-control-j99po_r8/engine/standalone/proofs/attack_reversal/King.bend"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "Error:\n- expected : 0n\n- observed : 64n\nContext:\n- bound : {True{} == True{} : Bool}\n- e     : {False{} == True{} : Bool}\nLocation: rows\n 8 |   match src:\n 9>|     case 0n: (e => Inr{Inl{{==}}},(e => D.impossible(S.member(0n,G.targets(G.reverse(G.King{}),64n)),0n,e),(e => Inr{Inr{Inr{Inl{{==}}}}},(e => D.impossible(S.member(0n,G.targets(G.reverse(G.King{}),64n)),0n,e),(e => Inr{Inr{Inr{Inr{Inr{Inr{Inr{Inl{{==}}}}}}}}},(e => D.impossible(S.member(0n,G.targets(G.reverse(G.King{}),64n)),0n,e),(e => D.impossible(S.member(0n,G.targets(G.reverse(G.King{}),64n)),0n,e),(e => D.impossible(S.member(0n,G.targets(G.reverse(G.King{}),64n)),0n,e),Unit{}))))))))\n10 |     case 1n: (e => Inr{Inl{{==}}},(e => Inl{{==}},(e => Inr{Inr{Inr{Inl{{==}}}}},(e => D.impossible(S.member(1n,G.targets(G.reverse(G.King{}),64n)),0n,e),(e => Inr{Inr{Inr{Inr{Inr{Inr{Inr{Inl{{==}}}}}}}}},(e => D.impossible(S.member(1n,G.targets(G.reverse(G.King{}),64n)),0n,e),(e => Inr{Inr{Inr{Inr{Inr{Inl{{==}}}}}}},(e => D.impossible(S.member(1n,G.targets(G.reverse(G.King{}),64n)),0n,e),Unit{}))))))))\n",
+        "seconds": 0.4659887330000174
+      }
+    },
+    {
+      "name": "actual-knight-offset",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "standalone/proofs/attack_geometry/Computed.bend",
+      "result": {
+        "args": [
+          "bun",
+          "--smol",
+          "/home/runner/work/DeepFin/DeepFin/.compiler/bend2/main.ts",
+          "/tmp/leaper-control-neyik_jv/engine/standalone/proofs/attack_geometry/Computed.bend"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "Error:\n- expected : [9n, 10n, 64n, 64n, 64n, 64n, 64n, 64n]\n- observed : [17n, 10n, 64n, 64n, 64n, 64n, 64n, 64n]\nContext:\n- e : {True{} == True{} : Bool}\nLocation: squares\n46 |   match sq:\n47>|     case 0n: ({==},({==},({==},{==})))\n48 |     case 1n: ({==},({==},({==},{==})))\n",
+        "seconds": 0.9024596860000145
+      }
+    },
+    {
+      "name": "source-bound-required",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "standalone/proofs/attack_reversal/PROOF.bend",
+      "result": {
+        "args": [
+          "bun",
+          "--smol",
+          "/home/runner/work/DeepFin/DeepFin/.compiler/bend2/main.ts",
+          "/tmp/leaper-control-0njv5npc/engine/standalone/proofs/attack_reversal/PROOF.bend"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "Error:\n- expected : {Cmp.is_lt(Nat.cmp(src, 64n)) == True{} : Bool}\n- observed : {True{} == True{} : Bool}\nContext:\n- kind         : ../attack_geometry/Geometry.Leaper\n- src          : Nat\n- dst          : Nat\n- source_bound : {True{} == True{} : Bool}\n- target_bound : {Cmp.is_lt(Nat.cmp(dst, 64n)) == True{} : Bool}\nLocation: LAWS.leaper_coordinate_membership_reverses\n10 | def Laws.leaper_coordinate_membership_reverses(kind,src,dst,source_bound,target_bound):\n11>|   R.bools(kind,src,dst,source_bound,target_bound)\n12 | \n",
+        "seconds": 27.322828681000004
+      }
+    },
+    {
+      "name": "target-bound-required",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "standalone/proofs/attack_reversal/PROOF.bend",
+      "result": {
+        "args": [
+          "bun",
+          "--smol",
+          "/home/runner/work/DeepFin/DeepFin/.compiler/bend2/main.ts",
+          "/tmp/leaper-control-qw51rffg/engine/standalone/proofs/attack_reversal/PROOF.bend"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "Error:\n- expected : {Cmp.is_lt(Nat.cmp(dst, 64n)) == True{} : Bool}\n- observed : {True{} == True{} : Bool}\nContext:\n- kind         : ../attack_geometry/Geometry.Leaper\n- src          : Nat\n- dst          : Nat\n- source_bound : {Cmp.is_lt(Nat.cmp(src, 64n)) == True{} : Bool}\n- target_bound : {True{} == True{} : Bool}\nLocation: LAWS.leaper_coordinate_membership_reverses\n10 | def Laws.leaper_coordinate_membership_reverses(kind,src,dst,source_bound,target_bound):\n11>|   R.bools(kind,src,dst,source_bound,target_bound)\n12 | \n",
+        "seconds": 27.765324674999988
+      }
+    },
+    {
+      "name": "public-mask-must-use-reversed-kind",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "standalone/proofs/attack_reversal/PROOF.bend",
+      "result": {
+        "args": [
+          "bun",
+          "--smol",
+          "/home/runner/work/DeepFin/DeepFin/.compiler/bend2/main.ts",
+          "/tmp/leaper-control-dcqw926f/engine/standalone/proofs/attack_reversal/PROOF.bend"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "Error:\n- expected : {Bool.not(Cmp.is_eq(U64.cmp(U64.and(../attack_geometry/Slots.value(kind, src), U64.shln.go(Nat.min(dst, 64n), U64{1, 0})), U64{0, 0}))) == Bool.not(Cmp.is_eq(U64.cmp(U64.and(../attack_geometry/Slots.value(kind, dst), U64.shln.go(Nat.min(src, 64n), U64{1, 0})), U64{0, 0}))) : Bool}\n- observed : {Bool.not(Cmp.is_eq(U64.cmp(U64.and(../attack_geometry/Slots.value(kind, src), U64.shln.go(Nat.min(dst, 64n), U64{1, 0})), U64{0, 0}))) == Bool.not(Cmp.is_eq(U64.cmp(U64.and(../attack_geometry/Slots.value(../attack_geometry/Geometry.reverse(kind), dst), U64.shln.go(Nat.min(src, 64n), U64{1, 0})), U64{0, 0}))) : Bool}\nContext:\n- kind         : ../attack_geometry/Geometry.Leaper\n- src          : Nat\n- dst          : Nat\n- source_bound : {Cmp.is_lt(Nat.cmp(src, 64n)) == True{} : Bool}\n- target_bound : {Cmp.is_lt(Nat.cmp(dst, 64n)) == True{} : Bool}\nLocation: LAWS.computed_leaper_mask_reverses\n29 | def Laws.computed_leaper_mask_reverses(kind,src,dst,source_bound,target_bound):\n30>|   computed_reversal(kind,src,dst,source_bound,target_bound)\n31 | \n",
+        "seconds": 27.004373464000025
+      }
+    },
+    {
+      "name": "reflection-high-limb-not-low",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "standalone/proofs/attack_reversal/Mask.bend",
+      "result": {
+        "args": [
+          "bun",
+          "--smol",
+          "/home/runner/work/DeepFin/DeepFin/.compiler/bend2/main.ts",
+          "/tmp/leaper-control-br8ewrdl/engine/standalone/proofs/attack_reversal/Mask.bend"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "Error:\n- expected : {U64{U32{WCon{Bool.or(Cmp.is_eq(Nat.cmp(0n, h)), Spec.contains(0n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(1n, h)), Spec.contains(1n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(2n, h)), Spec.contains(2n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(3n, h)), Spec.contains(3n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(4n, h)), Spec.contains(4n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(5n, h)), Spec.contains(5n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(6n, h)), Spec.contains(6n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(7n, h)), Spec.contains(7n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(8n, h)), Spec.contains(8n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(9n, h)), Spec.contains(9n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(10n, h)), Spec.contains(10n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(11n, h)), Spec.contains(11n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(12n, h)), Spec.contains(12n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(13n, h)), Spec.contains(13n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(14n, h)), Spec.contains(14n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(15n, h)), Spec.contains(15n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(16n, h)), Spec.contains(16n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(17n, h)), Spec.contains(17n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(18n, h)), Spec.contains(18n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(19n, h)), Spec.contains(19n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(20n, h)), Spec.contains(20n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(21n, h)), Spec.contains(21n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(22n, h)), Spec.contains(22n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(23n, h)), Spec.contains(23n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(24n, h)), Spec.contains(24n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(25n, h)), Spec.contains(25n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(26n, h)), Spec.contains(26n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(27n, h)), Spec.contains(27n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(28n, h)), Spec.contains(28n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(29n, h)), Spec.contains(29n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(30n, h)), Spec.contains(30n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(31n, h)), Spec.contains(31n, tail)), WNil{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}, U32{WCon{Bool.or(Cmp.is_eq(Nat.cmp(32n, h)), Spec.contains(0n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(33n, h)), Spec.contains(1n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(34n, h)), Spec.contains(2n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(35n, h)), Spec.contains(3n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(36n, h)), Spec.contains(4n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(37n, h)), Spec.contains(5n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(38n, h)), Spec.contains(6n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(39n, h)), Spec.contains(7n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(40n, h)), Spec.contains(8n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(41n, h)), Spec.contains(9n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(42n, h)), Spec.contains(10n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(43n, h)), Spec.contains(11n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(44n, h)), Spec.contains(12n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(45n, h)), Spec.contains(13n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(46n, h)), Spec.contains(14n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(47n, h)), Spec.contains(15n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(48n, h)), Spec.contains(16n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(49n, h)), Spec.contains(17n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(50n, h)), Spec.contains(18n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(51n, h)), Spec.contains(19n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(52n, h)), Spec.contains(20n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(53n, h)), Spec.contains(21n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(54n, h)), Spec.contains(22n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(55n, h)), Spec.contains(23n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(56n, h)), Spec.contains(24n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(57n, h)), Spec.contains(25n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(58n, h)), Spec.contains(26n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(59n, h)), Spec.contains(27n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(60n, h)), Spec.contains(28n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(61n, h)), Spec.contains(29n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(62n, h)), Spec.contains(30n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(63n, h)), Spec.contains(31n, tail)), WNil{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}} == U64{U32{WCon{Bool.or(Cmp.is_eq(Nat.cmp(0n, h)), Spec.contains(0n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(1n, h)), Spec.contains(1n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(2n, h)), Spec.contains(2n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(3n, h)), Spec.contains(3n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(4n, h)), Spec.contains(4n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(5n, h)), Spec.contains(5n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(6n, h)), Spec.contains(6n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(7n, h)), Spec.contains(7n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(8n, h)), Spec.contains(8n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(9n, h)), Spec.contains(9n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(10n, h)), Spec.contains(10n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(11n, h)), Spec.contains(11n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(12n, h)), Spec.contains(12n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(13n, h)), Spec.contains(13n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(14n, h)), Spec.contains(14n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(15n, h)), Spec.contains(15n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(16n, h)), Spec.contains(16n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(17n, h)), Spec.contains(17n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(18n, h)), Spec.contains(18n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(19n, h)), Spec.contains(19n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(20n, h)), Spec.contains(20n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(21n, h)), Spec.contains(21n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(22n, h)), Spec.contains(22n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(23n, h)), Spec.contains(23n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(24n, h)), Spec.contains(24n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(25n, h)), Spec.contains(25n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(26n, h)), Spec.contains(26n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(27n, h)), Spec.contains(27n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(28n, h)), Spec.contains(28n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(29n, h)), Spec.contains(29n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(30n, h)), Spec.contains(30n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(31n, h)), Spec.contains(31n, tail)), WNil{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}, U32{WCon{Bool.or(Cmp.is_eq(Nat.cmp(32n, h)), Spec.contains(32n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(33n, h)), Spec.contains(33n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(34n, h)), Spec.contains(34n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(35n, h)), Spec.contains(35n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(36n, h)), Spec.contains(36n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(37n, h)), Spec.contains(37n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(38n, h)), Spec.contains(38n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(39n, h)), Spec.contains(39n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(40n, h)), Spec.contains(40n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(41n, h)), Spec.contains(41n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(42n, h)), Spec.contains(42n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(43n, h)), Spec.contains(43n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(44n, h)), Spec.contains(44n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(45n, h)), Spec.contains(45n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(46n, h)), Spec.contains(46n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(47n, h)), Spec.contains(47n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(48n, h)), Spec.contains(48n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(49n, h)), Spec.contains(49n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(50n, h)), Spec.contains(50n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(51n, h)), Spec.contains(51n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(52n, h)), Spec.contains(52n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(53n, h)), Spec.contains(53n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(54n, h)), Spec.contains(54n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(55n, h)), Spec.contains(55n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(56n, h)), Spec.contains(56n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(57n, h)), Spec.contains(57n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(58n, h)), Spec.contains(58n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(59n, h)), Spec.contains(59n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(60n, h)), Spec.contains(60n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(61n, h)), Spec.contains(61n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(62n, h)), Spec.contains(62n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(63n, h)), Spec.contains(63n, tail)), WNil{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}} : U64}\n- observed : {U64{U32{WCon{Bool.or(Cmp.is_eq(Nat.cmp(0n, h)), Spec.contains(0n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(1n, h)), Spec.contains(1n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(2n, h)), Spec.contains(2n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(3n, h)), Spec.contains(3n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(4n, h)), Spec.contains(4n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(5n, h)), Spec.contains(5n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(6n, h)), Spec.contains(6n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(7n, h)), Spec.contains(7n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(8n, h)), Spec.contains(8n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(9n, h)), Spec.contains(9n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(10n, h)), Spec.contains(10n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(11n, h)), Spec.contains(11n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(12n, h)), Spec.contains(12n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(13n, h)), Spec.contains(13n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(14n, h)), Spec.contains(14n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(15n, h)), Spec.contains(15n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(16n, h)), Spec.contains(16n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(17n, h)), Spec.contains(17n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(18n, h)), Spec.contains(18n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(19n, h)), Spec.contains(19n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(20n, h)), Spec.contains(20n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(21n, h)), Spec.contains(21n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(22n, h)), Spec.contains(22n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(23n, h)), Spec.contains(23n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(24n, h)), Spec.contains(24n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(25n, h)), Spec.contains(25n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(26n, h)), Spec.contains(26n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(27n, h)), Spec.contains(27n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(28n, h)), Spec.contains(28n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(29n, h)), Spec.contains(29n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(30n, h)), Spec.contains(30n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(31n, h)), Spec.contains(31n, tail)), WNil{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}, U32{WCon{Bool.or(Cmp.is_eq(Nat.cmp(32n, h)), Spec.contains(32n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(33n, h)), Spec.contains(33n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(34n, h)), Spec.contains(34n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(35n, h)), Spec.contains(35n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(36n, h)), Spec.contains(36n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(37n, h)), Spec.contains(37n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(38n, h)), Spec.contains(38n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(39n, h)), Spec.contains(39n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(40n, h)), Spec.contains(40n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(41n, h)), Spec.contains(41n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(42n, h)), Spec.contains(42n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(43n, h)), Spec.contains(43n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(44n, h)), Spec.contains(44n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(45n, h)), Spec.contains(45n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(46n, h)), Spec.contains(46n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(47n, h)), Spec.contains(47n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(48n, h)), Spec.contains(48n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(49n, h)), Spec.contains(49n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(50n, h)), Spec.contains(50n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(51n, h)), Spec.contains(51n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(52n, h)), Spec.contains(52n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(53n, h)), Spec.contains(53n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(54n, h)), Spec.contains(54n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(55n, h)), Spec.contains(55n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(56n, h)), Spec.contains(56n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(57n, h)), Spec.contains(57n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(58n, h)), Spec.contains(58n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(59n, h)), Spec.contains(59n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(60n, h)), Spec.contains(60n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(61n, h)), Spec.contains(61n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(62n, h)), Spec.contains(62n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(63n, h)), Spec.contains(63n, tail)), WNil{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}} == U64{U32{WCon{Bool.or(Cmp.is_eq(Nat.cmp(0n, h)), Spec.contains(0n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(1n, h)), Spec.contains(1n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(2n, h)), Spec.contains(2n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(3n, h)), Spec.contains(3n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(4n, h)), Spec.contains(4n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(5n, h)), Spec.contains(5n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(6n, h)), Spec.contains(6n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(7n, h)), Spec.contains(7n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(8n, h)), Spec.contains(8n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(9n, h)), Spec.contains(9n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(10n, h)), Spec.contains(10n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(11n, h)), Spec.contains(11n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(12n, h)), Spec.contains(12n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(13n, h)), Spec.contains(13n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(14n, h)), Spec.contains(14n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(15n, h)), Spec.contains(15n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(16n, h)), Spec.contains(16n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(17n, h)), Spec.contains(17n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(18n, h)), Spec.contains(18n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(19n, h)), Spec.contains(19n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(20n, h)), Spec.contains(20n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(21n, h)), Spec.contains(21n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(22n, h)), Spec.contains(22n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(23n, h)), Spec.contains(23n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(24n, h)), Spec.contains(24n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(25n, h)), Spec.contains(25n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(26n, h)), Spec.contains(26n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(27n, h)), Spec.contains(27n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(28n, h)), Spec.contains(28n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(29n, h)), Spec.contains(29n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(30n, h)), Spec.contains(30n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(31n, h)), Spec.contains(31n, tail)), WNil{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}, U32{WCon{Bool.or(Cmp.is_eq(Nat.cmp(32n, h)), Spec.contains(32n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(33n, h)), Spec.contains(33n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(34n, h)), Spec.contains(34n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(35n, h)), Spec.contains(35n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(36n, h)), Spec.contains(36n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(37n, h)), Spec.contains(37n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(38n, h)), Spec.contains(38n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(39n, h)), Spec.contains(39n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(40n, h)), Spec.contains(40n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(41n, h)), Spec.contains(41n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(42n, h)), Spec.contains(42n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(43n, h)), Spec.contains(43n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(44n, h)), Spec.contains(44n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(45n, h)), Spec.contains(45n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(46n, h)), Spec.contains(46n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(47n, h)), Spec.contains(47n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(48n, h)), Spec.contains(48n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(49n, h)), Spec.contains(49n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(50n, h)), Spec.contains(50n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(51n, h)), Spec.contains(51n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(52n, h)), Spec.contains(52n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(53n, h)), Spec.contains(53n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(54n, h)), Spec.contains(54n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(55n, h)), Spec.contains(55n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(56n, h)), Spec.contains(56n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(57n, h)), Spec.contains(57n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(58n, h)), Spec.contains(58n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(59n, h)), Spec.contains(59n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(60n, h)), Spec.contains(60n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(61n, h)), Spec.contains(61n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(62n, h)), Spec.contains(62n, tail)), WCon{Bool.or(Cmp.is_eq(Nat.cmp(63n, h)), Spec.contains(63n, tail)), WNil{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}} : U64}\nContext:\n- h    : Nat\n- tail : List<&2, Nat>\nLocation: head\n153 |       packed(h <> tail),\n154>|       Equal.cong(Word(32n),U64,lo => U64{U32{lo},U32{Word.or(32n,word(32n,32n,Single{h}),word(32n,32n,Many{tail}))}},\n155 |         Word.or(32n,word(32n,0n,Single{h}),word(32n,0n,Many{tail})),word(32n,0n,Many{h <> tail}),or_cons(32n,0n,h,tail)),\n",
+        "seconds": 8.855608942000003
+      }
+    },
+    {
+      "name": "computed-zero-is-not-geometry",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "standalone/proofs/attack_geometry/Computed.bend",
+      "result": {
+        "args": [
+          "bun",
+          "--smol",
+          "/home/runner/work/DeepFin/DeepFin/.compiler/bend2/main.ts",
+          "/tmp/leaper-control-fegxxgsd/engine/standalone/proofs/attack_geometry/Computed.bend"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "Error:\n- expected : {U64{0, 0} == U64.or(U64.or(U64.or(U64.or(U64.or(U64.or(U64.or(U64.or(U64{0, 0}, U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 1), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 2), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 1), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 2), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 2), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 1), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 2), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 1), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967295), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 2), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967295), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 2), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967294), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 1), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967294), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 1), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 1), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 4294967294), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 1), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 4294967294), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 2), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 4294967295), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 2), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 4294967295), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967295), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 4294967294), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967295), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 4294967294), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967294), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 4294967295), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967294), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 4294967295), 8)), 64)), 64n), U64{1, 0})) : U64}\n- observed : {U64.or(U64.or(U64.or(U64.or(U64.or(U64.or(U64.or(U64.or(U64{0, 0}, U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 1), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 2), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 1), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 2), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 2), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 1), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 2), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 1), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967295), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 2), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967295), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 2), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967294), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 1), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967294), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 1), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 1), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 4294967294), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 1), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 4294967294), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 2), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 4294967295), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 2), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 4294967295), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967295), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 4294967294), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967295), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 4294967294), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967294), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 4294967295), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967294), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 4294967295), 8)), 64)), 64n), U64{1, 0})) == U64.or(U64.or(U64.or(U64.or(U64.or(U64.or(U64.or(U64.or(U64{0, 0}, U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 1), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 2), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 1), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 2), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 2), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 1), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 2), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 1), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967295), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 2), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967295), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 2), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967294), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 1), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967294), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 1), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 1), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 4294967294), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 1), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 4294967294), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 2), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 4294967295), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 2), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 4294967295), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967295), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 4294967294), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967295), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 4294967294), 8)), 64)), 64n), U64{1, 0})), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Bool.and(Cmp.is_lt(U32.cmp(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967294), 8)), Cmp.is_lt(U32.cmp(U32.add(U32.div(U32.from_nat(sq), 8), 4294967295), 8))), U32.add(U32.add(U32.mod(U32.from_nat(sq), 8), 4294967294), U32.mul(U32.add(U32.div(U32.from_nat(sq), 8), 4294967295), 8)), 64)), 64n), U64{1, 0})) : U64}\nContext:\n- sq : Nat\nLocation: unfold\n33 |   match kind:\n34>|     case G.Knight{}: accumulation(8n,U32.from_nat(sq),0,False{},U64.zero())\n35 |     case G.King{}: accumulation(8n,U32.from_nat(sq),0,True{},U64.zero())\n",
+        "seconds": 0.7773087090000104
+      }
+    },
+    {
+      "name": "missing-law",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "missing-proof",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "missing-law-import",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "missing-consumer-import",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "hole",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "foreign",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "unsafe",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "symlink",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "warning-on-zero-exit",
+      "kind": "synthetic output-wrapper unit",
+      "rejected": true
+    }
+  ],
+  "source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/attack_geometry/Computed.bend": "5d398e12a923e8586f712134daa7175cf7e271e768272707aa1d0bc3277096d9",
+    "standalone/proofs/attack_geometry/Geometry.bend": "fcc6a928ae24e7956e3f60d40b9489ccc3c8eeef081560c84d62c146123ee4ab",
+    "standalone/proofs/attack_geometry/Slots.bend": "900b1916c6bab03b21ab138c3089aa26308896285c79d252c363bb9d0d1c38fa",
+    "standalone/proofs/attack_geometry/probe.bend": "8b6871e08cc41f762c4499e2bdb8e215a6ff9b64454121d6c362ef64f9043be9",
+    "standalone/proofs/attack_reversal/BlackPawn.bend": "fc9c0459bdb30ca7f8628118882e43625db0d86284fbb6af0fcd4098331772fb",
+    "standalone/proofs/attack_reversal/Certificate.bend": "a2ca7dfc23880aa810be339c797f02b24d78da68eaa8463f402a6714a4413023",
+    "standalone/proofs/attack_reversal/King.bend": "747708d16a70679f4a8bd58320aee43b91f0fcfafbb7135859cc7730064aaef4",
+    "standalone/proofs/attack_reversal/Knight.bend": "54361112a7badf2d01106fe3255e7e915eaafb2c7b66dff5075b4be85da01cd8",
+    "standalone/proofs/attack_reversal/LAWS.bend": "fb5ea62c0a23ac7626a21c1c202118d83bd3c1e81e45fc85f3255e28cff2587f",
+    "standalone/proofs/attack_reversal/Lists.bend": "0389af72b2cc97a0ee5a414fea519bfef364c9fae75f5d8412feec2147c52ee1",
+    "standalone/proofs/attack_reversal/Mask.bend": "8a3c99db1f55d3b010f2106875c66cf2386ab9236db55b46b8ad28bc961d239a",
+    "standalone/proofs/attack_reversal/PROOF.bend": "26d8187ed1173dcb7df189adf74fd3da9bf02dd216440277664f8f497fb4d8cc",
+    "standalone/proofs/attack_reversal/README.md": "9adeac6ca562ce06492db0d026c91a7558c8b52752828b68f7b4540694d5ea62",
+    "standalone/proofs/attack_reversal/Reversal.bend": "58ce23ad9ed1419f354568d039b92703e44ef3fbe7b03d1fe9fa2e5f4ee3a902",
+    "standalone/proofs/attack_reversal/Spec.bend": "18cd39b362142f85e12e30b2f517e88ee2981a0d4c026e4339e3149ed41362d3",
+    "standalone/proofs/attack_reversal/WhitePawn.bend": "ccc5537d9f519737918de0b35b63127798651473ab7d61f7d664141e417d479a",
+    "standalone/proofs/attack_reversal/_common.py": "0d3657bb39b15b81629455021a9ccf30cfac2e872f770cc1a2fba44d13dcfe77",
+    "standalone/proofs/attack_reversal/consumer.bend": "1f89d1bb2bc8ad021b3ac8ec8d0ae4dcb9ba872d7337e8c36f8facd9dc5133ff",
+    "standalone/proofs/attack_reversal/focused.py": "22fb6d444294d8d1cb1dd160d9629a0760faad5f6650c5f1129514f6cbe85d81",
+    "standalone/proofs/attack_reversal/generate_certificates.py": "1e75962160f422deb58cac82eb089a5320a8f01530c100a379b3995c911cb35c",
+    "standalone/proofs/attack_reversal/test_harness.py": "38793cd46b7b2abd7058735682ed2f341efacf1b68cca0b821fd0b4b1767a4a1",
+    "standalone/proofs/attack_reversal/verify_native.py": "d42596f0f8874728f7a8f020175851c4a7774e18dbb81d2a6fea315a9869b19e",
+    "standalone/proofs/decoder/Bits.bend": "62b0794004f4fcc5f4bf5d02e927fc5737d6644c436313ed6ee381a8821272be",
+    "standalone/proofs/index/Bits.bend": "1fe9e204243efe2e651e14ec3db15f2ea2141ee7febf639fb0a7a8e4b5bc8afb",
+    "standalone/proofs/layout/Domain.bend": "5acad280e9df6975f63fa0fe51c18c08cb4f5ae9296c89a7e10673d5fa2e87b6",
+    "standalone/proofs/ray/Algebra.bend": "9b654dc68a5bb5c1d47232e2be23200eebcbd1bfa6b071a5bee60d7c7077ab69",
+    "standalone/proofs/ray/Grid.bend": "c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a",
+    "standalone/proofs/successor/Value.bend": "8e97a14a3659bda32dc061ae458338827d66b60dbb5749c71e2f3300140ceccf",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "compiler_identity": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\n",
+  "full_aggregate_executed": false
+}

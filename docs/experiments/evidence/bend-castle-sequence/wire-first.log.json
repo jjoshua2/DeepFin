@@ -1,0 +1,4 @@
+{
+  "raw_text": "Error:\n- message  : a match on a parameter or field (this name is a def or a consumed binder: give the value its own def)\nLocation:\n34 |         {Chess.filter_after(m,Nil{},_) == (table,S.select(f,m,Nil{})) : Array<U64> & List<&2,Chess.Ply>}\n35>|       match f:\n36 |         case True{}: {==}\n",
+  "sha256": "ed52ec3d2763cf8ce3678a772fa8bd03e58699c3b6b2021cf762386b58de633e"
+}

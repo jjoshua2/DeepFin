@@ -61,7 +61,12 @@ def _atomic_new(path: Path, data: bytes) -> None:
     if path.suffix == ".json":
         _need(len(data) <= MAX_META_BYTES, "metadata byte cap")
     _need(not path.exists(), f"sealed file already exists: {path.name}")
-    fd, name = tempfile.mkstemp(prefix=f".{path.name}.part-", dir=path.parent)
+    prefix = f".{path.name}.part-"
+    if path.name == "CLAIM.json":
+        # The claim may be killed mid-write, before it can own later stages.
+        # Its name must identify the exact intended claim even when torn.
+        prefix += f"{_sha(data)}-"
+    fd, name = tempfile.mkstemp(prefix=prefix, dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as output:
             output.write(data)
@@ -187,6 +192,8 @@ def _decode(frame: bytes, expected_raw_bytes: int) -> bytes:
         header = zstd.get_frame_parameters(frame)
         _need(header.content_size == expected_raw_bytes, "Zstd content size")
         _need(header.window_size <= MAX_RAW_BYTES, "Zstd window cap")
+        _need(header.has_checksum and header.dict_id == 0,
+              "Zstd checksum/dictionary contract")
         raw = zstd.ZstdDecompressor(
             max_window_size=MAX_RAW_BYTES // 1024,
         ).decompress(
@@ -203,7 +210,7 @@ def _verify_seal(directory: Path, raw: bytes,
                  claim: dict[str, Any]) -> dict[str, Any]:
     _need({part.name for part in directory.iterdir()} == _FILES,
           "unexpected sealed frame files")
-    _need(_load_canonical(directory / "CLAIM.json") == claim,
+    _need(_canonical(_load_canonical(directory / "CLAIM.json")) == _canonical(claim),
           "source/schema/config/code claim changed")
     receipt = _load_canonical(directory / "RECEIPT.json")
     frame_path = directory / "FRAME.zst"
@@ -213,7 +220,8 @@ def _verify_seal(directory: Path, raw: bytes,
         frame = source.read(MAX_FRAME_BYTES + 1)
         _need(len(frame) <= MAX_FRAME_BYTES and source.read(1) == b"",
               "compressed frame byte cap")
-    _need(receipt == _receipt(claim, frame), "frame receipt mismatch")
+    _need(_canonical(receipt) == _canonical(_receipt(claim, frame)),
+          "frame receipt mismatch")
     decoded = _decode(frame, len(raw))
     _need(decoded == raw, "decoded raw UCI bytes differ from source block")
     _check_rows(decoded, claim["rows"])
@@ -227,14 +235,23 @@ def _recover_unsealed(directory: Path, claim: dict[str, Any]) -> None:
           "unexpected unsealed frame files")
     _need(".lock" in names, "missing frame lock")
     if "CLAIM.json" in names:
-        _need(_load_canonical(directory / "CLAIM.json") == claim,
+        _need(_canonical(_load_canonical(directory / "CLAIM.json")) == _canonical(claim),
               "unsealed source/schema/config/code claim changed")
     else:
-        _need("FRAME.zst" not in names, "frame without source claim")
-    for part in directory.iterdir():
-        if part.name.startswith(_STAGES) or part.name == "FRAME.zst":
-            _need(not part.is_dir(), "unexpected stage directory")
-            part.unlink()
+        _need(not any(name == "FRAME.zst" or
+                      name.startswith((".FRAME.zst.part-", ".RECEIPT.json.part-"))
+                      for name in names), "frame without source claim")
+        claim_prefix = f".CLAIM.json.part-{_sha(_canonical(claim))}-"
+        _need(all(name == ".lock" or name.startswith(claim_prefix) for name in names),
+              "unowned claim stage")
+    stages = [part for part in directory.iterdir()
+              if part.name.startswith(_STAGES) or part.name == "FRAME.zst"]
+    # Validate every cleanup target before removing any evidence. Only regular
+    # files in this locked, source-bound block belong to the writer.
+    _need(all(part.is_file() and not part.is_symlink() for part in stages),
+          "unexpected or linked stage file")
+    for part in stages:
+        part.unlink()
     _fsync_dir(directory)
 
 
@@ -248,17 +265,17 @@ def pack_frame(input_block: Path, frames_root: Path,
     spec.validated()
     frames_root = Path(frames_root)
     _need(frames_root.parent.is_dir(), "frame-root parent missing")
-    if not frames_root.exists():
-        frames_root.mkdir()
-        _fsync_dir(frames_root.parent)
+    frames_root.mkdir(exist_ok=True)
     _need(frames_root.is_dir() and not frames_root.is_symlink(),
           "invalid frame root")
+    # A previous process may have died between mkdir and its parent fsync.
+    # Repeat the durability barrier even when the directory already exists.
+    _fsync_dir(frames_root.parent)
     directory = frames_root / f"block-{spec.block_index:09d}"
-    if not directory.exists():
-        directory.mkdir()
-        _fsync_dir(frames_root)
+    directory.mkdir(exist_ok=True)
     _need(directory.is_dir() and not directory.is_symlink(),
           "invalid block directory")
+    _fsync_dir(frames_root)
     lock_fd = os.open(directory / ".lock",
                       os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:

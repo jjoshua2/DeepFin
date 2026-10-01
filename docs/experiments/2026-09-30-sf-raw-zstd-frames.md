@@ -14,3 +14,25 @@ The decoder rejects a missing or mismatched content size, a window above 8 MiB, 
 The real block is sealed failed-attempt evidence with **no label credit**. Its input SHA-256, source receipt, source identity, roster identity, and frame hashes are pinned in the [evidence index](evidence/2026-09-30-sf-raw-zstd-frames.json). The measured writer call, including input read, compression, fsync and readback, took 0.061 s wall / 0.030 s CPU on this one block; direct decode took 0.001 s. These small-block times do not estimate sustained production or external-drive throughput. The subtotals exclude the retained raw input, pilot result, directory entries, filesystem allocation, and any future index or trainer packaging.
 
 Full Ruff and Vulture pass. Focused Pyright reports zero findings. The available full-repository basedpyright overlay reports the same pre-existing 439 errors and 7 warnings on current main and this successor, with zero normalized diagnostic differences; it is not a clean gate in this host setup. The proof bundle records the exact producer, tests, operator, synthetic measurement, direct pilot receipt, and lint comparison. Production use still needs indexed source-block inventory, an independent byte-level audit, reader and trainer integration, and representative external-drive cost and restart measurements. The live Stockfish label recipe and campaign were unchanged.
+
+## October 1 implementation reconciliation
+
+The September 30 measurements and their hashes above remain historical evidence
+from the pinned original producer; they are not measurements of a later revision.
+The original raw block and compressed pilot artifact are not available through the
+repository connector, so the independently authored all-byte audit remains
+**pending, with production qualification held**. Synthetic byte-for-byte tests
+cannot discharge that original-artifact audit or establish a corpus storage gain.
+
+[PR #966](https://github.com/jjoshua2/DeepFin/pull/966) reconciles the prototype with
+current main while preserving its original branch ancestry. The successor compares
+canonical metadata bytes, avoiding Python's equality between booleans and integers;
+checks the promised checksum and dictionary-free frame recipe; preflights all
+cleanup targets before deletion; binds torn initial claim stages to the intended
+claim hash; and repeats parent-directory fsync barriers on resume. The added tests
+exercise actual 2,048-row and 8 MiB inputs, actual over-cap input/frame files,
+metadata-type substitutions, missing frame-header properties, refused foreign
+stages, and resumed directory durability. Hosted checks on the exact final head
+are reported in the PR; the historical 15-test/local-lint results above do not
+stand in for those checks. No live files, recipes, processes or original artifacts
+are changed by this reconciliation.

@@ -1,0 +1,11 @@
+{
+  "parent_commit": "22aa6449cf4fc69506442e9396837f342cf061e6",
+  "parent_tree": "fbae01e969299855cd99aeb9a1ed38d37d912f8c",
+  "parent_paths": 4089,
+  "compiler": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "bun_version": "1.4.2",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "memory_max": "4294967296",
+  "memory_events_after_first_source_failure": "low 0\nhigh 0\nmax 1778982\noom 2\noom_kill 1\noom_group_kill 0\n",
+  "publication": "not performed; connector write actions unavailable and direct Git DNS failed"
+}

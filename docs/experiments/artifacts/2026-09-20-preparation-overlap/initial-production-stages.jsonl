@@ -1,0 +1,3 @@
+{"index": 3, "rows": 262079, "seconds": 15.945244750997517, "stage": "seal", "status": "STAGE_COMPLETE", "unix": 1789878303.322841}
+{"index": 3, "rows": 262079, "seconds": 111.06052378396271, "stage": "cohort", "status": "STAGE_COMPLETE", "unix": 1789878414.3893976}
+{"index": 1, "rows": 263916, "seconds": 19.553622567036655, "stage": "seal", "status": "STAGE_COMPLETE", "unix": 1789878433.9494553}
