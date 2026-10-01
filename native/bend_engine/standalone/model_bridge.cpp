@@ -9,6 +9,7 @@
 #include "model_contract.h"
 #include "batch_outputs.h"
 #include "dispatch_binding.h"
+#include "search_forward_budget.h"
 #ifdef DEEPFIN_BEND_CUDA_MODEL
 #include "cuda_execution.h"
 #endif
@@ -39,7 +40,8 @@ struct Runtime {
   at::Tensor input;
   std::vector<at::Tensor> inputs;
   int trace = -1;
-  uint32_t calls = 0;
+  deepfin_native::SearchForwardBudget search_budget;
+  uint32_t batch_calls = 0;
   bool audit = false;
   bool batch_api = false;
   bool ready = false;
@@ -51,7 +53,7 @@ struct Runtime {
   uint32_t input_changes = 0, output_changes = 0, input_tensor_allocations = 0;
   ~Runtime() {
     if (audit && ready) {
-      std::cerr << "native-buffer-audit calls=" << calls << " input_changes=" << input_changes
+      std::cerr << "native-buffer-audit calls=" << (batch_api ? batch_calls : search_budget.calls()) << " input_changes=" << input_changes
                 << " output_changes=" << output_changes << " input_tensor_allocations=" << input_tensor_allocations << '\n';
     }
 #ifdef DEEPFIN_BEND_CUDA_MODEL
@@ -170,12 +172,23 @@ static uint32_t open_model(bool batch_api) {
 }
 extern "C" uint32_t deepfin_model_open() { return open_model(false); }
 extern "C" uint32_t deepfin_model_open_batch() { return open_model(true); }
+// Explicit positive process-monotonic search epochs opt the singleton into
+// per-search admission. Diagnostic direct calls remain lifetime-bounded until
+// this succeeds; a batch package cannot use this path to reset its separate cap.
+extern "C" uint32_t deepfin_model_begin_search(uint32_t epoch, uint32_t limit) {
+  if (!state.ready || !state.loader || state.batch_api) return 0;
+  return state.search_budget.begin(epoch, limit);
+}
 extern "C" int deepfin_model_run(const float* input, uint32_t count, float* output, uint32_t capacity) {
   try {
-    if (!state.loader || state.batch_api || !input || !output || count != DEEPFIN_MODEL_CHANNELS * 64 || capacity != 1861
-        || state.calls >= 65536) throw std::runtime_error("native model input/call bound violated");
+    if (!state.loader || state.batch_api || !input || !output
+        || count != DEEPFIN_MODEL_CHANNELS * 64 || capacity != 1861)
+      throw std::runtime_error("native model input bound violated");
+    auto admission = state.search_budget.admit();
+    if (!admission) throw std::runtime_error("native model search/lifetime call bound violated");
+    const uint32_t sequence = admission.sequence();
     if (state.audit) {
-      if (!state.calls) { state.first_input = input; state.first_output = output; }
+      if (sequence == 1) { state.first_input = input; state.first_output = output; }
       state.input_changes += state.first_input != input;
       state.output_changes += state.first_output != output;
     }
@@ -185,9 +198,8 @@ extern "C" int deepfin_model_run(const float* input, uint32_t count, float* outp
     if (outputs.size() != 2) throw std::runtime_error("expected (policy, wdl) output tuple");
     copy_output(outputs[0], 1858, output);
     copy_output(outputs[1], 3, reinterpret_cast<char*>(output) + 1858 * sizeof(float));
-    ++state.calls;
     if (state.trace >= 0) {
-      const uint32_t header[] = {0x44464c31, state.calls, count, 1861};
+      const uint32_t header[] = {0x44464c31, sequence, count, 1861};
       write_all(state.trace, header, sizeof header);
       write_all(state.trace, input, count * sizeof(float));
       write_all(state.trace, output, 1861 * sizeof(float));
@@ -207,7 +219,7 @@ extern "C" int deepfin_model_run_batch(const float* input, uint32_t rows,
   try {
     constexpr uint32_t stride = DEEPFIN_MODEL_CHANNELS * 64;
     if (!state.ready || !state.batch_api || !input || !output || !rows
-        || rows > DEEPFIN_MODEL_BATCH || output_count != rows * 1861 || state.calls >= 65536)
+        || rows > DEEPFIN_MODEL_BATCH || output_count != rows * 1861 || state.batch_calls >= 65536)
       throw std::runtime_error("native batch row/output/call bound violated");
     const auto a = reinterpret_cast<uintptr_t>(input), b = reinterpret_cast<uintptr_t>(output);
     const size_t input_bytes = size_t(rows) * stride * sizeof(float);
@@ -227,25 +239,25 @@ extern "C" int deepfin_model_run_batch(const float* input, uint32_t rows,
       deepfin_native::copy_batch_outputs(outputs, DEEPFIN_MODEL_BATCH, rows, output);
     }
     if (state.audit) {
-      if (!state.calls) { state.first_input = input; state.first_output = output; }
+      if (!state.batch_calls) { state.first_input = input; state.first_output = output; }
       state.input_changes += state.first_input != input;
       state.output_changes += state.first_output != output;
     }
-    ++state.calls;
+    ++state.batch_calls;
     if (state.trace >= 0) {
       // v2: sequence, physical batch, real rows, channels, per-row output width.
       // Capture the actual padded tensor passed to AOTI, not unconsumed host tail.
 #ifdef DEEPFIN_BEND_CUDA_MODEL
       if (state.cuda) {
         // v3 stores actual BF16 device-input bits, not their pre-cast F32 values.
-        const uint32_t header[] = {0x44464333, state.calls, DEEPFIN_MODEL_BATCH, rows,
+        const uint32_t header[] = {0x44464333, state.batch_calls, DEEPFIN_MODEL_BATCH, rows,
                                    DEEPFIN_MODEL_CHANNELS, 1861, DEEPFIN_MODEL_DEVICE_INDEX, 16};
         write_all(state.trace, header, sizeof header);
         write_all(state.trace, state.cuda->trace_data(), size_t(DEEPFIN_MODEL_BATCH) * stride * 2);
       } else
 #endif
       {
-        const uint32_t header[] = {0x44464232, state.calls, DEEPFIN_MODEL_BATCH, rows, DEEPFIN_MODEL_CHANNELS, 1861};
+        const uint32_t header[] = {0x44464232, state.batch_calls, DEEPFIN_MODEL_BATCH, rows, DEEPFIN_MODEL_CHANNELS, 1861};
         write_all(state.trace, header, sizeof header);
         write_all(state.trace, state.input.const_data_ptr(), size_t(DEEPFIN_MODEL_BATCH) * stride * sizeof(float));
       }

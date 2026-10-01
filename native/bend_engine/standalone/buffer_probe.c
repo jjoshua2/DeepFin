@@ -5,6 +5,13 @@
 #include <stdio.h>
 #include <string.h>
 uint32_t deepfin_model_open(void) { return 1; }
+/* This buffer-only diagnostic has no search/session API. Refuse accidental use. */
+uint32_t deepfin_model_begin_search(uint32_t epoch, uint32_t limit) {
+    (void)epoch; (void)limit; return 0;
+}
+uint32_t deepfin_async_begin_search(uint32_t epoch, uint32_t limit) {
+    (void)epoch; (void)limit; return 0;
+}
 int deepfin_model_run(const float *x, uint32_t count, float *y, uint32_t capacity) {
     static const void *first_input;
     static const void *first_output;

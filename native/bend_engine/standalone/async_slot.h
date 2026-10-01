@@ -47,6 +47,21 @@ class AsyncSlot {
     return key_.token;
   }
 
+  // Run a short backend state transition atomically against submit/take. An
+  // occupied slot includes queued, running, cancelled and completed-but-untaken
+  // work. The callback must not re-enter this slot or wait for its worker.
+  template<class F> bool when_idle(F action) {
+    std::lock_guard lock(mutex_);
+    if (occupied_ || closing_ || poisoned_) return false;
+    return action();
+  }
+
+  // Non-consuming physical-completion snapshot. This never releases ownership.
+  AsyncStatus status(AsyncKey key) {
+    std::lock_guard lock(mutex_);
+    return status_locked(key);
+  }
+
   bool cancel(AsyncKey key) {
     std::lock_guard lock(mutex_);
     if (!occupied_ || key != key_) return false;
@@ -60,9 +75,8 @@ class AsyncSlot {
     // A malformed poll must not consume a valid result, even while still busy.
     if (!cancelled_ && (!destination || capacity != 1861))
       throw std::invalid_argument("async singleton output shape");
-    if (!done_) return AsyncStatus::pending;
-    const auto status = failed_ ? AsyncStatus::failed
-                       : cancelled_ ? AsyncStatus::cancelled : AsyncStatus::complete;
+    const auto status = status_locked(key);
+    if (status == AsyncStatus::pending) return status;
     if (status == AsyncStatus::complete)
       std::memcpy(destination, output_.data(), 1861 * sizeof(float));
     occupied_ = false;  // consume once; token and all three search IDs must match
@@ -81,6 +95,12 @@ class AsyncSlot {
   }
 
  private:
+  AsyncStatus status_locked(AsyncKey key) const {
+    if (!occupied_ || key != key_) return AsyncStatus::unknown;
+    if (!done_) return AsyncStatus::pending;
+    return failed_ ? AsyncStatus::failed
+         : cancelled_ ? AsyncStatus::cancelled : AsyncStatus::complete;
+  }
   void work() noexcept {
     for (;;) {
       uint32_t count;

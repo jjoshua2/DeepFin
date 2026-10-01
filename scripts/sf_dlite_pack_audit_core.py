@@ -210,6 +210,9 @@ def expected_pair(base: dict[str, np.ndarray], overlay: dict[str, np.ndarray],
     require(np.all(control["has_policy"] == 1) and
             np.all(control["has_search_wdl"] == 1) and
             np.all(control["has_legal_mask"] == 1), "selected target mask inactive")
+    require(np.all(control["is_network_turn"] == 1) and
+            np.all(control["has_is_network_turn"] == 1),
+            "selected row is not an active network turn")
     old = control["search_wdl"].astype("<f4")
     require(np.all(np.isfinite(old)) and np.all((old >= 0) & (old <= 1))
             and np.all(np.abs(old.sum(axis=1) - 1) <= 0.005),
@@ -302,6 +305,10 @@ def audit_shard(shard_id: int, census: dict[str, Any], roster: np.ndarray,
     selected_sha = hashlib.sha256(rows["stored_row"].astype("<u2").tobytes()).hexdigest()
     result: dict[str, Any] = {"schema": "sf_dlite_independent_pair_shard_audit_v1",
                               "shard_id": shard_id, "rows": len(indices),
+                              "active_network_turn_rows": int(np.count_nonzero(
+                                  control["is_network_turn"] == 1)),
+                              "present_network_turn_rows": int(np.count_nonzero(
+                                  control["has_is_network_turn"] == 1)),
                               "source_identity_sha256": identity,
                               "selected_stored_rows_sha256": selected_sha,
                               "source_content": source, "arms": {}}
