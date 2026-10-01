@@ -3139,9 +3139,9 @@ def run_arena(
     loaded_pair_scores = list(resumed.pair_scores) if resumed is not None else []
     receipts = (
         DurablePairReceipts(
-            pair_receipts_dir, seal_sha256=durable_source_seal_sha256,
+            pair_receipts_dir, seal_sha256=durable_source_seal.sha256,
             log=log_path, pgn=pgn_out,
-        ) if durable and pair_receipts_dir is not None
+        ) if durable_source_seal is not None and pair_receipts_dir is not None
         and pgn_out is not None
         else None
     )

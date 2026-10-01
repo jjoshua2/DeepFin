@@ -369,8 +369,11 @@ def test_run_arena_opt_in_wires_pair_receipts_and_refuses_changed_seal(
     first = run()
     assert first["pairs"] == 1
     assert first["complete_pair_receipts"] == 1
+    assert first["durable_source_seal_sha256"] == "c" * 64
     receipt0 = receipts_path / "pair_000000.json"
     first_bytes = receipt0.read_bytes()
+    assert json.loads(first_bytes)["seal_sha256"] == "c" * 64
+    assert read_game_log(log_path).settings["durable_source_seal_sha256"] == "c" * 64
     with pytest.raises(SystemExit, match="--resume"):
         run(resume=True, seal="d" * 64)
     assert receipt0.read_bytes() == first_bytes
@@ -378,6 +381,8 @@ def test_run_arena_opt_in_wires_pair_receipts_and_refuses_changed_seal(
     assert second["pairs"] == 2
     assert second["resumed_pairs"] == 1
     assert second["complete_pair_receipts"] == 2
+    assert second["durable_source_seal_sha256"] == "c" * 64
+    assert receipt0.read_bytes() == first_bytes
     assert sorted(p.name for p in receipts_path.glob("pair_*.json")) == [
         "pair_000000.json", "pair_000001.json",
     ]
@@ -437,7 +442,9 @@ def test_source_seal_refuses_model_mutation_and_argv_drift(
     seal_path = tmp_path / "seal.json"
     seal_path.write_text(json.dumps(seal))
     seal_sha = hashlib.sha256(seal_path.read_bytes()).hexdigest()
-    def validate(path: Path, digest: str, frozen_argv: list[str]) -> str:
+    def validate(
+        path: Path, digest: str, frozen_argv: list[str],
+    ) -> durable.ValidatedSourceSeal:
         return durable.validate_source_seal(
             path, digest, argv=frozen_argv,
             candidate=str(tmp_path / "candidate"),
