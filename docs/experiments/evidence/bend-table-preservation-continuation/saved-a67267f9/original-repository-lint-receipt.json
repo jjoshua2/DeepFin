@@ -1,0 +1,22 @@
+{
+  "name": "repository-lint",
+  "command": [
+    "bash",
+    "scripts/lint.sh"
+  ],
+  "cwd": "/mnt/data/table-preservation-work/repo",
+  "exit_code": 1,
+  "seconds": 0.009769493000021612,
+  "stdout_file": "repository-lint.stdout",
+  "stderr_file": "repository-lint.stderr",
+  "stdout": {
+    "text": "\n::: running lint tools in parallel\n\n::: ruff check\nenv: \u2018ruff\u2019: No such file or directory\n\n::: basedpyright\nscripts/lint.sh: line 135: basedpyright: command not found\n\n::: vulture (dead code, min confidence 80)\nscripts/lint.sh: line 116: vulture: command not found\n",
+    "sha256": "075f269264e3508474d7b1d8537ac148a8c7b09c2625c0f158c7f9cbabe359dc",
+    "bytes": 270
+  },
+  "stderr": {
+    "text": "",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  }
+}

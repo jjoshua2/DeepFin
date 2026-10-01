@@ -1,0 +1,4 @@
+{
+  "sha256": "b42a634039b3f2d9b262968bf9e54eef3d63f02c68828c8339a3355c3d594c69",
+  "raw_text": "fatal: unable to access 'https://github.com/jjoshua2/DeepFin.git/': Could not resolve host: github.com\n"
+}

@@ -1,0 +1,105 @@
+{
+  "status": "PRESERVED_SAVED_ALTERNATIVE",
+  "saved_commit": "a67267f9832abb843e1230fc619533122833e718",
+  "saved_base": "1915e4f283b1e3d5daf7e26683d5a6c2ef48a121",
+  "active_implementation_pr": 910,
+  "active_base": "83045b38c499ecaf945d6df56da68dd1b8ee2e80",
+  "primary_files": 14,
+  "new_active_laws_from_archive": 0,
+  "entries": {
+    "original-final-identity.json": {
+      "sha256": "ca686c52c4efac96fbfc16d9405b8c9fa953ec652087800b2f37c0b6bd94d350",
+      "bytes": 2564
+    },
+    "original-local-focused.json": {
+      "sha256": "b9bcdc812d29bc11562aef304484cb81534cc1578b0b7d2761dc3090c8f6c5d5",
+      "bytes": 16821
+    },
+    "original-qualification.json": {
+      "sha256": "6a2be995e9204416feeed75191271ca9fe65ac3be89b71c1363cd962e226457d",
+      "bytes": 1656
+    },
+    "original-readout.md": {
+      "sha256": "1cd5d042872a272166997ebd512f74de1caddb394314bac7a83b66612ce7c4f9",
+      "bytes": 9879
+    },
+    "original-recovery-verification.json": {
+      "sha256": "9b6f22b1922b58bcb77f9e52d20682b20f8e0e783298ce8c614d62d80c46c176",
+      "bytes": 1372
+    },
+    "original-repository-lint-receipt.json": {
+      "sha256": "e8c3bf6cdce3adebf7e04e7e25317c94976e6725266da03c7a1b6c8fd8c4bb73",
+      "bytes": 829
+    },
+    "original-self-review.md": {
+      "sha256": "2cd950ac4019b7a454c79a13a61ffba6093e9ce620bb9365cfe100171d8b312b",
+      "bytes": 1681
+    },
+    "original-source-identity.json": {
+      "sha256": "37e7f48cc66a71cdfeb3814faa8f2499463ac9c44bf1bf9985e621ff1182b607",
+      "bytes": 84164
+    },
+    "selected-native-record.json": {
+      "sha256": "0dd0602b20c229ea8a02f71c1d293e5131fe781e52b8a9b918689bdfe0250720",
+      "bytes": 3293
+    },
+    "source/Bind.bend.txt": {
+      "sha256": "4fad1fcdb16a1def1ad516e06e99ef696a83d98facf9d1fef3e3bf1b058a9830",
+      "bytes": 1172
+    },
+    "source/Castle.bend.txt": {
+      "sha256": "2dfba69d3e39c0fbcb082d273ca11e0755c1dff4654f64e23c5af9fdad45d557",
+      "bytes": 1573
+    },
+    "source/Filter.bend.txt": {
+      "sha256": "b587990355d48f87003eb0d145fe342b180d8962c0bc937ced261bfdcbdc1099",
+      "bytes": 3175
+    },
+    "source/Generator.bend.txt": {
+      "sha256": "a39df7209b324c32096e2ba6de7961181eb3d1505c82b1fb1b1b54bed50c9770",
+      "bytes": 1571
+    },
+    "source/LAWS.bend.txt": {
+      "sha256": "781b4ba14c98aff09798a6e726f7c912ab5a48cd7566467559053db722c97730",
+      "bytes": 745
+    },
+    "source/Lift.bend.txt": {
+      "sha256": "824cc6f07571a8908ed8b230392e09315eb81e64b055e0939b627a5c82af93a0",
+      "bytes": 1656
+    },
+    "source/PROOF.bend.txt": {
+      "sha256": "dc873d6fdcb906ef942bd053528a6f99b3d9db38f19c4d590a45dd314f5877ce",
+      "bytes": 410
+    },
+    "source/Query.bend.txt": {
+      "sha256": "28d4aca6a5fdda069fb9a52883592bcd3580ba10f3f873ca7a324e630f9ed1cd",
+      "bytes": 4720
+    },
+    "source/README.md.txt": {
+      "sha256": "4b55e8058ff3d1d0c546187d9395758b14b954c481aa076e198380773a1c1664",
+      "bytes": 4709
+    },
+    "source/Scan.bend.txt": {
+      "sha256": "3e4e29a37ed7546d7ca6d65afccf5841b24267ff6ece28d7c8c5ca83fef84464",
+      "bytes": 3924
+    },
+    "source/consumer.bend.txt": {
+      "sha256": "73eeb4486099ba149f25280460a31bc6a7aab7c41103bb27e3244a3eb1d43c26",
+      "bytes": 1144
+    },
+    "source/focused.py.txt": {
+      "sha256": "644c120401f7d787afaba6198583bef58f9fbbfa398fd15afd2bfe9bf6cb17db",
+      "bytes": 11319
+    },
+    "source/probe.bend.txt": {
+      "sha256": "44e729e9f15e808c5c4ed9359f52bd8bc813c62aadcffed79eec7ad1188a1a71",
+      "bytes": 5109
+    },
+    "source/verify_native.py.txt": {
+      "sha256": "9d4c9dd8c99323bd2dbe24d76988d7894a9464fefaa97886dd7c9bba51a239c2",
+      "bytes": 11437
+    }
+  },
+  "complete_original_commit_tree_claimed": false,
+  "fresh_saved_native_rerun": false
+}

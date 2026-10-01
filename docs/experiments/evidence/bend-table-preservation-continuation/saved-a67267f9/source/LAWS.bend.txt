@@ -1,0 +1,22 @@
+# Storage invariants of actual generator operations, independent of chess legality.
+import Base
+import ../../../legal_probe/Chess.bend as Chess
+import ./Bind.bend as Bind
+
+law ordinary_scan_preserves_table:
+  for table: Array<U64>
+  for +keys: List<&2,U32>
+  for +b: Chess.Board
+  for +tail: List<&2,Chess.Ply>
+  {Bind.moves_table(Chess.scan(keys,b,(table,tail))) == table : Array<U64>}
+
+law optimized_filter_preserves_table:
+  for table: Array<U64>
+  for +b: Chess.Board
+  for +moves: List<&2,Chess.Ply>
+  {Bind.moves_table(Chess.filter_prepare(b,(table,moves))) == table : Array<U64>}
+
+law complete_generator_preserves_table:
+  for table: Array<U64>
+  for +b: Chess.Board
+  {Bind.moves_table(Chess.legal_moves(table,b)) == table : Array<U64>}

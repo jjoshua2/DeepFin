@@ -1,0 +1,93 @@
+{
+  "native_gate": "PASS",
+  "compiler_identity": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\n",
+  "cc": "clang version 17.0.0 (https://github.com/swiftlang/llvm-project.git 10999b6d034fe318f3d56c83bddb6572593a8bb0)",
+  "requests_per_mode": 29,
+  "base_board_tail_cases": 8,
+  "u64_slot_comparisons_per_mode": 2638112,
+  "u32_limb_comparisons_per_mode": 5276224,
+  "native_table_contexts": {
+    "0": "one nonzero leaf",
+    "1": "8 patterned slots",
+    "2": "512 patterned slots",
+    "3": "real Tables.build plus nonzero unused slot",
+    "4": "131072 patterned slots, not a valid chess attack table"
+  },
+  "mutations": [
+    {
+      "name": "ordinary-scan-corrupts-unused-slot",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "all_ordered_move_lists_unchanged": true,
+      "first_mismatch": {
+        "checkpoint": "scan",
+        "slot": 131071,
+        "limb": 0,
+        "expected": 826366246,
+        "observed": 0
+      },
+      "mismatching_checkpoints": 12
+    },
+    {
+      "name": "unchecked-filter-corrupts-unused-slot",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "all_ordered_move_lists_unchanged": true,
+      "first_mismatch": {
+        "checkpoint": "filter",
+        "slot": 131071,
+        "limb": 0,
+        "expected": 826366246,
+        "observed": 0
+      },
+      "mismatching_checkpoints": 10
+    },
+    {
+      "name": "full-generator-corrupts-unused-slot",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "all_ordered_move_lists_unchanged": true,
+      "first_mismatch": {
+        "checkpoint": "legal",
+        "slot": 131071,
+        "limb": 0,
+        "expected": 826366246,
+        "observed": 0
+      },
+      "mismatching_checkpoints": 9
+    }
+  ],
+  "scope": "Every logical slot observed in balanced native arrays around the actual scan, both castling calls, optimized filter, and whole generator. Not allocator/pointer/lifetime proof or independent move legality/completeness.",
+  "record_type": "Compact derived native summary; original report retained unchanged in external review package",
+  "original_report": {
+    "file": "evidence/native.json",
+    "bytes": 2465474,
+    "sha256": "1ff084aea1451bef3a39b07a6d1af45c93d463d635f8daa257c9c94d98b4b66b",
+    "trace_hash_encoding": "UTF-8 JSON with sorted keys and compact separators; arrays retain their exact order"
+  },
+  "selected_from": {
+    "original_filename": "original-local-native-summary.json",
+    "bytes": 105373,
+    "sha256": "a62d0db1c2e1b8640edf94dc191cfbb73e05a45685c8ac717a8e6d8c16656807",
+    "full_report_in_original_review_package": true
+  },
+  "modes": [
+    {
+      "mode": "generic",
+      "invalid_rejections": 8
+    },
+    {
+      "mode": "portable",
+      "invalid_rejections": 8
+    },
+    {
+      "mode": "native",
+      "invalid_rejections": 8
+    },
+    {
+      "mode": "ubsan",
+      "invalid_rejections": 8
+    }
+  ],
+  "selection_notice": "Archival selection of original native headline, mode names, invalid counts and corruption records. Full original per-context snapshot records remain in the original review ZIP; this file is not a byte-identical copy of the original summary."
+}
