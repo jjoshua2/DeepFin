@@ -1,0 +1,54 @@
+{
+  "schema": "ceres_source_phase_observation_evidence_v1",
+  "status": "CPU_ONLY_PROPOSED_SUCCESSOR_OBSERVATION_ZERO_ADMISSION",
+  "date": "2026-09-30",
+  "reviewed_live_packet_manifest_sha256": "621839235e941ccd9e9e23949d19594a6d85aeeceda8d267179e9a07ea2b9975",
+  "reviewed_live_packet_source_review_sha256": "8eb252c8049a9b141641373ead5afb9202242cca4548b3d36c92ac6df20168df",
+  "source_phase_readout_sha256": "eea368af2a10f72a32e33aa482234d1873a14c1fd7f95f3608c86517ef83ea18",
+  "completion_cadence_readout_sha256": "384fb8441bfec3d594d419eedb420d43b21b7eb62bc1c52db177908505d34b1a",
+  "independent_archive_plan_sha256": "ffddbcc84a40940e7b02ac30056830e32132ce38b17fa1fbb727b06894284be5",
+  "independent_first_archive_receipt_sha256": "a4ce714f320296f703ce1ffedc70165dc849b05bea13ebc92fd43f8d3e034872",
+  "first_archive": {
+    "chunk_index": 7,
+    "archive_index": 0,
+    "accepted_rows": 8152,
+    "attempted_rows": 8152,
+    "completed_games": 68,
+    "natural_games": 37,
+    "syzygy_games": 31,
+    "status": "PASS_STORED_SOURCE_TARGET_ZERO_ADMISSION"
+  },
+  "observed_chunks": "7..22",
+  "observed_attempted_roots": 2070718,
+  "observed_physical_calls": 66992,
+  "observed_actor_wall_seconds": 11480.483,
+  "observed_root_outcome_including_nested_sink_seconds": 5812.464,
+  "observed_nested_sink_seconds": 2522.258,
+  "observed_infer_total_including_session_seconds": 5407.243,
+  "observed_choice_apply_seconds": 198.235,
+  "observed_unassigned_actor_seconds": 62.541,
+  "observed_completion_cadence_unique_per_second_chunks_7_to_14": 172.80857016854804,
+  "original_fresh_child_sha256": "5df36267b47261c82d633e97ef39b25c12514be77b470af60aae03b3ece7b89d",
+  "proposed_fresh_child_sha256": "8b5fe3d10008cf601fe44318794a0fbff50c97ab45c4ea873a2dea317be88b4a",
+  "observation_patch_sha256": "2f76a7fea5c3b92ed767a0a6c32eab033412e395a2654873c262590886fbce20",
+  "public_cpu_fixture_sha256": "eb9ff7b86596506283e16fc629ae1e2fffe82edd106061287f1d0c5123869810",
+  "public_patch_exact_apply_receipt_sha256": "0fef9dc8df91693a797236b6b2a01487f9d73e8826450a6a5831ae5e4ea026c9",
+  "cpu_validation": [
+    "ruff check passed for proposed child and public fixture",
+    "Python compile passed for proposed child and public fixture",
+    "valid five-phase receipt and four invalid receipts passed",
+    "archived patch reproduced proposed source bytes from original source"
+  ],
+  "limits": [
+    "host session.run wall is not GPU kernel time",
+    "source and CPU readback overlap; their stage durations must not be summed for throughput",
+    "independent full-row replay is one closed archive, not a completed corpus audit",
+    "patch is observation-only and has not been sealed into or launched as a GPU packet"
+  ],
+  "credit": {
+    "corpus": 0,
+    "training": 0,
+    "elo": 0,
+    "throughput_promotion": 0
+  }
+}

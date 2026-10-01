@@ -14,16 +14,20 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import gzip
 import hashlib
 import json
 import multiprocessing
 import os
 import re
 import shutil
+import signal
 import sys
+import threading
 import time
 from collections.abc import Generator, Mapping, Sequence
-from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,6 +36,11 @@ import chess
 import numpy as np
 import zarr
 from numcodecs import Blosc
+
+try:
+    import msgspec
+except ImportError:
+    msgspec = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -45,8 +54,8 @@ from scripts import derive_corpus_targets as derive
 from scripts import gen_sf_rooted_corpus as corpus
 from scripts.bt4_policy_dump import (
     DEFAULT_ONNX,
+    compact_legal_policy,
     file_sha256,
-    legal_move_probabilities,
     open_session,
     remap_provenance,
     resolve_policy_output,
@@ -67,6 +76,81 @@ PLY_FIELD = "ply"
 _SOURCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _SHARD_SUFFIXES = (".jsonl.zst", ".jsonl.gz")
 _COMPRESSOR = Blosc(cname="zstd", clevel=2, shuffle=Blosc.BITSHUFFLE)
+
+
+_BT4_ROW_DECODER = None
+if msgspec is not None:
+    class _BT4InputRow(msgspec.Struct):
+        """Project only consumed fields; Any and UNSET preserve validation inputs."""
+
+        schema: Any = msgspec.UNSET
+        run: Any = msgspec.UNSET
+        fen: Any = msgspec.UNSET
+        history_root_fen: Any = msgspec.UNSET
+        history_uci: Any = msgspec.UNSET
+        stm: Any = msgspec.UNSET
+        piece_count: Any = msgspec.UNSET
+        input_key: Any = msgspec.UNSET
+        game_id: Any = msgspec.UNSET
+        ply: Any = msgspec.UNSET
+        worker_id: Any = msgspec.UNSET
+
+
+    _BT4_ROW_DECODER = msgspec.json.Decoder(_BT4InputRow)
+# A skipped integer must not bypass Python's configurable JSON integer limit.
+# 640 is the smallest nonzero supported limit. False positives inside strings
+# only choose the reference decoder; they do not reject otherwise valid rows.
+_LONG_DIGITS = re.compile(r"[0-9]{640}")
+
+
+def _decode_bt4_row(line: str) -> dict[str, Any] | None:
+    """Project unused SF phases away; None asks the reader for stdlib decoding."""
+    if msgspec is None or _BT4_ROW_DECODER is None:
+        return None
+    # The C decoders have different recursion cutoffs, including for skipped
+    # fields. Count even brackets in strings: false positives only use stdlib.
+    # Reserve ample stack for its decoder and for this helper's caller.
+    frame = sys._getframe()
+    depth = 0
+    while frame is not None:
+        depth += 1
+        frame = frame.f_back
+    if (line.count("[") + line.count("{") >= sys.getrecursionlimit() - depth - 32
+            or _LONG_DIGITS.search(line)):
+        return None
+    try:
+        projected = _BT4_ROW_DECODER.decode(line)
+    except (msgspec.DecodeError, RecursionError):
+        # Preserve stdlib nonfinite numbers, unusual Unicode, non-object values,
+        # and its original exceptions for malformed JSON (including skipped SF).
+        return None
+    return {
+        key: value
+        for key, value in msgspec.structs.asdict(projected).items()
+        if value is not msgspec.UNSET
+    }
+
+
+def iter_bt4_input_rows(path: Path) -> Generator[dict[str, Any], None, None]:
+    """Stream the raw BT4 input projection; general target readers stay complete."""
+    if path.name.endswith(".jsonl.zst"):
+        module = corpus.zstandard_module()
+        if module is None:
+            raise derive.CorpusIntegrityError(
+                f"{path.name} is zstd-compressed but the zstandard module is not "
+                "importable in this environment",
+            )
+        with open(path, "rb") as binary:
+            reader = module.ZstdDecompressor().stream_reader(binary)
+            for line in derive._text_lines(reader):
+                row = _decode_bt4_row(line)
+                yield json.loads(line) if row is None else row
+        return
+    with gzip.open(path, "rt", encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                row = _decode_bt4_row(line)
+                yield json.loads(line) if row is None else row
 
 
 @dataclass(frozen=True)
@@ -590,6 +674,146 @@ def encode_rows(
     return stacked, boards, input_keys, game_ids, plies
 
 
+@dataclass(frozen=True)
+class PreparedInputBatch:
+    boards: list[chess.Board]
+    source_keys: np.ndarray
+    input_keys: np.ndarray
+    game_ids: np.ndarray
+    plies: np.ndarray
+    feed: np.ndarray
+
+
+def _prepare_input_batch(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    pending: PendingShard,
+    input_dtype: np.dtype[Any],
+) -> PreparedInputBatch:
+    planes, boards, raw_keys, gids, plies = encode_rows(rows, source=pending.source)
+    fingerprints = position_fingerprints(
+        planes, input_history_encoding=derive.INPUT_HISTORY_ENCODING,
+    )
+    if len(fingerprints) != len(rows) or any(
+        len(key) != FINGERPRINT_BYTES for key in fingerprints
+    ):
+        raise ValueError(f"{pending.path}: invalid derived-row fingerprints")
+    source_keys = np.frombuffer(b"".join(fingerprints), dtype=np.uint8).reshape(
+        len(rows), FINGERPRINT_BYTES,
+    )
+    feed = x_to_lc0_planes(
+        planes, input_history_encoding=derive.INPUT_HISTORY_ENCODING,
+    ).astype(input_dtype, copy=False)
+    return PreparedInputBatch(boards, source_keys, raw_keys, gids, plies, feed)
+
+
+def _iter_prepared_inputs(
+    pending: PendingShard,
+    *,
+    input_dtype: np.dtype[Any],
+    batch_size: int,
+    cancelled: threading.Event,
+) -> Generator[PreparedInputBatch, None, None]:
+    """One owner reads/prepares each batch; cancellation never drains the shard."""
+    cursor = 0
+    with closing(iter_bt4_input_rows(pending.path)) as reader:
+        while not cancelled.is_set():
+            rows: list[Mapping[str, Any]] = []
+            while len(rows) < batch_size and not cancelled.is_set():
+                try:
+                    row = next(reader)
+                except StopIteration:
+                    break
+                rows.append(row)
+            if cancelled.is_set() or not rows:
+                return
+            cursor += len(rows)
+            if cursor > pending.claimed_rows:
+                raise ValueError(
+                    f"{pending.path}: decoded more than {pending.claimed_rows} claimed rows",
+                )
+            batch = _prepare_input_batch(rows, pending=pending, input_dtype=input_dtype)
+            del rows
+            yield batch
+
+
+@contextmanager
+def _defer_input_cleanup_sigint() -> Generator[None, None, None]:
+    """Join the bounded producer before delivering an interrupt during cleanup.
+
+    CPython can mark an interrupted Thread.join complete before its worker exits.
+    Deferring SIGINT avoids closing an executing generator in that narrow window.
+    Other handlers are restored and called with the original signal/frame.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    original = signal.getsignal(signal.SIGINT)
+    received: list[tuple[int, Any]] = []
+
+    def defer(signum: int, frame: Any) -> None:
+        received.append((signum, frame))
+
+    signal.signal(signal.SIGINT, defer)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, original)
+        for signum, frame in received:
+            if callable(original):
+                original(signum, frame)
+            elif original == signal.SIG_DFL:
+                signal.default_int_handler(signum, frame)
+
+
+@contextmanager
+def prepared_input_batches(
+    pending: PendingShard,
+    *,
+    input_dtype: np.dtype[Any],
+    batch_size: int,
+    cpu_prefetch: bool,
+) -> Generator[Generator[PreparedInputBatch, None, None], None, None]:
+    """At most the consumed batch and one future; only the caller uses ONNX.
+
+    Closing cancels further reads, waits for at most the currently preparing
+    CPU batch, and closes its reader after the sole worker has stopped.
+    """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    cancelled = threading.Event()
+    batches = _iter_prepared_inputs(
+        pending, input_dtype=input_dtype, batch_size=batch_size, cancelled=cancelled,
+    )
+    try:
+        if not cpu_prefetch:
+            yield batches
+            return
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bt4-input")
+        try:
+            future = executor.submit(next, batches, None)
+
+            def consume() -> Generator[PreparedInputBatch, None, None]:
+                nonlocal future
+                while True:
+                    batch = future.result()
+                    if batch is None:
+                        return
+                    future = executor.submit(next, batches, None)
+                    yield batch
+
+            with closing(consume()) as consumer:
+                yield consumer
+        finally:
+            with _defer_input_cleanup_sigint():
+                cancelled.set()
+                executor.shutdown(wait=True, cancel_futures=True)
+                batches.close()
+    finally:
+        cancelled.set()
+        batches.close()
+
+
 def label_shard(
     pending: PendingShard,
     *,
@@ -603,6 +827,7 @@ def label_shard(
     remap_stamp: Mapping[str, Any],
     batch_size: int,
     wdl_output: Mapping[str, str] | None = None,
+    cpu_prefetch: bool = False,
 ) -> dict[str, Any]:
     """Label one closed source shard and atomically publish its sidecar."""
     if pending.target.exists():
@@ -630,95 +855,46 @@ def label_shard(
     top1_sum = 0.0
     legal_moves_sum = 0
     cursor = 0
-    batch_rows: list[Mapping[str, Any]] = []
-
-    def evaluate_batch(rows: Sequence[Mapping[str, Any]]) -> None:
+    def evaluate_batch(batch: PreparedInputBatch) -> None:
         nonlocal cursor, entropy_sum, top1_sum, legal_moves_sum
-        if not rows:
-            return
-        stop = cursor + len(rows)
-        if stop > rows_expected:
-            raise ValueError(
-                f"{pending.path}: decoded more than {rows_expected} claimed rows",
-            )
-        planes, boards, raw_keys, gids, batch_plies = encode_rows(
-            rows,
-            source=pending.source,
-        )
-        fingerprints = position_fingerprints(
-            planes,
-            input_history_encoding=derive.INPUT_HISTORY_ENCODING,
-        )
-        if len(fingerprints) != len(rows) or any(
-            len(key) != FINGERPRINT_BYTES for key in fingerprints
-        ):
-            raise ValueError(f"{pending.path}: invalid derived-row fingerprints")
-        source_keys[cursor:stop] = np.frombuffer(
-            b"".join(fingerprints), dtype=np.uint8,
-        ).reshape(len(rows), FINGERPRINT_BYTES)
-        input_keys[cursor:stop] = raw_keys
-        game_ids[cursor:stop] = gids
-        plies[cursor:stop] = batch_plies
+        boards = batch.boards
+        stop = cursor + len(boards)
+        source_keys[cursor:stop] = batch.source_keys
+        input_keys[cursor:stop] = batch.input_keys
+        game_ids[cursor:stop] = batch.game_ids
+        plies[cursor:stop] = batch.plies
 
-        feats = x_to_lc0_planes(
-            planes,
-            input_history_encoding=derive.INPUT_HISTORY_ENCODING,
-        ).astype(input_dtype, copy=False)
         names = [policy_name] + ([] if wdl_output is None else [wdl_output["output"]])
-        fetched = sess.run(names, {input_name: feats})
+        fetched = sess.run(names, {input_name: batch.feed})
         if len(fetched) != len(names):
             raise ValueError("teacher returned the wrong number of requested outputs")
         output = np.asarray(fetched[0], dtype=np.float32)
         if wdl_output is not None:
             values = np.asarray(fetched[1])
-            validate_wdl_values(values, len(rows), wdl_output)
+            validate_wdl_values(values, len(boards), wdl_output)
             assert wdl_raw is not None
             wdl_raw[cursor:stop] = values
-        if output.shape[0] != len(rows):
+        if output.shape[0] != len(boards):
             raise ValueError(
-                f"{pending.path}: BT4 returned {output.shape[0]} rows for {len(rows)} inputs",
+                f"{pending.path}: BT4 returned {output.shape[0]} rows for {len(boards)} inputs",
             )
         for offset, board in enumerate(boards):
             row_index = cursor + offset
-            moves, probs_raw = legal_move_probabilities(board, output[offset])
-            probs = np.asarray(probs_raw, dtype=np.float32)
-            indices = np.asarray(
-                [
-                    compact_index_for_move(board, move)
-                    for move in moves
-                ],
-                dtype=np.int64,
+            moves, probs, _ = compact_legal_policy(
+                board, output[offset], row_label=f"{pending.path}:{row_index}",
+                dense_out=bt4_policy[row_index],
             )
-            # The helper enumerates the complete legal Move list itself. Reuse
-            # those objects; a second call to the same compact converter is not
-            # an independent mapping check. Keep injectivity and range checks.
-            if (
-                len(indices) != len(moves)
-                or len(set(indices.tolist())) != len(moves)
-                or bool(np.any(indices < 0))
-                or bool(np.any(indices >= COMPACT_POLICY_SIZE))
-            ):
-                raise ValueError(f"{pending.path}:{row_index}: legal policy mapping mismatch")
-            if (
-                probs.shape != (len(indices),)
-                or not np.isfinite(probs).all()
-                or bool(np.any(probs < 0.0))
-                or not np.isclose(float(probs.sum()), 1.0, atol=2e-6)
-            ):
-                raise ValueError(f"{pending.path}:{row_index}: invalid BT4 legal policy")
-            bt4_policy[row_index, indices] = probs
             positive = probs > 0.0
-            entropy_sum += float(-np.sum(probs[positive] * np.log(probs[positive])))
+            entropy_sum += -float(np.sum(probs[positive] * np.log(probs[positive])))
             top1_sum += float(probs.max())
-            legal_moves_sum += len(indices)
+            legal_moves_sum += len(moves)
         cursor = stop
 
-    for row in derive.iter_corpus_rows(pending.path):
-        batch_rows.append(row)
-        if len(batch_rows) >= batch_size:
-            evaluate_batch(batch_rows)
-            batch_rows = []
-    evaluate_batch(batch_rows)
+    with prepared_input_batches(
+        pending, input_dtype=input_dtype, batch_size=batch_size, cpu_prefetch=cpu_prefetch,
+    ) as batches:
+        for batch in batches:
+            evaluate_batch(batch)
     if cursor != rows_expected:
         raise ValueError(
             f"{pending.path}: decoded {cursor} rows, progress claims {rows_expected}",
@@ -734,6 +910,7 @@ def label_shard(
     attrs = {
         **expected_existing_attrs(pending),
         "positions": rows_expected,
+        "cpu_prefetch": bool(cpu_prefetch),
         "source_sha256": source_sha,
         "source_key_sha256": sha_array(source_keys),
         "input_key_sha256": sha_array(input_keys),
@@ -916,7 +1093,7 @@ def verify_shard(
                 records['worker_id'][offset] = int(row['worker_id'])
         cursor = stop
 
-    for row in derive.iter_corpus_rows(pending.path):
+    for row in iter_bt4_input_rows(pending.path):
         batch_rows.append(row)
         if len(batch_rows) >= batch_size:
             verify_batch(batch_rows)
@@ -1175,6 +1352,7 @@ def run_label_group(args: argparse.Namespace) -> int:
             remap_stamp=remap_stamp,
             batch_size=int(args.batch_size),
             wdl_output=wdl_output,
+            cpu_prefetch=bool(getattr(args, "cpu_prefetch", False)),
         )
         append_receipt(
             pending.source.out_dir / PROGRESS_NAME,
@@ -1296,6 +1474,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-root", type=Path, required=True)
     parser.add_argument("--onnx", type=Path, default=Path(DEFAULT_ONNX))
     parser.add_argument("--batch-size", type=int, default=1024)
+    parser.add_argument(
+        "--cpu-prefetch", action="store_true",
+        help="opt in to one CPU-prepared batch ahead; ONNX stays on the consumer thread",
+    )
     parser.add_argument("--threads", type=int, default=16)
     parser.add_argument("--gpu-mem-gb", type=float, default=24.0)
     parser.add_argument("--policy-output", default=None)

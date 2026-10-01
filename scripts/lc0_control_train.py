@@ -158,6 +158,7 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import math
 import sys
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
@@ -192,6 +193,7 @@ from chess_anti_engine.replay.game_epoch import (
     GameAwareEpochBuffer,
 )
 from chess_anti_engine.replay.shard import iter_shard_paths
+from chess_anti_engine.replay import packed_zarr
 from chess_anti_engine.train import trainer as trainer_module
 from chess_anti_engine.train.losses import normalize_value_blend_fracs
 from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
@@ -324,7 +326,7 @@ def min_budget_for_mid_tolerance(window: int) -> int:
 # The artifacts a completed (or half-completed) run leaves behind. `--out-dir`
 # reuse is refused when any of these is present -- see `existing_run_artifacts`.
 RUN_ARTIFACTS = ("checkpoint.pt", "checkpoint_mid.pt", "summary.json",
-                 "checkpoint_epoch1.pt", "checkpoint_epoch1.pending.pt")
+                 "checkpoint_epoch1.pt", "checkpoint_epoch1.pending.pt", "recovery")
 
 
 def existing_run_artifacts(out_dir: Path) -> list[str]:
@@ -348,7 +350,8 @@ def existing_run_artifacts(out_dir: Path) -> list[str]:
     deliberately no `--overwrite`: this file adds no new delete path, and a
     rename is reversible by hand while a delete is not.
     """
-    return [name for name in RUN_ARTIFACTS if (Path(out_dir) / name).exists()]
+    names = set(RUN_ARTIFACTS) | {p.name for p in Path(out_dir).glob("checkpoint_epoch*.pt")}
+    return sorted(name for name in names if (Path(out_dir) / name).exists())
 
 
 def train_window_plan(*, steps: int, window: int) -> tuple[int, int, str | None]:
@@ -454,6 +457,7 @@ def mid_step_on_epoch_boundary(*, endpoints: tuple[int, ...], frac: float) -> in
 
 def checkpoint_identities(
     *, last: Path, mid: Path | None, epoch_one: Path | None = None,
+    additional_epochs: Sequence[Path] = (),
 ) -> tuple[str, list[dict[str, Any]]]:
     """``(run_id, [{role, path, sha256}])`` — THIS trajectory's identity.
 
@@ -490,6 +494,9 @@ def checkpoint_identities(
     if epoch_one is not None:
         entries.append({"role": "epoch1", "path": str(epoch_one.resolve()),
                         "sha256": sha256_file(epoch_one)})
+    for epoch, path in enumerate(additional_epochs, start=2):
+        entries.append({"role": f"epoch{epoch}", "path": str(path.resolve()),
+                        "sha256": sha256_file(path)})
     fingerprint = "|".join(
         f"{entry['role']}:{entry['sha256']}"
         for entry in sorted(entries, key=lambda e: str(e["role"]))
@@ -638,7 +645,9 @@ def _as_replay_buffer(sampler: Any) -> ReplayBuffer:
     return cast(ReplayBuffer, sampler)
 
 
-def stage_shards(shard_dirs: list[Path], staging: Path) -> int:
+def stage_shards(
+    shard_dirs: list[Path], staging: Path, *, allow_packed_zarr: bool = False,
+) -> int:
     """Symlink every shard into ONE flat directory with unique indices.
 
     ``DiskReplayBuffer`` reads a single directory and ``iter_shard_paths``
@@ -678,11 +687,12 @@ def stage_shards(shard_dirs: list[Path], staging: Path) -> int:
             stale.unlink()
     index = 0
     for shard_dir in shard_dirs:
-        paths = iter_shard_paths(shard_dir)
+        paths = _identity_paths(shard_dir, allow_packed_zarr)
         if not paths:
             raise ValueError(f"no shards under {shard_dir}")
         for path in paths:
-            (staging / f"shard_{index:06d}.zarr").symlink_to(path.resolve())
+            suffix = ".zarr.zip" if packed_zarr.is_packed(path) else ".zarr"
+            (staging / f"shard_{index:06d}{suffix}").symlink_to(path.resolve())
             index += 1
     if index == 0:
         raise ValueError("no shards found in any --shards directory")
@@ -769,6 +779,7 @@ def preflight(
     cfg: dict[str, Any], shard_dirs: list[Path], *, allow_leak: bool,
     allow_mixed_history: bool = False, allow_partial_corpus: bool = False,
     allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None,
+    allow_packed_zarr: bool = False,
 ) -> dict[str, dict[str, int]]:
     """The two LAUNCH-level value-blend guards. Returns the measured coverage.
 
@@ -818,7 +829,8 @@ def preflight(
         for shard_dir in shard_dirs:
             dir_labelled, dir_rows = (
                 measure(Path(shard_dir), allow_target_overlay=True, overlay_seal=overlay_seal)
-                if allow_target_overlay else measure(Path(shard_dir))
+                if allow_target_overlay else (measure(Path(shard_dir), allow_packed_zarr=True)
+                if allow_packed_zarr else measure(Path(shard_dir)))
             )
             labelled += dir_labelled
             rows += dir_rows
@@ -854,20 +866,20 @@ def preflight(
   # corpus is wrong under every blend, including the shipped one), and the
   # blend gate is about what THIS config would add on top. Folding them into one
   # function is what hid the mixing hazard behind the blend's early return.
-    for message in value_scheme_identity_problems(shard_dirs):
+    for message in value_scheme_identity_problems(shard_dirs, allow_packed_zarr=allow_packed_zarr):
         fail(message)
     # ⚑ NOT downgraded by --allow-leak: mixing input histories is not a value
     # leak, and it has its own explicit opt-in.
     for message in history_identity_problems(
-        shard_dirs, allow_mixed_history=allow_mixed_history,
+        shard_dirs, allow_mixed_history=allow_mixed_history, allow_packed_zarr=allow_packed_zarr,
     ):
         raise SystemExit(f"REFUSING TO LAUNCH — {message}")
     # ⚑ Same shape: a partial corpus is not a leak either.
     for message in partial_corpus_problems(
-        shard_dirs, allow_partial_corpus=allow_partial_corpus,
+        shard_dirs, allow_partial_corpus=allow_partial_corpus, allow_packed_zarr=allow_packed_zarr,
     ):
         raise SystemExit(f"REFUSING TO LAUNCH — {message}")
-    for message in baked_value_blend_problems(cfg, shard_dirs):
+    for message in baked_value_blend_problems(cfg, shard_dirs, allow_packed_zarr=allow_packed_zarr):
         fail(message)
     return {
         flag: {"labelled_rows": labelled, "rows": rows}
@@ -940,14 +952,32 @@ class ShardValueStamps:
     sources: dict[str, str]
 
 
-def read_value_stamps(shard_dirs: Sequence[Path]) -> ShardValueStamps:
+def _shard_attrs(path: Path) -> dict[str, Any]:
+    if packed_zarr.is_packed(path):
+        with packed_zarr.open_store(path) as store:
+            return dict(zarr.open_group(store=store, mode="r").attrs)
+    return dict(zarr.open_group(str(path), mode="r").attrs)
+
+
+def _identity_paths(root: Path, allow_packed_zarr: bool) -> list[Path]:
+    if not allow_packed_zarr and next(root.glob("shard_*.zarr.zip"), None) is not None:
+        raise ValueError("packed shards require --allow-packed-zarr: " + str(root))
+    paths = packed_zarr.shard_paths(root) if allow_packed_zarr else iter_shard_paths(root)
+    if not allow_packed_zarr and any(packed_zarr.is_packed(path) for path in paths):
+        raise ValueError("packed shard targets require --allow-packed-zarr: " + str(root))
+    return paths
+
+
+def read_value_stamps(
+    shard_dirs: Sequence[Path], *, allow_packed_zarr: bool = False,
+) -> ShardValueStamps:
     """Read every shard's value-identity attrs.  No policy, just the reading."""
     schemes: dict[str, str] = {}
     schemas: dict[int, str] = {}
     sources: dict[str, str] = {}
     for shard_dir in shard_dirs:
-        for path in iter_shard_paths(Path(shard_dir)):
-            attrs = zarr.open_group(str(path), mode="r").attrs
+        for path in _identity_paths(Path(shard_dir), allow_packed_zarr):
+            attrs = _shard_attrs(path)
             where = f"{Path(shard_dir).name}/{path.name}"
             scheme = str(attrs.get("derive_value_scheme", UNBAKED_VALUE_SCHEME))
             schemes.setdefault(scheme, where)
@@ -1039,15 +1069,17 @@ class ShardHistoryStamps:
         )
 
 
-def read_history_stamps(shard_dirs: Sequence[Path]) -> ShardHistoryStamps:
+def read_history_stamps(
+    shard_dirs: Sequence[Path], *, allow_packed_zarr: bool = False,
+) -> ShardHistoryStamps:
     """Read every shard's history-identity attrs.  No policy, just the reading."""
     row_schemas: dict[str, str] = {}
     zero_history: dict[bool, str] = {}
     mixed_within: dict[str, str] = {}
     unidentified: dict[str, str] = {}
     for shard_dir in shard_dirs:
-        for path in iter_shard_paths(Path(shard_dir)):
-            attrs = zarr.open_group(str(path), mode="r").attrs
+        for path in _identity_paths(Path(shard_dir), allow_packed_zarr):
+            attrs = _shard_attrs(path)
             where = f"{Path(shard_dir).name}/{path.name}"
             problem = marked_shard_problem(attrs)
             if problem is not None:
@@ -1072,6 +1104,7 @@ def read_history_stamps(shard_dirs: Sequence[Path]) -> ShardHistoryStamps:
 
 def history_identity_problems(
     shard_dirs: Sequence[Path], *, allow_mixed_history: bool,
+    allow_packed_zarr: bool = False,
 ) -> list[str]:
     """⚑⚑ ONE input-history identity across ``--shards`` (Grok D3, round 2).
 
@@ -1084,7 +1117,7 @@ def history_identity_problems(
     distributions no summary names.  ``--allow-mixed-history`` is the explicit
     opt-in, and the run's summary then records the mix.
     """
-    stamps = read_history_stamps(shard_dirs)
+    stamps = read_history_stamps(shard_dirs, allow_packed_zarr=allow_packed_zarr)
     problems: list[str] = []
     if stamps.unidentified:
         listed = "; ".join(f"{w} ({why})" for w, why in sorted(stamps.unidentified.items()))
@@ -1125,12 +1158,14 @@ def history_identity_problems(
 UNSTAMPED_CORPUS_COMPLETE = True
 
 
-def read_partial_corpus_stamps(shard_dirs: Sequence[Path]) -> dict[str, dict[str, Any]]:
+def read_partial_corpus_stamps(
+    shard_dirs: Sequence[Path], *, allow_packed_zarr: bool = False,
+) -> dict[str, dict[str, Any]]:
     """``{shard: its corpus_* stamps}`` for every shard stamped INCOMPLETE."""
     incomplete: dict[str, dict[str, Any]] = {}
     for shard_dir in shard_dirs:
-        for path in iter_shard_paths(Path(shard_dir)):
-            attrs = zarr.open_group(str(path), mode="r").attrs
+        for path in _identity_paths(Path(shard_dir), allow_packed_zarr):
+            attrs = _shard_attrs(path)
             if marked_shard_problem(attrs) is not None:
                 # Refused by name in `history_identity_problems`; never read
                 # here through a default.
@@ -1155,6 +1190,7 @@ def read_partial_corpus_stamps(shard_dirs: Sequence[Path]) -> dict[str, dict[str
 
 def partial_corpus_problems(
     shard_dirs: Sequence[Path], *, allow_partial_corpus: bool,
+    allow_packed_zarr: bool = False,
 ) -> list[str]:
     """⚑⚑ A derived shard from a corpus that was NOT WHOLE (#498 rebase).
 
@@ -1166,7 +1202,7 @@ def partial_corpus_problems(
     subset that launched without a word is the failure this refuses.
     ``--allow-partial-corpus`` is the explicit opt-in, recorded in the summary.
     """
-    incomplete = read_partial_corpus_stamps(shard_dirs)
+    incomplete = read_partial_corpus_stamps(shard_dirs, allow_packed_zarr=allow_packed_zarr)
     if not incomplete or allow_partial_corpus:
         return []
     listed = "; ".join(
@@ -1213,7 +1249,9 @@ def history_identity_record(
     }
 
 
-def value_scheme_identity_problems(shard_dirs: Sequence[Path]) -> list[str]:
+def value_scheme_identity_problems(
+    shard_dirs: Sequence[Path], *, allow_packed_zarr: bool = False,
+) -> list[str]:
     """⚑⚑ ONE value-target identity across ``--shards``, whatever the blend is.
 
     This is NOT the ``game_frac`` guard below and must not be folded into it.
@@ -1249,7 +1287,7 @@ def value_scheme_identity_problems(shard_dirs: Sequence[Path]) -> list[str]:
     the value round's own gate, invisible (Codex review of PR #494).  The
     source string spells the realized depth, so the pair separates them.
     """
-    stamps = read_value_stamps(shard_dirs)
+    stamps = read_value_stamps(shard_dirs, allow_packed_zarr=allow_packed_zarr)
     problems: list[str] = []
     unknown = sorted(s for s in stamps.schemas if s not in KNOWN_DERIVE_SCHEMAS)
     if unknown:
@@ -1296,7 +1334,8 @@ def value_scheme_identity_problems(shard_dirs: Sequence[Path]) -> list[str]:
 
 
 def baked_value_blend_problems(
-    cfg: Mapping[str, Any], shard_dirs: Sequence[Path],
+    cfg: Mapping[str, Any], shard_dirs: Sequence[Path], *,
+    allow_packed_zarr: bool = False,
 ) -> list[str]:
     """⚑⚑ ``game_frac > 0`` against shards that already baked the outcome in.
 
@@ -1352,7 +1391,7 @@ def baked_value_blend_problems(
         return []
     baked = {
         scheme: where
-        for scheme, where in read_value_stamps(shard_dirs).schemes.items()
+        for scheme, where in read_value_stamps(shard_dirs, allow_packed_zarr=allow_packed_zarr).schemes.items()
         if scheme != UNBAKED_VALUE_SCHEME
     }
     if not baked:
@@ -1590,7 +1629,7 @@ def _scalar_metric_record(metrics: Any) -> dict[str, Any]:
 def _train_multiple_game_epochs(
     trainer: Trainer, first: GameAwareEpochBuffer, *, buffer_kwargs: dict[str, Any],
     epochs: int, seed: int, batch_size: int, window_steps: int,
-    epoch_one_pending: Path,
+    epoch_one_pending: Path, recovery: Any = None,
 ) -> tuple[Any, int, list[dict[str, Any]], dict[str, Any]]:
     """Uninterrupted trajectory; fresh sampling order, continuous augmentation RNG."""
     buf = first
@@ -1600,6 +1639,7 @@ def _train_multiple_game_epochs(
     records: list[dict[str, Any]] = []
     windows: list[dict[str, Any]] = []
     steps_done = 0
+    rows_done = 0
     metrics: Any = None
     try:
         for epoch_index in range(epochs):
@@ -1633,6 +1673,14 @@ def _train_multiple_game_epochs(
                     "steps_requested": requested, "steps_cumulative": steps_done,
                     "epoch_steps_cumulative": epoch_steps, **values,
                 })
+                rows_done += int(values["train_samples_seen"])
+                if recovery is not None:
+                    recovery.maybe_save(trainer, progress={
+                        "epoch_index": epoch_index + 1, "epoch_seed": seed + epoch_index,
+                        "window_index": len(windows), "window_steps": requested,
+                        "epoch_steps_completed": epoch_steps, "run_steps_completed": steps_done,
+                        "run_rows_completed": rows_done, "corpus_sha256": corpus_sha,
+                    }, metrics=values, sampler_rng=buf.rng)
                 print(f"[train] epoch {epoch_index + 1}/{epochs}, "
                       f"{epoch_steps}/{epoch_batches} steps; total {steps_done}", flush=True)
             receipt = dict(buf.receipt())
@@ -1645,9 +1693,9 @@ def _train_multiple_game_epochs(
                             "steps_end": steps_done,
                             "window_count": len(windows) - start_window,
                             "sampling": receipt})
-            if epoch_index == 0:
-                # Published only after every epoch and the realized loss guards pass.
-                trainer.save(epoch_one_pending)
+            if epoch_index < epochs - 1:
+                # Retain each boundary; publish after realized loss guards pass.
+                trainer.save(epoch_one_pending.with_name(f"checkpoint_epoch{epoch_index + 1}.pending.pt"))
             buf.close()
     finally:
         buf.close()
@@ -1899,6 +1947,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, default=Path("configs/lc0_positive_control.yaml"))
     parser.add_argument("--shards", type=Path, nargs="+", required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--resume-checkpoint", type=Path,
+                        help="Trusted full-state donor for explicitly seeded new game epochs.")
+    parser.add_argument("--resume-checkpoint-sha256")
+    parser.add_argument("--resume-step", type=int)
     parser.add_argument(
         "--steps", type=int, required=True,
         help="optimizer steps. With --sampling-mode game_epoch, 0 resolves to "
@@ -2030,9 +2082,37 @@ def main(argv: list[str] | None = None) -> int:
              "recorded as not a valid control: nothing then ties the trained "
              "corpus to the held-out purity check.",
     )
+    parser.add_argument("--recovery-checkpoint-seconds", type=float, default=3600,
+                        help="Save full recovery state after the first window, then hourly; 0 disables.")
+    parser.add_argument("--recovery-checkpoint-keep", type=int, default=2)
     parser.add_argument("--overlay-storage-qualification", type=Path)
     parser.add_argument("--expected-overlay-storage-qualification-sha256")
+    parser.add_argument(
+        "--allow-packed-zarr", action="store_true",
+        help="allow immutable ordinary .zarr.zip shards in game_epoch mode; overlays are unsupported",
+    )
     args = parser.parse_args(argv)
+    if args.resume_checkpoint is not None:
+        if (
+            args.sampling_mode != "game_epoch"
+            or args.resume_checkpoint_sha256 is None
+            or len(args.resume_checkpoint_sha256) != 64
+            or any(ch not in "0123456789abcdef" for ch in args.resume_checkpoint_sha256)
+            or args.resume_step is None
+            or args.resume_step <= 0
+        ):
+            parser.error("bootstrap resume requires game_epoch, checkpoint SHA256 and positive expected step")
+    elif args.resume_checkpoint_sha256 is not None or args.resume_step is not None:
+        parser.error("resume identity requires --resume-checkpoint")
+    if args.allow_packed_zarr and (
+        args.sampling_mode != "game_epoch"
+        or args.overlay_storage_qualification is not None
+        or args.expected_overlay_storage_qualification_sha256 is not None
+    ):
+        parser.error("--allow-packed-zarr requires game_epoch without overlay qualification")
+    allow_packed_zarr = bool(args.allow_packed_zarr)
+    if not math.isfinite(args.recovery_checkpoint_seconds) or args.recovery_checkpoint_seconds < 0 or args.recovery_checkpoint_keep < 1:
+        parser.error("recovery interval must be finite/nonnegative and keep positive")
     if args.epoch_host_batch_overlap and args.sampling_mode != "game_epoch":
         raise SystemExit("--epoch-host-batch-overlap requires --sampling-mode game_epoch")
     overlay_ref = None
@@ -2040,13 +2120,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.overlay_storage_qualification is not None or args.expected_overlay_storage_qualification_sha256 is not None:
         if (args.overlay_storage_qualification is None
                 or args.expected_overlay_storage_qualification_sha256 is None
-                or args.sampling_mode != "game_epoch" or len(args.shards) != 1):
-            parser.error("overlay qualification requires both receipt pins, game_epoch and exactly one corpus")
-        from chess_anti_engine.replay.target_overlay import verify_qualification
+                or args.sampling_mode != "game_epoch"):
+            parser.error("overlay qualification requires both receipt pins and game_epoch")
+        from chess_anti_engine.replay.target_overlay import qualified_paths
         overlay_ref = {"path": str(args.overlay_storage_qualification.resolve()),
                        "sha256": args.expected_overlay_storage_qualification_sha256}
-        overlay_qualification = verify_qualification(overlay_ref, Path(args.shards[0]))
-        overlay_seal = BaseSeal(overlay_qualification["base_seal"])
+        overlay_paths = [path for root in args.shards for path in iter_shard_paths(Path(root))]
+        _, overlay_seal = qualified_paths(overlay_ref, overlay_paths)
     if args.epochs < 1 or (args.epochs > 1 and (
         args.sampling_mode != "game_epoch" or args.steps != 0
     )):
@@ -2088,13 +2168,14 @@ def main(argv: list[str] | None = None) -> int:
             cfg, shard_dirs, allow_leak=bool(args.allow_leak),
             allow_mixed_history=bool(args.allow_mixed_history),
             allow_partial_corpus=bool(args.allow_partial_corpus),
+            allow_packed_zarr=allow_packed_zarr,
         )
     history_identity = history_identity_record(
-        read_history_stamps(shard_dirs),
+        read_history_stamps(shard_dirs, allow_packed_zarr=allow_packed_zarr),
         allow_mixed_history=bool(args.allow_mixed_history),
     )
     partial_corpus = partial_corpus_record(
-        read_partial_corpus_stamps(shard_dirs),
+        read_partial_corpus_stamps(shard_dirs, allow_packed_zarr=allow_packed_zarr),
         allow_partial_corpus=bool(args.allow_partial_corpus),
     )
 
@@ -2145,7 +2226,7 @@ def main(argv: list[str] | None = None) -> int:
             "here deletes a checkpoint).",
         )
     out_dir.mkdir(parents=True, exist_ok=True)
-    staged = stage_shards(shard_dirs, out_dir / "staged_shards")
+    staged = stage_shards(shard_dirs, out_dir / "staged_shards", allow_packed_zarr=allow_packed_zarr)
     print(f"[data] staged {staged} shard(s) from {len(shard_dirs)} directory(ies)")
 
     kwargs = trainer_kwargs_from_config(cfg)
@@ -2161,10 +2242,22 @@ def main(argv: list[str] | None = None) -> int:
 
     model_cfg = model_config_from_flat_config(cfg)
     model = build_model(model_cfg)
+    # Bank the actual pre-optimizer initialization for matched recipe comparisons.
+    from scripts.bootstrap_initial_state import record_initial_state
+    record_initial_state(model, out_dir / "initial_state.json", seed=int(args.seed))
   # ⚑ model_config is not decoration: the trainer derives its input-history
   # encoding from it, and without it `select_input_history_arrays` refuses
   # every LC0-root row in the corpus. Same construction as tune/trainable.py.
     trainer = Trainer(model, model_config=model_cfg, **kwargs)
+    continuation = None
+    if args.resume_checkpoint is not None:
+        assert args.resume_checkpoint_sha256 is not None
+        assert args.resume_step is not None
+        from scripts.bootstrap_checkpoint_resume import resume_bootstrap
+        continuation = resume_bootstrap(
+            trainer, args.resume_checkpoint, args.resume_checkpoint_sha256,
+            args.resume_step, int(args.seed),
+        )
   # ⚑ Unique STORAGE, not sum(numel) over the state_dict: the 16
   # `layer_smolgens.N.gen_weight.weight` keys are one shared tensor (CLAUDE.md).
     params = unique_storage_param_count(model)
@@ -2242,6 +2335,7 @@ def main(argv: list[str] | None = None) -> int:
             "max_working_set_bytes": epoch_max_working_set_bytes,
             "objective_mask_counter": trainer.exact_objective_mask_counter,
             "host_batch_overlap": bool(args.epoch_host_batch_overlap),
+            "allow_packed_zarr": allow_packed_zarr,
         }
         if overlay_ref is not None:
             epoch_buffer_kwargs["overlay_storage_qualification"] = overlay_ref
@@ -2272,6 +2366,7 @@ def main(argv: list[str] | None = None) -> int:
         realized_replay = {
             "sampling_mode": "game_epoch",
             "applied": {
+                "allow_packed_zarr": bool(buf.allow_packed_zarr),
                 "input_planes": epoch_input_planes,
                 "input_history_encoding": buf.plan.input_history_encoding,
                 "history_rep_fix": bool(buf.plan.history_rep_fix),
@@ -2424,6 +2519,9 @@ def main(argv: list[str] | None = None) -> int:
     if planned_problems:
         print("⚑⚑ --allow-invalid-control: THIS RUN IS NOT A VALID CONTROL and "
               "its artifact cannot be quoted:\n  " + "\n  ".join(planned_problems))
+    from scripts.bootstrap_recovery import RollingRecoveryCheckpoints
+    recovery = RollingRecoveryCheckpoints(out_dir / "recovery",
+        interval_seconds=args.recovery_checkpoint_seconds, keep=args.recovery_checkpoint_keep)
     train_window_metrics: list[dict[str, Any]] = []
     multi_sampling_receipt: dict[str, Any] | None = None
     with CaptureRealizedLosses(
@@ -2470,10 +2568,11 @@ def main(argv: list[str] | None = None) -> int:
             metrics, steps_done, train_window_metrics, multi_sampling_receipt = _train_multiple_game_epochs(
                 trainer, buf, buffer_kwargs=epoch_buffer_kwargs, epochs=args.epochs,
                 seed=int(args.seed), batch_size=batch_size, window_steps=window_steps,
-                epoch_one_pending=out_dir / "checkpoint_epoch1.pending.pt",
+                epoch_one_pending=out_dir / "checkpoint_epoch1.pending.pt", recovery=recovery,
             )
         else:
             steps_done = 0
+            rows_done = 0
             for window_index in range(n_windows):
                 this_window = min(int(window_steps), int(args.steps) - steps_done)
                 if this_window <= 0:
@@ -2489,6 +2588,14 @@ def main(argv: list[str] | None = None) -> int:
                     "steps_cumulative": int(steps_done),
                     **_scalar_metric_record(metrics),
                 })
+                rows_done += int(getattr(metrics, "train_samples_seen", 0))
+                recovery.maybe_save(trainer, progress={
+                    "epoch_index": 1, "epoch_seed": int(args.seed),
+                    "window_index": window_index + 1, "window_steps": this_window,
+                    "epoch_steps_completed": steps_done, "run_steps_completed": steps_done,
+                    "run_rows_completed": rows_done,
+                    "corpus_sha256": getattr(getattr(buf, "plan", None), "corpus_sha256", None),
+                }, metrics=_scalar_metric_record(metrics), sampler_rng=getattr(buf, "rng", None))
                 if n_windows > 1:
                     # flush=True is load-bearing: stdout redirected to a file is
                     # 8KB block-buffered, and at ~60 bytes/line ~136 windows sat
@@ -2578,9 +2685,21 @@ def main(argv: list[str] | None = None) -> int:
     print("\n[guard] PASS: no SF-to-outcome leak, no all-outcome value target, "
           "and no outcome-borne categorical rebuild on any observed step")
 
+    if continuation is not None:
+        if trainer.step != continuation["step_start"] + int(steps_done):
+            raise RuntimeError("continuation global step accounting differs")
+        continuation.update(
+            step_end=trainer.step, additional_epochs=args.epochs,
+            additional_steps=int(steps_done),
+        )
     ckpt = out_dir / "checkpoint.pt"
     trainer.save(ckpt)
     epoch_one = None
+    additional_epoch_checkpoints = []
+    for epoch in range(2, args.epochs):
+        target = out_dir / f"checkpoint_epoch{epoch}.pt"
+        (out_dir / f"checkpoint_epoch{epoch}.pending.pt").replace(target)
+        additional_epoch_checkpoints.append({"additional_epoch": epoch, "path": str(target), "sha256": sha256_file(target)})
     if args.epochs > 1:
         epoch_one = out_dir / "checkpoint_epoch1.pt"
         (out_dir / "checkpoint_epoch1.pending.pt").replace(epoch_one)
@@ -2592,6 +2711,9 @@ def main(argv: list[str] | None = None) -> int:
     run_id, checkpoint_records = checkpoint_identities(
         last=ckpt, mid=mid_ckpt if mid.saved_at_step is not None else None,
         epoch_one=epoch_one,
+        additional_epochs=tuple(
+            out_dir / f"checkpoint_epoch{epoch}.pt" for epoch in range(2, args.epochs)
+        ),
     )
   # ⚑ THE SAME FUNCTION THE LAUNCH REFUSAL CALLED, with the ONE input that could
   # not be known in advance replaced by its realized value. Two copies of this
@@ -2627,6 +2749,8 @@ def main(argv: list[str] | None = None) -> int:
             "control results",
         )
     summary = {
+        "continuation": continuation,
+        "additional_epoch_checkpoints": additional_epoch_checkpoints,
         "steps": int(args.steps),
   # ⚑ THE STEPS THAT ACTUALLY RAN. `steps` above is the REQUEST; a windowed loop
   # can train fewer (the old floor plan discarded the remainder) or more (a
