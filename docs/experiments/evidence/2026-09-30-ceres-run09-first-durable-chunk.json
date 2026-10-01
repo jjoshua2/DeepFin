@@ -1,0 +1,64 @@
+{
+  "credit": 0,
+  "files": {
+    "final_packet": {
+      "bytes": 5239,
+      "sha256": "47140fac27d42931d0966e2189307c61c498887278f94085261146d5fc6fc869"
+    },
+    "final_source_review": {
+      "bytes": 2280,
+      "sha256": "ae378d38f669d61c0c92dc91296c504a116b6ebfc82c94dae5e40904283ebcbf"
+    },
+    "first_accepted": {
+      "bytes": 794,
+      "sha256": "c57d065c7d46b7b30145d0529e334dbe8cf621eb7c1469182c13589cded3dfb7"
+    },
+    "first_child": {
+      "bytes": 632637,
+      "sha256": "f120fb2d7d75168c6a74c44e5cf0780223b0bf8bf79a4512c7cd9eb0f275e6dd"
+    },
+    "first_commit_done": {
+      "bytes": 649,
+      "sha256": "40c9b46a44cb20e152c5cd18cdbe0c49286369ef533cb2b9e724e5fa4a7c3fd5"
+    },
+    "first_complete": {
+      "bytes": 1685,
+      "sha256": "af05adcdd757031f7af9764618605adb361cd49a4d6cce8249651c64c8da2621"
+    },
+    "first_ledger": {
+      "bytes": 1001,
+      "sha256": "2d9700a370b46a1cf1922a12715f5a290c74e5d0885649daf3272ba9c5ae90cb"
+    },
+    "first_local_review": {
+      "bytes": 1872,
+      "sha256": "b43360660fd73ee1effe1df9e4dc9a1493324d50fd25072a93e32937e5ac476e"
+    },
+    "first_provider": {
+      "bytes": 914,
+      "sha256": "4a713be7dadd86871044c750ed9f4cde8f7b904ef62714443d5b94b6f596ea5c"
+    },
+    "first_strict": {
+      "bytes": 261466,
+      "sha256": "eb28f01d58d743676c84052e89b390b364b9f08cf774512cae90f55faafab039"
+    },
+    "launch_authorization": {
+      "bytes": 1486,
+      "sha256": "524cc349ddc8b10723a1a25bc7f8ca34052732cb0cdd56c2b6ec6967ca979cb9"
+    },
+    "prefix_release": {
+      "bytes": 1128,
+      "sha256": "cb87451edff4febb935236149082c3c8c2b8aa4c5c2091937f1a326bd05218c0"
+    },
+    "prefix_seal": {
+      "bytes": 1017,
+      "sha256": "d8fd73862f81fe867e5183cdcf77fe7762505c30ec5929262b4cc33ca2a8a111"
+    },
+    "run08_last_complete": {
+      "bytes": 1063,
+      "sha256": "84c95fd8655d3734f51be7ce47f792e47febb7edc10dbc71f8b825a2d5b1bb0b"
+    }
+  },
+  "independent_external_archive_rehash_performed": false,
+  "schema": "ceres_run09_first_durable_chunk_evidence_v1",
+  "status": "LOCAL_RECEIPT_EVIDENCE_ZERO_ADMISSION"
+}
