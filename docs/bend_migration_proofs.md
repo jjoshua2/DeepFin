@@ -1,5 +1,19 @@
 # Bend migration and proof inventory
 
+## Sequential initialized castling producer/full-filter checks
+
+Hosted run **36322784771** passes the complete three-law consumer, separate premise examples, all16 controls, four native sequential modes and four compiled/executed actual-code corruptions, original compiler tests and unchanged locked repository lint on source `1e735f1b2724c4c28823d391a37be5d8b410799f`.
+
+The one-route guarded producer and full destination filter now have an exact initialized pair/list refinement. Returned tables are threaded through actual start/transit checks and the destination filter. On the isolated empty-tail pipeline, retained membership implies all three independent target-centred geometric checks are false. No caller assumes stage answers or intermediate table preservation.
+
+This is modular194/622 with exact191/606 parent evidence,not a full aggregate or complete optimized legal_moves theorem. Both-wing/ordinary-scan table preservation,optimized-filter composition,universal forward/reverse attack equivalence,historical rights and whole-generator completeness remain separate. See [the readout](experiments/2026-09-27-bend-castle-checked-pipeline.md).
+
+## Initialized geometric checks at derived castling stages
+
+Hosted run36295872282/job108554494045 passes the new complete composition consumer, five certificate-level semantic rejections plus one synthetic output check, four-mode actual stage oracle, original compiler/pin tests and unchanged repository lint. For the actual initial,transit and completed Boards, in_check now equals independent target-centred geometry plus the complete initialized array, with stage singleton/bounds derived from the initial invariants and producer guard.
+
+This is modular191/606, not a full aggregate run or a claim that all checks return safe. The original moving side is retained despite the child turn flip. Sequential table threading, accepted-generator safe results, forward/reverse attack equivalence and historical rights remain separate. All14 files of the saved raw-side singleton variant are archived without replacing the active Boolean-side suite or duplicating counts. See [the readout](experiments/2026-09-27-bend-castle-stage-geometry.md).
+
 ## Latest P3 castling mover-king propagation
 
 Hosted run **36291285103** passes four public laws, the importing consumer, all nineteen controls, all four native modes and three compiled/executed corruptions, original compiler tests and unchanged repository lint on source `bc8d5f83dbd9f3e77492763644ffe92478be1a16`.
@@ -7,6 +21,73 @@ Hosted run **36291285103** passes four public laws, the importing consumer, all 
 Starting with a consistent Board, exactly one selected-side home king and valid raw side metadata, actual transit preserves the king singleton. Actual castling does so under the producer guard, which supplies rook-landing freshness. Raw make_move flips valid side metadata. At start/transit/final stages actual in_check equals actual attacked at the intended moving-king square against the opposite side, including the whole pair. These are not caller-assumed output king counts.
 
 Modular190/600 retains parent186/581 without a full aggregate run. Initial king/side validity still needs its own global origin; opposing king invariants, universal forward/reverse attacks, legal-rights history and complete castling safety composition remain separate. See [the dated record](experiments/2026-09-26-bend-castle-king-invariants.md). No production responsibility moved.
+
+## Blocker-aware slider reciprocity
+
+Run **36343736223** passes both complete slider-reversal laws, the importing consumer and all17 controls, reproducible finite certificates,24 host methods in three optimization modes, four native builds under optimized Python, original compiler/pin checks and configured locked-environment lint on source `053f3d490d0fd774169e4b7fa38faea7519aafc0`.
+
+The strict-interior reversal proof allows occupied endpoints and includes the first blocker. All679 inherited source files remain unchanged; active modular totals207/706 retain205/689 and add2/17, without a full aggregate run. Complete initialized forward-witness composition, full-generator starting/transit safety and historical rights remain separate. See [the readout](experiments/2026-09-27-bend-slider-reversal.md).
+
+## Qualified non-slider reversal publication
+
+Run **36340014190** passed both complete public reversal laws, their importing consumer and all17 controls, certificate reproducibility,15 host methods in three optimization modes, four native builds under optimized Python, original compiler/pin checks and configured locked-environment lint on source `9381124bb2866e2e0a429f0c7806d80256b69721`.
+
+Both endpoints are bounded and pawn reversal exchanges colors. Active modular totals205/689 retain exact203/672 destination-proof baseline; no full aggregate run or extra discovery count. Slider reversal, full-generator start/transit safety and full forward attack composition remain separate. See [the publication record](experiments/2026-09-27-bend-leaper-reversal-publication.md).
+
+## Accepted full-generator castling destination safety
+
+Run **36336288019** passed all three public laws and their complete importing consumer, all17 classified controls, four native build modes and three compiled/executed actual-code corruptions, original compiler/pin gates, and unchanged configured locked-environment repository lint on source `3bb477d4c243b6235a2c7ff5730fae97dd51e96a`.
+
+A returned flag2 move now has a proved False destination check on the original table, not merely proof that a check is executed. The initialized composition derives its guard and final king certificate from actual membership and establishes independent target-centred destination geometry is unattacked. Initial consistency,singleton and valid-side conditions remain explicit. All-stage/full-game soundness and universal attack-direction correspondence remain separate. Modular203/672 with exact200/655 parent retained; no aggregate run or independent review. See [the readout](experiments/2026-09-27-bend-accepted-castle-destination.md).
+
+## Table-verifier hardening and integrated requalification
+
+The active table-preservation verifier now rejects incomplete results even under optimized Python and invalidates stale PASS receipts. Its exact sibling helper also supports generator_followup file loaders, with transitive dependency hashing. Both full active source gates, both four-mode native suites,59 host tests in three modes,compiler gates and configured locked lint passed in run36332433712. No Bend proof changed and modular counts remain200/655; no aggregate run or independent review. See [the publication record](experiments/2026-09-27-bend-table-verifier-publication.md).
+
+## Qualified post-generation query composition
+
+Hosted run **36330825632** passed the complete two-law consumer and15 controls, separately restored saved3-law/17-control gate, four native modes and four executable adapter corruptions, original compiler/pin gates and unchanged configured repository lint on source `7007d4dade5d4c02fd0068598052bd125ca63be7`.
+
+Active modular coverage is200/655; no full aggregate execution or duplicate alternative-suite count.
+
+The proposed generator_followup suite joins actual full generation to a subsequent
+initialized geometric king check, retaining the complete move list and returned table.
+The generation and query Boards are independent. Acceptance requires its full source
+and native gates; this is not yet credited as a completed result here. Existing
+table-preservation and initialized-geometry results remain unchanged. The saved
+three-law alternative is archived without adding duplicate active laws. See
+[the continuation record](experiments/2026-09-27-bend-generator-followup.md).
+
+## Whole-table preservation through complete move generation
+
+Hosted run **36328129634** passed all five public laws, the complete consumer and17 controls, four native full-buffer modes and three compiled/executed mutations, original compiler/pin tests and unchanged locked-environment lint on source `be2f8f1cf671780b6d8b2416d4c031648ce787bb`.
+
+Active evidence is modular198/640; no whole-aggregate execution or new legality claim.
+
+New table_preservation contracts prove whole source-array identity through attack queries, ordinary scan, both castling sides and prepared filtering, culminating in actual Chess.legal_moves. They require no initialized-content or Board-validity assumptions. Local source/control and four-mode whole-buffer tests pass; hosted status is recorded in [the readout](experiments/2026-09-27-bend-generator-table-preservation.md). This closes the generic state-preservation link, not full semantic legality, move completeness, pointer identity or lifetime.
+
+## Published sequential castling-check qualification
+
+Run **36324699695** passed both public laws, the complete importing consumer and all17 controls, all four native modes and three actual-code mutations, original compiler/pin gates, and unchanged locked-environment repository lint on published source `95049dd691032210a759052b4f04f26838c8e05d`.
+
+The saved two-law actual producer/full-filter sequence is now published with exact source identity and fresh qualification. Modular193/623; no full aggregate run or extra discovery count. All prior local failure receipts remain historical. See [the publication record](experiments/2026-09-27-bend-castle-sequence-publication.md). Full optimized generator/table-preservation composition and universal attack-direction correspondence remain separate.
+
+## Initialized single-side castling sequence — locally qualified
+
+Two new public source laws now connect actual castle_side and its subsequent actual
+filter_legal pass to independent target-centred stage-check Booleans, preserving
+the complete initialized array and exact ordered lists. Starting/transit checks
+are state-threaded, and the destination check governs the retained singleton.
+Public callers supply the initial Board/king/side/guard and initialization conditions,
+not query certificates or desired outputs. This adapter does not replace or prove
+the whole optimized legal_moves pipeline.
+
+The complete consumer and17 classified controls passed; the new four-mode native
+sequence oracle and actual-code mutations passed. Original compiler/pin gates passed.
+Repository lint is unqualified for missing tools and no hosted run/publication or
+independent review occurred. Modular193/623 retains191/606 from #899; the full
+aggregate did not run. See [the readout](experiments/2026-09-27-bend-castle-sequence.md).
+
 
 ## Initialized attack state reconciliation
 

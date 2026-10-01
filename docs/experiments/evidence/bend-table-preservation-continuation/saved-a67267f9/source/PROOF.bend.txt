@@ -1,0 +1,13 @@
+import Base
+import ./LAWS.bend as Laws
+import ./Lift.bend as Lift
+import ../storage/Representation.bend as R
+
+def Laws.ordinary_scan_preserves_table(table,keys,b,tail):
+  Lift.scan(table,keys,b,tail,R.reify(table))
+
+def Laws.optimized_filter_preserves_table(table,b,moves):
+  Lift.filter(table,b,moves,R.reify(table))
+
+def Laws.complete_generator_preserves_table(table,b):
+  Lift.legal(table,b,R.reify(table))

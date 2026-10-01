@@ -1,0 +1,25 @@
+# Actual complete legal_moves sequence, including optimized filter preparation.
+import Base
+import ../storage/Observe.bend as O
+import ../../../legal_probe/Chess.bend as Chess
+import ./Bind.bend as Bind
+import ./Scan.bend as Scan
+import ./Castle.bend as Castle
+import ./Filter.bend as Filter
+
+def last(+c: O.Cells,+b: Chess.Board,+ms: List<&2,Chess.Ply>) ->
+  {Bind.moves_table(Chess.filter_prepare(b,Chess.castle_side(b,False{},(O.pack(c),ms)))) == O.pack(c) : Array<U64>}:
+  Bind.moves(r => {Bind.moves_table(Chess.filter_prepare(b,r)) == O.pack(c) : Array<U64>},
+    c,Chess.castle_side(b,False{},(O.pack(c),ms)),Castle.side(c,b,False{},ms),out => Filter.prepare(c,b,out))
+
+def wings(+c: O.Cells,+b: Chess.Board,+ms: List<&2,Chess.Ply>) ->
+  {Bind.moves_table(Chess.filter_prepare(b,Chess.castle_side(b,False{},Chess.castle_side(b,True{},(O.pack(c),ms))))) == O.pack(c) : Array<U64>}:
+  Bind.moves(r => {Bind.moves_table(Chess.filter_prepare(b,Chess.castle_side(b,False{},r))) == O.pack(c) : Array<U64>},
+    c,Chess.castle_side(b,True{},(O.pack(c),ms)),Castle.side(c,b,True{},ms),out => last(c,b,out))
+
+def legal(+c: O.Cells,+b: Chess.Board) ->
+  {Bind.moves_table(Chess.legal_moves(O.pack(c),b)) == O.pack(c) : Array<U64>}:
+  +own = Chess.color(b,Chess.get_turn(b))
+  +keys = Chess.bit_squares(64n,U64.is_zero(own),own,Nil{})
+  Bind.moves(r => {Bind.moves_table(Chess.filter_prepare(b,Chess.castle_side(b,False{},Chess.castle_side(b,True{},r)))) == O.pack(c) : Array<U64>},
+    c,Chess.scan(keys,b,(O.pack(c),Nil{})),Scan.scan(keys,c,b,Nil{}),out => wings(c,b,out))

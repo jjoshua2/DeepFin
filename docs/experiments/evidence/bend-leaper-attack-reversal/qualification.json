@@ -1,0 +1,39 @@
+{
+  "qualification": "PASS_LOCAL_SOURCE_AND_NATIVE",
+  "source": "583aa888bbcd223fdca6a62a204ff374a9257bd3",
+  "source_tree": "eeecc9d67230bc38f07b0b4ccfcb57c16b1929c4",
+  "base": "e452fcc965c09fe52010c65ff9b25abcb48ec57d",
+  "new_laws": 2,
+  "new_controls": 17,
+  "control_categories": {
+    "source semantic/refinement": 8,
+    "manifest/import policy": 8,
+    "synthetic output-wrapper unit": 1
+  },
+  "retained_parent_laws": 200,
+  "retained_parent_controls": 655,
+  "modular_laws": 202,
+  "modular_controls": 672,
+  "full_aggregate_executed": false,
+  "independent_review": false,
+  "new_hosted_qualification": false,
+  "published": false,
+  "repository_lint": "FAILED_MISSING_TOOLS",
+  "native_modes": 4,
+  "native_driver_python_optimization": 1,
+  "host_test_methods": 15,
+  "host_optimization_modes": [
+    0,
+    1,
+    2
+  ],
+  "candidate_native_entries": 663,
+  "inherited_native_entries_unchanged": 645,
+  "native_queries_per_mode": 3072,
+  "reverse_pair_comparisons_per_mode": 196608,
+  "unique_geometric_class_endpoint_triples": 16384,
+  "certificate_rows": 256,
+  "coordinate_certificate_entries": 1280,
+  "positive_geometric_edges": 952,
+  "claim": "Bounded non-slider coordinate membership and actual mask computation reciprocity; not slider reversal or a complete accepted-move safety theorem."
+}

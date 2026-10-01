@@ -1,0 +1,114 @@
+{
+  "native_gate": "PASS",
+  "requests_per_mode": 173,
+  "complete_cells_per_mode": 2313088,
+  "complete_fields_per_mode": 4626176,
+  "full_131072_cell_buffers_per_mode": 17,
+  "input_sha256": "971ef40f80e7d31c6d5d9a21acbddd3836280d32ea979da5fccdc94f850fc07b",
+  "modes": [
+    {
+      "mode": "generic",
+      "requests": 173,
+      "complete_buffers": 173,
+      "compared_cells": 2313088,
+      "compared_u32_fields": 4626176,
+      "moves_observed": 2367,
+      "invalid_rejections": 7,
+      "observations_sha256": "06438afd138327cc412d2eb852f6777a41d3b29145648bf5af31f3bc0752f625"
+    },
+    {
+      "mode": "portable",
+      "requests": 173,
+      "complete_buffers": 173,
+      "compared_cells": 2313088,
+      "compared_u32_fields": 4626176,
+      "moves_observed": 2367,
+      "invalid_rejections": 7,
+      "observations_sha256": "06438afd138327cc412d2eb852f6777a41d3b29145648bf5af31f3bc0752f625"
+    },
+    {
+      "mode": "native",
+      "requests": 173,
+      "complete_buffers": 173,
+      "compared_cells": 2313088,
+      "compared_u32_fields": 4626176,
+      "moves_observed": 2367,
+      "invalid_rejections": 7,
+      "observations_sha256": "06438afd138327cc412d2eb852f6777a41d3b29145648bf5af31f3bc0752f625"
+    },
+    {
+      "mode": "ubsan",
+      "requests": 173,
+      "complete_buffers": 173,
+      "compared_cells": 2313088,
+      "compared_u32_fields": 4626176,
+      "moves_observed": 2367,
+      "invalid_rejections": 7,
+      "observations_sha256": "06438afd138327cc412d2eb852f6777a41d3b29145648bf5af31f3bc0752f625"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "scan-corrupts-unused-cell",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "build_mode": "generic",
+      "full_generator_cases": 8,
+      "all_move_lists_match_clean": true,
+      "corrupt_buffers": 7,
+      "first_changed_cell": 131071,
+      "before": "cell 0 0",
+      "after": "cell 305419896 2596069104"
+    },
+    {
+      "name": "unchecked-filter-corrupts-unused-cell",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "build_mode": "generic",
+      "full_generator_cases": 8,
+      "all_move_lists_match_clean": true,
+      "corrupt_buffers": 2,
+      "first_changed_cell": 131071,
+      "before": "cell 0 0",
+      "after": "cell 305419896 2596069104"
+    },
+    {
+      "name": "queen-combination-corrupts-unused-cell",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "build_mode": "generic",
+      "full_generator_cases": 8,
+      "all_move_lists_match_clean": true,
+      "corrupt_buffers": 6,
+      "first_changed_cell": 131071,
+      "before": "cell 0 0",
+      "after": "cell 305419896 2596069104"
+    }
+  ],
+  "source_sha256s": {
+    "standalone/proofs/table_preservation/LAWS.bend": "9b2550ee26409c8cac0911be6cde64e25609a463bc9d9f85459766a170aca1b2",
+    "standalone/proofs/table_preservation/probe.bend": "90fc958f659bd036d87c993eff5db11ad123fc0f40e99ca111fdc759b3159fd5",
+    "standalone/proofs/table_preservation/_validation.py": "574d995076f22d28a05914711dcab84abf9df8587c8a10b4510ce94161a5e2b0",
+    "standalone/proofs/table_preservation/Core.bend": "0035ad80373f95768e35ae92a131e84d27de8613359caf1cd1d717357ec4d2e0",
+    "standalone/proofs/table_preservation/Queries.bend": "f1a4e99305a8ee062d772b446525ecbe2253fe04bd90ce1cb2354031dff73cb8",
+    "standalone/proofs/table_preservation/Targets.bend": "c499bf743e8a767a615cc73320a9045c72d5a16f9047739ce57c1316d703e7d2",
+    "standalone/proofs/table_preservation/verify_native.py": "db904a2417aa0cb28ad4ddb01e3fb81628c8a6c98f08e60b9efa5e1928731c0a",
+    "standalone/proofs/table_preservation/Castles.bend": "36218fd47f8ec1ad6e202905b2ebed76012e4d3f87e559588eb1f2898ba59bf0",
+    "standalone/proofs/table_preservation/Checks.bend": "f6a5dea271da88935127ccf0e2263c1a4d09957bc3fb94984396fe54c0b4ebaf",
+    "standalone/proofs/table_preservation/focused.py": "faff7e942d7d2464e795a4e6589ee01435f8ae2cc8c77ac5e8b0e45994908dc2",
+    "standalone/proofs/table_preservation/Generation.bend": "9dff7dcf775ddb81e18c70666a043e0b7fd6773672c7bb68b6389c1db4eee7f3",
+    "standalone/proofs/table_preservation/README.md": "c89960da9ac6058a0d8279a3f17d4469d68a7c8594bf8462c06308bd9bb18d94",
+    "standalone/proofs/table_preservation/Filters.bend": "ce012952221f7ed37c762aef43f71bf84888ab43d124a52c898ac760d89a5138",
+    "standalone/proofs/table_preservation/consumer.bend": "da333f95ca4283f70830b0639f8b101367dce887eea59daaec2f151e53bc6096",
+    "standalone/proofs/table_preservation/test_harness.py": "8d2c05d7f1685d565143e013d26b9c1afb42cedb4ee60d518e09d8c5321305d4",
+    "standalone/proofs/table_preservation/PROOF.bend": "eef5237524432a5f6b87e62c20eade6f537662134bfb66c0bb2fbd908b02eaf2",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "scope": "Whole logical array values before/after actual operations. No native allocation/lifetime theorem or move-set correctness/completeness claim."
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "name": "native-final",
+    "command": [
+      "/opt/pyvenv/bin/python",
+      "native/bend_engine/standalone/proofs/castle_sequence/verify_native.py",
+      "/mnt/data/castle_work/compiler/bend",
+      "--report",
+      "/mnt/data/castle_work/native-final.json"
+    ],
+    "cwd": "/mnt/data/castle_work/repo",
+    "exit_code": 0,
+    "seconds": 27.959220463999827,
+    "sha256": "96ed15fe80fe086ee1cd5bfa0257b5eda3ec95570c62edba65623e14df8e14c5",
+    "raw_text": "PASS generic: 1776 sequential requests and 3552 marker reads\nPASS portable: 1776 sequential requests and 3552 marker reads\nPASS native: 1776 sequential requests and 3552 marker reads\nPASS ubsan: 1776 sequential requests and 3552 marker reads\nPASS actual mutation ignore-start-check: rejected on values after compilation and execution\nPASS actual mutation ignore-transit-check: rejected on values after compilation and execution\nPASS actual mutation erase-only-returned-marker: rejected on values after compilation and execution\n"
+  },
+  {
+    "name": "pin-final",
+    "command": [
+      "/mnt/data/castle_work/bun",
+      "test",
+      "native/bend_engine/standalone/verify_compiler.test.js"
+    ],
+    "cwd": "/mnt/data/castle_work/repo",
+    "exit_code": 0,
+    "seconds": 0.03192262499987919,
+    "sha256": "2551b6f194b90233ba19b3049f281c08ba7a134b8f67b3a359de77a8b0358cab",
+    "raw_text": "bun test v1.4.2 (744846f84)\n\nnative/bend_engine/standalone/verify_compiler.test.js:\n(pass) fetch and source verifier share the exact documented U64 pin [0.06ms]\n(pass) fingerprint is independent of checkout location [1.59ms]\n(pass) nested effects and core inputs all count [0.44ms]\n(pass) core mutation changes fingerprint [0.76ms]\n(pass) effect mutation changes fingerprint [0.53ms]\n(pass) extra effects are not silently ignored [0.67ms]\n(pass) renaming unchanged effect bytes changes the fingerprint [0.50ms]\n(pass) missing core input is rejected [0.44ms]\n(pass) core symlinks are rejected [0.42ms]\n(pass) effect directory symlinks are rejected [0.80ms]\n(pass) mismatched source fails without mutating the checkout [0.83ms]\n(pass) build derives revision and revision-keyed cache from the pin reader [0.06ms]\n\n 12 pass\n 0 fail\n 19 expect() calls\nRan 12 tests across 1 file. [21.00ms]\n"
+  },
+  {
+    "name": "compiler-final",
+    "command": [
+      "/mnt/data/castle_work/bun",
+      "tests/run/u64_proofs.js"
+    ],
+    "cwd": "/mnt/data/castle_work/compiler/bend",
+    "exit_code": 0,
+    "seconds": 3.8891603899999154,
+    "sha256": "b1366bab9cbd545e1ed78212bc36b9e2fa1a5b1646f5bfe9be5779ecc4a3e72d",
+    "raw_text": "{\n  \"proof_gate\": \"PASS\",\n  \"report\": [\n    {\n      \"source_laws\": [\n        \"pext_pdep_roundtrip\",\n        \"popcount_bound\",\n        \"popcount_zero\",\n        \"popcount_full\",\n        \"popcount_bit63\",\n        \"word_roundtrip\",\n        \"word_fullwidth\",\n        \"parts_roundtrip\",\n        \"from_parts_low\",\n        \"from_parts_high\",\n        \"widening_low\",\n        \"widening_high_zero\",\n        \"pext_zero_mask\",\n        \"pdep_zero_mask\",\n        \"xor_twice\",\n        \"not_twice\"\n      ],\n      \"checked\": true,\n      \"unsafe_or_foreign\": false\n    },\n    {\n      \"importing_application\": \"demos/proof_u64/main.bend\",\n      \"checked\": true\n    },\n    {\n      \"standard_test_fixture\": \"tests/proof/u64_laws.bend\",\n      \"checked\": true\n    },\n    {\n      \"negative\": \"missing-proof\",\n      \"rejected\": true\n    },\n    {\n      \"negative\": \"false-bound\",\n      \"rejected\": true\n    },\n    {\n      \"negative\": \"missing-laws-import\",\n      \"rejected\": true\n    },\n    {\n      \"negative\": \"proof-hole\",\n      \"rejected\": true\n    },\n    {\n      \"negative\": \"unsafe-proof\",\n      \"rejected\": true,\n      \"raw_cli_status\": 0\n    },\n    {\n      \"negative\": \"corrupted-high-half\",\n      \"rejected\": true\n    },\n    {\n      \"negative\": \"template-instance-cycle\",\n      \"rejected\": true\n    }\n  ]\n}\n"
+  }
+]

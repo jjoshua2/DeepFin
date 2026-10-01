@@ -1,0 +1,33 @@
+{
+  "nonqualifying_development_attempts": {
+    "queries-first.log": {
+      "sha256": "cf7a2c329f5b6c6af5a359e801b99c251b3f7bfe6664ac105bc73b92f81c638e",
+      "raw_text": "Error:\n- expected : {Core.table(U64, Array.get.at(U64, U32.add(U64.low(at), index), Array.size(U64, table))) == table : Array<U64>}\n- observed : {../storage/Observe.storage(Array.get.at(U64, U32.add(U64.low(at), index), Array.size(U64, table))) == table : Array<U64>}\nContext:\n- index : U32\n- table : Array<U64>\n- at    : U64\nLocation: offset\n11 |   (table,+at) = r\n12>|   Read.read_any(table,U32.add(U64.low(at),index))\n13 | \n"
+    },
+    "queries-second.log": {
+      "sha256": "f1e9bbb6847c4685ef82d23aaddeb2de3d36c0816b73a2cadee8d5e9a67788be",
+      "raw_text": "Error:\n- expected : c\n- observed : c (consumed more than once)\nContext:\n- table : Array<U64>\n- q     : U32\nLocation: read\n15 |   {C.table(U64,Array.get(U64,table,q)) == table : Array<U64>}:\n16>|   C.apply(U64,a => Array.get(U64,a,q),table,c =>\n17 |     Equal.trans(Array<U64>,C.table(U64,Array.get(U64,O.pack(c),q)),\n"
+    },
+    "queries-third.log": {
+      "sha256": "acac66a652013646e8ecf506cea49831b7002a41bf34119869571643ac06ce66",
+      "raw_text": "Error:\n- expected : {Core.table(U64, ../../../legal_probe/Chess.attack(U32{WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, _97}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}, table, sq, side, occ)) == table : Array<U64>}\n- observed : {Core.table(U64, Array.get.at(U64, U32.add(320, sq), Array.size(U64, table))) == table : Array<U64>}\nContext:\n- _97   : Word.Nil<> - WNil{}\n- table : Array<U64>\n- sq    : U32\n- side  : U32\n- occ   : U64\nLocation: attack\n68 |           queen(sq,occ,Chess.slide(O.pack(c),sq,occ)),slide(O.pack(c),sq,occ)))\n69>|     case _: read(table,U32.add(320,sq))\n70 | \n"
+    },
+    "native-lowering-first.log": {
+      "sha256": "6fdc688c957a027f6897911207b7f0f772d101d41eb13aabe747e73fb1d79500",
+      "raw_text": "Error:\n- message  : a parameter or field scrutinee (a match cannot scrutinize a computed value: give it its own def)\nLocation:\n32 |     case 1n+p:\n33>|       (table,v) = Array.get(U64,table,i)\n34 |       do IO<Array<U64>>:\n"
+    },
+    "native-lowering-second.log": {
+      "sha256": "e18730e6362c3ed8e12de8341618d09234dbe5e5bd5771b4e6c6200cf8019182",
+      "raw_text": "Error:\n- expected : a term (the keyword 'def' cannot head one)\n- observed : ' '\nLocation:\n72 | \n73>| def operate(op: U32,+b: Chess.Board,table: Array<U64>) -> IO(Array<U64>):\n74 |   match op:\n"
+    },
+    "native-lowering-third.log": {
+      "sha256": "eac1b520e19a481e92ecd998da1ebee855cfbbea1770c1380d55256b9aaa16e5",
+      "raw_text": "Error:\n- expected : U32\n- observed : Sigma<&1, &1, Array<U64>, _ => U32>\nContext:\n- context : U32\n- op      : U32\n- b       : ../../../legal_probe/Chess.Board\n- _       : Unit\n- table   : Array<U64>\n- table   : Array<U64>\n- _       : Unit\n- table   : Array<U64>\nLocation: execute\n93 |     table : Array<U64> <- values(U32.to_nat(capacity(context)),0,table)\n94>|     IO.print(\"done \" ++ U32.show(Array.size(U64,table)))\n95 | \n"
+    },
+    "local-lint.log": {
+      "sha256": "13dfc8c98d92235d145b6d7aa429cc1b617b81e3cf8dccf29f307cb4535dea00",
+      "raw_text": "\n::: running lint tools in parallel\n\n::: ruff check\nenv: 'ruff': No such file or directory\n\n::: basedpyright\n./scripts/lint.sh: line 135: basedpyright: command not found\n\n::: vulture (dead code, min confidence 80)\n./scripts/lint.sh: line 116: vulture: command not found\n"
+    }
+  },
+  "lint_pass_claimed": false
+}

@@ -1,0 +1,55 @@
+[
+  {
+    "step": "source",
+    "exit_code": 0,
+    "seconds": 114.57842382100011,
+    "args": [
+      "python3",
+      "native/bend_engine/standalone/proofs/attack_reversal/focused.py",
+      "/mnt/data/castle_progress/compiler/bend",
+      "--report",
+      "/mnt/data/castle_progress/evidence/focused.json"
+    ]
+  },
+  {
+    "step": "native",
+    "exit_code": 0,
+    "seconds": 14.208630459000005,
+    "args": [
+      "python3",
+      "-O",
+      "native/bend_engine/standalone/proofs/attack_reversal/verify_native.py",
+      "/mnt/data/castle_progress/compiler/bend",
+      "--report",
+      "/mnt/data/castle_progress/evidence/native.json"
+    ]
+  },
+  {
+    "step": "compiler-pin",
+    "exit_code": 0,
+    "seconds": 0.032023523000134446,
+    "args": [
+      "/mnt/data/castle_progress/bun",
+      "test",
+      "native/bend_engine/standalone/verify_compiler.test.js"
+    ]
+  },
+  {
+    "step": "compiler-source",
+    "exit_code": 0,
+    "seconds": 4.044707458999937,
+    "args": [
+      "/mnt/data/castle_progress/bun",
+      "tests/run/u64_proofs.js"
+    ]
+  },
+  {
+    "step": "lint",
+    "exit_code": 1,
+    "seconds": 0.015812421000191534,
+    "args": [
+      "bash",
+      "scripts/lint.sh"
+    ]
+  }
+]

@@ -1,0 +1,4 @@
+{
+  "sha256": "5e0682f550e43e3e17815ea9192178fd927da419e8f36929b32cb98183e3ec01",
+  "raw_text": "PASS native generic\nPASS native portable\nPASS native native\nPASS native ubsan\nPASS mutation asymmetric-knight\nPASS mutation swap-both-pawn-storages\n"
+}

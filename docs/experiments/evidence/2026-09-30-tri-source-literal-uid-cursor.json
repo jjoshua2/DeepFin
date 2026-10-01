@@ -1,0 +1,59 @@
+{
+  "schema": "tri_source_literal_uid_cursor_diagnostic_evidence_v1",
+  "date": "2026-09-30",
+  "scope": "CPU_SYNTHETIC_ONLY_ZERO_ARCHIVE_TARGET_TRAINER_OR_500M_CREDIT",
+  "base_commit": "f6e881cc285e4a41826d1909d1047712e21e7729",
+  "source_sha256": {
+    "chess_anti_engine/source/checkpointed_wave_v2.py": "23f41f865533a60d979bb4c5051f6b3dd7bcdeaf51eea9d7e65641de4cc11e2c",
+    "chess_anti_engine/source/checkpointed_candidate_v2.py": "153423c41452cf5e1533f495eac5bda2486243ad4bcfdd0ecf313cbf91a0c1d0",
+    "chess_anti_engine/source/checkpointed_cursor_v2.py": "45d2eb4c292f9b8e5c19c633557d9dd17c21020577d2932b4d4fe60c6a067ddf",
+    "tests/test_checkpointed_cursor_v2.py": "dc3eab05331ca5031edb4b936cbfab0e01a99e62e87182557c15e8053ef0c413"
+  },
+  "frozen_reader_sources_reviewed_but_not_run": {
+    "adapter_grouped.py": "4f415da2f2f09de0662a4ef7e277ff627704e6eba4ca7e641243bdb322ec695d",
+    "grouped_reader.py": "a6420401b41ad41c3ade14b5291a66d0f137e2807bd5790c615a2781a97c738b",
+    "neural_replay.py": "06be78f81b18643fe45e59bf75cb9325076e537c59d0c0dbdd8f41b6beb3ce05",
+    "replay_bridge.py": "34ca82756e238613c7be617d35dc6bd9a8f4afde13b5ce0a607d24e0fc94801e",
+    "selected_teacher_contract.py": "900758c2534ce45d69e612874fb076d13d564d20c229539f3fd387bafe33c6bf"
+  },
+  "fixture": {
+    "rows": 8195,
+    "native_bytes_per_row": 32,
+    "bt4_uid_ply_start": 16,
+    "game_rows_max": 256,
+    "game_rows_pattern": "31x256+255+2+1+1",
+    "segment_rows": 8192,
+    "frame_rows": 512,
+    "sort_run_rows_max": 2048,
+    "crash_witnesses": [
+      "SIGKILL after wave segment seal before cursor",
+      "SIGKILL after comparison seal before cursor"
+    ],
+    "post_crash_checks": "fresh replay, sealed receipt SHA and mtime retained, no-op cursor stable"
+  },
+  "validation": {
+    "cursor_tests": 6,
+    "existing_sort_tests": 13,
+    "test_status": "CURRENT_CURSOR_6_PASS_PRIOR_COMBINED_19_PASS",
+    "current_cursor_test_log_sha256": "a22720e7e0f651a2c6eab353df3268a9dfcedd25261110950e6ba13556124616",
+    "prior_combined_test_log_sha256": "d23c788d6d25bdc5f0974fd770cb9c59eb6747b85171cada1759c4689175fd36",
+    "whole_repo_ruff": "PASS",
+    "whole_repo_vulture": "PASS",
+    "basedpyright_python": "3.10",
+    "basedpyright_dependency_overlay": "repo Python 3.10 virtualenv plus installed Python 3.10 package paths; no installs or stubs changed",
+    "basedpyright_base": {"errors": 439, "warnings": 7, "report_sha256": "d01dd2a89973fcafecb31f8394755734fe04996089d8ea4a991470dac9b79cef"},
+    "basedpyright_candidate": {"errors": 439, "warnings": 7, "report_sha256": "5bee539372a41317eacb32d6b2a2aaa5e1d49eac4f736d5d9802b7c308d68910"},
+    "basedpyright_normalized_candidate_only": 0,
+    "basedpyright_normalized_base_only": 0,
+    "basedpyright_comparison_sha256": "49db6bb087a9b341550c108cbc2156a9b6d81851628fd6561d074698893fac0a",
+    "ordinary_full_lint_environment": "FAIL_IMPORT_DEPENDENCIES_NOT_RESOLVED_BY_PYRIGHT",
+    "ordinary_full_lint_log_sha256": "867a6405e66d6eea5ad190bd5cc0bdfb9e807c6debebcee3ae649d0ccf5caff3"
+  },
+  "not_established": [
+    "real BT4, Ceres, or SF archive callback binding",
+    "real 44800-byte native row parity",
+    "target join or trainer array admission",
+    "production watchdog and source paging",
+    "external-drive or 500M-row throughput and no-op restart time"
+  ]
+}
