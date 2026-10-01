@@ -47,7 +47,7 @@ PHYSICAL_SCOPE = (
 )
 OUTPUT_BYTES_MAX = 1 << 30
 FREE_BYTES_MIN = 50 << 30
-ARTIFACT_ROOT = Path("/home/josh/chess-artifacts")
+ARTIFACT_ROOT = Path.home() / "chess-artifacts"
 LEASE = Path("/tmp/chess-physical-heavy-io-exclusive.lock")
 LABEL_MONITOR_SOURCE = Path(
     "/tmp/sf_dlite_d8_full07_label_audit_session_supervisor_candidate_20260930.py")
