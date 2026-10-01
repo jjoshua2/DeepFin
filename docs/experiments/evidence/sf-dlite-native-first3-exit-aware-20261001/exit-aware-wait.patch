@@ -1,0 +1,14 @@
+--- a/builder_v12.py
++++ b/builder_candidate.py
+@@ -237,7 +237,10 @@
+                 if code is not None:
+                     need(code==0, f'unit child exited {code}')
+                     return
+-                time.sleep(5)
++                try:
++                    process.wait(timeout=5)
++                except subprocess.TimeoutExpired:
++                    pass
+     finally:
+         if process.poll() is None:
+             try:

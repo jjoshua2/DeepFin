@@ -67,7 +67,8 @@ position startpos moves e2e4 e7e5
 go nodes 32
 ```
 
-Supported subset: uci/isready, position startpos or six-field FEN with optional
+Supported subset: uci/isready, setoption (TreeNodes and Move Overhead),
+position startpos or six-field FEN with optional
 legal moves, ucinewgame, go nodes/depth/movetime/infinite and
 wtime/btime/winc/binc/movestogo, stop, quit, clean EOF.
 No ponder, searchmoves, MultiPV or claim protocol. Clock controls use
@@ -502,10 +503,12 @@ opt-in async mode they are processed while the copied forward runs, but encoding
 selection and blocked diagnostic output can still delay them. Quit joins physical
 work. No hard-stop latency guarantee is made. Policy maps and packed buffers are
 now reused as described below; legal entries/history inputs remain leaf-specific.
-The backend has a 65,536-forward process limit. No CUDA, batched scheduler,
-subtree reuse, production Gumbel parity, trained-model strength or training
-migration is established. Existing material-mode regressions and perft depths
-remain unchanged; new native tests and model export are opt-in only.
+The UCI path now uses the epoch-bound forward budget described below. Unbound
+diagnostic and separate batch calls retain a 65,536-forward process limit.
+No CUDA, batched scheduler, subtree reuse, production Gumbel parity, trained-model
+strength or training migration is established. Existing material-mode regressions
+and perft depths remain unchanged. Model export and real-model qualification stay
+explicit opt-in operations; hosted UCI controller checks do not export or load a model.
 
 ## Neural-work instrumentation
 

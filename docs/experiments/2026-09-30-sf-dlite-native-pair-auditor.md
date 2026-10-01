@@ -5,7 +5,7 @@ label corpus or raw Stockfish source has been scanned by this auditor. Its
 qualification status must not be used until a fresh successful label terminal, the
 independent all-label audit and the paired builder terminal are sealed, and
 this auditor completes every shard and final readback.
-The source pins bind the fresh full07 worker, authorization and builder v9.
+The current successor source pins bind the fresh full07 worker, authorization, builder v12 and core v3.
 Full04, full05 and full06 labels and receipts are ineligible. Production admission
 still requires a completed full07 label terminal and independently monitored
 all-label audit, followed by a sealed native builder terminal.
@@ -115,3 +115,47 @@ The production sizes are 450 MB for the roster and 30 MB for labels; existing
 adds per-pass hashing and memory rather than assuming a source path stays frozen.
 Tiny tests mutate the files after snapshot acquisition and substitute bytes at
 read time to distinguish immutability from a later source rehash.
+
+
+## October 1 local restart and training-eligibility fixes
+
+The all-label audit completed for all 2,500,000 full07 labels before the paired
+build began. Two bounded build attempts exited before sealing a native shard:
+the first native writer rejected its surrounding process alarm; the next writer
+rejected three custom provenance keys outside the native ShardMeta schema.
+The successor preserves the external deadline across both writes, uses supported
+native metadata, and retains source/census identity and the source metadata hash
+in the sealed receipt. Resume checks that hash. Failed attempt identities and
+partial outputs were preserved; they carry no native-pack or training credit.
+
+Independent tests include seven real timer/writer cases and two full guarded
+build-path cases: both native arms, stage seal, publication, repeated reopen,
+independent decoded-array audit, and refusal of a forged source metadata hash.
+A fresh production attempt has published its first shard. That observation
+does not qualify the complete pack or establish training/playing strength.
+
+The auditor successor uses a fresh standard-library exec guard before NumPy
+imports, avoiding preexec callbacks in the multithreaded parent. It also requires
+all selected source rows to have both `is_network_turn=1` and
+`has_is_network_turn=1`, matching the actual donor loss filter. Per-shard
+source-derived counts are bound through both receipt passes, checked again at
+final readback, summed to exactly 2,500,000, and included in qualification.
+Inactive rows fail admission; their flags are never rewritten or filtered away.
+
+The final integration starts from hosted-tested revision
+`25f1e08242c84f8f1e128c876b9038a0d781b0e6`, preserving its consumed-stream
+hashing, unmonitored-index reconstruction, immutable roster/label snapshots and
+portable artifact root. The combined focused CPU suite passed 41 tests both
+locally and independently. Subsequent explicit integer narrowing and a negative
+test annotation address two introduced typecheck findings; affected eligibility
+fixtures were rerun (seven passed). Full and scoped Ruff/Vulture pass; explicit
+path-scoped basedpyright passes with zero errors and warnings. The whole-repository
+default typecheck reports 2,502 errors and 1,562 warnings in this host environment,
+including unresolved installed dependencies. That full gate is not a clean pass;
+the source base already has an exact hosted CI pass, and this successor requires
+its own hosted validation.
+
+Each native/auditor unit retains its 30-minute bound and durable completion
+receipts. Long-running jobs reuse only sealed work with the same reviewed
+identity after rechecking it. Training and arena remain later, separately
+qualified serial GPU jobs.
