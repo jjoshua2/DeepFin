@@ -741,7 +741,10 @@ def supervise(command: list[str], root: Path, lease_fd: int,
                             "physical_scope": PHYSICAL_SCOPE,
                         })
                     return
-                time.sleep(5)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
     finally:
         if process.poll() is None:
             try:
