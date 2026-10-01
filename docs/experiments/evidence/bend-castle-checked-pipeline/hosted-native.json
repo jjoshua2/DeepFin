@@ -1,0 +1,119 @@
+{
+  "native_gate": "PASS",
+  "compiler_identity": {
+    "source_files": 84,
+    "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4"
+  },
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "fixture_count": 852,
+  "initializations": 2,
+  "requests_per_mode": 1704,
+  "distinct_inputs": 852,
+  "deduplicated_candidates": 0,
+  "fixture_sha256": "e094db4b5cc8ed9b21e37e703726da9011a24d875bc97eb5f2fd34b2aa91835e",
+  "cases_by_category": {
+    "rights-tail": 256,
+    "king-missing": 4,
+    "king-wrong-color": 4,
+    "king-wrong-kind": 4,
+    "rook-missing": 4,
+    "rook-wrong-color": 4,
+    "rook-wrong-kind": 4,
+    "path-blocker": 120,
+    "attack-file-4": 4,
+    "attack-file-5": 2,
+    "attack-file-6": 2,
+    "attack-file-1": 4,
+    "raw-metadata": 48,
+    "knight-transit": 4,
+    "attack-file-3": 2,
+    "attack-file-2": 2,
+    "mixed-coordinate": 384
+  },
+  "guard_true_cases": 432,
+  "emitted_cases": 269,
+  "accepted_pipeline_cases": 238,
+  "destination_only_removed_by_filter": 4,
+  "complete_child_boards_per_mode": 3414,
+  "modes": [
+    {
+      "mode": "generic",
+      "records": 3414,
+      "marker_reads": 28,
+      "output_sha256": "02d2a1a25767a39824506f432548d862f2d05401f551a057e4d477653750f22e",
+      "invalid_rejections": 9
+    },
+    {
+      "mode": "portable",
+      "records": 3414,
+      "marker_reads": 28,
+      "output_sha256": "02d2a1a25767a39824506f432548d862f2d05401f551a057e4d477653750f22e",
+      "invalid_rejections": 9
+    },
+    {
+      "mode": "native",
+      "records": 3414,
+      "marker_reads": 28,
+      "output_sha256": "02d2a1a25767a39824506f432548d862f2d05401f551a057e4d477653750f22e",
+      "invalid_rejections": 9
+    },
+    {
+      "mode": "ubsan",
+      "records": 3414,
+      "marker_reads": 28,
+      "output_sha256": "02d2a1a25767a39824506f432548d862f2d05401f551a057e4d477653750f22e",
+      "invalid_rejections": 9
+    }
+  ],
+  "mutations": [
+    {
+      "name": "omit-start-check",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "context": 0,
+      "batch_start": 256,
+      "diagnostic": "AssertionError [ERR_ASSERTION]: wrong output-list length: attack-file-4 producer\n+ actual - expected\n\n+ 'begin 2'\n- 'begin 1'\n         ^\n"
+    },
+    {
+      "name": "omit-transit-board",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "context": 0,
+      "batch_start": 256,
+      "diagnostic": "AssertionError [ERR_ASSERTION]: wrong output-list length: attack-file-5 producer\n+ actual - expected\n\n+ 'begin 2'\n- 'begin 1'\n         ^\n"
+    },
+    {
+      "name": "omit-destination-check",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "context": 0,
+      "batch_start": 256,
+      "diagnostic": "AssertionError [ERR_ASSERTION]: wrong output-list length: attack-file-6 filtered\n+ actual - expected\n\n+ 'begin 1'\n- 'begin 0'\n         ^\n"
+    },
+    {
+      "name": "lose-table-between-stages",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "context": 0,
+      "batch_start": 256,
+      "diagnostic": "AssertionError [ERR_ASSERTION]: wrong output-list length: attack-file-4 filtered\n+ actual - expected\n\n+ 'begin 1'\n- 'begin 0'\n         ^\n"
+    }
+  ],
+  "source_sha256s": {
+    "Certificates.bend": "6c909721e2d43dcb74641b4647866bf23a9891cd9ce56f6b382216807d5e84b2",
+    "Composition.bend": "a609659e97a1d85157403c3ebab1bdbc492ab21c8394a4f8d355ca2b41e93ff2",
+    "Decision.bend": "095705f66f578112a2b7ff10f7c04cd4fc3c3097edc403914bf3cd5e93390a59",
+    "Examples.bend": "9e09048c25f159a409c7793887b5556a07a2220dba30b3a547c75dc7a67410c3",
+    "LAWS.bend": "00086d9a430f7a644992f376db21d2151e2bcbdc8abe9b6ede48acd6c4715854",
+    "PROOF.bend": "73d82810810a02e4d0ff7f650124f9314c511a35561e0883178d9d567f700a05",
+    "Route.bend": "4a01c35fa8ab54ac183f8ca49a3c68dec2611dce4064c559438889be2f3a54dc",
+    "Spec.bend": "8ddb87254c143742d492d5ff4e135281f13954b073c58952e4623f2ee2cf02be",
+    "Wire.bend": "ed2ec17694b91751728ec34d22970d7ea6b4963a7850cbc619eacb1aa26d13e3",
+    "consumer.bend": "0c96849c79c39e4c1fa8f91ed49009ced97f9e078eb2247499f83499b5707e37",
+    "probe.bend": "0e72cf6b077d6711633082a4958b2368365a6e6ae6670cc9b948d36503e19b7e",
+    "verify_native.js": "db6fb859a5b998c0665a2e8979e3ba7d3df890ee045b3c8812f9d19d9b778bed"
+  },
+  "chess_sha256": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+  "generated_c_sha256": "aea073c3d6395c678bb59e264b4fa5df986500a3b119ec8af1a02912ff508303",
+  "scope": "Actual sequential castle_side producer followed by filter_legal on its empty-tail output. Complete ordered lists, child Boards and unused-slot state checks across two actual initialization contexts. Not the full legal_moves ordinary scan, forward/reverse theorem, rights history or full-buffer/lifetime proof."
+}

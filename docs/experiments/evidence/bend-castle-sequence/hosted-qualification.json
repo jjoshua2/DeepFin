@@ -1,0 +1,24 @@
+{
+  "qualification": "PASS",
+  "run": "36324699695",
+  "source": "95049dd691032210a759052b4f04f26838c8e05d",
+  "source_tree": "c5951dcbfb95b1ff565d92e27dfb13d94eb848fc",
+  "saved_commit": "f6202f7b490b327004eb78815cd83b8d94be40e7",
+  "saved_tree_reproduced": true,
+  "newly_hosted_laws": 2,
+  "newly_hosted_controls": 17,
+  "control_categories": {
+    "source semantic/refinement": 8,
+    "manifest/import policy": 8,
+    "synthetic output-wrapper unit": 1
+  },
+  "retained_parent_laws": 191,
+  "retained_parent_controls": 606,
+  "modular_laws": 193,
+  "modular_controls": 623,
+  "combined_wrapper_executed": false,
+  "native_source_entries": 620,
+  "independent_review": false,
+  "local_failed_receipts_preserved": true,
+  "full_optimized_generator_theorem": false
+}

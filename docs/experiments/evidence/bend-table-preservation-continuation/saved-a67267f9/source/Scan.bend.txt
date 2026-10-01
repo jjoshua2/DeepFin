@@ -1,0 +1,64 @@
+# Ordinary generation preserves storage; this does not classify generated moves.
+import Base
+import ../storage/Observe.bend as O
+import ../board/Spec.bend as Board
+import ../../../legal_probe/Chess.bend as Chess
+import ./Bind.bend as Bind
+import ./Query.bend as Q
+
+def selected(+c: O.Cells,+sq: U32,+side: U32,+occ: U64,p: Bool,n: Bool,b: Bool,r: Bool,q: Bool) ->
+  {O.storage(Chess.attack(Bool.pick(U32,p,0,Bool.pick(U32,n,1,Bool.pick(U32,b,2,Bool.pick(U32,r,3,Bool.pick(U32,q,4,5))))),O.pack(c),sq,side,occ)) == O.pack(c) : Array<U64>}:
+  match p n b r q:
+    case True{} _ _ _ _: Q.attack(c,Board.Pawn{},sq,side,occ)
+    case False{} True{} _ _ _: Q.attack(c,Board.Knight{},sq,side,occ)
+    case False{} False{} True{} _ _: Q.attack(c,Board.Bishop{},sq,side,occ)
+    case False{} False{} False{} True{} _: Q.attack(c,Board.Rook{},sq,side,occ)
+    case False{} False{} False{} False{} True{}: Q.attack(c,Board.Queen{},sq,side,occ)
+    case False{} False{} False{} False{} False{}: Q.attack(c,Board.King{},sq,side,occ)
+
+def piece_attack(+c: O.Cells,+b: Chess.Board,+src: U32) ->
+  {O.storage(Chess.attack(Chess.piece(b,src),O.pack(c),src,Chess.get_turn(b),Chess.occupied(b))) == O.pack(c) : Array<U64>}:
+  selected(c,src,Chess.get_turn(b),Chess.occupied(b),
+    U64.test_bit(Chess.get_pawns(b),U32.to_nat(src)),
+    U64.test_bit(Chess.get_knights(b),U32.to_nat(src)),
+    U64.test_bit(Chess.get_bishops(b),U32.to_nat(src)),
+    U64.test_bit(Chess.get_rooks(b),U32.to_nat(src)),
+    U64.test_bit(Chess.get_queens(b),U32.to_nat(src)))
+
+def pawn(+c: O.Cells,+b: Chess.Board,+src: U32) ->
+  {O.storage(Chess.pawn_targets(O.pack(c),b,src)) == O.pack(c) : Array<U64>}:
+  +w = U32.is_eq(Chess.get_turn(b),1)
+  +step = Bool.pick(U32,w,8,4294967288)
+  +first = U32.add(src,step)
+  +second = U32.add(first,step)
+  +occ = Chess.occupied(b)
+  +empty1 = Bool.and(U32.is_lt(first,64),Bool.not(U64.test_bit(occ,U32.to_nat(first))))
+  +start_rank = Bool.pick(U32,w,1,6)
+  +empty2 = Bool.and(empty1,Bool.and(U32.is_eq(U32.div(src,8),start_rank),Bool.not(U64.test_bit(occ,U32.to_nat(second)))))
+  +advances = U64.or(Chess.select_u64(empty1,U64.bit(U32.to_nat(first)),U64.zero()),Chess.select_u64(empty2,U64.bit(U32.to_nat(second)),U64.zero()))
+  +enemies = U64.and_not(Chess.color(b,U32.xor(Chess.get_turn(b),1)),Chess.get_kings(b))
+  Bind.mask(r => {O.storage(Chess.pawn_after(advances,U64.or(enemies,Chess.ep_target(b)),r)) == O.pack(c) : Array<U64>},
+    c,Chess.attack(0,O.pack(c),src,Chess.get_turn(b),occ),Q.attack(c,Board.Pawn{},src,Chess.get_turn(b),occ),v => {==})
+
+def targets(+c: O.Cells,+b: Chess.Board,+src: U32,pawn_flag: Bool) ->
+  {O.storage(Chess.piece_targets(pawn_flag,O.pack(c),b,src)) == O.pack(c) : Array<U64>}:
+  match pawn_flag:
+    case True{}: pawn(c,b,src)
+    case False{}:
+      Bind.mask(r => {O.storage(Chess.exclude_targets(U64.or(Chess.color(b,Chess.get_turn(b)),Chess.get_kings(b)),r)) == O.pack(c) : Array<U64>},
+        c,Chess.attack(Chess.piece(b,src),O.pack(c),src,Chess.get_turn(b),Chess.occupied(b)),piece_attack(c,b,src),v => {==})
+
+def step(+c: O.Cells,+b: Chess.Board,+src: U32,+tail: List<&2,Chess.Ply>) ->
+  {Bind.moves_table(Chess.scan_step(b,src,(O.pack(c),tail))) == O.pack(c) : Array<U64>}:
+  +pawn_flag = U64.test_bit(Chess.get_pawns(b),U32.to_nat(src))
+  Bind.mask(r => {Bind.moves_table(Chess.scan_after(src,pawn_flag,Chess.get_ep(b),tail,r)) == O.pack(c) : Array<U64>},
+    c,Chess.piece_targets(pawn_flag,O.pack(c),b,src),targets(c,b,src,pawn_flag),v => {==})
+
+def scan(keys: List<&2,U32>,+c: O.Cells,+b: Chess.Board,+tail: List<&2,Chess.Ply>) ->
+  {Bind.moves_table(Chess.scan(keys,b,(O.pack(c),tail))) == O.pack(c) : Array<U64>}:
+  match keys:
+    case Nil{}: {==}
+    case Con{+src,+rest}:
+      Bind.moves(r => {Bind.moves_table(Chess.scan(rest,b,r)) == O.pack(c) : Array<U64>},
+        c,Chess.scan_step(b,src,(O.pack(c),tail)),step(c,b,src,tail),
+        ms => scan(rest,c,b,ms))

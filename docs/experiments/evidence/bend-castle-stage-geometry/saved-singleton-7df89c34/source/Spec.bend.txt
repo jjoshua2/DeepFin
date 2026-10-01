@@ -1,0 +1,44 @@
+# Selected-side singleton invariants for actual castling safety boards.
+import Base
+import ../../../legal_probe/Chess.bend as Chess
+import ../castling/Route.bend as R
+
+def side(r: R.Route) -> U32:
+  match r:
+    case R.WhiteKing{}: 1
+    case R.WhiteQueen{}: 1
+    case R.BlackKing{}: 0
+    case R.BlackQueen{}: 0
+
+def transit(r: R.Route) -> U32:
+  match r:
+    case R.WhiteKing{}: 5
+    case R.WhiteQueen{}: 3
+    case R.BlackKing{}: 61
+    case R.BlackQueen{}: 59
+
+def owned(+b: Chess.Board,side: U32) -> U64:
+  U64.and(Chess.get_kings(b),Chess.color(b,side))
+
+def intermediate(+b: Chess.Board,+r: R.Route) -> Chess.Board:
+  Chess.make_move(b,Chess.Ply{R.src(r),transit(r),0,0})
+
+def final(+b: Chess.Board,+r: R.Route) -> Chess.Board:
+  Chess.make_move(b,Chess.Ply{R.src(r),R.dst(r),0,2})
+
+type Stage is Data:
+  Start{}
+  Transit{}
+  Castled{}
+
+def at(+b: Chess.Board,+r: R.Route,stage: Stage) -> Chess.Board:
+  match stage:
+    case Start{}: b
+    case Transit{}: intermediate(b,r)
+    case Castled{}: final(b,r)
+
+def square(+r: R.Route,stage: Stage) -> U32:
+  match stage:
+    case Start{}: R.src(r)
+    case Transit{}: transit(r)
+    case Castled{}: R.dst(r)

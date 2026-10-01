@@ -1,0 +1,33 @@
+# Every actual Array has a reification; callers assume neither shape nor contents.
+import Base
+import ../storage/Observe.bend as O
+import ../storage/Representation.bend as R
+import ../../../legal_probe/Chess.bend as Chess
+import ./Bind.bend as Bind
+import ./Scan.bend as Scan
+import ./Filter.bend as Filter
+import ./Generator.bend as Generator
+
+def scan(-a: Array<U64>,+keys: List<&2,U32>,+b: Chess.Board,+tail: List<&2,Chess.Ply>,cert: Exists(O.Cells,c => {O.pack(c) == a : Array<U64>})) ->
+  {Bind.moves_table(Chess.scan(keys,b,(a,tail))) == a : Array<U64>}:
+  (+c,e) = cert
+  +same: {O.pack(c) == a : Array<U64>} = e
+  %same : {Bind.moves_table(Chess.scan(keys,b,(_,tail))) == a : Array<U64>}
+  %same : {Bind.moves_table(Chess.scan(keys,b,(O.pack(c),tail))) == _ : Array<U64>}
+  Scan.scan(keys,c,b,tail)
+
+def filter(-a: Array<U64>,+b: Chess.Board,+ms: List<&2,Chess.Ply>,cert: Exists(O.Cells,c => {O.pack(c) == a : Array<U64>})) ->
+  {Bind.moves_table(Chess.filter_prepare(b,(a,ms))) == a : Array<U64>}:
+  (+c,e) = cert
+  +same: {O.pack(c) == a : Array<U64>} = e
+  %same : {Bind.moves_table(Chess.filter_prepare(b,(_,ms))) == a : Array<U64>}
+  %same : {Bind.moves_table(Chess.filter_prepare(b,(O.pack(c),ms))) == _ : Array<U64>}
+  Filter.prepare(c,b,ms)
+
+def legal(-a: Array<U64>,+b: Chess.Board,cert: Exists(O.Cells,c => {O.pack(c) == a : Array<U64>})) ->
+  {Bind.moves_table(Chess.legal_moves(a,b)) == a : Array<U64>}:
+  (+c,e) = cert
+  +same: {O.pack(c) == a : Array<U64>} = e
+  %same : {Bind.moves_table(Chess.legal_moves(_,b)) == a : Array<U64>}
+  %same : {Bind.moves_table(Chess.legal_moves(O.pack(c),b)) == _ : Array<U64>}
+  Generator.legal(c,b)

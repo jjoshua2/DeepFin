@@ -1,0 +1,41 @@
+{
+  "schema": "tri_source_shared_verification_evidence_v1",
+  "scope": "CPU-only bounded synthetic prototype; zero corpus, target, external-drive throughput, and 500M-row restart credit",
+  "parent_pr": 961,
+  "parent_commit": "2d9f72031727f3e92a787b75d0b3b015117f3f1e",
+  "frozen_code_commit": "bea30672273b3670c0508cf4c22d32b39cd2d122",
+  "source": "chess_anti_engine/source/checkpointed_sort.py",
+  "source_sha256": "ae667c2a48b7417426f5562ac6e623ee060c5896d6cf74a435f59694af396ab8",
+  "test": "tests/test_checkpointed_sort.py",
+  "test_sha256": "6334aadf429d0a41db2a8abef431d8f3035ee976611ea044841901efa27a0846",
+  "cumulative_patch_sha256": "0e79951e7aa10853898919f6b128d32b7313406f94921f20e42a0fd8aff34a81",
+  "durable_private_proof_manifest_sha256": "7b8e11d4a253c584e6235868807ba416b59a7ec17719580e60926a44be741309",
+  "validation": {
+    "focused_python310_tests_passed": 12,
+    "focused_python310_test_log_sha256": "71f41538de40685372df98265238f0d5a6798aea9c1170ff9b625efec6168553",
+    "focused_ruff": "pass",
+    "focused_vulture": "pass",
+    "focused_pyright_errors": 0,
+    "focused_pyright_warnings": 0,
+    "full_pyright_parent_errors": 188,
+    "full_pyright_successor_errors": 188,
+    "full_pyright_parent_warnings": 8,
+    "full_pyright_successor_warnings": 8,
+    "full_pyright_successor_only_diagnostics": 0,
+    "full_pyright_comparison_sha256": "d9578b0c2b39a2461e104b2ee1de6c8c8aa3f4144cdff5a13c663f04b726fcf5"
+  },
+  "synthetic_measurement": {
+    "metric_scope": "payload-file reads and cursor probes; excludes receipt/claim metadata, directories, and device latency",
+    "result_sha256": "ab01a4d394c2cb602045067c2d80a43d2f17e1683d7c46b780fb3835e638399d",
+    "source_runs": [4, 16, 64],
+    "noop_payload_file_bytes_read": [616, 3732, 20144],
+    "build_payload_file_bytes_read": [1232, 8708, 50360],
+    "old_noop_part_extent_visits_bytes": [924, 9952, 75540]
+  },
+  "session_caps": {
+    "runs": 128,
+    "parts": 4096,
+    "part_payload_bytes": 8388608,
+    "merge_inputs": 4
+  }
+}

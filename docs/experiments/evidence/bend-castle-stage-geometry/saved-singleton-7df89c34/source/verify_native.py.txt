@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""Independent square-set reference for actual king relocation and original-side selection.
+
+No proof-only module is executed by the candidate. Mutation builds use generic flags.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import random
+import shutil
+import subprocess
+import tempfile
+
+MASK = (1 << 32) - 1
+ROUTES = [(4, 6, 5, 7, 1), (4, 2, 3, 0, 1), (60, 62, 61, 63, 0), (60, 58, 59, 56, 0)]
+CORNER = {0: 2, 7: 1, 56: 8, 63: 4}
+
+
+def digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def encode(board, meta):
+    planes = [0] * 8
+    for i, (kinds, colors) in enumerate(board):
+        for kind in kinds:
+            planes[kind] |= 1 << i
+        for color in colors:
+            planes[6 if color == 1 else 7] |= 1 << i
+    return [v for p in planes for v in (p >> 32, p & MASK)] + list(meta)
+
+
+def copy_board(board):
+    return [(set(k), set(c)) for k, c in board]
+
+
+def occupied_kings(board, side):
+    color = 1 if side == 1 else 0
+    return sum(1 << i for i, (k, c) in enumerate(board) if 5 in k and color in c)
+
+
+def raw_reference(board, meta, src, dst, flag):
+    out = copy_board(board)
+    kind = next((k for k in range(5) if k in board[src][0]), 5)
+    removed = [src, dst]
+    rook_to = None
+    if flag == 2:
+        removed.append(dst + 1 if dst % 8 == 6 else (dst - 2) & MASK)
+        rook_to = (src + dst) // 2
+    for i in removed:
+        if i < 64:
+            out[i] = (set(), set())
+    color = 1 if meta[0] == 1 else 0
+    out[dst] = ({kind}, {color})
+    if rook_to is not None:
+        out[rook_to][0].add(3)
+        out[rook_to][1].add(color)
+    lost = CORNER.get(src, 0) | CORNER.get(dst, 0) | ((3 if color else 12) if kind == 5 else 0)
+    ep = (src + dst) // 2 if kind == 0 and src ^ dst == 16 else 64
+    return out, [meta[0] ^ 1, meta[1] & (~lost & MASK), ep]
+
+
+def fixtures():
+    rng = random.Random(0xC4516)
+    cases = []
+    def add(category, board, meta, src, dst, flag, holds):
+        result, rm = (copy_board(board), list(meta)) if flag == -1 else raw_reference(board, meta, src, dst, flag)
+        own = occupied_kings(result, meta[0])
+        target = src if flag == -1 else dst
+        if holds:
+            assert own == 1 << target
+        prefix = [1, 0, 0, 0] if flag == -1 else [0, src, dst, flag]
+        expected = encode(result, rm) + [own >> 32, own & MASK, (own & -own).bit_length() - 1 if own else 64]
+        cases.append({'category': category, 'input': prefix + encode(board, meta), 'expected': expected, 'singleton_premises': holds})
+    for src, dst, mid, rook, side in ROUTES:
+        for i in range(128):
+            board = [(set(), set()) for _ in range(64)]
+            for sq in range(64):
+                if sq not in {src, dst, mid, rook} and rng.randrange(3) == 0:
+                    board[sq] = ({rng.randrange(5)}, {rng.randrange(2)})
+            board[src] = ({5}, {side})
+            board[rook] = ({3}, {side})
+            # One or more opponent kings are allowed; only the moving side is certified.
+            for sq in rng.sample([q for q in range(64) if q not in {src, dst, mid, rook}], 1 + i % 3):
+                board[sq] = ({5}, {1-side})
+            meta = [side, rng.getrandbits(32), rng.getrandbits(32)]
+            add('starting', board, meta, src, dst, -1, True)
+            add('transit', board, meta, src, mid, 0, True)
+            add('castled', board, meta, src, dst, 2, True)
+        for scenario in ['missing_king', 'extra_own_king', 'blocked_rook_enemy_king', 'overlapping_source', 'invalid_turn']:
+            board = [(set(), set()) for _ in range(64)]
+            board[src] = ({5}, {side}); board[rook] = ({3}, {side})
+            enemy = 60 if side else 4
+            board[enemy] = ({5}, {1-side})
+            meta = [side, 15, 64]
+            if scenario == 'missing_king': board[src] = (set(), set())
+            elif scenario == 'extra_own_king': board[8] = ({5}, {side})
+            elif scenario == 'blocked_rook_enemy_king': board[mid] = ({5}, {1-side})
+            elif scenario == 'overlapping_source': board[src][0].add(0)
+            else: meta[0] = MASK
+            add(scenario, board, meta, src, dst, 2, False)
+    assert len({tuple(x['input']) for x in cases}) == len(cases)
+    return cases
+
+
+def run(cmd, *, timeout=180):
+    return subprocess.run(list(map(str, cmd)), capture_output=True, text=True, timeout=timeout,
+                          env={**os.environ, 'TERM': 'dumb', 'BEND_NO_TELEMETRY': '1'})
+
+
+def clean(cmd):
+    p = run(cmd)
+    if p.returncode != 0 or p.stderr:
+        raise AssertionError(f'{cmd[0]} status {p.returncode}: {p.stderr[-2000:]} {p.stdout[-1000:]}')
+    return p.stdout
+
+
+def compare(raw, cases):
+    lines = raw.strip().splitlines()
+    assert len(lines) == len(cases), 'output record count'
+    for i, (line, row) in enumerate(zip(lines, cases)):
+        actual = list(map(int, line.split()))
+        assert len(actual) == 22, 'complete Board and selected king observations'
+        for field, (got, expected) in enumerate(zip(actual, row['expected'])):
+            if got != expected:
+                return {'row': i, 'category': row['category'], 'field': field, 'observed': got, 'expected': expected}
+    return None
+
+
+def main():
+    ap = argparse.ArgumentParser(); ap.add_argument('compiler', type=Path); ap.add_argument('--report', type=Path, required=True)
+    args = ap.parse_args(); compiler = args.compiler.resolve()
+    suite = Path(__file__).resolve().parent; engine = suite.parents[2]
+    bun = os.environ.get('BUN', 'bun'); cc = os.environ.get('CC', 'clang')
+    cli = compiler / 'bend2/main.ts'
+    identity = clean([bun, engine / 'standalone/verify_compiler.js', compiler])
+    files = [*suite.glob('*.bend'), suite/'verify_native.py', engine/'legal_probe/Chess.bend', engine/'bitboard_probe/Sliders.bend', engine/'standalone/Position.bend', engine/'standalone/Text.bend']
+    hashes = {str(p.relative_to(engine)): digest(p.read_bytes()) for p in files}
+    rows = fixtures(); malformed = []; baseline = list(map(str, rows[1]['input']))
+    for index, value in [(0,'2'),(1,'64'),(2,'64'),(3,'1'),(4,'-1'),(4,str(1<<32)),(4,'bad')]:
+        x=baseline.copy();x[index]=value;malformed.append(x)
+    malformed += [baseline[1:], baseline * 65]
+    modes=[];mutations=[]
+    with tempfile.TemporaryDirectory(prefix='king-singleton-') as name:
+        td=Path(name);c=td/'probe.c';clean([bun,cli,suite/'probe.bend','-o',c])
+        flags=['-std=c11','-O1','-ffp-contract=off','-Werror=shift-count-overflow']
+        for mode,extra in [('generic',[]),('portable',['-DBEND_U64_PORTABLE']),('native',['-march=native']),('ubsan',['-fsanitize=undefined','-fno-sanitize-recover=all'])]:
+            exe=td/mode;clean([cc,*flags,*extra,c,'-pthread','-lm','-o',exe]); h=hashlib.sha256()
+            for i in range(0,len(rows),64):
+                batch=rows[i:i+64];out=clean([exe,'--threads','1',*[v for x in batch for v in x['input']]])
+                mismatch=compare(out,batch);assert mismatch is None,(mode,i,mismatch);h.update(out.encode())
+            for bad in malformed:
+                p=run([exe,'--threads','1',*bad]);assert p.returncode==2 and 'invalid castling' in p.stderr+p.stdout
+            modes.append({'mode':mode,'records':len(rows),'fields':len(rows)*22,'invalid_rejections':len(malformed),'output_sha256':h.hexdigest()})
+        specs=[
+          ('king_inserted_at_rook_target','update_piece(get_kings(b), remove, target, U32.is_eq(put, 5))','update_piece(get_kings(b), remove, rook_to, U32.is_eq(put, 5))'),
+          ('source_king_not_removed','U64.or(U64.bit(U32.to_nat(src)), U64.bit(U32.to_nat(cap)))','U64.or(U64.zero(), U64.bit(U32.to_nat(cap)))'),
+          ('side_not_flipped','U32.xor(side, 1), U32.and(get_rights(b)','side, U32.and(get_rights(b)')]
+        for label,old,new in specs:
+            copy=td/label;shutil.copytree(engine,copy);chess=copy/'legal_probe/Chess.bend';text=chess.read_text();assert text.count(old)==1;chess.write_text(text.replace(old,new))
+            c=td/(label+'.c');exe=td/(label+'.exe');clean([bun,cli,copy/'standalone/proofs/castle_singleton/probe.bend','-o',c]);clean([cc,*flags,c,'-pthread','-lm','-o',exe])
+            batch=rows[:3];out=clean([exe,'--threads','1',*[v for x in batch for v in x['input']]])
+            mismatch=compare(out,batch);assert mismatch is not None,label
+            mutations.append({'name':label,'compiled_and_executed':True,'rejected':True,**mismatch})
+    assert hashes=={str(p.relative_to(engine)): digest(p.read_bytes()) for p in files},'source changed'
+    assert clean([bun,engine/'standalone/verify_compiler.js',compiler])==identity
+    report={'native_gate':'PASS','records_per_mode':len(rows),'distinct_requests':len(rows),'fields_per_mode':len(rows)*22,'singleton_premise_cases':sum(x['singleton_premises'] for x in rows),
+      'categories':{c:sum(x['category']==c for x in rows) for c in sorted({x['category'] for x in rows})},'fixture_sha256':digest(json.dumps(rows,sort_keys=True).encode()),'modes':modes,'mutations':mutations,'source_sha256s':hashes,'cc':clean([cc,'--version']).splitlines()[0],
+      'scope':'Complete actual Board, original-side king plane and index; native check does not execute in_check or validate attack semantics. Modes repeat fixtures. Only moving-side singleton is certified.'}
+    args.report.write_text(json.dumps(report,indent=2)+'\n');print(json.dumps({k:v for k,v in report.items() if k!='source_sha256s'},indent=2))
+
+
+if __name__=='__main__':
+    main()
