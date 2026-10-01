@@ -13,7 +13,7 @@ import ../slider_reversal/Spec.bend as Slider
 import ../slider_reversal/Reversal.bend as Reverse
 import ../slider_reversal/Reflect.bend as Reflect
 
-def reversed(kind: S.Kind,+target: Nat,by: Bool,+occ: U64) -> U64:
+def reversed(kind: S.AttackKind,+target: Nat,by: Bool,+occ: U64) -> U64:
   match kind:
     case S.Pawn{}: I.mask(Piece.Pawn{},target,Bool.not(by),occ)
     case S.Knight{}: I.mask(Piece.Knight{},target,False{},occ)
@@ -41,7 +41,7 @@ def slider(+kind: Slider.Slider,+src: Nat,+dst: Nat,+occ: U64,+mask: U64,
       Equal.trans(Bool,U64.test_bit(Slider.geometry(kind,dst,occ),src),U64.test_bit(Slider.geometry(kind,src,occ),dst),Slider.answer(kind,Slider.paths(src,dst),occ),
         Reverse.geometry(kind,dst,src,occ,tb,sb),Reflect.geometry(kind,src,dst,occ,tb))))
 
-def edge(+kind: S.Kind,+src: Nat,+dst: Nat,+by: Bool,+occ: U64,
+def edge(+kind: S.AttackKind,+src: Nat,+dst: Nat,+by: Bool,+occ: U64,
   +sb: {Nat.is_lt(src,64n) == True{} : Bool},+tb: {Nat.is_lt(dst,64n) == True{} : Bool}) ->
   {Bit.get64(reversed(kind,dst,by,occ),src) == S.edge(kind,src,dst,by,occ) : Bool}:
   match kind:

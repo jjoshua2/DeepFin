@@ -7,14 +7,14 @@ import ../attack_reversal/Spec.bend as Member
 import ../slider_reversal/Spec.bend as Slider
 import ../attack_witness/Spec.bend as W
 
-type Kind is Data:
+type AttackKind is Data:
   Pawn{}
   Knight{}
   King{}
   Rook{}
   Bishop{}
 
-def edge(kind: Kind,+src: Nat,+dst: Nat,by: Bool,occ: U64) -> Bool:
+def edge(kind: AttackKind,+src: Nat,+dst: Nat,by: Bool,occ: U64) -> Bool:
   match kind:
     case Pawn{}: Member.contains(dst,G.targets(Bool.pick(G.Leaper,by,G.WhitePawn{},G.BlackPawn{}),src))
     case Knight{}: Member.contains(dst,G.targets(G.Knight{},src))
@@ -23,7 +23,7 @@ def edge(kind: Kind,+src: Nat,+dst: Nat,by: Bool,occ: U64) -> Bool:
     case Bishop{}: Slider.answer(Slider.Bishop{},Slider.paths(src,dst),occ)
 
 # A proof-only tabulation of the forward predicate. attacked uses scan below.
-def word(n: Nat,+src: Nat,+kind: Kind,+dst: Nat,+by: Bool,+occ: U64) -> Word(n):
+def word(n: Nat,+src: Nat,+kind: AttackKind,+dst: Nat,+by: Bool,+occ: U64) -> Word(n):
   match n:
     case 0n: WNil{}
     case 1n+p: WCon{edge(kind,src,dst,by,occ),word(p,1n+src,kind,dst,by,occ)}

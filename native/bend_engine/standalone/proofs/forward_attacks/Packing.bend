@@ -6,7 +6,7 @@ import ../attack_witness/Spec.bend as W
 import ../attack_witness/Reduction.bend as R
 import ../../../legal_probe/Chess.bend as Chess
 
-def mask(+kind: S.Kind,+dst: Nat,+by: Bool,+occ: U64) -> U64:
+def mask(+kind: S.AttackKind,+dst: Nat,+by: Bool,+occ: U64) -> U64:
   U64{U32{S.word(32n,0n,kind,dst,by,occ)},U32{S.word(32n,32n,kind,dst,by,occ)}}
 
 def masks(+dst: Nat,+by: Bool,+occ: U64) -> W.Masks:

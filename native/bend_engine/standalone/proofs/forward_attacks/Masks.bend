@@ -10,7 +10,7 @@ import ../prefix/Nats.bend as N
 import ../attack_witness/Spec.bend as W
 import ../initialized_attacks/Spec.bend as I
 
-def word(+n: Nat,+i: Nat,+high: Bool,+kind: S.Kind,+dst: Nat,+by: Bool,+occ: U64,
+def word(+n: Nat,+i: Nat,+high: Bool,+kind: S.AttackKind,+dst: Nat,+by: Bool,+occ: U64,
   +budget: {Nat.is_lt(Nat.add(n,i),33n) == True{} : Bool},+tb: {Nat.is_lt(dst,64n) == True{} : Bool}) ->
   {Sample.word(32n,n,i,Index.limb(Point.reversed(kind,dst,by,occ),high)) == S.word(n,Index.source(high,i),kind,dst,by,occ) : Word(n)}:
   match n:
@@ -26,7 +26,7 @@ def word(+n: Nat,+i: Nat,+high: Bool,+kind: S.Kind,+dst: Nat,+by: Bool,+occ: U64
           word(t,1n+i,high,kind,dst,by,occ,Index.next_bound(t,i,budget),tb),
           Equal.cong(Nat,Word(t),src => S.word(t,src,kind,dst,by,occ),Index.source(high,1n+i),1n+Index.source(high,i),Index.advance(high,i))))
 
-def limb(+high: Bool,+kind: S.Kind,+dst: Nat,+by: Bool,+occ: U64,tb: {Nat.is_lt(dst,64n) == True{} : Bool}) ->
+def limb(+high: Bool,+kind: S.AttackKind,+dst: Nat,+by: Bool,+occ: U64,tb: {Nat.is_lt(dst,64n) == True{} : Bool}) ->
   {Index.limb(Point.reversed(kind,dst,by,occ),high) == S.word(32n,Index.source(high,0n),kind,dst,by,occ) : Word(32n)}:
   +a = Index.limb(Point.reversed(kind,dst,by,occ),high)
   Equal.trans(Word(32n),a,Sample.word(32n,32n,0n,a),S.word(32n,Index.source(high,0n),kind,dst,by,occ),
@@ -42,7 +42,7 @@ def finish(+a: U64,+lo: Word(32n),+hi: Word(32n),
         Equal.cong(Word(32n),U64,w => U64{U32{w},U32{ah}},al,lo,low),
         Equal.cong(Word(32n),U64,w => U64{U32{lo},U32{w}},ah,hi,high))
 
-def mask(+kind: S.Kind,+dst: Nat,+by: Bool,+occ: U64,+tb: {Nat.is_lt(dst,64n) == True{} : Bool}) ->
+def mask(+kind: S.AttackKind,+dst: Nat,+by: Bool,+occ: U64,+tb: {Nat.is_lt(dst,64n) == True{} : Bool}) ->
   {Point.reversed(kind,dst,by,occ) == Pack.mask(kind,dst,by,occ) : U64}:
   finish(Point.reversed(kind,dst,by,occ),S.word(32n,0n,kind,dst,by,occ),S.word(32n,32n,kind,dst,by,occ),
     limb(False{},kind,dst,by,occ,tb),limb(True{},kind,dst,by,occ,tb))
