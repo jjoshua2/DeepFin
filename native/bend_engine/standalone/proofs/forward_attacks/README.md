@@ -1,7 +1,7 @@
 # Forward attack composition candidate
 
-Status: unqualified candidate. No new theorem credit until the complete bounded
-positive, semantic-control and source/compiler-identity gate passes.
+Status: source-qualified component on 99e07576da6207d23145b3865618e2f468731ff4
+in hosted run 36819600784. The complete legal-generator contract remains open.
 
 ## Contract
 
@@ -66,9 +66,38 @@ blockers and corrupt actual reverse-pawn query routing. The runtime routing
 control uses a small exact production equation consumed by the actual pair proof.
 Finite fixtures are control baselines, not universal theorem credit or native tests.
 
-Historical separate consumers took about29 seconds for leaper reversal and92
-for slider reversal. The prior castling consumer took about579–763 seconds.
+Historical separate consumers took about 29 seconds for leaper reversal and 92
+for slider reversal. The prior castling consumer took about 579–763 seconds.
 These support a bounded trial, not a guarantee that this candidate fits. Resource
 failure will remain NOT_COMPLETED with exact receipt; no larger budget or checker
 change follows automatically. No local executor/tests, GPU, model or training work
 is part of this source-proof task.
+
+## Qualified source/control outcome
+
+[Run 36819600784](https://github.com/jjoshua2/DeepFin/actions/runs/36819600784)
+passes all four complete importing consumer obligations at
+99e07576da6207d23145b3865618e2f468731ff4. The helper took 129.93545380700002
+seconds and the full consumer 814.066115424 seconds, each returning exact safe
+checker output. All five controls received their intended semantic rejections;
+final source and original pinned compiler identities remained unchanged.
+Five host methods passed under normal Python, -O and -OO, and all twelve original
+compiler-pin tests passed. No resource bound was increased.
+
+The [full receipt](../../../../../docs/experiments/evidence/bend-forward-attacks/qualified-36819600784.json)
+and [artifact provenance](../../../../../docs/experiments/evidence/bend-forward-attacks/qualified-36819600784-provenance.json)
+are retained. Independent source review checked the first-order reconstruction,
+coordinate/visibility semantics, complete pairs, direct castling composition,
+parser fixes and fail-closed gate. The receipt and artifact metadata were also
+independently read back.
+
+Earlier attempts failed safely at parsing: Kind is reserved, and destructuring
+a computed certificate needs a parameter helper. Those are source elaboration
+repairs, not semantic controls or theorem credit. The final public statements
+and premises are unchanged from the candidate design.
+
+This closes the forward-witness bridge within the symbolic initialized domain,
+including its direct castling-stage use. It does not close actual Tables.build,
+rights/history/reachability, ordinary/EP coverage, general skip safety or the
+whole-generator theorem. Prior castling/native/UCI regression gates passed
+separately; no new native execution or aggregate historical proof count is claimed.
