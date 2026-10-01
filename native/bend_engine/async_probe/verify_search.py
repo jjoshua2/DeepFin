@@ -157,6 +157,8 @@ def run_cases(command: list[str]) -> dict[str, Any]:
     c = Gate(command)
     try:
         c.init()
+        c.send('setoption name TreeNodes value 8193\nisready')
+        assert any('TreeNodes=8193' in row for row in c.until('readyok'))
         c.send('position startpos\ngo evals 2 depth 2')
         c.started()
         assert c.proc.stdin

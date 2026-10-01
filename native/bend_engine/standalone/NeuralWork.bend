@@ -143,3 +143,9 @@ def render(now: Nat, completed: U32, stop: U32, run: Run) -> String:
 # wall_seconds includes physical retirement here, not just time to bestmove.
 def retirement(now: Nat, completed: U32, stop: U32, run: Run) -> String:
   "info string neural_retired " ++ json(now, completed, stop, run)
+
+# Native admission is bounded even when no explicit neural-row limit was given.
+def admission_limit(run: Run, +simulations: U32) -> U32:
+  Run{began, +limit, ms, profile, executed, accepted, selection, encoding, backend, post, backup,
+    dispatched, cancelled, failed, rejected, wasted, asynchronous, epoch} = run
+  Bool.pick(U32, U32.is_zero(limit), simulations, U32.min(simulations, limit))

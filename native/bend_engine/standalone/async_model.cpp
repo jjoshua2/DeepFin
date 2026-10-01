@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+extern "C" uint32_t deepfin_model_begin_search(uint32_t, uint32_t);
 extern "C" int deepfin_model_run(const float*, uint32_t, float*, uint32_t);
 namespace {
 deepfin_native::AsyncSlot& slot() {
@@ -14,6 +15,11 @@ deepfin_native::AsyncSlot& slot() {
   std::fprintf(stderr, "native async contract: %s\n", error.what());
   std::exit(2);
 }
+}
+extern "C" uint32_t deepfin_async_begin_search(uint32_t epoch, uint32_t limit) {
+  try {
+    return slot().when_idle([=] { return deepfin_model_begin_search(epoch, limit) != 0; });
+  } catch (const std::exception& error) { invalid(error); }
 }
 extern "C" uint32_t deepfin_async_submit(uint32_t epoch, uint32_t request, uint32_t node,
                                           const float* input, uint32_t count) {

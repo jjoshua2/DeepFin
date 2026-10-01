@@ -71,6 +71,7 @@ jobs:
         run: |
           . .venv/bin/activate
           python -m pytest -q tests/test_bend_native_uci_clocks.py
+          python -m native.bend_engine.standalone.verify_session --report artifacts/uci-resources.json --command build/uci-engine/deepfin-bend --threads 1
           python -m native.bend_engine.standalone.verify_time_control --report artifacts/uci-clocks.json --command build/uci-engine/deepfin-bend --threads 1
           python -m native.bend_engine.standalone.verify --report artifacts/uci-regression.json --command build/uci-engine/deepfin-bend --threads 1
           python -m native.bend_engine.standalone.verify_rules --report artifacts/uci-rules.json --command build/uci-engine/deepfin-bend --threads 1
@@ -83,6 +84,43 @@ jobs:
           . .venv/bin/activate
           revision=$(bun native/bend_engine/standalone/verify_compiler.js --revision)
           bash native/bend_engine/async_probe/qualify_search.sh "build/bend_toolchain/sources/$revision" build/uci-engine/engine.c build/uci-async
+      - name: Compile and link production CPU LibTorch bridge without a model
+        if: matrix.mode == 'generic'
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: |
+          . .venv/bin/activate
+          python - <<'PY'
+          from pathlib import Path
+          import torch
+          if torch.version.cuda is not None:
+              raise RuntimeError("CPU bridge qualification requires the CPU wheel")
+          folder = Path("build/uci-link-contract")
+          folder.mkdir()
+          definitions = {
+              "DEEPFIN_MODEL_SHA256": '"' + "0" * 64 + '"',
+              "DEEPFIN_MODEL_TORCH_VERSION": '"' + torch.__version__.split("+")[0] + '"',
+              "DEEPFIN_MODEL_PROFILE": "4", "DEEPFIN_MODEL_CHANNELS": "175",
+              "DEEPFIN_MODEL_BATCH": "1", "DEEPFIN_MODEL_CUDA": "0",
+              "DEEPFIN_MODEL_DEVICE_INDEX": "0",
+          }
+          folder.joinpath("model_contract.h").write_text(
+              "// Compile/link fixture only; no package is opened.\n#pragma once\n" +
+              "".join("#define " + key + " " + value + "\n" for key, value in definitions.items()))
+          PY
+          cmake -S native/bend_engine/standalone -B build/uci-production-link \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" \
+            -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')" \
+            -DBEND_GENERATED_C="$PWD/build/uci-engine/engine.c" -DBEND_CONTRACT_DIR="$PWD/build/uci-link-contract"
+          cmake --build build/uci-production-link --parallel 1
+          status=0
+          build/uci-production-link/deepfin-bend-neural --threads 1 > artifacts/uci-native-no-package.txt 2>&1 || status=$?
+          test "$status" = 2
+          grep -q 'DEEPFIN_BEND_MODEL_PACKAGE is required' artifacts/uci-native-no-package.txt
+          ldd build/uci-production-link/deepfin-bend-neural > artifacts/uci-native-libraries.txt
+          if grep -qi libpython artifacts/uci-native-libraries.txt; then exit 2; fi
+          sha256sum build/uci-production-link/deepfin-bend-neural > artifacts/uci-native-binary.txt
       - name: Whole-repository static gate
         if: matrix.mode == 'generic'
         run: |
@@ -95,6 +133,7 @@ jobs:
           name: bend-uci-engine-${{ matrix.mode }}
           path: |
             artifacts/uci-*.json
+            artifacts/uci-*.txt
             build/uci-engine/build.txt
             build/uci-async/*.json
             build/uci-async/*.txt
