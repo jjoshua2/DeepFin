@@ -97,44 +97,49 @@ def run(packet_path: Path, attempt: Path) -> dict:
     route_path = Path(candidate.__file__).resolve()
     unit.pinned_file(route_path, claim.route_sha256, 1 << 20)
 
-    # Each import has already passed an exact no-follow hash read. Recheck
-    # __file__ after import so ambient PYTHONPATH cannot substitute a module.
-    for directory in reversed(tuple(dict.fromkeys(pin.path.parent for pin in pins))):
-        sys.path.insert(0, str(directory))
-    modules: dict[str, ModuleType] = {
-        pin.module: importlib.import_module(pin.module) for pin in pins}
-    unit.verify_modules(modules, tuple(pins))
-    neural_child = modules["neural_child"]
-    verifier, binder, verifier_sha = neural_child._load_verifier(unit.SOURCE)
-    verifier_path = Path(verifier.__code__.co_filename)
-    unit.need(verifier_path.resolve() == verifier_pin_path.resolve() and
-              verifier_sha == verifier_pin_sha,
-              "accepted verifier differs from private source pins")
-    grouped_reader = modules["grouped_reader"]
-    # Reserve the full possible NPZ charge before reading replay context.
-    # Packet, imports, witness, and executable reads have separate file caps.
-    context_meter = grouped_reader.LogicalReadMeter(
-        claim.archive_context_bytes - unit.MAX_ARCHIVE_BYTES)
-    gate = neural_child._open_gate(unit.SOURCE)
-    with gate:
-        unit.need(gate.inventory_sha256 == claim.syzygy_inventory_sha256,
-                  "opened strict Syzygy inventory")
-        context = modules["replay_bridge"].bind_bt4_context(
-            binder, gate, context_meter, verifier_sha)
-        game, archive_bytes = unit.read_frozen_bt4_game(
-            claim.expected, adapter=modules["adapter_grouped"],
-            grouped_reader=grouped_reader,
-            neural_replay=modules["neural_replay"],
-            supervisor=modules["supervisor"],
-            imported_modules={name: module for name, module in modules.items()
-                              if name not in {"adapter_grouped", "grouped_reader",
-                                              "neural_replay", "supervisor"}},
-            module_pins=tuple(pins), gate=gate,
-            verifier=verifier, verifier_sha256=verifier_sha,
-            verifier_path=verifier_path, strict_context=context,
-            syzygy_inventory_sha256=claim.syzygy_inventory_sha256,
-            old_rows=witness.rows, old_proof=witness.proof,
-            old_routes=witness.routes, route=candidate.route)
+    # Import paths are checked before execution and existing bytecode caches
+    # cannot replace the exact source bytes authenticated by the private packet.
+    source_pins = (*pins, unit.FrozenFile(
+        "__bt4_raw_verifier__", verifier_pin_path, verifier_pin_sha))
+    with unit.source_snapshot_imports(source_pins) as executed:
+        for directory in reversed(tuple(dict.fromkeys(pin.path.parent for pin in pins))):
+            sys.path.insert(0, str(directory))
+        modules: dict[str, ModuleType] = {
+            pin.module: importlib.import_module(pin.module) for pin in pins}
+        unit.verify_modules(modules, tuple(pins))
+        neural_child = modules["neural_child"]
+        verifier, binder, verifier_sha = neural_child._load_verifier(unit.SOURCE)
+        verifier_path = Path(verifier.__code__.co_filename)
+        unit.need({pin.path for pin in source_pins} <= executed,
+                  "frozen loader did not execute every authenticated source snapshot")
+        unit.need(verifier_path.resolve() == verifier_pin_path.resolve() and
+                  verifier_sha == verifier_pin_sha,
+                  "accepted verifier differs from private source pins")
+        grouped_reader = modules["grouped_reader"]
+        # Reserve the full possible NPZ charge before reading replay context.
+        # Packet, imports, witness, and executable reads have separate file caps.
+        context_meter = grouped_reader.LogicalReadMeter(
+            claim.archive_context_bytes - unit.MAX_ARCHIVE_BYTES)
+        gate = neural_child._open_gate(unit.SOURCE)
+        with gate:
+            unit.need(gate.inventory_sha256 == claim.syzygy_inventory_sha256,
+                      "opened strict Syzygy inventory")
+            context = modules["replay_bridge"].bind_bt4_context(
+                binder, gate, context_meter, verifier_sha)
+            game, archive_bytes = unit.read_frozen_bt4_game(
+                claim.expected, adapter=modules["adapter_grouped"],
+                grouped_reader=grouped_reader,
+                neural_replay=modules["neural_replay"],
+                supervisor=modules["supervisor"],
+                imported_modules={name: module for name, module in modules.items()
+                                  if name not in {"adapter_grouped", "grouped_reader",
+                                                  "neural_replay", "supervisor"}},
+                module_pins=tuple(pins), gate=gate,
+                verifier=verifier, verifier_sha256=verifier_sha,
+                verifier_path=verifier_path, strict_context=context,
+                syzygy_inventory_sha256=claim.syzygy_inventory_sha256,
+                old_rows=witness.rows, old_proof=witness.proof,
+                old_routes=witness.routes, route=candidate.route)
     unit.need(context_meter.bytes + archive_bytes <= claim.archive_context_bytes,
               "owned NPZ plus replay-context logical input cap")
     return unit.write_game_output(attempt, claim, game, archive_bytes,

@@ -40,9 +40,15 @@ history/context, outcome and contract-derived teacher route with the old witness
 
 Review found and corrected these additional gaps:
 
+- A per-root nonblocking no-follow regular-file lock now keeps concurrent owners
+  from launching separate attempts and racing completion publication
+- Frozen imports and the raw verifier now execute retained authenticated source
+  snapshots rather than timestamp-valid cached bytecode. Every pinned path must
+  pass the source loader before replay; custom loaders that bypass it fail closed
 - A pending owner alarm could interrupt between child launch and cleanup ownership.
   Launch now defers that signal until the child handle is covered by cleanup; the
-  exec guard explicitly unblocks the inherited child alarm mask before replay
+  exec guard explicitly unblocks the inherited child alarm mask before replay.
+  A pre-blocked owner SIGALRM is rejected before any owned work
 - Resumed result JSON and semantic output verification could re-open paths after
   hashing. Parsing and comparison now use the exact authenticated byte snapshots,
   including bounded no-follow reads for claim and completion metadata
@@ -61,7 +67,9 @@ the pinned replay path does not launch subprocesses.
 ## Validation boundary
 
 The reconciliation adds deterministic regressions for the spawn-return alarm
-window, authenticated-result snapshot use and interrupted receipt publication;
+window, authenticated-result snapshot use, interrupted receipt publication,
+concurrent owner refusal, pre-blocked owner signals, stale bytecode, and ambient
+source-path substitution;
 the saved proof fixture also tests matching omissions throughout its original
 format. These are repository tests, not fresh archive-parity evidence.
 No local executor or local tests were used for this reconciliation. Final

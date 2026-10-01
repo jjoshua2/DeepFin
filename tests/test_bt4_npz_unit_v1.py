@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 from pathlib import Path
+import py_compile
 import signal
 import subprocess
 import sys
@@ -60,8 +62,7 @@ def _source_proof(identity: unit.GameIdentity) -> dict:
             "archive_sha256": identity.archive_sha256,
             "gross_rows": identity.rows,
             "raw_archive_sha256": identity.archive_sha256,
-            "checks": {key: True for key in
-                       ("feed", "policy", "strict_receipt", "terminal")},
+            "checks": dict.fromkeys(("feed", "policy", "strict_receipt", "terminal"), True),
             "detail": "synthetic", "evidence": {"fixture": "synthetic"},
             "final_fen": "synthetic", "result": "1-0",
             "source_verifier_sha256": "d" * 64, "termination": "synthetic"}
@@ -830,3 +831,90 @@ def test_deadline_during_receipt_publication_removes_completion(
                             verify_output=lambda _: None)
     assert (tmp_path / "attempt_0000" / "RESULT.json").exists()
     assert not (tmp_path / "COMPLETE.json").exists()
+
+
+def test_preblocked_owner_alarm_refused_before_work() -> None:
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
+    try:
+        with pytest.raises(unit.Hold, match="exclusive owner alarm"):
+            with unit.owned_deadline(1):
+                raise AssertionError("blocked owner alarm admitted")
+        assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
+def test_concurrent_root_owner_refused_and_released(tmp_path: Path) -> None:
+    ready = tmp_path / "owner.ready"
+    owner = subprocess.Popen([
+        sys.executable, "-c",
+        "import fcntl, pathlib, sys, time; "
+        "lock = open(sys.argv[1], 'w'); "
+        "fcntl.flock(lock, fcntl.LOCK_EX); "
+        "pathlib.Path(sys.argv[2]).touch(); time.sleep(30)",
+        str(tmp_path / ".bt4_owner.lock"), str(ready)])
+    script = tmp_path / "worker.py"
+    script.write_text(_WORKER)
+    argv = (str(Path(sys.executable).resolve()), str(GUARD), str(script))
+    claim = _claim(script, argv)
+    try:
+        _await_file(ready)
+        with pytest.raises(unit.Hold, match="already has an owner"):
+            unit.run_owned_unit(tmp_path, claim, argv=argv,
+                                output_names=("payload.bin",),
+                                verify_output=lambda _: None)
+        assert not (tmp_path / "CLAIM.json").exists()
+        assert not (tmp_path / "attempt_0000").exists()
+    finally:
+        owner.kill()
+        owner.wait(timeout=5)
+    complete = unit.run_owned_unit(
+        tmp_path, claim, argv=argv, output_names=("payload.bin",),
+        verify_output=lambda _: None)
+    assert complete["attempt"] == "attempt_0000"
+
+
+def test_frozen_source_executes_pinned_bytes_not_timestamp_valid_pyc(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    name = "_bt4_snapshot_source_fixture"
+    path = tmp_path / f"{name}.py"
+    path.write_text("VALUE = 'stale'\n")
+    stamp = path.stat()
+    cached = py_compile.compile(str(path), doraise=True)
+    assert cached is not None and Path(cached).is_file()
+    # Same size and mtime make the old pyc eligible to an ordinary import.
+    path.write_text("VALUE = 'fresh'\n")
+    os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    pin = unit.FrozenFile(name, path, unit.sha(path.read_bytes()))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    try:
+        with unit.source_snapshot_imports((pin,)) as executed:
+            module = importlib.import_module(name)
+            assert module.VALUE == "fresh"
+            assert executed == {path}
+            unit.verify_modules({name: module}, (pin,))
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_frozen_source_refuses_ambient_path_before_execution(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    name = "_bt4_snapshot_path_fixture"
+    pinned = tmp_path / "pinned"
+    ambient = tmp_path / "ambient"
+    pinned.mkdir()
+    ambient.mkdir()
+    path = pinned / f"{name}.py"
+    path.write_text("VALUE = 'pinned'\n")
+    marker = tmp_path / "should-not-exist"
+    (ambient / f"{name}.py").write_text(
+        f"from pathlib import Path; Path({str(marker)!r}).touch()\n")
+    pin = unit.FrozenFile(name, path, unit.sha(path.read_bytes()))
+    monkeypatch.syspath_prepend(str(ambient))
+    try:
+        with unit.source_snapshot_imports((pin,)):
+            with pytest.raises(unit.Hold, match="path before execution"):
+                importlib.import_module(name)
+        assert not marker.exists()
+    finally:
+        sys.modules.pop(name, None)

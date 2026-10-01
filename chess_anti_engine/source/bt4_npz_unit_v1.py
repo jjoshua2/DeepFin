@@ -9,7 +9,9 @@ from __future__ import annotations
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
+import fcntl
 import hashlib
+import importlib.machinery
 import json
 import os
 from pathlib import Path
@@ -17,9 +19,10 @@ import re
 import signal
 import stat
 import subprocess
+import sys
 import time
-from types import ModuleType
-from typing import cast
+from types import CodeType, ModuleType
+from typing import Any, cast
 
 from chess_anti_engine.source import checkpointed_candidate_v2 as candidate
 from chess_anti_engine.source import checkpointed_cursor_v2 as cursor
@@ -85,6 +88,13 @@ def sha(data: bytes) -> str:
 def canonical(value: object) -> bytes:
     return (json.dumps(value, sort_keys=True, separators=(",", ":"),
                        ensure_ascii=True, allow_nan=False) + "\n").encode("ascii")
+
+
+def json_object(raw: bytes, why: str) -> dict[str, Any]:
+    value = json.loads(raw)
+    if type(value) is not dict:
+        raise Hold(why)
+    return cast(dict[str, Any], value)
 
 
 def hex64(value: object) -> bool:
@@ -172,6 +182,64 @@ def verify_modules(modules: dict[str, ModuleType], pins: tuple[FrozenFile, ...])
              Path(file_name).resolve() == pin.path.resolve(),
              f"frozen import path: {pin.module}")
         pinned_file(pin.path, pin.sha256, 1 << 20)
+
+
+@contextmanager
+def source_snapshot_imports(pins: tuple[FrozenFile, ...]
+                            ) -> Generator[set[Path], None, None]:
+    """Compile pinned imports from authenticated bytes, never an ambient pyc.
+
+    This process-wide hook is only used by the isolated, single-threaded child.
+    The caller must require coverage for every source path before replay; custom
+    loaders which bypass SourceFileLoader are deliberately unsupported.
+    """
+    need(len({pin.module for pin in pins}) == len(pins) and
+         all(pin.module not in sys.modules for pin in pins),
+         "frozen source already imported/duplicate")
+    snapshots = {pin.path: pinned_file(pin.path, pin.sha256, 1 << 20)
+                 for pin in pins}
+    by_name = {pin.module: pin.path for pin in pins}
+    executed: set[Path] = set()
+    original_get_code = importlib.machinery.SourceFileLoader.get_code
+
+    def get_code(loader: importlib.machinery.SourceFileLoader,
+                 fullname: str) -> CodeType | None:
+        path = Path(loader.path)
+        if fullname in by_name:
+            need(path == by_name[fullname], "frozen import path before execution")
+        raw = snapshots.get(path)
+        if raw is None:
+            return original_get_code(loader, fullname)
+        executed.add(path)
+        return compile(raw, str(path), "exec", dont_inherit=True, optimize=0)
+
+    setattr(importlib.machinery.SourceFileLoader, "get_code", get_code)
+    try:
+        yield executed
+    finally:
+        setattr(importlib.machinery.SourceFileLoader, "get_code", original_get_code)
+
+
+@contextmanager
+def owned_root(root: Path) -> Generator[None, None, None]:
+    """Hold one nonblocking owner lease through reuse, launch and publication."""
+    need(root.is_absolute() and root.is_dir() and
+         not root.is_symlink() and root == root.resolve(),
+         "owned unit path")
+    fd = os.open(root / ".bt4_owner.lock",
+                 os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC |
+                 os.O_NONBLOCK, 0o600)
+    try:
+        info = os.fstat(fd)
+        need(stat.S_ISREG(info.st_mode) and info.st_nlink == 1,
+             "owned unit lock type")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise Hold("owned unit already has an owner") from error
+        yield
+    finally:
+        os.close(fd)
 
 
 @dataclass(frozen=True)
@@ -776,7 +844,8 @@ def owned_deadline(seconds: int) -> Generator[None, None, None]:
         yield
         return
     need(signal.getsignal(signal.SIGALRM) == signal.SIG_DFL and
-         signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0),
+         signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0) and
+         signal.SIGALRM not in signal.pthread_sigmask(signal.SIG_BLOCK, set()),
          "exclusive owner alarm required")
     previous = signal.signal(signal.SIGALRM, _owner_alarm)
     _owner_deadline = time.monotonic() + seconds
@@ -844,8 +913,8 @@ def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
     complete_path = root / "COMPLETE.json"
     if complete_path.exists():
         complete_raw = bounded_file(complete_path, 1 << 20)
-        complete = json.loads(complete_raw)
-        need(type(complete) is dict and complete_raw == canonical(complete) and
+        complete = json_object(complete_raw, "complete receipt object")
+        need(complete_raw == canonical(complete) and
              complete.get("schema") == "bt4_npz_owned_one_game_complete_v1" and
              set(complete) == {"schema", "claim_sha256", "attempt",
                                "outputs", "result_sha256",
@@ -865,11 +934,10 @@ def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
         attempt = root / complete["attempt"]
         result_raw = pinned_file(attempt / "RESULT.json",
                                  complete["result_sha256"], 1 << 20)
-        result = json.loads(result_raw)
-        need(type(result) is dict, "complete result/source differs")
+        result = json_object(result_raw, "complete result/source differs")
         archive_bytes = result.get("logical_archive_bytes")
         context_bytes = result.get("logical_context_bytes")
-        need(type(result) is dict and result_raw == canonical(result) and
+        need(result_raw == canonical(result) and
              set(result) == {"schema", "claim_sha256", "rows",
                              "logical_archive_bytes", "logical_context_bytes",
                              "outputs"} and
@@ -948,6 +1016,8 @@ def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
                     _kill_group(process)
             finally:
                 signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        if process is None:
+            raise Hold("owned child handle missing")
         exit_code = process.wait()
         stdout.flush()
         os.fsync(stdout.fileno())
@@ -957,8 +1027,8 @@ def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
         raise Hold(f"owned child failed: {failure or exit_code}; attempt={attempt.name}")
     result_path = attempt / "RESULT.json"
     result_raw = bounded_file(result_path, 1 << 20)
-    result = json.loads(result_raw)
-    need(type(result) is dict and result_raw == canonical(result) and
+    result = json_object(result_raw, "owned result object")
+    need(result_raw == canonical(result) and
          result.get("schema") == "bt4_npz_owned_one_game_result_v1" and
          set(result) == {"schema", "claim_sha256", "rows",
                          "logical_archive_bytes", "logical_context_bytes",
@@ -1009,7 +1079,7 @@ def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
 def run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
                    output_names: tuple[str, ...],
                    verify_output: Callable[[dict[str, bytes]], None]) -> dict:
-    with owned_deadline(claim.wall_seconds):
+    with owned_deadline(claim.wall_seconds), owned_root(root):
         return _run_owned_unit(root, claim, argv=argv,
                                output_names=output_names,
                                verify_output=verify_output)
@@ -1043,16 +1113,16 @@ def _run_bt4_packet_unit(root: Path, claim: UnitClaim, *, packet_path: Path,
     def verify(payloads: dict[str, bytes]) -> None:
         verify_game_output(payloads, claim, witness, route)
 
-    return run_owned_unit(root, claim, argv=argv,
-                          output_names=OUTPUT_NAMES,
-                          verify_output=verify)
+    return _run_owned_unit(root, claim, argv=argv,
+                           output_names=OUTPUT_NAMES,
+                           verify_output=verify)
 
 
 def run_bt4_packet_unit(root: Path, claim: UnitClaim, *, packet_path: Path,
                         witness_files: WitnessFiles,
                         argv: tuple[str, str, str, str],
                         route: Callable[[list], object]) -> dict:
-    with owned_deadline(claim.wall_seconds):
+    with owned_deadline(claim.wall_seconds), owned_root(root):
         return _run_bt4_packet_unit(root, claim, packet_path=packet_path,
                                     witness_files=witness_files, argv=argv,
                                     route=route)
