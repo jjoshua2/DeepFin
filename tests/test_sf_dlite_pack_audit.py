@@ -402,7 +402,7 @@ def test_label_index_hashes_consumed_bytes_before_publishing(
 
     with monkeypatch.context() as patch:
         patch.setattr(Path, "open", transient_open)
-        with pytest.raises(ValueError, match="consumed label block bytes|data grew"):
+        with pytest.raises(ValueError, match=r"consumed label block bytes|data grew"):
             runner.label_index(tmp_path, plan, census, label)
     assert iterations == [True]
     assert data.read_bytes() == original
@@ -470,6 +470,86 @@ def test_orphan_label_index_is_reconstructed_without_replacing_receipt(
         runner.label_index(tmp_path, plan, census, label)
     assert rebuilds == [True, True]
     assert not (tmp_path / "resource_receipts" / "label-index.json").exists()
+
+
+def test_roster_reader_uses_a_pinned_immutable_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    roster = _roster()
+    path = tmp_path / "roster.bin"
+    original = roster.tobytes()
+    path.write_bytes(original)
+    census = {"row_dtype": roster.dtype.descr,
+              "roster": {"path": str(path), "sha256": runner.digest(original)}}
+    monkeypatch.setattr(runner, "ROWS", len(roster))
+    snapshot = runner.roster_array(census)
+    changed = roster.copy()
+    changed["source_row"][0] += 1
+    path.write_bytes(changed.tobytes())
+    assert snapshot.tobytes() == original
+    assert not snapshot.flags.writeable
+    with pytest.raises(ValueError, match="consumed array bytes differ"):
+        runner.roster_array(census)
+
+    path.write_bytes(original)
+    real_read = Path.read_bytes
+
+    def changed_read(item: Path) -> bytes:
+        return changed.tobytes() if item == path else real_read(item)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "read_bytes", changed_read)
+        with pytest.raises(ValueError, match="consumed array bytes differ"):
+            runner.roster_array(census)
+    assert path.read_bytes() == original
+
+
+def test_shard_labels_are_pinned_and_immutable_during_both_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    census, roster, labels, arms = _fixture(tmp_path)
+    root = tmp_path / "audit"
+    root.mkdir()
+    for name in ("audit_receipts", "verify_receipts"):
+        (root / name).mkdir()
+    path = root / "labels.f4"
+    original = labels.tobytes()
+    changed = labels.copy()
+    changed[0] = [.1, .4, .5]
+    path.write_bytes(original)
+    runner.publish(root / "LABEL-INDEX.json",
+                   {"table": {"path": str(path), "sha256": runner.digest(original)}})
+    plan = {"self_sha256": "e" * 64, "builder_terminal": {"sha256": "f" * 64}}
+    monkeypatch.setattr(runner, "ROWS", 3)
+    monkeypatch.setattr(runner, "roster_array", lambda *_args, **_kwargs: roster)
+    real_read_arrays = audit.read_arrays
+
+    def mutate_before_label_consumption(
+        array_path: Path, expected: frozenset[str],
+    ) -> dict[str, np.ndarray]:
+        path.write_bytes(changed.tobytes())
+        return real_read_arrays(array_path, expected)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(audit, "read_arrays", mutate_before_label_consumption)
+        for verify in (False, True):
+            try:
+                runner.run_shard(root, plan, census, {"arms": arms}, 0, verify=verify)
+            finally:
+                path.write_bytes(original)
+    assert path.read_bytes() == original
+
+    real_read = Path.read_bytes
+
+    def changed_read(item: Path) -> bytes:
+        return changed.tobytes() if item == path else real_read(item)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "read_bytes", changed_read)
+        for verify in (False, True):
+            with pytest.raises(ValueError, match="consumed array bytes differ"):
+                runner.run_shard(root, plan, census, {"arms": arms}, 0, verify=verify)
+    assert path.read_bytes() == original
 
 
 def test_receipt_prefix_refuses_gap_and_changed_prior(tmp_path: Path) -> None:
@@ -617,7 +697,8 @@ def test_tiny_qualification_publishes_only_final_into_pack_root(
     label_table = audit_root / "labels.f4"
     labels.astype("<f4").tofile(label_table)
     label_sha = runner.publish(audit_root / "LABEL-INDEX.json",
-                               {"rows": 3, "table": {"path": str(label_table)}})
+                               {"rows": 3, "table": {"path": str(label_table),
+                                                   "sha256": audit.sha256_file(label_table)}})
     proof = audit.audit_shard(0, census, roster, labels, arms)
     proof.update({"plan_sha256": plan["self_sha256"],
                   "builder_terminal_sha256": builder_sha,
@@ -856,14 +937,22 @@ time.sleep(30)
 
 
 def test_parent_killed_after_unit_proof_restarts_before_monitor_acceptance(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Exercise the actual process/receipt lifecycle without requiring the
+    # production host's 32-GiB memory and 50-GiB disk headroom in CPU CI.
+    monkeypatch.setattr(runner, "AVAILABLE_KIB_MIN", 0)
+    monkeypatch.setattr(runner, "FREE_BYTES_MIN", 0)
+    monkeypatch.setattr(runner, "physical_counters", lambda: {"fixture": (0, 0)})
     (tmp_path / "resource_receipts").mkdir()
     marker = tmp_path / "proof_written"
     owner = """
 import os, sys
 from pathlib import Path
 from scripts import audit_sf_dlite_paired_pack as audit
+audit.AVAILABLE_KIB_MIN = 0
+audit.FREE_BYTES_MIN = 0
+audit.physical_counters = lambda: {'fixture': (0, 0)}
 with Path(sys.argv[1]).open('a+b') as lease:
     child = [sys.executable, '-c', sys.argv[2], str(os.getpid()),
              sys.argv[3], sys.argv[4], 'hold']

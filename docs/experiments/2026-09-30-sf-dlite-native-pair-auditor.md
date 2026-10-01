@@ -106,3 +106,12 @@ completion and independent monitor chain remain prerequisites, not results
 established by merging this implementation. Existing plans pin the auditor source
 bytes, so these fixes require a newly reviewed plan rather than silently reusing
 an older implementation's checkpoints.
+
+Independent review also identified a live-memmap gap between label-index
+verification and shard consumption. Roster and staged-label arrays now consume
+immutable in-memory snapshots hashed from those exact bytes on every shard pass.
+The production sizes are 450 MB for the roster and 30 MB for labels; existing
+6-GiB child RSS, 30-minute wall and shared-I/O gates still apply. This deliberately
+adds per-pass hashing and memory rather than assuming a source path stays frozen.
+Tiny tests mutate the files after snapshot acquisition and substitute bytes at
+read time to distinguish immutability from a later source rehash.

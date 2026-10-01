@@ -352,16 +352,22 @@ def sources(plan: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[
     return census, builder, label
 
 
-def roster_array(census: dict[str, Any], *, hash_bytes: bool) -> np.memmap:
-    path = Path(census["roster"]["path"])
-    require(path.is_file() and not path.is_symlink() and
-            path.stat().st_size == ROWS * 180, "roster size differs")
-    if hash_bytes:
-        require(sha256_file(path) == census["roster"]["sha256"],
-                "roster bytes changed")
+def pinned_array_bytes(path: Path, expected_sha: str, expected_bytes: int) -> bytes:
+    """Freeze the exact binary input consumed by array readers."""
+    require(path.is_file() and not path.is_symlink()
+            and path.stat().st_size == expected_bytes, "pinned array size differs")
+    raw = path.read_bytes()
+    require(len(raw) == expected_bytes and digest(raw) == expected_sha,
+            "consumed array bytes differ from pinned bytes")
+    return raw
+
+
+def roster_array(census: dict[str, Any]) -> np.ndarray:
     dtype = np.dtype([tuple(item) for item in census["row_dtype"]], align=False)
     require(dtype.itemsize == 180, "roster dtype differs")
-    return np.memmap(path, dtype=dtype, mode="r", shape=(ROWS,))
+    raw = pinned_array_bytes(Path(census["roster"]["path"]),
+                             census["roster"]["sha256"], ROWS * 180)
+    return np.frombuffer(raw, dtype=dtype, count=ROWS)
 
 
 def qualified_label_blocks(plan: dict[str, Any], label: dict[str, Any]
@@ -426,7 +432,7 @@ def label_index(root: Path, plan: dict[str, Any], census: dict[str, Any],
             return receipt
         # A proof published before monitor acceptance is not a completed unit.
         # Reconstruct it from qualified bytes before the parent can credit it.
-    roster = roster_array(census, hash_bytes=True)
+    roster = roster_array(census)
     stage_root = root / "label_stage"
     attempt = stage_root / f"attempt-{os.getpid()}-{secrets.token_hex(8)}"
     attempt.mkdir()
@@ -809,9 +815,10 @@ def run_shard(root: Path, plan: dict[str, Any], census: dict[str, Any],
     audit_path = root / "audit_receipts" / f"shard_{shard_id:06d}.json"
     verify_path = root / "verify_receipts" / f"shard_{shard_id:06d}.json"
     label_receipt, label_sha = read_receipt(root / "LABEL-INDEX.json")
-    roster = roster_array(census, hash_bytes=False)
-    labels = np.memmap(label_receipt["table"]["path"], dtype="<f4", mode="r",
-                       shape=(ROWS, 3))
+    roster = roster_array(census)
+    table = label_receipt["table"]
+    label_bytes = pinned_array_bytes(Path(table["path"]), table["sha256"], ROWS * 3 * 4)
+    labels = np.frombuffer(label_bytes, dtype="<f4").reshape(ROWS, 3)
     proof = audit_shard(shard_id, census, roster, labels, builder["arms"])
     proof.update({"plan_sha256": plan["self_sha256"],
                   "builder_terminal_sha256": plan["builder_terminal"]["sha256"],
@@ -958,7 +965,7 @@ def verify_final(root: Path, plan: dict[str, Any], census: dict[str, Any],
             np.array_equal(np.sort(np.concatenate(all_indices)),
                            np.arange(ROWS, dtype="<i4")),
             "verified paired roster does not cover every row once")
-    roster_array(census, hash_bytes=True)
+    roster_array(census)
     label_index(root, plan, census, pinned(Path(plan["label_terminal"]["path"]),
                                            plan["label_terminal"]["sha256"]))
     candidate = dict(builder)
