@@ -1,5 +1,15 @@
 # Bend migration and proof inventory
 
+## Complete legal-generator finish line
+
+The [end-to-end contract](bend_legal_generator_contract.md) specifies soundness,
+completeness, unique canonical moves, complete table preservation and successor
+representation for actual Tables.build plus optimized Chess.legal_moves, under
+independent orthodox-history and representation premises. It groups the remaining
+work into three compositional milestones. The new closed-builder candidate is
+unqualified until its fail-closed source/control gate passes; no accepted-law
+count or complete-generator result is added by this specification.
+
 ## Sequential initialized castling producer/full-filter checks
 
 Hosted run **36322784771** passes the complete three-law consumer, separate premise examples, all16 controls, four native sequential modes and four compiled/executed actual-code corruptions, original compiler tests and unchanged locked repository lint on source `1e735f1b2724c4c28823d391a37be5d8b410799f`.
