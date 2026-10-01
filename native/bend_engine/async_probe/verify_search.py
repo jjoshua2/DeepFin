@@ -146,7 +146,13 @@ def snapshot(lines: list[str], epoch: int, *, dispatched: int, executed: int,
     return report
 
 
+def require_assertions() -> None:
+    if not __debug__:
+        raise RuntimeError('qualification requires assertions; run without -O/-OO/PYTHONOPTIMIZE')
+
+
 def run_cases(command: list[str]) -> dict[str, Any]:
+    require_assertions()
     observations: list[dict[str, Any]] = []
     c = Gate(command)
     try:
@@ -220,6 +226,26 @@ def run_cases(command: list[str]) -> dict[str, Any]:
         lines = c.until('bestmove ', 0.75)
         observations.append(snapshot(lines, 2, dispatched=0, executed=0, accepted=0, cancelled=0))
         c.no_start()
+        # The old physical callback remains blocked throughout these new searches.
+        # A depleted clock must return a legal zero-work fallback before release,
+        # even though duration=0 normally means there is no timer.
+        for epoch, position, limits in (
+                (3, 'startpos', 'wtime 0 btime 1000 nodes 256'),
+                (4, 'startpos', 'wtime 50 winc 86400000 nodes 256'),
+                (5, 'startpos moves e2e4', 'btime 0 wtime 1000 nodes 256')):
+            c.send('position ' + position + '\ngo ' + limits)
+            lines = c.until('bestmove ', 0.75)
+            report = snapshot(lines, epoch, dispatched=0, executed=0, accepted=0, cancelled=0)
+            assert report['completed_simulations'] == report['movetime_ms'] == 0, report
+            assert any('unsearched legal fallback' in row for row in lines), lines
+            board = chess.Board()
+            if 'moves' in position:
+                board.push_uci('e2e4')
+            assert chess.Move.from_uci(lines[-1].split()[1]) in board.legal_moves, lines
+            observations.append(report)
+            c.send('stop')
+            c.no_bestmove()
+            c.no_start()
         c.release()
         retired = one_report(c.until(RETIRED), RETIRED, 1)
         assert retired['unconfirmed_forward_rows'] == 0
@@ -308,12 +334,13 @@ def run_cases(command: list[str]) -> dict[str, Any]:
         c.finish()
     finally:
         c.close()
-    return {'status': 'passed', 'scope': 'actual Bend UCI/search with deterministic blocked callback; not a model or speed test',
+    return {'status': 'passed', 'qualified': True, 'zero_clock_before_retirement': 3, 'scope': 'actual Bend UCI/search with deterministic blocked callback; not a model or speed test',
             'decision_reports': observations, 'failure_cases': 3, 'sync_negative_control': True,
             'stop_before_release': True, 'readiness_before_release': True, 'quit_waits_for_physical_completion': True}
 
 
 def verify_accounting(text: str) -> None:
+    require_assertions()
     rows = text.splitlines()
     assert len(rows) == 3, rows
     decision = one_report([rows[0]], WORK, 7)
@@ -342,6 +369,9 @@ def main() -> None:
     parser.add_argument('--accounting-output', type=Path, required=True)
     parser.add_argument('--command', nargs=argparse.REMAINDER, required=True)
     args = parser.parse_args()
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(json.dumps({'qualified': False, 'status': 'started'}) + '\n')
+    require_assertions()
     verify_accounting(args.accounting_output.read_text())
     report = run_cases(args.command)
     args.report.write_text(json.dumps(report, indent=2) + '\n')
