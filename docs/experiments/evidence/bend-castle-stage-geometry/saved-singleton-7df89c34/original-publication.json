@@ -1,0 +1,76 @@
+{
+  "repository": "jjoshua2/DeepFin",
+  "base_pr": 897,
+  "base_branch": "feat/bend-initialized-attacked-20260926",
+  "base": "1b27a4d75744167fc0e365f7f331d2cd80881b21",
+  "branch": "feat/bend-castle-singleton-20260926",
+  "head": "7df89c34d03149b6ff00ebd5456ef96be2d901ee",
+  "tree": "19cbeffbf4e051c1a2a02c236e6259f9d0133a42",
+  "source_commit": "4e1787f0750ca72c8aa7308f1d814841ee750a75",
+  "source_tree": "50ffd3ab0f9be9aaa6d79c0e60bce3bf6af2166f",
+  "changed_file_count": 31,
+  "bundle": {
+    "file": "bend-castle-singleton.bundle",
+    "bytes": 94626,
+    "sha256": "8d6af4c7b8733a9a7c431225c29a71903a64817bbabd0797c5e5daac143f10bb"
+  },
+  "patch": {
+    "file": "bend-castle-singleton.patch",
+    "bytes": 347252,
+    "sha256": "504b5673bd9a2009747402cf8f4f6c33b75944e1b027da75aaf92d5d88d980df"
+  },
+  "pr_body": {
+    "file": "PR_BODY.md",
+    "bytes": 6811,
+    "sha256": "a797feb6fba620d6a651e863ed4f708f50cde29cbb7c932e5abbb04144ba8671"
+  },
+  "publication_script": {
+    "file": "publish.sh",
+    "bytes": 3371,
+    "sha256": "8fc541f0ed689cf1f74c0ac5f96f821da120553bd5c685a93cad1530df1fecc6"
+  },
+  "qualification_script": {
+    "file": "qualify.sh",
+    "bytes": 2373,
+    "sha256": "c17a0ef93af9ec002c371fce1b9489bfe8d15d1770cb2545c8e1bcdd88c8dfe5"
+  },
+  "publish_script_syntax_checked": true,
+  "publish_script_executed": false,
+  "fresh_index_patch_reapplies_exactly": true,
+  "prerequisite_only_bundle_import_matches": true,
+  "remote_pr_created_or_updated": false,
+  "qualification": {
+    "qualification": "LOCAL_SOURCE_AND_NATIVE_PASS_LINT_UNQUALIFIED",
+    "source": "4e1787f0750ca72c8aa7308f1d814841ee750a75",
+    "source_tree": "50ffd3ab0f9be9aaa6d79c0e60bce3bf6af2166f",
+    "parent": "1b27a4d75744167fc0e365f7f331d2cd80881b21",
+    "parent_source_files_unchanged": 586,
+    "native_source_count": 600,
+    "new_laws": 5,
+    "new_controls": 18,
+    "control_categories": {
+      "source semantic/refinement": 9,
+      "manifest/import policy": 8,
+      "synthetic output-wrapper unit; not compiler execution": 1
+    },
+    "retained_parent_laws": 186,
+    "retained_parent_controls": 581,
+    "modular_laws": 191,
+    "modular_controls": 599,
+    "combined_wrapper_executed": false,
+    "native_modes": 4,
+    "native_requests_per_mode": 1556,
+    "native_fields_per_mode": 34232,
+    "distinct_original_boards": 532,
+    "positive_original_boards": 512,
+    "stage_observations_with_singleton_prerequisites": 1536,
+    "malformed_rejections_per_mode": 9,
+    "generic_actual_mutations": 3,
+    "repository_lint": "UNQUALIFIED_MISSING_TOOLS",
+    "hosted_qualification": false,
+    "remote_publication": false,
+    "independent_review": false,
+    "moving_side_only": true,
+    "attack_truth_or_complete_castling_safety_proved": false
+  }
+}

@@ -1,0 +1,454 @@
+"""Synthetic only: a bounded fake replay exercises the real reader interface."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+import hashlib
+import json
+import os
+from pathlib import Path
+import signal
+import sys
+from types import SimpleNamespace
+
+import pytest
+
+from chess_anti_engine.source import checkpointed_candidate_v2 as candidate
+from chess_anti_engine.source import checkpointed_cursor_v2 as cursor
+from chess_anti_engine.source import checkpointed_sort as sort
+from chess_anti_engine.source import checkpointed_wave_v2 as wave
+
+MANIFEST = "a" * 64
+STRICT = "b" * 64
+SYZYGY = "c" * 64
+CONFIG = "d" * 64
+SOURCE = "e" * 64
+ROUTE_CODE = "f" * 64
+NAMESPACE = "bt4_run11:" + MANIFEST
+CONTEXT = ("history", "repetition", 0, "legal", "teacher-query")
+PREFIX = ("e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5a4", "g8f6",
+          "e1g1", "f8e7", "f1e1", "b7b5", "a4b3", "d7d6", "c2c3", "e8g8")
+
+
+def _archive(game: int) -> bytes:
+    return wave.canonical(["synthetic-archive", game])
+
+
+def _locators(*, large: bool = False) -> tuple[cursor.GameLocator, ...]:
+    # 31*256 + 255 = 8,191. A 2-row game crosses 8,192, then two
+    # independent games prove that the stored midgame hash is not reused.
+    sizes = [256] * 31 + [255, 2, 1, 1] if large else [2, 2]
+    return tuple(cursor.GameLocator(
+        "BT4-v9", MANIFEST, NAMESPACE, f"root-{index}", index,
+        size, wave.sha(_archive(index)), STRICT, len(PREFIX), PREFIX)
+        for index, size in enumerate(sizes))
+
+
+def _pipeline(root: Path, *, large: bool = False,
+              tamper_native: bool = False,
+              tamper_proof: bool = False,
+              tamper_archive: bool = False,
+              locators: tuple[cursor.GameLocator, ...] | None = None
+              ) -> tuple[cursor.CursorPipeline, cursor.SourceCursor]:
+    locators = locators or _locators(large=large)
+
+    def snapshot(loc: cursor.GameLocator) -> bytes:
+        return (_archive(loc.game_id) + b"changed" if tamper_archive
+                else _archive(loc.game_id))
+
+    def replay(loc: cursor.GameLocator, raw: bytes, proof_sink):
+        source_proof = {"schema": "full512_raw_strict_source_proof_v1",
+                        "status": "PASS_SOURCE_PROOF",
+                        "source": loc.source,
+                        "root_id": loc.root_id,
+                        "game_id": loc.game_id,
+                        "strict_receipt_sha256": STRICT,
+                        "archive_sha256": wave.sha(raw),
+                        "gross_rows": loc.rows}
+        source_proof_sha = hashlib.sha256(json.dumps(
+            source_proof, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=True, allow_nan=False).encode("ascii") + b"\n").hexdigest()
+        proof_sink({"source": loc.source, "root_id": loc.root_id,
+                    "game_id": loc.game_id, "archive_sha256": wave.sha(raw),
+                    "source_proof_sha256": ("0" * 64 if tamper_proof
+                                            else source_proof_sha),
+                    "source_proof": source_proof,
+                    "terminal_fact": {"syzygy_inventory_sha256": SYZYGY,
+                                      "terminal_replayed": True,
+                                      "rows": loc.rows}})
+        answer = []
+        for ply in range(loc.rows):
+            uid = [loc.source_manifest_sha, loc.namespace, loc.root_id,
+                   loc.game_id, loc.ply_start + ply]
+            native = hashlib.sha256(wave.canonical(uid)).digest()
+            if tamper_native and loc.game_id == 0 and ply == 0:
+                native = bytes([native[0] ^ 1]) + native[1:]
+            answer.append(({
+                "uid": uid, "source": loc.source,
+                "provenance_locator_sha256": wave.sha(wave.canonical(uid)),
+                "history_stack_sha256": CONTEXT[0],
+                "repetition": CONTEXT[1], "rule50": CONTEXT[2],
+                "legal_context_sha256": CONTEXT[3],
+                "teacher_query_sha256": CONTEXT[4],
+                "outcome": "1-0"}, native))
+        return tuple(answer)
+
+    reader = cursor.ReplayGameReader(snapshot, replay,
+                                     strict_receipt_sha256=STRICT,
+                                     syzygy_inventory_sha256=SYZYGY)
+    source = cursor.SourceCursor(locators, reader,
+                                 strict_receipt_sha256=STRICT,
+                                 syzygy_inventory_sha256=SYZYGY,
+                                 reader_code_sha256=wave.sha(b"synthetic-reader-v1"))
+    store = wave.SegmentStore(root / "waves", input_sha256=source.identity,
+                              source_sha256=SOURCE, config_sha256=CONFIG,
+                              roster=source.roster, strict_receipt_sha256=STRICT,
+                              syzygy_inventory_sha256=SYZYGY,
+                              route_code_sha256=ROUTE_CODE, row_bytes=32)
+    return cursor.CursorPipeline(root / "pipeline", source, store), source
+
+
+def _sort(root: Path, source: cursor.SourceCursor) -> sort.CheckpointedSort:
+    return sort.CheckpointedSort(root / "sort", source_sha256=source.identity,
+                                 config_sha256=CONFIG, kind="digest",
+                                 row_cap=2048, byte_cap=256 << 10, fanin=4)
+
+
+def _run_child(root: str, hook: str) -> None:
+    pipeline, _ = _pipeline(Path(root), large=True)
+    def kill(_: int) -> None:
+        os.kill(os.getpid(), signal.SIGKILL)
+    if hook == "wave":
+        pipeline.wave1(after_wave_seal=kill)
+    elif hook == "comparison":
+        pipeline.wave1(after_comparison=kill)
+    else:
+        raise ValueError("unknown kill hook")
+
+
+def _case_literal_uid_paired_candidate_and_sort(tmp_path: Path) -> None:
+    pipeline, source = _pipeline(tmp_path)
+    pipeline.wave1()
+    runs = pipeline.wave2_metadata_sort(_sort(tmp_path, source))
+    assert len(runs) == 1
+    assert len(list(_sort(tmp_path, source).iter_run(runs[0]))) == 4
+    notes = list(pipeline.store.iter_rows(0))
+    assert notes[0][0]["uid"][1] == NAMESPACE
+    assert notes[0][0]["uid"][4] == 16
+    assert notes[0][0]["source"] == "BT4-v9"
+    assert candidate.route(notes[0][0]["uid"]) == "Ceres"
+    assert candidate.route(notes[3][0]["uid"]) == "BT4"
+    records = (pipeline.root / "candidate_00000000" / "RECORDS.bin").read_bytes()
+    assert len(records) == 4 * 100
+    for index in range(4):
+        item = sort.RECORD.unpack_from(records, index * 100)
+        assert sort.TEACHERS[item[11]] == candidate.route(notes[index][0]["uid"])
+    before = wave.file_sha(pipeline.root / "candidate_00000000" / "RECEIPT.json")
+    assert pipeline.wave2_metadata_sort(_sort(tmp_path, source)) == runs
+    assert wave.file_sha(pipeline.root / "candidate_00000000" / "RECEIPT.json") == before
+
+
+def _case_8195_midgame_two_crash_boundaries_resume_and_noop(tmp_path: Path) -> None:
+    script = ("import runpy,sys; "
+              "runpy.run_path(sys.argv[1])['_run_child'](sys.argv[2],sys.argv[3])")
+    exit_code = sort.run_owned_cpu(
+        [sys.executable, "-c", script, __file__, str(tmp_path), "wave"],
+        log_path=tmp_path / "kill.log", timeout_seconds=90)
+    assert exit_code == -signal.SIGKILL, (tmp_path / "kill.log").read_text()
+    sealed_wave = tmp_path / "waves" / "segment_00000000" / "RECEIPT.json"
+    assert sealed_wave.exists()
+    wave_hash = wave.file_sha(sealed_wave)
+    wave_mtime = sealed_wave.stat().st_mtime_ns
+    first = tmp_path / "pipeline" / "cursor_00000000.json"
+    assert not first.exists()
+    exit_code = sort.run_owned_cpu(
+        [sys.executable, "-c", script, __file__, str(tmp_path), "comparison"],
+        log_path=tmp_path / "kill-comparison.log", timeout_seconds=90)
+    assert exit_code == -signal.SIGKILL, (tmp_path / "kill-comparison.log").read_text()
+    comparison = tmp_path / "waves" / "compare_00000000.json"
+    assert comparison.exists()
+    assert not first.exists()
+    compare_hash = wave.file_sha(comparison)
+    compare_mtime = comparison.stat().st_mtime_ns
+    pipeline, source = _pipeline(tmp_path, large=True)
+    pipeline.wave1()
+    assert wave.file_sha(sealed_wave) == wave_hash
+    assert sealed_wave.stat().st_mtime_ns == wave_mtime
+    assert wave.file_sha(comparison) == compare_hash
+    assert comparison.stat().st_mtime_ns == compare_mtime
+    first_cursor = json.loads(first.read_bytes())
+    assert first_cursor["end"][:2] == [32, 1]
+    assert first_cursor["end"][2] is not None
+    sealed_hash = wave.file_sha(first)
+    sealed_mtime = first.stat().st_mtime_ns
+    runs = pipeline.wave2_metadata_sort(_sort(tmp_path, source))
+    assert len(runs) == 5
+    assert sum(_sort(tmp_path, source).verify_run(run)["rows"] for run in runs) == 8195
+    assert first.stat().st_mtime_ns == sealed_mtime
+    assert wave.file_sha(first) == sealed_hash
+    pipeline.wave1()
+    assert pipeline.wave2_metadata_sort(_sort(tmp_path, source)) == runs
+    assert first.stat().st_mtime_ns == sealed_mtime
+
+
+def _case_source_namespace_native_and_receipt_tamper_refusal(tmp_path: Path) -> None:
+    pipeline, source = _pipeline(tmp_path)
+    pipeline.wave1()
+    changed, _ = _pipeline(tmp_path, tamper_native=True)
+    with pytest.raises(wave.Hold, match="wave 2 byte/order/metadata mismatch"):
+        changed.wave2_metadata_sort(_sort(tmp_path, source))
+    pipeline.wave2_metadata_sort(_sort(tmp_path, source))
+    archive, _ = _pipeline(tmp_path / "archive", tamper_archive=True)
+    with pytest.raises(wave.Hold, match="archive snapshot byte identity"):
+        archive.wave1()
+    proof, _ = _pipeline(tmp_path / "proof", tamper_proof=True)
+    with pytest.raises(wave.Hold, match="complete checked replay proof"):
+        proof.wave1()
+    locators = _locators()
+    swap = (cursor.GameLocator("Ceres-v8", *(
+        locators[0].source_manifest_sha, locators[0].namespace,
+        locators[0].root_id, locators[0].game_id, locators[0].rows,
+        locators[0].archive_sha, locators[0].strict_receipt_sha)),
+            *locators[1:])
+    with pytest.raises(wave.Hold, match="conflicting source namespace"):
+        _pipeline(tmp_path / "swap", locators=swap)
+    namespace = tuple(cursor.GameLocator(
+        loc.source, loc.source_manifest_sha, "new-namespace", loc.root_id,
+        loc.game_id, loc.rows, loc.archive_sha, loc.strict_receipt_sha,
+        loc.ply_start, loc.root_prefix_uci)
+        for loc in locators)
+    with pytest.raises(wave.Hold, match=r"cursor/wave source pins|claim/source/config"):
+        _pipeline(tmp_path, locators=namespace)
+    coordinated = tuple(cursor.GameLocator(
+        loc.source, loc.source_manifest_sha, loc.namespace, loc.root_id,
+        loc.game_id, loc.rows,
+        wave.sha(_archive(loc.game_id) + b"changed"), loc.strict_receipt_sha,
+        loc.ply_start, loc.root_prefix_uci)
+        for loc in locators)
+    with pytest.raises(wave.Hold, match=r"cursor/wave source pins|claim/source/config"):
+        _pipeline(tmp_path, locators=coordinated)
+    reused_game_id = cursor.GameLocator(
+        locators[0].source, locators[0].source_manifest_sha,
+        locators[0].namespace, "another-root", locators[0].game_id,
+        locators[0].rows, locators[0].archive_sha,
+        locators[0].strict_receipt_sha, locators[0].ply_start,
+        locators[0].root_prefix_uci)
+    accepted, _ = _pipeline(tmp_path / "reused-game-id",
+                            locators=(locators[0], reused_game_id))
+    assert accepted.source.total_rows == 4
+    with pytest.raises(wave.Hold, match="duplicate literal source-qualified game"):
+        _pipeline(tmp_path / "duplicate-game",
+                  locators=(locators[0], locators[0]))
+    wrong_ply = cursor.GameLocator(
+        locators[0].source, locators[0].source_manifest_sha,
+        locators[0].namespace, locators[0].root_id, locators[0].game_id,
+        locators[0].rows, locators[0].archive_sha,
+        locators[0].strict_receipt_sha, 0, PREFIX)
+    with pytest.raises(wave.Hold, match="source-specific literal UID ply start"):
+        _pipeline(tmp_path / "wrong-ply", locators=(wrong_ply,))
+    changed_prefix = tuple(cursor.GameLocator(
+        loc.source, loc.source_manifest_sha, loc.namespace, loc.root_id,
+        loc.game_id, loc.rows, loc.archive_sha, loc.strict_receipt_sha,
+        loc.ply_start, ("d2d4", *loc.root_prefix_uci[1:]))
+        for loc in locators)
+    with pytest.raises(wave.Hold, match=r"cursor/wave source pins|claim/source/config"):
+        _pipeline(tmp_path, locators=changed_prefix)
+    actual = SimpleNamespace(
+        source=locators[0].source,
+        source_manifest_sha=locators[0].source_manifest_sha,
+        namespace=locators[0].namespace,
+        root_id=locators[0].root_id,
+        game_id=locators[0].game_id,
+        gross_rows=locators[0].rows,
+        archive_sha=locators[0].archive_sha,
+        strict_receipt_sha=locators[0].strict_receipt_sha,
+        root={"uci_prefix": ["d2d4", *PREFIX[1:]]})
+    with_actual = cursor.GameLocator(
+        locators[0].source, locators[0].source_manifest_sha,
+        locators[0].namespace, locators[0].root_id, locators[0].game_id,
+        locators[0].rows, locators[0].archive_sha,
+        locators[0].strict_receipt_sha, locators[0].ply_start,
+        locators[0].root_prefix_uci, actual)
+    mismatched_actual, _ = _pipeline(tmp_path / "actual-prefix",
+                                     locators=(with_actual,))
+    with pytest.raises(wave.Hold, match="pinned adapter locator/root-prefix identity"):
+        mismatched_actual.wave1()
+    old_claim = json.loads((pipeline.root / "CLAIM.json").read_bytes())
+    old_claim["schema"] = "source_cursor_pipeline_claim_v2"
+    (pipeline.root / "CLAIM.json").write_bytes(wave.canonical(old_claim))
+    with pytest.raises(wave.Hold, match="cursor source/config/code changed"):
+        _pipeline(tmp_path)
+    (pipeline.root / "CLAIM.json").write_bytes(wave.canonical(pipeline.claim))
+    path = pipeline.root / "cursor_00000000.json"
+    original = path.read_bytes()
+    path.write_bytes(original[:-1])
+    with pytest.raises((ValueError, json.JSONDecodeError)):
+        pipeline.wave1()
+    path.write_bytes(original)
+    records = pipeline.root / "candidate_00000000" / "RECORDS.bin"
+    original = records.read_bytes()
+    records.write_bytes(original[:-1])
+    with pytest.raises(wave.Hold, match="candidate file hash/size"):
+        candidate.verify(pipeline.store, 0, records.parent)
+    records.write_bytes(original)
+    # A coordinated local data/receipt rewrite still cannot alter winner facts.
+    changed = bytearray(original)
+    fields = list(sort.RECORD.unpack_from(changed, 0))
+    fields[9] = 1  # a valid but false outcome
+    sort.RECORD.pack_into(changed, 0, *fields)
+    records.write_bytes(changed)
+    receipt_path = records.parent / "RECEIPT.json"
+    original_receipt = receipt_path.read_bytes()
+    receipt = json.loads(original_receipt)
+    receipt["files"]["RECORDS.bin"]["sha256"] = wave.sha(bytes(changed))
+    receipt_path.write_bytes(wave.canonical(receipt))
+    with pytest.raises(wave.Hold, match="candidate differs from paired wave"):
+        candidate.verify(pipeline.store, 0, records.parent)
+    records.write_bytes(original)
+    receipt_path.write_bytes(original_receipt)
+
+
+def _case_valid_but_false_presealed_sort_run_refused(tmp_path: Path) -> None:
+    pipeline, source = _pipeline(tmp_path)
+    pipeline.wave1()
+    pipeline.store.compare_wave2(
+        0, source.rows_from(cursor.Cursor(0, 0, None)))
+    meta = pipeline.root / "candidate_00000000"
+    candidate.seal(pipeline.store, 0, meta)
+    sorter = sort.CheckpointedSort(
+        tmp_path / "false-sort", source_sha256=source.identity,
+        config_sha256=CONFIG, kind="digest", row_cap=2048,
+        byte_cap=256 << 10, fanin=4)
+    receipt_sha = wave.file_sha(meta / "RECEIPT.json")
+    identity = wave.sha(wave.canonical([receipt_sha, 0]))
+    sorter.seal_source_run(
+        "candidate_00000000",
+        [sort.SortEntry("0" * 64, index, (0, index)) for index in range(4)],
+        source_identity_sha256=identity)
+    with pytest.raises(wave.Hold, match="sort run differs from paired candidate"):
+        pipeline.wave2_metadata_sort(sorter)
+
+
+def _case_comparison_without_cursor_rechecks_source_bytes(tmp_path: Path) -> None:
+    pipeline, _ = _pipeline(tmp_path)
+
+    def interrupt(_: int) -> None:
+        raise RuntimeError("controlled unsealed cursor window")
+
+    with pytest.raises(RuntimeError, match="controlled"):
+        pipeline.wave1(after_wave_seal=interrupt)
+    with pytest.raises(RuntimeError, match="controlled"):
+        pipeline.wave1(after_comparison=interrupt)
+    comparison = tmp_path / "waves" / "compare_00000000.json"
+    saved = comparison.read_bytes()
+    changed, _ = _pipeline(tmp_path, tamper_native=True)
+    with pytest.raises(wave.Hold, match="source differs from sealed paired wave"):
+        changed.wave1()
+    assert comparison.read_bytes() == saved
+    assert not (pipeline.root / "cursor_00000000.json").exists()
+
+
+def _case_direct_wave2_refuses_valid_sealed_truncated_last_segment(
+        tmp_path: Path) -> None:
+    pipeline, source = _pipeline(tmp_path)
+    two_rows = source.reader.read_game(source.locators[0])
+    pipeline.store.seal_wave1(0, iter(two_rows), expected_rows=2)
+    pipeline.store.compare_wave2(0, iter(two_rows))
+    receipt = {
+        "schema": "source_cursor_segment_v3",
+        "claim_sha256": wave.sha(wave.canonical(pipeline.claim)),
+        "segment": 0,
+        "start": [0, 0, None], "end": [1, 0, None],
+        "previous_cursor_receipt_sha256": "0" * 64,
+        "wave_receipt_sha256": wave.file_sha(
+            pipeline.store._path(0) / "RECEIPT.json"),
+    }
+    wave.atomic_write(pipeline.root / "cursor_00000000.json",
+                      wave.canonical(receipt))
+    assert pipeline.store.verify_segment(0)["rows"] == 2
+    assert pipeline.store.verify_comparison(0)["rows"] == 2
+    with pytest.raises(wave.Hold, match="paired segment truncated"):
+        pipeline.wave2_metadata_sort(_sort(tmp_path, source))
+
+
+# Resource-accounted work must not run in the monolithic pytest process.
+# On Linux an exec also banks the previous address space's RSS high-water mark,
+# so one direct child can still inherit the heavyweight suite's peak. A small
+# supervisor execs first, then forks the owned case with a clean address space.
+# Every actual case still uses SegmentStore's unchanged absolute 1-GiB RSS cap.
+_CURSOR_CASES = (
+    _case_literal_uid_paired_candidate_and_sort,
+    _case_8195_midgame_two_crash_boundaries_resume_and_noop,
+    _case_source_namespace_native_and_receipt_tamper_refusal,
+    _case_valid_but_false_presealed_sort_run_refused,
+    _case_comparison_without_cursor_rechecks_source_bytes,
+    _case_direct_wave2_refuses_valid_sealed_truncated_last_segment,
+)
+
+
+@pytest.mark.parametrize("case", _CURSOR_CASES, ids=lambda case: case.__name__)
+def test_cursor_contract_in_owned_process(
+        tmp_path: Path, case: Callable[[Path], None]) -> None:
+    case_script = (
+        "import runpy,sys; from pathlib import Path; "
+        "namespace=runpy.run_path(sys.argv[1]); "
+        "namespace[sys.argv[3]](Path(sys.argv[2]))")
+    supervisor = (
+        "import sys; from pathlib import Path; "
+        "from chess_anti_engine.source.checkpointed_sort import run_owned_cpu; "
+        "code=run_owned_cpu([sys.executable,'-c',sys.argv[1],*sys.argv[2:]],"
+        "log_path=Path(sys.argv[3])/'case.log',timeout_seconds=540); "
+        "raise SystemExit(code)")
+    code = sort.run_owned_cpu(
+        [sys.executable, "-c", supervisor, case_script,
+         str(Path(__file__).resolve()), str(tmp_path), case.__name__],
+        log_path=tmp_path / "supervisor.log", timeout_seconds=600)
+    assert code == 0, "\n".join(
+        f"{path.name}:\n{path.read_text()}" for path in tmp_path.glob("*.log"))
+
+
+def test_segment_budget_keeps_absolute_default_rss_cap(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pipeline, _ = _pipeline(tmp_path)
+    store = pipeline.store
+    assert store.rss_cap == store.claim["rss_cap_bytes"] == 1 << 30
+    peak_kib = store.rss_cap // 1024
+    requests: list[int] = []
+
+    def usage(who: int) -> SimpleNamespace:
+        requests.append(who)
+        return SimpleNamespace(ru_maxrss=peak_kib)
+
+    monkeypatch.setattr(wave.resource, "getrusage", usage)
+    # Equality is allowed. A previous high-water peak above the cap is still
+    # refused on every call; no baseline subtraction or cap increase is used.
+    store._budget(wave.time.monotonic(), 0)
+    peak_kib += 1
+    for _ in range(2):
+        with pytest.raises(wave.Hold, match="segment RSS cap"):
+            store._budget(wave.time.monotonic(), 0)
+    assert requests == [wave.resource.RUSAGE_SELF] * 3
+
+
+@pytest.mark.parametrize("exceeded", ["RSS", "wall"])
+def test_short_comparison_checks_budget_before_sealing(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exceeded: str) -> None:
+    pipeline, source = _pipeline(tmp_path)
+    store = pipeline.store
+    peak_kib = store.rss_cap // 1024
+    monkeypatch.setattr(
+        wave.resource, "getrusage",
+        lambda _: SimpleNamespace(ru_maxrss=peak_kib))
+    store.seal_wave1(
+        0, source.rows_from(cursor.Cursor(0, 0, None)), expected_rows=4)
+    sealed = store._path(0) / "RECEIPT.json"
+    before = sealed.read_bytes(), sealed.stat().st_mtime_ns
+    if exceeded == "RSS":
+        peak_kib += 1
+    else:
+        ticks = iter((0.0, float(store.wall_cap + 1)))
+        monkeypatch.setattr(wave.time, "monotonic", lambda: next(ticks))
+    with pytest.raises(wave.Hold, match=f"segment {exceeded} cap"):
+        store.compare_wave2(0, source.rows_from(cursor.Cursor(0, 0, None)))
+    assert not (store.root / "compare_00000000.json").exists()
+    assert (sealed.read_bytes(), sealed.stat().st_mtime_ns) == before

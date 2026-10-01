@@ -1,0 +1,60 @@
+{
+  "command_prefix": [
+    "/usr/bin/python3",
+    "-m",
+    "scripts.lc0_control_train",
+    "--config",
+    "/tmp/deepfin-bootstrap-continuation/configs/lc0_positive_control.yaml",
+    "--out-dir",
+    "/home/josh/projects/chess/runs/expanded50548069_v50_from35m_epoch4_seed105_recovery_v2",
+    "--steps",
+    "0",
+    "--batch-size",
+    "512",
+    "--sampling-mode",
+    "game_epoch",
+    "--epoch-plan-workers",
+    "2",
+    "--epoch-load-workers",
+    "2",
+    "--seed",
+    "105",
+    "--device",
+    "cuda",
+    "--train-window-steps",
+    "88",
+    "--allow-invalid-control",
+    "--allow-partial-corpus",
+    "--epochs",
+    "1"
+  ],
+  "out": "/home/josh/projects/chess/runs/expanded50548069_v50_from35m_epoch4_seed105_recovery_v2",
+  "dataset_complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/union_recovery_v1/complete.json",
+  "dataset_failed": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/union_recovery_v1/failed.json",
+  "schedule_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/union_recovery_v1/union_admission.json",
+  "additional_pins": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260917/expanded50m_continue_v2/run.py",
+      "sha256": "e6007ff41753d97b3589e5a9734d8c421c3829c092645b6a4fe59bda52fadf43"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260917/expanded50m_continue_v2/bind.py",
+      "sha256": "8d5b15f9b86964e2d7e22739d5050250b9a6adc8373f51db4763dcc1926466e8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/v50_continue_epochs2_4_v2/complete.json",
+      "sha256": "d5a09738765231e1dc836a8636e0ef0edb542706fb8b32db4065c6f527739334"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/v50_continue_epochs2_4_v2/scheduler_run/parent_outer_terminal.json",
+      "sha256": "00d1e73358efc0dc7b894cdd3cdbc0119f8c032ea8e20b41a19d90d14ce1d421"
+    },
+    {
+      "path": "/home/josh/projects/chess/runs/combined35m_v50_seed101_continue_epochs2_4/checkpoint.pt",
+      "sha256": "e579bd08f90009924941bb5c773d01af836f6500f95a0250eca2918d7b58679c"
+    }
+  ],
+  "base_plan_sha256": "78dac2b73083e3c741ab8ff7e1544ad035f96f77a382975572817e55848eb044",
+  "new_plan_sha256": "67c318a896b5241cbaaab362dfebb25ca51603081e9468727292e275864ea688",
+  "scripts": "run.py and bind.py byte-identical to archived original; changed HERE comes from fresh host namespace"
+}

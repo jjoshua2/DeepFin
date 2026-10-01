@@ -1,0 +1,95 @@
+// Opt-in public castling single-king source laws and rejection controls.
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {createHash} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import {PIN,verifyCompiler} from '../../verify_compiler.js';
+const args=process.argv.slice(2);
+assert.ok(args.length===1||(args.length===3&&args[1]==='--report'),'usage: focused.js COMPILER [--report FILE]');
+const compiler=path.resolve(args[0]),identity=verifyCompiler(compiler),suite=import.meta.dirname;
+const engine=path.resolve(suite,'../../..'),temp=fs.mkdtempSync(path.join(os.tmpdir(),'deepfin-castle-kings-'));
+const names=['transit_preserves_single_moving_king','castling_preserves_single_moving_king','move_flips_valid_side','castling_stage_check_targets_moving_king'];
+const sha=x=>createHash('sha256').update(x).digest('hex'),text=p=>fs.readFileSync(p,'utf8');
+const code=p=>text(p).split('\n').map(l=>l.split('#')[0]).join('\n'),controls=[];
+function graph(f,boundary,seen=new Set()){
+  f=path.resolve(f);const rel=path.relative(boundary,f);
+  assert.ok(!rel.split(path.sep).includes('..')&&(rel.startsWith('standalone/')||rel==='legal_probe/Chess.bend'||rel==='bitboard_probe/Sliders.bend'),'escaped scope');
+  assert.ok(fs.lstatSync(f).isFile(),'nonregular proof input');assert.equal(fs.realpathSync(f),f,'symlinked proof input');
+  if(seen.has(f))return seen;seen.add(f);const source=code(f);assert.doesNotMatch(source,/@unsafe|\?/,'unsafe dependency or proof hole');
+  for(const m of source.matchAll(/^\s*import\s+(\S+)/gm)){if(m[1]==='Base')continue;assert.match(m[1],/^\.{1,2}\/[A-Za-z0-9_/.]+\.bend$/,'foreign import');graph(path.resolve(path.dirname(f),m[1]),boundary,seen);}return seen;
+}
+function manifest(s){
+  assert.deepEqual([...code(path.join(s,'LAWS.bend')).matchAll(/^law (\w+):/gm)].map(m=>m[1]),names);
+  const p=code(path.join(s,'PROOF.bend'));assert.deepEqual([...p.matchAll(/^def Laws\.(\w+)\(/gm)].map(m=>m[1]),names);
+  assert.match(p,/import \.\/LAWS\.bend as Laws/);assert.match(code(path.join(s,'consumer.bend')),/import \.\/PROOF\.bend as Proof/);
+}
+function invoke(f){const start=performance.now();const r=spawnSync(process.execPath,[path.join(compiler,'bend2/main.ts'),f],{encoding:'utf8',timeout:180000,maxBuffer:32<<20,env:{...process.env,TERM:'dumb',BEND_NO_TELEMETRY:'1'}});
+  assert.equal(r.error,undefined,String(r.error));assert.equal(r.signal,null);return {status:r.status,output:(r.stdout+r.stderr).trim(),elapsed_seconds:(performance.now()-start)/1000};}
+function clean(r){assert.equal(r.status,0,r.output.slice(-2500));assert.equal(r.output,'All terms check.');}
+function copy(name){const e=path.join(temp,name);fs.cpSync(engine,e,{recursive:true});return {e,s:path.join(e,'standalone/proofs/castle_kings'),chess:path.join(e,'legal_probe/Chess.bend')};}
+function replace(f,from,to){const s=text(f);assert.equal(s.split(from).length,2,'nonunique mutation');fs.writeFileSync(f,s.replace(from,to));}
+function lawEdit(d,name,from,to){
+  const file=path.join(d.s,'LAWS.bend'),raw=text(file),start=raw.indexOf('law '+name+':');
+  assert.ok(start>=0);let end=raw.indexOf('\nlaw ',start+1);if(end<0)end=raw.length;
+  const body=raw.slice(start,end);assert.equal(body.split(from).length,2,'nonunique law mutation');
+  fs.writeFileSync(file,raw.slice(0,start)+body.replace(from,to)+raw.slice(end));
+}
+function reject(name,entry,edit,location){
+  const d=copy(name);edit(d);const r=invoke(path.join(d.s,entry));assert.equal(r.status,1,name+': must reject');
+  assert.match(r.output,/expected[\s\S]*observed/,name+': not semantic');assert.doesNotMatch(r.output,/no such file|RangeError|Maximum call stack|Segmentation fault|more than once|a decreasing self-call|a defined name|a pattern \(a binder/);
+  assert.ok(location.test(r.output),name+': wrong location '+r.output.match(/Location: .*/)?.[0]);console.error('REJECTED '+name);controls.push({name,rejected:true,kind:'source semantic/refinement',entry,diagnostic_sha256:sha(r.output),diagnostic_bytes:Buffer.byteLength(r.output),excerpt:r.output.slice(-1600)});
+}
+function guard(name,edit,check){const d=copy(name);edit(d);assert.throws(()=>check(d));controls.push({name,rejected:true,kind:'manifest/import policy'});}
+try{
+  manifest(suite);const closure=graph(path.join(suite,'consumer.bend'),engine);
+  for(const f of ['focused.js','verify_native.py','probe.bend','README.md'])closure.add(path.join(suite,f));
+  graph(path.join(suite,'probe.bend'),engine,closure);
+  closure.add(path.resolve(suite,'../attack_witness/verify_native.py'));
+  closure.add(path.resolve(suite,'../../toolchain.json'));closure.add(path.resolve(suite,'../../verify_compiler.js'));
+  const hashes=()=>Object.fromEntries([...closure].sort().map(f=>[path.relative(engine,f),sha(fs.readFileSync(f))]));
+  const before=hashes(),consumer=invoke(path.join(suite,'consumer.bend'));clean(consumer);
+  reject('actual-retains-old-king','Projection.bend',d=>replace(d.chess,
+    'update_piece(get_kings(b), remove, target, U32.is_eq(put, 5)),',
+    'U64.or(get_kings(b), select_u64(U32.is_eq(put, 5), target, U64.zero())),'),/Location: \.\.\/(move_update\/Ordinary|castling\/Actual)\.unfold\b/);
+  reject('actual-rook-added-to-king-plane','Projection.bend',d=>replace(d.chess,
+    'update_piece(get_kings(b), remove, target, U32.is_eq(put, 5)),',
+    'update_piece(get_kings(b), remove, U64.or(target, rook_to), U32.is_eq(put, 5)),'),/Location: \.\.\/(move_update\/Ordinary|castling\/Actual)\.unfold\b/);
+  reject('actual-turn-not-flipped','Stages.bend',d=>replace(d.chess,
+    'U32.xor(side, 1), U32.and(get_rights(b), U32.not(rights_lost)), ep}',
+    'side, U32.and(get_rights(b), U32.not(rights_lost)), ep}'),/Location: \.\.\/(move_update\/Ordinary|castling\/Actual)\.unfold\b/);
+  reject('actual-checks-own-attacker-color','../attack_witness/King.bend',d=>replace(d.chess,
+    'attacked(table, b, U64.ctz(U64.and(get_kings(b), color(b, side))), U32.xor(side, 1))',
+    'attacked(table, b, U64.ctz(U64.and(get_kings(b), color(b, side))), side)'),/Location: checked\b/);
+  reject('omit-initial-singleton','consumer.bend',d=>lawEdit(d,names[0],
+    'one: {S.kings(b,white) == U64.bit(U32.to_nat(S.src(white))) : U64}',
+    'one: {True{} == True{} : Bool}'),/Location: LAWS\.transit_preserves_single_moving_king\b/);
+  reject('omit-valid-side','consumer.bend',d=>lawEdit(d,names[0],
+    'turn: {Chess.get_turn(b) == Bool.to_u32(white) : U32}',
+    'turn: {True{} == True{} : Bool}'),/Location: LAWS\.transit_preserves_single_moving_king\b/);
+  reject('omit-input-consistency','consumer.bend',d=>lawEdit(d,names[0],
+    'good: {B.valid(b) == True{} : Bool}',
+    'good: {True{} == True{} : Bool}'),/Location: LAWS\.transit_preserves_single_moving_king\b/);
+  reject('omit-producer-guard','consumer.bend',d=>lawEdit(d,names[1],
+    'guard: {E.guard(b,ks) == True{} : Bool}',
+    'guard: {True{} == True{} : Bool}'),/Location: LAWS\.castling_preserves_single_moving_king\b/);
+  reject('wrong-final-king-square','consumer.bend',d=>lawEdit(d,names[1],
+    '{S.kings(S.final(b,white,ks),white) == U64.bit(U32.to_nat(S.dst(white,ks))) : U64}',
+    '{S.kings(S.final(b,white,ks),white) == U64.bit(U32.to_nat(S.transit(white,ks))) : U64}'),/Location: LAWS\.castling_preserves_single_moving_king\b/);
+  reject('wrong-stage-attacker-side','consumer.bend',d=>lawEdit(d,names[3],
+    'Bool.to_u32(Bool.not(white))) : Array<U64> & Bool}',
+    'Bool.to_u32(white)) : Array<U64> & Bool}'),/Location: LAWS\.castling_stage_check_targets_moving_king\b/);
+  guard('missing-law',d=>replace(path.join(d.s,'LAWS.bend'),'law transit_preserves_single_moving_king:','def missing:'),d=>manifest(d.s));
+  guard('missing-proof',d=>replace(path.join(d.s,'PROOF.bend'),'def Laws.transit_preserves_single_moving_king(','def missing('),d=>manifest(d.s));
+  guard('missing-laws-import',d=>replace(path.join(d.s,'PROOF.bend'),'import ./LAWS.bend as Laws\n',''),d=>manifest(d.s));
+  guard('missing-consumer-import',d=>replace(path.join(d.s,'consumer.bend'),'import ./PROOF.bend as Proof\n',''),d=>manifest(d.s));
+  guard('proof-hole',d=>fs.appendFileSync(path.join(d.s,'Stages.bend'),'\n?missing\n'),d=>graph(path.join(d.s,'consumer.bend'),d.e));
+  guard('foreign-proof',d=>fs.appendFileSync(path.join(d.s,'Stages.bend'),'\nimport "./oracle.c"\n'),d=>graph(path.join(d.s,'consumer.bend'),d.e));
+  guard('unsafe-proof',d=>replace(path.join(d.s,'Stages.bend'),'def mid(','@unsafe\ndef mid('),d=>graph(path.join(d.s,'consumer.bend'),d.e));
+  guard('symlink-proof',d=>{const f=path.join(d.s,'Stages.bend');fs.renameSync(f,f+'.orig');fs.symlinkSync('Stages.bend.orig',f);},d=>graph(path.join(d.s,'consumer.bend'),d.e));
+  assert.throws(()=>clean({status:0,output:'All terms check.\nWARNING: unsafe or foreign dependency'}));controls.push({name:'warning-on-zero-exit',rejected:true,kind:'synthetic output-wrapper unit; not compiler execution'});
+  assert.equal(controls.length,19);assert.deepEqual(hashes(),before);assert.deepEqual(verifyCompiler(compiler),identity);
+  const report={focused_gate:'PASS',controls_gate:'PASS',consumer:'PASS',compiler_revision:PIN.revision,...identity,new_law_count:4,new_laws:names,inherited_gate_run:false,consumer_seconds:consumer.elapsed_seconds,consumer_raw:consumer.output,negative_controls:controls,source_sha256s:before,scope:'Actual start/transit/final mover-king singleton, valid-side flip and complete pair check targeting, under explicit initial singleton/consistency/side and final producer-guard premises. No independent attack reversal, historical rights or full legal-move safety claim.'};
+  const enc=JSON.stringify(report,null,2)+'\n';if(args[2])fs.writeFileSync(args[2],enc);console.log(enc.trimEnd());
+}finally{fs.rmSync(temp,{recursive:true,force:true});}

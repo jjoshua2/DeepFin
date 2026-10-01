@@ -1,0 +1,26 @@
+{
+  "qualification": "PASS",
+  "run": "36343736223",
+  "source": "053f3d490d0fd774169e4b7fa38faea7519aafc0",
+  "source_tree": "4070bf56a4829d8d0d8586ee7e12a0e8d21c0974",
+  "base": "ec9997838788ea5de34c81a7f97037ef47753723",
+  "new_laws": 2,
+  "new_controls": 17,
+  "control_categories": {
+    "source semantic/refinement": 8,
+    "manifest/import policy": 8,
+    "synthetic output-wrapper unit": 1
+  },
+  "retained_parent_laws": 205,
+  "retained_parent_controls": 689,
+  "modular_laws": 207,
+  "modular_controls": 706,
+  "combined_wrapper_executed": false,
+  "native_source_entries": 705,
+  "host_test_methods": 24,
+  "host_optimization_modes": 3,
+  "native_verifier_python_optimization": 2,
+  "native_build_modes": 4,
+  "independent_review": false,
+  "initialized_lookup_composition": false
+}
