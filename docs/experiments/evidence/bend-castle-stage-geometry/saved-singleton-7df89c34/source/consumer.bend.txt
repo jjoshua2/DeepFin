@@ -1,0 +1,67 @@
+import Base
+import ./Spec.bend as S
+import ../board/Spec.bend as B
+import ../castling/Route.bend as R
+import ../castle_emission/Spec.bend as E
+import ../../../legal_probe/Chess.bend as Chess
+import ./LAWS.bend as Laws
+import ./PROOF.bend as Proof
+import ../../Position.bend as P
+
+def use_transit(+b: Chess.Board,+r: R.Route,good: {B.valid(b) == True{} : Bool},+one: {S.owned(b,Chess.get_turn(b)) == U64.bit(U32.to_nat(R.src(r))) : U64}) ->
+  {S.owned(S.intermediate(b,r),Chess.get_turn(b)) == U64.bit(U32.to_nat(S.transit(r))) : U64}:
+  Laws.transit_preserves_moving_king_singleton(b,r,good,one)
+
+def use_castle(+b: Chess.Board,+r: R.Route,+good: {B.valid(b) == True{} : Bool},+one: {S.owned(b,Chess.get_turn(b)) == U64.bit(U32.to_nat(R.src(r))) : U64},fresh: {B.fresh_mask(b,R.rook(r)) == True{} : Bool}) ->
+  {S.owned(S.final(b,r),Chess.get_turn(b)) == R.target(r) : U64}:
+  Laws.castle_preserves_moving_king_singleton(b,r,good,one,fresh)
+
+def use_guarded_singleton(+b: Chess.Board,+ks: Bool,good: {B.valid(b) == True{} : Bool},one: {S.owned(b,Chess.get_turn(b)) == U64.bit(U32.to_nat(R.src(E.route(b,ks)))) : U64},guard: {E.guard(b,ks) == True{} : Bool}) ->
+  {S.owned(Chess.make_move(b,E.move(b,ks)),Chess.get_turn(b)) == R.target(E.route(b,ks)) : U64}:
+  Laws.guard_supplies_castling_singleton(b,ks,good,one,guard)
+
+def use_guarded_check(table: Array<U64>,+b: Chess.Board,+ks: Bool,+stage: S.Stage,good: {B.valid(b) == True{} : Bool},one: {S.owned(b,Chess.get_turn(b)) == U64.bit(U32.to_nat(R.src(E.route(b,ks)))) : U64},guard: {E.guard(b,ks) == True{} : Bool}) ->
+  {Chess.in_check(table,S.at(b,E.route(b,ks),stage),Chess.get_turn(b)) ==
+    Chess.attacked(table,S.at(b,E.route(b,ks),stage),S.square(E.route(b,ks),stage),U32.xor(Chess.get_turn(b),1)) : Array<U64> & Bool}:
+  Laws.guarded_checks_target_original_side_king(table,b,ks,stage,good,one,guard)
+
+def use_valid_side(+b: Chess.Board,+m: Chess.Ply,+white: Bool,valid: {Chess.get_turn(b) == Bool.to_u32(white) : U32}) ->
+  {Chess.get_turn(Chess.make_move(b,m)) == Bool.to_u32(Bool.not(white)) : U32}:
+  Laws.move_flips_valid_side(b,m,white,valid)
+
+def white_board() -> Chess.Board:
+  P.metadata(P.put(5,False{},60,P.put(3,True{},7,P.put(5,True{},4,P.empty()))),1,15,64)
+
+def checked_white_castle() -> {S.owned(S.final(white_board(),R.WhiteKing{}),1) == U64.bit(6n) : U64}:
+  Laws.castle_preserves_moving_king_singleton(white_board(),R.WhiteKing{},{==},{==},{==})
+
+def checked_white_transit() -> {S.owned(S.intermediate(white_board(),R.WhiteKing{}),1) == U64.bit(5n) : U64}:
+  Laws.transit_preserves_moving_king_singleton(white_board(),R.WhiteKing{},{==},{==})
+
+def black_board() -> Chess.Board:
+  P.metadata(P.put(5,True{},4,P.put(3,False{},56,P.put(5,False{},60,P.empty()))),0,15,64)
+
+def checked_black_castle() -> {S.owned(S.final(black_board(),R.BlackQueen{}),0) == U64.bit(58n) : U64}:
+  Laws.castle_preserves_moving_king_singleton(black_board(),R.BlackQueen{},{==},{==},{==})
+
+def checked_black_guard() -> {S.owned(Chess.make_move(black_board(),E.move(black_board(),False{})),0) == U64.bit(58n) : U64}:
+  Laws.guard_supplies_castling_singleton(black_board(),False{},{==},{==},{==})
+
+def original_side_not_child_turn() -> {S.owned(S.final(white_board(),R.WhiteKing{}),Chess.get_turn(S.final(white_board(),R.WhiteKing{}))) == U64.bit(60n) : U64}:
+  {==}
+
+def extra_king() -> Chess.Board:
+  P.put(5,True{},0,white_board())
+
+def extra_king_survives() -> {S.owned(S.final(extra_king(),R.WhiteKing{}),1) == U64.or(U64.bit(0n),U64.bit(6n)) : U64}:
+  {==}
+
+def blocked_king() -> Chess.Board:
+  P.put(5,False{},5,white_board())
+
+def blocked_rook_target_transfers_king_ownership() -> {S.owned(S.final(blocked_king(),R.WhiteKing{}),1) == U64.or(U64.bit(5n),U64.bit(6n)) : U64}:
+  {==}
+
+def blocked_king_input_is_consistent() -> {B.valid(blocked_king()) == True{} : Bool}: {==}
+
+def blocked_king_is_not_fresh() -> {B.fresh_mask(blocked_king(),R.rook(R.WhiteKing{})) == False{} : Bool}: {==}

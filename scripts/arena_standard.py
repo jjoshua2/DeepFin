@@ -68,6 +68,12 @@ from chess_anti_engine.eval.arena_pgn import (
     ArenaPgnWriter,
     engine_name_from_checkpoint,
 )
+from chess_anti_engine.eval.arena_durable import (
+    DurablePairReceipts,
+    ValidatedSourceSeal,
+    file_span,
+    validate_source_seal,
+)
 from chess_anti_engine.eval.sprt import SprtMonitor, SprtSpec
 from chess_anti_engine.moves import ActionDecodeError
 from chess_anti_engine.utils.game_log import (
@@ -2884,6 +2890,9 @@ def run_arena(
     eval_max_batch: int = DEFAULT_EVAL_MAX_BATCH,
     sprt: SprtSpec | None = None,
     sprt_lookahead_pairs: int | None = None,
+    durable_source_seal: ValidatedSourceSeal | None = None,
+    durable_source_seal_sha256: str | None = None,
+    pair_receipts_dir: Path | None = None,
 ) -> dict:
     """Run one standardized arena and return (and optionally log) the record.
 
@@ -2900,6 +2909,28 @@ def run_arena(
     size, and the deliverable is the H1/H0/INCONCLUSIVE verdict. None leaves
     every byte of the fixed-N path, and of its JSONL record, unchanged.
     """
+    if durable_source_seal_sha256 is not None:
+        raise SystemExit(
+            "bare durable_source_seal_sha256 is refused; pass a ValidatedSourceSeal "
+            "returned by validate_source_seal"
+        )
+    if durable_source_seal is not None and type(durable_source_seal) is not ValidatedSourceSeal:
+        raise SystemExit("durable_source_seal must come from validate_source_seal")
+    durable = durable_source_seal is not None
+    durable_source_seal_sha256 = (
+        durable_source_seal.sha256 if durable_source_seal is not None else None
+    )
+    if (durable and (pair_receipts_dir is None or pgn_out is None
+                     or game_log_path is None or sprt is not None
+                     or sprt_lookahead_pairs is not None
+                     or mode != "matched_sims" or games != 1152
+                     or syzygy_path is None or tb_max_pieces != 6
+                     or max_seconds is None or not 0 < max_seconds <= 3200)):
+        raise SystemExit(
+            "durable paired arena requires fixed 1152-game matched_sims, "
+            "six-man Syzygy, PGN, explicit game log/receipts, no SPRT, "
+            "and --max-seconds in (0, 3200]"
+        )
     if sprt_lookahead_pairs is not None:
         if type(sprt_lookahead_pairs) is not int or sprt_lookahead_pairs < 0:
             raise SystemExit("--sprt-lookahead-pairs must be a nonnegative integer")
@@ -2959,6 +2990,8 @@ def run_arena(
         openings = load_paired_openings(
             openings_path, n_pairs=n_pairs, max_plies=opening_plies, rng=rng,
         )
+    if durable and len(openings) != 576:
+        raise SystemExit("durable arena requires exactly 576 frozen opening pairs")
 
     # ---- evaluator cap checks --------------------------------------------
     # These live HERE: after the shape refusals (so both sides' topk are
@@ -3053,6 +3086,8 @@ def run_arena(
         # Enabled admission changes batching/RNG consumption. Bind it on resume;
         # omission preserves historical settings fingerprints byte for byte.
         log_settings["sprt_lookahead_pairs"] = sprt_lookahead_pairs
+    if durable:
+        log_settings["durable_source_seal_sha256"] = durable_source_seal_sha256
     fingerprint = settings_fingerprint(log_settings)
     log_path = (
         Path(game_log_path) if game_log_path is not None
@@ -3102,6 +3137,19 @@ def run_arena(
     done_pair_ids = set(resumed.complete_pair_ids) if resumed is not None else set()
     orphan_pair_ids = set(resumed.orphan_pair_ids) if resumed is not None else set()
     loaded_pair_scores = list(resumed.pair_scores) if resumed is not None else []
+    receipts = (
+        DurablePairReceipts(
+            pair_receipts_dir, seal_sha256=durable_source_seal.sha256,
+            log=log_path, pgn=pgn_out,
+        ) if durable_source_seal is not None and pair_receipts_dir is not None
+        and pgn_out is not None
+        else None
+    )
+    if receipts is not None:
+        if resumed is not None:
+            receipts.recover_and_verify(resumed.complete_pair_ids)
+        elif any(receipts.directory.glob("pair_*.json")):
+            raise SystemExit("durable pair receipts exist without their game log")
     remaining_ids = [i for i in range(len(openings)) if i not in done_pair_ids]
     openings_to_play = [openings[i] for i in remaining_ids]
     if resumed is not None:
@@ -3231,7 +3279,10 @@ def run_arena(
             base_tags["SyzygyMaxPieces"] = str(tb_max_pieces)
         if label:
             base_tags["ArenaLabel"] = label
-        pgn_writer = ArenaPgnWriter(pgn_out, event=label or "arena", base_tags=base_tags)
+        pgn_writer = ArenaPgnWriter(
+            pgn_out, event=label or "arena", base_tags=base_tags,
+            durable=durable,
+        )
         print(f"[arena] PGN output -> {pgn_out} "
               f"(White/Black = {cand_name} / {ref_name})", flush=True)
 
@@ -3242,6 +3293,7 @@ def run_arena(
     game_log = GameLogWriter(
         log_path, driver="arena_standard", settings=log_settings,
         resuming=had_log,
+        durable=durable,
         # Recorded, NOT fingerprinted: a log has to say which hypothesis its
         # games were collected under — a verdict is unreadable a month later
         # without it. Resume compares this specification separately from game
@@ -3298,6 +3350,7 @@ def run_arena(
             _check_opening_history(opening_root_fen, opening_uci, start_fen)
         played_uci_sha256 = _played_uci_sha256(moves)
         score = score_from_result(result, a_is_white=a_is_white)
+        pgn_offset = pgn_out.stat().st_size if durable and pgn_out is not None else 0
         if pgn_writer is not None:
             extra = {
                 "WhiteSearch": cand_search if a_is_white else ref_search,
@@ -3350,6 +3403,10 @@ def run_arena(
                 pair_half=half,
                 extra=extra,
             ))
+        pgn_span = (
+            file_span(pgn_out, pgn_offset, pgn_out.stat().st_size - pgn_offset)
+            if durable and pgn_out is not None else None
+        )
         row: dict[str, Any] = {
             "pair_id": int(pair_id),
             "half": int(half),
@@ -3377,7 +3434,18 @@ def run_arena(
             row["opening_root_fen"] = opening_root_fen
             row["opening_uci"] = list(opening_uci)
             row["played_uci_sha256"] = played_uci_sha256
+        if pgn_span is not None:
+            row["durable_pgn_span"] = pgn_span
+        log_offset = log_path.stat().st_size if durable else 0
         game_log.write_game(row)
+        if receipts is not None and pgn_span is not None:
+            log_span = file_span(
+                log_path, log_offset, log_path.stat().st_size - log_offset,
+            )
+            receipts.record_game(
+                int(pair_id), int(half), jsonl_span=log_span,
+                pgn_span=pgn_span,
+            )
 
     pgn_sink = _on_game
 
@@ -3805,6 +3873,10 @@ def run_arena(
         expected_all_pairs=None if sprt_monitor is None else sprt_monitor.complete_pairs,
     )
     if not game_log_agrees:
+        if durable:
+            raise SystemExit(
+                f"durable arena log failed on-disk pair readback: {disagreement}"
+            )
         print(
             f"[arena] WARNING: {log_path} does not hold what this run scored: "
             f"{disagreement}. The summary below uses the play loop; do NOT "
@@ -3818,6 +3890,12 @@ def run_arena(
         n_written = pgn_writer.games_written
         pgn_writer.close()
         print(f"[arena] wrote {n_written} games to {pgn_out}", flush=True)
+    if receipts is not None:
+        sealed = load_arena_resume(log_path, settings=log_settings, openings=openings)
+        receipts.recover_and_verify(sealed.complete_pair_ids)
+        if len(sealed.complete_pair_ids) != len(pair_scores):
+            raise SystemExit("durable pair receipts do not cover the scored union")
+        receipts.close()
 
     # Against the openings ACTUALLY loaded, not the requested `n_pairs`:
     # load_fen_openings uses every row of a short FEN file rather than padding
@@ -3933,6 +4011,10 @@ def run_arena(
         )
     if sprt_lookahead_pairs is not None:
         record["sprt_lookahead_pairs"] = sprt_lookahead_pairs
+    if receipts is not None:
+        record["durable_source_seal_sha256"] = durable_source_seal_sha256
+        record["pair_receipts_dir"] = str(receipts.directory)
+        record["complete_pair_receipts"] = len(pair_scores)
     if out_path is not None:
         if resumed is not None and not played_pair_scores:
             # A no-op resume recomputes and prints the same summary the
@@ -4260,6 +4342,12 @@ def main() -> None:
                         "the fingerprint in the name is what keeps two "
                         "different runs out of one file. Pass this to resume a "
                         "log whose label has changed.")
+    p.add_argument("--durable-seal", type=Path, default=None,
+                   help="opt-in fixed 576-pair arena: frozen source/model/profile manifest")
+    p.add_argument("--durable-seal-sha256", default=None,
+                   help="expected SHA256 of --durable-seal; both flags are required")
+    p.add_argument("--pair-receipts-dir", type=Path, default=None,
+                   help="atomic receipt directory for both committed colorings")
     p.add_argument("--openings-fen", type=Path, default=None,
                    help="plain FEN file (one per line, # comments) used as paired "
                         "openings instead of a PGN/Polyglot book — for blind-spot "
@@ -4325,6 +4413,46 @@ def main() -> None:
                         "'never look'.")
     add_common_args(p)
     args = p.parse_args()
+
+    validated_durable_seal: ValidatedSourceSeal | None = None
+    durable_args = (
+        args.durable_seal, args.durable_seal_sha256, args.pair_receipts_dir,
+    )
+    if any(value is not None for value in durable_args):
+        if not all(value is not None for value in durable_args):
+            raise SystemExit("durable arena needs seal path, SHA256 and pair receipts directory")
+        if (args.openings_fen is None or args.games_out is None
+                or args.pgn_out is None or args.syzygy is None
+                or not args.resume or args.sprt is not None
+                or args.games != 1152 or args.syzygy_max_pieces != 6
+                or args.max_seconds is None or not 0 < args.max_seconds <= 3200):
+            raise SystemExit(
+                "durable arena requires explicit FEN, JSONL and PGN paths, "
+                "--resume, --games 1152, six-man Syzygy, no SPRT, "
+                "and --max-seconds <= 3200"
+            )
+        excluded = {"--durable-seal", "--durable-seal-sha256"}
+        frozen_argv: list[str] = []
+        skip_next = False
+        for arg in sys.argv[1:]:
+            if skip_next:
+                skip_next = False
+                continue
+            if arg in excluded:
+                skip_next = True
+            elif not any(arg.startswith(flag + "=") for flag in excluded):
+                frozen_argv.append(arg)
+        if skip_next:
+            raise SystemExit("durable seal option lacks a value")
+        try:
+            validated_durable_seal = validate_source_seal(
+                args.durable_seal, args.durable_seal_sha256,
+                argv=frozen_argv, candidate=args.candidate,
+                reference=args.reference, openings=args.openings_fen,
+                config=production_config_path(), syzygy_path=args.syzygy,
+            )
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"durable source seal rejected: {exc}") from exc
 
     sprt_spec: SprtSpec | None = None
     if args.sprt is not None:
@@ -4469,6 +4597,8 @@ def main() -> None:
         search_reference=side_reference,
         sprt=sprt_spec,
         sprt_lookahead_pairs=args.sprt_lookahead_pairs,
+        durable_source_seal=validated_durable_seal,
+        pair_receipts_dir=args.pair_receipts_dir,
     )
 
 

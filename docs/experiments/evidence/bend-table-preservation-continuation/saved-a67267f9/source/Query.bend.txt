@@ -1,0 +1,74 @@
+# Every actual attack-query branch only reads its input table.
+import Base
+import ../storage/Observe.bend as O
+import ../storage/Read.bend as Read
+import ../../../legal_probe/Chess.bend as Chess
+import ./Bind.bend as Bind
+import ../board/Spec.bend as Board
+import ../../../bitboard_probe/Sliders.bend as Sliders
+
+def offset(+c: O.Cells,+index: U32,+value: U64) ->
+  {O.storage(Chess.slide_offset(index,(O.pack(c),value))) == O.pack(c) : Array<U64>}:
+  Read.read(c,U32.add(U64.low(value),index))
+
+def masked(+c: O.Cells,+sq: U32,+occ: U64,+mask: U64) ->
+  {O.storage(Chess.slide_mask(sq,occ,(O.pack(c),mask))) == O.pack(c) : Array<U64>}:
+  Bind.mask(r => {O.storage(Chess.slide_offset(Sliders.pext_index(occ,mask),r)) == O.pack(c) : Array<U64>},
+    c,Array.get(U64,O.pack(c),U32.add(128,sq)),Read.read(c,U32.add(128,sq)),
+    v => offset(c,Sliders.pext_index(occ,mask),v))
+
+def slide(+c: O.Cells,+sq: U32,+occ: U64) ->
+  {O.storage(Chess.slide(O.pack(c),sq,occ)) == O.pack(c) : Array<U64>}:
+  Bind.mask(r => {O.storage(Chess.slide_mask(sq,occ,r)) == O.pack(c) : Array<U64>},
+    c,Array.get(U64,O.pack(c),sq),Read.read(c,sq),v => masked(c,sq,occ,v))
+
+def queen(+c: O.Cells,+sq: U32,+occ: U64,+rook: U64) ->
+  {O.storage(Chess.queen_after(sq,occ,(O.pack(c),rook))) == O.pack(c) : Array<U64>}:
+  Bind.mask(r => {O.storage(Chess.or_result(rook,r)) == O.pack(c) : Array<U64>},
+    c,Chess.slide(O.pack(c),U32.add(64,sq),occ),slide(c,U32.add(64,sq),occ),v => {==})
+
+def attack(+c: O.Cells,kind: Board.Piece,+sq: U32,+side: U32,+occ: U64) ->
+  {O.storage(Chess.attack(Board.tag(kind),O.pack(c),sq,side,occ)) == O.pack(c) : Array<U64>}:
+  match kind:
+    case Board.Pawn{}: Read.read(c,U32.add(sq,Bool.pick(U32,U32.is_eq(side,1),384,448)))
+    case Board.Knight{}: Read.read(c,U32.add(256,sq))
+    case Board.Bishop{}: slide(c,U32.add(64,sq),occ)
+    case Board.Rook{}: slide(c,sq,occ)
+    case Board.Queen{}:
+      Bind.mask(r => {O.storage(Chess.queen_after(sq,occ,r)) == O.pack(c) : Array<U64>},
+        c,Chess.slide(O.pack(c),sq,occ),slide(c,sq,occ),v => queen(c,sq,occ,v))
+    case Board.King{}: Read.read(c,U32.add(320,sq))
+
+
+def attacked_rook(+c: O.Cells,+b: Chess.Board,+sq: U32,+by: U32,+hits: U64,+ra: U64) ->
+  {Bind.bool_table(Chess.attacked_rook(b,sq,by,hits,(O.pack(c),ra))) == O.pack(c) : Array<U64>}:
+  Bind.mask(r => {Bind.bool_table(Chess.attacked_bishop(b,by,U64.or(hits,U64.and(ra,U64.or(Chess.get_rooks(b),Chess.get_queens(b)))),r)) == O.pack(c) : Array<U64>},
+    c,Chess.attack(2,O.pack(c),sq,by,Chess.occupied(b)),attack(c,Board.Bishop{},sq,by,Chess.occupied(b)),v => {==})
+
+def attacked_king(+c: O.Cells,+b: Chess.Board,+sq: U32,+by: U32,+hits: U64,+ka: U64) ->
+  {Bind.bool_table(Chess.attacked_king(b,sq,by,hits,(O.pack(c),ka))) == O.pack(c) : Array<U64>}:
+  Bind.mask(r => {Bind.bool_table(Chess.attacked_rook(b,sq,by,U64.or(hits,U64.and(ka,Chess.get_kings(b))),r)) == O.pack(c) : Array<U64>},
+    c,Chess.attack(3,O.pack(c),sq,by,Chess.occupied(b)),attack(c,Board.Rook{},sq,by,Chess.occupied(b)),
+    v => attacked_rook(c,b,sq,by,U64.or(hits,U64.and(ka,Chess.get_kings(b))),v))
+
+def attacked_knight(+c: O.Cells,+b: Chess.Board,+sq: U32,+by: U32,+hits: U64,+na: U64) ->
+  {Bind.bool_table(Chess.attacked_knight(b,sq,by,hits,(O.pack(c),na))) == O.pack(c) : Array<U64>}:
+  Bind.mask(r => {Bind.bool_table(Chess.attacked_king(b,sq,by,U64.or(hits,U64.and(na,Chess.get_knights(b))),r)) == O.pack(c) : Array<U64>},
+    c,Chess.attack(5,O.pack(c),sq,by,Chess.occupied(b)),attack(c,Board.King{},sq,by,Chess.occupied(b)),
+    v => attacked_king(c,b,sq,by,U64.or(hits,U64.and(na,Chess.get_knights(b))),v))
+
+def attacked_pawn(+c: O.Cells,+b: Chess.Board,+sq: U32,+by: U32,+pa: U64) ->
+  {Bind.bool_table(Chess.attacked_pawn(b,sq,by,(O.pack(c),pa))) == O.pack(c) : Array<U64>}:
+  Bind.mask(r => {Bind.bool_table(Chess.attacked_knight(b,sq,by,U64.and(pa,Chess.get_pawns(b)),r)) == O.pack(c) : Array<U64>},
+    c,Chess.attack(1,O.pack(c),sq,by,Chess.occupied(b)),attack(c,Board.Knight{},sq,by,Chess.occupied(b)),
+    v => attacked_knight(c,b,sq,by,U64.and(pa,Chess.get_pawns(b)),v))
+
+def attacked(+c: O.Cells,+b: Chess.Board,+sq: U32,+by: U32) ->
+  {Bind.bool_table(Chess.attacked(O.pack(c),b,sq,by)) == O.pack(c) : Array<U64>}:
+  Bind.mask(r => {Bind.bool_table(Chess.attacked_pawn(b,sq,by,r)) == O.pack(c) : Array<U64>},
+    c,Chess.attack(0,O.pack(c),sq,U32.xor(by,1),Chess.occupied(b)),attack(c,Board.Pawn{},sq,U32.xor(by,1),Chess.occupied(b)),
+    v => attacked_pawn(c,b,sq,by,v))
+
+def checked(+c: O.Cells,+b: Chess.Board,+side: U32) ->
+  {Bind.bool_table(Chess.in_check(O.pack(c),b,side)) == O.pack(c) : Array<U64>}:
+  attacked(c,b,U64.ctz(U64.and(Chess.get_kings(b),Chess.color(b,side))),U32.xor(side,1))

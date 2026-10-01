@@ -1,0 +1,56 @@
+# Full and optimized filtering preserve the table on both acceptance paths.
+import Base
+import ../storage/Observe.bend as O
+import ../board/Spec.bend as Board
+import ../../../legal_probe/Chess.bend as Chess
+import ./Bind.bend as Bind
+import ./Query.bend as Q
+
+def step(+c: O.Cells,+b: Chess.Board,+m: Chess.Ply,+tail: List<&2,Chess.Ply>) ->
+  {Bind.moves_table(Chess.filter_step(b,m,(O.pack(c),tail))) == O.pack(c) : Array<U64>}:
+  Bind.boolean(r => {Bind.moves_table(Chess.filter_after(m,tail,r)) == O.pack(c) : Array<U64>},
+    c,Chess.in_check(O.pack(c),Chess.make_move(b,m),Chess.get_turn(b)),
+    Q.checked(c,Chess.make_move(b,m),Chess.get_turn(b)),v => {==})
+
+def full(xs: List<&2,Chess.Ply>,+c: O.Cells,+b: Chess.Board,+tail: List<&2,Chess.Ply>) ->
+  {Bind.moves_table(Chess.filter_legal(xs,b,(O.pack(c),tail))) == O.pack(c) : Array<U64>}:
+  match xs:
+    case Nil{}: {==}
+    case Con{+m,+rest}:
+      Bind.moves(r => {Bind.moves_table(Chess.filter_legal(rest,b,r)) == O.pack(c) : Array<U64>},
+        c,Chess.filter_step(b,m,(O.pack(c),tail)),step(c,b,m,tail),
+        ms => full(rest,c,b,ms))
+
+def fast_step(required: Bool,+c: O.Cells,+b: Chess.Board,+m: Chess.Ply,+tail: List<&2,Chess.Ply>) ->
+  {Bind.moves_table(Chess.filter_fast_step(required,b,m,(O.pack(c),tail))) == O.pack(c) : Array<U64>}:
+  match required:
+    case True{}: step(c,b,m,tail)
+    case False{}: {==}
+
+def fast(xs: List<&2,Chess.Ply>,+c: O.Cells,+b: Chess.Board,+sensitive: U64,+tail: List<&2,Chess.Ply>) ->
+  {Bind.moves_table(Chess.filter_fast(xs,b,sensitive,(O.pack(c),tail))) == O.pack(c) : Array<U64>}:
+  match xs:
+    case Nil{}: {==}
+    case Con{+m,+rest}:
+      Bind.moves(r => {Bind.moves_table(Chess.filter_fast(rest,b,sensitive,r)) == O.pack(c) : Array<U64>},
+        c,Chess.filter_fast_step(Chess.filter_requires(sensitive,m),b,m,(O.pack(c),tail)),
+        fast_step(Chess.filter_requires(sensitive,m),c,b,m,tail),ms => fast(rest,c,b,sensitive,ms))
+
+def blockers(+c: O.Cells,+b: Chess.Board,+ms: List<&2,Chess.Ply>,+rays: U64) ->
+  {Bind.moves_table(Chess.filter_blockers(b,ms,(O.pack(c),rays))) == O.pack(c) : Array<U64>}:
+  fast(ms,c,b,U64.and(Chess.color(b,Chess.get_turn(b)),U64.or(rays,Chess.get_kings(b))),Nil{})
+
+def checked(+c: O.Cells,+b: Chess.Board,+ms: List<&2,Chess.Ply>,check: Bool) ->
+  {Bind.moves_table(Chess.filter_checked(b,ms,(O.pack(c),check))) == O.pack(c) : Array<U64>}:
+  match check:
+    case True{}: full(ms,c,b,Nil{})
+    case False{}:
+      +sq = U64.ctz(U64.and(Chess.get_kings(b),Chess.color(b,Chess.get_turn(b))))
+      Bind.mask(r => {Bind.moves_table(Chess.filter_blockers(b,ms,r)) == O.pack(c) : Array<U64>},
+        c,Chess.attack(4,O.pack(c),sq,Chess.get_turn(b),Chess.occupied(b)),
+        Q.attack(c,Board.Queen{},sq,Chess.get_turn(b),Chess.occupied(b)),v => blockers(c,b,ms,v))
+
+def prepare(+c: O.Cells,+b: Chess.Board,+ms: List<&2,Chess.Ply>) ->
+  {Bind.moves_table(Chess.filter_prepare(b,(O.pack(c),ms))) == O.pack(c) : Array<U64>}:
+  Bind.boolean(r => {Bind.moves_table(Chess.filter_checked(b,ms,r)) == O.pack(c) : Array<U64>},
+    c,Chess.in_check(O.pack(c),b,Chess.get_turn(b)),Q.checked(c,b,Chess.get_turn(b)),v => checked(c,b,ms,v))

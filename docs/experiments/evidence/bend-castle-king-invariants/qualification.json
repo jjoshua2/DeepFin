@@ -1,0 +1,21 @@
+{
+  "qualification": "PASS",
+  "run": "36291285103",
+  "source": "bc8d5f83dbd9f3e77492763644ffe92478be1a16",
+  "source_tree": "9c03405ef0cae1461ac5ef2aa4eace46f157d47a",
+  "new_laws": 4,
+  "new_controls": 19,
+  "control_categories": {
+    "source semantic/refinement": 10,
+    "manifest/import policy": 8,
+    "synthetic output-wrapper unit; not compiler execution": 1
+  },
+  "retained_parent_laws": 186,
+  "retained_parent_controls": 581,
+  "modular_laws": 190,
+  "modular_controls": 600,
+  "combined_wrapper_executed": false,
+  "native_source_entries": 601,
+  "independent_review": false,
+  "scope": "Mover singleton and valid-side propagation through actual castling stages; complete actual check-to-stage-query pair. Explicit initial consistency/singleton/side and final producer-guard premises, not full semantic legal castling."
+}

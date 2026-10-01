@@ -1,0 +1,198 @@
+"""Compare every logical table slot before/after actual generation stages.
+
+Move-list comparisons are same-implementation pipeline parity, not an independent
+chess oracle. Raw table patterns are independently computed by this driver. The
+real initialized table is compared against its own pre-operation snapshot.
+"""
+from __future__ import annotations
+import argparse
+from array import array
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+SUITE=Path(__file__).resolve().parent
+ENGINE=SUITE.parents[2]
+MODES={'generic':[], 'portable':['-DBEND_U64_PORTABLE'], 'native':['-march=native'],
+       'ubsan':['-fsanitize=undefined','-fno-sanitize-recover=all']}
+SIZES={0:1,1:8,2:512,3:131072,4:131072}
+
+
+def digest(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest()
+
+
+def run(command: list[str], timeout: int=180) -> subprocess.CompletedProcess[str]:
+    r=subprocess.run(command,capture_output=True,text=True,timeout=timeout,check=False,
+                     env={**os.environ,'BEND_NO_TELEMETRY':'1','TERM':'dumb'})
+    if r.returncode != 0 or r.stderr:
+        raise AssertionError((command[:4],r.returncode,r.stderr[-3000:],r.stdout[-1000:]))
+    return r
+
+
+def encode(pieces: list[tuple[int,int,int]], turn: int=1, rights: int=0, ep: int=64) -> list[int]:
+    planes=[0]*8
+    for sq,kind,side in pieces:
+        assert 0<=sq<64 and 0<=kind<6 and side in (0,1)
+        planes[kind] |= 1<<sq
+        planes[6 if side else 7] |= 1<<sq
+    return [v for bb in planes for v in [bb>>32,bb&0xffffffff]]+[turn,rights,ep]
+
+
+def fixtures() -> list[dict]:
+    initial=[]
+    for side,home,pawn in [(1,0,8),(0,56,48)]:
+        for file,kind in enumerate([3,1,2,4,5,2,1,3]): initial.append((home+file,kind,side))
+        for file in range(8): initial.append((pawn+file,0,side))
+    castles=[(4,5,1),(0,3,1),(7,3,1),(60,5,0),(56,3,0),(63,3,0)]
+    data=[
+        ('initial',0,encode(initial,1,15)),
+        ('white_castles',0,encode(castles,1,15)),
+        ('black_castles',0,encode(castles,0,15)),
+        ('checked_white',0,encode([(4,5,1),(7,3,1),(56,5,0),(52,3,0)],1,1)),
+        ('en_passant',0,encode([(6,5,1),(60,5,0),(36,0,1),(35,0,0),(32,3,0)],1,0,43)),
+        ('promotion',0,encode([(4,5,1),(60,5,0),(48,0,1),(57,3,0)],1)),
+        ('arbitrary_tail',1,encode(castles,1,15)),
+        ('duplicate_castle_tail',2,encode(castles,0,15)),
+    ]
+    return [{'name':name,'tail_mode':tail,'input':[tail,*board]} for name,tail,board in data]
+
+
+def observe(binary: Path, context: int, cases: list[dict], output: Path) -> dict:
+    argv=[str(binary),str(context),*(str(x) for c in cases for x in c['input'])]
+    with output.open('wb') as stream:
+        p=subprocess.run(argv,stdout=stream,stderr=subprocess.PIPE,timeout=180,check=False)
+    if p.returncode or p.stderr:
+        raise AssertionError(('native execution',context,p.returncode,p.stderr[-3000:].decode()))
+    n=SIZES[context]
+    records=[]; failures=[]; baseline: array|None=None; move_trace=[]; parity=0
+    with output.open() as stream:
+        def line() -> str:
+            return stream.readline().rstrip('\n')
+        def snapshot(label: str) -> None:
+            nonlocal baseline
+            header=line()
+            assert header==f'state {label} {n}',header
+            words=array('I')
+            for _ in range(n):
+                parts=line().split()
+                assert len(parts)==3 and parts[0]=='word',parts
+                high,low=map(int,parts[1:]); assert 0<=high<=0xffffffff and 0<=low<=0xffffffff
+                words.extend([high,low])
+            assert line()=='end-state'
+            if baseline is None:
+                baseline=words
+                if context!=3:
+                    for i in range(n):
+                        assert words[2*i]==(305419896+i)&0xffffffff
+                        assert words[2*i+1]==2596069104^((i*2654435761)&0xffffffff)
+                else:
+                    assert list(words[-2:])==[826366246,1398314899]
+            elif words!=baseline:
+                at=next(i for i,(a,b) in enumerate(zip(words,baseline)) if a!=b)
+                failures.append({'checkpoint':label,'slot':at//2,'limb':at%2,
+                                 'expected':baseline[at],'observed':words[at]})
+            # Hash a canonical little-endian representation, not platform endianness.
+            packed=array('I',words)
+            if __import__('sys').byteorder!='little': packed.byteswap()
+            records.append({'checkpoint':label,'slots':n,'sha256':digest(packed.tobytes())})
+        snapshot('initial')
+        for case in cases:
+            assert line()=='case'
+            stages={}
+            for stage in ['scan','castles','filter','legal']:
+                h=line().split(); assert len(h)==3 and h[:2]==['moves',stage],h
+                count=int(h[2]); assert 0<=count<=4096
+                ms=[]
+                for _ in range(count):
+                    parts=line().split(); assert len(parts)==5 and parts[0]=='move',parts
+                    move=tuple(map(int,parts[1:])); assert all(0<=v<=0xffffffff for v in move)
+                    ms.append(move)
+                assert line()=='end-moves'
+                stages[stage]=ms
+                move_trace.append({'case':case['name'],'stage':stage,'moves':ms})
+                snapshot(stage)
+            if case['tail_mode']==0:
+                assert stages['filter']==stages['legal'],('manual/full pipeline mismatch',case['name'])
+                parity+=1
+            assert line()=='end-case'
+        assert not stream.read(),'Unexpected extra output'
+    return {'context':context,'requests':len(cases),'table_slots':n,'snapshots':records,
+            'compared_u64_slots':4*len(cases)*n,'mismatches':failures,
+            'move_trace':move_trace,'empty_tail_pipeline_parity_cases':parity,
+            'input_sha256':digest(json.dumps(argv[1:],separators=(',',':')).encode())}
+
+
+def main() -> None:
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('compiler',type=Path)
+    parser.add_argument('--report',type=Path,required=True)
+    args=parser.parse_args(); compiler=args.compiler.resolve()
+    bun=os.environ.get('BUN','bun'); cc=os.environ.get('CC','clang')
+    identity=run([bun,str(ENGINE/'standalone/verify_compiler.js'),str(compiler)]).stdout
+    sources=list(SUITE.glob('*'))+[ENGINE/p for p in ['legal_probe/Chess.bend','bitboard_probe/Sliders.bend','standalone/Tables.bend','standalone/Text.bend','standalone/toolchain.json','standalone/verify_compiler.js']]
+    hashes={p.relative_to(ENGINE).as_posix():digest(p.read_bytes()) for p in sources if p.is_file()}
+    cases=fixtures()
+    batches={0:cases,1:cases,2:cases,3:[cases[0],cases[1],cases[3]],4:[cases[2],cases[7]]}
+    modes=[]; baseline3=None
+    with tempfile.TemporaryDirectory(prefix='table-preservation-native-') as td:
+        work=Path(td)
+        c=work/'probe.c'
+        run([bun,str(compiler/'bend2/main.ts'),str(SUITE/'probe.bend'),'-o',str(c)])
+        for mode,flags in MODES.items():
+            binary=work/mode
+            run([cc,'-std=c11','-O1','-ffp-contract=off','-Werror=shift-count-overflow',*flags,str(c),'-pthread','-lm','-o',str(binary)])
+            contexts=[]
+            for context,selected in batches.items():
+                observation=observe(binary,context,selected,work/'output.txt')
+                assert not observation['mismatches'],observation['mismatches']
+                if context==3 and baseline3 is None: baseline3=observation
+                contexts.append(observation)
+                print(f'PASS {mode} context {context}: {len(selected)} Boards, {observation["compared_u64_slots"]} full-slot comparisons',flush=True)
+            row=[str(v) for v in cases[0]['input']]
+            invalid=[[],['5'],['x'],['-1'],['4294967296'],['0',*row[:-1]],['0','3',*row[1:]],['0',*(row*9)]]
+            for bad in invalid:
+                failed=subprocess.run([str(binary),*bad],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=60,check=False)
+                assert failed.returncode==2 and b'invalid preservation' in failed.stderr,(failed.returncode,failed.stderr)
+            modes.append({'mode':mode,'contexts':contexts,'invalid_rejections':len(invalid)})
+        copied=work/'engine';shutil.copytree(ENGINE,copied,symlinks=True,ignore=shutil.ignore_patterns('__pycache__'))
+        chess=copied/'legal_probe/Chess.bend'; pristine=chess.read_text()
+        edits=[
+            ('ordinary-scan-corrupts-unused-slot','(table, destinations(64n, U64.is_zero(targets), targets, src, pawn, ep_sq, acc))',
+             '(Array.set(U64,table,131071,U64.zero()), destinations(64n, U64.is_zero(targets), targets, src, pawn, ep_sq, acc))'),
+            ('unchecked-filter-corrupts-unused-slot','(table, Con{m, acc})','(Array.set(U64,table,131071,U64.zero()), Con{m, acc})'),
+            ('full-generator-corrupts-unused-slot','scan(bit_squares(64n, U64.is_zero(own), own, Nil{}), b, (table, Nil{}))',
+             'scan(bit_squares(64n, U64.is_zero(own), own, Nil{}), b, (Array.set(U64,table,131071,U64.zero()), Nil{}))'),
+        ]
+        mutations=[]
+        for name,old,new in edits:
+            assert pristine.count(old)==1,name
+            chess.write_text(pristine.replace(old,new))
+            generated=work/(name+'.c'); binary=work/name
+            run([bun,str(compiler/'bend2/main.ts'),str(copied/'standalone/proofs/table_preservation/probe.bend'),'-o',str(generated)])
+            run([cc,'-std=c11','-O1','-ffp-contract=off','-Werror=shift-count-overflow',str(generated),'-pthread','-lm','-o',str(binary)])
+            result=observe(binary,3,batches[3],work/'mutated-output.txt')
+            assert result['mismatches'],name
+            assert result['move_trace']==baseline3['move_trace'],('Mutation affected list values unexpectedly',name)
+            mutations.append({'name':name,'compiled_and_executed':True,'rejected':True,'all_ordered_move_lists_unchanged':True,
+                              'first_mismatch':result['mismatches'][0], 'mismatching_checkpoints':len(result['mismatches'])})
+            print('PASS native corruption:',name,flush=True)
+        chess.write_text(pristine)
+    assert {p:digest((ENGINE/p).read_bytes()) for p in hashes}==hashes
+    assert run([bun,str(ENGINE/'standalone/verify_compiler.js'),str(compiler)]).stdout==identity
+    total=sum(4*len(batches[k])*SIZES[k] for k in batches)
+    report={'native_gate':'PASS','compiler_identity':identity,'cc':run([cc,'--version']).stdout.splitlines()[0],
+            'requests_per_mode':sum(map(len,batches.values())),'base_board_tail_cases':len(cases),
+            'u64_slot_comparisons_per_mode':total,'u32_limb_comparisons_per_mode':2*total,
+            'native_table_contexts':{'0':'one nonzero leaf','1':'8 patterned slots','2':'512 patterned slots','3':'real Tables.build plus nonzero unused slot','4':'131072 patterned slots, not a valid chess attack table'},
+            'modes':modes,'mutations':mutations,'source_sha256s':hashes,
+            'scope':'Every logical slot observed in balanced native arrays around the actual scan, both castling calls, optimized filter, and whole generator. Not allocator/pointer/lifetime proof or independent move legality/completeness.'}
+    args.report.write_text(json.dumps(report,indent=2)+'\n')
+    print('PASS table preservation native suite',flush=True)
+
+if __name__=='__main__':
+    main()

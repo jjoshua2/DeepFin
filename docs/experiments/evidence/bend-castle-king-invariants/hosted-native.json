@@ -1,0 +1,102 @@
+{
+  "native_gate": "PASS",
+  "cases": 1148,
+  "distinct_inputs": 1148,
+  "stage_boards_per_mode": 3444,
+  "fields_per_mode": 82656,
+  "transit_premise_cases": 451,
+  "castle_premise_cases": 437,
+  "categories": {
+    "guarded_singleton": 256,
+    "opposing_king_all_squares": 256,
+    "additional_moving_king": 256,
+    "kind_and_raw_side": 116,
+    "arbitrary_consistent": 256,
+    "blocked_rook_king_counterexample": 4,
+    "inconsistent_decoder_priority": 4
+  },
+  "fixture_sha256": "aff5652ed932adee344eda764464b687d747649f93584c61af0dd395b9e3ec65",
+  "modes": [
+    {
+      "mode": "generic",
+      "output_sha256": "0f792ce599979a385d3b61ce8911a367eb9885bd35678a2cf3f2d9af0d61da95",
+      "invalid_rejections": 8
+    },
+    {
+      "mode": "portable",
+      "output_sha256": "0f792ce599979a385d3b61ce8911a367eb9885bd35678a2cf3f2d9af0d61da95",
+      "invalid_rejections": 8
+    },
+    {
+      "mode": "native",
+      "output_sha256": "0f792ce599979a385d3b61ce8911a367eb9885bd35678a2cf3f2d9af0d61da95",
+      "invalid_rejections": 8
+    },
+    {
+      "mode": "ubsan",
+      "output_sha256": "0f792ce599979a385d3b61ce8911a367eb9885bd35678a2cf3f2d9af0d61da95",
+      "invalid_rejections": 8
+    }
+  ],
+  "mutations": [
+    {
+      "name": "retains-old-king",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "case": 0,
+      "category": "guarded_singleton",
+      "stage": 1,
+      "field": 10,
+      "observed": 402653184,
+      "expected": 134217728
+    },
+    {
+      "name": "rook-added-to-king-plane",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "case": 0,
+      "category": "guarded_singleton",
+      "stage": 2,
+      "field": 10,
+      "observed": 201326592,
+      "expected": 67108864
+    },
+    {
+      "name": "turn-not-flipped",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "case": 0,
+      "category": "guarded_singleton",
+      "stage": 1,
+      "field": 16,
+      "observed": 0,
+      "expected": 1
+    }
+  ],
+  "source_sha256s": {
+    "standalone/proofs/castle_kings/Rows.bend": "55bfe46f83806451335929f1b487e945b25b97e641f54b094d25b1c2672dc0cb",
+    "standalone/proofs/castle_kings/Spec.bend": "38af884730845cf5955d9b8b5809a7dba35eca9fdbb9f673d86ba875428a1a16",
+    "standalone/proofs/castle_kings/LAWS.bend": "ce9f2eea63ca99f0843fd3e999f8f85d97d2c403be559762bd0be2d1e9596637",
+    "standalone/proofs/castle_kings/probe.bend": "f3d5f89d7b9a4d789cae32a69f8c30edaf11f5a815764b15f3d77b8ba1a47f5c",
+    "standalone/proofs/castle_kings/Algebra.bend": "edae2d5ebb49a2a109156ea12c4981fed6fa95d4ea6953b3900a1ccb39921744",
+    "standalone/proofs/castle_kings/Stages.bend": "a85649b236e5abed2afa4bdb808ea6f6f4eea62e2807aa6ea7579de08f7b13da",
+    "standalone/proofs/castle_kings/focused.js": "4c3ac3b5d64fa939093bfb6d178e1b92758df7f77c00dd61fdcc94efab1f81a1",
+    "standalone/proofs/castle_kings/Check.bend": "27483a6f481e0136177681849117a3e916bf5aae32894789284a7909264e562c",
+    "standalone/proofs/castle_kings/verify_native.py": "ceec2022255843a573f23ef1856939a0c3704b08dc0f8a776cd7643ff5473b9b",
+    "standalone/proofs/castle_kings/Kind.bend": "8a444c4f50b17c125ba173bb537d272f1a2f2722dcc1c08a860101e2ae0b367e",
+    "standalone/proofs/castle_kings/Fresh.bend": "5fd017fca002852fb811a5aabaa15189a0ed4267d984d183ed432383eecb41e0",
+    "standalone/proofs/castle_kings/README.md": "ea2e87c251f5f8061420996ba3406c16bb6721b876ea95abd51fad239304f57e",
+    "standalone/proofs/castle_kings/consumer.bend": "1528d52b8e293af9af2bc604eb9d4e23ea8396b02660c6a4246044e6483cbe92",
+    "standalone/proofs/castle_kings/PROOF.bend": "85d61cc9b02832d2dbeff0062e83d092e4b6687c62a7ed059778e8ed2af179e6",
+    "standalone/proofs/castle_kings/Projection.bend": "12813332f29274be3666d1445fb48e49d3474e3dc64af9b33c35bd597eb49639",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/proofs/attack_witness/verify_native.py": "1244bea5156f61362383953a201ed29ca177cc7f55870c4765d6d6ec106d2f84"
+  },
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "scope": "Complete actual start/transit/final Boards, mover king plane, bounded check index and check/attack values; not legal-move soundness or forward/reverse theorem."
+}
