@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Sequential initialized castling producer/full-filter checks
+
+Hosted run **36322784771** passes the complete three-law consumer, separate premise examples, all16 controls, four native sequential modes and four compiled/executed actual-code corruptions, original compiler tests and unchanged locked repository lint on source `1e735f1b2724c4c28823d391a37be5d8b410799f`.
+
+The one-route guarded producer and full destination filter now have an exact initialized pair/list refinement. Returned tables are threaded through actual start/transit checks and the destination filter. On the isolated empty-tail pipeline, retained membership implies all three independent target-centred geometric checks are false. No caller assumes stage answers or intermediate table preservation.
+
+This is modular194/622 with exact191/606 parent evidence,not a full aggregate or complete optimized legal_moves theorem. Both-wing/ordinary-scan table preservation,optimized-filter composition,universal forward/reverse attack equivalence,historical rights and whole-generator completeness remain separate. See [the readout](experiments/2026-09-27-bend-castle-checked-pipeline.md).
+
 ## Initialized geometric checks at derived castling stages
 
 Hosted run36295872282/job108554494045 passes the new complete composition consumer, five certificate-level semantic rejections plus one synthetic output check, four-mode actual stage oracle, original compiler/pin tests and unchanged repository lint. For the actual initial,transit and completed Boards, in_check now equals independent target-centred geometry plus the complete initialized array, with stage singleton/bounds derived from the initial invariants and producer guard.
