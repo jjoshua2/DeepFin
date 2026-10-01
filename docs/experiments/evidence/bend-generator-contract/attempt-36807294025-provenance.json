@@ -1,0 +1,35 @@
+{
+  "schema": "deepfin.closed-builder-attempt.v1",
+  "candidate_head": "f9ec0dae6e40681ce271ef6256a2add256a85609",
+  "base_head": "ae2d095b66dcbf5cabbae96dc3e3e0629a5192fa",
+  "source_tree": "3f066d7bc82bfa9866da16bacd44665d6c6dbc70",
+  "workflow_run_url": "https://github.com/jjoshua2/DeepFin/actions/runs/36807294025",
+  "job_url": "https://github.com/jjoshua2/DeepFin/actions/runs/36807294025/job/110194374813",
+  "report_provenance": "JSON reconstructed from the unmodified receipt printed in the verified GitHub job log; semantic fields preserved. Original ZIP identity is separately retained.",
+  "artifact_url": "https://github.com/jjoshua2/DeepFin/actions/runs/36807294025/artifacts/11138550462",
+  "artifact_id": 11138550462,
+  "artifact_zip_sha256": "67985d7dfc01c90d7583a9d1fb1ddacf09c8dc2914f65129e8956a58e8b95ecc",
+  "result": "NOT_COMPLETED",
+  "reason": "Positive importing consumer exceeded its 600-second wall bound with no checker output.",
+  "new_accepted_laws": 0,
+  "semantic_controls_executed": 0,
+  "completed_checks": [
+    "Existing compiler installation and source identity",
+    "Three host classification tests in normal Python, -O and -OO",
+    "12 original compiler pin tests",
+    "git diff --exit-code after the failed attempt"
+  ],
+  "unexecuted_checks": [
+    "Two proposed semantic controls",
+    "Final qualifier source/compiler recheck after semantic controls"
+  ],
+  "limits": {
+    "cpu_quota_percent": 200,
+    "memory_max_gib": 6,
+    "swap_max_bytes": 0,
+    "whole_qualifier_wall_seconds": 1100,
+    "positive_consumer_wall_seconds": 600,
+    "per_negative_control_wall_seconds": 180
+  },
+  "interpretation": "Resource-limited non-completion, not a semantic rejection, false theorem, accepted theorem, or whole-generator proof. The job's final memory-peak line is not used as a reliable compiler peak-memory claim."
+}

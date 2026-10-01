@@ -8,7 +8,9 @@ representation for actual Tables.build plus optimized Chess.legal_moves, under
 independent orthodox-history and representation premises. It groups the remaining
 work into three compositional milestones. The new closed-builder candidate is
 unqualified until its fail-closed source/control gate passes; no accepted-law
-count or complete-generator result is added by this specification.
+count or complete-generator result is added by this specification. The initial
+[hosted attempt](experiments/2026-10-01-bend-generator-contract.md) exceeded 600
+seconds with no checker output; zero laws and zero semantic controls are credited.
 
 ## Sequential initialized castling producer/full-filter checks
 

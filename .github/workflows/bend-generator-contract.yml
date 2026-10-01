@@ -5,6 +5,15 @@ on:
       - '.github/workflows/bend-generator-contract.yml'
       - 'native/bend_engine/standalone/proofs/generator_contract/**'
       - 'docs/bend_legal_generator_contract.md'
+      - 'native/bend_engine/standalone/Tables.bend'
+      - 'native/bend_engine/standalone/Subsets.bend'
+      - 'native/bend_engine/standalone/proofs/initialized_attacks/Build.bend'
+      - 'native/bend_engine/standalone/proofs/builder/Spec.bend'
+      - 'native/bend_engine/standalone/proofs/table_preservation/focused.py'
+      - 'native/bend_engine/standalone/proofs/table_preservation/_validation.py'
+      - 'native/bend_engine/standalone/verify_compiler.js'
+      - 'native/bend_engine/standalone/toolchain.json'
+      - 'native/bend_engine/install_ci_bend.sh'
   workflow_dispatch:
 permissions:
   contents: read

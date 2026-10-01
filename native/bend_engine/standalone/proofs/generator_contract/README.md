@@ -3,7 +3,7 @@
 The finish line is [the complete contract](../../../../../docs/bend_legal_generator_contract.md).
 This directory does not register an accepted law or increment the proof inventory.
 
-The first candidate closes the exact public-builder boundary:
+The first candidate targets the exact public-builder boundary:
 `Tables.build() == Init.run(17n,U64.zero(),128n,64n)`.
 Both sides are the actual production construction calls, and the only proof term
 is reflexivity. The importing consumer repeats the complete proposition.
@@ -50,3 +50,12 @@ A pass would close only this initialization bridge. It would not prove castling,
 ordinary/en-passant generation, fast-filter equivalence, completeness, uniqueness,
 or native execution. A failure will be retained with its exact identity rather
 than relabeled a theorem. No local executor, GPU, model or training work is needed.
+
+## Observed result
+
+The initial candidate in run [36807294025](https://github.com/jjoshua2/DeepFin/actions/runs/36807294025)
+exceeded the 600-second positive-consumer bound after 600.272 seconds with no
+checker output. Its receipt is NOT_COMPLETED: zero accepted laws and neither
+semantic control executed. See the [dated failure record](../../../../../docs/experiments/2026-10-01-bend-generator-contract.md).
+A timeout is not a theorem rejection or proof of falsehood. No larger retry or
+checker/runtime change follows automatically.

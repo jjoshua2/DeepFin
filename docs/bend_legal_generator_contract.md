@@ -48,8 +48,10 @@ definition of legal history may discharge them.
 
 ## Independent state and history
 
-The semantic anchor remains the repository's pinned FIDE 2023 English orthodox
-rules, specifically the move rules in Article 3 and the initial position.
+The semantic anchor remains the repository's pinned [English FIDE Laws applied
+from 1 January 2023](https://handbook.fide.com/chapter/e012023), specifically the
+move rules in Article 3 and the initial position. This is a fixed edition, not a
+claim about whichever edition is current.
 This is orthodox chess, not Chess960. The independent specification must use
 bounded file/rank coordinates and a 64-cell piece map, not attack-table lookups
 or Chess.legal_moves.
@@ -181,6 +183,12 @@ and its importing consumer test the exact equality on the unchanged compiler
 aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae. This candidate has no accepted-law
 credit until its complete fail-closed source/control gate succeeds. Even then,
 all remaining milestones above stay open.
+
+The first hosted run exceeded the 600-second positive-consumer bound with no
+checker output. Its [dated record](experiments/2026-10-01-bend-generator-contract.md)
+retains the exact identities and NOT_COMPLETED outcome. Zero accepted laws and
+zero executed semantic controls are credited. The limitation is being diagnosed;
+it does not show that the equality is false.
 
 ## Residual trust and completion language
 

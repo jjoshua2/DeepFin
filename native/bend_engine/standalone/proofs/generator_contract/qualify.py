@@ -134,6 +134,7 @@ def main() -> None:
             }
         before = identities()
         report["source_sha256s"] = before
+        write_report(args.report, report)
         consumer = invoke(bun, compiler, SUITE / "consumer.bend", 600)
         report["consumer"] = consumer
         write_report(args.report, report)
