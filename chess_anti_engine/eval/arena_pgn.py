@@ -32,6 +32,7 @@ from an absolute path — this repo is public.
 from __future__ import annotations
 
 import datetime
+import os
 import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
@@ -119,15 +120,23 @@ class ArenaPgnWriter:
         site: str = "?",
         date: str | None = None,
         base_tags: Mapping[str, str] | None = None,
+        durable: bool = False,
     ) -> None:
         self.path = Path(path)
         self.event = event
         self.site = site
         self.date = date or datetime.date.today().strftime("%Y.%m.%d")
         self.base_tags = dict(base_tags or {})
+        self.durable = durable
         self.games_written = 0
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fh = self.path.open("a", encoding="utf-8")
+        if self.durable:
+            parent_fd = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
 
     def __enter__(self) -> ArenaPgnWriter:
         return self
@@ -187,6 +196,8 @@ class ArenaPgnWriter:
         self._fh.write(self.game_to_text(game, round_tag=round_tag))
         self._fh.write("\n\n")
         self._fh.flush()
+        if self.durable:
+            os.fsync(self._fh.fileno())
         self.games_written += 1
 
 
