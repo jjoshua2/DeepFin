@@ -879,6 +879,9 @@ physical, eligible, no-result and exclusion counts. Use a fresh output directory
 A filtered corpus needs its own later schedule qualification; this command does
 not reuse a previous corpus's training schedule or allocate training.
 
+Packed ordinary Zarr has an explicit exact-epoch API and read-only qualification
+command; see [packed Zarr](packed_zarr.md). Directory replay remains the default.
+
 ### Hourly bootstrap recovery
 
 `lc0_control_train.py` saves full trainer state after its first completed optimizer
