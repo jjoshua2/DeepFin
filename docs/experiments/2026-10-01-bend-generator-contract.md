@@ -135,3 +135,30 @@ no swap and 1,600 seconds; helper 180, complete consumer 600, five semantic cont
 120 seconds each. Initial failure or any invalid control fails closed. These are
 qualification bounds, not theorem premises. Existing runtime/compiler/proofs and
 the closed-builder gate stay unchanged. No local tests or GPU are used.
+
+## Castling full-consumer attempt and evidence-led budget allocation
+
+[Run 36812198118](https://github.com/jjoshua2/DeepFin/actions/runs/36812198118)
+on head 5665387303fdb1a0c024548f6564aa93240e8600 passed its generic actual
+full/fast projection helper in 8.329775745999996 seconds. The complete importing
+consumer timed out after 600.1790122010001 seconds with empty checker output.
+The [receipt](evidence/bend-generator-contract/castling-attempt-36812198118.json)
+and [provenance](evidence/bend-generator-contract/castling-attempt-36812198118-provenance.json)
+retain the source/compiler identities. No controls ran and accepted candidate
+credit remains zero. The earlier two attempts stopped promptly on quantity
+errors; they are not semantic controls or theorem successes.
+
+Independent review identified and verified fixes for both a duplicated linear
+evidence use and the classifier's original ability to misclassify Data/Type
+diagnostics. The host test now contains the exact original kind-error diagnostic
+and quantity examples. All host tests in three modes and original pin tests
+passed at this head; full qualification still did not complete.
+
+The unchanged inherited castle_sequence consumer already has a hosted
+641.93163341-second passing receipt. With explicit approval, the next attempt
+therefore reallocates the same 1,600-second total budget: helper 180, consumer
+900, five controls 90 each, with unchanged 2-CPU quota, 6-GiB RAM/no swap.
+It does not extend the closed public-builder's 600-second bound or modify the
+checker. A small exact production-wiring lemma, used by the composition and
+included in its positive helper baseline, lets the duplicate-wing corruption
+be checked without rerunning the large initialization proof graph.

@@ -14,6 +14,7 @@ import ./CastlePrefix.bend as Prefix
 import ./CastleProjection.bend as Projection
 import ./CastleFinish.bend as Finish
 import ./CastleUnique.bend as Unique
+import ./CastleRuntime.bend as Runtime
 
 def transport(-b: Chess.Board,-x: Array<U64> & List<&2,Chess.Ply>,-y: Array<U64> & List<&2,Chess.Ply>,
   same: {x == y : Array<U64> & List<&2,Chess.Ply>},
@@ -22,17 +23,17 @@ def transport(-b: Chess.Board,-x: Array<U64> & List<&2,Chess.Ply>,-y: Array<U64>
   %same : C.every(m => C.classified(b,m),E.moves(_))
   good
 
-def projected(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+white: Bool,
+def projected_prefix(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+white: Bool,
   +depth: {d == 17n : Nat},+tables: {n == 128n : Nat},+full: {extra == 64n : Nat},
   +good: {B.valid(b) == True{} : Bool},+turn: {Chess.get_turn(b) == Bool.to_u32(white) : U32},
   +one: {K.kings(b,white) == U64.bit(U32.to_nat(K.src(white))) : U64}) ->
-  {P.project(E.moves(Chess.legal_moves(Init.run(d,seed,n,extra),b))) ==
+  {P.project(E.moves(Chess.filter_prepare(b,P.prefix(Init.run(d,seed,n,extra),b)))) ==
     E.moves(Chess.filter_legal(
       P.project(P.before(b,white,False{},P.before(b,white,True{},E.moves(C.candidates(Init.run(d,seed,n,extra),b))))),
       b,(Init.run(d,seed,n,extra),Nil{}))) : List<&2,Chess.Ply>}:
   +xs = P.before(b,white,False{},P.before(b,white,True{},E.moves(C.candidates(Init.run(d,seed,n,extra),b))))
   Equal.trans(List<&2,Chess.Ply>,
-    P.project(E.moves(Chess.legal_moves(Init.run(d,seed,n,extra),b))),
+    P.project(E.moves(Chess.filter_prepare(b,P.prefix(Init.run(d,seed,n,extra),b)))),
     P.project(E.moves(Chess.filter_prepare(b,(Init.run(d,seed,n,extra),xs)))),
     E.moves(Chess.filter_legal(P.project(xs),b,(Init.run(d,seed,n,extra),Nil{}))),
     Equal.cong(Array<U64> & List<&2,Chess.Ply>,List<&2,Chess.Ply>,
@@ -43,6 +44,26 @@ def projected(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+white: Boo
       transport(b,P.prefix(Init.run(d,seed,n,extra),b),(Init.run(d,seed,n,extra),xs),
         Prefix.exact(d,seed,n,extra,b,white,depth,tables,full,good,turn,one),
         Prefix.classified(Init.run(d,seed,n,extra),b))))
+
+def projected(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+white: Bool,
+  +depth: {d == 17n : Nat},+tables: {n == 128n : Nat},+full: {extra == 64n : Nat},
+  +good: {B.valid(b) == True{} : Bool},+turn: {Chess.get_turn(b) == Bool.to_u32(white) : U32},
+  +one: {K.kings(b,white) == U64.bit(U32.to_nat(K.src(white))) : U64}) ->
+  {P.project(E.moves(Chess.legal_moves(Init.run(d,seed,n,extra),b))) ==
+    E.moves(Chess.filter_legal(
+      P.project(P.before(b,white,False{},P.before(b,white,True{},E.moves(C.candidates(Init.run(d,seed,n,extra),b))))),
+      b,(Init.run(d,seed,n,extra),Nil{}))) : List<&2,Chess.Ply>}:
+  Equal.trans(List<&2,Chess.Ply>,
+    P.project(E.moves(Chess.legal_moves(Init.run(d,seed,n,extra),b))),
+    P.project(E.moves(Chess.filter_prepare(b,P.prefix(Init.run(d,seed,n,extra),b)))),
+    E.moves(Chess.filter_legal(
+      P.project(P.before(b,white,False{},P.before(b,white,True{},E.moves(C.candidates(Init.run(d,seed,n,extra),b))))),
+      b,(Init.run(d,seed,n,extra),Nil{}))),
+    Equal.cong(Array<U64> & List<&2,Chess.Ply>,List<&2,Chess.Ply>,r => P.project(E.moves(r)),
+      Chess.legal_moves(Init.run(d,seed,n,extra),b),
+      Chess.filter_prepare(b,P.prefix(Init.run(d,seed,n,extra),b)),
+      Runtime.unfold(Init.run(d,seed,n,extra),b)),
+    projected_prefix(d,seed,n,extra,b,white,depth,tables,full,good,turn,one))
 
 def moves(+d: Nat,+seed: U64,+n: Nat,+extra: Nat,+b: Chess.Board,+white: Bool,
   +depth: {d == 17n : Nat},+tables: {n == 128n : Nat},+full: {extra == 64n : Nat},

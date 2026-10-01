@@ -2,6 +2,8 @@
 # Ordinary safety is not assumed or concluded.
 import Base
 import ./CastleSpec.bend as P
+# Include the exact production-wiring control baseline in this helper check.
+import ./CastleRuntime.bend as Runtime
 import ../accepted_castle/Spec.bend as S
 import ../accepted_castle/Filter.bend as Filter
 import ../castle_chain/Spec.bend as C

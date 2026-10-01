@@ -107,7 +107,7 @@ def main() -> None:
         report["projection_helper"] = helper
         write_report(args.report, report)
         require(safe(helper), "projection helper did not return exact safe checker success")
-        consumer = invoke(bun, compiler, SUITE / "castle_consumer.bend", 600)
+        consumer = invoke(bun, compiler, SUITE / "castle_consumer.bend", 900)
         report["consumer"] = consumer
         write_report(args.report, report)
         require(safe(consumer), "complete consumer did not return exact safe checker success")
@@ -134,7 +134,7 @@ def main() -> None:
                 "actual-generator-repeats-kingside", "legal_probe/Chess.bend",
                 "filter_prepare(b, castle_side(b, False{}, castle_side(b, True{},\n    scan(",
                 "filter_prepare(b, castle_side(b, True{}, castle_side(b, True{},\n    scan(",
-                "castle_consumer.bend", "projected",
+                "CastleRuntime.bend", "unfold",
             ),
             (
                 "two-wing-list-repeats-kingside", "standalone/proofs/generator_contract/CastleUnique.bend",
@@ -150,7 +150,7 @@ def main() -> None:
                 replace(copied / target, old, new)
                 entry = copied / "standalone/proofs/generator_contract" / entry_name
                 closure(entry, copied)
-                result = invoke(bun, compiler, entry, 120)
+                result = invoke(bun, compiler, entry, 90)
                 controls.append({
                     "name": name, "kind": "source semantic/refinement",
                     "target": target, "expected_location": location,

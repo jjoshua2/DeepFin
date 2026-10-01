@@ -47,9 +47,28 @@ unsafe output, signal or resource failure leaves NOT_COMPLETED.
 
 The planned hosted limits are two CPU cores of quota, 6 GiB RAM, no swap and
 1,600 seconds for the whole source qualifier. The helper has 180 seconds,
-the complete consumer 600, and each of five controls 120. No GPU or local
+the complete consumer 900, and each of five controls 90. No GPU or local
 executor is used. Host classification tests run under Python, -O and -OO;
 they are not source theorem counts. Unchanged runtime native checks are
 separate evidence, not this source proof.
 
 No new source gate or native result is claimed in this candidate description.
+
+## First full-consumer outcome and unchanged overall budget
+
+Run 36812198118 on source 5665387303fdb1a0c024548f6564aa93240e8600
+passed the generic actual full/fast projection helper in 8.329775745999996 seconds.
+The complete initialized consumer then reached the 600-second stage bound after
+600.1790122010001 seconds with no output. No semantic control ran and no candidate
+definition was credited. This is non-completion, not rejection of the theorem.
+
+The unchanged inherited castle_sequence consumer's existing hosted receipt
+records 641.93163341 seconds. Consequently the approved next run reallocates
+the same 1,600-second whole-qualifier allowance to helper 180, consumer 900 and
+five controls 90 each. CPU, RAM, swap, checker and source premises are unchanged.
+The separate actual Tables.build bound remains 600 seconds.
+
+The duplicate-generator corruption now checks the small exact production-wiring
+lemma used by the composition. Its unmodified body is part of the positive helper
+baseline. This preserves the real legal_moves/producer link while avoiding a
+second full initialized proof graph merely to locate a changed wing call.
