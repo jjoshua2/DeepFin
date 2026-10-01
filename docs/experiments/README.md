@@ -12,7 +12,6 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
-| [Bounded tri-source shared verification](2026-09-30-tri-source-shared-verification.md) | CPU-only process-scoped capped part verification; synthetic no-op reads each distinct part once, while full-run validation and production source joins remain open |
 | [Audited 50M bootstrap expansion](2026-09-17-audited-scale-bootstrap.md) | Historical saved-audit V50 and explicit 50–60M contract; missing source binding and isolated scheduler recovered with both histories, no new experiment or training launch |
 | [Ceres direct-compact synthetic sink](2026-09-30-ceres-direct-compact-synthetic-sink.md) | 26-arm tiny full-head synthetic CPU screen: noisy +2.000% median sink-wall saving, semantic ZIP parity, no live adoption or measured production gain |
 | [Ceres owner target and compact-order correction](2026-09-30-ceres-owner-target-and-compact-order.md) | CPU source-game target reconstruction, one real selected-row overlap and a zero-credit diagnostic legal-order fix; no saved-call or production gain claim |
@@ -61,6 +60,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Three-source selected-target diagnostic pipeline](2026-09-29-tri-source-selected-target-pipeline.md) | Audited 83,416-winner BT4/Ceres/SF-origin selected-target ZIP pack, missing-head cost and physical storage bounds; diagnostic zero corpus credit |
 | [Tri-source replay storage checkpoints](2026-09-30-tri-source-storage-checkpoints.md) | Synthetic paired-wave restart fixture and independent 8,192-row BT4 native-byte compression audit; fixed-record/external-sort design remains unimplemented |
 | [Bounded tri-source checkpointed sort foundation](2026-09-30-tri-source-checkpointed-sort-foundation.md) | CPU-only 100-byte candidate metadata and resumable sort parts, including SIGKILL tests; recursive verification and live source/target integration remain open |
+| [Bounded tri-source shared verification](2026-09-30-tri-source-shared-verification.md) | CPU-only process-scoped capped part verification; synthetic no-op reads each distinct part once, while full-run validation and production source joins remain open |
 | [Full512 old-cohort selected/dual ABBA cost](2026-09-29-full512-old-cohort-abba-cost.md) | Four-arm same-row screen: 38.888684% selected complete-arm saving passes the 15% cost gate; zero corpus or 500M credit, representative pilot next |
 | [Full512 58,820-row whole-bank selected/dual ABBA cost](2026-09-29-full512-whole-bank-abba-cost.md) | Independently audited 43.936202% mean complete-arm saving across two pairs; zero corpus or 500M credit |
 | [E versus D on shared 576-opening strict bank](2026-09-29-e-vs-d-576-strict.md) | Direct original E−D: −12.37 Elo [−27.18, +2.39], preregistered result unresolved; 1,152 audited games and rule50-aware six-man replay |
