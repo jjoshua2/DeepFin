@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260917/expanded50m_continue_v1/run.py",
+    "--plan",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260917/expanded50m_continue_v1/plan.json",
+    "--sha256",
+    "78dac2b73083e3c741ab8ff7e1544ad035f96f77a382975572817e55848eb044",
+    "--execute"
+  ],
+  "cwd": "/tmp/deepfin-bootstrap-continuation",
+  "env": {},
+  "completion": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260917/expanded50m_continue_v1/complete.json",
+    "status_key": "status",
+    "expected": "PASS_EXPANDED50M_V50_CONTINUATION"
+  },
+  "pins_archived_in": "plan.json; registered pins are plan file pin followed by plan.pins",
+  "original_descriptor_sha256": "85f151980598e12f9e20b900f64dcf57ed1330150509601f26f3b4b615aa8c02"
+}

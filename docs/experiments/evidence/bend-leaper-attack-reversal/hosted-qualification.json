@@ -1,0 +1,28 @@
+{
+  "qualification": "PASS",
+  "run": "36340014190",
+  "source": "9381124bb2866e2e0a429f0c7806d80256b69721",
+  "source_tree": "1e0b1beb1511270df830fc485e79be5b6f3674b7",
+  "base": "4d0d51fcc24b3d814a3e57d0dc676ffd514af33a",
+  "saved_local_commit": "717b56793e1de754536114a4ae31c742728241e9",
+  "newly_hosted_laws": 2,
+  "newly_hosted_controls": 17,
+  "control_categories": {
+    "source semantic/refinement": 8,
+    "manifest/import policy": 8,
+    "synthetic output-wrapper unit": 1
+  },
+  "retained_parent_laws": 203,
+  "retained_parent_controls": 672,
+  "modular_laws": 205,
+  "modular_controls": 689,
+  "combined_wrapper_executed": false,
+  "native_source_entries": 679,
+  "primary_files_preserved": 18,
+  "host_test_methods": 15,
+  "host_optimization_modes": 3,
+  "native_verifier_python_optimization": 2,
+  "native_build_modes": 4,
+  "independent_review": false,
+  "slider_reversal_proved": false
+}

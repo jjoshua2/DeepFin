@@ -1,0 +1,262 @@
+{
+  "native_gate": "PASS",
+  "base_generation_boards": 4,
+  "base_requests": 184,
+  "initialization_contexts": 2,
+  "requests_per_mode": 368,
+  "generator_calls_per_request": 2,
+  "modes": [
+    {
+      "mode": "generic",
+      "requests": 368,
+      "checks_compared": 368,
+      "moves_compared": 6992,
+      "marker_reads": 6,
+      "invalid_rejections": 8,
+      "batches": [
+        {
+          "requests": 64,
+          "moves_compared": 1388,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "df15c0595d29f6cd9adaa2f22e989a954331db8f5ae624156710c3f726f5a10d"
+        },
+        {
+          "requests": 64,
+          "moves_compared": 1664,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "c719129778ef1aa0a92d7145ea7de51e8823e376b8e77248a5ff033cd19efd0a"
+        },
+        {
+          "requests": 56,
+          "moves_compared": 444,
+          "checks_compared": 56,
+          "marker_reads": 1,
+          "output_sha256": "7d43cef9cd0804fc6d36caa5b8c9ea4934aa4f10b5952e5aff0c6948ae6c3304"
+        },
+        {
+          "requests": 64,
+          "moves_compared": 1388,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "2d053cd966e96e1b6e5233ee9fa59a6cf4dbd51224f30460ac3a385a529cc9f6"
+        },
+        {
+          "requests": 64,
+          "moves_compared": 1664,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "79a5344ae0cbb01c4e39bbcd2a53f3419425d24693b4025df1e05698cdb25aa7"
+        },
+        {
+          "requests": 56,
+          "moves_compared": 444,
+          "checks_compared": 56,
+          "marker_reads": 1,
+          "output_sha256": "e76e6bb73daece64febbb4cf2c892f15b9531bf99c02f8c75635fb0bb739738e"
+        }
+      ]
+    },
+    {
+      "mode": "portable",
+      "requests": 368,
+      "checks_compared": 368,
+      "moves_compared": 6992,
+      "marker_reads": 6,
+      "invalid_rejections": 8,
+      "batches": [
+        {
+          "requests": 64,
+          "moves_compared": 1388,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "df15c0595d29f6cd9adaa2f22e989a954331db8f5ae624156710c3f726f5a10d"
+        },
+        {
+          "requests": 64,
+          "moves_compared": 1664,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "c719129778ef1aa0a92d7145ea7de51e8823e376b8e77248a5ff033cd19efd0a"
+        },
+        {
+          "requests": 56,
+          "moves_compared": 444,
+          "checks_compared": 56,
+          "marker_reads": 1,
+          "output_sha256": "7d43cef9cd0804fc6d36caa5b8c9ea4934aa4f10b5952e5aff0c6948ae6c3304"
+        },
+        {
+          "requests": 64,
+          "moves_compared": 1388,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "2d053cd966e96e1b6e5233ee9fa59a6cf4dbd51224f30460ac3a385a529cc9f6"
+        },
+        {
+          "requests": 64,
+          "moves_compared": 1664,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "79a5344ae0cbb01c4e39bbcd2a53f3419425d24693b4025df1e05698cdb25aa7"
+        },
+        {
+          "requests": 56,
+          "moves_compared": 444,
+          "checks_compared": 56,
+          "marker_reads": 1,
+          "output_sha256": "e76e6bb73daece64febbb4cf2c892f15b9531bf99c02f8c75635fb0bb739738e"
+        }
+      ]
+    },
+    {
+      "mode": "native",
+      "requests": 368,
+      "checks_compared": 368,
+      "moves_compared": 6992,
+      "marker_reads": 6,
+      "invalid_rejections": 8,
+      "batches": [
+        {
+          "requests": 64,
+          "moves_compared": 1388,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "df15c0595d29f6cd9adaa2f22e989a954331db8f5ae624156710c3f726f5a10d"
+        },
+        {
+          "requests": 64,
+          "moves_compared": 1664,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "c719129778ef1aa0a92d7145ea7de51e8823e376b8e77248a5ff033cd19efd0a"
+        },
+        {
+          "requests": 56,
+          "moves_compared": 444,
+          "checks_compared": 56,
+          "marker_reads": 1,
+          "output_sha256": "7d43cef9cd0804fc6d36caa5b8c9ea4934aa4f10b5952e5aff0c6948ae6c3304"
+        },
+        {
+          "requests": 64,
+          "moves_compared": 1388,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "2d053cd966e96e1b6e5233ee9fa59a6cf4dbd51224f30460ac3a385a529cc9f6"
+        },
+        {
+          "requests": 64,
+          "moves_compared": 1664,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "79a5344ae0cbb01c4e39bbcd2a53f3419425d24693b4025df1e05698cdb25aa7"
+        },
+        {
+          "requests": 56,
+          "moves_compared": 444,
+          "checks_compared": 56,
+          "marker_reads": 1,
+          "output_sha256": "e76e6bb73daece64febbb4cf2c892f15b9531bf99c02f8c75635fb0bb739738e"
+        }
+      ]
+    },
+    {
+      "mode": "ubsan",
+      "requests": 368,
+      "checks_compared": 368,
+      "moves_compared": 6992,
+      "marker_reads": 6,
+      "invalid_rejections": 8,
+      "batches": [
+        {
+          "requests": 64,
+          "moves_compared": 1388,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "df15c0595d29f6cd9adaa2f22e989a954331db8f5ae624156710c3f726f5a10d"
+        },
+        {
+          "requests": 64,
+          "moves_compared": 1664,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "c719129778ef1aa0a92d7145ea7de51e8823e376b8e77248a5ff033cd19efd0a"
+        },
+        {
+          "requests": 56,
+          "moves_compared": 444,
+          "checks_compared": 56,
+          "marker_reads": 1,
+          "output_sha256": "7d43cef9cd0804fc6d36caa5b8c9ea4934aa4f10b5952e5aff0c6948ae6c3304"
+        },
+        {
+          "requests": 64,
+          "moves_compared": 1388,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "2d053cd966e96e1b6e5233ee9fa59a6cf4dbd51224f30460ac3a385a529cc9f6"
+        },
+        {
+          "requests": 64,
+          "moves_compared": 1664,
+          "checks_compared": 64,
+          "marker_reads": 1,
+          "output_sha256": "79a5344ae0cbb01c4e39bbcd2a53f3419425d24693b4025df1e05698cdb25aa7"
+        },
+        {
+          "requests": 56,
+          "moves_compared": 444,
+          "checks_compared": 56,
+          "marker_reads": 1,
+          "output_sha256": "e76e6bb73daece64febbb4cf2c892f15b9531bf99c02f8c75635fb0bb739738e"
+        }
+      ]
+    }
+  ],
+  "mutations": [
+    {
+      "name": "discard-returned-table",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "build_mode": "generic",
+      "diagnostic": "('check', 1, 1, '0')"
+    },
+    {
+      "name": "check-opposite-side",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "build_mode": "generic",
+      "diagnostic": "('check', 1, 1, '0')"
+    },
+    {
+      "name": "discard-generated-moves",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "build_mode": "generic",
+      "diagnostic": "('ordered-moves', 0, ['15:23:0:0', '15:31:0:0', '14:22:0:0'], [])"
+    },
+    {
+      "name": "query-generation-board",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "build_mode": "generic",
+      "diagnostic": "('check', 1, 1, '0')"
+    }
+  ],
+  "fixture_sha256": "ec7927887ca3059fe6fc8d09cde57821ecea7b605199ed62e8c79e6633d7ded9",
+  "source_sha256s": {
+    "standalone/proofs/generator_followup/Runtime.bend": "638543aa80dbd85c9bc7227690d6b7efcb82bb7a77f74d2cd8c68b6199e46b11",
+    "standalone/proofs/generator_followup/probe.bend": "16569cad2347445aaed3e17c7e793dde15e999dad723092889b7e87fcb894378",
+    "standalone/proofs/generator_followup/verify_native.py": "bb80243c2bb6e4e835ae09d351ec55002edf9e6ce73176a5fe6dd4920382ee5c",
+    "standalone/proofs/attack_witness/verify_native.py": "1244bea5156f61362383953a201ed29ca177cc7f55870c4765d6d6ec106d2f84",
+    "standalone/proofs/table_preservation/verify_native.py": "a057fa5ec4937adbea66bc5bfc4530b8f8189d951918b66b050fa1dfd5a25782",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20"
+  },
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "scope": "Independent subsequent check oracle, differential full ordered move-list parity, sampled retained marker. Not independent move-set correctness or full-buffer/lifetime correctness."
+}

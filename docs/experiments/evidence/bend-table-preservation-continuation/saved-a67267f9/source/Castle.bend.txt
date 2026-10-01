@@ -1,0 +1,26 @@
+# Both castling branches preserve table storage even when their guards reject.
+import Base
+import ../storage/Observe.bend as O
+import ../castle_emission/Spec.bend as E
+import ../../../legal_probe/Chess.bend as Chess
+import ./Bind.bend as Bind
+import ./Query.bend as Q
+
+def start(+c: O.Cells,+b: Chess.Board,+src: U32,+dst: U32,+transit: U32,+tail: List<&2,Chess.Ply>,+check: Bool) ->
+  {Bind.moves_table(Chess.castle_start(b,src,dst,transit,tail,(O.pack(c),check))) == O.pack(c) : Array<U64>}:
+  Bind.boolean(r => {Bind.moves_table(Chess.castle_finish(Chess.Ply{src,dst,0,2},check,tail,r)) == O.pack(c) : Array<U64>},
+    c,Chess.in_check(O.pack(c),Chess.make_move(b,Chess.Ply{src,transit,0,0}),Chess.get_turn(b)),
+    Q.checked(c,Chess.make_move(b,Chess.Ply{src,transit,0,0}),Chess.get_turn(b)),v => {==})
+
+def checked(ok: Bool,+c: O.Cells,+b: Chess.Board,+src: U32,+dst: U32,+transit: U32,+tail: List<&2,Chess.Ply>) ->
+  {Bind.moves_table(Chess.castle_checked(ok,O.pack(c),b,src,dst,transit,tail)) == O.pack(c) : Array<U64>}:
+  match ok:
+    case False{}: {==}
+    case True{}:
+      Bind.boolean(r => {Bind.moves_table(Chess.castle_start(b,src,dst,transit,tail,r)) == O.pack(c) : Array<U64>},
+        c,Chess.in_check(O.pack(c),b,Chess.get_turn(b)),Q.checked(c,b,Chess.get_turn(b)),
+        v => start(c,b,src,dst,transit,tail,v))
+
+def side(+c: O.Cells,+b: Chess.Board,+ks: Bool,+tail: List<&2,Chess.Ply>) ->
+  {Bind.moves_table(Chess.castle_side(b,ks,(O.pack(c),tail))) == O.pack(c) : Array<U64>}:
+  checked(E.guard(b,ks),c,b,E.src(b),E.dst(b,ks),E.transit(b,ks),tail)

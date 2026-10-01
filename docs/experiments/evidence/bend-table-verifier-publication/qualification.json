@@ -1,0 +1,29 @@
+{
+  "qualification": "PASS",
+  "run": "36332433712",
+  "source": "a1a90374fe9ef320bb913872137a45453d8ddd32",
+  "source_tree": "220c52b0f5b2fee5a7e0002e587811be4ffb7a56",
+  "base": "012d0b0bc883065745433baa5436078083c4310e",
+  "host_test_methods": 59,
+  "host_optimization_modes": 3,
+  "preservation_source_modes": [
+    "normal",
+    "-O"
+  ],
+  "preservation_native_python_optimization": 2,
+  "preservation_laws_rerun": 5,
+  "preservation_controls_rerun": 17,
+  "followup_laws_rerun": 2,
+  "followup_controls_rerun": 15,
+  "followup_python_optimization": 0,
+  "native_build_modes_per_suite": 4,
+  "native_observations_match_prior_suites": true,
+  "native_source_entries": 645,
+  "new_formal_laws": 0,
+  "new_registered_controls": 0,
+  "modular_laws": 200,
+  "modular_controls": 655,
+  "combined_wrapper_executed": false,
+  "independent_review": false,
+  "active_bend_source_changed": false
+}

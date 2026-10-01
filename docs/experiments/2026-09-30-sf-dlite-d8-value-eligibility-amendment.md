@@ -82,6 +82,13 @@ its exact command record has SHA-256
 The launch receipt at
 `labels/sf_dlite_legacy_g10_d8_full05_20260930/LAUNCH-1790801293986850286.json`
 has SHA-256 `5ba5f55062cb401930a3e6ff682ec78c4366cc06e0d59ec27d04ad5ad0906a0b`.
+At the original preregistration publication, full05 was **running and unadmitted**;
+a complete terminal and independent all-row audit were still required before
+building targets. The subsequent readout below preserves the outcome of that
+attempt without retrospectively changing its eligibility rule.
+
+## Subsequent full05 failure readout
+
 Full05 stopped after 453.04 seconds with `FAILED_NO_LABEL_CREDIT`. Its failed
 launch receipt is
 `labels/sf_dlite_legacy_g10_d8_full05_20260930/LAUNCH-1790801293986850286-FAILED.json`

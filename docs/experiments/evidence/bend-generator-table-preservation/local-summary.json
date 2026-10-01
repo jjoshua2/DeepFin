@@ -1,0 +1,104 @@
+{
+  "source_gate": "PASS",
+  "laws": 5,
+  "controls": 17,
+  "control_categories": {
+    "source semantic/refinement": 8,
+    "manifest/import policy": 8,
+    "synthetic output-wrapper unit": 1
+  },
+  "consumer": {
+    "exit_code": 0,
+    "raw_text": "All terms check.\n",
+    "sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84",
+    "seconds": 0.7388357820000238
+  },
+  "native_gate": "PASS",
+  "native_modes": [
+    {
+      "mode": "generic",
+      "requests": 173,
+      "complete_buffers": 173,
+      "compared_cells": 2313088,
+      "compared_u32_fields": 4626176,
+      "moves_observed": 2367,
+      "invalid_rejections": 7,
+      "observations_sha256": "06438afd138327cc412d2eb852f6777a41d3b29145648bf5af31f3bc0752f625"
+    },
+    {
+      "mode": "portable",
+      "requests": 173,
+      "complete_buffers": 173,
+      "compared_cells": 2313088,
+      "compared_u32_fields": 4626176,
+      "moves_observed": 2367,
+      "invalid_rejections": 7,
+      "observations_sha256": "06438afd138327cc412d2eb852f6777a41d3b29145648bf5af31f3bc0752f625"
+    },
+    {
+      "mode": "native",
+      "requests": 173,
+      "complete_buffers": 173,
+      "compared_cells": 2313088,
+      "compared_u32_fields": 4626176,
+      "moves_observed": 2367,
+      "invalid_rejections": 7,
+      "observations_sha256": "06438afd138327cc412d2eb852f6777a41d3b29145648bf5af31f3bc0752f625"
+    },
+    {
+      "mode": "ubsan",
+      "requests": 173,
+      "complete_buffers": 173,
+      "compared_cells": 2313088,
+      "compared_u32_fields": 4626176,
+      "moves_observed": 2367,
+      "invalid_rejections": 7,
+      "observations_sha256": "06438afd138327cc412d2eb852f6777a41d3b29145648bf5af31f3bc0752f625"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "scan-corrupts-unused-cell",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "build_mode": "generic",
+      "full_generator_cases": 8,
+      "all_move_lists_match_clean": true,
+      "corrupt_buffers": 7,
+      "first_changed_cell": 131071,
+      "before": "cell 0 0",
+      "after": "cell 305419896 2596069104"
+    },
+    {
+      "name": "unchecked-filter-corrupts-unused-cell",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "build_mode": "generic",
+      "full_generator_cases": 8,
+      "all_move_lists_match_clean": true,
+      "corrupt_buffers": 2,
+      "first_changed_cell": 131071,
+      "before": "cell 0 0",
+      "after": "cell 305419896 2596069104"
+    },
+    {
+      "name": "queen-combination-corrupts-unused-cell",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "build_mode": "generic",
+      "full_generator_cases": 8,
+      "all_move_lists_match_clean": true,
+      "corrupt_buffers": 6,
+      "first_changed_cell": 131071,
+      "before": "cell 0 0",
+      "after": "cell 305419896 2596069104"
+    }
+  ],
+  "local_native_report_sha256": "965b9b445f0fd6c4e754ebb89ca08bab835aef567a9d13930509b6a0e7fca0d7",
+  "local_focused_report_sha256": "918ffe021d491300f0becbeb12c8019209de6a4f3fdf9ce5aefb78255c226b83",
+  "original_compiler_source_gate": "PASS",
+  "pin_tests": 12,
+  "lint": "FAIL_MISSING_TOOLS",
+  "independent_review": false,
+  "note": "Local native run preceded creation of focused.py and README; all native-executed source bytes are unchanged. Final unified hosted qualification is required for the final complete manifest."
+}
