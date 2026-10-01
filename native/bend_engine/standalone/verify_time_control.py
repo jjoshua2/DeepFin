@@ -35,7 +35,15 @@ def search(c: Client, board: chess.Board, limits: str, expected_ms: int,
             'completed_simulations': record['completed_simulations'], 'move': move.uci()}
 
 
+def require_assertions() -> None:
+    # The shared Client/state oracle and this verifier use assertions. Refuse
+    # optimized Python rather than ever publishing a weakened qualification.
+    if not __debug__:
+        raise RuntimeError('qualification requires assertions; run without -O/-OO/PYTHONOPTIMIZE')
+
+
 def verify(command: list[str]) -> dict[str, object]:
+    require_assertions()
     c = Client(command)
     checks: list[dict[str, object]] = []
     invalid = 0

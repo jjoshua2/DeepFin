@@ -66,7 +66,9 @@ planned checks, not claimed results.
    settings; clock overhead; go ponder/ponderhit with a fresh post-hit clock;
    searchmoves root restriction; explicit unsupported options; transactional
    position/ucinewgame; stop/quit exactly once and physical retirement. Supported
-   maximum history/search/arena bounds must be explicit and suitable for games
+   maximum history/search/arena bounds must be explicit and suitable for games.
+   The native bridge's current process-wide 65,536-forward diagnostic limit must
+   be removed or replaced with a tournament-suitable, checked lifecycle
 2. Search integration: configurable arenas and useful continuation beyond the
    initial diagnostic horizon; native PUCT parameters and selection/backup
    semantics; shared-tree walkers if required for the production comparison.
