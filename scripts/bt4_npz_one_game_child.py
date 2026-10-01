@@ -51,7 +51,8 @@ def run(packet_path: Path, attempt: Path) -> dict:
     unit.need(packet_path.is_absolute() and attempt.is_absolute() and
               attempt.is_dir() and attempt.parent.joinpath("CLAIM.json").exists(),
               "owned packet/attempt path")
-    claim = unit.claim_from_bytes((attempt.parent / "CLAIM.json").read_bytes())
+    claim = unit.claim_from_bytes(unit.bounded_file(
+        attempt.parent / "CLAIM.json", 1 << 20))
     packet_raw = unit.pinned_file(packet_path, claim.config_sha256, 1 << 20)
     decoded = json.loads(packet_raw)
     if type(decoded) is not dict:

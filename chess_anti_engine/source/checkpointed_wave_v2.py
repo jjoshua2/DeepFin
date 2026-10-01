@@ -440,6 +440,7 @@ class SegmentStore:
                 self._budget(start, 0)
         need(next(iterator, None) is None and count == first['rows'],
              'wave 2 trailing/count')
+        self._budget(start, 0)
         receipt = {'schema': 'tri_paired_wave_comparison_v2',
                    'claim_sha256': sha(self.claim_raw), 'segment': number,
                    'segment_receipt_sha256':

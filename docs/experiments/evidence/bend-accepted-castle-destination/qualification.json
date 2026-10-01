@@ -1,0 +1,19 @@
+{
+  "qualification": "PASS",
+  "run": "36336288019",
+  "source": "3bb477d4c243b6235a2c7ff5730fae97dd51e96a",
+  "source_tree": "8c6e103c4d271d339fa8283eed45c2a160a3eea7",
+  "base": "e452fcc965c09fe52010c65ff9b25abcb48ec57d",
+  "new_laws": 3,
+  "new_controls": 17,
+  "retained_parent_laws": 200,
+  "retained_parent_controls": 655,
+  "modular_laws": 203,
+  "modular_controls": 672,
+  "combined_wrapper_executed": false,
+  "native_source_entries": 661,
+  "full_generator_destination_geometry": true,
+  "full_generator_all_three_stage_safety": false,
+  "universal_forward_reverse_equivalence": false,
+  "independent_review": false
+}

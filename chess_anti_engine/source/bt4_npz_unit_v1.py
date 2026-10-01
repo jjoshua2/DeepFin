@@ -43,6 +43,22 @@ OLD_ROW_KEYS = frozenset({
     "history_stack_sha256", "repetition", "rule50",
     "legal_context_sha256", "teacher_query_sha256", "outcome",
 })
+OLD_PROOF_KEYS = frozenset({
+    "archive_sha256", "game_id", "history_chain", "root_id", "source",
+    "source_proof", "source_proof_sha256", "strict_trace", "terminal_fact",
+})
+OLD_SOURCE_PROOF_KEYS = frozenset({
+    "archive_sha256", "checks", "detail", "evidence", "final_fen", "game_id",
+    "gross_rows", "raw_archive_sha256", "result", "root_id", "schema",
+    "source", "source_verifier_sha256", "status", "strict_receipt_sha256",
+    "termination",
+})
+OLD_TERMINAL_KEYS = frozenset({
+    "final_fen", "first_terminal_ply", "game_id", "outcome_used_as_target",
+    "pair_members", "raw_dtz", "raw_wdl", "result", "root_id", "rows",
+    "signature", "source", "source_archive_sha256",
+    "source_strict_receipt_sha256", "terminal_replayed", "termination",
+})
 NEW_PROOF_KEYS = frozenset({"game_proof_sha256",
                             "syzygy_inventory_sha256"})
 LOCAL_CODE_KEYS = frozenset({
@@ -96,10 +112,10 @@ def verify_local_code(pins: dict[str, str]) -> None:
         pinned_file(path.resolve(), pins[name], 1 << 20)
 
 
-def pinned_file(path: Path, digest: str, cap: int) -> bytes:
-    """Read a pinned regular file through no-follow components and exact SHA."""
-    need(path.is_absolute() and hex64(digest) and 0 < cap <= MAX_ARCHIVE_BYTES,
-         "pinned path/SHA/cap")
+def bounded_file(path: Path, cap: int) -> bytes:
+    """Read one bounded regular-file snapshot through no-follow components."""
+    need(path.is_absolute() and ".." not in path.parts and
+         0 < cap <= MAX_ARCHIVE_BYTES, "pinned path/SHA/cap")
     parent = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     try:
         for part in path.parts[1:-1]:
@@ -125,13 +141,19 @@ def pinned_file(path: Path, digest: str, cap: int) -> bytes:
                 return (info.st_dev, info.st_ino, info.st_size,
                         info.st_mtime_ns, info.st_ctime_ns)
             raw = b"".join(blocks)
-            need(identity(before) == identity(after) and sha(raw) == digest,
-                 "pinned file changed/SHA")
+            need(identity(before) == identity(after), "pinned file changed/SHA")
             return raw
         finally:
             os.close(fd)
     finally:
         os.close(parent)
+
+
+def pinned_file(path: Path, digest: str, cap: int) -> bytes:
+    need(hex64(digest), "pinned path/SHA/cap")
+    raw = bounded_file(path, cap)
+    need(sha(raw) == digest, "pinned file changed/SHA")
+    return raw
 
 
 @dataclass(frozen=True)
@@ -266,6 +288,7 @@ def load_old_witness(files: WitnessFiles, expected: GameIdentity) -> OldWitness:
          all(type(value) is str and value for value in routes) and
          canonical(routes) == routes_raw,
          "canonical old proof/routes")
+    validate_old_proof(proof, expected)
     return OldWitness(_decode_rows(metadata, native, expected,
                                    enriched=False),
                       proof, tuple(routes))
@@ -315,12 +338,13 @@ def write_game_output(attempt: Path, claim: UnitClaim,
     return result
 
 
-def verify_game_output(attempt: Path, claim: UnitClaim,
+def verify_game_output(payloads: dict[str, bytes], claim: UnitClaim,
                        witness: OldWitness,
                        route: Callable[[list], object]) -> None:
-    metadata = (attempt / OUTPUT_NAMES[0]).read_bytes()
-    native = (attempt / OUTPUT_NAMES[1]).read_bytes()
-    proof_raw = (attempt / OUTPUT_NAMES[2]).read_bytes()
+    need(set(payloads) == set(OUTPUT_NAMES), "complete verified game payloads")
+    metadata = payloads[OUTPUT_NAMES[0]]
+    native = payloads[OUTPUT_NAMES[1]]
+    proof_raw = payloads[OUTPUT_NAMES[2]]
     proof = json.loads(proof_raw)
     need(type(proof) is dict and canonical(proof) == proof_raw,
          "child proof canonical bytes")
@@ -379,6 +403,8 @@ def compare_old_witness(game: BoundGame, *, old_rows: tuple[tuple[dict, bytes], 
     raw_projection = {**game.proof, "terminal_fact":
                       {key: value for key, value in terminal.items()
                        if key != "syzygy_inventory_sha256"}}
+    validate_old_proof(old_proof, expected)
+    validate_old_proof(raw_projection, expected)
     need(len(game.rows) == len(old_rows) == len(old_routes) == expected.rows and
          set(game.proof) == set(old_proof) and
          canonical(raw_projection) == canonical(old_proof),
@@ -415,6 +441,51 @@ def compare_old_witness(game: BoundGame, *, old_rows: tuple[tuple[dict, bytes], 
              f"old UID/native/context/outcome/route differs at {index}")
 
 
+def validate_old_proof(proof: dict, expected: GameIdentity) -> None:
+    """Require the saved bridge format, not two equally incomplete witnesses."""
+    source = proof.get("source_proof")
+    terminal = proof.get("terminal_fact")
+    history = proof.get("history_chain")
+    trace = proof.get("strict_trace")
+    if type(source) is not dict or type(terminal) is not dict or type(history) is not dict:
+        raise Hold("complete raw old replay proof")
+    need(set(proof) == set(OLD_PROOF_KEYS) and
+         set(source) == set(OLD_SOURCE_PROOF_KEYS) and
+         set(terminal) == set(OLD_TERMINAL_KEYS) and
+         set(history) == {"opening_uci", "played_uci", "root_start_fen",
+                          "row_index", "schema", "terminal_fen"} and
+         history.get("schema") == "tri_source_full_game_history_chain_v1" and
+         history.get("opening_uci") == list(expected.root_prefix_uci) and
+         type(history.get("played_uci")) is list and
+         len(history["played_uci"]) == expected.rows and
+         type(history.get("row_index")) is list and
+         len(history["row_index"]) == expected.rows and
+         type(trace) is list and len(trace) == expected.rows + 1,
+         "complete raw old replay proof")
+    need(source["schema"] == "full512_raw_strict_source_proof_v1" and
+         source["status"] == "PASS_SOURCE_PROOF" and
+         type(source["checks"]) is dict and
+         set(source["checks"]) == {"feed", "policy", "strict_receipt", "terminal"} and
+         all(value is True for value in source["checks"].values()) and
+         type(source["evidence"]) is dict and bool(source["evidence"]) and
+         hex64(source["source_verifier_sha256"]) and
+         sha(canonical(source)) == proof.get("source_proof_sha256") and
+         source["raw_archive_sha256"] == expected.archive_sha256 and
+         source["gross_rows"] == terminal["rows"] == expected.rows and
+         source["strict_receipt_sha256"] ==
+             terminal["source_strict_receipt_sha256"] ==
+             expected.strict_receipt_sha256 and
+         proof.get("archive_sha256") == source["archive_sha256"] ==
+             terminal["source_archive_sha256"] == expected.archive_sha256 and
+         proof.get("source") == source["source"] == terminal["source"] == SOURCE and
+         proof.get("root_id") == source["root_id"] ==
+             terminal["root_id"] == expected.root_id and
+         proof.get("game_id") == source["game_id"] ==
+             terminal["game_id"] == expected.game_id and
+         terminal["terminal_replayed"] is True,
+         "complete raw old replay proof identity")
+
+
 def enrich_old_replay_proof(raw_proof: dict, old_proof: dict,
                             expected: GameIdentity,
                             syzygy_inventory_sha256: str) -> dict:
@@ -431,6 +502,7 @@ def enrich_old_replay_proof(raw_proof: dict, old_proof: dict,
          terminal.get("terminal_replayed") is True and
          terminal.get("rows") == expected.rows,
          "raw old replay proof/gate inventory differs")
+    validate_old_proof(raw_proof, expected)
     return {**raw_proof, "terminal_fact":
             {**terminal,
              "syzygy_inventory_sha256": syzygy_inventory_sha256}}
@@ -582,7 +654,18 @@ class UnitClaim:
             self.expected.archive_sha256,
             self.expected.strict_receipt_sha256)), "unit SHA pins")
         verify_local_code(self.local_code_sha256)
-        need(0 < self.expected.rows <= MAX_ROWS and
+        need(type(self.expected.game_id) is int and
+             0 <= self.expected.game_id <= sort.U32 and
+             type(self.expected.namespace) is str and bool(self.expected.namespace) and
+             type(self.expected.root_id) is str and bool(self.expected.root_id) and
+             type(self.expected.root_prefix_uci) is tuple and
+             len(self.expected.root_prefix_uci) == 16 and
+             all(type(move) is str and 4 <= len(move) <= 5
+                 for move in self.expected.root_prefix_uci) and
+             all(type(value) is int for value in (
+                 self.expected.rows, self.wall_seconds, self.rss_bytes,
+                 self.output_bytes, self.archive_context_bytes)) and
+             0 < self.expected.rows <= MAX_ROWS and
              0 < self.wall_seconds <= MAX_WALL_SECONDS and
              0 < self.rss_bytes <= MAX_RSS_BYTES and
              0 < self.output_bytes <= MAX_OUTPUT_BYTES and
@@ -722,7 +805,7 @@ def _kill_group(process: subprocess.Popen[bytes]) -> None:
 
 def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
                     output_names: tuple[str, ...],
-                    verify_output: Callable[[Path], None]) -> dict:
+                    verify_output: Callable[[dict[str, bytes]], None]) -> dict:
     """Own and seal a bounded child attempt; previous failed attempts stay visible.
 
     The child writes output files into the attempt directory and a canonical
@@ -730,11 +813,12 @@ def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
     """
     claim.validate()
     need(root.is_absolute() and root.exists() and root.is_dir() and
-         not root.is_symlink() and
+         not root.is_symlink() and root == root.resolve() and
          type(argv) is tuple and len(argv) >= 3 and
          all(type(arg) is str and arg for arg in argv) and
          0 < len(output_names) <= 4 and len(set(output_names)) == len(output_names) and
-         all(re.fullmatch(r"[A-Za-z0-9_.-]+", name) is not None
+         all(re.fullmatch(r"[A-Za-z0-9_.-]+", name) is not None and
+             name not in {".", "..", "RESULT.json", "stdout.log", "stderr.log"}
              for name in output_names) and
          callable(verify_output),
          "owned unit path/command/outputs")
@@ -753,14 +837,15 @@ def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
     claim_raw = canonical(claim.as_json())
     claim_path = root / "CLAIM.json"
     if claim_path.exists():
-        need(claim_path.read_bytes() == claim_raw, "unit claim/source/config changed")
+        need(bounded_file(claim_path, 1 << 20) == claim_raw,
+             "unit claim/source/config changed")
     else:
         wave.atomic_write(claim_path, claim_raw)
     complete_path = root / "COMPLETE.json"
     if complete_path.exists():
-        complete_raw = complete_path.read_bytes()
+        complete_raw = bounded_file(complete_path, 1 << 20)
         complete = json.loads(complete_raw)
-        need(complete_raw == canonical(complete) and
+        need(type(complete) is dict and complete_raw == canonical(complete) and
              complete.get("schema") == "bt4_npz_owned_one_game_complete_v1" and
              set(complete) == {"schema", "claim_sha256", "attempt",
                                "outputs", "result_sha256",
@@ -778,21 +863,20 @@ def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
              0 <= complete["wall_seconds"] <= claim.wall_seconds,
              "complete attempt/result shape")
         attempt = root / complete["attempt"]
-        need(sha(pinned_file(attempt / "RESULT.json",
-                             complete["result_sha256"], 1 << 20)) ==
-             complete["result_sha256"], "complete result changed")
-        result = json.loads((attempt / "RESULT.json").read_bytes())
+        result_raw = pinned_file(attempt / "RESULT.json",
+                                 complete["result_sha256"], 1 << 20)
+        result = json.loads(result_raw)
         need(type(result) is dict, "complete result/source differs")
         archive_bytes = result.get("logical_archive_bytes")
         context_bytes = result.get("logical_context_bytes")
-        need(type(result) is dict and
+        need(type(result) is dict and result_raw == canonical(result) and
              set(result) == {"schema", "claim_sha256", "rows",
                              "logical_archive_bytes", "logical_context_bytes",
                              "outputs"} and
              result.get("schema") == "bt4_npz_owned_one_game_result_v1" and
              result.get("claim_sha256") == sha(claim_raw) and
              result.get("outputs") == complete["outputs"] and
-             result.get("rows") == claim.expected.rows and
+             result.get("rows") == complete.get("rows") == claim.expected.rows and
              type(archive_bytes) is int and
              0 < archive_bytes <= MAX_ARCHIVE_BYTES and
              type(context_bytes) is int and
@@ -803,15 +887,13 @@ def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
              result.get("logical_context_bytes") ==
                  complete.get("logical_context_bytes"),
              "complete result/source differs")
-        for name, digest in complete["outputs"].items():
-            need(name in output_names and
-                 hex64(digest) and
-                 sha(pinned_file(attempt / name, digest,
-                                 claim.output_bytes)) == digest,
-                 "complete output changed")
         need(set(complete["outputs"]) == set(output_names),
              "complete output set")
-        verify_output(attempt)
+        payloads = {name: pinned_file(attempt / name, digest, claim.output_bytes)
+                    for name, digest in complete["outputs"].items()}
+        need(sum(len(raw) for raw in payloads.values()) <= claim.output_bytes,
+             "complete output cap")
+        verify_output(payloads)
         return complete
     index = 0
     while (root / f"attempt_{index:04d}").exists():
@@ -834,12 +916,17 @@ def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
            "BT4_CHILD_WALL_SECONDS": str(claim.wall_seconds),
            "BT4_INTERPRETER_PATH": interpreter_arg}
     with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr:
-        process = subprocess.Popen(
-            (*argv, str(attempt)), stdout=stdout, stderr=stderr,
-            # The exec guard installs PDEATH and SIGALRM before archive code.
-            start_new_session=True, env=env)
+        process: subprocess.Popen[bytes] | None = None
         failure = None
+        # Defer the owner alarm until the child handle is owned by the cleanup
+        # scope. The exec guard unblocks its inherited mask before replay.
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK,
+                                               {signal.SIGALRM})
         try:
+            process = subprocess.Popen(
+                (*argv, str(attempt)), stdout=stdout, stderr=stderr,
+                start_new_session=True, env=env)
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
             while process.poll() is None:
                 peak_rss = max(peak_rss, sum(_rss_bytes(pid) for pid in
                                              _tree_pids(process.pid)))
@@ -856,7 +943,11 @@ def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
         finally:
             # Also reap if monitoring itself raises. Kill surviving descendants
             # after an otherwise successful direct-child exit.
-            _kill_group(process)
+            try:
+                if process is not None:
+                    _kill_group(process)
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         exit_code = process.wait()
         stdout.flush()
         os.fsync(stdout.fileno())
@@ -865,11 +956,9 @@ def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
     if failure is not None or exit_code != 0:
         raise Hold(f"owned child failed: {failure or exit_code}; attempt={attempt.name}")
     result_path = attempt / "RESULT.json"
-    need(result_path.exists() and result_path.stat().st_size <= 1 << 20,
-         "owned result missing/oversize")
-    result_raw = result_path.read_bytes()
+    result_raw = bounded_file(result_path, 1 << 20)
     result = json.loads(result_raw)
-    need(result_raw == canonical(result) and
+    need(type(result) is dict and result_raw == canonical(result) and
          result.get("schema") == "bt4_npz_owned_one_game_result_v1" and
          set(result) == {"schema", "claim_sha256", "rows",
                          "logical_archive_bytes", "logical_context_bytes",
@@ -885,15 +974,12 @@ def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
          type(result.get("outputs")) is dict and
          set(result["outputs"]) == set(output_names),
          "owned result/source/cap")
-    for name, digest in result["outputs"].items():
-        need(hex64(digest) and
-             sha(pinned_file(attempt / name, digest,
-                             claim.output_bytes)) == digest,
-             "owned output SHA")
+    payloads = {name: pinned_file(attempt / name, digest, claim.output_bytes)
+                for name, digest in result["outputs"].items()}
     need(sum(path.stat().st_size for path in attempt.iterdir()
              if path.is_file()) <= claim.output_bytes,
          "owned final output cap")
-    verify_output(attempt)
+    verify_output(payloads)
     elapsed = time.monotonic() - start
     need(elapsed <= claim.wall_seconds and
          (_owner_deadline is None or time.monotonic() <= _owner_deadline),
@@ -908,13 +994,21 @@ def _run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
                 "rows": result["rows"],
                 "peak_rss_bytes": peak_rss,
                 "wall_seconds": round(elapsed, 6)}
-    wave.atomic_write(complete_path, canonical(complete))
+    try:
+        wave.atomic_write(complete_path, canonical(complete))
+        need(_owner_deadline is None or time.monotonic() <= _owner_deadline,
+             "wall cap")
+    except BaseException:
+        # A deadline or failed fsync must not leave a resumable success receipt.
+        complete_path.unlink(missing_ok=True)
+        wave.fsync_directory(root)
+        raise
     return complete
 
 
 def run_owned_unit(root: Path, claim: UnitClaim, *, argv: tuple[str, ...],
                    output_names: tuple[str, ...],
-                   verify_output: Callable[[Path], None]) -> dict:
+                   verify_output: Callable[[dict[str, bytes]], None]) -> dict:
     with owned_deadline(claim.wall_seconds):
         return _run_owned_unit(root, claim, argv=argv,
                                output_names=output_names,
@@ -946,8 +1040,8 @@ def _run_bt4_packet_unit(root: Path, claim: UnitClaim, *, packet_path: Path,
     pinned_file(route_path, claim.route_sha256, 1 << 20)
     witness = load_old_witness(witness_files, claim.expected)
 
-    def verify(attempt: Path) -> None:
-        verify_game_output(attempt, claim, witness, route)
+    def verify(payloads: dict[str, bytes]) -> None:
+        verify_game_output(payloads, claim, witness, route)
 
     return run_owned_unit(root, claim, argv=argv,
                           output_names=OUTPUT_NAMES,

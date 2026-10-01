@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import hashlib
 import json
 import os
@@ -125,7 +126,7 @@ def _run_child(root: str, hook: str) -> None:
         raise ValueError("unknown kill hook")
 
 
-def test_literal_uid_paired_candidate_and_sort(tmp_path: Path) -> None:
+def _case_literal_uid_paired_candidate_and_sort(tmp_path: Path) -> None:
     pipeline, source = _pipeline(tmp_path)
     pipeline.wave1()
     runs = pipeline.wave2_metadata_sort(_sort(tmp_path, source))
@@ -147,13 +148,13 @@ def test_literal_uid_paired_candidate_and_sort(tmp_path: Path) -> None:
     assert wave.file_sha(pipeline.root / "candidate_00000000" / "RECEIPT.json") == before
 
 
-def test_8195_midgame_two_crash_boundaries_resume_and_noop(tmp_path: Path) -> None:
+def _case_8195_midgame_two_crash_boundaries_resume_and_noop(tmp_path: Path) -> None:
     script = ("import runpy,sys; "
               "runpy.run_path(sys.argv[1])['_run_child'](sys.argv[2],sys.argv[3])")
     exit_code = sort.run_owned_cpu(
         [sys.executable, "-c", script, __file__, str(tmp_path), "wave"],
         log_path=tmp_path / "kill.log", timeout_seconds=90)
-    assert exit_code == -signal.SIGKILL
+    assert exit_code == -signal.SIGKILL, (tmp_path / "kill.log").read_text()
     sealed_wave = tmp_path / "waves" / "segment_00000000" / "RECEIPT.json"
     assert sealed_wave.exists()
     wave_hash = wave.file_sha(sealed_wave)
@@ -163,7 +164,7 @@ def test_8195_midgame_two_crash_boundaries_resume_and_noop(tmp_path: Path) -> No
     exit_code = sort.run_owned_cpu(
         [sys.executable, "-c", script, __file__, str(tmp_path), "comparison"],
         log_path=tmp_path / "kill-comparison.log", timeout_seconds=90)
-    assert exit_code == -signal.SIGKILL
+    assert exit_code == -signal.SIGKILL, (tmp_path / "kill-comparison.log").read_text()
     comparison = tmp_path / "waves" / "compare_00000000.json"
     assert comparison.exists()
     assert not first.exists()
@@ -190,7 +191,7 @@ def test_8195_midgame_two_crash_boundaries_resume_and_noop(tmp_path: Path) -> No
     assert first.stat().st_mtime_ns == sealed_mtime
 
 
-def test_source_namespace_native_and_receipt_tamper_refusal(tmp_path: Path) -> None:
+def _case_source_namespace_native_and_receipt_tamper_refusal(tmp_path: Path) -> None:
     pipeline, source = _pipeline(tmp_path)
     pipeline.wave1()
     changed, _ = _pipeline(tmp_path, tamper_native=True)
@@ -307,7 +308,7 @@ def test_source_namespace_native_and_receipt_tamper_refusal(tmp_path: Path) -> N
     receipt_path.write_bytes(original_receipt)
 
 
-def test_valid_but_false_presealed_sort_run_refused(tmp_path: Path) -> None:
+def _case_valid_but_false_presealed_sort_run_refused(tmp_path: Path) -> None:
     pipeline, source = _pipeline(tmp_path)
     pipeline.wave1()
     pipeline.store.compare_wave2(
@@ -328,7 +329,7 @@ def test_valid_but_false_presealed_sort_run_refused(tmp_path: Path) -> None:
         pipeline.wave2_metadata_sort(sorter)
 
 
-def test_comparison_without_cursor_rechecks_source_bytes(tmp_path: Path) -> None:
+def _case_comparison_without_cursor_rechecks_source_bytes(tmp_path: Path) -> None:
     pipeline, _ = _pipeline(tmp_path)
 
     def interrupt(_: int) -> None:
@@ -347,7 +348,7 @@ def test_comparison_without_cursor_rechecks_source_bytes(tmp_path: Path) -> None
     assert not (pipeline.root / "cursor_00000000.json").exists()
 
 
-def test_direct_wave2_refuses_valid_sealed_truncated_last_segment(
+def _case_direct_wave2_refuses_valid_sealed_truncated_last_segment(
         tmp_path: Path) -> None:
     pipeline, source = _pipeline(tmp_path)
     two_rows = source.reader.read_game(source.locators[0])
@@ -368,3 +369,86 @@ def test_direct_wave2_refuses_valid_sealed_truncated_last_segment(
     assert pipeline.store.verify_comparison(0)["rows"] == 2
     with pytest.raises(wave.Hold, match="paired segment truncated"):
         pipeline.wave2_metadata_sort(_sort(tmp_path, source))
+
+
+# Resource-accounted work must not run in the monolithic pytest process.
+# On Linux an exec also banks the previous address space's RSS high-water mark,
+# so one direct child can still inherit the heavyweight suite's peak. A small
+# supervisor execs first, then forks the owned case with a clean address space.
+# Every actual case still uses SegmentStore's unchanged absolute 1-GiB RSS cap.
+_CURSOR_CASES = (
+    _case_literal_uid_paired_candidate_and_sort,
+    _case_8195_midgame_two_crash_boundaries_resume_and_noop,
+    _case_source_namespace_native_and_receipt_tamper_refusal,
+    _case_valid_but_false_presealed_sort_run_refused,
+    _case_comparison_without_cursor_rechecks_source_bytes,
+    _case_direct_wave2_refuses_valid_sealed_truncated_last_segment,
+)
+
+
+@pytest.mark.parametrize("case", _CURSOR_CASES, ids=lambda case: case.__name__)
+def test_cursor_contract_in_owned_process(
+        tmp_path: Path, case: Callable[[Path], None]) -> None:
+    case_script = (
+        "import runpy,sys; from pathlib import Path; "
+        "namespace=runpy.run_path(sys.argv[1]); "
+        "namespace[sys.argv[3]](Path(sys.argv[2]))")
+    supervisor = (
+        "import sys; from pathlib import Path; "
+        "from chess_anti_engine.source.checkpointed_sort import run_owned_cpu; "
+        "code=run_owned_cpu([sys.executable,'-c',sys.argv[1],*sys.argv[2:]],"
+        "log_path=Path(sys.argv[3])/'case.log',timeout_seconds=540); "
+        "raise SystemExit(code)")
+    code = sort.run_owned_cpu(
+        [sys.executable, "-c", supervisor, case_script,
+         str(Path(__file__).resolve()), str(tmp_path), case.__name__],
+        log_path=tmp_path / "supervisor.log", timeout_seconds=600)
+    assert code == 0, "\n".join(
+        f"{path.name}:\n{path.read_text()}" for path in tmp_path.glob("*.log"))
+
+
+def test_segment_budget_keeps_absolute_default_rss_cap(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pipeline, _ = _pipeline(tmp_path)
+    store = pipeline.store
+    assert store.rss_cap == store.claim["rss_cap_bytes"] == 1 << 30
+    peak_kib = store.rss_cap // 1024
+    requests: list[int] = []
+
+    def usage(who: int) -> SimpleNamespace:
+        requests.append(who)
+        return SimpleNamespace(ru_maxrss=peak_kib)
+
+    monkeypatch.setattr(wave.resource, "getrusage", usage)
+    # Equality is allowed. A previous high-water peak above the cap is still
+    # refused on every call; no baseline subtraction or cap increase is used.
+    store._budget(wave.time.monotonic(), 0)
+    peak_kib += 1
+    for _ in range(2):
+        with pytest.raises(wave.Hold, match="segment RSS cap"):
+            store._budget(wave.time.monotonic(), 0)
+    assert requests == [wave.resource.RUSAGE_SELF] * 3
+
+
+@pytest.mark.parametrize("exceeded", ["RSS", "wall"])
+def test_short_comparison_checks_budget_before_sealing(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exceeded: str) -> None:
+    pipeline, source = _pipeline(tmp_path)
+    store = pipeline.store
+    peak_kib = store.rss_cap // 1024
+    monkeypatch.setattr(
+        wave.resource, "getrusage",
+        lambda _: SimpleNamespace(ru_maxrss=peak_kib))
+    store.seal_wave1(
+        0, source.rows_from(cursor.Cursor(0, 0, None)), expected_rows=4)
+    sealed = store._path(0) / "RECEIPT.json"
+    before = sealed.read_bytes(), sealed.stat().st_mtime_ns
+    if exceeded == "RSS":
+        peak_kib += 1
+    else:
+        ticks = iter((0.0, float(store.wall_cap + 1)))
+        monkeypatch.setattr(wave.time, "monotonic", lambda: next(ticks))
+    with pytest.raises(wave.Hold, match=f"segment {exceeded} cap"):
+        store.compare_wave2(0, source.rows_from(cursor.Cursor(0, 0, None)))
+    assert not (store.root / "compare_00000000.json").exists()
+    assert (sealed.read_bytes(), sealed.stat().st_mtime_ns) == before

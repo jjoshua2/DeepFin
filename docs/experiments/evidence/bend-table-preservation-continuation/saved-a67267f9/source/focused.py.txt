@@ -1,0 +1,200 @@
+"""Check actual whole-generator table preservation and fail-closed controls."""
+from __future__ import annotations
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+import time
+
+SUITE = Path(__file__).resolve().parent
+ENGINE = SUITE.parents[2]
+LAWS = ['ordinary_scan_preserves_table', 'optimized_filter_preserves_table', 'complete_generator_preserves_table']
+
+
+def digest(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest()
+
+
+def code(path: Path) -> str:
+    return '\n'.join(line.split('#', 1)[0] for line in path.read_text().splitlines())
+
+
+def closure(entry: Path, engine: Path) -> dict[str, str]:
+    found: dict[str, str] = {}
+    def visit(path: Path) -> None:
+        absolute = Path(os.path.abspath(path))
+        real = absolute.resolve(strict=True)
+        if absolute != real or not absolute.is_file():
+            raise ValueError(f'Symlink or nonregular proof input: {path}')
+        rel = absolute.relative_to(engine).as_posix()
+        if not (rel.startswith('standalone/') or rel in {'legal_probe/Chess.bend', 'bitboard_probe/Sliders.bend'}):
+            raise ValueError(f'Out-of-scope proof input: {rel}')
+        if rel in found:
+            return
+        found[rel] = digest(absolute.read_bytes())
+        text = code(absolute)
+        if '@unsafe' in text or '?' in text:
+            raise ValueError(f'Unsafe/hole input: {rel}')
+        for imported in re.findall(r'^\s*import\s+(\S+)', text, re.MULTILINE):
+            if imported == 'Base':
+                continue
+            if not re.fullmatch(r'\.{1,2}/[A-Za-z0-9_/.]+\.bend', imported):
+                raise ValueError(f'Foreign proof input: {imported}')
+            visit(absolute.parent / imported)
+    visit(entry)
+    return dict(sorted(found.items()))
+
+
+def manifest(suite: Path) -> None:
+    if re.findall(r'^law (\w+):', code(suite/'LAWS.bend'), re.MULTILINE) != LAWS:
+        raise ValueError('Public law manifest mismatch')
+    if re.findall(r'^def Laws\.(\w+)\(', code(suite/'PROOF.bend'), re.MULTILINE) != LAWS:
+        raise ValueError('Public proof manifest mismatch')
+    if 'import ./PROOF.bend as Proof' not in code(suite/'consumer.bend'):
+        raise ValueError('Consumer not importing proof')
+    if 'import ./LAWS.bend as Laws' not in code(suite/'PROOF.bend'):
+        raise ValueError('Proof not importing laws')
+
+
+def invoke(compiler: Path, entry: Path) -> dict:
+    started = time.monotonic()
+    run = subprocess.run([os.environ.get('BUN', 'bun'), str(compiler/'bend2/main.ts'), str(entry)],
+                         capture_output=True, timeout=120, check=False,
+                         env={**os.environ, 'BEND_NO_TELEMETRY':'1', 'TERM':'dumb'})
+    raw = run.stdout + run.stderr
+    return {'exit_code':run.returncode, 'seconds':time.monotonic()-started,
+            'raw_text':raw.decode(), 'sha256':digest(raw)}
+
+
+def safe(result: dict) -> None:
+    if result['exit_code'] != 0 or result['raw_text'].strip() != 'All terms check.':
+        raise AssertionError(str(result)[-4000:])
+
+
+def replace(path: Path, old: str, new: str) -> None:
+    text = path.read_text()
+    if text.count(old) != 1:
+        raise AssertionError(f'Nonunique mutation in {path}: {text.count(old)}')
+    path.write_text(text.replace(old, new))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('compiler', type=Path)
+    parser.add_argument('--report', type=Path, required=True)
+    args = parser.parse_args()
+    compiler = args.compiler.resolve()
+    verify = [os.environ.get('BUN','bun'), str(ENGINE/'standalone/verify_compiler.js'), str(compiler)]
+    identity = subprocess.run(verify, text=True, capture_output=True, check=True).stdout
+    manifest(SUITE)
+    before = closure(SUITE/'consumer.bend', ENGINE)
+    # Include every suite file as well as the proof closure; additions are tracked.
+    before.update({p.relative_to(ENGINE).as_posix():digest(p.read_bytes()) for p in SUITE.iterdir() if p.is_file()})
+    consumer = invoke(compiler, SUITE/'consumer.bend')
+    safe(consumer)
+    edits = [
+        ('pawn-read-corrupts-table', 'Query.bend', 'legal_probe/Chess.bend',
+         'Array.get(U64, table, U32.add(sq, Bool.pick(U32, U32.is_eq(side, 1), 384, 448)))',
+         'Array.get(U64, Array.set(U64,table,0,U64.zero()), U32.add(sq, Bool.pick(U32, U32.is_eq(side, 1), 384, 448)))', r'Location:.*\battack\b'),
+        ('attack-reducer-loses-table', 'Query.bend', 'legal_probe/Chess.bend',
+         '(table, Bool.not(U64.is_zero(U64.and(hits, color(b, by)))))',
+         '(ALeaf{U64.zero()}, Bool.not(U64.is_zero(U64.and(hits, color(b, by)))))', r'Location:.*\battacked_rook\b'),
+        ('ordinary-scan-corrupts-table', 'Scan.bend', 'legal_probe/Chess.bend',
+         '(table, destinations(64n, U64.is_zero(targets), targets, src, pawn, ep_sq, acc))',
+         '(Array.set(U64,table,131071,U64.zero()), destinations(64n, U64.is_zero(targets), targets, src, pawn, ep_sq, acc))', r'Location:.*\bstep\b'),
+        ('unchecked-filter-corrupts-table', 'Filter.bend', 'legal_probe/Chess.bend',
+         '(table, Con{m, acc})', '(Array.set(U64,table,131071,U64.zero()), Con{m, acc})', r'Location:.*\bfast_step\b'),
+        ('rejected-castle-loses-table', 'Castle.bend', 'legal_probe/Chess.bend',
+         'case False{}: (table, acc)', 'case False{}: (ALeaf{U64.zero()}, acc)', r'Location:.*\bchecked\b'),
+        ('generator-reinitializes-table', 'Generator.bend', 'legal_probe/Chess.bend',
+         'scan(bit_squares(64n, U64.is_zero(own), own, Nil{}), b, (table, Nil{}))',
+         'scan(bit_squares(64n, U64.is_zero(own), own, Nil{}), b, (Array.set(U64,table,131071,U64.zero()), Nil{}))', r'Location:.*\blegal\b'),
+        ('false-public-result', 'consumer.bend', 'standalone/proofs/table_preservation/LAWS.bend',
+         '{Bind.moves_table(Chess.legal_moves(table,b)) == table : Array<U64>}',
+         '{Bind.moves_table(Chess.legal_moves(table,b)) == ALeaf{U64.zero()} : Array<U64>}', r'Location:.*complete_generator_preserves_table'),
+        ('missing-bind-certificate', 'Bind.bend', 'standalone/proofs/table_preservation/Bind.bend',
+         'kept: {O.storage(r) == O.pack(c) : Array<U64>}', 'kept: {True{} == True{} : Bool}', r'Location:.*\bmask\b'),
+    ]
+    records = []
+    logs = args.report.parent / 'focused-logs'
+    logs.mkdir(parents=True, exist_ok=True)
+    (logs/'consumer.log').write_text(consumer['raw_text'])
+    for name, entry, target, old, new, location in edits:
+        with tempfile.TemporaryDirectory(prefix='table-preservation-control-') as td:
+            copied = Path(td)/'engine'
+            shutil.copytree(ENGINE, copied, symlinks=True, ignore=shutil.ignore_patterns('__pycache__'))
+            replace(copied/target, old, new)
+            result = invoke(compiler, copied/'standalone/proofs/table_preservation'/entry)
+            (logs/(name+'.log')).write_text(result['raw_text'])
+            text = result['raw_text']
+            forbidden = ['no such file', 'RangeError', 'Maximum call stack', 'more than once', 'a decreasing self-call', 'Segmentation fault', 'a defined name', 'a pattern (a binder']
+            if not (result['exit_code']==1 and 'expected' in text and 'observed' in text
+                    and re.search(location,text) and not any(x in text for x in forbidden)):
+                raise AssertionError(f'{name} is not an intended semantic rejection: {result}')
+            records.append({'name':name, 'kind':'source semantic/refinement', 'rejected':True, 'entry':entry, **result})
+            print('PASS source control', name, flush=True)
+    checks = [
+        ('missing-law','LAWS.bend','law ordinary_scan_preserves_table:','def missing:'),
+        ('missing-proof','PROOF.bend','def Laws.ordinary_scan_preserves_table(','def missing('),
+        ('missing-law-import','PROOF.bend','import ./LAWS.bend as Laws',''),
+        ('missing-consumer-import','consumer.bend','import ./PROOF.bend as Proof',''),
+        ('proof-hole','Generator.bend',None,'\n?missing\n'),
+        ('unsafe-proof','Generator.bend',None,'\n@unsafe\n'),
+        ('foreign-proof','Generator.bend',None,'\nimport "./oracle.c"\n'),
+        ('symlink-proof','Generator.bend',None,None),
+    ]
+    for name, file, old, new in checks:
+        with tempfile.TemporaryDirectory(prefix='table-preservation-policy-') as td:
+            copied=Path(td)/'engine'
+            shutil.copytree(ENGINE,copied,symlinks=True,ignore=shutil.ignore_patterns('__pycache__'))
+            suite=copied/'standalone/proofs/table_preservation'; target=suite/file
+            if old is not None:
+                replace(target,old,new)
+            elif new is not None:
+                target.write_text(target.read_text()+new)
+            else:
+                target.rename(target.with_suffix('.original'))
+                target.symlink_to(target.with_suffix('.original').name)
+            rejected=False
+            try:
+                manifest(suite)
+                closure(suite/'consumer.bend',copied)
+            except (ValueError, OSError):
+                rejected=True
+            if not rejected:
+                raise AssertionError('Policy mutation accepted: '+name)
+            records.append({'name':name,'kind':'manifest/import policy','rejected':True})
+    try:
+        safe({'exit_code':0,'raw_text':'All terms check.\nWARNING: unsafe dependency'})
+    except AssertionError:
+        records.append({'name':'warning-on-zero-exit','kind':'synthetic output-wrapper unit','rejected':True})
+    else:
+        raise AssertionError('Warning was accepted')
+    assert len(records)==17
+    # Demonstrate the exact boundary: wrong answers need not change the stored array.
+    with tempfile.TemporaryDirectory(prefix='table-preservation-boundary-') as td:
+        copied=Path(td)/'engine'; shutil.copytree(ENGINE,copied,symlinks=True,ignore=shutil.ignore_patterns('__pycache__'))
+        replace(copied/'legal_probe/Chess.bend', '(table, U64.or(a, b))',
+                '(table, U64.and(a, b))')
+        boundary=invoke(compiler,copied/'standalone/proofs/table_preservation/consumer.bend')
+        safe(boundary)
+    after=closure(SUITE/'consumer.bend',ENGINE)
+    after.update({p.relative_to(ENGINE).as_posix():digest(p.read_bytes()) for p in SUITE.iterdir() if p.is_file()})
+    if before != after:
+        raise AssertionError('Source drift')
+    if subprocess.run(verify,text=True,capture_output=True,check=True).stdout != identity:
+        raise AssertionError('Compiler drift')
+    report={'focused_gate':'PASS','new_laws':3,'new_controls':17,'consumer':consumer,'negative_controls':records,
+            'compiler_identity':identity,'source_sha256s':dict(sorted(before.items())),
+            'supplementary_boundary':{'claim':'Replacing queen mask union with intersection preserves the storage theorem, not attack answers or correct moves.', 'counted_as_control':False,**boundary},
+            'scope':'Actual full generator retains the complete input array for arbitrary arrays/Boards. No move-list correctness, initialized attack semantics or native lifetime claim.'}
+    args.report.write_text(json.dumps(report,indent=2)+'\n')
+    print('PASS table-preservation: three laws and seventeen controls',flush=True)
+
+if __name__=='__main__':
+    main()

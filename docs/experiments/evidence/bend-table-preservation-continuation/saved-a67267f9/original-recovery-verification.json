@@ -1,0 +1,20 @@
+{
+  "base": "1915e4f283b1e3d5daf7e26683d5a6c2ef48a121",
+  "base_tree": "e0bde84a595e3eccd9c0f275dc66a90cd2762395",
+  "final_commit": "a67267f9832abb843e1230fc619533122833e718",
+  "final_tree": "a541d04ac54821662b34c53987fcd813fc78ccdf",
+  "candidate_absent_before_bundle_import": true,
+  "fresh_index_patch_tree": "a541d04ac54821662b34c53987fcd813fc78ccdf",
+  "bundle_import_tree": "a541d04ac54821662b34c53987fcd813fc78ccdf",
+  "patch_bytes": 296019,
+  "patch_sha256": "de516f8e15e5723448e546d12caf965ac876afb9ee22703d3c4a826d7618c962",
+  "bundle_bytes": 69988,
+  "bundle_sha256": "d2b40985ae235b54eb35a7f4bcf84435a9db63b1d7084c4bb9b1df19a88fc186",
+  "bundle_verify_stdout": "The bundle contains this ref:\na67267f9832abb843e1230fc619533122833e718 refs/heads/feat/bend-generator-table-preservation-20260927\nThe bundle requires this ref:\n1915e4f283b1e3d5daf7e26683d5a6c2ef48a121 \nThe bundle uses this hash algorithm: sha1\n",
+  "bundle_verify_stderr": "/mnt/data/table-preservation-work/publication/generator-table-preservation.bundle is okay\n",
+  "bundle_fetch_stderr": "From /mnt/data/table-preservation-work/publication/generator-table-preservation.bundle\n * [new branch]      feat/bend-generator-table-preservation-20260927 -> recovered\n",
+  "changed_files": 28,
+  "tracked_paths": 4150,
+  "github_write_performed": false,
+  "publishing_script_executed": false
+}

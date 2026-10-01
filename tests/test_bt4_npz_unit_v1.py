@@ -58,7 +58,13 @@ def _source_proof(identity: unit.GameIdentity) -> dict:
             "root_id": identity.root_id, "game_id": identity.game_id,
             "strict_receipt_sha256": STRICT,
             "archive_sha256": identity.archive_sha256,
-            "gross_rows": identity.rows}
+            "gross_rows": identity.rows,
+            "raw_archive_sha256": identity.archive_sha256,
+            "checks": {key: True for key in
+                       ("feed", "policy", "strict_receipt", "terminal")},
+            "detail": "synthetic", "evidence": {"fixture": "synthetic"},
+            "final_fen": "synthetic", "result": "1-0",
+            "source_verifier_sha256": "d" * 64, "termination": "synthetic"}
 
 
 def _replay(identity: unit.GameIdentity, *, wrong_uid: bool = False,
@@ -76,6 +82,14 @@ def _replay(identity: unit.GameIdentity, *, wrong_uid: bool = False,
               "archive_sha256": identity.archive_sha256,
               "source_proof_sha256": unit.sha(unit.canonical(proof)),
               "source_proof": proof,
+              "history_chain": {
+                  "opening_uci": list(identity.root_prefix_uci),
+                  "played_uci": ["a2a3"] * identity.rows,
+                  "root_start_fen": "synthetic",
+                  "row_index": [{} for _ in range(identity.rows)],
+                  "schema": "tri_source_full_game_history_chain_v1",
+                  "terminal_fen": "synthetic"},
+              "strict_trace": [{} for _ in range(identity.rows + 1)],
               "terminal_fact": {
                   "final_fen": "synthetic", "first_terminal_ply": 0,
                   "game_id": identity.game_id, "outcome_used_as_target": True,
@@ -146,6 +160,14 @@ def test_saved_game_1388_old_proof_format_and_single_field_enrichment() -> None:
     enriched = unit.enrich_old_replay_proof(proof, proof, expected, SYZYGY)
     assert enriched["terminal_fact"]["syzygy_inventory_sha256"] == SYZYGY
     assert unit.canonical(_old_proof(unit.BoundGame((), enriched))) == raw
+    # Matching omissions in both inputs must not turn into a complete proof.
+    for section in (None, "source_proof", "terminal_fact", "history_chain"):
+        original = proof if section is None else proof[section]
+        for key in original:
+            damaged = json.loads(raw)
+            del (damaged if section is None else damaged[section])[key]
+            with pytest.raises(unit.Hold, match="raw old replay proof"):
+                unit.enrich_old_replay_proof(damaged, damaged, expected, SYZYGY)
     damaged = {**proof, "terminal_fact":
                {key: value for key, value in proof["terminal_fact"].items()
                 if key != "source_strict_receipt_sha256"}}
@@ -435,10 +457,13 @@ def test_fsynced_game_output_and_old_witness_file_join(tmp_path: Path) -> None:
     attempt.mkdir()
     result = unit.write_game_output(attempt, claim, game, len(ARCHIVE), 0)
     assert result["outputs"]["native.bin"] == unit.sha(payloads["native.bin"])
-    unit.verify_game_output(attempt, claim, witness, lambda _: "BT4")
+    emitted = {name: (attempt / name).read_bytes() for name in unit.OUTPUT_NAMES}
+    unit.verify_game_output(emitted, claim, witness, lambda _: "BT4")
     (attempt / "native.bin").write_bytes(b"changed" + payloads["native.bin"][7:])
     with pytest.raises(unit.Hold, match="old UID/native/context/outcome/route"):
-        unit.verify_game_output(attempt, claim, witness, lambda _: "BT4")
+        unit.verify_game_output(
+            {name: (attempt / name).read_bytes() for name in unit.OUTPUT_NAMES},
+            claim, witness, lambda _: "BT4")
 
 
 _WORKER = '''from pathlib import Path
@@ -483,8 +508,8 @@ def test_owned_resume_noop_and_corruption_hold(tmp_path: Path) -> None:
                             verify_output=lambda _: None)
     assert not (tmp_path / "CLAIM.json").exists()
 
-    def verify(attempt: Path) -> None:
-        unit.need((attempt / "payload.bin").read_bytes() == b"ok",
+    def verify(payloads: dict[str, bytes]) -> None:
+        unit.need(payloads["payload.bin"] == b"ok",
                   "old witness differs")
 
     with pytest.raises(unit.Hold, match="old witness differs"):
@@ -610,7 +635,7 @@ def test_parent_alarm_interrupts_sealing_without_complete(tmp_path: Path) -> Non
     argv = (str(Path(sys.executable).resolve()), str(GUARD), str(script))
     claim = _claim(script, argv, wall=1)
 
-    def blocked_verify(_attempt: Path) -> None:
+    def blocked_verify(_payloads: dict[str, bytes]) -> None:
         time.sleep(30)
 
     with pytest.raises(unit.Hold, match="wall cap"):
@@ -730,3 +755,78 @@ def test_exec_guard_refuses_wrong_owner(tmp_path: Path) -> None:
         start_new_session=True, env=env)
     assert child.wait(timeout=5) == 127
     assert not marker.exists()
+
+
+def test_alarm_pending_at_spawn_return_reaps_owned_child(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    script = tmp_path / "sleeping_worker.py"
+    script.write_text("import time; time.sleep(30)\n")
+    argv = (str(Path(sys.executable).resolve()), str(GUARD), str(script))
+    claim = _claim(script, argv)
+    children: list[subprocess.Popen[bytes]] = []
+
+    def spawn(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+        process = cast(subprocess.Popen[bytes], subprocess.Popen(*args, **kwargs))
+        children.append(process)
+        # Reproduce expiry after OS launch but before Popen is assigned.
+        os.kill(os.getpid(), signal.SIGALRM)
+        return process
+
+    monkeypatch.setattr(unit, "subprocess", SimpleNamespace(Popen=spawn))
+    with pytest.raises(unit.Hold, match="wall cap"):
+        unit.run_owned_unit(tmp_path, claim, argv=argv,
+                            output_names=("payload.bin",),
+                            verify_output=lambda _: None)
+    assert len(children) == 1
+    assert children[0].poll() is not None
+    assert _dead_or_zombie(children[0].pid)
+    assert not (tmp_path / "COMPLETE.json").exists()
+
+
+def test_resume_parses_authenticated_result_snapshot(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    script = tmp_path / "worker.py"
+    script.write_text(_WORKER)
+    argv = (str(Path(sys.executable).resolve()), str(GUARD), str(script))
+    claim = _claim(script, argv)
+    seen: list[bytes] = []
+
+    def verify(payloads: dict[str, bytes]) -> None:
+        seen.append(payloads["payload.bin"])
+
+    complete = unit.run_owned_unit(
+        tmp_path, claim, argv=argv, output_names=("payload.bin",),
+        verify_output=verify)
+    original_read = Path.read_bytes
+
+    def reject_result_reread(path: Path) -> bytes:
+        assert path.name != "RESULT.json", "must parse the authenticated bytes"
+        return original_read(path)
+
+    monkeypatch.setattr(Path, "read_bytes", reject_result_reread)
+    assert unit.run_owned_unit(
+        tmp_path, claim, argv=argv, output_names=("payload.bin",),
+        verify_output=verify) == complete
+    assert seen == [b"bad", b"bad"]
+
+
+def test_deadline_during_receipt_publication_removes_completion(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    script = tmp_path / "worker.py"
+    script.write_text(_WORKER)
+    argv = (str(Path(sys.executable).resolve()), str(GUARD), str(script))
+    claim = _claim(script, argv)
+    original_write = unit.wave.atomic_write
+
+    def expire_after_publication(path: Path, raw: bytes) -> None:
+        original_write(path, raw)
+        if path.name == "COMPLETE.json":
+            raise unit.Hold("wall cap")
+
+    monkeypatch.setattr(unit.wave, "atomic_write", expire_after_publication)
+    with pytest.raises(unit.Hold, match="wall cap"):
+        unit.run_owned_unit(tmp_path, claim, argv=argv,
+                            output_names=("payload.bin",),
+                            verify_output=lambda _: None)
+    assert (tmp_path / "attempt_0000" / "RESULT.json").exists()
+    assert not (tmp_path / "COMPLETE.json").exists()

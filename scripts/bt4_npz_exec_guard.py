@@ -36,6 +36,7 @@ def main() -> None:
         os._exit(127)
     signal.signal(signal.SIGALRM, signal.SIG_DFL)
     signal.alarm(seconds)
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGALRM})
     os.execv(interpreter, (interpreter, *sys.argv[1:]))
 
 
