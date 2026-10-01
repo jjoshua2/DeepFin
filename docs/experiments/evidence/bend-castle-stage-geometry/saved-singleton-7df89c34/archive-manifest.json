@@ -1,0 +1,99 @@
+{
+  "archive_status": "SAVED_LOCAL_SOURCES_PRESERVED",
+  "archive_run": "36296376219",
+  "saved_commit": "7df89c34d03149b6ff00ebd5456ef96be2d901ee",
+  "saved_tree": "19cbeffbf4e051c1a2a02c236e6259f9d0133a42",
+  "saved_base": "1b27a4d75744167fc0e365f7f331d2cd80881b21",
+  "active_parent_pr": 898,
+  "active_parent": "e8430e5cf9c33bcc2856f3a61bf19b44ec46c388",
+  "primary_files": 14,
+  "archived_focused_source_entries": 13,
+  "inherited_dependency_matches": 38,
+  "payload_sha256": "c13fd38964a435a18bb7123bd2b0e22d3ff5b393734b291a7d9bf14cb10658e0",
+  "entries": {
+    "original-focused.json": {
+      "bytes": 21651,
+      "sha256": "d4bf10a98af915619ac2e947eeb2fd6349164ec29526dcc8dee2c80d5443e176"
+    },
+    "original-native.json": {
+      "bytes": 4209,
+      "sha256": "3f6332370f6ffe66b119b6645aabf324a180754a494079594ecd775f97ce9b02"
+    },
+    "original-publication.json": {
+      "bytes": 2769,
+      "sha256": "ca63f30eafa0c4c587baef097a4644af08e0509bd7f017477504223e5c372e96"
+    },
+    "original-qualification.json": {
+      "bytes": 1196,
+      "sha256": "5734cee35244dc0ffdb8086114fc7e50f01bf37471aae992f66b07bd3f5448ed"
+    },
+    "original-readout.md": {
+      "bytes": 11372,
+      "sha256": "b53ef2b797a975e85ffd666da4861370d9688efa3a515d58a0c37fda2d43a52f"
+    },
+    "original-source-consumer.json": {
+      "bytes": 319,
+      "sha256": "175a6ddfaf9b3cb367da4152c7aacf7d377508b544cb83706460cf77595a9cfb"
+    },
+    "source/Algebra.bend.txt": {
+      "bytes": 6214,
+      "sha256": "65750149d1da573cd93fe3e12576eba3ac274b4c5759364ceee41818a4225033"
+    },
+    "source/Checks.bend.txt": {
+      "bytes": 4991,
+      "sha256": "8b7a6c11f76f27c00983a5b2cafd35192df14f106c388c38bdc5762ca9bc916a"
+    },
+    "source/Finish.bend.txt": {
+      "bytes": 6326,
+      "sha256": "23db569735870ca35c7af7abcb1b0276c77fc53e85f7a4372e10891c731368e4"
+    },
+    "source/LAWS.bend.txt": {
+      "bytes": 1932,
+      "sha256": "a3bbc00e89406f5c2020c121c41789dd520b2b7f861d508c80faf454002a6d52"
+    },
+    "source/PROOF.bend.txt": {
+      "bytes": 809,
+      "sha256": "c607dad998521c3561bb577b5e1470197ecead23ddd00863bc75e0feb8e25bbf"
+    },
+    "source/Prerequisites.bend.txt": {
+      "bytes": 4218,
+      "sha256": "27e48f86b0d704249b75890495ad7344ab05a0f2ae2abaec742f9c2134ada93e"
+    },
+    "source/README.md.txt": {
+      "bytes": 4946,
+      "sha256": "08cb25bb06fc8053c43bf4e83c19abe389709fd73de4990c128d8f7feaafbbb7"
+    },
+    "source/Raw.bend.txt": {
+      "bytes": 4180,
+      "sha256": "2fe7771dbd51e25e793ef08915b985fced79067fdef9cda09a2833604017f7d4"
+    },
+    "source/Rows.bend.txt": {
+      "bytes": 70111,
+      "sha256": "7aad833ace9a37b5d739151b49fd98e5337263542760b77b9fd7f1e31d47b6a4"
+    },
+    "source/Spec.bend.txt": {
+      "bytes": 1164,
+      "sha256": "8fcf219ee6ed3e227ed41174fa40165264e41e6041f4640eda48141cb2ac059b"
+    },
+    "source/consumer.bend.txt": {
+      "bytes": 3945,
+      "sha256": "73d0c548b1de60cf73b4093b4befd5d0a995ca09341346755b9429fec471173f"
+    },
+    "source/focused.js.txt": {
+      "bytes": 8964,
+      "sha256": "fe44f2aea7bbf5f0793be9f78203b3e54206813a1148d58473d1818d6ce753ae"
+    },
+    "source/probe.bend.txt": {
+      "bytes": 2638,
+      "sha256": "df825b701ddae4c82ddba3a51866a83b191a628854a6867d06e6acf9ed43d596"
+    },
+    "source/verify_native.py.txt": {
+      "bytes": 9576,
+      "sha256": "0c53420400ebeba6124d7b4d3be74976b87b8192de38e0906277e90420f5b8b6"
+    }
+  },
+  "fresh_alternative_source_execution": false,
+  "fresh_alternative_native_execution": false,
+  "duplicate_registered_laws_added": 0,
+  "new_source_composition_qualification": "separate workflow; do not infer from archive verification"
+}

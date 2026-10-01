@@ -1,0 +1,100 @@
+{
+  "native_gate": "PASS",
+  "records_per_mode": 1556,
+  "distinct_requests": 1556,
+  "fields_per_mode": 34232,
+  "singleton_premise_cases": 1536,
+  "categories": {
+    "blocked_rook_enemy_king": 4,
+    "castled": 512,
+    "extra_own_king": 4,
+    "invalid_turn": 4,
+    "missing_king": 4,
+    "overlapping_source": 4,
+    "starting": 512,
+    "transit": 512
+  },
+  "fixture_sha256": "b3afeb8b97c4ce49c6ba71432f406f3f1d46c3dadbe0a7364caa61aa1ed994ff",
+  "modes": [
+    {
+      "mode": "generic",
+      "records": 1556,
+      "fields": 34232,
+      "invalid_rejections": 9,
+      "output_sha256": "da6312e429d10689e7ac0a054ebe227608e60e5aab17c169d6487a2255c3c02d"
+    },
+    {
+      "mode": "portable",
+      "records": 1556,
+      "fields": 34232,
+      "invalid_rejections": 9,
+      "output_sha256": "da6312e429d10689e7ac0a054ebe227608e60e5aab17c169d6487a2255c3c02d"
+    },
+    {
+      "mode": "native",
+      "records": 1556,
+      "fields": 34232,
+      "invalid_rejections": 9,
+      "output_sha256": "da6312e429d10689e7ac0a054ebe227608e60e5aab17c169d6487a2255c3c02d"
+    },
+    {
+      "mode": "ubsan",
+      "records": 1556,
+      "fields": 34232,
+      "invalid_rejections": 9,
+      "output_sha256": "da6312e429d10689e7ac0a054ebe227608e60e5aab17c169d6487a2255c3c02d"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "king_inserted_at_rook_target",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "row": 1,
+      "category": "transit",
+      "field": 11,
+      "observed": 2097152,
+      "expected": 2097184
+    },
+    {
+      "name": "source_king_not_removed",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "row": 1,
+      "category": "transit",
+      "field": 11,
+      "observed": 2097200,
+      "expected": 2097184
+    },
+    {
+      "name": "side_not_flipped",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "row": 1,
+      "category": "transit",
+      "field": 16,
+      "observed": 1,
+      "expected": 0
+    }
+  ],
+  "source_sha256s": {
+    "standalone/proofs/castle_singleton/probe.bend": "df825b701ddae4c82ddba3a51866a83b191a628854a6867d06e6acf9ed43d596",
+    "standalone/proofs/castle_singleton/LAWS.bend": "a3bbc00e89406f5c2020c121c41789dd520b2b7f861d508c80faf454002a6d52",
+    "standalone/proofs/castle_singleton/consumer.bend": "73d0c548b1de60cf73b4093b4befd5d0a995ca09341346755b9429fec471173f",
+    "standalone/proofs/castle_singleton/Algebra.bend": "65750149d1da573cd93fe3e12576eba3ac274b4c5759364ceee41818a4225033",
+    "standalone/proofs/castle_singleton/Finish.bend": "23db569735870ca35c7af7abcb1b0276c77fc53e85f7a4372e10891c731368e4",
+    "standalone/proofs/castle_singleton/Spec.bend": "8fcf219ee6ed3e227ed41174fa40165264e41e6041f4640eda48141cb2ac059b",
+    "standalone/proofs/castle_singleton/Prerequisites.bend": "27e48f86b0d704249b75890495ad7344ab05a0f2ae2abaec742f9c2134ada93e",
+    "standalone/proofs/castle_singleton/Checks.bend": "8b7a6c11f76f27c00983a5b2cafd35192df14f106c388c38bdc5762ca9bc916a",
+    "standalone/proofs/castle_singleton/Rows.bend": "7aad833ace9a37b5d739151b49fd98e5337263542760b77b9fd7f1e31d47b6a4",
+    "standalone/proofs/castle_singleton/PROOF.bend": "c607dad998521c3561bb577b5e1470197ecead23ddd00863bc75e0feb8e25bbf",
+    "standalone/proofs/castle_singleton/Raw.bend": "2fe7771dbd51e25e793ef08915b985fced79067fdef9cda09a2833604017f7d4",
+    "standalone/proofs/castle_singleton/verify_native.py": "0c53420400ebeba6124d7b4d3be74976b87b8192de38e0906277e90420f5b8b6",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d"
+  },
+  "cc": "clang version 17.0.0 (https://github.com/swiftlang/llvm-project.git 10999b6d034fe318f3d56c83bddb6572593a8bb0)",
+  "scope": "Complete actual Board, original-side king plane and index; native check does not execute in_check or validate attack semantics. Modes repeat fixtures. Only moving-side singleton is certified."
+}

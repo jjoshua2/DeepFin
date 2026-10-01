@@ -1,0 +1,11 @@
+{
+  "command": [
+    "/mnt/data/work-castle-singleton/toolchain/bun",
+    "/mnt/data/work-castle-singleton/toolchain/bend/bend/bend2/main.ts",
+    "native/bend_engine/standalone/proofs/castle_singleton/consumer.bend"
+  ],
+  "status": "PASS",
+  "exit_code": 0,
+  "seconds": 33.06953352300002,
+  "timeout_seconds": 180
+}

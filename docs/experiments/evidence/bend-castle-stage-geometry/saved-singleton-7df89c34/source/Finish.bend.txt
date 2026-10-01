@@ -1,0 +1,103 @@
+import Base
+import ./Algebra.bend as A
+import ./Raw.bend as Raw
+import ./Prerequisites.bend as P
+import ./Spec.bend as S
+import ../decoder/Bits.bend as Bits
+import ../board/Spec.bend as B
+import ../castling/Route.bend as R
+import ../castling/Actual.bend as C
+import ../move_update/Spec.bend as M
+import ../ray/Algebra.bend as Old
+import ../../../legal_probe/Chess.bend as Chess
+
+def zero_word(+n: Nat,+m: Word(n)) -> {Word.and(n,Word.zero(n),Word.not(n,m)) == Word.zero(n) : Word(n)}:
+  match n:
+    case 0n: {==}
+    case 1n+t:
+      match m:
+        case WCon{h,+tail}:
+          Equal.cong(Word(t),Word(1n+t),x => WCon{False{},x},Word.and(t,Word.zero(t),Word.not(t,tail)),Word.zero(t),zero_word(t,tail))
+
+def zero_clear(+m: U64) -> {U64.and_not(U64.zero(),m) == U64.zero() : U64}:
+  match m:
+    case U64{U32{+ml},U32{+mh}}:
+      A.join64(Word.and(32n,Word.zero(32n),Word.not(32n,ml)),Word.and(32n,Word.zero(32n),Word.not(32n,mh)),Word.zero(32n),Word.zero(32n),zero_word(32n,ml),zero_word(32n,mh))
+
+def right_zero(+k: U64) -> {U64.and(k,U64.zero()) == U64.zero() : U64}:
+  match k:
+    case U64{U32{+kl},U32{+kh}}:
+      A.join64(Word.and(32n,kl,Word.zero(32n)),Word.and(32n,kh,Word.zero(32n)),Word.zero(32n),Word.zero(32n),Bits.and_zero(32n,kl),Bits.and_zero(32n,kh))
+
+def pruned(+k: U64,+m: U64,+r: U64,e: {U64.and(k,r) == U64.zero() : U64}) ->
+  {U64.and(U64.and_not(k,m),r) == U64.zero() : U64}:
+  Equal.trans(U64,U64.and(U64.and_not(k,m),r),U64.and_not(U64.and(k,r),m),U64.zero(),A.prune(k,m,r),
+    Equal.trans(U64,U64.and_not(U64.and(k,r),m),U64.and_not(U64.zero(),m),U64.zero(),Equal.cong(U64,U64,x => U64.and_not(x,m),U64.and(k,r),U64.zero(),e),zero_clear(m)))
+
+def collapse(+b: Chess.Board,+m: U64,+t: U64,+r: U64,+white: Bool,
+  removed: {U64.and_not(Raw.selected(b,white),m) == U64.zero() : U64},
+  empty_rook: {U64.and(Chess.get_kings(b),r) == U64.zero() : U64}) ->
+  {Raw.normal(b,m,t,r,white) == t : U64}:
+  Equal.trans(U64,Raw.normal(b,m,t,r,white),U64.or(U64.or(U64.zero(),t),U64.and(U64.and_not(Chess.get_kings(b),m),r)),t,
+    Equal.cong(U64,U64,x => U64.or(U64.or(x,t),U64.and(U64.and_not(Chess.get_kings(b),m),r)),U64.and_not(Raw.selected(b,white),m),U64.zero(),removed),
+    Equal.trans(U64,U64.or(U64.or(U64.zero(),t),U64.and(U64.and_not(Chess.get_kings(b),m),r)),U64.or(U64.or(U64.zero(),t),U64.zero()),t,
+      Equal.cong(U64,U64,x => U64.or(U64.or(U64.zero(),t),x),U64.and(U64.and_not(Chess.get_kings(b),m),r),U64.zero(),pruned(Chess.get_kings(b),m,r,empty_rook)),
+      Equal.trans(U64,U64.or(U64.or(U64.zero(),t),U64.zero()),U64.or(U64.zero(),t),t,Old.zero(U64.or(U64.zero(),t)),Old.left_zero(t))))
+
+def source_bound(+r: R.Route) -> {Nat.is_lt(U32.to_nat(R.src(r)),64n) == True{} : Bool}:
+  match r:
+    case R.WhiteKing{}: {==}
+    case R.WhiteQueen{}: {==}
+    case R.BlackKing{}: {==}
+    case R.BlackQueen{}: {==}
+
+def source_self(+r: R.Route) -> {U64.test_bit(U64.bit(U32.to_nat(R.src(r))),U32.to_nat(R.src(r))) == True{} : Bool}:
+  match r:
+    case R.WhiteKing{}: {==}
+    case R.WhiteQueen{}: {==}
+    case R.BlackKing{}: {==}
+    case R.BlackQueen{}: {==}
+
+def decoded(+b: Chess.Board,+r: R.Route,good: {B.valid(b) == True{} : Bool},
+  one: {S.owned(b,Chess.get_turn(b)) == U64.bit(U32.to_nat(R.src(r))) : U64}) ->
+  {Chess.piece(b,R.src(r)) == 5 : U32}:
+  P.actual_king_decoder(b,R.src(r),source_bound(r),good,
+    P.test_left(Chess.get_kings(b),Chess.color(b,Chess.get_turn(b)),U32.to_nat(R.src(r)),source_bound(r),
+      Equal.trans(Bool,U64.test_bit(S.owned(b,Chess.get_turn(b)),U32.to_nat(R.src(r))),U64.test_bit(U64.bit(U32.to_nat(R.src(r))),U32.to_nat(R.src(r))),True{},
+        Equal.cong(U64,Bool,x => U64.test_bit(x,U32.to_nat(R.src(r))),S.owned(b,Chess.get_turn(b)),U64.bit(U32.to_nat(R.src(r))),one),source_self(r))))
+
+def castle_removed(+r: R.Route) -> {U64.and_not(U64.bit(U32.to_nat(R.src(r))),C.mask(R.src(r),R.dst(r))) == U64.zero() : U64}:
+  match r:
+    case R.WhiteKing{}: {==}
+    case R.WhiteQueen{}: {==}
+    case R.BlackKing{}: {==}
+    case R.BlackQueen{}: {==}
+
+def transit_mask(+r: R.Route) -> U64:
+  M.removal(U64.bit(U32.to_nat(R.src(r))),U64.bit(U32.to_nat(S.transit(r))))
+
+def transit_removed(+r: R.Route) -> {U64.and_not(U64.bit(U32.to_nat(R.src(r))),transit_mask(r)) == U64.zero() : U64}:
+  match r:
+    case R.WhiteKing{}: {==}
+    case R.WhiteQueen{}: {==}
+    case R.BlackKing{}: {==}
+    case R.BlackQueen{}: {==}
+
+def castle(+b: Chess.Board,+r: R.Route,+good: {B.valid(b) == True{} : Bool},
+  +one: {S.owned(b,Chess.get_turn(b)) == U64.bit(U32.to_nat(R.src(r))) : U64},
+  fresh: {B.fresh_mask(b,R.rook(r)) == True{} : Bool}) ->
+  {S.owned(S.final(b,r),Chess.get_turn(b)) == R.target(r) : U64}:
+  Equal.trans(U64,S.owned(S.final(b,r),Chess.get_turn(b)),Raw.normal(b,C.mask(R.src(r),R.dst(r)),R.target(r),R.rook(r),U32.is_eq(Chess.get_turn(b),1)),R.target(r),
+    Raw.castle(b,R.src(r),R.dst(r),decoded(b,r,good,one)),
+    collapse(b,C.mask(R.src(r),R.dst(r)),R.target(r),R.rook(r),U32.is_eq(Chess.get_turn(b),1),
+      Equal.trans(U64,U64.and_not(S.owned(b,Chess.get_turn(b)),C.mask(R.src(r),R.dst(r))),U64.and_not(U64.bit(U32.to_nat(R.src(r))),C.mask(R.src(r),R.dst(r))),U64.zero(),
+        Equal.cong(U64,U64,x => U64.and_not(x,C.mask(R.src(r),R.dst(r))),S.owned(b,Chess.get_turn(b)),U64.bit(U32.to_nat(R.src(r))),one),castle_removed(r)),P.fresh_no_kings(b,R.rook(r),good,fresh)))
+
+def transit(+b: Chess.Board,+r: R.Route,good: {B.valid(b) == True{} : Bool},
+  +one: {S.owned(b,Chess.get_turn(b)) == U64.bit(U32.to_nat(R.src(r))) : U64}) ->
+  {S.owned(S.intermediate(b,r),Chess.get_turn(b)) == U64.bit(U32.to_nat(S.transit(r))) : U64}:
+  Equal.trans(U64,S.owned(S.intermediate(b,r),Chess.get_turn(b)),Raw.normal(b,transit_mask(r),U64.bit(U32.to_nat(S.transit(r))),U64.zero(),U32.is_eq(Chess.get_turn(b),1)),U64.bit(U32.to_nat(S.transit(r))),
+    Raw.ordinary(b,R.src(r),S.transit(r),decoded(b,r,good,one)),
+    collapse(b,transit_mask(r),U64.bit(U32.to_nat(S.transit(r))),U64.zero(),U32.is_eq(Chess.get_turn(b),1),
+      Equal.trans(U64,U64.and_not(S.owned(b,Chess.get_turn(b)),transit_mask(r)),U64.and_not(U64.bit(U32.to_nat(R.src(r))),transit_mask(r)),U64.zero(),
+        Equal.cong(U64,U64,x => U64.and_not(x,transit_mask(r)),S.owned(b,Chess.get_turn(b)),U64.bit(U32.to_nat(R.src(r))),one),transit_removed(r)),right_zero(Chess.get_kings(b))))
