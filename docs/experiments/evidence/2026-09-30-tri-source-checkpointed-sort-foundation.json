@@ -1,0 +1,38 @@
+{
+  "schema": "tri_source_checkpointed_sort_foundation_evidence_v1",
+  "scope": "bounded CPU-only metadata/sort primitive; zero corpus, target, throughput, and 500M-readiness credit",
+  "base_commit": "42131242a0095f1a1905c723f10d0862a587eb48",
+  "frozen_commit_before_public_record": "984cde01ab4be5f6fb0ae0781813b26ee462981e",
+  "module": "chess_anti_engine/source/checkpointed_sort.py",
+  "module_sha256": "6bdaafa5445423be04cc2d542eb281ad7de1825e1d6d3881749c16f73ca4f1d1",
+  "test": "tests/test_checkpointed_sort.py",
+  "test_sha256": "67233ef9b11526e1f297313320cf06713e940ce6c6d021716b77354f71be57a6",
+  "final_receipt_crash_fix_patch_sha256": "03e5137adf686cd512a3c250d4bafeef7456b8ca94601e3e336ec0b8d5ebfa39",
+  "durable_private_proof_manifest_sha256": "c951cd1e7604f70654a79d0f66445207dbc1dc8448c470e3844cd7cd9192a859",
+  "focused_python310_pytest": {
+    "passed": 5,
+    "failed": 0,
+    "log_sha256": "fcc72d1f5f8a80c764cbfcbb72ac6d61cff483d65fca01dc0e0d570786f63212"
+  },
+  "full_pyright_python310_baseline_comparison": {
+    "base_errors": 188,
+    "branch_errors": 188,
+    "base_warnings": 8,
+    "branch_warnings": 8,
+    "branch_only_diagnostics": 0,
+    "base_only_diagnostics": 0,
+    "comparison_sha256": "f5019d0e87edb6d13b2d6ba7ef752f990ae78d9555c61e9c68b3444a8504cb83",
+    "base_log_sha256": "b182dc6508ab0f78e7fe312075585095e02329bfd3362865fafa2a0e8b7c4fc3",
+    "branch_log_sha256": "11f0ae564020e56b0f1416e9e0555728aa4a92421b50426324134b026e897ef4"
+  },
+  "synthetic_64_source_run_verification": {
+    "source_runs": 64,
+    "fanin": 4,
+    "final_payload_bytes": 5036,
+    "first_build_verify_calls": 519,
+    "first_build_payload_extent_bytes": 90648,
+    "noop_verify_calls": 477,
+    "noop_payload_extent_bytes": 75540,
+    "scaling_result_sha256": "0ff752429a81a802088361f2bc27b8360f727021f0fffba8e8738cb4f0f3209b"
+  }
+}

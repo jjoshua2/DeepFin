@@ -1,0 +1,16 @@
+{
+  "status": "FIRST_PRODUCTION_GROUP_COMPLETE_BATCH_RUNNING",
+  "descriptor": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_throughput/grouped_continuation_group4_v1/registered_batch.json",
+    "sha256": "9a3df1eb3b03e0b8ffafc4801e7adb4745fa2b3cd3466db6f1d55211a93cd3bc"
+  },
+  "first_receipt": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_throughput/grouped_continuation_group4_v1/block11/driver/chunks/shard000000/receipt.json",
+    "sha256": "7adeb178d8aa09b9b6fc140623d4f8a0586fb84f0a9bc8d726a37c704a616db2"
+  },
+  "rows": 32768,
+  "elapsed_seconds": 97.27245418999519,
+  "exit_code": 0,
+  "whole_cohort_qualified": false,
+  "scope": "First4shards ofblock11 complete; not completecohort/batchclaim. Parentreportsnextgroupactive."
+}

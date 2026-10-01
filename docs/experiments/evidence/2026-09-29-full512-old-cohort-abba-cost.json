@@ -1,0 +1,121 @@
+{
+  "accounting": {
+    "final_readback_seconds": 142.08651914200163,
+    "full_wall_seconds": 469.2319439300045,
+    "neutral_warmup_calls": 8,
+    "observed_caps": {
+      "combined_io_bytes": 85899345920,
+      "full_wall_seconds": 5400,
+      "output_files": 96,
+      "output_tree_bytes": 4294967296
+    },
+    "output_files": 51,
+    "output_tree_bytes": 2649577818,
+    "postcommit_parent_combined_io_bytes": 50570748864,
+    "postcommit_parent_rchar_bytes": 47918525496,
+    "postcommit_parent_wchar_bytes": 2652223368,
+    "real_calls": 2310,
+    "stage_seconds": 6.555101259989897
+  },
+  "arms": {
+    "D1": {
+      "arm_wall_after_model_and_job_calls_seconds": 45.62258644099347,
+      "charged_neutral_warmups": 2,
+      "complete_wall_seconds": 95.79456796500017,
+      "first_real_inference_seconds": {
+        "BT4": 0.03570488598779775,
+        "Ceres": 0.16543186499620788
+      },
+      "job_calls_phase_seconds": 46.00704492602381,
+      "model_session_seconds": 4.164936597982887,
+      "neutral_warmup_seconds": 0.7576896090176888,
+      "real_calls": 770
+    },
+    "D2": {
+      "arm_wall_after_model_and_job_calls_seconds": 45.70238492899807,
+      "charged_neutral_warmups": 2,
+      "complete_wall_seconds": 100.7702294170158,
+      "first_real_inference_seconds": {
+        "BT4": 0.04140200398978777,
+        "Ceres": 0.15319326097960584
+      },
+      "job_calls_phase_seconds": 50.91268544198829,
+      "model_session_seconds": 4.155159046029439,
+      "neutral_warmup_seconds": 1.007843216008041,
+      "real_calls": 770
+    },
+    "S1": {
+      "arm_wall_after_model_and_job_calls_seconds": 28.40549226399162,
+      "charged_neutral_warmups": 2,
+      "complete_wall_seconds": 59.00983357199584,
+      "first_real_inference_seconds": {
+        "BT4": 0.05008331601857208,
+        "Ceres": 0.19891526098945178
+      },
+      "job_calls_phase_seconds": 25.486255627998617,
+      "model_session_seconds": 5.118085680005606,
+      "neutral_warmup_seconds": 0.9826082020008471,
+      "real_calls": 385
+    },
+    "S2": {
+      "arm_wall_after_model_and_job_calls_seconds": 28.665684977022465,
+      "charged_neutral_warmups": 2,
+      "complete_wall_seconds": 61.11350075399969,
+      "first_real_inference_seconds": {
+        "BT4": 0.07187197500024922,
+        "Ceres": 0.1643931090075057
+      },
+      "job_calls_phase_seconds": 28.367996383982245,
+      "model_session_seconds": 4.0798193929949775,
+      "neutral_warmup_seconds": 0.8962487649987452,
+      "real_calls": 385
+    }
+  },
+  "call_roster_sha256": "9f2f2a3eed6aca6bff4596686f471a642b02fb32d56104db065a0b4f18e71e41",
+  "collector_manifest_sha256": "879defe4361236401e77d13f598f93f7260354d7b9a3a2b58d878aa22b035db1",
+  "credit": 0,
+  "decision": "ADVANCE_LARGER_PILOT",
+  "historical_run06": {
+    "comparison_limit": "old S-first had no neutral warmup; old D arm included S-dependent archive readback; old independent audit covered small receipts only",
+    "dual_second_complete_arm_seconds": 140.0081508049916,
+    "fixed_order_saving_fraction": 0.11962616898167222,
+    "old_dual_second_arm_residual_seconds": 82.628095750988,
+    "old_selected_first_real_inference_seconds": {
+      "BT4": 48.788438229996245,
+      "Ceres": 14.981157409027219
+    },
+    "selected_first_complete_arm_seconds": 123.25951209798222,
+    "small_receipt_audit_sha256": "6f0c4a385f7a96438f54a91705e6f376c4658e3488bd8363c044bddf0a973b8c",
+    "terminal_sha256": "4b326d71faf43767b8835887f4c8eba30d6a9f1c460f9a99a8ca17fedbbff773"
+  },
+  "independent_audit_sha256": "28cdc3ae94a00ef2458eb3ad129b158feeac798c402dd8e7d757a22394793cff",
+  "limits": [
+    "old cohort only",
+    "two ABBA pairs are descriptive, not a sampling interval",
+    "no Full512 admission, strength, or 500M throughput credit"
+  ],
+  "operator_manifest_sha256": "4442765d4c376fc10773f834c4ece70cf2d1e6b339e8ba4ba2f1a5df778b8bb1",
+  "operator_terminal_sha256": "00e3e4faad1633a413f89436f9c3eb66a6886abb68e6ae8f9bfb58c4d21d01de",
+  "parity": {
+    "dual_target_sha256": "491c627743139f96f06590127365930d5405559be644b25e1aa373332ccfdf46",
+    "full_byte_independent_audit_pass": true,
+    "selected_target_sha256": "5676f552156887a250ad6102528d347206e6c37161d10cfe0993f3551a0356e7"
+  },
+  "postcommit_sha256": "1d10a1d766f963a7636bf982adac1f31cee53b7ad4976efb94e30660936867aa",
+  "primary": {
+    "dual_mean_complete_arm_seconds": 98.28239869100798,
+    "early_pair_saving_fraction": 0.38399603625170187,
+    "gate_pass": true,
+    "late_pair_saving_fraction": 0.393536155394718,
+    "rule": "1-mean(S1,S2)/mean(D1,D2)>=0.15; both opposite-order pair savings positive; complete parity and clean teardown",
+    "saving_fraction": 0.3888868407472751,
+    "selected_mean_complete_arm_seconds": 60.061667162997765,
+    "threshold_fraction": 0.15
+  },
+  "rows": 12288,
+  "schema": "full512_old_cohort_selected_dual_abba_cost_readout_v1",
+  "scope": "same_12288_row_old_BT4_v9_Ceres_v8_cohort_only_zero_credit",
+  "selected_roster_sha256": "750e864ffdf22795846243bf98144c28b78b667e8e31f6f9c3a8d257e1556444",
+  "stage_sha256": "fe9de4a6ac7ade3f7b764045c587166190e2c7ec1e8fed9af70d473be02c221f",
+  "status": "PASS_REGISTERED_ABBA_FULL_BYTE_AUDIT_ZERO_CREDIT"
+}

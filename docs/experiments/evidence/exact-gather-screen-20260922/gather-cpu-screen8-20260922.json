@@ -1,0 +1,76 @@
+{
+  "status": "FIXED_REAL_VALUES_PROTOTYPE_PARITY_PASS",
+  "rows_loaded_per_shard": 256,
+  "shards": [
+    {
+      "overlay": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/D/shard_000000.zarr",
+      "manifest_sha256": "ca79c6382b941fee41c05e119315666c24112bb9dc03ba6248c60980755f6467"
+    },
+    {
+      "overlay": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/D/shard_000001.zarr",
+      "manifest_sha256": "5c810f93306f1993b77c130a47ef75cb658a2d22e47b08e62d600a97e08fb3e2"
+    },
+    {
+      "overlay": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/D/shard_000002.zarr",
+      "manifest_sha256": "0f7c6ff2a905db2deba37a86a096e56f913649fdf1ac10ace8afd15817dd7799"
+    },
+    {
+      "overlay": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/D/shard_000003.zarr",
+      "manifest_sha256": "e6b878e538445f24518f014d28fce5a5ba8d118337aa375d6f251eec185c283d"
+    },
+    {
+      "overlay": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/D/shard_000004.zarr",
+      "manifest_sha256": "de2dd23db1725b9453dcf71853ec6077fb5edbd1877ce901d2dc0aee567b1590"
+    },
+    {
+      "overlay": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/D/shard_000005.zarr",
+      "manifest_sha256": "8d4bda59a304db407a54f3eae5616809416e9b1b1b37c270e1cc103ea20170d2"
+    },
+    {
+      "overlay": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/D/shard_000006.zarr",
+      "manifest_sha256": "d6b2a24e0ce1664eb9c4f008d1198f6aabff487816c134d42787c68348b2d026"
+    },
+    {
+      "overlay": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/D/shard_000007.zarr",
+      "manifest_sha256": "46079012e7ded02e79d777c1bcb13011194fec01d29cc085841e3c9d688de45a"
+    }
+  ],
+  "batch_rows": 512,
+  "source_arrays_bytes": 57356288,
+  "runs": [
+    {
+      "variant": "old",
+      "iterations": 100,
+      "seconds": 0.32193724310491234
+    },
+    {
+      "variant": "new",
+      "iterations": 100,
+      "seconds": 0.14047204400412738
+    },
+    {
+      "variant": "new",
+      "iterations": 100,
+      "seconds": 0.13620511791668832
+    },
+    {
+      "variant": "old",
+      "iterations": 100,
+      "seconds": 0.3283823860110715
+    },
+    {
+      "variant": "old",
+      "iterations": 100,
+      "seconds": 0.3411769539816305
+    },
+    {
+      "variant": "new",
+      "iterations": 100,
+      "seconds": 0.1518326960504055
+    }
+  ],
+  "profile": "         270301 function calls in 0.292 seconds\n\n   Ordered by: cumulative time\n   List reduced from 26 to 15 due to restriction <15>\n\n   ncalls  tottime  percall  cumtime  percall filename:lineno(function)\n      100    0.002    0.000    0.292    0.003 /tmp/gather_cpu_screen8_20260922.py:14(old)\n      100    0.126    0.001    0.153    0.002 /home/josh/projects/chess-worktrees/exact-gather-20260922/chess_anti_engine/replay/disk_buffer.py:339(_concat_sparse_batches)\n      100    0.001    0.000    0.137    0.001 /tmp/gather_cpu_screen8_20260922.py:14(<listcomp>)\n      800    0.001    0.000    0.136    0.000 /home/josh/projects/chess-worktrees/exact-gather-20260922/chess_anti_engine/replay/game_epoch.py:345(_slice_epoch_arrays)\n      800    0.010    0.000    0.134    0.000 /home/josh/projects/chess-worktrees/exact-gather-20260922/chess_anti_engine/replay/game_epoch.py:356(<dictcomp>)\n    13600    0.004    0.000    0.121    0.000 /home/josh/.local/lib/python3.10/site-packages/numpy/core/fromnumeric.py:95(take)\n    13600    0.004    0.000    0.117    0.000 /home/josh/.local/lib/python3.10/site-packages/numpy/core/fromnumeric.py:53(_wrapfunc)\n    13600    0.112    0.000    0.112    0.000 {method 'take' of 'numpy.ndarray' objects}\n    14400    0.011    0.000    0.015    0.000 /home/josh/projects/chess-worktrees/exact-gather-20260922/chess_anti_engine/replay/disk_buffer.py:324(_batch_dims)\n     9300    0.004    0.000    0.009    0.000 {built-in method builtins.any}\n    71800    0.005    0.000    0.005    0.000 /home/josh/projects/chess-worktrees/exact-gather-20260922/chess_anti_engine/replay/disk_buffer.py:355(<genexpr>)\n    56000    0.005    0.000    0.005    0.000 {built-in method numpy.asarray}\n      100    0.000    0.000    0.002    0.000 /home/josh/projects/chess-worktrees/exact-gather-20260922/chess_anti_engine/replay/disk_buffer.py:344(<setcomp>)\n    13600    0.001    0.000    0.001    0.000 {built-in method builtins.getattr}\n    13600    0.001    0.000    0.001    0.000 /home/josh/.local/lib/python3.10/site-packages/numpy/core/fromnumeric.py:91(_take_dispatcher)\n\n\n",
+  "wall_seconds": 1.9312622820725664,
+  "peak_rss_kib": 181460,
+  "limitations": "Partial8shard tensors, repeated fixed gather only; not actual epoch schedule/trainer timing; homogeneous prototype with no mixed/default/error handling."
+}

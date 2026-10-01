@@ -1,0 +1,20 @@
+{
+  "status": "PASS_APPEND_ONLY_QUEUE_REGISTRATION",
+  "registered_unix": 1790043252.250344,
+  "id": "packed_trainer256_pair_20260921",
+  "before_count": 238,
+  "after_count": 239,
+  "queue_before_sha256": "bfbf89b934d4298c7e42425bccdbe9a7d0a8cc64aa9019ee5fa1f14a1ab47c69",
+  "queue_after_sha256": "f367b426cbc29727ae4d266d80839ed1fe2b6957f1ceef482ae59ac22bb51251",
+  "state_unchanged": true,
+  "prior_items_unchanged": true,
+  "dependencies": [
+    "factorial58_fresh_D",
+    "factorial58_D_C_400sims",
+    "factorial58_D_B_400sims",
+    "bt4_pipeline_prefetch_20260921"
+  ],
+  "descriptor_sha256": "0ee0ba7c32d1ad5afc6f00d7166e63b7634e9f24c2c2da203938f5a756aac3d4",
+  "plan_sha256": "cc9949d4e4c694111e2f1de1f081325fb469579a90d3e7ca5a9a0607f25f0a15",
+  "review_sha256": "29a448b313faf54c8aaa2718f74b869dc2e710445831a401a8f5856f4f2f711d"
+}

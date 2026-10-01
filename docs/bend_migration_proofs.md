@@ -150,6 +150,7 @@ Hosted run **36216251656** passes both public en-passant laws and importing cons
 
 Both public contracts retain the complete actual flag1/promotion0 Board update and partition preservation under input consistency. Removal includes source,destination and destination XOR8. These promote the earlier supplementary proofs unchanged; they do not certify source-pawn/rank/history,EP metadata or king safety. Qualification is modular152/453 with the exact150/436 parent retained,not a full aggregate run. See [the dated readout](experiments/2026-09-25-bend-en-passant-update.md). Castling and legal-producer connections remain next; no Python application responsibility moved into Bend.
 
+
 ## Supplementary en-passant update refinement
 
 Two newly source-checked derived statements now cover actual flag1/promotion0 make_move: exact complete-Board update and partition preservation. A structural mask identity connects removal of source,destination and destination XOR8 to existing deletion/fresh-insertion producers. Caller input consistency is required only for preservation; legal EP,pawn/source/rank/history conditions and king safety remain unproved here. Exact archived sources and the portable driver are in [the supplementary record](experiments/evidence/bend-move-promotion-publication/en-passant-review/README.md).
@@ -163,6 +164,13 @@ Hosted run **36169939079** passes both unchanged focused source suites (five ord
 The five move-update and four promotion contracts are now hosted-qualified on the exact saved primary sources. They provide complete update and partition guarantees for flag0 ordinary/typed-promotion calls,plus actual promotion-choice ordering and tail preservation. They do not prove legal source pieces,promotion ranks,king safety,castling,en-passant or independently correct metadata.
 
 Coverage is modular150/436 with parent141/401 retained on exact source evidence; both saved focused gates and native suites reran,but the full aggregate did not. No old contract was weakened. See [the publication record](experiments/2026-09-25-bend-move-promotion-publication.md). No application responsibility moved into Bend.
+
+
+## Latest P3 ordinary, promotion and en-passant updates
+
+Hosted run **36160654909** passed both focused source gates, all35 controls across them, both four-mode native suites and four behavioral mutations, original compiler checks and unchanged repository lint on source `1c45eae81922a6364cc98b01163e279036d799b9`.
+
+The saved five ordinary-update contracts are now hosted-qualified with four new typed-promotion and en-passant contracts. Exact complete Board updates and partition preservation use real Chess.make_move, clearing and insertion producers. Typed promotion means tags1..4/flag0; en-passant means flag1/promotion0 with the actual destination XOR8 capture mask. Legal sources, pawn ranks, victim conditions, king safety, metadata correctness and castling remain separate. Modular150/436 combines newly executed9/35 with exact retained141/401, not a full aggregate run. No application code migrated from Python. See [the dated record](experiments/2026-09-25-bend-special-move-updates.md).
 
 ## Latest P3 initialized parser frontier
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from contextlib import contextmanager
 import json
 import os
 import secrets
@@ -10,11 +11,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from collections.abc import Callable, Mapping
 from typing import Any
+from collections.abc import Generator
 
 import numpy as np
 import zarr
 
 from .target_overlay import BaseSeal
+from .codec_safety import _reject_unsafe_shard_codecs
 from numcodecs import Blosc
 
 from chess_anti_engine.moves import (
@@ -1233,98 +1236,6 @@ def _declared_nbytes(value: Any) -> int:
     return int(nbytes)
 
 
-# --- Untrusted-deserialization guard for uploaded shards (issue #411) --------
-#
-# An uploaded ``.zarr`` array is decoded through the codec its own ``.zarray``
-# declares. A numcodecs *object codec* (Pickle/JSON/MsgPack/VLen*) attached as a
-# filter or compressor runs an attacker-chosen deserializer -- ``pickle`` calls
-# ``__reduce__`` -- the moment a chunk is materialized on the training host.
-# ``allow_pickle=False`` closes the twin ``.npz`` sink in ``load_shard_arrays``;
-# this closes the ``.zarr`` sibling. It is an ALLOWLIST, not a denylist: every
-# permitted dtype/compressor is a fixed numeric/byte-transform that provably
-# cannot deserialize an object, so the next hostile codec is rejected by
-# default rather than needing to be enumerated.
-#
-# Calibrated against what production actually writes (``save_local_shard_arrays``
-# is the ONLY zarr writer; it emits ``Blosc(cname="zstd")`` with no filters) and
-# empirically confirmed against 14 real shards under ``runs/`` on 2026-08-13:
-# every array used dtype in {u1,i1,i2,i4,i8,f2,f4}, compressor ``blosc``, and
-# NO filters. The dtype allowlist is by *kind* (bool/int/uint/float) so a future
-# numeric width needs no change here; the compressor allowlist admits the family
-# of pure byte-transform (de)compressors so a compressor swap does not take the
-# fleet to zero, while still rejecting every object codec.
-_SAFE_SHARD_DTYPE_KINDS: frozenset[str] = frozenset({"b", "i", "u", "f"})
-_SAFE_SHARD_COMPRESSOR_IDS: frozenset[str] = frozenset(
-    {"blosc", "zstd", "lz4", "gzip", "zlib", "bz2", "lzma"}
-)
-
-
-def _reject_unsafe_shard_codecs(proxies: dict[str, Any]) -> None:
-    """Reject uploaded zarr arrays whose dtype/codec could run a deserializer.
-
-    ⚑ FAILS CLOSED. Every member must be POSITIVELY identified as an
-    allowlisted numeric ``zarr.Array``; anything this function cannot classify
-    -- a sub-group in a field slot, a member with no readable ``dtype``, an
-    unreadable ``.zarray`` -- is REJECTED, not defaulted. The obvious spelling
-    ``np.dtype(getattr(arr, "dtype", None))`` is a trap: it maps a MISSING
-    dtype to ``float64``, whose kind ``f`` this allowlist permits, so the
-    guard would accept exactly the members it failed to understand. A security
-    gate whose default is ACCEPT is the "gate that cannot fail" shape. The
-    downstream ``validate_arrays`` is NOT the backstop here -- it lives in a
-    different function that a later reordering could move or skip.
-
-    ⚑ Takes the SAME proxy objects the loader goes on to materialize, not the
-    group to re-walk. Two independent walks over ``_SHARD_FIELDS`` is precisely
-    how a guard and its loader drift apart later; passing the built dict makes
-    "the guard inspected what was decoded" true by construction, and halves the
-    lazy-path cost.
-
-    Reads ``.zarray`` metadata only (``dtype``/``filters``/``compressor``) --
-    no chunk is decoded -- so it is safe on lazy, untrusted proxies BEFORE
-    materialization.
-    """
-    for name, arr in proxies.items():
-        if not isinstance(arr, zarr.Array):
-            raise ValueError(
-                f"shard member {name!r} is a {type(arr).__name__}, not a zarr array; "
-                f"refusing to decode (untrusted-deserialization guard)",
-            )
-        raw_dtype = getattr(arr, "dtype", None)
-        if raw_dtype is None:
-            raise ValueError(
-                f"shard array {name!r} declares no dtype; "
-                f"refusing to decode (untrusted-deserialization guard)",
-            )
-        try:
-            dtype = np.dtype(raw_dtype)
-        except TypeError as exc:
-            raise ValueError(
-                f"shard array {name!r} declares an unreadable dtype {raw_dtype!r}; "
-                f"refusing to decode (untrusted-deserialization guard)",
-            ) from exc
-        if dtype.kind not in _SAFE_SHARD_DTYPE_KINDS:
-            raise ValueError(
-                f"shard array {name!r} declares non-numeric dtype {dtype!s}; "
-                f"refusing to decode (untrusted-deserialization guard)",
-            )
-        filters = getattr(arr, "filters", None)
-        if filters:
-            filter_ids = [getattr(f, "codec_id", type(f).__name__) for f in filters]
-            raise ValueError(
-                f"shard array {name!r} declares filters {filter_ids}; only "
-                f"filter-free numeric arrays are accepted (untrusted-deserialization guard)",
-            )
-        compressor = getattr(arr, "compressor", None)
-        if compressor is not None:
-            codec_id = getattr(compressor, "codec_id", type(compressor).__name__)
-            if codec_id not in _SAFE_SHARD_COMPRESSOR_IDS:
-                raise ValueError(
-                    f"shard array {name!r} uses disallowed compressor {codec_id!r}; "
-                    f"only byte-transform compressors are accepted "
-                    f"(untrusted-deserialization guard)",
-                )
-
-
 def validate_array_declarations(
     arrs: dict[str, Any],
     *,
@@ -1868,13 +1779,53 @@ def save_local_shard_arrays(
     return p
 
 
+@contextmanager
+def open_shard_arrays(
+    path: str | Path, *, lazy: bool = False, validate: bool = True,
+    allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None,
+) -> Generator[tuple[dict[str, Any], dict[str, Any]], None, None]:
+    """Scope lazy archive arrays to an explicit owner; directory reads are unchanged."""
+    from .packed_zarr import is_packed, open_store
+    p = Path(path)
+    if is_packed(p):
+        if overlay_seal is not None:
+            raise ValueError("packed ordinary shards cannot carry an overlay seal")
+        with open_store(p) as store:
+            yield _load_shard_arrays(p, lazy=lazy, validate=validate,
+                                     allow_target_overlay=allow_target_overlay,
+                                     overlay_seal=overlay_seal, _store=store)
+    else:
+        yield _load_shard_arrays(p, lazy=lazy, validate=validate,
+                                 allow_target_overlay=allow_target_overlay,
+                                 overlay_seal=overlay_seal)
+
+
 def load_shard_arrays(
+    path: str | Path, *, lazy: bool = False, validate: bool = True,
+    allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load ordinary/qualified overlay shards; packed lazy reads require ownership.
+
+    Use ``with open_shard_arrays(..., lazy=True)`` for packed Zarr declarations.
+    Eager archives close before return, including on decoder/validation errors.
+    """
+    from .packed_zarr import is_packed
+    if lazy and is_packed(Path(path)):
+        raise ValueError("lazy packed Zarr requires the open_shard_arrays context")
+    with open_shard_arrays(path, lazy=lazy, validate=validate,
+                           allow_target_overlay=allow_target_overlay,
+                           overlay_seal=overlay_seal) as result:
+        return result
+
+
+def _load_shard_arrays(
     path: str | Path,
     *,
     lazy: bool = False,
     validate: bool = True,
     allow_target_overlay: bool = False,
     overlay_seal: BaseSeal | None = None,
+    _store: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Load a shard's arrays + meta, dispatching on suffix.
 
@@ -1924,7 +1875,7 @@ def load_shard_arrays(
     if is_overlay:
         proxies, meta = overlay_proxies(p, _SHARD_FIELDS, seal=overlay_seal)
     else:
-        g = zarr.open_group(str(p), mode="r")
+        g = zarr.open_group(_store if _store is not None else str(p), mode="r")
         meta = dict(g.attrs.asdict())
         proxies = {name: g[name] for name in _SHARD_FIELDS if name in g}
     # Untrusted-deserialization guard (issue #411): reject object dtypes and

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
+from dataclasses import asdict
 import hashlib
 import json
 import math
@@ -53,7 +54,36 @@ def package_manifest(package: Path) -> tuple[dict[str, object], Encoding]:
     if type(data.get('channels')) is not int or data.get('channels') != encoding.channels:
         raise ValueError('manifest channels disagree with encoding')
     execution_spec(data)
+    if data['format'] == CHECKPOINT_FORMAT:
+        validate_checkpoint_encoding(data, encoding)
     return data, encoding
+
+
+def validate_checkpoint_encoding(data: dict[str, object], encoding: Encoding) -> None:
+    """Require the saved architecture, resolved config and wire encoding to agree.
+
+    These fields have been present in every package emitted by this v3 exporter.
+    Hashing the package alone cannot detect a contradictory sidecar. This is a
+    consistency check for trusted artifacts, not authentication of model code.
+    """
+    from chess_anti_engine.model import ARCH_SCHEMA_VERSION
+    from chess_anti_engine.uci.model_loader import model_config_from_arch
+    arch, resolved = data.get('arch'), data.get('resolved_model_config')
+    if not isinstance(arch, dict) or not isinstance(resolved, dict):
+        raise ValueError('checkpoint manifest requires architecture and resolved configuration')
+    schema = arch.get('_schema_version')
+    if type(schema) is not int or not 1 <= schema <= ARCH_SCHEMA_VERSION:
+        raise ValueError('unsupported checkpoint manifest architecture schema')
+    for record in (arch, resolved):
+        if record.get('kind') not in ('tiny', 'transformer') or record.get('policy_encoding') != 'lc0_1858':
+            raise ValueError('unsupported checkpoint model kind/policy encoding')
+        for key, expected in asdict(encoding).items():
+            actual = record.get(key)
+            if type(actual) is not type(expected) or actual != expected:
+                raise ValueError('checkpoint configuration disagrees with encoding: ' + key)
+    expected_config = asdict(model_config_from_arch(arch))
+    if json.dumps(resolved, sort_keys=True, allow_nan=False) != json.dumps(expected_config, sort_keys=True, allow_nan=False):
+        raise ValueError('checkpoint resolved configuration disagrees with architecture')
 
 
 def execution_spec(data: dict[str, object]) -> tuple[str, str, int]:
@@ -145,13 +175,17 @@ class NativeEvaluator:
         assert self.proc.stdin is not None
         assert self.proc.stdout is not None
         self.input, self.output = self.proc.stdin, self.proc.stdout
-        os.set_blocking(self.input.fileno(), False)
         try:
+            os.set_blocking(self.input.fileno(), False)
             if struct.unpack('<2I', read_exact(self.output, 8, time.monotonic() + timeout)) != (MAGIC, 0):
                 raise ValueError('invalid evaluator handshake')
         except Exception as error:
-            details = self.diagnostics()
-            self.close()
+            try:
+                details = self.diagnostics()
+            except (OSError, ValueError) as diagnostic_error:
+                details = 'native stderr unavailable: ' + str(diagnostic_error)
+            finally:
+                self.close()
             raise RuntimeError('native evaluator startup failed: ' + str(error) + '\n' + details) from error
         except BaseException:
             self.close()
