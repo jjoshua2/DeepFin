@@ -13,3 +13,7 @@ def Native.diagnostics() -> IO(Bool):
 
 def Native.run(count: U32, input: Array<F32>, output: Array<F32>) -> IO(Buffers):
   import "./model_call.c"
+
+# Checked search-epoch admission; zero is sync, one is async.
+def Native.begin(epoch: U32, limit: U32, asynchronous: U32) -> IO(Unit):
+  import "./model_call.c"

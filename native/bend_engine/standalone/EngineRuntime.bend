@@ -10,13 +10,15 @@ import ./ModelInput.bend as Input
 import ./LogitReply.bend as Logits
 import ./NeuralWork.bend as Work
 import ./Async.bend as Async
+import ./SessionOptions.bend as Options
+import ./ModelBuffers.bend as Buffers
 
 type Retirement is Data:
   NoRetirement{}
   Retiring{id: Async.Identity, run: Work.Run, completed: U32, stop: U32}
 
 type Control is Data:
-  Control{epoch: U32, asynchronous: Bool, retirement: Retirement}
+  Control{epoch: U32, asynchronous: Bool, retirement: Retirement, options: Options.Options}
 
 type Cache is Type:
   Cache{native: Native.Cache, control: Control}
@@ -31,21 +33,21 @@ type Submission is Type:
   Submission{cache: Cache, table: Array<U64>, pending: Pending, encoding_ms: Nat}
 
 def cache(model: U32, diagnostics: Bool, asynchronous: Bool) -> Cache:
-  Cache{Native.cache(model, diagnostics), Control{0, asynchronous, NoRetirement{}}}
+  Cache{Native.cache(model, diagnostics), Control{0, asynchronous, NoRetirement{}, Options.defaults()}}
 
 def enabled(cache: Cache) -> Cache & Bool:
-  Cache{native, Control{epoch, +asynchronous, retirement}} = cache
-  (Cache{native, Control{epoch, asynchronous, retirement}}, asynchronous)
+  Cache{native, Control{epoch, +asynchronous, retirement, options}} = cache
+  (Cache{native, Control{epoch, asynchronous, retirement, options}}, asynchronous)
 
 # A new search owns a fresh epoch, including zero-forward and queued searches.
 # No wraparound and no reset on position/ucinewgame. Tokens are separate IDs.
 def next(cache: Cache) -> IO(Cache & U32):
-  Cache{native, Control{epoch, asynchronous, retirement}} = cache
+  Cache{native, Control{epoch, asynchronous, retirement, options}} = cache
   match epoch:
     case 4294967295: IO.die(Cache & U32, 2, "search epoch exhausted; restart required")
     case _:
       +fresh = U32.inc(epoch)
-      IO.pure(Cache & U32, (Cache{native, Control{fresh, asynchronous, retirement}}, fresh))
+      IO.pure(Cache & U32, (Cache{native, Control{fresh, asynchronous, retirement, options}}, fresh))
 
 def wrap(control: Control, r: Native.Result) -> Result:
   Native.Result{native, table, reply, enc, back, post} = r
@@ -128,18 +130,18 @@ def complete(cache: Cache, +timing: Bool, root: Pos.Game, pending: Pending, tabl
           Logits.convert_buffer(ticket, entries, 1861, Array.size(F32, output)))
 
 def retiring(cache: Cache, id: Async.Identity, run: Work.Run, completed: U32, stop: U32) -> Cache:
-  Cache{native, Control{epoch, asynchronous, retirement}} = cache
-  Cache{native, Control{epoch, asynchronous, Retiring{id, run, completed, stop}}}
+  Cache{native, Control{epoch, asynchronous, retirement, options}} = cache
+  Cache{native, Control{epoch, asynchronous, Retiring{id, run, completed, stop}, options}}
 
-def retirement_done(native: Native.Cache, epoch: U32, asynchronous: Bool, id: Async.Identity,
+def retirement_done(native: Native.Cache, options: Options.Options, epoch: U32, asynchronous: Bool, id: Async.Identity,
   run: Work.Run, completed: U32, stop: U32, status: U32) -> IO(Cache & Bool):
   match status:
-    case 1: IO.pure(Cache & Bool, (Cache{native, Control{epoch, asynchronous, Retiring{id, run, completed, stop}}}, True{}))
+    case 1: IO.pure(Cache & Bool, (Cache{native, Control{epoch, asynchronous, Retiring{id, run, completed, stop}, options}}, True{}))
     case 3:
       do IO<Cache & Bool>:
         now : Nat <- IO.now()
         IO.print(Work.retirement(now, completed, stop, Work.retired(run, True{})))
-        return (Cache{native, Control{epoch, asynchronous, NoRetirement{}}}, False{})
+        return (Cache{native, Control{epoch, asynchronous, NoRetirement{}, options}}, False{})
     case 4:
       do IO<Cache & Bool>:
         now : Nat <- IO.now()
@@ -150,13 +152,13 @@ def retirement_done(native: Native.Cache, epoch: U32, asynchronous: Bool, id: As
 # Nonblocking; a replacement search can own its own root/clock while this drain
 # prevents dispatch. Late output can never reach either the old or new tree.
 def retire(cache: Cache) -> IO(Cache & Bool):
-  Cache{native, Control{epoch, asynchronous, retirement}} = cache
+  Cache{native, Control{epoch, asynchronous, retirement, options}} = cache
   match retirement:
-    case NoRetirement{}: IO.pure(Cache & Bool, (Cache{native, Control{epoch, asynchronous, NoRetirement{}}}, False{}))
+    case NoRetirement{}: IO.pure(Cache & Bool, (Cache{native, Control{epoch, asynchronous, NoRetirement{}, options}}, False{}))
     case Retiring{+id, run, completed, stop}:
       do IO<Cache & Bool>:
         status : U32 <- Async.drain_identity(id)
-        retirement_done(native, epoch, asynchronous, id, run, completed, stop, status)
+        retirement_done(native, options, epoch, asynchronous, id, run, completed, stop, status)
 
 def shutdown_checked(r: Cache & Bool) -> IO(Unit):
   (discarded, busy) = r
@@ -169,3 +171,20 @@ def shutdown(cache: Cache) -> IO(Unit):
     Async.Async.shutdown()
     r : Cache & Bool <- retire(cache)
     shutdown_checked(r)
+
+# Settings persist across positions/new games; controller admits writes only idle.
+def settings(cache: Cache) -> Cache & Options.Options:
+  Cache{native, Control{epoch, asynchronous, retirement, +options}} = cache
+  (Cache{native, Control{epoch, asynchronous, retirement, options}}, options)
+
+def configure(cache: Cache, options: Options.Options) -> Cache:
+  Cache{native, Control{epoch, asynchronous, retirement, old}} = cache
+  Cache{native, Control{epoch, asynchronous, retirement, options}}
+
+# Invoke only immediately before actual native work after old-slot retirement.
+# Repeated calls in one epoch are idempotent and cannot replenish its budget.
+def begin(cache: Cache, limit: U32) -> IO(Cache):
+  Cache{native, Control{+epoch, +asynchronous, retirement, options}} = cache
+  do IO<Cache>:
+    Buffers.Native.begin(epoch, limit, Bool.to_u32(asynchronous))
+    return Cache{native, Control{epoch, asynchronous, retirement, options}}

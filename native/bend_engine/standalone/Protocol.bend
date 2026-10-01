@@ -103,7 +103,7 @@ def set_limit(+which: U32, value: Maybe<&2, U32>, lim: Limits) -> Limits:
       Limits{n, d, ms, inf, seen, False{}, evals}
     case Some{+v}:
       Limits{n, d, ms, inf, +seen, valid, evals} = lim
-      max = Bool.pick(U32, U32.is_eq(which, 1), 256, Bool.pick(U32, U32.is_eq(which, 2), 32, Bool.pick(U32, U32.is_eq(which, 16), 65536, 60000)))
+      max = Bool.pick(U32, U32.is_eq(which, 1), 65536, Bool.pick(U32, U32.is_eq(which, 2), 32, Bool.pick(U32, U32.is_eq(which, 16), 65536, 60000)))
       ok = Bool.and(valid, Bool.and(U32.is_gt(which, 0), Bool.and(U32.is_zero(U32.and(seen, which)),
         Bool.and(U32.is_gt(v, 0), U32.is_le(v, max)))))
       Limits{Bool.pick(U32, U32.is_eq(which, 1), v, n), Bool.pick(U32, U32.is_eq(which, 2), v, d),
@@ -152,4 +152,4 @@ def command(+s: String) -> U32:
   Bool.pick(U32, String.eq(s, "uci"), 1, Bool.pick(U32, String.eq(s, "isready"), 2,
     Bool.pick(U32, String.eq(s, "position"), 3, Bool.pick(U32, String.eq(s, "go"), 4,
       Bool.pick(U32, String.eq(s, "stop"), 5, Bool.pick(U32, String.eq(s, "quit"), 6,
-        Bool.pick(U32, String.eq(s, "ucinewgame"), 7, Bool.pick(U32, String.eq(s, "d"), 8, Bool.pick(U32, String.eq(s, "perft"), 9, Bool.pick(U32, String.eq(s, "rules"), 10, Bool.pick(U32, String.eq(s, "encode_history"), 11, Bool.pick(U32, String.eq(s, "encode_input"), 12, Bool.pick(U32, String.eq(s, "policy"), 13, Bool.pick(U32, String.eq(s, "encode_request"), 14, 0))))))))))))))
+        Bool.pick(U32, String.eq(s, "ucinewgame"), 7, Bool.pick(U32, String.eq(s, "d"), 8, Bool.pick(U32, String.eq(s, "perft"), 9, Bool.pick(U32, String.eq(s, "rules"), 10, Bool.pick(U32, String.eq(s, "encode_history"), 11, Bool.pick(U32, String.eq(s, "encode_input"), 12, Bool.pick(U32, String.eq(s, "policy"), 13, Bool.pick(U32, String.eq(s, "encode_request"), 14, Bool.pick(U32, String.eq(s, "setoption"), 15, 0)))))))))))))))

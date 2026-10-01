@@ -1,6 +1,7 @@
 import Base
 import ../standalone/EngineRuntime.bend as Runtime
 import ../standalone/NativeEvaluation.bend as Native
+import ../standalone/SessionOptions.bend as Options
 
 def last(r: Runtime.Cache & U32) -> IO(Unit):
   (cache, epoch) = r
@@ -11,5 +12,5 @@ def last(r: Runtime.Cache & U32) -> IO(Unit):
 
 def main() -> IO(Unit):
   do IO<Unit>:
-    r : Runtime.Cache & U32 <- Runtime.next(Runtime.Cache{Native.Disabled{}, Runtime.Control{4294967294, False{}, Runtime.NoRetirement{}}})
+    r : Runtime.Cache & U32 <- Runtime.next(Runtime.Cache{Native.Disabled{}, Runtime.Control{4294967294, False{}, Runtime.NoRetirement{}, Options.defaults()}})
     last(r)

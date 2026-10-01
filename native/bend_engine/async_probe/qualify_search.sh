@@ -18,6 +18,9 @@ done
 for mode in normal ubsan; do
   flags=()
   if [[ "$mode" == ubsan ]]; then flags=(-fsanitize=undefined -fno-sanitize-recover=all); fi
+  "$cxx" -std=c++20 -O1 -ffp-contract=off "${flags[@]}" -pthread \
+    "$here/search_forward_budget_test.cpp" "$here/../standalone/async_model.cpp" -o "$out/budget-$mode"
+  "$out/budget-$mode" > "$out/budget-$mode.txt"
   "$cc" -std=c11 -O1 -ffp-contract=off "${flags[@]}" -DDEEPFIN_BEND_NATIVE_MODEL -c "$engine" -o "$out/engine-$mode.o"
   "$cxx" -std=c++20 -O1 -ffp-contract=off "${flags[@]}" -pthread "$out/engine-$mode.o" \
     "$here/../standalone/async_model.cpp" "$here/search_gate.cpp" -lm -o "$out/gate-$mode"
