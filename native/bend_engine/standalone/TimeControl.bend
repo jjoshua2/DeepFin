@@ -92,10 +92,9 @@ def resolve(turn: U32, clocks: Clocks, lim: Protocol.Limits) -> Protocol.Limits:
 
 def finish(turn: U32, reading: Reading) -> Protocol.Limits:
   Reading{Clocks{w, b, wi, bi, moves, seen, valid}, pending, rest} = reading
-  clocks = Clocks{w, b, wi, bi, moves, seen, Bool.and(valid, U32.is_zero(pending))}
   lim = Protocol.go(List.reverse(&2, String, rest),
     Protocol.GoState{Protocol.Limits{64, 4, 0, False{}, 0, True{}, 0}, 0})
-  resolve(turn, clocks, lim)
+  resolve(turn, Clocks{w, b, wi, bi, moves, seen, Bool.and(valid, U32.is_zero(pending))}, lim)
 
 def go(xs: List<&2, String>, turn: U32) -> Protocol.Limits:
   finish(turn, read(xs, Reading{Clocks{0, 0, 0, 0, 30, 0, True{}}, 0, Nil{}}))
