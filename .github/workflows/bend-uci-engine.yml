@@ -4,6 +4,7 @@ on:
     paths:
       - '.github/workflows/bend-uci-engine.yml'
       - 'native/bend_engine/standalone/**'
+      - 'native/bend_engine/async_probe/**'
       - 'tests/test_bend_native_uci_clocks.py'
       - 'native/bend_engine/legal_probe/Chess.bend'
       - 'native/bend_engine/session_probe/Search.bend'
@@ -15,6 +16,7 @@ on:
     paths:
       - '.github/workflows/bend-uci-engine.yml'
       - 'native/bend_engine/standalone/**'
+      - 'native/bend_engine/async_probe/**'
       - 'tests/test_bend_native_uci_clocks.py'
       - 'native/bend_engine/legal_probe/Chess.bend'
       - 'native/bend_engine/session_probe/Search.bend'
@@ -46,6 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -63,6 +66,7 @@ jobs:
         run: |
           revision=$(bun native/bend_engine/standalone/verify_compiler.js --revision)
           bash native/bend_engine/standalone/build.sh build/uci-engine "build/bend_toolchain/sources/$revision" "${{ matrix.mode }}"
+          printf 'source_revision=%s\n' "$(git rev-parse HEAD)" >> build/uci-engine/build.txt
       - name: Clock allocations, standard client and existing UCI regression
         run: |
           . .venv/bin/activate
@@ -70,6 +74,15 @@ jobs:
           python -m native.bend_engine.standalone.verify_time_control --report artifacts/uci-clocks.json --command build/uci-engine/deepfin-bend --threads 1
           python -m native.bend_engine.standalone.verify --report artifacts/uci-regression.json --command build/uci-engine/deepfin-bend --threads 1
           python -m native.bend_engine.standalone.verify_rules --report artifacts/uci-rules.json --command build/uci-engine/deepfin-bend --threads 1
+      - name: Actual UCI async lifecycle and zero-clock retirement
+        if: matrix.mode == 'generic'
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: |
+          . .venv/bin/activate
+          revision=$(bun native/bend_engine/standalone/verify_compiler.js --revision)
+          bash native/bend_engine/async_probe/qualify_search.sh "build/bend_toolchain/sources/$revision" build/uci-engine/engine.c build/uci-async
       - name: Whole-repository static gate
         if: matrix.mode == 'generic'
         run: |
@@ -83,4 +96,6 @@ jobs:
           path: |
             artifacts/uci-*.json
             build/uci-engine/build.txt
+            build/uci-async/*.json
+            build/uci-async/*.txt
           retention-days: 30

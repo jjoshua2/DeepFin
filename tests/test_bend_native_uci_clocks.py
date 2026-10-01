@@ -11,12 +11,15 @@ import pytest
 
 
 @pytest.mark.parametrize('flag', ['-O', '-OO'])
-def test_optimized_verifier_fails_closed_before_engine_start(tmp_path: Path, flag: str) -> None:
+@pytest.mark.parametrize('verifier', ['standalone.verify_time_control', 'async_probe.verify_search'])
+def test_optimized_verifier_fails_closed_before_engine_start(
+        tmp_path: Path, flag: str, verifier: str) -> None:
     report = tmp_path / 'report.json'
     report.write_text('{"qualified": true}\n')
+    extra = ['--accounting-output', str(tmp_path / 'missing.txt')] if verifier.startswith('async') else []
     result = subprocess.run(
-        [sys.executable, flag, '-m', 'native.bend_engine.standalone.verify_time_control',
-         '--report', str(report), '--command', '/deliberately/missing/engine'],
+        [sys.executable, flag, '-m', 'native.bend_engine.' + verifier,
+         '--report', str(report), *extra, '--command', '/deliberately/missing/engine'],
         capture_output=True, text=True, timeout=20, check=False,
         env={**os.environ, 'PYTHONOPTIMIZE': ''},
     )
@@ -26,10 +29,11 @@ def test_optimized_verifier_fails_closed_before_engine_start(tmp_path: Path, fla
     assert json.loads(report.read_text())['qualified'] is False
 
 
-def test_normal_interpreter_allows_the_assertion_guard() -> None:
+@pytest.mark.parametrize('verifier', ['standalone.verify_time_control', 'async_probe.verify_search'])
+def test_normal_interpreter_allows_the_assertion_guard(verifier: str) -> None:
     result = subprocess.run(
         [sys.executable, '-c',
-         'from native.bend_engine.standalone.verify_time_control import require_assertions; '
+         f'from native.bend_engine.{verifier} import require_assertions; '
          'require_assertions(); print("guard passed")'],
         capture_output=True, text=True, timeout=20, check=False,
         env={**os.environ, 'PYTHONOPTIMIZE': ''},

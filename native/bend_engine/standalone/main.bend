@@ -349,7 +349,8 @@ def past_deadline(now: Nat, +duration: U32, run: Work.Run) -> Bool:
   Bool.and(U32.is_gt(duration, 0), Nat.is_ge(Work.wall(now, run), U32.to_nat(duration)))
 
 # A replacement go is represented by Running with its own epoch and clock, but
-# cannot select/dispatch until the old slot retires. Its timer still expires.
+# cannot select/dispatch until the old slot retires. Its timer still expires,
+# and a depleted-clock zero budget can finish without touching the old slot.
 def blocked_running(expired: Bool, cache: NativeEvaluation.Cache, root: Pos.Game, table: Array<U64>, tree: Search.Tree,
   budget: U32, inf: Bool, run: Work.Run, duration: U32, fallback: U32) -> IO(State):
   match expired:
@@ -360,12 +361,12 @@ def blocked_running(expired: Bool, cache: NativeEvaluation.Cache, root: Pos.Game
         return ready_state(cache, root, table, tree, budget, inf, run, duration, fallback)
 
 def tick_running(busy: Bool, cache: NativeEvaluation.Cache, model: U32, root: Pos.Game, table: Array<U64>, tree: Search.Tree,
-  budget: U32, inf: Bool, +run: Work.Run, +duration: U32, fallback: U32) -> IO(State):
+  +budget: U32, inf: Bool, +run: Work.Run, +duration: U32, fallback: U32) -> IO(State):
   match busy:
     case True{}:
       do IO<State>:
         now : Nat <- IO.now()
-        blocked_running(past_deadline(now, duration, run), cache, root, table, tree, budget, inf, run, duration, fallback)
+        blocked_running(Bool.or(U32.is_zero(budget), past_deadline(now, duration, run)), cache, root, table, tree, budget, inf, run, duration, fallback)
     case False{}:
       do IO<State>:
         now : Nat <- IO.now()
@@ -542,10 +543,11 @@ def command_deadline(expired: Bool, s: State) -> IO(State):
 def command_checked(s: State) -> IO(State):
   State{cache, root, table, mode, +quit} = s
   match mode:
-    case Running{tree, budget, inf, +run, +duration, fallback}:
+    case Running{tree, +budget, inf, +run, +duration, fallback}:
       do IO<State>:
         now : Nat <- IO.now()
-        command_deadline(past_deadline(now, duration, run), State{cache, root, table, Running{tree, budget, inf, run, duration, fallback}, quit})
+        command_deadline(Bool.or(U32.is_zero(budget), past_deadline(now, duration, run)),
+          State{cache, root, table, Running{tree, budget, inf, run, duration, fallback}, quit})
     case Awaiting{tree, pending, budget, inf, +run, +duration, fallback}:
       do IO<State>:
         now : Nat <- IO.now()
