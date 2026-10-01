@@ -177,8 +177,11 @@ def main() -> None:
                         report.update(status='passed', qualification='passed')
                     finally:
                         report['native_calls'] = evaluator.sequence - 1
-                        report['native_stderr_tail'] = evaluator.diagnostics()
-                        evaluator.close()
+                        try:
+                            report['native_stderr_tail'] = evaluator.diagnostics()
+                        finally:
+                            # Diagnostic IO must never prevent worker cleanup.
+                            evaluator.close()
                     enter('complete')
         except Exception as error:
             if report['qualification'] == 'running':

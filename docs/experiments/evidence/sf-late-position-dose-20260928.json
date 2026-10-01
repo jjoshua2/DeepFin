@@ -1,0 +1,81 @@
+{
+  "schema": "sf-late-position-dose-source-readout-v1",
+  "status": "SAVED_SOURCE_ONLY_NO_TRAINING_AUTHORIZATION",
+  "source": {
+    "path": "docs/experiments/evidence/sf-constraints-full-readout-20260911.json",
+    "sha256": "ae504f4231dd9d9e1af25d4f4cf5796cc917f60163cf6d644cdc14b62344473a",
+    "main_base_commit": "c014c51d700d1bd13b63feb179b51be28122b1bc",
+    "operator": "exact ordinary Tactical300 preview",
+    "slice_key": "ply_index",
+    "new_corpus_or_teacher_execution": false
+  },
+  "totals": {
+    "all_rows": 262079,
+    "ordinary_d9_rows": 187628,
+    "mate_excluded_rows": 74451,
+    "source_qualified_game_clusters": 1331,
+    "scientific_trigger_rows": 13495,
+    "bit_level_only_normalization_differences": 31669,
+    "moved_mass_probability_units": 1841.9948401132096
+  },
+  "disjoint_ply_slices": [
+    {
+      "ply": "<40",
+      "all_rows": 53024,
+      "ordinary_rows": 48490,
+      "mate_excluded_rows": 4534,
+      "scientific_trigger_rows": 2583,
+      "moved_mass_probability_units": 21.116652757478185,
+      "mean_moved_mass_per_ordinary_row_pct": 0.04354846928743697,
+      "share_of_total_moved_mass_pct": 1.146401298072061,
+      "mean_bt4_mass_on_gt300cp_inferior_moves_pct": 0.6084174179458718,
+      "unscored_share_of_gt300cp_inferior_mass_pct": 70.31198259000965,
+      "contradicted_share_of_adjudicable_gt300cp_inferior_mass_pct": 2.4133410237993527
+    },
+    {
+      "ply": "40-79",
+      "all_rows": 51524,
+      "ordinary_rows": 38499,
+      "mate_excluded_rows": 13025,
+      "scientific_trigger_rows": 1556,
+      "moved_mass_probability_units": 117.23351309203524,
+      "mean_moved_mass_per_ordinary_row_pct": 0.30451054077257916,
+      "share_of_total_moved_mass_pct": 6.3644865088129245,
+      "mean_bt4_mass_on_gt300cp_inferior_moves_pct": 3.042301855844689,
+      "unscored_share_of_gt300cp_inferior_mass_pct": 68.93106192488547,
+      "contradicted_share_of_adjudicable_gt300cp_inferior_mass_pct": 7.248772073460861
+    },
+    {
+      "ply": ">=80",
+      "all_rows": 157531,
+      "ordinary_rows": 100639,
+      "mate_excluded_rows": 56892,
+      "scientific_trigger_rows": 9356,
+      "moved_mass_probability_units": 1703.6446742636933,
+      "mean_moved_mass_per_ordinary_row_pct": 1.6928275064971765,
+      "share_of_total_moved_mass_pct": 92.48911219311502,
+      "mean_bt4_mass_on_gt300cp_inferior_moves_pct": 9.915391659801957,
+      "unscored_share_of_gt300cp_inferior_mass_pct": 57.53421086621881,
+      "contradicted_share_of_adjudicable_gt300cp_inferior_mass_pct": 12.229708426601858
+    }
+  ],
+  "fixed_late_only_same_bank_arithmetic": {
+    "moved_mass_retained_pct": 92.48911219311502,
+    "ordinary_rows_touched_pct": 53.637516788539024,
+    "mean_moved_mass_across_all_ordinary_rows_pct": 0.9079906379984296,
+    "late_mate_excluded_fraction_all_late_rows_pct": 36.11479645276168
+  },
+  "additional_source_hashes": {
+    "tactical100_record_sha256": "c77e86bddb8b628a1bf80ed7305301ea635ca7ae8da748991250d41ad7cf9d92",
+    "downside300_record_sha256": "ebe2d5ea7c08269847133e5a282c4a63c227cde76d9d55a6f1983b94234982e2",
+    "factorial_record_sha256": "280a0603a2e358651d8b2997a63e68566dba5d6d57c180c6f76e17d67b66e9d6",
+    "selected_e_vs_d_record_commit": "3d6923ec81745d8a0a8b875a26e48cec624ad1b2",
+    "selected_e_vs_d_record_sha256": "439b68846ba21dbbc6b7391ee3d70bb34a87031ea1206ca0032a4e86eb21137a"
+  },
+  "limits": [
+    "No same-bank playing-strength estimate for a late-only operator.",
+    "Ply is not piece count.",
+    "The G10 slice does not forecast the 58M factorial recipe.",
+    "Missing deeper comparisons prevent treating scored-roster conditional regret as ground truth."
+  ]
+}

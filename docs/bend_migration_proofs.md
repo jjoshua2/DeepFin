@@ -1,5 +1,19 @@
 # Bend migration and proof inventory
 
+## Initialized geometric checks at derived castling stages
+
+Hosted run36295872282/job108554494045 passes the new complete composition consumer, five certificate-level semantic rejections plus one synthetic output check, four-mode actual stage oracle, original compiler/pin tests and unchanged repository lint. For the actual initial,transit and completed Boards, in_check now equals independent target-centred geometry plus the complete initialized array, with stage singleton/bounds derived from the initial invariants and producer guard.
+
+This is modular191/606, not a full aggregate run or a claim that all checks return safe. The original moving side is retained despite the child turn flip. Sequential table threading, accepted-generator safe results, forward/reverse attack equivalence and historical rights remain separate. All14 files of the saved raw-side singleton variant are archived without replacing the active Boolean-side suite or duplicating counts. See [the readout](experiments/2026-09-27-bend-castle-stage-geometry.md).
+
+## Latest P3 castling mover-king propagation
+
+Hosted run **36291285103** passes four public laws, the importing consumer, all nineteen controls, all four native modes and three compiled/executed corruptions, original compiler tests and unchanged repository lint on source `bc8d5f83dbd9f3e77492763644ffe92478be1a16`.
+
+Starting with a consistent Board, exactly one selected-side home king and valid raw side metadata, actual transit preserves the king singleton. Actual castling does so under the producer guard, which supplies rook-landing freshness. Raw make_move flips valid side metadata. At start/transit/final stages actual in_check equals actual attacked at the intended moving-king square against the opposite side, including the whole pair. These are not caller-assumed output king counts.
+
+Modular190/600 retains parent186/581 without a full aggregate run. Initial king/side validity still needs its own global origin; opposing king invariants, universal forward/reverse attacks, legal-rights history and complete castling safety composition remain separate. See [the dated record](experiments/2026-09-26-bend-castle-king-invariants.md). No production responsibility moved.
+
 ## Published sequential castling-check qualification
 
 Run **36324699695** passed both public laws, the complete importing consumer and all17 controls, all four native modes and three actual-code mutations, original compiler/pin gates, and unchanged locked-environment repository lint on published source `95049dd691032210a759052b4f04f26838c8e05d`.
@@ -22,20 +36,6 @@ Repository lint is unqualified for missing tools and no hosted run/publication o
 independent review occurred. Modular193/623 retains191/606 from #899; the full
 aggregate did not run. See [the readout](experiments/2026-09-27-bend-castle-sequence.md).
 
-
-## Initialized geometric checks at derived castling stages
-
-Hosted run36295872282/job108554494045 passes the new complete composition consumer, five certificate-level semantic rejections plus one synthetic output check, four-mode actual stage oracle, original compiler/pin tests and unchanged repository lint. For the actual initial,transit and completed Boards, in_check now equals independent target-centred geometry plus the complete initialized array, with stage singleton/bounds derived from the initial invariants and producer guard.
-
-This is modular191/606, not a full aggregate run or a claim that all checks return safe. The original moving side is retained despite the child turn flip. Sequential table threading, accepted-generator safe results, forward/reverse attack equivalence and historical rights remain separate. All14 files of the saved raw-side singleton variant are archived without replacing the active Boolean-side suite or duplicating counts. See [the readout](experiments/2026-09-27-bend-castle-stage-geometry.md).
-
-## Latest P3 castling mover-king propagation
-
-Hosted run **36291285103** passes four public laws, the importing consumer, all nineteen controls, all four native modes and three compiled/executed corruptions, original compiler tests and unchanged repository lint on source `bc8d5f83dbd9f3e77492763644ffe92478be1a16`.
-
-Starting with a consistent Board, exactly one selected-side home king and valid raw side metadata, actual transit preserves the king singleton. Actual castling does so under the producer guard, which supplies rook-landing freshness. Raw make_move flips valid side metadata. At start/transit/final stages actual in_check equals actual attacked at the intended moving-king square against the opposite side, including the whole pair. These are not caller-assumed output king counts.
-
-Modular190/600 retains parent186/581 without a full aggregate run. Initial king/side validity still needs its own global origin; opposing king invariants, universal forward/reverse attacks, legal-rights history and complete castling safety composition remain separate. See [the dated record](experiments/2026-09-26-bend-castle-king-invariants.md). No production responsibility moved.
 
 ## Initialized attack state reconciliation
 
@@ -165,6 +165,7 @@ Hosted run **36216251656** passes both public en-passant laws and importing cons
 
 Both public contracts retain the complete actual flag1/promotion0 Board update and partition preservation under input consistency. Removal includes source,destination and destination XOR8. These promote the earlier supplementary proofs unchanged; they do not certify source-pawn/rank/history,EP metadata or king safety. Qualification is modular152/453 with the exact150/436 parent retained,not a full aggregate run. See [the dated readout](experiments/2026-09-25-bend-en-passant-update.md). Castling and legal-producer connections remain next; no Python application responsibility moved into Bend.
 
+
 ## Supplementary en-passant update refinement
 
 Two newly source-checked derived statements now cover actual flag1/promotion0 make_move: exact complete-Board update and partition preservation. A structural mask identity connects removal of source,destination and destination XOR8 to existing deletion/fresh-insertion producers. Caller input consistency is required only for preservation; legal EP,pawn/source/rank/history conditions and king safety remain unproved here. Exact archived sources and the portable driver are in [the supplementary record](experiments/evidence/bend-move-promotion-publication/en-passant-review/README.md).
@@ -178,6 +179,13 @@ Hosted run **36169939079** passes both unchanged focused source suites (five ord
 The five move-update and four promotion contracts are now hosted-qualified on the exact saved primary sources. They provide complete update and partition guarantees for flag0 ordinary/typed-promotion calls,plus actual promotion-choice ordering and tail preservation. They do not prove legal source pieces,promotion ranks,king safety,castling,en-passant or independently correct metadata.
 
 Coverage is modular150/436 with parent141/401 retained on exact source evidence; both saved focused gates and native suites reran,but the full aggregate did not. No old contract was weakened. See [the publication record](experiments/2026-09-25-bend-move-promotion-publication.md). No application responsibility moved into Bend.
+
+
+## Latest P3 ordinary, promotion and en-passant updates
+
+Hosted run **36160654909** passed both focused source gates, all35 controls across them, both four-mode native suites and four behavioral mutations, original compiler checks and unchanged repository lint on source `1c45eae81922a6364cc98b01163e279036d799b9`.
+
+The saved five ordinary-update contracts are now hosted-qualified with four new typed-promotion and en-passant contracts. Exact complete Board updates and partition preservation use real Chess.make_move, clearing and insertion producers. Typed promotion means tags1..4/flag0; en-passant means flag1/promotion0 with the actual destination XOR8 capture mask. Legal sources, pawn ranks, victim conditions, king safety, metadata correctness and castling remain separate. Modular150/436 combines newly executed9/35 with exact retained141/401, not a full aggregate run. No application code migrated from Python. See [the dated record](experiments/2026-09-25-bend-special-move-updates.md).
 
 ## Latest P3 initialized parser frontier
 

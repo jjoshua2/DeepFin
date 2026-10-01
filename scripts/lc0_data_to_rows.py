@@ -1388,7 +1388,7 @@ def run_config_problems(
     return problems
 
 
-def shard_dir_label_coverage(shard_dir: Path, flag: str, *, allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None) -> tuple[int, int]:
+def shard_dir_label_coverage(shard_dir: Path, flag: str, *, allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None, allow_packed_zarr: bool = False) -> tuple[int, int]:
     """``(labelled_rows, total_rows)`` for one ``has_*`` column.
 
     ⚑ A FRACTION, not a boolean. ``any()`` over a mixed corpus reports "these
@@ -1397,38 +1397,41 @@ def shard_dir_label_coverage(shard_dir: Path, flag: str, *, allow_target_overlay
     Reads the flag through the LAZY shard loader so the 175-plane inputs are
     never decoded.
     """
-    from chess_anti_engine.replay.shard import iter_shard_paths, load_shard_arrays
+    from chess_anti_engine.replay.shard import iter_shard_paths, open_shard_arrays
+    from chess_anti_engine.replay import packed_zarr
 
     labelled = 0
     rows = 0
-    paths = iter_shard_paths(shard_dir)
+    if allow_packed_zarr and allow_target_overlay:
+        raise ValueError("packed Zarr does not support target overlays")
+    paths = packed_zarr.shard_paths(shard_dir) if allow_packed_zarr else iter_shard_paths(shard_dir)
     if allow_target_overlay and paths and overlay_seal is None:
         from chess_anti_engine.replay.target_overlay import seal_for_overlay
         overlay_seal = seal_for_overlay(paths[0])
     for path in paths:
-        arrs, _meta = (load_shard_arrays(path, lazy=True, allow_target_overlay=True, overlay_seal=overlay_seal)
-                       if allow_target_overlay else load_shard_arrays(path, lazy=True))
-        flags = arrs.get(flag)
-        if flags is None:
-  # ⚑ Row count off the INPUT array, not off `meta["positions"]`. That key is
-  # optional and reads None on shards written without it, and an unlabelled
-  # shard that contributed 0 to the denominator would make a mixed corpus read
-  # as fully labelled — the exact failure this function replaces.
-            rows += int(np.asarray(arrs["x"].shape[0]))
-            continue
-        values = np.asarray(flags)
-        rows += int(values.shape[0])
-        labelled += int((values > 0).sum())
+        with open_shard_arrays(
+            path, lazy=True, allow_target_overlay=allow_target_overlay, overlay_seal=overlay_seal,
+        ) as (arrs, _meta):
+            flags = arrs.get(flag)
+            if flags is None:
+                # Shape metadata supplies the denominator without decoding x.
+                rows += int(arrs["x"].shape[0])
+                continue
+            values = np.asarray(flags)
+            rows += int(values.shape[0])
+            labelled += int((values > 0).sum())
     return labelled, rows
 
 
-def shard_dir_sf_wdl_coverage(shard_dir: Path, *, allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None) -> tuple[int, int]:
+def shard_dir_sf_wdl_coverage(shard_dir: Path, *, allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None, allow_packed_zarr: bool = False) -> tuple[int, int]:
     """``(labelled_rows, total_rows)`` for the Stockfish value label."""
-    return (shard_dir_label_coverage(shard_dir, "has_sf_wdl", allow_target_overlay=True, overlay_seal=overlay_seal)
-            if allow_target_overlay else shard_dir_label_coverage(shard_dir, "has_sf_wdl"))
+    return shard_dir_label_coverage(
+        shard_dir, "has_sf_wdl", allow_target_overlay=allow_target_overlay,
+        overlay_seal=overlay_seal, allow_packed_zarr=allow_packed_zarr,
+    )
 
 
-def shard_dir_search_wdl_coverage(shard_dir: Path, *, allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None) -> tuple[int, int]:
+def shard_dir_search_wdl_coverage(shard_dir: Path, *, allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None, allow_packed_zarr: bool = False) -> tuple[int, int]:
     """``(labelled_rows, total_rows)`` for the SEARCH value label.
 
     ⚑ The bigger term, and the one that had no reader until PR #438's review
@@ -1438,8 +1441,10 @@ def shard_dir_search_wdl_coverage(shard_dir: Path, *, allow_target_overlay: bool
     corpus here trains the whole value head on the game result while
     ``sf_wdl_frac: 0.0`` keeps every SF-side check clean.
     """
-    return (shard_dir_label_coverage(shard_dir, "has_search_wdl", allow_target_overlay=True, overlay_seal=overlay_seal)
-            if allow_target_overlay else shard_dir_label_coverage(shard_dir, "has_search_wdl"))
+    return shard_dir_label_coverage(
+        shard_dir, "has_search_wdl", allow_target_overlay=allow_target_overlay,
+        overlay_seal=overlay_seal, allow_packed_zarr=allow_packed_zarr,
+    )
 
 
 def shard_dir_has_sf_wdl(shard_dir: Path) -> bool:
