@@ -37,8 +37,9 @@ and inherited proofs. It adds no axiom, proof hole, runtime change or assumed
 intermediate array. An exact whole-array preservation theorem already proved
 for the real generator supplies the first component.
 
-Qualification first checks the standalone filter-projection helper, then the
-complete initialized consumer including inherited law bodies. Five semantic
+Qualification checks the standalone filter-projection helper and short semantic
+controls before the complete initialized consumer, including inherited law bodies.
+Only the complete combined gate grants credit. Five semantic
 controls separately include/erase projected tags, flip the actual destination
 check side, repeat the actual kingside producer in legal_moves, and repeat a
 canonical wing in the uniqueness statement. Only intended semantic rejection
@@ -72,3 +73,18 @@ The duplicate-generator corruption now checks the small exact production-wiring
 lemma used by the composition. Its unmodified body is part of the positive helper
 baseline. This preserves the real legal_moves/producer link while avoiding a
 second full initialized proof graph merely to locate a changed wing call.
+
+## Complete source consumer checked; control qualification still pending
+
+Run 36813268646 at 879a996056cb1e2b00839bd159012945aa43f1ec passed the
+complete initialized exact-pair and uniqueness consumer in 579.028494238 seconds.
+The positive helper passed in 6.758946540000011 seconds. The first semantic
+control passed. The second corruption was rejected at an earlier ordinary
+lemma, not its required castling-retention location, so the gate correctly
+remained NOT_COMPLETED and later controls were not run.
+
+The successor control erases only proj_bit's True constructor, preserving
+the ordinary bridge while directly falsifying castle retention. It does not
+broaden accepted diagnostics. Short controls now precede the expensive full
+consumer, with all the same final requirements and unchanged total/stage bounds.
+The source theorem and importing consumer are unchanged.

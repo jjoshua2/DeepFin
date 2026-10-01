@@ -162,3 +162,26 @@ It does not extend the closed public-builder's 600-second bound or modify the
 checker. A small exact production-wiring lemma, used by the composition and
 included in its positive helper baseline, lets the duplicate-wing corruption
 be checked without rerunning the large initialization proof graph.
+
+## Complete castling source consumer accepted, control harness refinement
+
+[Run 36813268646](https://github.com/jjoshua2/DeepFin/actions/runs/36813268646)
+at 879a996056cb1e2b00839bd159012945aa43f1ec passed the full importing
+exact-pair/uniqueness consumer in 579.028494238 seconds, with exact output
+"All terms check." The helper including actual production wiring passed in
+6.758946540000011 seconds. The [unchanged receipt](evidence/bend-generator-contract/castling-attempt-36813268646.json)
+and [artifact provenance](evidence/bend-generator-contract/castling-attempt-36813268646-provenance.json)
+retain those source/checker identities.
+
+One intended semantic control passed. The second erased all projection heads
+and was rejected in ordinary_cons before castle_retain, so its registered
+location test correctly failed. Later controls were not executed and the full
+gate stayed NOT_COMPLETED, with zero qualification credit. Whole-repository
+lint and PEXT CI passed separately at this head.
+
+The refined mutant erases only the projection's True constructor, preserving
+the ordinary bridge and falsifying castling retention directly. The matcher
+is not broadened. Short controls are moved ahead of the expensive complete
+consumer so malformed controls fail promptly; full consumer plus all controls,
+source/compiler checks and original resource limits remain mandatory. No theorem
+source, consumer, premise, compiler or runtime change accompanies this correction.

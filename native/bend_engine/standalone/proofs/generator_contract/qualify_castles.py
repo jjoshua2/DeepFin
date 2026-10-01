@@ -107,10 +107,6 @@ def main() -> None:
         report["projection_helper"] = helper
         write_report(args.report, report)
         require(safe(helper), "projection helper did not return exact safe checker success")
-        consumer = invoke(bun, compiler, SUITE / "castle_consumer.bend", 900)
-        report["consumer"] = consumer
-        write_report(args.report, report)
-        require(safe(consumer), "complete consumer did not return exact safe checker success")
         controls: list[dict] = []
         report["controls"] = controls
         mutations = [
@@ -121,8 +117,8 @@ def main() -> None:
             ),
             (
                 "castling-heads-erased", "standalone/proofs/generator_contract/CastleSpec.bend",
-                "proj_bit(U32.is_eq(C.flag(m),2),m,project(rest))",
-                "proj_bit(False{},m,project(rest))", "CastleProjection.bend", "castle_retain",
+                "case True{}: Con{m,tail}",
+                "case True{}: tail", "CastleProjection.bend", "castle_retain",
             ),
             (
                 "actual-final-check-flipped-side", "legal_probe/Chess.bend",
@@ -160,6 +156,10 @@ def main() -> None:
                 require(semantic_rejection(result, location),
                         "control was not the intended semantic rejection: " + name)
         require(len(controls) == 5, "incomplete control inventory")
+        consumer = invoke(bun, compiler, SUITE / "castle_consumer.bend", 900)
+        report["consumer"] = consumer
+        write_report(args.report, report)
+        require(safe(consumer), "complete consumer did not return exact safe checker success")
         require(before == identities(), "source drift")
         after = subprocess.run(pin_command, capture_output=True, text=True, timeout=30, check=True)
         require(pin.stdout == after.stdout and not after.stderr, "compiler drift")
