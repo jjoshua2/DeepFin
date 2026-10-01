@@ -428,3 +428,27 @@ def test_segment_budget_keeps_absolute_default_rss_cap(
         with pytest.raises(wave.Hold, match="segment RSS cap"):
             store._budget(wave.time.monotonic(), 0)
     assert requests == [wave.resource.RUSAGE_SELF] * 3
+
+
+@pytest.mark.parametrize("exceeded", ["RSS", "wall"])
+def test_short_comparison_checks_budget_before_sealing(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exceeded: str) -> None:
+    pipeline, source = _pipeline(tmp_path)
+    store = pipeline.store
+    peak_kib = store.rss_cap // 1024
+    monkeypatch.setattr(
+        wave.resource, "getrusage",
+        lambda _: SimpleNamespace(ru_maxrss=peak_kib))
+    store.seal_wave1(
+        0, source.rows_from(cursor.Cursor(0, 0, None)), expected_rows=4)
+    sealed = store._path(0) / "RECEIPT.json"
+    before = sealed.read_bytes(), sealed.stat().st_mtime_ns
+    if exceeded == "RSS":
+        peak_kib += 1
+    else:
+        ticks = iter((0.0, float(store.wall_cap + 1)))
+        monkeypatch.setattr(wave.time, "monotonic", lambda: next(ticks))
+    with pytest.raises(wave.Hold, match=f"segment {exceeded} cap"):
+        store.compare_wave2(0, source.rows_from(cursor.Cursor(0, 0, None)))
+    assert not (store.root / "compare_00000000.json").exists()
+    assert (sealed.read_bytes(), sealed.stat().st_mtime_ns) == before
