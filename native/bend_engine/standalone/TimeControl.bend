@@ -17,10 +17,12 @@ def field(+word: String) -> U32:
       Bool.pick(U32, String.eq(word, "movestogo"), 16, 0)))))
 
 def set(which: U32, value: Maybe<&2, U32>, clocks: Clocks) -> Clocks:
-  Clocks{w, b, wi, bi, moves, +seen, valid} = clocks
   match value:
-    case None{}: Clocks{w, b, wi, bi, moves, seen, False{}}
+    case None{}:
+      Clocks{w, b, wi, bi, moves, seen, valid} = clocks
+      Clocks{w, b, wi, bi, moves, seen, False{}}
     case Some{+v}:
+      Clocks{w, b, wi, bi, moves, +seen, valid} = clocks
       +which = which
       range = Bool.pick(Bool, U32.is_eq(which, 16),
         Bool.and(U32.is_gt(v, 0), U32.is_le(v, 1000)), U32.is_le(v, 86400000))
@@ -67,21 +69,26 @@ def allocated(ms: U32, ok: Bool, lim: Protocol.Limits) -> Protocol.Limits:
     Bool.pick(U32, U32.is_zero(U32.and(seen, 1)), 65536, nodes))
   Protocol.Limits{budget, depth, ms, infinite, U32.or(seen, 64), Bool.and(valid, ok), evals}
 
-def resolve(turn: U32, clocks: Clocks, lim: Protocol.Limits) -> Protocol.Limits:
-  Clocks{w, b, wi, bi, moves, +seen, valid} = clocks
+def valid_limits(ok: Bool, lim: Protocol.Limits) -> Protocol.Limits:
+  Protocol.Limits{nodes, depth, duration, infinite, seen, valid, evals} = lim
+  Protocol.Limits{nodes, depth, duration, infinite, seen, Bool.and(ok, valid), evals}
+
+def resolve_active(turn: U32, clocks: Clocks, lim: Protocol.Limits) -> Protocol.Limits:
+  Clocks{w, b, wi, bi, moves, seen, valid} = clocks
   Protocol.Limits{nodes, depth, +duration, +infinite, +limits_seen, limits_valid, evals} = lim
-  +lim = Protocol.Limits{nodes, depth, duration, infinite, limits_seen, limits_valid, evals}
+  +white = U32.is_eq(turn, 1)
+  present = U32.is_gt(U32.and(seen, Bool.pick(U32, white, 1, 2)), 0)
+  ok = Bool.and(valid, Bool.and(present, Bool.not(infinite)))
+  # Explicit movetime takes precedence, but supplied clock syntax is checked.
+  ms = Bool.pick(U32, U32.is_gt(U32.and(limits_seen, 4), 0), duration,
+    milliseconds(Bool.pick(U32, white, w, b), Bool.pick(U32, white, wi, bi), moves))
+  allocated(ms, ok, Protocol.Limits{nodes, depth, duration, infinite, limits_seen, limits_valid, evals})
+
+def resolve(turn: U32, clocks: Clocks, lim: Protocol.Limits) -> Protocol.Limits:
+  Clocks{w, b, wi, bi, moves, seen, valid} = clocks
   match seen:
-    case 0:
-      Protocol.Limits{nodes, depth, duration, infinite, limits_seen, Bool.and(valid, limits_valid), evals}
-    case _:
-      +white = U32.is_eq(turn, 1)
-      present = U32.is_gt(U32.and(seen, Bool.pick(U32, white, 1, 2)), 0)
-      ok = Bool.and(valid, Bool.and(present, Bool.not(infinite)))
-      # Explicit movetime takes precedence, but supplied clock syntax is checked.
-      ms = Bool.pick(U32, U32.is_gt(U32.and(limits_seen, 4), 0), duration,
-        milliseconds(Bool.pick(U32, white, w, b), Bool.pick(U32, white, wi, bi), moves))
-      allocated(ms, ok, lim)
+    case 0: valid_limits(valid, lim)
+    case _: resolve_active(turn, Clocks{w, b, wi, bi, moves, seen, valid}, lim)
 
 def finish(turn: U32, reading: Reading) -> Protocol.Limits:
   Reading{Clocks{w, b, wi, bi, moves, seen, valid}, pending, rest} = reading
