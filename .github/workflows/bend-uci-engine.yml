@@ -1,0 +1,83 @@
+name: Bend UCI engine
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/bend-uci-engine.yml'
+      - 'native/bend_engine/standalone/**'
+      - 'native/bend_engine/legal_probe/Chess.bend'
+      - 'native/bend_engine/session_probe/Search.bend'
+      - 'native/bend_engine/install_ci_bend.sh'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bend-uci-engine.yml'
+      - 'native/bend_engine/standalone/**'
+      - 'native/bend_engine/legal_probe/Chess.bend'
+      - 'native/bend_engine/session_probe/Search.bend'
+      - 'native/bend_engine/install_ci_bend.sh'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bend-uci-engine-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  BEND_NO_TELEMETRY: '1'
+  CAE_TEST_THREADS: '2'
+  OMP_NUM_THREADS: '2'
+  MKL_NUM_THREADS: '2'
+  MAX_JOBS: '1'
+  CUDA_VISIBLE_DEVICES: ''
+  PYTHONUNBUFFERED: '1'
+jobs:
+  native-uci:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [generic, ubsan]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked CPU environment and pinned compiler
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+      - name: Compile actual standalone entrypoint
+        env:
+          CC: clang-18
+        run: |
+          revision=$(bun native/bend_engine/standalone/verify_compiler.js --revision)
+          bash native/bend_engine/standalone/build.sh build/uci-engine "build/bend_toolchain/sources/$revision" "${{ matrix.mode }}"
+      - name: Clock allocations, standard client and existing UCI regression
+        run: |
+          . .venv/bin/activate
+          python -m native.bend_engine.standalone.verify_time_control --report artifacts/uci-clocks.json --command build/uci-engine/deepfin-bend --threads 1
+          python -m native.bend_engine.standalone.verify --report artifacts/uci-regression.json --command build/uci-engine/deepfin-bend --threads 1
+          python -m native.bend_engine.standalone.verify_rules --report artifacts/uci-rules.json --command build/uci-engine/deepfin-bend --threads 1
+      - name: Whole-repository static gate
+        if: matrix.mode == 'generic'
+        run: |
+          . .venv/bin/activate
+          ./scripts/lint.sh
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-uci-engine-${{ matrix.mode }}
+          path: |
+            artifacts/uci-*.json
+            build/uci-engine/build.txt
+          retention-days: 30

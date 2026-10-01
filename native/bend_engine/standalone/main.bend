@@ -6,6 +6,7 @@ import ./Tables.bend as Tables
 import ./Text.bend as Text
 import ./Position.bend as Pos
 import ./Protocol.bend as Protocol
+import ./TimeControl.bend as TimeControl
 import ./Rules.bend as Rules
 import ./SearchHistory.bend as History
 import ./EncodingDiagnostic.bend as EncodingDiagnostic
@@ -479,10 +480,10 @@ def evaluation_args(cache: NativeEvaluation.Cache, args: List<&2, String>, +root
     table : Array<U64> <- EvaluationDiagnostic.run(args, root, table)
     return State{cache, root, table, Idle{}, False{}}
 
-def idle_command(cache: NativeEvaluation.Cache, code: U32, args: List<&2, String>, root: Pos.Game, table: Array<U64>) -> IO(State):
+def idle_command(cache: NativeEvaluation.Cache, code: U32, args: List<&2, String>, +root: Pos.Game, table: Array<U64>) -> IO(State):
   match code:
     case 3: replace(cache, root, Protocol.position(Protocol.parse_position(args), table))
-    case 4: go_limits(cache, root, table, Protocol.go(args, Protocol.GoState{Protocol.Limits{64, 4, 0, False{}, 0, True{}, 0}, 0}))
+    case 4: go_limits(cache, root, table, TimeControl.go(args, Chess.get_turn(Pos.board(root))))
     case 7: IO.pure(State, State{cache, Pos.start(), table, Idle{}, False{}})
     case 9: perft_args(cache, args, root, table)
     case 10: rules_args(cache, args, root, table)
