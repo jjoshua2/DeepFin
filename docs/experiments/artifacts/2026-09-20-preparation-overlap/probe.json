@@ -1,0 +1,19 @@
+{
+  "status": "PASS_DISJOINT_COHORT_PROBE",
+  "source_index": 3,
+  "rows": 262079,
+  "shards": 32,
+  "stages": [
+    {
+      "stage": "seal",
+      "seconds": 17.57251507102046
+    },
+    {
+      "stage": "cohort",
+      "seconds": 119.68370155303273
+    }
+  ],
+  "target_bytes": 101128095,
+  "target_allocated_bytes": 106098688,
+  "target_files": 2465
+}
