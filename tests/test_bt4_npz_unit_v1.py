@@ -836,9 +836,8 @@ def test_deadline_during_receipt_publication_removes_completion(
 def test_preblocked_owner_alarm_refused_before_work() -> None:
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
     try:
-        with pytest.raises(unit.Hold, match="exclusive owner alarm"):
-            with unit.owned_deadline(1):
-                raise AssertionError("blocked owner alarm admitted")
+        with pytest.raises(unit.Hold, match="exclusive owner alarm"), unit.owned_deadline(1):
+            raise AssertionError("blocked owner alarm admitted")
         assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
     finally:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
@@ -880,8 +879,11 @@ def test_frozen_source_executes_pinned_bytes_not_timestamp_valid_pyc(
     path = tmp_path / f"{name}.py"
     path.write_text("VALUE = 'stale'\n")
     stamp = path.stat()
-    cached = py_compile.compile(str(path), doraise=True)
-    assert cached is not None and Path(cached).is_file()
+    cached = py_compile.compile(
+        str(path), doraise=True,
+        invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+    assert cached is not None
+    assert Path(cached).is_file()
     # Same size and mtime make the old pyc eligible to an ordinary import.
     path.write_text("VALUE = 'fresh'\n")
     os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
@@ -912,9 +914,9 @@ def test_frozen_source_refuses_ambient_path_before_execution(
     pin = unit.FrozenFile(name, path, unit.sha(path.read_bytes()))
     monkeypatch.syspath_prepend(str(ambient))
     try:
-        with unit.source_snapshot_imports((pin,)):
-            with pytest.raises(unit.Hold, match="path before execution"):
-                importlib.import_module(name)
+        with unit.source_snapshot_imports((pin,)), pytest.raises(
+                unit.Hold, match="path before execution"):
+            importlib.import_module(name)
         assert not marker.exists()
     finally:
         sys.modules.pop(name, None)
