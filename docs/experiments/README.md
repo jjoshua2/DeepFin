@@ -12,8 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
-| [Bounded tri-source verification rollover](2026-09-30-tri-source-verification-rollover.md) | CPU-only 129-run synthetic ancestry crosses the 128-summary cache limit and survives a final-merge SIGKILL/resume; rereads grow and 500M source integration remains open |
-| [Bounded tri-source shared verification](2026-09-30-tri-source-shared-verification.md) | CPU-only process-scoped capped part verification; synthetic no-op reads each distinct part once, while full-run validation and production source joins remain open |
+| [Audited 50M bootstrap expansion](2026-09-17-audited-scale-bootstrap.md) | Historical saved-audit V50 and explicit 50–60M contract; missing source binding and isolated scheduler recovered with both histories, no new experiment or training launch |
 | [Ceres direct-compact synthetic sink](2026-09-30-ceres-direct-compact-synthetic-sink.md) | 26-arm tiny full-head synthetic CPU screen: noisy +2.000% median sink-wall saving, semantic ZIP parity, no live adoption or measured production gain |
 | [Ceres owner target and compact-order correction](2026-09-30-ceres-owner-target-and-compact-order.md) | CPU source-game target reconstruction, one real selected-row overlap and a zero-credit diagnostic legal-order fix; no saved-call or production gain claim |
 | [Persistent Stockfish scalar cost](2026-09-29-sf-scalar-persistent-cost.md) | Frozen 10k-row persistent one-thread d6/d8/d10 cost/agreement screen with cold TT per row/depth and zero corpus/training credit |
@@ -61,6 +60,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Three-source selected-target diagnostic pipeline](2026-09-29-tri-source-selected-target-pipeline.md) | Audited 83,416-winner BT4/Ceres/SF-origin selected-target ZIP pack, missing-head cost and physical storage bounds; diagnostic zero corpus credit |
 | [Tri-source replay storage checkpoints](2026-09-30-tri-source-storage-checkpoints.md) | Synthetic paired-wave restart fixture and independent 8,192-row BT4 native-byte compression audit; fixed-record/external-sort design remains unimplemented |
 | [Bounded tri-source checkpointed sort foundation](2026-09-30-tri-source-checkpointed-sort-foundation.md) | CPU-only 100-byte candidate metadata and resumable sort parts, including SIGKILL tests; recursive verification and live source/target integration remain open |
+| [Bounded tri-source shared verification](2026-09-30-tri-source-shared-verification.md) | CPU-only process-scoped capped part verification; synthetic no-op reads each distinct part once, while full-run validation and production source joins remain open |
+| [Bounded tri-source verification rollover](2026-09-30-tri-source-verification-rollover.md) | CPU-only 129-run synthetic ancestry crosses the 128-summary cache limit and survives a final-merge SIGKILL/resume; rereads grow and 500M source integration remains open |
 | [Full512 old-cohort selected/dual ABBA cost](2026-09-29-full512-old-cohort-abba-cost.md) | Four-arm same-row screen: 38.888684% selected complete-arm saving passes the 15% cost gate; zero corpus or 500M credit, representative pilot next |
 | [Full512 58,820-row whole-bank selected/dual ABBA cost](2026-09-29-full512-whole-bank-abba-cost.md) | Independently audited 43.936202% mean complete-arm saving across two pairs; zero corpus or 500M credit |
 | [E versus D on shared 576-opening strict bank](2026-09-29-e-vs-d-576-strict.md) | Direct original E−D: −12.37 Elo [−27.18, +2.39], preregistered result unresolved; 1,152 audited games and rule50-aware six-man replay |
@@ -70,6 +71,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Overlay validation reuse](2026-09-21-overlay-validation-reuse.md) | Future exact-epoch startup: nine-to-one semantic validations per shard; 5.42× faster constructor stages on eight real shards with exact plan/target parity; active runtime unchanged |
 | [SF-free BT4+Ceres targets](2026-09-21-sffree-targets.md) | Reviewed E builder and three real source families qualified; bounded full 58M CPU preparation launched; training pending |
 | [58M policy/value teacher factorial](2026-09-19-58m-policy-value-factorial.md) | Reviewed pipeline queued:22.78M missing Ceres labels, target overlays, four fresh58M arms and four direct matches; active continuation preserved; no factorial results |
+| [Factorial58 CPU preparation overlap](2026-09-20-preparation-overlap.md) | Historical teacher-labeling/CPU-preparation overlap, inherited writer ownership and bounded probe evidence; publication recovery requires fresh qualification before adoption |
 | [B100 Tactical300 policy transfer](2026-09-11-b100-tactical300-transfer.md) | Candidate sparse SF mass-transfer policy tooling with mandatory deeper-SF calibration before materialization or training |
 | [Tactical300 saved-depth diagnostic](2026-09-11-tactical300-calibration.md) | Provenance-gated d9/BT4 disagreements against saved d10/d12; diagnostic tooling only, not a published-transfer calibration or training admission |
 | [Ceres saved Syzygy source fixture](2026-09-29-ceres-saved-syzygy-source-fixture.md) | Tracked CPU producer/readback reproves two saved six-man WDL/DTZ game results; zero generated-row credit |
@@ -136,6 +138,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Bend subset source laws](2026-09-21-bend-subset-source-laws.md) | Eight initial production-step laws with negative controls and independent native table checks; full P1 ordering/refinement still open |
 | [Bend-owned native neural leaves](2026-09-21-bend-native-leaf.md) | Actual search inputs and legal priors in Bend, native model execution without Python runtime; CPU fixture only |
 | [Bend policy/input composition](2026-09-21-bend-policy-composition.md) | Recovered Bend policy vocabulary paired with complete input from one Game; no inference or Python runtime |
+| [Packed Zarr exact-sampler qualification](2026-09-20-packed-zarr-exact.md) | 131,072 identical ordered rows at batch256; external ZIP consumer12.537s vs NVMe directory10.953s; opt-in ordinary reader, no live adoption |
 | [Bend complete feature inputs](2026-09-20-bend-classical-encoding.md) | Complete 146/175-plane inputs authored in Bend, exact C parity and current U64 compiler; no model/policy execution |
 | [Bend neural history encoding](2026-09-20-bend-history-encoding.md) | Bend-authored 112-plane history/metadata block with exact Python/C comparisons; partial input, no neural inference |
 | [Bend-owned draw rules](2026-09-20-bend-owned-draws.md) | Standalone native history identity and automatic root/leaf draws, no Python runtime; claims/encoding remain separate |
@@ -166,6 +169,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Saved G10 value pilot and coverage](2026-09-11-g10-value-pilot-and-coverage.md) | 1,574,952 matched saved-SF rows; native BT4 WDL and metadata manifest admission complete for all 16,404,093 accepted common G10 positions; original B100 policy products now complete for all 20 (16,404,093 rows); fixed SF50/native BT4 WDL50 value products now also complete for all 20, including the four-root writer; [combined 35.3M value result supports V50 at +31.30 Elo](2026-09-13-combined35m-value-transfer.md) |
 | [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | Both CeresV25 fixed-400 matches complete: +6.79 Elo vs B100 and +25.83 vs B100V50, intervals include zero; retain B100 incumbent/Ceres alternative; no automatic extra games |
 | [Combined 35.3M value transfer](2026-09-13-combined35m-value-transfer.md) | Completed 512-game/400-simulation comparison: V50 +31.30 Elo [+8.53, +54.34]; provisional 35M value recipe after reviewed read-only recovery |
+| [V50 checkpoint continuation](2026-09-17-v50-checkpoint-continuation.md) | Strict LC0 bootstrap state continuation and retained epoch boundaries; archived 35M/50M operational evidence, no current launch claim |
 | [All-move SF downside candidate](2026-09-12-sf-allmove-downside.md) | Completed 18.91M-row training at 2/2 workers; fixed 400-simulation comparison +17.66 Elo [−17.97, +53.66] versus B100, unresolved; selected G10 phase-zero/provenance pilot completed 8,192 rows in 9.889s, no full rewrite or training selected |
 | [SF tactical guidance for BT4 policy](2026-09-10-bt4-sf-tactical-training.md) | Completed 400-simulation match: tactical recipe −13.6 Elo [−52.4,+24.9]; unresolved, retain B100 |
 | [Deeper SF value census](2026-09-11-deeper-sf-value-census.md) | Complete: saved SF values pass label-change thresholds; 3,247 single-move exclusions and two malformed rosters explained; opt-in selector selected, no strength claim |
@@ -209,6 +213,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [58M SF late-dose metadata and census design](2026-09-28-sf-late-dose-metadata.md) | 4.7 MB bounded metadata receipt for 58,090,688 retained rows; source-aware controls and capped three-shard pilot proposed, no corpus scan or training |
 | [SF-free D/E phase-start arena](2026-09-27-factorial58-d-e-phase-arena.md) | Complete strict six-man 384-pair/768-game phase test: primary late-minus-early +1.758 points [−2.734, +6.445], inconclusive; secondary overall GSPRT H0 applies only to its declared hypotheses |
 | [Saved Stockfish policy dose by ply and pieces](2026-09-28-sf-late-position-dose.md) | Registered read-only G10 Tactical300 cross-tab: 83.879% of moved mass at ply ≥80 with 7–13 pieces (55.462% at 8–13); no Elo or 58M distribution claim; bounded 58M screen remains next |
+| [Zarr ZIP decoder pilot](2026-09-20-zarr-zip-pilot.md) | Byte-preserving packed chunks; validated external decoder 8.2x faster in cache-affected pilot, no sampler adoption |
 | [External trainer throughput inventory](2026-09-28-500m-external-trainer-inventory.md) | Archived cold/warm packed trainer rates and local E epoch; historical 128-full-shard same-ZIP sizing, with the later completed screen linked separately |
 
 These descriptions identify the records, not the state of a running experiment.
@@ -263,6 +268,7 @@ analysis workflow.
 - [Bounded arena memory and initialization-cost screen](2026-09-24-arena-memory-screen.md): equal-work per-child peak RSS and process timing across capacities; no model/GPU or live-memory budget claim.
 - [Ceres CPU history reductions](2026-09-21-ceres-history-reductions.md) — exact-byte CPU encoder comparison.
 Current evidence correction and scale plan: [September 16 bootstrap audit](2026-09-16-bootstrap-status-audit.md).
+- [2026-09-20: External storage and BT4 labeling efficiency](2026-09-20-storage-loader.md)
 - [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
 
 - [Bounded owning ring and calibrated collection comparison](2026-09-23-bend-owning-collections.md): Search.Tree payloads, layout failure/workaround, and matched-work timings; no scheduler adoption.
