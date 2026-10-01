@@ -24,12 +24,15 @@ def semantic_rejection(result: dict, location: str) -> bool:
         "no such file", "RangeError", "Maximum call stack", "more than once",
         "a decreasing self-call", "a defined name", "a parameter or field scrutinee",
         "a pattern (a binder", "out of memory", "OutOfMemory", "WARNING", "unsafe", "TODO",
+        "consumed", "erased", "a kind (", "quantity",
     )
     return (
         result["exit_code"] == 1
         and not result["timed_out"]
         and "expected" in output
         and "observed" in output
+        and not re.search(r"(?m)^- expected\s*:\s*[-+][A-Za-z_]\w*\s*$", output)
+        and not re.search(r"(?m)^- (?:expected|observed)\s*:\s*(?:Data|Type|Quant|Kind\([^\n]*\)|&[012])\s*$", output)
         and bool(re.search(r"Location:\s*(?:[\w./]+\.)*" + re.escape(location) + r"\b", output))
         and not any(word in output for word in forbidden)
     )

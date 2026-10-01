@@ -118,7 +118,7 @@ def step(+c: O.Cells,+b: Chess.Board,+rays: U64,
         Equal.sym(List<&2,Chess.Ply>,
           P.project(S.retain(S.checked(c,b,m),m,acc)),
           P.project(acc),
-          ordinary_retain(S.checked(c,b,m),m,acc,plain)))
+          ordinary_retain(S.checked(c,b,m),m,acc,same)))
     case Inr{castle}:
       Equal.cong(Bool,List<&2,Chess.Ply>,
         required => P.project(S.fast_step(required,c,b,m,acc)),
