@@ -35,6 +35,9 @@ from scripts.sf_dlite_pack_audit_core import (
     audit_shard, require, sha256_file, tree_stamp)
 
 
+EXEC_GUARD = Path(__file__).with_name('sf_dlite_pack_exec_guard.py')
+EXEC_GUARD_SHA = '76e937ccf57ebeed4852f054484c89af7a1a54773c3260cb7b9a9b8148bec235'
+
 ROWS = 2_500_000
 SHARDS = 384
 UNIT_SECONDS = 1800
@@ -66,8 +69,8 @@ EXPECTED_PINS = {
     "injectivity": "2b10f425d98d5f788ec8b06f359094c8cc655749e24d4ef641b9f2b318422b88",
     "roster": "8766e5745a6f36e4ecbed90cc861d012e29f2d21356958fa1477bead4dcc7941",
     "target_scheme": "716ef4da2c928a437ca001f7ea769c8e555091221cb22ca7ee884e5deeaefdfa",
-    "builder_source": "79f916c3e0f957c20d79b431192810363890f8094eed291889518f15c88d5bbf",
-    "builder_core": "50af80882449d3fc9626ed91fa9a9e99587cc9f7cc1fcb07046b1bdb35adfaf5",
+    "builder_source": "510053c253838cdaf4a58f00967b4d1f80b67ee48d990274c232bec2ee25d9a4",
+    "builder_core": "6ba81564824baee7c7e5e1c4a80a82bfb29f5e325421b00f33f376ba68dc4038",
     "label_worker": "31a7730cac1f9b6b39f01b938ccf6772c895d5a2727f89eb5a969aacec24cf83",
     "label_authorization": "b4806340c7f3a5a61c8eedd0ea4156f99928b494274780ae7877fb072c484dc1",
     "label_auditor": "e80ce6c8bbb7585b4a46cfd8720fac21f248df8658a0d2d2045104e90afdceb2",
@@ -663,15 +666,14 @@ def process_rss_kib(process: subprocess.Popen[bytes]) -> int:
     raise ValueError("HOLD: live child RSS missing")
 
 
-def preexec_owned_child(owner_pid: int, seconds: int) -> None:
-    """Arm the lease-bearing child before exec, including the startup interval."""
-    libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(1, signal.SIGKILL, 0, 0, 0) != 0:
-        os._exit(127)
-    if os.getppid() != owner_pid:
-        os._exit(127)
-    signal.signal(signal.SIGALRM, signal.SIG_DFL)
-    signal.alarm(seconds)
+def owned_child_command(command: list[str], owner_pid: int,
+                        seconds: int) -> list[str]:
+    """Pin a fresh exec guard; avoid Python hooks after forking NumPy."""
+    require(EXEC_GUARD.is_file() and not EXEC_GUARD.is_symlink()
+            and sha256_file(EXEC_GUARD) == EXEC_GUARD_SHA,
+            "owned-child exec guard changed")
+    return [sys.executable, "-B", str(EXEC_GUARD), str(owner_pid),
+            str(seconds), *command]
 
 
 def supervise(command: list[str], root: Path, lease_fd: int,
@@ -683,8 +685,8 @@ def supervise(command: list[str], root: Path, lease_fd: int,
     started = time.monotonic()
     owner_pid = os.getpid()
     process = subprocess.Popen(
-        command, pass_fds=(lease_fd,), start_new_session=True,
-        preexec_fn=lambda: preexec_owned_child(owner_pid, UNIT_SECONDS))  # noqa: PLW1509
+        owned_child_command(command, owner_pid, UNIT_SECONDS),
+        pass_fds=(lease_fd,), start_new_session=True)
     maximum_rss = 0
     try:
         with (root / "RESOURCE.jsonl").open("ab") as trace:
@@ -901,6 +903,18 @@ def receipt_prefix(root: Path, plan_sha: str,
     return audited, verified
 
 
+def require_network_turn_counts(proof: dict[str, Any]) -> tuple[int, int]:
+    """Require the complete shard to satisfy the actual training turn filter."""
+    rows = proof.get("rows")
+    active = proof.get("active_network_turn_rows")
+    present = proof.get("present_network_turn_rows")
+    if type(rows) is not int or type(active) is not int or type(present) is not int:
+        raise ValueError("HOLD: verified network-turn counts do not cover every selected row")
+    require(rows > 0 and active == rows and present == rows,
+            "verified network-turn counts do not cover every selected row")
+    return active, present
+
+
 def verify_final(root: Path, plan: dict[str, Any], census: dict[str, Any],
                  builder: dict[str, Any]) -> dict[str, Any]:
     """Small exact receipt chain/readback and current metadata-stamp gate."""
@@ -912,6 +926,8 @@ def verify_final(root: Path, plan: dict[str, Any], census: dict[str, Any],
     previous_audit = "0" * 64
     previous_verify = "0" * 64
     total = 0
+    active_turn_total = 0
+    present_turn_total = 0
     all_indices: list[np.ndarray] = []
     for shard_id in range(SHARDS):
         audit, audit_sha = read_receipt(root / "audit_receipts" /
@@ -960,8 +976,11 @@ def verify_final(root: Path, plan: dict[str, Any], census: dict[str, Any],
                     "paired sidecar changed after verified byte audit")
             if arm == "control":
                 all_indices.append(np.frombuffer(sidecar_bytes, dtype="<i4"))
+        active, present = require_network_turn_counts(audit)
+        active_turn_total += active
+        present_turn_total += present
         total += audit["rows"]
-    require(total == ROWS and
+    require(total == ROWS and active_turn_total == ROWS and present_turn_total == ROWS and
             np.array_equal(np.sort(np.concatenate(all_indices)),
                            np.arange(ROWS, dtype="<i4")),
             "verified paired roster does not cover every row once")
@@ -979,7 +998,9 @@ def verify_final(root: Path, plan: dict[str, Any], census: dict[str, Any],
     candidate["independent_auditor"] = {
         "plan_sha256": plan["self_sha256"], "audit_tail_sha256": previous_audit,
         "verify_tail_sha256": previous_verify, "shard_receipts": SHARDS,
-        "rows": ROWS, "auditor_sources": source_provenance(),
+        "rows": ROWS, "active_network_turn_rows": active_turn_total,
+        "present_network_turn_rows": present_turn_total,
+        "auditor_sources": source_provenance(),
         "auditor_runtime": runtime_provenance(),
         "label_index_sha256": read_receipt(root / "LABEL-INDEX.json")[1],
         "scope": "qualified D8 labels to paired native bytes; no raw search rerun"}
