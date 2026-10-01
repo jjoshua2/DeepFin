@@ -89,3 +89,49 @@ All repository work was through GitHub and GitHub Actions. No local executor,
 training, GPU, model export, live state or deployment was touched. The complete
 castling, ordinary/promotion/EP enumeration, fast-filter theorem and final
 generator composition remain open.
+
+## Final trigger-fix head: second bounded non-completion
+
+[Run 36808544524, job 110198207115](https://github.com/jjoshua2/DeepFin/actions/runs/36808544524/job/110198207115)
+qualifies the unchanged candidate on branch head
+1e80548473589020e5004d7ba5b4b17d2569c6df, checked via GitHub's merge revision
+8eb4e5b85be6ba5b9a6d709c835b95578b8a4638 into base
+9369067851896bf3ddbb5d0ad084809b091b2e8f.
+
+The positive consumer again timed out with no checker output, after
+600.174135031 seconds. Its [receipt](evidence/bend-generator-contract/attempt-36808544524.json)
+remains NOT_COMPLETED; zero accepted laws and zero executed semantic controls.
+The compiler, limits, theorem and controls were unchanged. Source identities were
+successfully recorded before the child. Original pin tests, all three host-test
+optimization modes and the post-attempt unchanged-source check passed. The final
+post-control source/compiler verification was not reached. All six other exact-head
+ordinary/Bend regression workflows, including CI 36808544572, completed successfully;
+those results do not turn this normalization timeout into a proof.
+
+[Provenance](evidence/bend-generator-contract/attempt-36808544524-provenance.json)
+binds the printed receipt and original artifact metadata. The retained artifact
+ZIP was 1,420 bytes with SHA-256
+af0fb5c5de3262054a5e2e1ef86dd7ed3fdfc4273d7f15c1d138a91dc0d3e44d.
+No peak-memory inference is made from systemd's final accounting.
+
+## Compositional continuation: both-wing exact projection
+
+The new [castling candidate](../../native/bend_engine/standalone/proofs/generator_contract/CASTLING.md)
+targets exact whole-array and tag-2 list equality for actual optimized legal_moves,
+plus complete-Ply Boolean uniqueness. The ordinary scan and both real castling
+producers stay in the implementation side; a projection theorem connects full
+and optimized filtering after execution. Both wing guards are decided inside
+the proof, and independent three-stage geometric checks select the two canonical
+moves. No intermediate state or desired attack answer is assumed.
+
+This candidate is not qualified at publication. Its consumer retains the existing
+symbolic initialized recipe, valid-Board/Boolean-side/home-king singleton premises,
+and inherited proof bodies. It does not close actual Tables.build, independently
+derive historical rights or cover general king-away positions. No new accepted-law
+count, native result or complete-generator result is claimed.
+
+Before running, the qualifier is bounded at two CPU cores of quota, 6 GiB RAM,
+no swap and 1,600 seconds; helper 180, complete consumer 600, five semantic controls
+120 seconds each. Initial failure or any invalid control fails closed. These are
+qualification bounds, not theorem premises. Existing runtime/compiler/proofs and
+the closed-builder gate stay unchanged. No local tests or GPU are used.

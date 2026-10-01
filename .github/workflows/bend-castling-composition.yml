@@ -1,0 +1,71 @@
+name: Bend castling composition
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/bend-castling-composition.yml'
+      - 'native/bend_engine/standalone/proofs/**'
+      - 'native/bend_engine/legal_probe/Chess.bend'
+      - 'native/bend_engine/bitboard_probe/Sliders.bend'
+      - 'native/bend_engine/standalone/Tables.bend'
+      - 'native/bend_engine/standalone/Subsets.bend'
+      - 'native/bend_engine/standalone/verify_compiler.js'
+      - 'native/bend_engine/standalone/toolchain.json'
+      - 'native/bend_engine/install_ci_bend.sh'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bend-castling-composition-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  exact-projection:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BEND_NO_TELEMETRY: '1'
+      CUDA_VISIBLE_DEVICES: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+      - name: Original compiler install and pin
+        run: bash native/bend_engine/install_ci_bend.sh
+      - name: Host classification and original pin tests
+        run: |
+          python -m unittest native.bend_engine.standalone.proofs.generator_contract.test_qualify_castles
+          python -O -m unittest native.bend_engine.standalone.proofs.generator_contract.test_qualify_castles
+          python -OO -m unittest native.bend_engine.standalone.proofs.generator_contract.test_qualify_castles
+          bun test native/bend_engine/standalone/verify_compiler.test.js
+      - name: Exact projected pair and uniqueness within bounded resources
+        run: |
+          mkdir -p artifacts/bend-castling-composition
+          sudo systemd-run --wait --collect --pipe \
+            --unit="bend-castling-composition-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --property=CPUQuota=200% --property=MemoryMax=6G \
+            --property=MemorySwapMax=0 --property=RuntimeMaxSec=1600 \
+            --uid="$(id -u)" --working-directory="$PWD" \
+            /usr/bin/env BEND_NO_TELEMETRY=1 CUDA_VISIBLE_DEVICES= \
+            BUN="$(command -v bun)" "$(command -v python)" -m \
+            native.bend_engine.standalone.proofs.generator_contract.qualify_castles \
+            "$PWD/build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae" \
+            --report "$PWD/artifacts/bend-castling-composition/source.json"
+      - name: Record result and unchanged source
+        if: always()
+        run: |
+          if test -f artifacts/bend-castling-composition/source.json; then
+            cat artifacts/bend-castling-composition/source.json
+          fi
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-castling-composition
+          path: artifacts/bend-castling-composition/
+          if-no-files-found: warn
+          retention-days: 30
