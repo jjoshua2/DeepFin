@@ -22,6 +22,29 @@ Starting with a consistent Board, exactly one selected-side home king and valid 
 
 Modular190/600 retains parent186/581 without a full aggregate run. Initial king/side validity still needs its own global origin; opposing king invariants, universal forward/reverse attacks, legal-rights history and complete castling safety composition remain separate. See [the dated record](experiments/2026-09-26-bend-castle-king-invariants.md). No production responsibility moved.
 
+## Published sequential castling-check qualification
+
+Run **36324699695** passed both public laws, the complete importing consumer and all17 controls, all four native modes and three actual-code mutations, original compiler/pin gates, and unchanged locked-environment repository lint on published source `95049dd691032210a759052b4f04f26838c8e05d`.
+
+The saved two-law actual producer/full-filter sequence is now published with exact source identity and fresh qualification. Modular193/623; no full aggregate run or extra discovery count. All prior local failure receipts remain historical. See [the publication record](experiments/2026-09-27-bend-castle-sequence-publication.md). Full optimized generator/table-preservation composition and universal attack-direction correspondence remain separate.
+
+## Initialized single-side castling sequence — locally qualified
+
+Two new public source laws now connect actual castle_side and its subsequent actual
+filter_legal pass to independent target-centred stage-check Booleans, preserving
+the complete initialized array and exact ordered lists. Starting/transit checks
+are state-threaded, and the destination check governs the retained singleton.
+Public callers supply the initial Board/king/side/guard and initialization conditions,
+not query certificates or desired outputs. This adapter does not replace or prove
+the whole optimized legal_moves pipeline.
+
+The complete consumer and17 classified controls passed; the new four-mode native
+sequence oracle and actual-code mutations passed. Original compiler/pin gates passed.
+Repository lint is unqualified for missing tools and no hosted run/publication or
+independent review occurred. Modular193/623 retains191/606 from #899; the full
+aggregate did not run. See [the readout](experiments/2026-09-27-bend-castle-sequence.md).
+
+
 ## Initialized attack state reconciliation
 
 The saved local composition is preserved alongside the existing #897 implementation, not silently substituted or counted again. A new native state regression detects returned-table loss after a correct current answer, and unused-slot corruption even when every query answer remains correct. Fresh four-mode native and configured repository lint evidence is in [the reconciliation record](experiments/2026-09-26-bend-attack-state-reconciliation.md). Exact existing three-law/source-control evidence is retained; totals remain modular186/581, not a full aggregate execution. Forward/reverse geometry and castling singleton propagation remain next.
