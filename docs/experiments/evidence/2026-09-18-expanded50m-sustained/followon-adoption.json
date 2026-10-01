@@ -1,0 +1,22 @@
+{
+  "status": "QUEUED_CONDITIONAL_FOLLOWON",
+  "unix": 1789735044.5388482,
+  "item": {
+    "id": "expanded50548069_v50_epochs2_4_seed106",
+    "kind": "registered_command",
+    "status": "queued",
+    "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_epochs2_4_v1/scheduler_run",
+    "max_seconds": 87070,
+    "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_epochs2_4_v1/registered_command.json",
+    "command_sha256": "1115f9c6b26dd7ac58fff35a39f469aaff5a1c7a0337a81b95a27d21308436df"
+  },
+  "additional_epochs": 3,
+  "seeds": [
+    106,
+    107,
+    108
+  ],
+  "expected_hours": 21,
+  "hard_training_hours": 24,
+  "scope": "Four total50Mpasses afteroriginal35Mfour-exposuredonor; source order changes, recipe unchanged; boundaries preserved."
+}
