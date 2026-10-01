@@ -190,6 +190,9 @@ def run_cases(command: list[str]) -> dict[str, Any]:
         assert (retired['executed_real_rows'], retired['executed_wasted_rows'],
                 retired['accepted_neural_rows'], retired['cancelled_rows']) == (1, 1, 0, 1)
         observations.append(snapshot(lines, 2, dispatched=1, executed=1, accepted=1, cancelled=0))
+        resources = [json.loads(row.removeprefix('info string tree_resources '))
+                     for row in lines if row.startswith('info string tree_resources ')]
+        assert len(resources) == 1 and resources[0]['capacity'] == 8193, lines
         board = chess.Board()
         board.push_uci('e2e4')
         assert chess.Move.from_uci(lines[-1].split()[1]) in board.legal_moves, lines[-1]

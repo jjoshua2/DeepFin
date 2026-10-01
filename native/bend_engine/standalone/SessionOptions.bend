@@ -26,15 +26,20 @@ def selected(ok: Bool, options: Options) -> Maybe<&2, Options>:
     case False{}: None{}
     case True{}: Some{options}
 
+def apply_value(which: U32, +n: U32, options: Options) -> Maybe<&2, Options>:
+  match which:
+    case 1:
+      Options{nodes, overhead} = options
+      selected(Bool.and(U32.is_ge(n, 4096), U32.is_le(n, 65536)), Options{n, overhead})
+    case 2:
+      Options{nodes, overhead} = options
+      selected(U32.is_le(n, 5000), Options{nodes, n})
+    case _: None{}
+
 def set_value(which: U32, number: Maybe<&2, U32>, options: Options) -> Maybe<&2, Options>:
   match number:
     case None{}: None{}
-    case Some{+n}:
-      Options{nodes, overhead} = options
-      match which:
-        case 1: selected(Bool.and(U32.is_ge(n, 4096), U32.is_le(n, 65536)), Options{n, overhead})
-        case 2: selected(U32.is_le(n, 5000), Options{nodes, n})
-        case _: None{}
+    case Some{n}: apply_value(which, n, options)
 
 def named(ok: Bool, which: U32, text: String, options: Options) -> Maybe<&2, Options>:
   match ok:
