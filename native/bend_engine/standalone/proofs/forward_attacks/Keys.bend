@@ -85,12 +85,20 @@ def normalize(+key: Nat,+sq: Nat,+dir: Nat,+occ: U64,
     Equal.cong(Nat,U64,x => Ray.directional(x,Bool.pick(Nat,Nat.is_ge(key,64n),4n,0n),occ),Nat.mod(key,64n),sq,place),
     Equal.cong(Nat,U64,x => Ray.directional(sq,x,occ),Bool.pick(Nat,Nat.is_ge(key,64n),4n,0n),dir,direction))
 
+def rook_certificate(+sq: Nat,+occ: U64,certificate: shape(sq)) ->
+  {Ray.rays(sq,occ) == Ray.directional(sq,0n,occ) : U64}:
+  (a,(b,(c,d))) = certificate
+  normalize(sq,sq,0n,occ,a,Equal.cong(Bool,Nat,v => Bool.pick(Nat,v,4n,0n),Nat.is_ge(sq,64n),False{},b))
+
+def bishop_certificate(+sq: Nat,+occ: U64,certificate: shape(sq)) ->
+  {Ray.rays(64n+sq,occ) == Ray.directional(sq,4n,occ) : U64}:
+  (a,(b,(c,d))) = certificate
+  normalize(64n+sq,sq,4n,occ,c,Equal.cong(Bool,Nat,v => Bool.pick(Nat,v,4n,0n),Nat.is_ge(64n+sq,64n),True{},d))
+
 def rook(+sq: Nat,+occ: U64,bound: {Nat.is_lt(sq,64n) == True{} : Bool}) ->
   {Ray.rays(sq,occ) == Ray.directional(sq,0n,occ) : U64}:
-  (a,(b,(c,d))) = checked(sq,bound)
-  normalize(sq,sq,0n,occ,a,Equal.cong(Bool,Nat,v => Bool.pick(Nat,v,4n,0n),Nat.is_ge(sq,64n),False{},b))
+  rook_certificate(sq,occ,checked(sq,bound))
 
 def bishop(+sq: Nat,+occ: U64,bound: {Nat.is_lt(sq,64n) == True{} : Bool}) ->
   {Ray.rays(64n+sq,occ) == Ray.directional(sq,4n,occ) : U64}:
-  (a,(b,(c,d))) = checked(sq,bound)
-  normalize(64n+sq,sq,4n,occ,c,Equal.cong(Bool,Nat,v => Bool.pick(Nat,v,4n,0n),Nat.is_ge(64n+sq,64n),True{},d))
+  bishop_certificate(sq,occ,checked(sq,bound))
