@@ -6,18 +6,23 @@ evaluator and needs no interpreter, subprocess, checkpoint or attack-table file.
 The separate [native neural build](#bend-owned-search-leaves-with-a-native-model-backend)
 keeps the controller, input and probabilities in Bend while executing a bound
 model through native LibTorch/AOTI. That product additionally needs the package
-and native libraries, but still no Python runtime. Model math and training are
-not yet Bend-authored; the old Python tools remain external migration references.
+and native libraries, but still no Python runtime. Model math is native C++/LibTorch/AOTI; training deliberately remains Python.
+The old Python engine tools remain external migration references.
 
 **Optional CPU async mode:** the native neural product accepts
 `DEEPFIN_BEND_ASYNC=1` for pending-forward stop/readiness and separate physical
 retirement. Synchronous remains default. See [lifecycle and full engine checks](../async_probe/README.md#full-engine-integration-pr4b).
 
+The current end-to-end finish line, remaining integration gates and bounded
+real-model qualification proposal are in [the UCI completion contract](../../../docs/bend_uci_completion.md).
+Historical sections below retain their original evidence scope; they are not a
+claim that every component is reachable from this UCI entrypoint.
+
 ## Ownership, not just a wrapper
 
 | Responsibility | Implementation |
 | --- | --- |
-| UCI tokens, decimal limits, command/state dispatch | Text.bend, Protocol.bend, main.bend |
+| UCI tokens, decimal limits, clock allocation, command/state dispatch | Text.bend, Protocol.bend, TimeControl.bend, main.bend |
 | FEN, castling/EP metadata, exact legal move replay | Position.bend and existing Chess.bend |
 | Played board/move history and both clocks | Position.bend; retained in Bend state |
 | Repetition identity, automatic draw rules, search-leaf history | Rules.bend and SearchHistory.bend |
@@ -63,8 +68,13 @@ go nodes 32
 ```
 
 Supported subset: uci/isready, position startpos or six-field FEN with optional
-legal moves, ucinewgame, go nodes/depth/movetime/infinite, stop, quit, clean EOF.
-No setoption, clocks/increments, ponder, searchmoves, MultiPV or claim protocol.
+legal moves, ucinewgame, go nodes/depth/movetime/infinite and
+wtime/btime/winc/binc/movestogo, stop, quit, clean EOF.
+No setoption, ponder, searchmoves, MultiPV or claim protocol. Clock controls use
+the accepted root's active side, a 50 ms reserve and a default 30-move horizon;
+see the completion contract for exact bounds/precedence. At/below the reserve,
+return a legal unsearched fallback without model work. Clocked searches feed the
+same cooperative deadline as movetime, including native async cancellation.
 Unsupported/invalid limits return an info string, never silently select a model.
 A position is committed only if its full FEN and every replayed move pass. Invalid
 later moves preserve the previous root/history. FEN structural/king-safety checks
@@ -80,7 +90,10 @@ polls between bounded resumable steps. isready works while searching; busy root/
 changes are rejected. stop yields one bestmove, repeated stop does not duplicate
 it. If no simulation completed, a legal fallback is labeled **unsearched**.
 
-Search uses 1..256 simulations, 4096 nodes, horizon 1..32; defaults 64/4.
+Explicit nodes accepts 1..256 simulations, with 4096 arena nodes and horizon
+1..32; defaults 64/4. Timed/evaluation budgets without explicit nodes use the
+existing internal 65,536-simulation safety ceiling; arena exhaustion can finish
+sooner. A depleted clock selects zero simulations.
 `info nodes` counts completed simulations, not allocated nodes. `movetime` accepts
 1..60000 milliseconds and is checked between steps, not a hard real-time deadline.
 `infinite` completes a bounded search and holds the result until stop. It does not
@@ -200,20 +213,20 @@ above for interpreter-free execution. `perft` remains strictly a legal-move coun
 and deliberately ignores draw adjudication. The extra history work has not been
 performance-qualified, and does not imply a speedup or a complete rules proof.
 
-## What is NOT ported yet
+## Remaining engine gaps
 
-This is not feature parity with the Python scaffolding. Automatic history draws
-now run in Bend; optional claim choices are not yet migrated into this entry point.
-Mate/stalemate are handled by the existing native search. The GUI remains
-responsible for played-game results/claims: UCI has no claim-action encoding.
-There is no neural encoder, model loading/inference, batching, training, PGN export,
-subtree reuse, production Gumbel parity, advanced time management, strength or speed
-claim. A material evaluator makes this initial runtime-isolation test independent
-of model export infrastructure. The next migration work belongs in Bend (claim choices
-and neural encoding), rather than adding another Python orchestration layer.
+This is not yet feature parity with production DeepFin. Complete input encoding,
+legal policy conversion and selected-leaf CPU inference are implemented below.
+Training stays Python; transformer math executes in the native C++ backend.
+The UCI path still lacks options, ponder/searchmoves, subtree reuse, shared-tree
+multi-walker parity, useful unbounded/deepening search, CUDA integration and
+trained-model/device/strength qualification. The separate persistent CPU live
+runner and CUDA tensor probe do not close those UCI gaps.
 
-Self-reviewed, not independently reviewed or formally proven. No production entry
-point, prior branch, compiler kernel, perft depth or existing test is replaced.
+Automatic history draws run in Bend; optional claim choices are not yet migrated
+into this entry point. Mate/stalemate are handled by the native search. The GUI
+remains responsible for played-game results/claims: UCI has no claim-action
+encoding. See the completion contract for explicit acceptance gates.
 
 ## Bend-owned 112-plane neural history block (partial model input)
 
