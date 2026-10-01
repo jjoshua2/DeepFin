@@ -62,7 +62,7 @@ def verify(command: list[str]) -> dict[str, Any]:
             assert c.dump() == prior
             observations.append(result(c, 'wtime 100 movestogo 1 nodes 2', 8193, 25))
             rejected += 1
-        # An option cannot alter either running or held work.
+        # A queued option cannot alter the current Running search.
         c.send('go nodes 1 infinite\nsetoption name TreeNodes value 65536\nisready\n')
         rows = c.until('readyok')
         assert any('busy' in row for row in rows), rows

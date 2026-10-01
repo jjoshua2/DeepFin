@@ -8,11 +8,11 @@ type Options is Data:
 def defaults() -> Options:
   Options{4096, 50}
 
-def tree_nodes(options: Options) -> U32:
+def get_tree_nodes(options: Options) -> U32:
   Options{nodes, overhead} = options
   nodes
 
-def overhead(options: Options) -> U32:
+def get_overhead(options: Options) -> U32:
   Options{nodes, ms} = options
   ms
 
@@ -26,7 +26,7 @@ def selected(ok: Bool, options: Options) -> Maybe<&2, Options>:
     case False{}: None{}
     case True{}: Some{options}
 
-def value(which: U32, number: Maybe<&2, U32>, options: Options) -> Maybe<&2, Options>:
+def set_value(which: U32, number: Maybe<&2, U32>, options: Options) -> Maybe<&2, Options>:
   match number:
     case None{}: None{}
     case Some{+n}:
@@ -39,7 +39,7 @@ def value(which: U32, number: Maybe<&2, U32>, options: Options) -> Maybe<&2, Opt
 def named(ok: Bool, which: U32, text: String, options: Options) -> Maybe<&2, Options>:
   match ok:
     case False{}: None{}
-    case True{}: value(which, Text.number(text), options)
+    case True{}: set_value(which, Text.number(text), options)
 
 def parse(args: List<&2, String>, options: Options) -> Maybe<&2, Options>:
   match args:

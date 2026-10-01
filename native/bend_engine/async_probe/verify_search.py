@@ -161,6 +161,8 @@ def run_cases(command: list[str]) -> dict[str, Any]:
         assert any('TreeNodes=8193' in row for row in c.until('readyok'))
         c.send('position startpos\ngo evals 2 depth 2')
         c.started()
+        c.send('setoption name TreeNodes value 65536\nisready')
+        assert any('busy' in row for row in c.until('readyok'))
         assert c.proc.stdin
         c.proc.stdin.write('isre')
         c.proc.stdin.flush()
@@ -170,6 +172,9 @@ def run_cases(command: list[str]) -> dict[str, Any]:
         c.send('stop\nisready')
         lines = c.until('readyok', 0.75)
         observations.append(snapshot(lines, 1, dispatched=1, executed=0, accepted=0, cancelled=1))
+        resources = [json.loads(row.removeprefix('info string tree_resources '))
+                     for row in lines if row.startswith('info string tree_resources ')]
+        assert len(resources) == 1 and resources[0]['capacity'] == 8193, lines
         parsed = parse_report(lines, kind='evals', budget=2)
         assert not parsed['comparable'], parsed
         c.send('stop')

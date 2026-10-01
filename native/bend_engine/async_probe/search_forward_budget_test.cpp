@@ -44,6 +44,11 @@ struct Gate {
     allowed = true;
     wake.notify_all();
   }
+  void rearm() {
+    // Test owner calls this only after taking physical completion.
+    std::lock_guard lock(mutex);
+    started = allowed = false;
+  }
 };
 AsyncStatus wait_done(AsyncSlot& slot, AsyncKey key) {
   const auto deadline = std::chrono::steady_clock::now() + 5s;
@@ -252,9 +257,29 @@ void actual_adapter() {
   require(!deepfin_async_begin_search(0, 1));
   require(!deepfin_async_begin_search(1, 0));
   require(!deepfin_async_begin_search(1, 65537));
+  // Failed begins do not opt diagnostics into epoch validation. Before a
+  // successful binding, legacy zero/arbitrary epochs retain their original ABI.
+  adapter_gate.release();
+  uint32_t legacy_token = 0;
+  for (uint32_t epoch : {0u, 100u}) {
+    const auto next = deepfin_async_submit(epoch, 1, 1, input.data(), input.size());
+    require(next == ++legacy_token);
+    require(wait_adapter(next, epoch, output.data()) == 2);
+  }
+  require(adapter_budget.calls() == 2 && adapter_budget.used() == 2);
+  adapter_gate.rearm();
+  output.fill(-19.0f);
   require(deepfin_async_begin_search(10, 1));
+  require(!deepfin_async_begin_search(9, 1));
+  require(!deepfin_async_begin_search(10, 2));
+  require(!deepfin_async_begin_search(11, 0));
+  require(!deepfin_async_begin_search(11, 65537));
+  for (uint32_t epoch : {0u, 9u, 11u})
+    require(deepfin_async_submit(epoch, 1, 1, input.data(), input.size()) == 0);
+  require(adapter_budget.calls() == 2 && adapter_budget.used() == 0);
+  // Rejected begins retained epoch 10; rejected submissions owned no slot/token.
   const auto token = deepfin_async_submit(10, 1, 1, input.data(), input.size());
-  require(token != 0);
+  require(token == legacy_token + 1);
   adapter_gate.wait_started();
   const uint32_t prior_begins = begin_calls;
   require(!deepfin_async_begin_search(11, 1));
@@ -264,19 +289,24 @@ void actual_adapter() {
   adapter_gate.release();
   require(wait_adapter(token, 10, output.data()) == 3);
   require(std::all_of(output.begin(), output.end(), [](float x) { return x == -19.0f; }));
-  require(adapter_budget.calls() == 1 && adapter_budget.used() == 1);
+  require(adapter_budget.calls() == 3 && adapter_budget.used() == 1);
+  // The occupied-slot rejection of begin(11) also left the prior binding intact.
+  require(deepfin_async_submit(11, 1, 1, input.data(), input.size()) == 0);
   require(deepfin_async_begin_search(10, 1));
   require(!adapter_budget.admit());
   require(!deepfin_async_begin_search(10, 2));
   require(!deepfin_async_begin_search(9, 1));
   require(deepfin_async_begin_search(11, 2));
+  for (uint32_t epoch : {0u, 10u, 12u})
+    require(deepfin_async_submit(epoch, 1, 1, input.data(), input.size()) == 0);
+  require(adapter_budget.calls() == 3 && adapter_budget.used() == 0);
   for (uint32_t i = 0; i < 2; ++i) {
     require(deepfin_async_begin_search(11, 2));
     const auto next = deepfin_async_submit(11, 1, 1, input.data(), input.size());
-    require(next > token);
+    require(next == token + i + 1);
     require(wait_adapter(next, 11, output.data()) == 2);
   }
-  require(adapter_budget.calls() == 3 && adapter_budget.used() == 2);
+  require(adapter_budget.calls() == 5 && adapter_budget.used() == 2);
   require(deepfin_async_begin_search(11, 2));
   require(!adapter_budget.admit());
   deepfin_async_shutdown();

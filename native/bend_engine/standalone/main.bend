@@ -406,7 +406,7 @@ def start_configured(+root: Pos.Game, lim: Protocol.Limits, table: Array<U64>, m
   (cache, options) = r
   do IO<State>:
     now : Nat <- IO.now()
-    return State{cache, root, table, Running{Search.start(Pos.board(root), Options.tree_nodes(options), epoch, depth), budget, inf,
+    return State{cache, root, table, Running{Search.start(Pos.board(root), Options.get_tree_nodes(options), epoch, depth), budget, inf,
       Work.identified(Work.start(now, evals, duration, U32.is_gt(U32.and(seen, 32), 0)), epoch), duration, fallback(ms, 4294967295)}, False{}}
 
 def start_identified(root: Pos.Game, lim: Protocol.Limits, table: Array<U64>, ms: List<&2, Chess.Ply>,
@@ -496,7 +496,7 @@ def evaluation_args(cache: NativeEvaluation.Cache, args: List<&2, String>, +root
 def go_configured(+root: Pos.Game, table: Array<U64>, args: List<&2, String>,
   r: NativeEvaluation.Cache & Options.Options) -> IO(State):
   (cache, options) = r
-  go_limits(cache, root, table, TimeControl.go(args, Chess.get_turn(Pos.board(root)), Options.overhead(options)))
+  go_limits(cache, root, table, TimeControl.go(args, Chess.get_turn(Pos.board(root)), Options.get_overhead(options)))
 
 def option_result(cache: NativeEvaluation.Cache, root: Pos.Game, table: Array<U64>,
   result: Maybe<&2, Options.Options>) -> IO(State):
