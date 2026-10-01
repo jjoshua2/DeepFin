@@ -106,14 +106,15 @@ def step(+c: O.Cells,+b: Chess.Board,+rays: U64,
       Chess.filter_requires(M.sensitive(b,rays),m),c,b,m,acc)) ==
     P.project(S.retain(S.checked(c,b,m),m,acc)) : List<&2,Chess.Ply>}:
   match part:
-    case Inl{+plain}:
+    case Inl{plain}:
+      +same: {U32.is_eq(C.flag(m),2) == False{} : Bool} = plain
       Equal.trans(List<&2,Chess.Ply>,
         P.project(S.fast_step(
           Chess.filter_requires(M.sensitive(b,rays),m),c,b,m,acc)),
         P.project(acc),
         P.project(S.retain(S.checked(c,b,m),m,acc)),
         ordinary_fast(
-          Chess.filter_requires(M.sensitive(b,rays),m),c,b,m,acc,plain),
+          Chess.filter_requires(M.sensitive(b,rays),m),c,b,m,acc,same),
         Equal.sym(List<&2,Chess.Ply>,
           P.project(S.retain(S.checked(c,b,m),m,acc)),
           P.project(acc),
