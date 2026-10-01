@@ -1,6 +1,12 @@
 {
   "artifact_sha256": {
     "cost_ranked_plan": "89b298aad54d64d7f3434b847532587121edacd987c61eceffb65a5cfe18262a",
+    "external_join_fixture_v1b_author_harness": "f804e2fd044db4606c556cfdcb8633fbacacb8e557a685d3495a121030510920",
+    "external_join_fixture_v1b_author_result": "3c364656eee6744c67fdea60363d9ff48d8aeeafa55527d0c17fb5334aff79d2",
+    "external_join_fixture_v1b_claim": "9c64327e48837fcdf8a52c57e8a844e128829b1a5cd407f1051036204a6aac93",
+    "external_join_fixture_v1b_first_merge_receipt": "d3d12c805306a25da61a7bb8fcff4c48c3cb50eadc526e5925dd8d75ccb1d3a3",
+    "external_join_fixture_v1b_manifest": "81332fdf2f8fe9c9dbcf03342f67dd3a7001cbd15a0083385d383b98b4803b10",
+    "external_join_fixture_v1b_source": "ed047784f0371530f9cb950b166a5aa212fce84b011440c3eaaa70abcf4ea3f3",
     "paired_wave_v2_producer": "73428706c2be0fe54b50bd6bd91492fc94e9ac0a21062f1cf39fc953e6da0698",
     "paired_wave_v2b_fixture": "f7536b0292512df855a852746649b9309485536a0d9d3390015ed2ec0861ef47",
     "paired_wave_v2b_receipt": "2bd7f8270aec89e605d81be138c198c2640364034ddf9acf22ec60ec7f7e85ab",
@@ -16,6 +22,22 @@
     "real_slice_producer": "a023908a3ccee20b27a682e4f08b84997876a43ccd638f741f10bc0eb10d86ac",
     "real_slice_receipt": "5702feab50397b253a4474d2e7e693a26c8b301ead96a645911b610a2fefc8ca"
   },
+  "external_join_synthetic_v1b": {
+    "artifact_bundle_name": "tri-source-external-join-synthetic-v1b-20260930",
+    "author_checked_refusals": 18,
+    "first_merge_child_exit": -9,
+    "first_merge_receipt_reused": true,
+    "initial_sort_run_row_cap": 2048,
+    "input_rows": 8193,
+    "merge_fanin_cap": 4,
+    "native_bytes_per_generated_row": 64,
+    "noop_receipts_unchanged": true,
+    "physical_source_segments": 2,
+    "sealed_receipts": 49,
+    "status": "ROOT_RERAN_AUTHOR_HARNESS_PASS_SYNTHETIC_ONLY",
+    "unique_inputs": 8192,
+    "winner_ordinal_for_cross_segment_duplicate": 8192
+  },
   "limits": [
     "one BT4-v9 gross-candidate source slice only; Ceres, SF and second wave unmeasured",
     "84.77x ratio covers compressed DATA only; retained subtotal excludes UID/context/provenance/proof metadata, claims, receipts, archived proofs and original source bank",
@@ -23,7 +45,8 @@
     "current strict replay source child is not restartable from an archive/game cursor",
     "current global UID/digest/winner/game-ID/target maps and monolithic JSON receipt are not 500M-ready",
     "100-byte fixed-record external-sort format is a proposal, not implemented producer behavior",
-    "no external-drive loader, GPU training, corpus admission or playing-strength measurement"
+    "no external-drive loader, GPU training, corpus admission or playing-strength measurement",
+    "external-join v1b is a generated-row author harness reproduced by root, not an independently authored parser or production pipeline"
   ],
   "real_bt4_slice": {
     "author_cpu_seconds": 2.391851419,

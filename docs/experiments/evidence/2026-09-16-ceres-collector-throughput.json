@@ -1,0 +1,11 @@
+{
+  "cohort": "block09",
+  "shards": 113,
+  "elapsed_seconds": 6753.607648022,
+  "chunk_seconds_sum": 3389.074222410047,
+  "session_run_seconds_sum": 2035.4066066455562,
+  "gaps_seconds_sum": 3364.468880176544,
+  "median_gap_seconds": 30.038790106773376,
+  "zero_pause_subtracted_seconds": 3393.607648022,
+  "projected_speedup": 1.9900967785590686
+}
