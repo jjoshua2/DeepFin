@@ -164,18 +164,28 @@ def test_stable_same_key_merge_kill_resume_and_group_bound(tmp_path: Path) -> No
     indexes = (entry.input_index for entry in store.iter_run(final))
     assert all(index == expected for expected, index in enumerate(indexes))
     losers = 0
+    loser_sink = tmp_path / "losers.jsonl"
 
-    def on_loser(_: cs.SortEntry) -> None:
-        nonlocal losers
-        losers += 1
+    with loser_sink.open("w", encoding="ascii") as sink:
+        def on_loser(entry: cs.SortEntry) -> None:
+            nonlocal losers
+            losers += 1
+            sink.write(f"{entry.input_index}\n")
 
-    result = list(cs.fold_digest_groups(
-        store.iter_run(final), fetch=_fetch, on_loser=on_loser))
+        tracemalloc.start()
+        try:
+            result = list(cs.fold_digest_groups(
+                store.iter_run(final), fetch=_fetch, on_loser=on_loser))
+            _, fold_peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
     assert len(result) == 1
     assert result[0].count == 8193
     assert result[0].winner.input_index == 8192
     assert result[0].outcome_counts == (2731, 2731, 2731)
     assert losers == 8192
+    assert sum(1 for _ in loser_sink.open(encoding="ascii")) == 8192
+    assert fold_peak < 16 << 20
 
     manifest_sha = hashlib.sha256((final / "RUN.json").read_bytes()).hexdigest()
     receipts = {p.relative_to(store.root): hashlib.sha256(p.read_bytes()).hexdigest()
@@ -254,6 +264,237 @@ store.merge_run('merged', [root/'source_0', root/'source_1'])
     with pytest.raises(cs.CheckpointError, match="file membership"):
         store.verify_run(run)
     assert stage.read_bytes() == b"unexpected"
+
+
+@pytest.mark.parametrize("source_count", [4, 16, 64])
+def test_shared_noop_verification_reads_each_part_once(
+        tmp_path: Path, source_count: int) -> None:
+    store = cs.CheckpointedSort(
+        tmp_path / "runs", source_sha256=SOURCE, config_sha256=CONFIG,
+        kind="digest", row_cap=2, byte_cap=2048, fanin=4)
+    inputs = [store.seal_source_run(
+        f"source_{index}", [cs.SortEntry(DIGEST, index, (0, index))],
+        source_identity_sha256=hashlib.sha256(
+            f"source-{index}".encode()).hexdigest())
+        for index in range(source_count)]
+    build = cs._VerificationSession(store)
+    final = store.merge_all(inputs, prefix="merge", _session=build)
+    before = hashlib.sha256((final / "RUN.json").read_bytes()).hexdigest()
+    part_receipts = {
+        path.relative_to(store.root): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in store.root.glob("*/part_*.receipt.json")}
+
+    fresh = cs._VerificationSession(store)
+    assert store.merge_all(inputs, prefix="merge", _session=fresh) == final
+    parts = list(store.root.glob("*/part_*.jsonl"))
+    distinct_extent = sum(path.stat().st_size for path in parts)
+    assert fresh.payload_reads == len(parts)
+    assert fresh.payload_bytes_read == (distinct_extent +
+                                       fresh.cursor_probe_reads)
+    assert len(fresh.runs) <= cs.MAX_VERIFIED_RUNS
+    assert len(fresh.parts) == len(parts) <= cs.MAX_VERIFIED_PARTS
+    assert hashlib.sha256((final / "RUN.json").read_bytes()).hexdigest() == before
+    assert {
+        path.relative_to(store.root): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in store.root.glob("*/part_*.receipt.json")} == part_receipts
+    assert [entry.input_index for entry in store.iter_run(final)] == list(
+        range(source_count))
+
+    # The cache is invocation-local: an old ancestor changed after the no-op
+    # must be refused by the next full verification.
+    ancestor = inputs[0] / "part_00000000.jsonl"
+    ancestor.write_bytes(ancestor.read_bytes()[:-1])
+    with pytest.raises(cs.CheckpointError, match="part hash/size"):
+        store.verify_run(final)
+
+
+@pytest.mark.parametrize("tamper", ["payload", "receipt"])
+def test_input_part_changed_after_preflight_is_refused_before_merge(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        tamper: str) -> None:
+    store = cs.CheckpointedSort(
+        tmp_path / "runs", source_sha256=SOURCE, config_sha256=CONFIG,
+        kind="digest", row_cap=2, byte_cap=2048, fanin=2)
+    inputs = [store.seal_source_run(
+        f"source_{index}", [cs.SortEntry(DIGEST, index, (0, index))],
+        source_identity_sha256=str(index) * 64)
+        for index in range(2)]
+    input_part = inputs[0] / "part_00000000.jsonl"
+    input_receipt = inputs[0] / "part_00000000.receipt.json"
+    original_prepare = store._prepare
+
+    def tamper_after_input_preflight(
+            path: Path, claim: dict[str, object]) -> str:
+        result = original_prepare(path, claim)
+        changed = input_part if tamper == "payload" else input_receipt
+        changed.write_bytes(changed.read_bytes()[:-1])
+        return result
+
+    monkeypatch.setattr(store, "_prepare", tamper_after_input_preflight)
+    with pytest.raises(cs.CheckpointError,
+                       match=r"changed input sort (part|receipt) before merge"):
+        store.merge_run("merged", inputs)
+    assert not list((store.root / "merged").glob("part_*.receipt.json"))
+
+
+
+@pytest.mark.parametrize("metadata", ["RUN.json", "CLAIM.json"])
+def test_input_run_metadata_changed_after_preflight_is_refused(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metadata: str) -> None:
+    store = cs.CheckpointedSort(
+        tmp_path / "runs", source_sha256=SOURCE, config_sha256=CONFIG,
+        kind="digest", row_cap=4, byte_cap=4096, fanin=4)
+    inputs = [store.seal_source_run(
+        f"source_{index}", [cs.SortEntry(DIGEST, index, (0, index))],
+        source_identity_sha256=str(index) * 64)
+        for index in range(2)]
+    original_prepare = store._prepare
+
+    def tamper(path: Path, claim: dict[str, object]) -> str:
+        result = original_prepare(path, claim)
+        target = inputs[0] / metadata
+        value = json.loads(target.read_bytes())
+        key = ("receipt_chain_sha256" if metadata == "RUN.json"
+               else "source_identity_sha256")
+        value[key] = "f" * 64
+        target.write_bytes(cs._canonical(value))
+        return result
+
+    monkeypatch.setattr(store, "_prepare", tamper)
+    with pytest.raises(cs.CheckpointError,
+                       match=r"changed input sort (run receipt|claim)"):
+        store.merge_run("merged", inputs)
+    assert not list((store.root / "merged").glob("part_*.receipt.json"))
+
+
+def test_cached_ancestor_receipt_changed_between_merge_groups_is_refused(
+        tmp_path: Path) -> None:
+    store = cs.CheckpointedSort(
+        tmp_path / "runs", source_sha256=SOURCE, config_sha256=CONFIG,
+        kind="digest", row_cap=4, byte_cap=4096, fanin=4)
+    inputs = [store.seal_source_run(
+        f"source_{index}", [cs.SortEntry(DIGEST, index, (0, index))],
+        source_identity_sha256=hashlib.sha256(str(index).encode()).hexdigest())
+        for index in range(16)]
+    changed = False
+
+    def tamper(run: Path, _: int) -> None:
+        nonlocal changed
+        if run.name == "merge_000_000001" and not changed:
+            receipt = store.root / "merge_000_000000" / "RUN.json"
+            value = json.loads(receipt.read_bytes())
+            value["receipt_chain_sha256"] = "f" * 64
+            receipt.write_bytes(cs._canonical(value))
+            changed = True
+
+    with pytest.raises(cs.CheckpointError,
+                       match="changed input sort run receipt"):
+        store.merge_all(inputs, prefix="merge", after_part_seal=tamper)
+    assert changed
+    assert not (store.root / "merge_001_000000" / "RUN.json").exists()
+
+
+def test_verification_session_caps_are_explicit(tmp_path: Path) -> None:
+    store = cs.CheckpointedSort(
+        tmp_path / "runs", source_sha256=SOURCE, config_sha256=CONFIG,
+        kind="digest", row_cap=2, byte_cap=256, fanin=2)
+    session = cs._VerificationSession(store)
+    for index in range(cs.MAX_VERIFIED_RUNS):
+        session.record_run(Path(f"run_{index}"), {"parts": 1})
+    session.record_run(Path("one_more_run"), {"parts": 1})
+    assert len(session.runs) == cs.MAX_VERIFIED_RUNS
+    assert Path("run_0") not in session.runs
+    assert session.run_evictions == 1
+    session.stack.update(session.runs)
+    with pytest.raises(cs.CheckpointError, match="active run cap"):
+        session.record_run(Path("all_active"), {"parts": 1})
+
+    proof = cs._PartProof("a" * 64, "b" * 64, 1, 1,
+                          (DIGEST, 0), (DIGEST, 0))
+    for index in range(cs.MAX_VERIFIED_PARTS):
+        session.record_part(Path("run"), index, proof)
+    with pytest.raises(cs.CheckpointError, match="part cap"):
+        session.record_part(Path("run"), cs.MAX_VERIFIED_PARTS, proof)
+
+
+def test_129_ancestor_rollover_sigkill_resume_and_fresh_tamper(
+        tmp_path: Path) -> None:
+    store = cs.CheckpointedSort(
+        tmp_path / "runs", source_sha256=SOURCE, config_sha256=CONFIG,
+        kind="digest", row_cap=16, byte_cap=4096, fanin=4)
+    inputs = [store.seal_source_run(
+        f"source_{index:03d}",
+        [cs.SortEntry(DIGEST, index, (0, index))],
+        source_identity_sha256=hashlib.sha256(
+            f"source-slice-{index}".encode()).hexdigest())
+        for index in range(129)]
+    # Each source identity stands for one bounded synthetic slice. No archive
+    # parser or real cursor is being qualified by this fixture.
+    child = (
+        "import os,signal,sys; from pathlib import Path; "
+        "from chess_anti_engine.source.checkpointed_sort import CheckpointedSort; "
+        "r=Path(sys.argv[1]); "
+        "s=CheckpointedSort(r,source_sha256='a'*64,config_sha256='b'*64,"
+        "kind='digest',row_cap=16,byte_cap=4096,fanin=4); "
+        "s.merge_all([r/f'source_{i:03d}' for i in range(129)],"
+        "prefix='merge',after_part_seal=lambda run,_:os.kill("
+        "os.getpid(),signal.SIGKILL) if run.name=='merge_003_000000'"
+        " else None)"
+    )
+    code = cs.run_owned_cpu(
+        [sys.executable, "-c", child, str(store.root)],
+        log_path=tmp_path / "rollover_kill.log", timeout_seconds=60)
+    assert code == -signal.SIGKILL
+    first = store.root / "merge_003_000000" / "part_00000000.receipt.json"
+    assert first.is_file()
+    first_sha = hashlib.sha256(first.read_bytes()).hexdigest()
+    first_mtime_ns = first.stat().st_mtime_ns
+
+    resume = cs._VerificationSession(store)
+    final = store.merge_all(inputs, prefix="merge", _session=resume)
+    assert hashlib.sha256(first.read_bytes()).hexdigest() == first_sha
+    assert first.stat().st_mtime_ns == first_mtime_ns
+    assert len(resume.runs) <= cs.MAX_VERIFIED_RUNS
+    assert len(resume.parts) <= cs.MAX_VERIFIED_PARTS
+    assert resume.run_evictions > 0
+    assert [entry.input_index for entry in store.iter_run(final)] == list(
+        range(129))
+    final_sha = hashlib.sha256((final / "RUN.json").read_bytes()).hexdigest()
+    noop = cs._VerificationSession(store)
+    assert store.merge_all(inputs, prefix="merge", _session=noop) == final
+    assert hashlib.sha256((final / "RUN.json").read_bytes()).hexdigest() == final_sha
+    assert hashlib.sha256(first.read_bytes()).hexdigest() == first_sha
+    assert first.stat().st_mtime_ns == first_mtime_ns
+    assert noop.run_evictions > 0
+    assert len(noop.runs) <= cs.MAX_VERIFIED_RUNS
+    assert noop.payload_reads >= len(noop.parts)
+    assert inputs[0] not in noop.runs
+
+    ancestor = inputs[0] / "part_00000000.jsonl"
+    ancestor.write_bytes(ancestor.read_bytes()[:-1])
+    with pytest.raises(cs.CheckpointError, match="part hash/size"):
+        store.verify_run(inputs[0], _session=noop)
+    with pytest.raises(cs.CheckpointError, match="part hash/size"):
+        store.verify_run(final)
+
+
+def test_verification_session_binds_store_identity(tmp_path: Path) -> None:
+    store = cs.CheckpointedSort(
+        tmp_path / "runs", source_sha256=SOURCE, config_sha256=CONFIG,
+        kind="digest", row_cap=2, byte_cap=2048, fanin=2)
+    run = store.seal_source_run(
+        "source_0", [cs.SortEntry(DIGEST, 0, (0, 0))],
+        source_identity_sha256="0" * 64)
+    session = cs._VerificationSession(store)
+    store.verify_run(run, _session=session)
+    changed = cs.CheckpointedSort(
+        store.root, source_sha256=SOURCE, config_sha256="f" * 64,
+        kind="digest", row_cap=2, byte_cap=2048, fanin=2)
+    with pytest.raises(cs.CheckpointError, match="session store identity"):
+        changed.verify_run(run, _session=session)
+    store.code_sha256 = "0" * 64
+    with pytest.raises(cs.CheckpointError, match="session store identity"):
+        store.verify_run(run, _session=session)
 
 
 def test_duplicate_digest_group_accumulator_does_not_grow_with_members() -> None:

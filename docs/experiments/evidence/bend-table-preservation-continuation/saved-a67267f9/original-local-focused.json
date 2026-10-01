@@ -1,0 +1,197 @@
+{
+  "focused_gate": "PASS",
+  "new_laws": 3,
+  "new_controls": 17,
+  "consumer": {
+    "exit_code": 0,
+    "seconds": 4.051571704000025,
+    "raw_text": "All terms check.\n",
+    "sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+  },
+  "negative_controls": [
+    {
+      "name": "pawn-read-corrupts-table",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Query.bend",
+      "exit_code": 1,
+      "seconds": 0.2629736100000173,
+      "raw_text": "Error:\n- expected : {../storage/Observe.storage(Array.get.at(U64, U32.add(sq, Bool.pick(U32, Cmp.is_eq(U32.cmp(side, 1)), 384, 448)), Array.size(U64, Array.set.fin(U64, Array.swap.at(U64, 0, U64{0, 0}, Array.size(U64, ../storage/Observe.pack(c))))))) == ../storage/Observe.pack(c) : Array<U64>}\n- observed : {../storage/Observe.storage(Array.get.at(U64, U32.add(sq, Bool.pick(U32, Cmp.is_eq(U32.cmp(side, 1)), 384, 448)), Array.size(U64, ../storage/Observe.pack(c)))) == ../storage/Observe.pack(c) : Array<U64>}\nContext:\n- c    : ../storage/Observe.Cells\n- sq   : U32\n- side : U32\n- occ  : U64\nLocation: attack\n32 |   match kind:\n33>|     case Board.Pawn{}: Read.read(c,U32.add(sq,Bool.pick(U32,U32.is_eq(side,1),384,448)))\n34 |     case Board.Knight{}: Read.read(c,U32.add(256,sq))\n",
+      "sha256": "c61f2c82596fafe6b67ee88fb2f7ad3500199610a19ffa016e88b58a9c07fd67"
+    },
+    {
+      "name": "attack-reducer-loses-table",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Query.bend",
+      "exit_code": 1,
+      "seconds": 0.27329249999979766,
+      "raw_text": "Error:\n- expected : [U64{0, 0}]\n- observed : ../storage/Observe.pack(c)\nContext:\n- c    : ../storage/Observe.Cells\n- b    : ../../../legal_probe/Chess.Board\n- sq   : U32\n- by   : U32\n- hits : U64\n- ra   : U64\n- v    : U64\nLocation: attacked_rook\n45 |   Bind.mask(r => {Bind.bool_table(Chess.attacked_bishop(b,by,U64.or(hits,U64.and(ra,U64.or(Chess.get_rooks(b),Chess.get_queens(b)))),r)) == O.pack(c) : Array<U64>},\n46>|     c,Chess.attack(2,O.pack(c),sq,by,Chess.occupied(b)),attack(c,Board.Bishop{},sq,by,Chess.occupied(b)),v => {==})\n47 | \n",
+      "sha256": "d4fd8904e875e38bc1c479520985fcfc2fd05a771ec8683c8acaa4fab62ea3f7"
+    },
+    {
+      "name": "ordinary-scan-corrupts-table",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Scan.bend",
+      "exit_code": 1,
+      "seconds": 0.2730334389998461,
+      "raw_text": "Error:\n- expected : Array.set.fin(U64, Array.swap.at(U64, 131071, U64{0, 0}, Array.size(U64, ../storage/Observe.pack(c))))\n- observed : ../storage/Observe.pack(c)\nContext:\n- c         : ../storage/Observe.Cells\n- b         : ../../../legal_probe/Chess.Board\n- src       : U32\n- tail      : List<&2, ../../../legal_probe/Chess.Ply>\n- pawn_flag : Bool\n- v         : U64\nLocation: step\n54 |   Bind.mask(r => {Bind.moves_table(Chess.scan_after(src,pawn_flag,Chess.get_ep(b),tail,r)) == O.pack(c) : Array<U64>},\n55>|     c,Chess.piece_targets(pawn_flag,O.pack(c),b,src),targets(c,b,src,pawn_flag),v => {==})\n56 | \n",
+      "sha256": "c03a3470db735acf7a7eb01e40113addd4e33373a2ba2c1437d4814e1caf2ee4"
+    },
+    {
+      "name": "unchecked-filter-corrupts-table",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Filter.bend",
+      "exit_code": 1,
+      "seconds": 0.32223360899979525,
+      "raw_text": "Error:\n- expected : Array.set.fin(U64, Array.swap.at(U64, 131071, U64{0, 0}, Array.size(U64, ../storage/Observe.pack(c))))\n- observed : ../storage/Observe.pack(c)\nContext:\n- c    : ../storage/Observe.Cells\n- b    : ../../../legal_probe/Chess.Board\n- m    : ../../../legal_probe/Chess.Ply\n- tail : List<&2, ../../../legal_probe/Chess.Ply>\nLocation: fast_step\n27 |     case True{}: step(c,b,m,tail)\n28>|     case False{}: {==}\n29 | \n",
+      "sha256": "43a5449bd0ac7606aea6e806d072f42af33282a192c2507440690879f666b9a5"
+    },
+    {
+      "name": "rejected-castle-loses-table",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Castle.bend",
+      "exit_code": 1,
+      "seconds": 3.574928633000127,
+      "raw_text": "Error:\n- expected : [U64{0, 0}]\n- observed : ../storage/Observe.pack(c)\nContext:\n- c       : ../storage/Observe.Cells\n- b       : ../../../legal_probe/Chess.Board\n- src     : U32\n- dst     : U32\n- transit : U32\n- tail    : List<&2, ../../../legal_probe/Chess.Ply>\nLocation: checked\n17 |   match ok:\n18>|     case False{}: {==}\n19 |     case True{}:\n",
+      "sha256": "de2919847b75b6444f2f58ab4148c93745e53eb22d3857de3869b4b14d22ea61"
+    },
+    {
+      "name": "generator-reinitializes-table",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Generator.bend",
+      "exit_code": 1,
+      "seconds": 3.9899326780000592,
+      "raw_text": "Error:\n- expected : {Bind.moves_table(../../../legal_probe/Chess.filter_prepare(b, ../../../legal_probe/Chess.castle_side(b, False{}, ../../../legal_probe/Chess.castle_side(b, True{}, ../../../legal_probe/Chess.scan(../../../legal_probe/Chess.bit_squares(64n, U64.is_zero(../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), []), b, (Array.set.fin(U64, Array.swap.at(U64, 131071, U64{0, 0}, Array.size(U64, ../storage/Observe.pack(c)))), [])))))) == ../storage/Observe.pack(c) : Array<U64>}\n- observed : {Bind.moves_table(../../../legal_probe/Chess.filter_prepare(b, ../../../legal_probe/Chess.castle_side(b, False{}, ../../../legal_probe/Chess.castle_side(b, True{}, ../../../legal_probe/Chess.scan(../../../legal_probe/Chess.bit_squares(64n, U64.is_zero(../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), []), b, (../storage/Observe.pack(c), [])))))) == ../storage/Observe.pack(c) : Array<U64>}\nContext:\n- c    : ../storage/Observe.Cells\n- b    : ../../../legal_probe/Chess.Board\n- own  : U64\n- keys : List<&2, U32>\nLocation: legal\n23 |   +keys = Chess.bit_squares(64n,U64.is_zero(own),own,Nil{})\n24>|   Bind.moves(r => {Bind.moves_table(Chess.filter_prepare(b,Chess.castle_side(b,False{},Chess.castle_side(b,True{},r)))) == O.pack(c) : Array<U64>},\n25 |     c,Chess.scan(keys,b,(O.pack(c),Nil{})),Scan.scan(keys,c,b,Nil{}),out => wings(c,b,out))\n",
+      "sha256": "0d5a2ad1333c3289eedc980c6f97efd7c46b4ae7f159d89133f9ab9a71951b37"
+    },
+    {
+      "name": "false-public-result",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "consumer.bend",
+      "exit_code": 1,
+      "seconds": 3.694733751000058,
+      "raw_text": "Error:\n- expected : {Bind.moves_table(../../../legal_probe/Chess.filter_prepare(b, ../../../legal_probe/Chess.castle_side(b, False{}, ../../../legal_probe/Chess.castle_side(b, True{}, ../../../legal_probe/Chess.scan(../../../legal_probe/Chess.bit_squares(64n, U64.is_zero(../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), []), b, (table, [])))))) == [U64{0, 0}] : Array<U64>}\n- observed : {Bind.moves_table(../../../legal_probe/Chess.filter_prepare(b, ../../../legal_probe/Chess.castle_side(b, False{}, ../../../legal_probe/Chess.castle_side(b, True{}, ../../../legal_probe/Chess.scan(../../../legal_probe/Chess.bit_squares(64n, U64.is_zero(../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), []), b, (table, [])))))) == table : Array<U64>}\nContext:\n- table : Array<U64>\n- b     : ../../../legal_probe/Chess.Board\nLocation: LAWS.complete_generator_preserves_table\n12 | def Laws.complete_generator_preserves_table(table,b):\n13>|   Lift.legal(table,b,R.reify(table))\n14 | \n",
+      "sha256": "ba40cc570a65668080f726a0bea0c2855f09ab003c4b8a88fd4db2fe8c2ae1e7"
+    },
+    {
+      "name": "missing-bind-certificate",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Bind.bend",
+      "exit_code": 1,
+      "seconds": 0.24549917900003493,
+      "raw_text": "Error:\n- expected : {a == ../storage/Observe.pack(c) : Array<U64>}\n- observed : {True{} == True{} : Bool}\nContext:\n- Goal : @-r:Sigma<&1, &1, Array<U64>, _ => U64> -> Type\n- c    : ../storage/Observe.Cells\n- a    : Array<U64>\n- v    : U64\n- kept : {True{} == True{} : Bool}\n- next : @v:U64 -> Goal((../storage/Observe.pack(c), v))\nLocation: mask\n17 |   (a,+v) = r\n18>|   %Equal.sym(Array<U64>,a,O.pack(c),kept) : Goal((_,v))\n19 |   next(v)\n",
+      "sha256": "dfb7549e1e6dc6cb4e030fcb86aec7890e2a20944abf08aeaf49a3bdbf329d70"
+    },
+    {
+      "name": "missing-law",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "missing-proof",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "missing-law-import",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "missing-consumer-import",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "proof-hole",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "unsafe-proof",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "foreign-proof",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "symlink-proof",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "warning-on-zero-exit",
+      "kind": "synthetic output-wrapper unit",
+      "rejected": true
+    }
+  ],
+  "compiler_identity": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\n",
+  "source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/board/Actual.bend": "c27ac87812368df1f565cfd2f0406a28ceaf212f4f1cd93d9e3c0f4f28ac4b5b",
+    "standalone/proofs/board/Rows.bend": "5a03bfbd266f4ef984127a86a9007a5e73a79e135a43acc6e90ce47bb831a342",
+    "standalone/proofs/board/Spec.bend": "d0e60648dc7a0b803fa715c05c53ad92274657995a994996470afb7fc45f581a",
+    "standalone/proofs/board/Words.bend": "614c05950398a65d56d5c4953882ec3c7952236b71029624ccabc5db2bd94fff",
+    "standalone/proofs/builder/Spec.bend": "f025a0111dde5a5acfbe99ced04c3608145cd9b73ea4ade2d5cad13695cbbb0c",
+    "standalone/proofs/castle_emission/Spec.bend": "b07ca190932a44fbb59ce2c90bb02e02806d1da170b7cbd43c0f8c3890d135ee",
+    "standalone/proofs/castling/Actual.bend": "fe3cd9b30a9b1334d65116f783e55e0a3c4b4c657eb7d236c0c72422fa82b5ab",
+    "standalone/proofs/castling/Fresh.bend": "a74efdb25443e2191b00782c6a9fbf28fa3578a341b930aa7860e91595898604",
+    "standalone/proofs/castling/Route.bend": "bdc3b458d9288576d2307238aa25c9f8732db742b9aa677653f366d2b08be7e4",
+    "standalone/proofs/initialized_attacks/Build.bend": "af7ae803b927f223eb97c29331d3a979275a2f788767542ddf3256846b049251",
+    "standalone/proofs/move_update/Clear.bend": "d17e4cfa8bab35d0a97b01723c8967b554fe54204f51d1e30c2302c5e9de82c9",
+    "standalone/proofs/move_update/Core.bend": "03622895c74c320c298f5ffde8be5bb866c395be90fb51d7fd38dc0ad3987034",
+    "standalone/proofs/move_update/Ordinary.bend": "6ebcad3f9b60661ef8ba7053e5e369d94cb3820556709bb64bcbf104e499f4ad",
+    "standalone/proofs/move_update/Rows.bend": "664efb66f2afd0fe4287060ba808f34510cdac51190ee9ad6ad916527f3470e6",
+    "standalone/proofs/move_update/Selection.bend": "3e4def8b492e0136265d3da5155a4bada2d87e30b3bfef8949f2ce00c3554ee8",
+    "standalone/proofs/move_update/Spec.bend": "45dfe5836c7f0656cc8d76a63f1bf59e7c24d0c6b8d0ef9aad6808712695e901",
+    "standalone/proofs/move_update/Words.bend": "932612b475100accde1d82fdb27cd39686ce49e171ddc0fe72039f20b49de64b",
+    "standalone/proofs/ray/Algebra.bend": "9b654dc68a5bb5c1d47232e2be23200eebcbd1bfa6b071a5bee60d7c7077ab69",
+    "standalone/proofs/ray/Frame.bend": "eacd6b86d18f3ead0dd56f4843f36b134b5c61630ae16fc6147dae7be8f8ccc9",
+    "standalone/proofs/ray/Grid.bend": "c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a",
+    "standalone/proofs/ray/Masking.bend": "c129c86d11aeda8ccc417f57906ebddbf8607550e8fe6bc881df89254d235149",
+    "standalone/proofs/ray/Path.bend": "92595303f046ac947264f179a3489b40cd7822b674807511d846955eda6269ad",
+    "standalone/proofs/ray/Rays.bend": "f90217fa004d1c221ecf5a83c69167cb7cf3044055ab97d7cf612a5e12400054",
+    "standalone/proofs/storage/Observe.bend": "51d1b811b9ed4933db9672d0348490e2e017110460dd473d33a0fe6bde6b292b",
+    "standalone/proofs/storage/Read.bend": "4df305d3b934e27d4c12e3049f337b1ae5312bb1ff428b98b048c4d9b2fbfaa1",
+    "standalone/proofs/storage/Representation.bend": "1703fb62ab133fbfd4fa8155fa59dc19d1fa87ce2d838c92453eed516fbc9e2d",
+    "standalone/proofs/table_preservation/Bind.bend": "4fad1fcdb16a1def1ad516e06e99ef696a83d98facf9d1fef3e3bf1b058a9830",
+    "standalone/proofs/table_preservation/Castle.bend": "2dfba69d3e39c0fbcb082d273ca11e0755c1dff4654f64e23c5af9fdad45d557",
+    "standalone/proofs/table_preservation/Filter.bend": "b587990355d48f87003eb0d145fe342b180d8962c0bc937ced261bfdcbdc1099",
+    "standalone/proofs/table_preservation/Generator.bend": "a39df7209b324c32096e2ba6de7961181eb3d1505c82b1fb1b1b54bed50c9770",
+    "standalone/proofs/table_preservation/LAWS.bend": "781b4ba14c98aff09798a6e726f7c912ab5a48cd7566467559053db722c97730",
+    "standalone/proofs/table_preservation/Lift.bend": "824cc6f07571a8908ed8b230392e09315eb81e64b055e0939b627a5c82af93a0",
+    "standalone/proofs/table_preservation/PROOF.bend": "dc873d6fdcb906ef942bd053528a6f99b3d9db38f19c4d590a45dd314f5877ce",
+    "standalone/proofs/table_preservation/Query.bend": "28d4aca6a5fdda069fb9a52883592bcd3580ba10f3f873ca7a324e630f9ed1cd",
+    "standalone/proofs/table_preservation/README.md": "4b55e8058ff3d1d0c546187d9395758b14b954c481aa076e198380773a1c1664",
+    "standalone/proofs/table_preservation/Scan.bend": "3e4e29a37ed7546d7ca6d65afccf5841b24267ff6ece28d7c8c5ca83fef84464",
+    "standalone/proofs/table_preservation/consumer.bend": "73eeb4486099ba149f25280460a31bc6a7aab7c41103bb27e3244a3eb1d43c26",
+    "standalone/proofs/table_preservation/focused.py": "644c120401f7d787afaba6198583bef58f9fbbfa398fd15afd2bfe9bf6cb17db",
+    "standalone/proofs/table_preservation/probe.bend": "44e729e9f15e808c5c4ed9359f52bd8bc813c62aadcffed79eec7ad1188a1a71",
+    "standalone/proofs/table_preservation/verify_native.py": "9d4c9dd8c99323bd2dbe24d76988d7894a9464fefaa97886dd7c9bba51a239c2",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba"
+  },
+  "supplementary_boundary": {
+    "claim": "Replacing queen mask union with intersection preserves the storage theorem, not attack answers or correct moves.",
+    "counted_as_control": false,
+    "exit_code": 0,
+    "seconds": 3.8845040239998525,
+    "raw_text": "All terms check.\n",
+    "sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+  },
+  "scope": "Actual full generator retains the complete input array for arbitrary arrays/Boards. No move-list correctness, initialized attack semantics or native lifetime claim."
+}

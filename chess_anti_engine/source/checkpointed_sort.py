@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import heapq
+import io
 import json
 import os
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ import shutil
 import struct
 import subprocess
 import sys
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from typing import Any, Literal, cast
 
@@ -33,6 +35,8 @@ MAX_TABLE_BYTES = 16 << 20
 MAX_FIELD_BYTES = 4096
 MAX_RUN_ROWS = 2048
 MAX_FANIN = 4
+MAX_VERIFIED_RUNS = 128
+MAX_VERIFIED_PARTS = 4096
 U32 = (1 << 32) - 1
 U64 = (1 << 64) - 1
 SOURCES = ("BT4", "Ceres", "SF")
@@ -411,18 +415,116 @@ class _PartState:
     end_cursors: tuple[Cursor, ...]
     first: tuple[Any, int] | None
     last: tuple[Any, int] | None
+    final_receipt: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class _PartProof:
+    receipt_sha256: str
+    payload_sha256: str
+    size: int
+    rows: int
+    first: tuple[Any, int]
+    last: tuple[Any, int]
+
+
+class _VerificationSession:
+    """One invocation's capped proof cache; never persisted across restarts."""
+
+    def __init__(self, owner: CheckpointedSort) -> None:
+        self.identity = self._identity(owner)
+        self.byte_cap = owner.byte_cap
+        self.runs: OrderedDict[Path, dict[str, Any]] = OrderedDict()
+        self.parts: dict[tuple[Path, int], _PartProof] = {}
+        self.stack: set[Path] = set()
+        self.run_evictions = 0
+        self.payload_reads = 0
+        self.payload_bytes_read = 0
+        self.cursor_probe_reads = 0
+
+    @staticmethod
+    def _identity(owner: CheckpointedSort) -> tuple[object, ...]:
+        return (owner.root, owner.source_sha256, owner.config_sha256,
+                owner.code_sha256, owner.kind, owner.row_cap,
+                owner.byte_cap, owner.fanin)
+
+    def require_owner(self, owner: CheckpointedSort) -> None:
+        _need(self.identity == self._identity(owner),
+              "verification session store identity changed")
+
+    def record_part(self, run: Path, part: int, proof: _PartProof) -> None:
+        key = run, part
+        if key not in self.parts:
+            _need(len(self.parts) < MAX_VERIFIED_PARTS,
+                  "bounded verification session part cap")
+        else:
+            _need(self.parts[key] == proof, "changed part within verification")
+        self.parts[key] = proof
+
+    def record_run(self, run: Path, receipt: dict[str, Any]) -> None:
+        if run not in self.runs and len(self.runs) == MAX_VERIFIED_RUNS:
+            evict = next((old for old in self.runs
+                          if old not in self.stack), None)
+            if evict is None:
+                raise CheckpointError(
+                    "bounded verification session active run cap")
+            del self.runs[evict]
+            self.run_evictions += 1
+        self.runs[run] = receipt
+        self.runs.move_to_end(run)
+
+    def read_part(self, path: Path) -> bytes:
+        with path.open("rb") as stream:
+            payload = stream.read(self.byte_cap + 1)
+            extra = stream.read(1) if len(payload) <= self.byte_cap else b""
+        self.payload_reads += 1
+        self.payload_bytes_read += len(payload) + len(extra)
+        _need(len(payload) <= self.byte_cap and not extra,
+              "physical sort part exceeds byte cap")
+        return payload
+
+
+def _scan_payload(payload: bytes, kind: SortKind,
+                  previous: tuple[Any, int] | None
+                  ) -> tuple[int, tuple[Any, int] | None,
+                             tuple[Any, int] | None]:
+    count = 0
+    first = None
+    last = previous
+    for line in io.BytesIO(payload):
+        entry = _entry_from_line(line, kind)
+        order = _entry_order(entry)
+        _need(last is None or last < order,
+              "sort run ordering or repeated input index")
+        if first is None:
+            first = order
+        last = order
+        count += 1
+    return count, first, last
+
+
+def _require_run_receipt(run: Path, receipt: dict[str, Any]) -> None:
+    """Recheck exact verified metadata, never adopt a later path's hash."""
+    _need((run / "RUN.json").read_bytes() == _canonical(receipt),
+          "changed input sort run receipt before merge")
+    _need(_file_sha(run / "CLAIM.json") == receipt["claim_sha256"],
+          "changed input sort claim before merge")
 
 
 class _RunReader:
     """One-row-at-a-time physical-part reader with restartable byte cursor."""
 
     def __init__(self, run: Path, kind: SortKind, parts: int,
+                 session: _VerificationSession,
+                 run_receipt: dict[str, Any],
                  cursor: Cursor = (0, 0)) -> None:
         self.run = run
         self.kind: SortKind = kind
         self.parts = parts
+        self.session = session
+        self.run_receipt = run_receipt
         self.cursor = cursor
-        self.stream: Any = None
+        self.stream: io.BytesIO | None = None
         self.open_part = -1
 
     def close(self) -> None:
@@ -441,21 +543,40 @@ class _RunReader:
             part, offset = self.cursor
             if self.open_part != part:
                 self.close()
-                self.stream = (self.run / f"part_{part:08d}.jsonl").open("rb")
+                _require_run_receipt(self.run, self.run_receipt)
+                proof = self.session.parts.get((self.run, part))
+                if proof is None:
+                    raise CheckpointError("unverified input sort part")
+                _need(_file_sha(self.run / f"part_{part:08d}.receipt.json") ==
+                      proof.receipt_sha256,
+                      "changed input sort receipt before merge")
+                payload = self.session.read_part(
+                    self.run / f"part_{part:08d}.jsonl")
+                _need(len(payload) == proof.size and
+                      _sha(payload) == proof.payload_sha256,
+                      "changed input sort part before merge")
+                count, first, last = _scan_payload(payload, self.kind, None)
+                _need(count == proof.rows and first == proof.first and
+                      last == proof.last,
+                      "changed input sort part rows before merge")
+                self.stream = io.BytesIO(payload)
                 self.open_part = part
-            size = (self.run / f"part_{part:08d}.jsonl").stat().st_size
+            stream = self.stream
+            if stream is None:
+                raise CheckpointError("missing verified input sort buffer")
+            size = self.session.parts[(self.run, part)].size
             _need(0 <= offset <= size, "sort cursor byte bounds")
             if offset == size:
                 self.cursor = (part + 1, 0)
                 continue
-            self.stream.seek(offset)
+            stream.seek(offset)
             if offset:
-                self.stream.seek(offset - 1)
-                _need(self.stream.read(1) == b"\n", "sort cursor line boundary")
-                self.stream.seek(offset)
-            raw = self.stream.readline()
+                stream.seek(offset - 1)
+                _need(stream.read(1) == b"\n", "sort cursor line boundary")
+                stream.seek(offset)
+            raw = stream.readline()
             _need(raw.endswith(b"\n"), "truncated sort row at cursor")
-            end = self.stream.tell()
+            end = stream.tell()
             self.cursor = (part + 1, 0) if end == size else (part, end)
             return _entry_from_line(raw, self.kind), self.cursor
         _need(self.cursor == (self.parts, 0), "sort end cursor")
@@ -501,9 +622,12 @@ class CheckpointedSort:
 
     def _claim_value(self, name: str, *, mode: str,
                      expected_rows: int, source_identity: str | None = None,
-                     inputs: Sequence[Path] = ()) -> dict[str, Any]:
+                     inputs: Sequence[Path] = (),
+                     input_receipts: Sequence[dict[str, Any]] = ()
+                     ) -> dict[str, Any]:
         _need(type(expected_rows) is int and 0 < expected_rows <= U64,
               "positive expected run count")
+        _need(len(inputs) == len(input_receipts), "verified input receipt count")
         if mode == "source":
             _need(_hex64(source_identity) and not inputs and
                   expected_rows <= self.row_cap, "bounded source run input")
@@ -519,15 +643,17 @@ class CheckpointedSort:
                 "fanin": self.fanin, "expected_rows": expected_rows,
                 "source_identity_sha256": source_identity,
                 "inputs": [{"name": path.name,
-                            "run_sha256": _file_sha(path / "RUN.json")}
-                           for path in inputs]}
+                            "run_sha256": _sha(_canonical(receipt))}
+                           for path, receipt in
+                           zip(inputs, input_receipts, strict=True)]}
 
     def _prepare(self, path: Path, claim: dict[str, Any]) -> str:
         path.mkdir(parents=True, exist_ok=True)
         return _claim(path / "CLAIM.json", claim)
 
     def _verify_parts(self, path: Path, claim: dict[str, Any],
-                      *, require_final: bool) -> _PartState:
+                      *, require_final: bool,
+                      session: _VerificationSession) -> _PartState:
         claim_raw = (path / "CLAIM.json").read_bytes()
         _need(claim_raw == _canonical(claim), "source/config/code run claim")
         claim_sha = _sha(claim_raw)
@@ -566,33 +692,30 @@ class CheckpointedSort:
             _need(all(a <= b for a, b in zip(cursors, end, strict=True)),
                   "sort input cursor regression")
             for item, cursor in zip(inputs, end, strict=True):
-                self._validate_cursor(self._path(item["name"]), cursor)
+                self._validate_cursor(self._path(item["name"]), cursor,
+                                      session=session)
             _need(payload_path.is_file() and
-                  _file_sha(payload_path) == receipt["payload_sha256"] and
-                  payload_path.stat().st_size == receipt["bytes"] and
                   0 < receipt["rows"] <= self.row_cap and
                   0 < receipt["bytes"] <= self.byte_cap,
                   "sort part hash/size/bounds")
-            part_count = 0
-            part_first = None
-            part_last = None
-            with payload_path.open("rb") as stream:
-                for line in stream:
-                    entry = _entry_from_line(line, self.kind)
-                    order = _entry_order(entry)
-                    _need(last is None or last < order,
-                          "sort run ordering or repeated input index")
-                    if part_first is None:
-                        part_first = order
-                    part_last = last = order
-                    if first is None:
-                        first = order
-                    part_count += 1
-                _need(part_count == receipt["rows"],
-                      "sort part row count/truncation")
+            payload = session.read_part(payload_path)
+            _need(_sha(payload) == receipt["payload_sha256"] and
+                  len(payload) == receipt["bytes"],
+                  "sort part hash/size/bounds")
+            part_count, part_first, part_last = _scan_payload(
+                payload, self.kind, last)
+            if (part_count != receipt["rows"] or
+                    part_first is None or part_last is None):
+                raise CheckpointError("sort part row count/truncation")
             _need(receipt["first"] == _order_json(part_first) and
                   receipt["last"] == _order_json(part_last),
                   "sort part key bounds")
+            session.record_part(path, count, _PartProof(
+                _sha(raw), receipt["payload_sha256"], len(payload),
+                part_count, part_first, part_last))
+            if first is None:
+                first = part_first
+            last = part_last
             total += part_count
             previous = _sha(raw)
             chain = _sha(bytes.fromhex(chain) + bytes.fromhex(previous))
@@ -616,6 +739,7 @@ class CheckpointedSort:
                 (path / name).unlink()  # only the next owned unsealed part
             all_names -= unsealed
         _need(all_names == expected_names, "sort run file membership")
+        final_receipt = None
         if require_final or final.exists():
             _need(final.exists() and count > 0, "final sort run receipt")
             final_raw = final.read_bytes()
@@ -629,9 +753,11 @@ class CheckpointedSort:
                       "last": _order_json(last)} and
                   total == claim["expected_rows"],
                   "final sort run count/chain")
-        return _PartState(count, total, chain, previous, cursors, first, last)
+        return _PartState(count, total, chain, previous, cursors, first, last,
+                          final_receipt)
 
-    def _validate_cursor(self, run: Path, cursor: Cursor) -> None:
+    def _validate_cursor(self, run: Path, cursor: Cursor,
+                         *, session: _VerificationSession) -> None:
         run_receipt = json.loads((run / "RUN.json").read_bytes())
         parts = run_receipt["parts"]
         part, offset = cursor
@@ -647,18 +773,26 @@ class CheckpointedSort:
         if offset:
             with payload.open("rb") as stream:
                 stream.seek(offset - 1)
-                _need(stream.read(1) == b"\n", "input cursor line boundary")
+                byte = stream.read(1)
+            session.cursor_probe_reads += 1
+            session.payload_bytes_read += len(byte)
+            _need(byte == b"\n", "input cursor line boundary")
 
-    def verify_run(self, run: Path, *, _memo: dict[Path, dict[str, Any]] | None = None,
-                   _stack: set[Path] | None = None) -> dict[str, Any]:
-        """Hash and scan all sealed parts and recursively bind input runs."""
+    def verify_run(self, run: Path, *,
+                   _session: _VerificationSession | None = None
+                   ) -> dict[str, Any]:
+        """Hash and scan all sealed parts with one bounded invocation cache."""
         _need(sys.flags.optimize == 0, "optimized Python mode forbidden")
         run = Path(run)
         _need(run.parent == self.root and not run.is_symlink() and
               self._path(run.name) == run, "run outside store")
-        memo = {} if _memo is None else _memo
-        stack = set() if _stack is None else _stack
+        session = _session or _VerificationSession(self)
+        session.require_owner(self)
+        memo = session.runs
+        stack = session.stack
         if run in memo:
+            _require_run_receipt(run, memo[run])
+            memo.move_to_end(run)
             return memo[run]
         _need(run not in stack, "cyclic run inputs")
         stack.add(run)
@@ -677,6 +811,7 @@ class CheckpointedSort:
               claim["expected_rows"] > 0,
               "sort source/config/code claim")
         inputs = claim["inputs"]
+        child_receipts: dict[str, dict[str, Any]] = {}
         if claim["mode"] == "source":
             _need(_hex64(claim["source_identity_sha256"]) and
                   inputs == [] and claim["expected_rows"] <= self.row_cap,
@@ -690,25 +825,26 @@ class CheckpointedSort:
             total = 0
             for item in inputs:
                 child = self._path(item["name"])
-                child_receipt = self.verify_run(child, _memo=memo,
-                                                _stack=stack)
+                child_receipt = self.verify_run(child, _session=session)
+                child_receipts[item["name"]] = child_receipt
                 _need(_file_sha(child / "RUN.json") == item["run_sha256"],
                       "changed merge input receipt")
                 total += child_receipt["rows"]
             _need(total == claim["expected_rows"], "merge input row count")
-        state = self._verify_parts(run, claim, require_final=True)
+        state = self._verify_parts(run, claim, require_final=True,
+                                   session=session)
         if inputs:
             for item, cursor in zip(inputs, state.end_cursors, strict=True):
                 child = self._path(item["name"])
-                self._validate_cursor(child, cursor)
-                child_run = memo[child]
+                self._validate_cursor(child, cursor, session=session)
+                child_run = child_receipts[item["name"]]
                 _need(cursor == (child_run["parts"], 0),
                       "final merge did not consume every input")
-        receipt = json.loads((run / "RUN.json").read_bytes())
-        _need(receipt["parts"] == state.count and
-              receipt["rows"] == state.rows,
-              "sort final receipt state")
-        memo[run] = receipt
+        receipt = state.final_receipt
+        if receipt is None:
+            raise CheckpointError("sort final receipt state")
+        _require_run_receipt(run, receipt)
+        session.record_run(run, receipt)
         stack.remove(run)
         return receipt
 
@@ -734,8 +870,10 @@ class CheckpointedSort:
         _atomic_bytes(receipt_file, _canonical(receipt))
         return _file_sha(receipt_file)
 
-    def _finalize(self, run: Path, claim: dict[str, Any]) -> dict[str, Any]:
-        state = self._verify_parts(run, claim, require_final=False)
+    def _finalize(self, run: Path, claim: dict[str, Any],
+                  session: _VerificationSession) -> dict[str, Any]:
+        state = self._verify_parts(run, claim, require_final=False,
+                                   session=session)
         _need(state.rows == claim["expected_rows"] and state.count > 0,
               "sort run incomplete at finalize")
         receipt = {"schema": "checkpointed_sort_run_v1",
@@ -745,7 +883,7 @@ class CheckpointedSort:
                    "first": _order_json(state.first),
                    "last": _order_json(state.last)}
         _atomic_bytes(run / "RUN.json", _canonical(receipt))
-        return self.verify_run(run)
+        return self.verify_run(run, _session=session)
 
     def seal_source_run(self, name: str,
                         entries: Iterable[SortEntry],
@@ -771,11 +909,13 @@ class CheckpointedSort:
         claim = self._claim_value(name, mode="source",
                                   expected_rows=len(rows),
                                   source_identity=source_identity_sha256)
+        session = _VerificationSession(self)
         claim_sha = self._prepare(run, claim)
         if (run / "RUN.json").exists():
-            self.verify_run(run)
+            self.verify_run(run, _session=session)
             return run
-        state = self._verify_parts(run, claim, require_final=False)
+        state = self._verify_parts(run, claim, require_final=False,
+                                   session=session)
         if state.count == 0:
             self._seal_part(run, claim_sha=claim_sha, index=0,
                             payload=payload, rows=len(rows),
@@ -786,29 +926,34 @@ class CheckpointedSort:
             _need(state.count == 1 and state.rows == len(rows) and
                   _file_sha(run / "part_00000000.jsonl") == _sha(payload),
                   "changed resumed source sort rows")
-        self._finalize(run, claim)
+        self._finalize(run, claim, session)
         return run
 
     def merge_run(self, name: str, inputs: Sequence[Path],
-                  *, after_part_seal: Callable[[Path, int], None] | None = None
+                  *, after_part_seal: Callable[[Path, int], None] | None = None,
+                  _session: _VerificationSession | None = None
                   ) -> Path:
         """Resume a <=4-way stable merge at a sealed physical-part boundary."""
         _need(2 <= len(inputs) <= self.fanin and
               len(set(inputs)) == len(inputs), "merge input fan-in/uniqueness")
-        input_receipts = [self.verify_run(path) for path in inputs]
+        session = _session or _VerificationSession(self)
+        session.require_owner(self)
+        input_receipts = [self.verify_run(path, _session=session)
+                          for path in inputs]
         claim = self._claim_value(
-            name, mode="merge", inputs=inputs,
+            name, mode="merge", inputs=inputs, input_receipts=input_receipts,
             expected_rows=sum(item["rows"] for item in input_receipts))
         run = self._path(name)
         claim_sha = self._prepare(run, claim)
         if (run / "RUN.json").exists():
-            self.verify_run(run)
+            self.verify_run(run, _session=session)
             return run
-        state = self._verify_parts(run, claim, require_final=False)
+        state = self._verify_parts(run, claim, require_final=False,
+                                   session=session)
         _need(len(state.end_cursors) == len(inputs),
               "resume input cursor count")
         for path, cursor in zip(inputs, state.end_cursors, strict=True):
-            self._validate_cursor(path, cursor)
+            self._validate_cursor(path, cursor, session=session)
         committed = list(state.end_cursors)
         part_start = tuple(committed)
         previous = state.last_receipt_sha256
@@ -818,7 +963,8 @@ class CheckpointedSort:
         buffer_first: tuple[Any, int] | None = None
         buffer_last: tuple[Any, int] | None = None
         last_order = state.last
-        readers = [_RunReader(path, self.kind, receipt["parts"], cursor)
+        readers = [_RunReader(path, self.kind, receipt["parts"],
+                              session, receipt, cursor)
                    for path, receipt, cursor in
                    zip(inputs, input_receipts, committed, strict=True)]
         heap: list[tuple[Any, int, int, SortEntry, Cursor]] = []
@@ -877,13 +1023,16 @@ class CheckpointedSort:
         finally:
             for reader in readers:
                 reader.close()
-        self._finalize(run, claim)
+        self._finalize(run, claim, session)
         return run
 
     def merge_all(self, inputs: Sequence[Path], *, prefix: str,
-                  after_part_seal: Callable[[Path, int], None] | None = None
+                  after_part_seal: Callable[[Path, int], None] | None = None,
+                  _session: _VerificationSession | None = None
                   ) -> Path:
         _need(bool(inputs), "no external sort runs")
+        session = _session or _VerificationSession(self)
+        session.require_owner(self)
         current = list(inputs)
         depth = 0
         while len(current) > 1:
@@ -895,14 +1044,17 @@ class CheckpointedSort:
                 else:
                     name = f"{prefix}_{depth:03d}_{number:06d}"
                     next_runs.append(self.merge_run(
-                        name, group, after_part_seal=after_part_seal))
+                        name, group, after_part_seal=after_part_seal,
+                        _session=session))
             current = next_runs
             depth += 1
         return current[0]
 
     def iter_run(self, run: Path) -> Iterator[SortEntry]:
-        receipt = self.verify_run(run)
-        with _RunReader(run, self.kind, receipt["parts"]) as reader:
+        session = _VerificationSession(self)
+        receipt = self.verify_run(run, _session=session)
+        with _RunReader(run, self.kind, receipt["parts"], session,
+                        receipt) as reader:
             while (item := reader.next_entry()) is not None:
                 yield item[0]
 

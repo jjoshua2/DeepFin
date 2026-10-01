@@ -1,0 +1,33 @@
+# Dependent elimination of a returned pair using its table-preservation certificate.
+import Base
+import ../storage/Observe.bend as O
+import ../../../legal_probe/Chess.bend as Chess
+
+def bool_table(r: Array<U64> & Bool) -> Array<U64>:
+  (a,v) = r
+  a
+
+def moves_table(r: Array<U64> & List<&2,Chess.Ply>) -> Array<U64>:
+  (a,v) = r
+  a
+
+def mask(-Goal: @-r: Array<U64> & U64 -> Type,+c: O.Cells,r: Array<U64> & U64,
+  kept: {O.storage(r) == O.pack(c) : Array<U64>},
+  next: @v: U64 -> Goal((O.pack(c),v))) -> Goal(r):
+  (a,+v) = r
+  %Equal.sym(Array<U64>,a,O.pack(c),kept) : Goal((_,v))
+  next(v)
+
+def boolean(-Goal: @-r: Array<U64> & Bool -> Type,+c: O.Cells,r: Array<U64> & Bool,
+  kept: {bool_table(r) == O.pack(c) : Array<U64>},
+  next: @v: Bool -> Goal((O.pack(c),v))) -> Goal(r):
+  (a,+v) = r
+  %Equal.sym(Array<U64>,a,O.pack(c),kept) : Goal((_,v))
+  next(v)
+
+def moves(-Goal: @-r: Array<U64> & List<&2,Chess.Ply> -> Type,+c: O.Cells,r: Array<U64> & List<&2,Chess.Ply>,
+  kept: {moves_table(r) == O.pack(c) : Array<U64>},
+  next: @v: List<&2,Chess.Ply> -> Goal((O.pack(c),v))) -> Goal(r):
+  (a,+v) = r
+  %Equal.sym(Array<U64>,a,O.pack(c),kept) : Goal((_,v))
+  next(v)

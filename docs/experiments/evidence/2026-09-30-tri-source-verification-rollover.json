@@ -1,0 +1,54 @@
+{
+  "schema": "tri_source_verification_rollover_evidence_v1",
+  "scope": "CPU-only synthetic prototype; zero corpus, target, external-drive throughput, and 500M-row restart credit",
+  "base_commit": "274d8084302f77a9f57a730269d3033746059da8",
+  "source": "chess_anti_engine/source/checkpointed_sort.py",
+  "source_sha256": "e72ce1bdfc4b63244d7210b067b0f02ae16b72a8b9bb329d54241eb6d8d0d8c2",
+  "test": "tests/test_checkpointed_sort.py",
+  "test_sha256": "c8204c962f72d134b97182e58038d44b3bb8cd080c1db5af4e21e5ede5c8a1f6",
+  "code_test_patch_sha256": "573d18907a8544140d906fd9225eb172b731300d3837fb0beb5a934b44182bca",
+  "synthetic_measurement_source_sha256": "90e43f3d6e1e1940b2516858042669de7103568537b7e9a9f179d6eb7010db46",
+  "synthetic_measurement_result_sha256": "83b815f2e3d43b240647cf2cddebfa94adda97c6f3961ba1de12d927e8c9b632",
+  "rollover": {
+    "source_runs": 129,
+    "distinct_physical_parts": 186,
+    "distinct_payload_bytes": 50902,
+    "noop_payload_reads": 514,
+    "noop_payload_bytes_read": 101642,
+    "noop_cursor_probe_reads": 0,
+    "verified_run_summary_entries": 128,
+    "verified_part_proof_entries": 186,
+    "run_summary_evictions": 372,
+    "noop_python_tracemalloc_peak_bytes": 1504859,
+    "kill_point": "first sealed part of the final-depth four-way merge, after run-summary rollover",
+    "resume": "sealed part receipt SHA-256 and modification time unchanged; final receipt stable on no-op",
+    "tamper": "evicted oldest source part refused in the same session and on fresh final-run verification"
+  },
+  "large_digest_group": {
+    "identical_digest_rows": 8193,
+    "losers_streamed": 8192,
+    "streamed_loser_digest_sha256": "d7c2866f911c21d6ef9dd404b53dd7516860ff6b088a5135b3b71c81442c0c9e",
+    "read_and_fold_python_tracemalloc_peak_bytes": 1085511
+  },
+  "validation": {
+    "focused_python310_tests_passed": 13,
+    "focused_python310_test_log_sha256": "01a1ba1b3cd33edaa051e060371bdc2c5bdd9a730e32bcdccbf70609cb4491be",
+    "whole_repository_ruff": "pass",
+    "whole_repository_vulture": "pass",
+    "focused_basedpyright_errors": 0,
+    "focused_basedpyright_warnings": 0,
+    "full_basedpyright_base_errors": 439,
+    "full_basedpyright_successor_errors": 439,
+    "full_basedpyright_base_warnings": 7,
+    "full_basedpyright_successor_warnings": 7,
+    "full_basedpyright_successor_only_diagnostics": 0,
+    "full_basedpyright_base_only_diagnostics": 0,
+    "normalized_comparison_sha256": "7d0abfccf1ef10ccab2b3dfe30be910b26f4523ddc2cc2ae3d899e8d1880bcac"
+  },
+  "limits": [
+    "No real archive/game source cursor or native input parser is integrated",
+    "No external-drive I/O, wall-time, or 500M-row restart measurement",
+    "The 4096-part proof cap and fresh full ancestor-DAG verification remain",
+    "Synthetic input slices and one 8193-row duplicate group do not bound production memory"
+  ]
+}

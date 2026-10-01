@@ -1,0 +1,29 @@
+{
+  "qualification": "LOCAL_SOURCE_AND_NATIVE_PASS_LINT_UNQUALIFIED",
+  "source": "199ce3bda33e87b0432d153400bdc6f7730b6eb8",
+  "source_tree": "d6acde447e39f51cddbdc947889a97c4a6334353",
+  "new_laws": 2,
+  "new_controls": 17,
+  "control_categories": {
+    "source semantic/refinement": 8,
+    "manifest/import policy": 8,
+    "synthetic output-wrapper unit": 1
+  },
+  "retained_parent_laws": 191,
+  "retained_parent_controls": 606,
+  "modular_laws": 193,
+  "modular_controls": 623,
+  "combined_wrapper_executed": false,
+  "native_modes": 4,
+  "native_requests_per_mode": 1776,
+  "child_boards_per_mode": 4466,
+  "board_fields_per_mode": 84854,
+  "marker_reads_per_mode": 3552,
+  "native_mutations": 3,
+  "lint_status": "MISSING_TOOLS",
+  "hosted_qualification": false,
+  "remote_publication": false,
+  "independent_review": false,
+  "full_optimized_legal_moves_theorem": false,
+  "universal_forward_reverse_equivalence": false
+}

@@ -1,5 +1,10 @@
 # Selected-E D-lite scalar depth-8 first-target eligibility amendment — 2026-09-30
 
+This is the historical pre-full06 method record. Its launch-state statements are
+as of that publication; the subsequent [full06 stop and fresh full07 attempt](https://github.com/jjoshua2/DeepFin/pull/970)
+and [full07 recovery and audit](https://github.com/jjoshua2/DeepFin/pull/972)
+are separate readouts, not retrospective changes to this preregistration.
+
 The exact local method amendment was fsynced **before** full06 labeling
 (SHA-256 `a076b546e2fbd945a7080a37f6704bd2974637d0ef42fea0d99a7f1fc0cb7b50`).
 This public record describes that prospective correction to the eligibility
