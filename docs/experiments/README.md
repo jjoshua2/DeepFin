@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Forward attack composition](2026-10-01-bend-forward-attacks.md) | Qualified source-forward witness bridge, complete initialized query pairs and direct castling composition; actual public-builder/history/ordinary/skip/full-generator obligations remain |
 | [Complete generator contract and builder blocker](2026-10-01-bend-generator-contract.md) | Actual public-builder equality exceeded the 600-second hosted bound; zero accepted laws and zero executed controls; explicit end-to-end target and residual obligations |
 | [Audited 50M bootstrap expansion](2026-09-17-audited-scale-bootstrap.md) | Historical saved-audit V50 and explicit 50–60M contract; missing source binding and isolated scheduler recovered with both histories, no new experiment or training launch |
 | [D-lite paired-pack auditor exit-aware wait](2026-10-01-sf-dlite-auditor-exit-wait.md) | One-hunk supervised-wait candidate and real-child CPU checks; no live audit, data, or admission credit |

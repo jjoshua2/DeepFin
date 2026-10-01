@@ -1,0 +1,51 @@
+{
+  "repository": "jjoshua2/DeepFin",
+  "pull_request": 983,
+  "head_commit": "99e07576da6207d23145b3865618e2f468731ff4",
+  "base_commit": "a62c0e95cc7c0036f463b923fad10a3fadb72b1c",
+  "run_id": 36819600784,
+  "job_id": 110232098865,
+  "run_url": "https://github.com/jjoshua2/DeepFin/actions/runs/36819600784",
+  "artifact": {
+    "id": 11142869743,
+    "name": "bend-forward-attacks",
+    "digest": "sha256:01b00ed8ee219f822b2b4403632d1265136e838ca2a8bac10c2dea8b3e931e9e",
+    "size_in_bytes": 15301,
+    "created_at": "2026-10-01T05:40:25Z"
+  },
+  "checkout_lines": [
+    "2026-10-01T05:24:22.2785178Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin 99e07576da6207d23145b3865618e2f468731ff4",
+    "2026-10-01T05:24:25.3492423Z HEAD is now at 99e0757 Destructure scalar certificates through parameter-based proof helpers",
+    "2026-10-01T05:24:25.3572201Z [command]/usr/bin/git log -1 --format=%H"
+  ],
+  "receipt_origin": "Complete unchanged JSON receipt from the hosted job's Record result and unchanged source step, with GitHub timestamp prefixes removed. No semantic fields changed.",
+  "result": "PASS",
+  "accepted_candidate_definitions": 4,
+  "controls": [
+    {
+      "name": "wrong-forward-pawn-color",
+      "rejected": true,
+      "location": "white_pawn_forward"
+    },
+    {
+      "name": "omit-upper-source-limb",
+      "rejected": true,
+      "location": "upper_rook"
+    },
+    {
+      "name": "omit-queen-diagonal-witness",
+      "rejected": true,
+      "location": "queen_diagonal"
+    },
+    {
+      "name": "ignore-forward-slider-blockers",
+      "rejected": true,
+      "location": "blocked_rook"
+    },
+    {
+      "name": "actual-pawn-query-not-reversed",
+      "rejected": true,
+      "location": "unfold"
+    }
+  ]
+}
