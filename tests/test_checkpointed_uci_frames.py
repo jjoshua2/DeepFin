@@ -327,7 +327,7 @@ def test_actual_oversized_input_refuses_without_a_seal(tmp_path: Path, limit: st
                             0, frames.MAX_ROWS if limit == "rows" else 1,
                             min(len(raw), frames.MAX_RAW_BYTES))
     root = tmp_path / "frames"
-    with pytest.raises(frames.FrameError, match="row count|input block exceeds byte cap"):
+    with pytest.raises(frames.FrameError, match=r"row count|input block exceeds byte cap"):
         frames.pack_frame(source, root, spec)
     assert not (root / "block-000000000" / "RECEIPT.json").exists()
 
@@ -355,7 +355,7 @@ def test_frame_recipe_header_refuses_even_with_rewritten_receipt(
     ).compress(source.read_bytes())
     _frame_path(root, 0).write_bytes(altered)
     _rewrite_receipt(root, 0, altered)
-    with pytest.raises(frames.FrameError, match="Zstd checksum/dictionary contract|Zstd content size"):
+    with pytest.raises(frames.FrameError, match=r"Zstd checksum/dictionary contract|Zstd content size"):
         frames.pack_frame(source, root, spec)
 
 
@@ -380,7 +380,7 @@ def test_metadata_type_changes_cannot_preserve_a_seal_or_claim(
     if not sealed:
         (directory / "RECEIPT.json").unlink()
     original_frame = _frame_path(root, 0).read_bytes()
-    with pytest.raises(frames.FrameError, match="claim changed|receipt mismatch"):
+    with pytest.raises(frames.FrameError, match=r"claim changed|receipt mismatch"):
         frames.pack_frame(source, root, spec)
     assert _frame_path(root, 0).read_bytes() == original_frame
 
