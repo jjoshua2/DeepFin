@@ -37,6 +37,7 @@ except ImportError:
     _HAS_GUMBEL_C = False
 
 if TYPE_CHECKING:
+    from chess_anti_engine.tablebase import SyzygyProbe
     from chess_anti_engine.inference import BatchEvaluator
     from chess_anti_engine.mcts.gumbel_c import (
         run_gumbel_root_many_c as _run_gumbel_root_many_c,
@@ -90,6 +91,7 @@ def pick_moves_for_boards(
     gumbel_vloss_weight: int = 0,
     gumbel_target_batch: int = 0,
     evaluator: BatchEvaluator | None = None,
+    tb_probe: SyzygyProbe | None = None,
 ) -> list[int]:
     """Run gumbel- or PUCT-MCTS for one model on a list of boards.
 
@@ -136,6 +138,8 @@ def pick_moves_for_boards(
     ROOT submit is NOT bucketed against it, so size ``max_batch`` at or above
     the largest board count any one call will be handed.
     """
+    if tb_probe is not None and str(mcts_type) != "gumbel":
+        raise ValueError("Tablebase-guided match search requires the compiled Gumbel path")
     input_history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
     input_extra_features = str(getattr(model, "input_extra_features", "v1"))
     policy_encoding = str(getattr(model, "policy_encoding", "lc0_1858"))
@@ -174,12 +178,15 @@ def pick_moves_for_boards(
             # NOT c_puct/fpu_reduction/cpuct_*: inert in a Gumbel search, and
             # arena_standard now refuses them (mcts.gumbel.INERT_GUMBEL_KNOBS).
             gumbel_cfg = dataclasses.replace(gumbel_cfg, **gumbel_overrides)
+        if tb_probe is not None and (not _HAS_GUMBEL_C or volatility_search_enabled(gumbel_cfg)):
+            raise ValueError("Tablebase guidance is unsupported on the Python Gumbel path")
         if volatility_search_enabled(gumbel_cfg):
             warn_volatility_python_path()
         if _HAS_GUMBEL_C and not volatility_search_enabled(gumbel_cfg):
             result = _run_gumbel_root_many_c(
                 model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
                 evaluator=evaluator,
+                tb_probe=tb_probe,
                 allow_terminal_root_shortcuts=True,
                 vloss_weight=int(gumbel_vloss_weight),
                 target_batch=int(gumbel_target_batch),

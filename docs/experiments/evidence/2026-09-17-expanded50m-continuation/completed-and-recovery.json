@@ -1,0 +1,63 @@
+{
+  "training": {
+    "status": "PASS_V50_CONTINUED_EPOCHS2_4",
+    "started_unix": 1789614331.2552729,
+    "plan_sha256": "65282c9222fb2ac0e7dc5d52fb62e6e45b3a42dbc35c4968889c238ab0e6560d",
+    "pid": 84270,
+    "summary_sha256": "7358fd6d5a3d121ef7d26f546f67a203da6ff570a386b11ce3fc0a2399b776a6",
+    "continuation": {
+      "checkpoint": "/home/josh/projects/chess/runs/combined35m_v50_seed101/checkpoint.pt",
+      "sha256": "6d36f93d040c8babed040159419279af62a444f6466f42b720e12bb72d67ab02",
+      "step_start": 68974,
+      "epoch_seed_start": 102,
+      "restored": [
+        "model",
+        "optimizer",
+        "scheduler",
+        "step",
+        "peak_lr",
+        "zclip"
+      ],
+      "rng": "Torch reset to explicit epoch seed; sampler uses successive epoch seeds; uninterrupted RNG replay not claimed",
+      "step_end": 275896,
+      "additional_epochs": 3,
+      "additional_steps": 206922
+    },
+    "checkpoints": [
+      {
+        "path": "/home/josh/projects/chess/runs/combined35m_v50_seed101_continue_epochs2_4/checkpoint_epoch1.pt",
+        "sha256": "0d6bb2ef7c33adc62b60bf53d7911f825985e4f5ee0665cdfe75955eb82ec9b5"
+      },
+      {
+        "path": "/home/josh/projects/chess/runs/combined35m_v50_seed101_continue_epochs2_4/checkpoint_epoch2.pt",
+        "sha256": "235534778882e069ca14213fbeb30d646ebb702b945098c05be95d951a2c3607"
+      },
+      {
+        "path": "/home/josh/projects/chess/runs/combined35m_v50_seed101_continue_epochs2_4/checkpoint.pt",
+        "sha256": "e579bd08f90009924941bb5c773d01af836f6500f95a0250eca2918d7b58679c"
+      }
+    ],
+    "ended_unix": 1789667464.2265902,
+    "elapsed_seconds": 53132.97131859801
+  },
+  "ceres": {
+    "status": "PASS_REMAINING_CERES_TAILS08_11_12",
+    "completed_blocks": [
+      "ceres_union_partial08",
+      "ceres_union_partial11",
+      "ceres_union_whole12"
+    ],
+    "started_unix": 1789667473.7576916,
+    "active_block": null,
+    "elapsed_seconds": 2628.255844340005,
+    "ended_unix": 1789670102.0135362
+  },
+  "initial50m_wait": {
+    "status": "INCOMPLETE",
+    "started_unix": 1789670116.2299323,
+    "plan_sha256": "78dac2b73083e3c741ab8ff7e1544ad035f96f77a382975572817e55848eb044",
+    "error": "RuntimeError('dataset preparation failed')",
+    "ended_unix": 1789674976.2941043,
+    "elapsed_seconds": 4860.064174277999
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "status": "READ_ONLY_TRAINING_DATA_PATH_DIAGNOSIS",
+  "observed_utc": "2026-09-22T23:29:30.732596+00:00",
+  "evidence": [
+    {
+      "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_D/summary.json",
+      "sha256": "a004f281b2bec41d056bca3d5ec56d8626ccca7c8fdb6e439dfc8f3cde53b405"
+    },
+    {
+      "path": "/tmp/deepfin-factorial58-runtime/chess_anti_engine/train/trainer.py",
+      "sha256": "195b4ea2b40e20d91591a9b5a41db6137ec8795239a22ec9b05f571b7cb929ee"
+    },
+    {
+      "path": "/tmp/deepfin-factorial58-runtime/chess_anti_engine/replay/game_epoch.py",
+      "sha256": "a84ad58fd68719e42513fa0411ca64f02ce848167cc1496a0a6add1ff4664b78"
+    },
+    {
+      "path": "/tmp/deepfin-factorial58-runtime/chess_anti_engine/replay/dataset.py",
+      "sha256": "bbf052e534fb18db0e51a124fbb0c59c554a22e9ad094be48a0b7de341f691bd"
+    },
+    {
+      "path": "/tmp/exact-host-overlap-pr-body.md",
+      "sha256": "db35b85b8c9012022e4c7758a78dc8ae6dadbb2ed4558c6b66e12bb6b33a7607"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/overlay-validation-reuse-20260921/candidate.json",
+      "sha256": "607fca673d320356d6599c572a4ba5da07bc7943f3e0e704f81aa8e6580c17aa"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-20260922/complete.json",
+      "sha256": "cdf96f9313dd7d93729b09c9960b554cc6b497027b54973456099cd92b7eff0c"
+    }
+  ],
+  "D_windows": 1290,
+  "D_train_time_s": 33780.5368080429,
+  "D_batch_prefetch_wait_s": 13580.638422927412,
+  "D_wait_fraction_of_recorded_train_time": 0.40202553618668246,
+  "D_host_overlap_effective": false,
+  "highest_return_next_qualification": {
+    "candidate": "Existing opt-in exact host batch overlap (#615), not new implementation",
+    "why": "Frozen exact default prepares host batch and pins/transfers synchronously on consumer. One-worker overlap already exists with planned reserve and transfer lifetime gates. E/D command omits flag. Qualify identical tensor/order/final optimizer state and GPU throughput before future adoption.",
+    "confidence": "High code-path attribution; medium performance expectation; no measured GPU speedup for this flag located."
+  },
+  "existing_unadopted": [
+    {
+      "candidate": "#810 operation-local overlay validation reuse",
+      "evidence": "Eight-shard constructor stages 15.011->2.772s; 72->8 semantic validations; benchmark excludes full corpus/root operation check. Not a steady-state or full-training speedup proof."
+    },
+    {
+      "candidate": "Packed Zarr input",
+      "evidence": "Latest GPU retry incomplete: external_zip stage PASS2481.908s; no completed paired comparator; cannot establish training speedup."
+    }
+  ],
+  "new_implementation_candidate": {
+    "candidate": "Preallocated ordered gather replacing per-chunk fancy-index copies then concatenate in GameAwareEpochBuffer._gather",
+    "why": "Current gather creates one copied batch part per chunk and concatenates into another full copy. Direct scatter into one preallocated schema-correct batch can remove intermediate copy while preserving selected order and all field/default semantics.",
+    "confidence": "Medium structural opportunity; low timing attribution until a bounded CPU profile separates gather, prepare, decode/validation, pin and H2D."
+  },
+  "important_limits": [
+    "batch_prefetch_wait_s wraps sampling/preparation plus pin_memory and H2D issue; it is not pure disk wait or a CPU-only profile.",
+    "Host overlap does not move pinning/H2D off the consumer and cannot promise to hide entire wait phase.",
+    "Compact transfer already preserves safely widenable values until device; generic float16-before-copy suggestion would duplicate existing behavior.",
+    "No active runtime edits, GPU calls or corpus benchmark performed."
+  ]
+}

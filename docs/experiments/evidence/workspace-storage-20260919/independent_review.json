@@ -1,0 +1,9 @@
+{
+  "status": "PASS_INDEPENDENT_30_FILES_8_QUEUED_JOBS_AND_OPERATOR",
+  "unix": 1789843201.639989,
+  "manifest_sha256": "380221e52cc1169760b4337d31a12f01fdaa9f2959c42c5057c2664fa576cbae",
+  "queue_sha256": "4d88b27626c209198e07073594a9408cf1d36b1f63f06c2f39180d737ab895fc",
+  "output_paths_absent": true,
+  "scientific_and_runtime_fields_unchanged": true,
+  "scope": "Only exact external model-output replacement and cascading SHA updates; README additions manually inspected; actual unmodified operator checked all eight remapped validation descriptors."
+}

@@ -1,0 +1,17 @@
+{
+  "status": "passed",
+  "workflow_run": 35999628706,
+  "tested_workflow_commit": "8f271655d12b31ed7dfe55a1cccb8cb0418efa35",
+  "base_commit": "db10bd62be839034482296068b0216d0d9d7af93",
+  "prior_validation_run": 35998021794,
+  "prior_artifact": 10806529575,
+  "prior_artifact_zip_sha256": "f21aede54a4aa00a4689163d2a2e418f9479221fe3990f5480bc44a19bc523a5",
+  "qualified_c_sha256": "8f9d1712af22a1ec40914ce2e53e60d5a3fde264b92c34a8561d4c3edb254b72",
+  "reference_history_rep_fix": true,
+  "matching_diagnostic_cases": 37,
+  "matching_quiet_repeats": 37,
+  "focused_python_tests": 345,
+  "verifier_sha256": "3d9690bf270fd694e7ee05af1ef959d74543d74b369b18480a8fde673ecd788f",
+  "raw_report_sha256": "f7fc7cfd9903beea71753671f4a405c18f6decd83d24b7dd3aeaa6a6c1dc98e8",
+  "scope": "Reference setup correction; unchanged qualified C rebuilt, no repeated whole coordinator matrix or performance claim"
+}

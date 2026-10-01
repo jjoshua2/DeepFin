@@ -1,0 +1,92 @@
+{
+  "artifact_identity": "audited old-cohort selected S1 policy/search-WDL target payload",
+  "block_rows": 4096,
+  "dense_bytes": 45735936,
+  "limitations": [
+    "Single bank and cached CPU observation; no independent rerun or cold-drive benchmark.",
+    "Payload sizes exclude container headers, input features, row identity and other training fields.",
+    "Exploratory CSR representation is not an integrated trainer codec; padded layout matches existing repository sparse representation.",
+    "Compression times are descriptive one-shot measurements, not controlled speedup estimates."
+  ],
+  "policy_nonzeros": {
+    "max": 61,
+    "mean": 26.09423828125,
+    "percentiles": {
+      "p50": 29.0,
+      "p90": 43.0,
+      "p99": 52.0
+    }
+  },
+  "profiles": [
+    {
+      "build_and_validation_wall_seconds": 0.28024564700899646,
+      "compression": [
+        {
+          "bytes_excluding_container_headers": 1420665,
+          "bytes_per_row": 115.614013671875,
+          "codec": "zlib",
+          "compression_seconds": 0.08826050700736232,
+          "level": 1
+        },
+        {
+          "bytes_excluding_container_headers": 1153102,
+          "bytes_per_row": 93.83968098958333,
+          "codec": "zlib",
+          "compression_seconds": 0.24433570299879648,
+          "level": 6
+        }
+      ],
+      "exact_fp16_roundtrip": true,
+      "logical_payload_bytes": 45735936,
+      "mode": "dense"
+    },
+    {
+      "build_and_validation_wall_seconds": 0.28293736101477407,
+      "compression": [
+        {
+          "bytes_excluding_container_headers": 933144,
+          "bytes_per_row": 75.939453125,
+          "codec": "zlib",
+          "compression_seconds": 0.0245169959962368,
+          "level": 1
+        },
+        {
+          "bytes_excluding_container_headers": 863884,
+          "bytes_per_row": 70.30305989583333,
+          "codec": "zlib",
+          "compression_seconds": 0.0411983449885156,
+          "level": 6
+        }
+      ],
+      "exact_fp16_roundtrip": true,
+      "logical_payload_bytes": 3031040,
+      "mode": "padded"
+    },
+    {
+      "build_and_validation_wall_seconds": 0.2183220939768944,
+      "compression": [
+        {
+          "bytes_excluding_container_headers": 830216,
+          "bytes_per_row": 67.56315104166667,
+          "codec": "zlib",
+          "compression_seconds": 0.020634097018046305,
+          "level": 1
+        },
+        {
+          "bytes_excluding_container_headers": 782025,
+          "bytes_per_row": 63.641357421875,
+          "codec": "zlib",
+          "compression_seconds": 0.03481474900036119,
+          "level": 6
+        }
+      ],
+      "exact_fp16_roundtrip": true,
+      "logical_payload_bytes": 1380888,
+      "mode": "csr"
+    }
+  ],
+  "rows": 12288,
+  "scope": "saved_old_cohort_cpu_storage_geometry_not_drive_or_training_benchmark",
+  "source_receipt_sha256": "6146e05bb12967df97cf2fc8b122313e95bd19205b929160ae9b4e0eeefd96c0",
+  "source_sha256": "5676f552156887a250ad6102528d347206e6c37161d10cfe0993f3551a0356e7"
+}
