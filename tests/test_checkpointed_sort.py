@@ -327,6 +327,63 @@ def test_input_part_changed_after_preflight_is_refused_before_merge(
     assert not list((store.root / "merged").glob("part_*.receipt.json"))
 
 
+
+@pytest.mark.parametrize("metadata", ["RUN.json", "CLAIM.json"])
+def test_input_run_metadata_changed_after_preflight_is_refused(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metadata: str) -> None:
+    store = cs.CheckpointedSort(
+        tmp_path / "runs", source_sha256=SOURCE, config_sha256=CONFIG,
+        kind="digest", row_cap=4, byte_cap=4096, fanin=4)
+    inputs = [store.seal_source_run(
+        f"source_{index}", [cs.SortEntry(DIGEST, index, (0, index))],
+        source_identity_sha256=str(index) * 64)
+        for index in range(2)]
+    original_prepare = store._prepare
+
+    def tamper(path: Path, claim: dict[str, object]) -> str:
+        result = original_prepare(path, claim)
+        target = inputs[0] / metadata
+        value = json.loads(target.read_bytes())
+        key = ("receipt_chain_sha256" if metadata == "RUN.json"
+               else "source_identity_sha256")
+        value[key] = "f" * 64
+        target.write_bytes(cs._canonical(value))
+        return result
+
+    monkeypatch.setattr(store, "_prepare", tamper)
+    with pytest.raises(cs.CheckpointError,
+                       match=r"changed input sort (run receipt|claim)"):
+        store.merge_run("merged", inputs)
+    assert not list((store.root / "merged").glob("part_*.receipt.json"))
+
+
+def test_cached_ancestor_receipt_changed_between_merge_groups_is_refused(
+        tmp_path: Path) -> None:
+    store = cs.CheckpointedSort(
+        tmp_path / "runs", source_sha256=SOURCE, config_sha256=CONFIG,
+        kind="digest", row_cap=4, byte_cap=4096, fanin=4)
+    inputs = [store.seal_source_run(
+        f"source_{index}", [cs.SortEntry(DIGEST, index, (0, index))],
+        source_identity_sha256=hashlib.sha256(str(index).encode()).hexdigest())
+        for index in range(16)]
+    changed = False
+
+    def tamper(run: Path, _: int) -> None:
+        nonlocal changed
+        if run.name == "merge_000_000001" and not changed:
+            receipt = store.root / "merge_000_000000" / "RUN.json"
+            value = json.loads(receipt.read_bytes())
+            value["receipt_chain_sha256"] = "f" * 64
+            receipt.write_bytes(cs._canonical(value))
+            changed = True
+
+    with pytest.raises(cs.CheckpointError,
+                       match="changed input sort run receipt"):
+        store.merge_all(inputs, prefix="merge", after_part_seal=tamper)
+    assert changed
+    assert not (store.root / "merge_001_000000" / "RUN.json").exists()
+
+
 def test_verification_session_caps_are_explicit(tmp_path: Path) -> None:
     store = cs.CheckpointedSort(
         tmp_path / "runs", source_sha256=SOURCE, config_sha256=CONFIG,
