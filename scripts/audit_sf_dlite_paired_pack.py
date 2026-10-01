@@ -393,6 +393,7 @@ def label_index(root: Path, plan: dict[str, Any], census: dict[str, Any],
     require(len(block_by_path) == len(qualified_blocks),
             "duplicate qualified label receipt path")
     final = root / "LABEL-INDEX.json"
+    receipt: dict[str, Any] | None = None
     if final.exists():
         receipt, _ = read_receipt(final)
         require(receipt["label_terminal_sha256"] == plan["label_terminal"]["sha256"]
@@ -421,7 +422,10 @@ def label_index(root: Path, plan: dict[str, Any], census: dict[str, Any],
             require(data.stat().st_size == block["data_bytes"]
                     and sha256_file(data) == block["data_sha256"],
                     "staged label source block changed")
-        return receipt
+        if require_resource(root, plan["self_sha256"], "label-index"):
+            return receipt
+        # A proof published before monitor acceptance is not a completed unit.
+        # Reconstruct it from qualified bytes before the parent can credit it.
     roster = roster_array(census, hash_bytes=True)
     stage_root = root / "label_stage"
     attempt = stage_root / f"attempt-{os.getpid()}-{secrets.token_hex(8)}"
@@ -444,13 +448,13 @@ def label_index(root: Path, plan: dict[str, Any], census: dict[str, Any],
                 EXPECTED_PINS["label_worker"],
                 "worker label completion differs")
         for receipt_path in sorted(folder.glob("s*-b*.receipt.json")):
-            block_receipts.append({"path": str(receipt_path),
-                                   "sha256": sha256_file(receipt_path)})
-            block = json.loads(receipt_path.read_bytes())
             expected = block_by_path.get(str(receipt_path))
-            require(expected is not None
-                    and block_receipts[-1]["sha256"] == expected["receipt_sha256"]
-                    and str(folder / block["data_file"]) == expected["data_path"]
+            if expected is None:
+                raise ValueError("HOLD: unqualified label block")
+            block = pinned(receipt_path, expected["receipt_sha256"])
+            block_receipts.append({"path": str(receipt_path),
+                                   "sha256": expected["receipt_sha256"]})
+            require(str(folder / block["data_file"]) == expected["data_path"]
                     and block["data_sha256"] == expected["data_sha256"]
                     and block["data_bytes"] == expected["data_bytes"]
                     and block["rows"] == expected["rows"]
@@ -465,12 +469,18 @@ def label_index(root: Path, plan: dict[str, Any], census: dict[str, Any],
                     EXPECTED_PINS["label_authorization"],
                     "label block identity differs")
             data = folder / block["data_file"]
-            require(sha256_file(data) == block["data_sha256"] and
-                    data.stat().st_size == block["data_bytes"],
+            require(data.is_file() and not data.is_symlink()
+                    and data.stat().st_size == block["data_bytes"],
                     "label block data changed")
             indices: list[int] = []
+            consumed = hashlib.sha256()
+            consumed_bytes = 0
             with data.open("rb") as stream:
                 for line in stream:
+                    consumed.update(line)
+                    consumed_bytes += len(line)
+                    require(consumed_bytes <= block["data_bytes"],
+                            "label block data grew during read")
                     row = json.loads(line)
                     index = row["roster_index"]
                     require(type(index) is int and 0 <= index < ROWS and bitmap[index] == 0,
@@ -500,6 +510,9 @@ def label_index(root: Path, plan: dict[str, Any], census: dict[str, Any],
                     bitmap[index] = 1
                     indices.append(index)
                     count += 1
+            require(consumed_bytes == block["data_bytes"]
+                    and consumed.hexdigest() == block["data_sha256"],
+                    "consumed label block bytes differ from qualified bytes")
             require(len(indices) == block["rows"] and
                     digest(np.asarray(indices, dtype="<i4").tobytes()) ==
                     block["roster_indices_sha256"],
@@ -518,7 +531,7 @@ def label_index(root: Path, plan: dict[str, Any], census: dict[str, Any],
         with path.open("rb") as stream:
             os.fsync(stream.fileno())
     sync_directory(attempt)
-    result = {"schema": "sf_dlite_independent_label_index_v1", "rows": ROWS,
+    result: dict[str, Any] = {"schema": "sf_dlite_independent_label_index_v1", "rows": ROWS,
               "blocks": blocks,
               "block_receipts": block_receipts,
               "plan_sha256": plan["self_sha256"],
@@ -529,6 +542,17 @@ def label_index(root: Path, plan: dict[str, Any], census: dict[str, Any],
               "roster_sha256": census["roster"]["sha256"],
               "table": {"path": str(table_path), "sha256": sha256_file(table_path)},
               "bitmap": {"path": str(bitmap_path), "sha256": sha256_file(bitmap_path)}}
+    if receipt is not None:
+        require({key: value for key, value in result.items()
+                 if key not in ("table", "bitmap")} ==
+                {key: value for key, value in receipt.items()
+                 if key not in ("table", "bitmap")}
+                and all(result[key]["sha256"] == receipt[key]["sha256"]
+                        for key in ("table", "bitmap")),
+                "orphan label index differs from independent reconstruction")
+        shutil.rmtree(attempt)
+        sync_directory(stage_root)
+        return receipt
     publish(final, result)
     return result
 

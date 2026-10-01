@@ -83,3 +83,26 @@ appearing in one unit and disappearing or reversing before the next.
 These tests do not measure production runtime or prove actual WSL power-loss
 behavior. Production execution remains held until plan/source review and the
 shared heavy-I/O lease are explicitly scheduled.
+
+## October 1 correctness review
+
+The label index now hashes the exact JSONL bytes consumed by its line parser,
+including length, before publishing a durable index. Receipt JSON is parsed from
+the same SHA-pinned bytes. A transient valid WDL replacement, a byte append or a
+truncated trailing newline must fail even if the original source is restored
+before final readback. Partial staging files carry no index or pack credit.
+
+A label index published before its parent monitor accepted the unit is now
+independently reconstructed from the qualified sources on restart. Its table,
+bitmap and receipt identity must match; successful reconstruction preserves the
+original receipt and removes only the new comparison staging directory. A
+self-consistent unmonitored table hash alone cannot establish source fidelity.
+Monitor-backed indexes retain their source and staged-byte rechecks.
+
+The added synthetic regressions exercise consumed-byte substitution and
+unmonitored index reconstruction. No production archive, label scan, GPU work,
+pack admission or strength measurement is part of this code review. The full07
+completion and independent monitor chain remain prerequisites, not results
+established by merging this implementation. Existing plans pin the auditor source
+bytes, so these fixes require a newly reviewed plan rather than silently reusing
+an older implementation's checkpoints.

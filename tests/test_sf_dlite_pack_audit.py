@@ -256,9 +256,9 @@ def test_physical_meter_refuses_disappearance_or_reversal_between_units(
     assert state["last"] == {"8:0": (15, 27), "8:1": (4, 6)}
 
 
-def test_independent_three_row_label_index_and_source_recheck(
+def _label_fixture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     monkeypatch.setattr(runner, "ROWS", 3)
     roster = _roster()
     monkeypatch.setattr(runner, "roster_array", lambda *_args, **_kwargs: roster)
@@ -320,6 +320,18 @@ def test_independent_three_row_label_index_and_source_recheck(
             "label_terminal": {"sha256": "f" * 64},
             "label_audit": {"path": str(audit_terminal),
                             "sha256": audit.sha256_file(audit_terminal)}}
+    return plan, census, label
+
+
+def test_independent_three_row_label_index_and_source_recheck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, census, label = _label_fixture(tmp_path, monkeypatch)
+    folder = Path(label["output_root"]) / "worker00"
+    data = folder / "s000-b000.jsonl"
+    receipt_path = folder / "s000-b000.receipt.json"
+    block = json.loads(receipt_path.read_bytes())
+    rows = [json.loads(line) for line in data.read_bytes().splitlines()]
     result = runner.label_index(tmp_path, plan, census, label)
     assert result["rows"] == 3
     assert result["blocks"] == 1
@@ -339,6 +351,125 @@ def test_independent_three_row_label_index_and_source_recheck(
     (fresh / "label_stage").mkdir()
     with pytest.raises(ValueError, match="HOLD"):
         runner.label_index(fresh, plan, census, label)
+
+
+@pytest.mark.parametrize("change", ["wdl", "append", "truncate"])
+def test_label_index_hashes_consumed_bytes_before_publishing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str,
+) -> None:
+    plan, census, label = _label_fixture(tmp_path, monkeypatch)
+    data = Path(label["output_root"]) / "worker00" / "s000-b000.jsonl"
+    original = data.read_bytes()
+    changed = {
+        "wdl": original.replace(b"[0.2, 0.3, 0.5]", b"[0.1, 0.4, 0.5]"),
+        "append": original.replace(b"\n", b" \n", 1),
+        "truncate": original[:-1],
+    }[change]
+    assert changed != original
+    real_open = Path.open
+    iterations: list[bool] = []
+
+    class TransientStream:
+        def __init__(self, stream: Any) -> None:
+            self.stream = stream
+
+        def __enter__(self) -> TransientStream:
+            return self
+
+        def __exit__(self, *_args: Any) -> None:
+            self.stream.close()
+            with real_open(data, "wb") as output:
+                output.write(original)
+
+        def read(self, size: int = -1) -> bytes:
+            return self.stream.read(size)
+
+        def fileno(self) -> int:
+            return self.stream.fileno()
+
+        def __iter__(self) -> Any:
+            # A preliminary hash still sees the qualified bytes. Only the
+            # subsequent line consumer sees the replacement, which is restored
+            # before any restart or final source hash can observe it.
+            with real_open(data, "wb") as output:
+                output.write(changed)
+            iterations.append(True)
+            return iter(self.stream)
+
+    def transient_open(path: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        stream = real_open(path, mode, *args, **kwargs)
+        return TransientStream(stream) if path == data and mode == "rb" else stream
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "open", transient_open)
+        with pytest.raises(ValueError, match="consumed label block bytes|data grew"):
+            runner.label_index(tmp_path, plan, census, label)
+    assert iterations == [True]
+    assert data.read_bytes() == original
+    assert not (tmp_path / "LABEL-INDEX.json").exists()
+    assert not (tmp_path / "PAIRED_PACK_QUALIFICATION.json").exists()
+    result = runner.label_index(tmp_path, plan, census, label)
+    actual = np.fromfile(result["table"]["path"], dtype="<f4").reshape(3, 3)
+    assert np.array_equal(actual, np.tile(np.array([.2, .3, .5], dtype="<f4"), (3, 1)))
+
+
+def test_label_index_parses_the_pinned_receipt_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, census, label = _label_fixture(tmp_path, monkeypatch)
+    path = Path(label["output_root"]) / "worker00" / "s000-b000.receipt.json"
+    original = path.read_bytes()
+    changed = json.loads(original)
+    changed["roster_indices_sha256"] = "0" * 64
+    real_hash = runner.sha256_file
+
+    def hash_then_swap(item: Path) -> str:
+        value = real_hash(item)
+        if item == path:
+            item.write_bytes(runner.canonical(changed))
+        return value
+
+    monkeypatch.setattr(runner, "sha256_file", hash_then_swap)
+    result = runner.label_index(tmp_path, plan, census, label)
+    assert result["rows"] == 3
+    assert path.read_bytes() == original
+
+
+def test_orphan_label_index_is_reconstructed_without_replacing_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, census, label = _label_fixture(tmp_path, monkeypatch)
+    result = runner.label_index(tmp_path, plan, census, label)
+    receipt_path = tmp_path / "LABEL-INDEX.json"
+    original_receipt = receipt_path.read_bytes()
+    original_mtime = receipt_path.stat().st_mtime_ns
+    original_attempts = list((tmp_path / "label_stage").iterdir())
+    real_roster = runner.roster_array
+    rebuilds: list[bool] = []
+
+    def counted_roster(*args: Any, **kwargs: Any) -> np.ndarray:
+        rebuilds.append(True)
+        return real_roster(*args, **kwargs)
+
+    monkeypatch.setattr(runner, "roster_array", counted_roster)
+    assert runner.label_index(tmp_path, plan, census, label) == result
+    assert rebuilds == [True]
+    assert receipt_path.read_bytes() == original_receipt
+    assert receipt_path.stat().st_mtime_ns == original_mtime
+    assert list((tmp_path / "label_stage").iterdir()) == original_attempts
+
+    # A self-consistent but unmonitored table hash is not source evidence.
+    table_path = Path(result["table"]["path"])
+    table = np.fromfile(table_path, dtype="<f4").reshape(3, 3)
+    table[0] = [.1, .4, .5]
+    table.tofile(table_path)
+    changed_receipt, _ = runner.read_receipt(receipt_path)
+    changed_receipt["table"]["sha256"] = audit.sha256_file(table_path)
+    receipt_path.write_bytes(runner.canonical(changed_receipt))
+    with pytest.raises(ValueError, match="orphan label index differs"):
+        runner.label_index(tmp_path, plan, census, label)
+    assert rebuilds == [True, True]
+    assert not (tmp_path / "resource_receipts" / "label-index.json").exists()
 
 
 def test_receipt_prefix_refuses_gap_and_changed_prior(tmp_path: Path) -> None:
