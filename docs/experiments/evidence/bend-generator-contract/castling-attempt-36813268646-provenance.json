@@ -1,0 +1,21 @@
+{
+  "repository": "jjoshua2/DeepFin",
+  "pull_request": 979,
+  "head_commit": "879a996056cb1e2b00839bd159012945aa43f1ec",
+  "run_id": 36813268646,
+  "job_id": 110212750236,
+  "run_url": "https://github.com/jjoshua2/DeepFin/actions/runs/36813268646",
+  "artifact": {
+    "id": 11140942771,
+    "name": "bend-castling-composition",
+    "digest": "sha256:7bc83b7f4b50562a93c705a3a985c606c6b7cef07dbcbf2911d7ee39eb4ae3aa",
+    "size_in_bytes": 12951,
+    "created_at": "2026-10-01T04:12:50Z"
+  },
+  "receipt_origin": "Complete unchanged JSON receipt printed by the hosted job; only timestamp prefixes removed.",
+  "result": "NOT_COMPLETED",
+  "complete_consumer": "All terms check.",
+  "accepted_candidate_definitions": 0,
+  "intended_semantic_controls_passed": 1,
+  "semantic_controls_attempted": 2
+}

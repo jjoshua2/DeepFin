@@ -1,0 +1,37 @@
+{
+  "closed_builder_gate": "NOT_COMPLETED",
+  "new_accepted_law_count": 0,
+  "scope": "Actual Tables.build equality only; full generator contract remains open.",
+  "compiler_identity": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\n",
+  "source_sha256s": {
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/proofs/builder/Spec.bend": "f025a0111dde5a5acfbe99ced04c3608145cd9b73ea4ade2d5cad13695cbbb0c",
+    "standalone/proofs/generator_contract/Closed.bend": "cf6538c1577f4c4cc6ccb0fadc30a8034c6ac7650936a03472b6662947e853fd",
+    "standalone/proofs/generator_contract/README.md": "0a0c1f228fd487c0a6b20d4e3ad15883137c3a13d330db07b4bbecb5fa348cdf",
+    "standalone/proofs/generator_contract/consumer.bend": "a675d0ae583558d4c2178c249d3dcc32d726a65b6c32f0db511d136d67e80b94",
+    "standalone/proofs/generator_contract/qualify.py": "26a0dfaa898064d9712658b06500c9bb9f14fa1b17777182c45bb740d253eb38",
+    "standalone/proofs/generator_contract/test_qualify.py": "5a63b8a162b5704c7bbdfdfb9800ff3f3b7723a6e4c1fe836fb7a591c7da3bca",
+    "standalone/proofs/initialized_attacks/Build.bend": "af7ae803b927f223eb97c29331d3a979275a2f788767542ddf3256846b049251",
+    "standalone/proofs/table_preservation/_validation.py": "574d995076f22d28a05914711dcab84abf9df8587c8a10b4510ce94161a5e2b0",
+    "standalone/proofs/table_preservation/focused.py": "faff7e942d7d2464e795a4e6589ee01435f8ae2cc8c77ac5e8b0e45994908dc2",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "consumer": {
+    "command": [
+      "/home/runner/.bun/bin/bun",
+      "--smol",
+      "/home/runner/work/DeepFin/DeepFin/build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae/bend2/main.ts",
+      "/home/runner/work/DeepFin/DeepFin/native/bend_engine/standalone/proofs/generator_contract/consumer.bend",
+      "--check-only"
+    ],
+    "exit_code": null,
+    "timed_out": true,
+    "wall_limit_seconds": 600,
+    "seconds": 600.271891773,
+    "raw_text": "",
+    "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "failure": "AssertionError: closed consumer did not return exact safe checker success"
+}

@@ -1,0 +1,24 @@
+{
+  "repository": "jjoshua2/DeepFin",
+  "pull_request": 979,
+  "head_commit": "5665387303fdb1a0c024548f6564aa93240e8600",
+  "run_id": 36812198118,
+  "job_id": 110209484021,
+  "run_url": "https://github.com/jjoshua2/DeepFin/actions/runs/36812198118",
+  "artifact": {
+    "id": 11140427207,
+    "name": "bend-castling-composition",
+    "digest": "sha256:226ea043e7d6ab115eea5d63a807e8f9bceb84bdc3576f5ec13be3b41cf57ba1",
+    "size_in_bytes": 12316,
+    "created_at": "2026-10-01T03:58:47Z"
+  },
+  "checkout_lines": [
+    "2026-10-01T03:48:28.7280861Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +12f1b347fc6d25d5e47a6cd12a35f76218ee3ba1:refs/remotes/pull/979/merge",
+    "2026-10-01T03:48:32.1034650Z HEAD is now at 12f1b34 Merge 5665387303fdb1a0c024548f6564aa93240e8600 into beef6c2b5c3f4b819396517529dbdb58c6625715",
+    "2026-10-01T03:48:32.1102252Z [command]/usr/bin/git log -1 --format=%H"
+  ],
+  "receipt_origin": "Complete unchanged JSON receipt printed by the hosted job; reconstructed by removing only GitHub timestamp prefixes.",
+  "result": "NOT_COMPLETED",
+  "accepted_candidate_definitions": 0,
+  "semantic_controls_executed": 0
+}

@@ -1,0 +1,76 @@
+name: Bend generator contract
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/bend-generator-contract.yml'
+      - 'native/bend_engine/standalone/proofs/generator_contract/**'
+      - 'docs/bend_legal_generator_contract.md'
+      - 'native/bend_engine/standalone/Tables.bend'
+      - 'native/bend_engine/standalone/Subsets.bend'
+      - 'native/bend_engine/standalone/proofs/initialized_attacks/Build.bend'
+      - 'native/bend_engine/standalone/proofs/builder/Spec.bend'
+      - 'native/bend_engine/standalone/proofs/table_preservation/focused.py'
+      - 'native/bend_engine/standalone/proofs/table_preservation/_validation.py'
+      - 'native/bend_engine/standalone/verify_compiler.js'
+      - 'native/bend_engine/standalone/toolchain.json'
+      - 'native/bend_engine/install_ci_bend.sh'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bend-generator-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  closed-builder:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    env:
+      BEND_NO_TELEMETRY: '1'
+      CUDA_VISIBLE_DEVICES: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+      - name: Original compiler install and pin
+        run: bash native/bend_engine/install_ci_bend.sh
+      - name: Host gate classifications in three optimization modes
+        run: |
+          python -m unittest native.bend_engine.standalone.proofs.generator_contract.test_qualify
+          python -O -m unittest native.bend_engine.standalone.proofs.generator_contract.test_qualify
+          python -OO -m unittest native.bend_engine.standalone.proofs.generator_contract.test_qualify
+          bun test native/bend_engine/standalone/verify_compiler.test.js
+      - name: Closed equality and semantic controls within CPU RAM and wall bounds
+        run: |
+          mkdir -p artifacts/bend-generator-contract
+          # A transient cgroup limits the complete qualifier and every child.
+          # No persistent service or additional repository permission is created.
+          sudo systemd-run --wait --collect --pipe \
+            --unit="bend-generator-contract-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --property=CPUQuota=200% --property=MemoryMax=6G \
+            --property=MemorySwapMax=0 --property=RuntimeMaxSec=1100 \
+            --uid="$(id -u)" --working-directory="$PWD" \
+            /usr/bin/env BEND_NO_TELEMETRY=1 CUDA_VISIBLE_DEVICES= \
+            BUN="$(command -v bun)" "$(command -v python)" -m \
+            native.bend_engine.standalone.proofs.generator_contract.qualify \
+            "$PWD/build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae" \
+            --report "$PWD/artifacts/bend-generator-contract/closed-builder.json"
+      - name: Record available result and unchanged source
+        if: always()
+        run: |
+          if test -f artifacts/bend-generator-contract/closed-builder.json; then
+            cat artifacts/bend-generator-contract/closed-builder.json
+          fi
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-generator-contract
+          path: artifacts/bend-generator-contract/
+          if-no-files-found: warn
+          retention-days: 30
