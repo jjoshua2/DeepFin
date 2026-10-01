@@ -7,6 +7,7 @@ import ./Text.bend as Text
 import ./Position.bend as Pos
 import ./Protocol.bend as Protocol
 import ./TimeControl.bend as TimeControl
+import ./SessionOptions.bend as Options
 import ./Rules.bend as Rules
 import ./SearchHistory.bend as History
 import ./EncodingDiagnostic.bend as EncodingDiagnostic
@@ -89,16 +90,19 @@ def rule_reply(ticket: Search.Ticket) -> Search.Reply:
   Search.Ticket{epoch, request, id, b, moves, reply} = ticket
   Search.Reply{epoch, request, id, 3, 0.0, 1.0, 0.0, 0, Array.new(F32, 8n, 0.0)}
 
-def model_reply(cache: NativeEvaluation.Cache, timing: Bool, model: U32, root: Pos.Game, game: Pos.Game, ticket: Search.Ticket,
+def model_reply(cache: NativeEvaluation.Cache, timing: Bool, model: U32, limit: U32, root: Pos.Game, game: Pos.Game, ticket: Search.Ticket,
   table: Array<U64>) -> IO(NativeEvaluation.Result):
   match model:
     case 0: IO.pure(NativeEvaluation.Result, NativeEvaluation.material(cache, (table, reply_for(ticket))))
-    case _: NativeEvaluation.evaluate(cache, timing, model, root, game, ticket, table)
+    case _:
+      do IO<NativeEvaluation.Result>:
+        cache : NativeEvaluation.Cache <- NativeEvaluation.begin(cache, limit)
+        NativeEvaluation.evaluate(cache, timing, model, root, game, ticket, table)
 
-def evaluate_reply(cache: NativeEvaluation.Cache, timing: Bool, model: U32, reason: U32, root: Pos.Game, game: Pos.Game,
+def evaluate_reply(cache: NativeEvaluation.Cache, timing: Bool, model: U32, limit: U32, reason: U32, root: Pos.Game, game: Pos.Game,
   ticket: Search.Ticket, table: Array<U64>) -> IO(NativeEvaluation.Result):
   match reason:
-    case 0: model_reply(cache, timing, model, root, game, ticket, table)
+    case 0: model_reply(cache, timing, model, limit, root, game, ticket, table)
     case _: IO.pure(NativeEvaluation.Result, NativeEvaluation.material(cache, (table, rule_reply(ticket))))
 
 def ready_state(cache: NativeEvaluation.Cache, root: Pos.Game, table: Array<U64>, tree: Search.Tree, budget: U32,
@@ -143,15 +147,16 @@ def await_submitted(root: Pos.Game, tree: Search.Tree, budget: U32, inf: Bool,
 
 def adjudicated_mode(asynchronous: Bool, cache: NativeEvaluation.Cache, +model: U32, +code: U32,
   +root: Pos.Game, game: Pos.Game, tree: Search.Tree, +ticket: Search.Ticket, table: Array<U64>,
-  budget: U32, inf: Bool, +started: Work.Run, duration: U32, fallback: U32) -> IO(State):
+  +budget: U32, inf: Bool, +started: Work.Run, duration: U32, fallback: U32) -> IO(State):
   match asynchronous:
     case True{}:
       do IO<State>:
+        cache : NativeEvaluation.Cache <- NativeEvaluation.begin(cache, Work.admission_limit(started, budget))
         r : NativeEvaluation.Submission <- NativeEvaluation.submit(cache, Work.profiling(started), model, game, ticket, table)
         await_submitted(root, tree, budget, inf, started, duration, fallback, r)
     case False{}:
       do IO<State>:
-        r : NativeEvaluation.Result <- evaluate_reply(cache, Work.profiling(started), model, code, root, game, ticket, table)
+        r : NativeEvaluation.Result <- evaluate_reply(cache, Work.profiling(started), model, Work.admission_limit(started, budget), code, root, game, ticket, table)
         resume_reply(Bool.and(U32.is_gt(model, 0), U32.is_zero(code)), root, tree, ticket, budget, inf, started, duration, fallback, r)
 
 def adjudicated_cache(+model: U32, +code: U32, root: Pos.Game, game: Pos.Game, tree: Search.Tree,
@@ -244,17 +249,18 @@ def fallback_notice(used: Bool) -> IO(Unit):
     case False{}: IO.pure(Unit, Unit{})
     case True{}: IO.print("info string legal protocol fallback; no searched continuation; GUI owns adjudication")
 
-def picked(cache: NativeEvaluation.Cache, run: Work.Run, hold: Bool, root: Pos.Game, table: Array<U64>, +fallback: U32, +n: U32, +stop: U32, p: Pick) -> IO(State):
+def picked(cache: NativeEvaluation.Cache, resources: String, run: Work.Run, hold: Bool, root: Pos.Game, table: Array<U64>, +fallback: U32, +n: U32, +stop: U32, p: Pick) -> IO(State):
   Pick{pool, +key, visits} = p
   +missing = U32.is_eq(key, 4294967295)
   do IO<State>:
     now : Nat <- IO.now()
     fallback_notice(Bool.and(missing, Bool.not(U32.is_eq(fallback, 4294967295))))
-    output_or_hold(cache, Work.render(now, n, stop, run), hold, root, table, Bool.pick(U32, missing, fallback, key), n, stop)
+    output_or_hold(cache, resources ++ "\n" ++ Work.render(now, n, stop, run), hold, root, table, Bool.pick(U32, missing, fallback, key), n, stop)
 
 def finish(cache: NativeEvaluation.Cache, run: Work.Run, hold: Bool, root: Pos.Game, table: Array<U64>, fallback: U32, tree: Search.Tree) -> IO(State):
-  Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
-  picked(cache, run, hold, root, table, fallback, n, stop, pick(U32.to_nat(used), 0, Pick{pool, 4294967295, 0}))
+  Search.Tree{pool, +used, cap, n, pending, epoch, request, stop, limit} = tree
+  resources = "info string tree_resources {\"capacity\":" ++ U32.show(cap) ++ ",\"used\":" ++ U32.show(used) ++ "}"
+  picked(cache, resources, run, hold, root, table, fallback, n, stop, pick(U32.to_nat(used), 0, Pick{pool, 4294967295, 0}))
 
 def cancelled_output(quitting: Bool, cache: NativeEvaluation.Cache, run: Work.Run, root: Pos.Game,
   table: Array<U64>, fallback: U32, tree: Search.Tree) -> IO(State):
@@ -264,13 +270,13 @@ def cancelled_output(quitting: Bool, cache: NativeEvaluation.Cache, run: Work.Ru
 
 def cancel_wait(cache: NativeEvaluation.Cache, root: Pos.Game, table: Array<U64>, tree: Search.Tree,
   pending: NativeEvaluation.Pending, run: Work.Run, fallback: U32, +code: U32, quitting: Bool) -> IO(State):
-  Search.Tree{pool, used, cap, +n, ignored, epoch, request, stop, limit} = tree
+  Search.Tree{pool, used, +cap, +n, ignored, epoch, request, stop, limit} = tree
   NativeEvaluation.Pending{+id, ticket, game, entries} = pending
   +cancelled = Work.cancel_pending(run)
   do IO<State>:
     Async.cancel_identity(id)
     cancelled_output(quitting, NativeEvaluation.retiring(cache, id, cancelled, n, code), cancelled,
-      root, table, fallback, Search.Tree{pool, used, cap, n, 4096, epoch, request, code, limit})
+      root, table, fallback, Search.Tree{pool, used, cap, n, Search.no_pending(cap), epoch, request, code, limit})
 
 def stop(cache: NativeEvaluation.Cache, root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
   match mode:
@@ -394,14 +400,19 @@ def fallback(ms: List<&2, Chess.Ply>, best: U32) -> U32:
     case Nil{}: best
     case Con{m, rest}: fallback(rest, U32.min(best, Search.key(m)))
 
-def start_identified(+root: Pos.Game, lim: Protocol.Limits, table: Array<U64>, ms: List<&2, Chess.Ply>,
-  r: NativeEvaluation.Cache & U32) -> IO(State):
+def start_configured(+root: Pos.Game, lim: Protocol.Limits, table: Array<U64>, ms: List<&2, Chess.Ply>,
+  +epoch: U32, r: NativeEvaluation.Cache & Options.Options) -> IO(State):
   Protocol.Limits{budget, depth, +duration, inf, seen, valid, evals} = lim
-  (cache, +epoch) = r
+  (cache, options) = r
   do IO<State>:
     now : Nat <- IO.now()
-    return State{cache, root, table, Running{Search.start(Pos.board(root), 4096, epoch, depth), budget, inf,
+    return State{cache, root, table, Running{Search.start(Pos.board(root), Options.get_tree_nodes(options), epoch, depth), budget, inf,
       Work.identified(Work.start(now, evals, duration, U32.is_gt(U32.and(seen, 32), 0)), epoch), duration, fallback(ms, 4294967295)}, False{}}
+
+def start_identified(root: Pos.Game, lim: Protocol.Limits, table: Array<U64>, ms: List<&2, Chess.Ply>,
+  r: NativeEvaluation.Cache & U32) -> IO(State):
+  (cache, epoch) = r
+  start_configured(root, lim, table, ms, epoch, NativeEvaluation.settings(cache))
 
 def start_search(cache: NativeEvaluation.Cache, root: Pos.Game, lim: Protocol.Limits, r: Array<U64> & List<&2, Chess.Ply>) -> IO(State):
   (table, ms) = r
@@ -481,10 +492,28 @@ def evaluation_args(cache: NativeEvaluation.Cache, args: List<&2, String>, +root
     table : Array<U64> <- EvaluationDiagnostic.run(args, root, table)
     return State{cache, root, table, Idle{}, False{}}
 
+
+def go_configured(+root: Pos.Game, table: Array<U64>, args: List<&2, String>,
+  r: NativeEvaluation.Cache & Options.Options) -> IO(State):
+  (cache, options) = r
+  go_limits(cache, root, table, TimeControl.go(args, Chess.get_turn(Pos.board(root)), Options.get_overhead(options)))
+
+def option_result(cache: NativeEvaluation.Cache, root: Pos.Game, table: Array<U64>,
+  result: Maybe<&2, Options.Options>) -> IO(State):
+  match result:
+    case None{}: message(State{cache, root, table, Idle{}, False{}}, "unsupported or invalid setoption; previous settings preserved")
+    case Some{+options}:
+      message(State{NativeEvaluation.configure(cache, options), root, table, Idle{}, False{}}, Options.show(options))
+
+def set_options(root: Pos.Game, table: Array<U64>, args: List<&2, String>,
+  r: NativeEvaluation.Cache & Options.Options) -> IO(State):
+  (cache, options) = r
+  option_result(cache, root, table, Options.parse(args, options))
+
 def idle_command(cache: NativeEvaluation.Cache, code: U32, args: List<&2, String>, +root: Pos.Game, table: Array<U64>) -> IO(State):
   match code:
     case 3: replace(cache, root, Protocol.position(Protocol.parse_position(args), table))
-    case 4: go_limits(cache, root, table, TimeControl.go(args, Chess.get_turn(Pos.board(root))))
+    case 4: go_configured(root, table, args, NativeEvaluation.settings(cache))
     case 7: IO.pure(State, State{cache, Pos.start(), table, Idle{}, False{}})
     case 9: perft_args(cache, args, root, table)
     case 10: rules_args(cache, args, root, table)
@@ -492,6 +521,7 @@ def idle_command(cache: NativeEvaluation.Cache, code: U32, args: List<&2, String
     case 12: input_args(cache, args, root, table)
     case 13: policy_args(cache, args, root, table)
     case 14: evaluation_args(cache, args, root, table)
+    case 15: set_options(root, table, args, NativeEvaluation.settings(cache))
     case _: message(State{cache, root, table, Idle{}, False{}}, "unsupported command")
 
 def available(cache: NativeEvaluation.Cache, code: U32, args: List<&2, String>, root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
@@ -507,6 +537,7 @@ def handle(code: U32, args: List<&2, String>, s: State) -> IO(State):
       do IO<State>:
         IO.print("id name DeepFin Bend standalone diagnostic")
         IO.print("id author DeepFin contributors")
+        Options.advertise()
         IO.print("uciok")
         return s
     case 2:

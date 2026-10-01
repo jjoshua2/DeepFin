@@ -16,7 +16,7 @@ qualification rather than relabeling the existing backend.
 
 | Product | Actual path | Present capability and important limit |
 | --- | --- | --- |
-| Standalone material UCI | `standalone/main.bend` → `Protocol`/`TimeControl` → `Search` | Bend state/legal/history/search; bounded 4096-node fresh trees; no trained model |
+| Standalone material UCI | `standalone/main.bend` → `Protocol`/`TimeControl` → `Search` | Bend state/legal/history/search; bounded configurable 4096–65536-node fresh trees; no trained model |
 | Standalone neural UCI | Same main → `EngineRuntime` → `NativeEvaluation` → `model_bridge.cpp` | Exact-bound CPU F32 batch 1; opt-in single-forward async; no Python runtime |
 | Persistent live roots | `multi_root/live.bend` → `LiveRun` | Separate headless CPU-F32 product, 1–16 roots, generations, FIFO, one physical batch slot |
 | CUDA/BF16 tensor backend | `batch_backend/main.bend` → batch effect → `cuda_execution.cpp` | Separate synchronous probe; not device-qualified and not reachable from UCI's singleton opener |
@@ -62,13 +62,14 @@ planned checks, not claimed results.
 
 ## Remaining acceptance gates, in dependency order
 
-1. Complete native UCI session contract: advertised and effective setoption
-   settings; clock overhead; go ponder/ponderhit with a fresh post-hit clock;
+1. Complete native UCI session contract: qualify the resource/options and per-search
+   admission candidate below, then go ponder/ponderhit with a fresh post-hit clock;
    searchmoves root restriction; explicit unsupported options; transactional
    position/ucinewgame; stop/quit exactly once and physical retirement. Supported
    maximum history/search/arena bounds must be explicit and suitable for games.
-   The native bridge's current process-wide 65,536-forward diagnostic limit must
-   be removed or replaced with a tournament-suitable, checked lifecycle
+   The native bridge's former process-wide 65,536-forward diagnostic limit is
+   replaced for explicitly session-bound work; its checked epoch lifecycle still
+   needs exact-head qualification before this gate closes
 2. Search integration: configurable arenas and useful continuation beyond the
    initial diagnostic horizon; native PUCT parameters and selection/backup
    semantics; shared-tree walkers if required for the production comparison.
@@ -149,3 +150,25 @@ all case results, memory peaks, cancellation/retirement counters, failures and
 total elapsed time. Raw private model/input traces are not uploaded by default.
 Stop at pass/fail for this exact package/device; a pass does not authorize
 deployment, further buckets, multi-GPU work, performance tuning or a tournament.
+
+## Next repository milestone: effective resources and repeatable native sessions
+
+Candidate only until exact-head CI and independent review complete. TreeNodes and
+Move Overhead are advertised and applied in Bend, with transactional idle-only
+changes and settings preserved across games. Actual tree capacity/usage is reported;
+explicit nodes accepts up to the existing 65536 per-search safety ceiling.
+
+A native guard adds checked epoch-bound admission before every actual model forward,
+with no reset while a physical async slot remains occupied. Same-epoch calls cannot
+refund consumed budget; stale identities and changed bounds fail. A new epoch can
+renew its own bounded allowance after retirement, so a long-lived UCI process is no
+longer stopped by the 65537th cumulative forward. Diagnostic batch/unbound calls
+retain their old cap and all lifetime counters remain overflow-checked.
+
+Acceptance requires actual generated UCI generic/UBSan settings readback, malformed
+and busy transaction tests, persistence across ucinewgame, standard-client configure,
+large-arena cancellation/retirement, and production native-guard boundary tests
+including more than 65536 cumulative admissions across distinct searches.
+This slice does not add searchmoves, ponder, deeper search, CUDA or trained-model
+qualification. Those contracts follow separately rather than being implied by
+a resource option or a passed synthetic callback.

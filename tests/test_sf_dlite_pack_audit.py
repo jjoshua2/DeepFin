@@ -78,10 +78,13 @@ def _arrays() -> dict[str, np.ndarray]:
     return arrays
 
 
-def _fixture(root: Path) -> tuple[dict[str, Any], np.ndarray, np.ndarray, dict[str, Any]]:
+def _fixture(root: Path, inactive_turn_field: str | None = None
+             ) -> tuple[dict[str, Any], np.ndarray, np.ndarray, dict[str, Any]]:
     base = root / "base.zarr"
     overlay = root / "overlay.zarr"
     base_arrays = _arrays()
+    if inactive_turn_field is not None:
+        base_arrays[inactive_turn_field][2] = 0
     _write_group(base, base_arrays)
     (base / "row_provenance.npz").write_bytes(b"tiny qualified provenance")
     selected = np.array([0, 2, 3], dtype=np.int64)
@@ -160,6 +163,9 @@ def test_tiny_native_pair_full_source_row_and_file_proof(tmp_path: Path) -> None
     census, roster, labels, arms = _fixture(tmp_path)
     result = audit.audit_shard(0, census, roster, labels, arms)
     assert result["rows"] == 3
+    assert result["active_network_turn_rows"] == 3
+    assert result["present_network_turn_rows"] == 3
+    assert runner.require_network_turn_counts(result) == (3, 3)
     assert result["arms"]["control"]["nonmain_arrays_sha256"] == result["arms"][
         "candidate"]["nonmain_arrays_sha256"]
     assert result["arms"]["control"]["search_wdl_sha256"] != result["arms"][
@@ -819,16 +825,15 @@ time.sleep(5)
     assert b"owned child exceeded 30-minute wall cap" in result.stderr
 
 
-def test_preexec_guard_caps_child_before_python_watchdog() -> None:
+def test_exec_guard_caps_child_before_python_watchdog() -> None:
     owner_pid = os.getpid()
-    result = subprocess.run(
-        [sys.executable, "-c", "import time; time.sleep(5)"],
-        cwd=Path(__file__).resolve().parents[1], check=False, timeout=5,
-        preexec_fn=lambda: runner.preexec_owned_child(owner_pid, 1))
+    result = subprocess.run(runner.owned_child_command(
+        [sys.executable, "-c", "import time; time.sleep(5)"], owner_pid, 1),
+        cwd=Path(__file__).resolve().parents[1], check=False, timeout=5)
     assert result.returncode == -signal.SIGALRM
 
 
-def test_preexec_parent_kill_releases_inherited_lease(tmp_path: Path) -> None:
+def test_exec_parent_kill_releases_inherited_lease(tmp_path: Path) -> None:
     lease_path = tmp_path / "lease"
     pid_path = tmp_path / "child.pid"
     marker = tmp_path / "child-started"
@@ -839,9 +844,9 @@ from scripts import audit_sf_dlite_paired_pack as audit
 with Path(sys.argv[1]).open('a+b') as lease:
     fcntl.flock(lease.fileno(), fcntl.LOCK_EX)
     owner_pid = os.getpid()
-    child = subprocess.Popen([sys.executable, '-c', sys.argv[4], sys.argv[3]],
-                             pass_fds=(lease.fileno(),),
-                             preexec_fn=lambda: audit.preexec_owned_child(owner_pid, 30))
+    child = subprocess.Popen(audit.owned_child_command(
+        [sys.executable, '-c', sys.argv[4], sys.argv[3]], owner_pid, 30),
+        pass_fds=(lease.fileno(),))
     Path(sys.argv[2]).write_text(str(child.pid))
     time.sleep(30)
 """
@@ -871,7 +876,7 @@ time.sleep(30)
                 break
             time.sleep(.02)
         else:
-            pytest.fail("preexec-guarded child survived parent SIGKILL")
+            pytest.fail("exec-guarded child survived parent SIGKILL")
         with lease_path.open("a+b") as lease:
             fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     finally:
@@ -998,3 +1003,22 @@ if sys.argv[4] == 'hold':
         if parent.poll() is None:
             parent.kill()
             parent.wait(timeout=5)
+
+
+@pytest.mark.parametrize("field", ["is_network_turn", "has_is_network_turn"])
+def test_coherently_sealed_inactive_turn_row_refused(tmp_path: Path, field: str) -> None:
+    census, roster, labels, arms = _fixture(tmp_path, inactive_turn_field=field)
+    with pytest.raises(ValueError, match="active network turn"):
+        audit.audit_shard(0, census, roster, labels, arms)
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("active_network_turn_rows", 2), ("present_network_turn_rows", 2),
+    ("active_network_turn_rows", True), ("present_network_turn_rows", None),
+])
+def test_final_readback_refuses_missing_or_incomplete_turn_proof(field: str, value: object) -> None:
+    proof: dict[str, Any] = {"rows": 3, "active_network_turn_rows": 3,
+                             "present_network_turn_rows": 3}
+    proof[field] = value
+    with pytest.raises(ValueError, match="network-turn counts"):
+        runner.require_network_turn_counts(proof)

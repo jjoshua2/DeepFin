@@ -3,12 +3,14 @@
 // stdout remains exclusively the engine's UCI/accounting stream.
 #include <cerrno>
 #include <cstdint>
+#include "../standalone/search_forward_budget.h"
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <unistd.h>
 
 namespace {
+deepfin_native::SearchForwardBudget budget;
 int event_fd = -1, release_fd = -1;
 int descriptor(const char* name) {
   const char* value = std::getenv(name);
@@ -31,8 +33,13 @@ extern "C" int deepfin_model_open() {
   release_fd = descriptor("DEEPFIN_TEST_RELEASE_FD");
   return 4; // 175-plane root-legacy-meta/v2_threats, CPU F32 singleton
 }
+extern "C" uint32_t deepfin_model_begin_search(uint32_t epoch, uint32_t limit) {
+  return event_fd >= 0 && release_fd >= 0 && budget.begin(epoch, limit);
+}
 extern "C" int deepfin_model_run(const float* x, uint32_t count, float* y, uint32_t out) {
   if (!x || !y || count != 11200 || out != 1861) return 1;
+  auto admission = budget.admit();
+  if (!admission) return 1;
   ssize_t n;
   do { n = write(event_fd, "S", 1); } while (n < 0 && errno == EINTR);
   if (n != 1) std::abort();

@@ -54,10 +54,10 @@ def read(xs: List<&2, String>, reading: Reading) -> Reading:
     case Nil{}: reading
     case Con{head, tail}: read(tail, word(head, reading))
 
-# Bounds keep all arithmetic below U32 overflow. Hold back 50 ms; at/below the
-# reserve return immediately without selecting or evaluating a search leaf.
-def milliseconds(+remaining: U32, increment: U32, moves: U32) -> U32:
-  available = U32.sub(remaining, U32.min(remaining, 50))
+# Bounds keep all arithmetic below U32 overflow. At/below the
+# configured reserve return immediately without selecting or evaluating a search leaf.
+def milliseconds(+remaining: U32, increment: U32, moves: U32, overhead: U32) -> U32:
+  available = U32.sub(remaining, U32.min(remaining, overhead))
   target = U32.add(U32.div(remaining, moves), U32.div(U32.mul(increment, 3), 4))
   U32.min(60000, U32.min(available, U32.max(1, target)))
 
@@ -73,7 +73,7 @@ def valid_limits(ok: Bool, lim: Protocol.Limits) -> Protocol.Limits:
   Protocol.Limits{nodes, depth, duration, infinite, seen, valid, evals} = lim
   Protocol.Limits{nodes, depth, duration, infinite, seen, Bool.and(ok, valid), evals}
 
-def resolve_active(turn: U32, clocks: Clocks, lim: Protocol.Limits) -> Protocol.Limits:
+def resolve_active(turn: U32, clocks: Clocks, lim: Protocol.Limits, overhead: U32) -> Protocol.Limits:
   Clocks{w, b, wi, bi, moves, seen, valid} = clocks
   Protocol.Limits{nodes, depth, +duration, +infinite, +limits_seen, limits_valid, evals} = lim
   +white = U32.is_eq(turn, 1)
@@ -81,20 +81,20 @@ def resolve_active(turn: U32, clocks: Clocks, lim: Protocol.Limits) -> Protocol.
   ok = Bool.and(valid, Bool.and(present, Bool.not(infinite)))
   # Explicit movetime takes precedence, but supplied clock syntax is checked.
   ms = Bool.pick(U32, U32.is_gt(U32.and(limits_seen, 4), 0), duration,
-    milliseconds(Bool.pick(U32, white, w, b), Bool.pick(U32, white, wi, bi), moves))
+    milliseconds(Bool.pick(U32, white, w, b), Bool.pick(U32, white, wi, bi), moves, overhead))
   allocated(ms, ok, Protocol.Limits{nodes, depth, duration, infinite, limits_seen, limits_valid, evals})
 
-def resolve(turn: U32, clocks: Clocks, lim: Protocol.Limits) -> Protocol.Limits:
+def resolve(turn: U32, clocks: Clocks, lim: Protocol.Limits, overhead: U32) -> Protocol.Limits:
   Clocks{w, b, wi, bi, moves, seen, valid} = clocks
   match seen:
     case 0: valid_limits(valid, lim)
-    case _: resolve_active(turn, Clocks{w, b, wi, bi, moves, seen, valid}, lim)
+    case _: resolve_active(turn, Clocks{w, b, wi, bi, moves, seen, valid}, lim, overhead)
 
-def finish(turn: U32, reading: Reading) -> Protocol.Limits:
+def finish(turn: U32, reading: Reading, overhead: U32) -> Protocol.Limits:
   Reading{Clocks{w, b, wi, bi, moves, seen, valid}, pending, rest} = reading
   lim = Protocol.go(List.reverse(&2, String, rest),
     Protocol.GoState{Protocol.Limits{64, 4, 0, False{}, 0, True{}, 0}, 0})
-  resolve(turn, Clocks{w, b, wi, bi, moves, seen, Bool.and(valid, U32.is_zero(pending))}, lim)
+  resolve(turn, Clocks{w, b, wi, bi, moves, seen, Bool.and(valid, U32.is_zero(pending))}, lim, overhead)
 
-def go(xs: List<&2, String>, turn: U32) -> Protocol.Limits:
-  finish(turn, read(xs, Reading{Clocks{0, 0, 0, 0, 30, 0, True{}}, 0, Nil{}}))
+def go(xs: List<&2, String>, turn: U32, overhead: U32) -> Protocol.Limits:
+  finish(turn, read(xs, Reading{Clocks{0, 0, 0, 0, 30, 0, True{}}, 0, Nil{}}), overhead)

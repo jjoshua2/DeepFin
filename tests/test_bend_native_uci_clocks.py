@@ -11,7 +11,7 @@ import pytest
 
 
 @pytest.mark.parametrize('flag', ['-O', '-OO'])
-@pytest.mark.parametrize('verifier', ['standalone.verify_time_control', 'async_probe.verify_search'])
+@pytest.mark.parametrize('verifier', ['standalone.verify_time_control', 'standalone.verify_session', 'async_probe.verify_search'])
 def test_optimized_verifier_fails_closed_before_engine_start(
         tmp_path: Path, flag: str, verifier: str) -> None:
     report = tmp_path / 'report.json'
@@ -29,7 +29,7 @@ def test_optimized_verifier_fails_closed_before_engine_start(
     assert json.loads(report.read_text())['qualified'] is False
 
 
-@pytest.mark.parametrize('verifier', ['standalone.verify_time_control', 'async_probe.verify_search'])
+@pytest.mark.parametrize('verifier', ['standalone.verify_time_control', 'standalone.verify_session', 'async_probe.verify_search'])
 def test_normal_interpreter_allows_the_assertion_guard(verifier: str) -> None:
     result = subprocess.run(
         [sys.executable, '-c',

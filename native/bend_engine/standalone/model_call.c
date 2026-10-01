@@ -6,6 +6,8 @@
 #include <string.h>
 #ifdef DEEPFIN_BEND_NATIVE_MODEL
 extern uint32_t deepfin_model_open(void);
+extern uint32_t deepfin_model_begin_search(uint32_t, uint32_t);
+extern uint32_t deepfin_async_begin_search(uint32_t, uint32_t);
 extern int deepfin_model_run(const float *, uint32_t, float *, uint32_t);
 #endif
 
@@ -18,6 +20,23 @@ static Term native_open_run(Env e, Term *f, IoWork *w) {
 #else
     return 0;
 #endif
+}
+static Term native_begin_run(Env e, Term *f, IoWork *w) {
+    (void)e; (void)w;
+#ifdef DEEPFIN_BEND_NATIVE_MODEL
+    const uint32_t epoch = f[0], limit = f[1], asynchronous = f[2];
+    if (asynchronous > 1 || !(asynchronous
+          ? deepfin_async_begin_search(epoch, limit)
+          : deepfin_model_begin_search(epoch, limit))) {
+        fputs("native search admission contract failed\n", stderr);
+        exit(2);
+    }
+#else
+    (void)f;
+    fputs("native search admission requires linked model support\n", stderr);
+    exit(2);
+#endif
+    return term_pak(CID_UNIT, 0);
 }
 static Term native_diagnostics_run(Env e, Term *f, IoWork *w) {
     (void)e; (void)f; (void)w;
@@ -61,6 +80,7 @@ static Term native_run_run(Env e, Term *f, IoWork *w) {
 }
 static void __attribute__((constructor)) model_effects_use(void) {
     io_eff(CID_NATIVE_OPEN, native_open_run, 0);
+    io_eff(CID_NATIVE_BEGIN, native_begin_run, 0);
     io_eff(CID_NATIVE_DIAGNOSTICS, native_diagnostics_run, 0);
     io_eff(CID_NATIVE_RUN, native_run_run, 0);
 }

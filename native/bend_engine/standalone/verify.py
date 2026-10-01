@@ -185,7 +185,7 @@ def verify(command: list[str]) -> dict[str, object]:
             assert any('invalid position' in x for x in rows), rows
             assert c.dump() == prior
             invalid += 1
-        for limits in ('nodes 0', 'nodes 257', 'nodes 4294967296', 'nodes -1', 'nodes 2 nodes 3',
+        for limits in ('nodes 0', 'nodes 65537', 'nodes 4294967296', 'nodes -1', 'nodes 2 nodes 3',
                        'depth 33', 'depth', 'winc 1000', 'infinite movetime 1', 'movetime 1 infinite'):
             rows = c.sync('go ' + limits)
             assert any('invalid go' in x for x in rows), rows

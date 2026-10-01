@@ -67,11 +67,13 @@ position startpos moves e2e4 e7e5
 go nodes 32
 ```
 
-Supported subset: uci/isready, position startpos or six-field FEN with optional
+Supported subset: uci/isready, setoption (TreeNodes and Move Overhead),
+position startpos or six-field FEN with optional
 legal moves, ucinewgame, go nodes/depth/movetime/infinite and
 wtime/btime/winc/binc/movestogo, stop, quit, clean EOF.
-No setoption, ponder, searchmoves, MultiPV or claim protocol. Clock controls use
-the accepted root's active side, a 50 ms reserve and a default 30-move horizon;
+No ponder, searchmoves, MultiPV or claim protocol. Clock controls use
+the accepted root's active side, the configured Move Overhead reserve (default
+50 ms) and a default 30-move horizon;
 see the completion contract for exact bounds/precedence. At/below the reserve,
 return a legal unsearched fallback without model work. Clocked searches feed the
 same cooperative deadline as movetime, including native async cancellation.
@@ -90,7 +92,8 @@ polls between bounded resumable steps. isready works while searching; busy root/
 changes are rejected. stop yields one bestmove, repeated stop does not duplicate
 it. If no simulation completed, a legal fallback is labeled **unsearched**.
 
-Explicit nodes accepts 1..256 simulations, with 4096 arena nodes and horizon
+Explicit nodes accepts 1..65,536 simulations, with a configurable 4096..65,536
+logical arena-node limit and horizon
 1..32; defaults 64/4. Timed/evaluation budgets without explicit nodes use the
 existing internal 65,536-simulation safety ceiling; arena exhaustion can finish
 sooner. A depleted clock selects zero simulations.
@@ -218,7 +221,7 @@ performance-qualified, and does not imply a speedup or a complete rules proof.
 This is not yet feature parity with production DeepFin. Complete input encoding,
 legal policy conversion and selected-leaf CPU inference are implemented below.
 Training stays Python; transformer math executes in the native C++ backend.
-The UCI path still lacks options, ponder/searchmoves, subtree reuse, shared-tree
+The UCI path still lacks ponder/searchmoves, subtree reuse, shared-tree
 multi-walker parity, useful unbounded/deepening search, CUDA integration and
 trained-model/device/strength qualification. The separate persistent CPU live
 runner and CUDA tensor probe do not close those UCI gaps.
@@ -500,10 +503,12 @@ opt-in async mode they are processed while the copied forward runs, but encoding
 selection and blocked diagnostic output can still delay them. Quit joins physical
 work. No hard-stop latency guarantee is made. Policy maps and packed buffers are
 now reused as described below; legal entries/history inputs remain leaf-specific.
-The backend has a 65,536-forward process limit. No CUDA, batched scheduler,
-subtree reuse, production Gumbel parity, trained-model strength or training
-migration is established. Existing material-mode regressions and perft depths
-remain unchanged; new native tests and model export are opt-in only.
+The UCI path now uses the epoch-bound forward budget described below. Unbound
+diagnostic and separate batch calls retain a 65,536-forward process limit.
+No CUDA, batched scheduler, subtree reuse, production Gumbel parity, trained-model
+strength or training migration is established. Existing material-mode regressions
+and perft depths remain unchanged. Model export and real-model qualification stay
+explicit opt-in operations; hosted UCI controller checks do not export or load a model.
 
 ## Neural-work instrumentation
 
@@ -543,3 +548,27 @@ lookup, chess legality, neural numerics or the native compiler. See the durable
 [migration/proof matrix](../../../docs/bend_migration_proofs.md) and
 [subset evidence record](../../../docs/experiments/2026-09-21-bend-subset-source-laws.md).
 Neither proof/native gate is added to ordinary pytest or existing perft budgets.
+
+## Session resources and native search admission (candidate)
+
+The native handshake advertises TreeNodes (4096..65536, default 4096) and Move
+Overhead (0..5000 ms, default 50). Exact integer settings commit only while the
+controller is idle; unknown/invalid or busy changes preserve the prior settings
+and root. Settings and native buffers survive position changes and ucinewgame.
+TreeNodes is a logical node cap; underlying storage rounds up to a power of two.
+Each result reports its actual tree capacity and used count in tree_resources.
+
+The standalone native model route explicitly begins each search epoch with its
+effective simulation/neural-row bound (at most 65536). Repeating the same epoch
+and bound is idempotent, without replenishment; stale epochs, changed bounds and
+a busy native slot are rejected. Cancelled work stays charged to its original
+epoch until physical retirement. This replaces the old process-wide diagnostic
+65536-forward lifetime stop for session-bound UCI work. Legacy unbound diagnostics
+and the separate batch route retain their original 65536 cap; checked lifetime
+counters still fail before wrapping. Zero-work searches never reset admission.
+
+The existing Bend UCI engine workflow qualifies these paths with actual generated
+material and blocked-native UCI, native guard boundary tests, standard-client
+configuration, malformed transactions, generic and UBSan builds. Results are
+pending for this candidate. This does not establish trained-model performance,
+CUDA support, ponder/searchmoves or production search parity.
