@@ -202,3 +202,19 @@ The proof does not establish playing strength, model quality, performance,
 search correctness, complete UCI behavior, Python-free training, or freedom from
 all engine bugs. Final reports must name the actual theorem, premises, source
 head, passing checks, independent review and residual trusted components.
+
+## Qualified both-wing component, 1 October 2026
+
+The [castling projection composition](../native/bend_engine/standalone/proofs/generator_contract/CASTLING.md)
+now has a complete passing source/control gate at a2824a0d586a1ca17bb279538866872edb4e03df
+([run 36814349505](https://github.com/jjoshua2/DeepFin/actions/runs/36814349505)).
+It proves exact whole-array and tag-2 output-list equality for actual optimized
+legal_moves, plus complete-Ply Boolean uniqueness. Both wing guards and the three
+independent target-centred geometry checks determine the canonical output list.
+The ordinary scan remains in the actual implementation before projection.
+
+The premises remain symbolic initialized construction, valid Board, Boolean side
+and a home-king singleton. Historical entitlement and derivation of these premises,
+general king-away positions, forward/reverse geometry composition and the closed
+public-builder bridge remain separate. This is genuine component closure inside
+milestone 1, not completion of that milestone or of the five-part top-level claim.

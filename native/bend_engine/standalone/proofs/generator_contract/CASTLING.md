@@ -1,7 +1,7 @@
 # Exact both-wing castling projection candidate
 
-Status: unqualified candidate; zero additional accepted-law credit until the
-complete fail-closed source gate succeeds.
+Status: source-qualified component on a2824a0d586a1ca17bb279538866872edb4e03df
+in hosted run 36814349505. The complete legal-generator contract remains open.
 
 The complete importing consumer asks the unchanged pinned checker for:
 
@@ -88,3 +88,29 @@ the ordinary bridge while directly falsifying castle retention. It does not
 broaden accepted diagnostics. Short controls now precede the expensive full
 consumer, with all the same final requirements and unchanged total/stage bounds.
 The source theorem and importing consumer are unchanged.
+
+## Final combined source qualification
+
+[Run 36814349505](https://github.com/jjoshua2/DeepFin/actions/runs/36814349505)
+passes the complete combined gate at source
+a2824a0d586a1ca17bb279538866872edb4e03df:
+
+- Exact actual full/fast and production-wiring helper: 8.497660053999994 seconds
+- Full importing exact array/list and complete-Ply uniqueness consumer:
+  697.018755295 seconds, exact safe checker output
+- All five intended semantic controls, including production check-side and
+  repeated-wing corruptions, at their registered locations
+- Final unchanged source and pinned compiler identities
+- Four host classification tests in each Python optimization mode and twelve
+  original compiler-pin tests
+
+The [receipt](../../../../../docs/experiments/evidence/bend-generator-contract/castling-qualified-36814349505.json)
+and [provenance](../../../../../docs/experiments/evidence/bend-generator-contract/castling-qualified-36814349505-provenance.json)
+preserve exact source hashes and original artifact identity. Independent source
+review checked the theorem/data flow, quantity fixes, diagnostic classification,
+precise mutant, budget reallocation and final gate ordering.
+
+Two component definitions are qualified; historical modular law counts and full
+aggregate status are not revised. No runtime/native/GPU result is newly claimed.
+The separately failing actual public-builder boundary and all residual history,
+forward-attack, ordinary/EP, skip-check and whole-generator obligations remain.

@@ -185,3 +185,38 @@ is not broadened. Short controls are moved ahead of the expensive complete
 consumer so malformed controls fail promptly; full consumer plus all controls,
 source/compiler checks and original resource limits remain mandatory. No theorem
 source, consumer, premise, compiler or runtime change accompanies this correction.
+
+## Final combined castling source gate: PASS
+
+[Run 36814349505, job 110216055951](https://github.com/jjoshua2/DeepFin/actions/runs/36814349505/job/110216055951)
+on a2824a0d586a1ca17bb279538866872edb4e03df passes the entire fail-closed gate.
+The helper completed in 8.497660053999994 seconds. All five semantic controls
+were rejected at their required locations, then the complete importing consumer
+returned exact safe output after 697.018755295 seconds. Final source and compiler
+identity checks passed. Four host classification methods passed under normal
+Python, -O and -OO; all twelve original compiler-pin tests passed. The unchanged
+whole-qualifier 1,600-second, 2-CPU quota and 6-GiB/no-swap limits were respected.
+
+The [full source receipt](evidence/bend-generator-contract/castling-qualified-36814349505.json)
+and [provenance](evidence/bend-generator-contract/castling-qualified-36814349505-provenance.json)
+retain the source/compiler identity, diagnostics and original artifact metadata.
+The first stdout JSON copy interleaved systemd status output; the second complete
+copy printed by the following record step was parsed unchanged. No compiler
+peak-memory claim is inferred from the service's final accounting line.
+
+Independent source review found no remaining blockers after checking actual
+generator retention, complete table transport, both wing order/decisions, complete
+Ply uniqueness, explicit local premises, source-wiring mutation and fail-closed
+gate corrections. Review and final source/control evidence are distinct.
+
+This qualifies the two public component definitions in CastleComposition:
+exact and no_duplicates, as requested by the complete castle_consumer. It is
+not an aggregate proof-inventory run and does not qualify actual Tables.build,
+historical rights/reachability, forward-attack composition, ordinary/promotion/EP
+coverage, general skip-check safety or the integrated legal-generator theorem.
+The proof is a local home-king/symbolic-initializer component of that finish line.
+Runtime, checker, Base, pin, inherited proofs and previous gates are unchanged.
+
+Exact-head whole-repository lint and PEXT passed; ordinary CI was still running
+when this record was prepared. Existing native regression results are separate
+and do not upgrade the source theorem's domain or residual trusted components.

@@ -1,0 +1,24 @@
+{
+  "repository": "jjoshua2/DeepFin",
+  "pull_request": 979,
+  "head_commit": "a2824a0d586a1ca17bb279538866872edb4e03df",
+  "run_id": 36814349505,
+  "job_id": 110216055951,
+  "run_url": "https://github.com/jjoshua2/DeepFin/actions/runs/36814349505",
+  "artifact": {
+    "id": 11140584099,
+    "name": "bend-castling-composition",
+    "digest": "sha256:50c6e114b7a3f24eefbd140bab8407efe9c7a6c684bcc6e2598da4893f6e2b7a",
+    "size_in_bytes": 14146,
+    "created_at": "2026-10-01T04:29:18Z"
+  },
+  "checkout_lines": [
+    "2026-10-01T04:16:44.0072298Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +c7139e58da4cebc343fd362d024bf503daf27860:refs/remotes/pull/979/merge",
+    "2026-10-01T04:16:47.3294473Z HEAD is now at c7139e5 Merge a2824a0d586a1ca17bb279538866872edb4e03df into beef6c2b5c3f4b819396517529dbdb58c6625715",
+    "2026-10-01T04:16:47.3373536Z [command]/usr/bin/git log -1 --format=%H"
+  ],
+  "receipt_origin": "Complete unchanged second JSON receipt printed by the Record result and unchanged source step. The first stdout copy interleaves systemd completion messages and was not parsed as JSON. Removed only GitHub timestamp prefixes from the second copy.",
+  "result": "PASS",
+  "accepted_candidate_definitions": 2,
+  "intended_semantic_controls_passed": 5
+}
