@@ -43,6 +43,7 @@ class InventoryGateTests(unittest.TestCase):
             report = Path(directory) / "report.json"
             report.write_text('{"bitboard_inventory_gate":"PASS","accepted_candidate_definitions":9}')
             with patch("sys.argv", ["qualify", directory, "--report", str(report)]), \
+                 patch.dict("os.environ", {"BUN": "bun"}), \
                  patch("native.bend_engine.standalone.proofs.bitboard_inventory.qualify.subprocess.run",
                        side_effect=FileNotFoundError("missing pinned compiler")):
                 try:

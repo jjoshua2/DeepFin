@@ -34,25 +34,25 @@ collapsing duplicate list tails.
 
 ## Reproducible qualification
 
-The unchanged checker is aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), with 84 compiler/Base inputs and fingerprint d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4. Qualification ran in the isolated josh Ubuntu WSL worktree with CPU affinity 0,1, numeric thread settings 2 and nice 10. The gate took 80.603 child CPU seconds and 61.918 wall seconds; each positive checker call was bounded at 180 seconds and each semantic control at 120 seconds.
+The unchanged checker is aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), with 84 compiler/Base inputs and fingerprint d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4. Qualification ran in the isolated Ubuntu WSL worktree with CPU affinity 0,1, numeric thread settings 2 and nice 10. The gate took 70.704 child CPU seconds and 53.546 wall seconds; each positive checker call was bounded at 180 seconds and each semantic control at 120 seconds.
 
 All 4 positive entries returned the exact All terms check output:
 
-- Inventory.bend: exit 0, no timeout, 7.088s; output SHA-256 3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84.
-- OneBit.bend: exit 0, no timeout, 8.288s; output SHA-256 3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84.
-- ClearStep.bend: exit 0, no timeout, 0.351s; output SHA-256 3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84.
-- consumer.bend: exit 0, no timeout, 7.234s; output SHA-256 3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84.
+- Inventory.bend: exit 0, no timeout, 5.773s; output SHA-256 3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84.
+- OneBit.bend: exit 0, no timeout, 6.482s; output SHA-256 3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84.
+- ClearStep.bend: exit 0, no timeout, 0.300s; output SHA-256 3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84.
+- consumer.bend: exit 0, no timeout, 6.530s; output SHA-256 3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84.
 
 All 5 actual-source and disconnected-consumer controls rejected semantically at their intended obligations:
 
-- actual-bit-square-key: semantic rejection at singleton_indices (0.675s; diagnostic SHA-256 7d38b306f47dbd9ba2932b31cfe05cb46fd17d577b2a7ac9885df6b51e4d3c57).
-- actual-destination-budget: semantic rejection at cells (7.552s; diagnostic SHA-256 3a0255cda8e86175c729c63096edc99b517f7d4e205795e33bd924232f07038c).
-- actual-scan-step-target-source: semantic rejection at scan_step_onehot (6.933s; diagnostic SHA-256 4060349c860447c4771c913ff8c5341b2418256fd27a96bb105b744ab4f9e7d7).
-- actual-clear-lsb-count-step: semantic rejection at use_clear_lsb_popcount_step (7.277s; diagnostic SHA-256 b75809399c972eb7334040da5cfe1383f62ed9dbc3dd1146355006c5f57cd42f).
-- consumer-proof-call-disconnected: semantic rejection at use_actual_legal_moves_one_source (8.255s; diagnostic SHA-256 d42b562701257ba919cafe1b62cf2cf203c605d27106ddeb2541b685e93a2d81).
+- actual-bit-square-key: semantic rejection at singleton_indices (0.499s; diagnostic SHA-256 7d38b306f47dbd9ba2932b31cfe05cb46fd17d577b2a7ac9885df6b51e4d3c57).
+- actual-destination-budget: semantic rejection at cells (6.518s; diagnostic SHA-256 3a0255cda8e86175c729c63096edc99b517f7d4e205795e33bd924232f07038c).
+- actual-scan-step-target-source: semantic rejection at scan_step_onehot (6.499s; diagnostic SHA-256 4060349c860447c4771c913ff8c5341b2418256fd27a96bb105b744ab4f9e7d7).
+- actual-clear-lsb-count-step: semantic rejection at use_clear_lsb_popcount_step (6.526s; diagnostic SHA-256 b75809399c972eb7334040da5cfe1383f62ed9dbc3dd1146355006c5f57cd42f).
+- consumer-proof-call-disconnected: semantic rejection at use_actual_legal_moves_one_source (6.522s; diagnostic SHA-256 d42b562701257ba919cafe1b62cf2cf203c605d27106ddeb2541b685e93a2d81).
 
-The gate freshly reran the preceding destination-factorization gate: 4 contracts passed and all 5 controls rejected. Its inherited receipt SHA-256 is 66a868fddd31d66b8b0a851621f21e32caff798804a80597e00339d5608e8e04. All 249 earlier source identities remain unchanged.
+The gate freshly reran the preceding destination-factorization gate: 4 contracts passed and all 5 controls rejected. Its inherited receipt SHA-256 is 61a20248cba5a65e6c7e823d6e4ef1a47f42075a3555e83c8643497b91e80042. All 249 earlier source identities remain unchanged.
 
-The primary qualification receipt SHA-256 is 2729441f8fdbf389d7fd18868221edc2359464c0ade128fa811991117eda258f and binds 56 proof, implementation, compiler-pin and gate-helper identities. It records commands, source hashes, exact checker outputs, negative diagnostics, compiler identity, CPU/wall accounting and the final no-drift check. The host-validation receipt SHA-256 is c7b14a317618c5231f46748c42d7825d2b4b7a247e9b1ae55ccda7f821bd9e14; focused tests passed under normal Python, -O and -OO, as did ruff, basedpyright, vulture, py_compile and staged/unstaged whitespace checks.
+The primary qualification receipt SHA-256 is 1d09bf1f9fafc819228886784dcf93296795390aa5ffdb5f1584d8740a6da271 and binds 56 proof, implementation, compiler-pin and gate-helper identities. It records commands, source hashes, exact checker outputs, negative diagnostics, compiler identity, CPU/wall accounting and the final no-drift check. The host-validation receipt SHA-256 is b0a5e77cead71a7818c6ebdeb45923c45f4a2b3a3be34f762f7ea0f9e385c783; focused tests passed under normal Python, -O and -OO, as did ruff, basedpyright, vulture, py_compile and staged/unstaged whitespace checks.
 
-The independent review is recorded in evidence/bend-bitboard-inventory/independent-review.md and covers the exact checked proof, its bridges to actual Base operations, gate controls, receipt hashes and stated scope. A local stacked patch and draft PR text are prepared outside the source checkout; nothing was pushed or merged.
+The independent review is recorded in evidence/bend-bitboard-inventory/independent-review.md and covers the exact checked proof, its bridges to actual Base operations, gate controls, receipt hashes and stated scope. PR #990 received a follow-up portability correction after CI exposed maintainer-specific Bun paths. The bounded gate was rerun against refreshed source identities; the exact CI path-leak test and focused ruff check pass.

@@ -51,7 +51,7 @@ controls; `qualify.py` reruns that earlier gate before the new checks.
 Use the isolated WSL source checkout and the unchanged compiler pin:
 
 ```bash
-BUN=/home/josh/.bun/bin/bun BEND_NO_TELEMETRY=1 \
+BUN=bun BEND_NO_TELEMETRY=1 \
   OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 RAYON_NUM_THREADS=2 \
   nice -n 10 taskset -c 0,1 python3 -m \
   native.bend_engine.standalone.proofs.bitboard_inventory.qualify \

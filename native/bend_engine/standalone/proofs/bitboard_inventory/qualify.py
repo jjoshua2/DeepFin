@@ -98,7 +98,9 @@ def main() -> None:
         os.environ.update({"OMP_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "2",
                            "MKL_NUM_THREADS": "2", "RAYON_NUM_THREADS": "2",
                            "BEND_NO_TELEMETRY": "1", "TERM": "dumb"})
-        bun = os.environ.get("BUN", "/home/josh/.bun/bin/bun")
+        bun = os.environ.get("BUN") or shutil.which("bun")
+        if not bun:
+            raise RuntimeError("bun executable was not found")
         compiler = args.compiler.resolve()
         pin_command = [bun, str(ENGINE / "standalone/verify_compiler.js"), str(compiler)]
         pin = subprocess.run(pin_command, capture_output=True, text=True, timeout=30, check=True)

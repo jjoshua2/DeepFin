@@ -2,7 +2,7 @@
   "host_validation": "PASS",
   "repository_root": "/home/josh/projects/chess-worktrees/bend-bitboard-inventory-20261002",
   "cpu_affinity_limit": 2,
-  "wall_seconds": 1.6150079029903281,
+  "wall_seconds": 1.6557597370119765,
   "checks": [
     {
       "command": [
