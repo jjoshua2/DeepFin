@@ -425,7 +425,7 @@ def resume_open_capacity(
 
     ``__init__`` calls ``_enforce_window`` before the caller can raise
     ``capacity``. A same-trial resume or salvage whose checkpoint has no
-    ``current_window`` used to construct at ``replay_window_start`` and delete
+    ``current_window`` used to construct at the configured start capacity and delete
     the durable window; the later bump cannot put those shards back. Open at
     exactly the configured maximum in that case, even if a transient pre-bump
     computed a larger window. A saved window and a fresh start return
