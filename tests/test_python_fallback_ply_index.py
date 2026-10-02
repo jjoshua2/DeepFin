@@ -61,6 +61,48 @@ def _state_from_fen(fen: str, *, game: GameConfig | None = None) -> SelfplayStat
     return state
 
 
+def _force_python_fallback(state: SelfplayState) -> None:
+    """Mirror the coupled C-ply import fallback used by SelfplayState.create."""
+    state.has_c_ply = False
+    state.c_process_ply = None
+    for name in (
+        "batch_enc_146",
+        "batch_enc_146_lc0_root",
+        "batch_enc_146_lc0_root_legacy_meta",
+        "batch_enc_146_bf16",
+        "batch_enc_146_lc0_root_bf16",
+        "batch_enc_146_lc0_root_legacy_meta_bf16",
+    ):
+        setattr(state, name, None)
+
+
+def _append_python_net_move(
+    state: SelfplayState, uci: str, *, mask: np.ndarray | None = None,
+) -> Any:
+    """Play one selected CBoard action through the Python fallback recorder."""
+    cboard_position = chess.Board(state.cboards[0].fen())
+    action = int(move_to_index(chess.Move.from_uci(uci), cboard_position))
+    probs = np.zeros((POLICY_SIZE,), dtype=np.float32)
+    probs[action] = 1.0
+    planes = input_plane_count(state.game.input_extra_features)
+    _append_records_via_python(
+        state,
+        [0],
+        xs_batch=np.zeros((1, planes, 8, 8), dtype=np.float32),
+        pol_logits=np.zeros((1, POLICY_SIZE), dtype=np.float32),
+        wdl_est=np.array([[0.4, 0.2, 0.4]], dtype=np.float32),
+        probs_list=[probs],
+        actions=[action],
+        values_list=[0.0],
+        gumbel_diags=[None],
+        masks_list=[mask],
+        is_full=np.ones((1,), dtype=bool),
+        sample_weights=[1.0],
+        diff_focus=DiffFocusConfig(),
+    )
+    return state.samples_per_game[0][-1]
+
+
 def test_python_fallback_records_absolute_fen_ply_like_c_path() -> None:
     # A FEN-created board has no local move-stack history, but its fullmove
     # counter still places it at an absolute game ply. The production CBoard
@@ -69,7 +111,7 @@ def test_python_fallback_records_absolute_fen_ply_like_c_path() -> None:
     # The dispatcher in run_network_turn only reaches _append_records_via_python
     # when has_c_ply is False. In a built env the constructor sets it True, so
     # leaving it there tests a configuration production never produces.
-    state.has_c_ply = False
+    _force_python_fallback(state)
     board = state.boards[0]
     assert len(board.move_stack) == 0
     assert board.ply() == 136
@@ -105,26 +147,11 @@ def test_python_fallback_records_absolute_fen_ply_like_c_path() -> None:
 
 
 def test_python_fallback_ply_survives_an_intervening_curriculum_sf_ply() -> None:
-    """⚑ The regression the FEN test above structurally cannot see.
-
-    ``state.cboards`` is advanced by EVERY producer of a ply: the net turn, the
-    1-legal shortcut in ``_apply_forced_moves``, and the curriculum / SF-refute
-    opponent moves in ``stockfish_turn._push_curriculum_opponent_move``.
-    ``state.boards`` is advanced only by the two net-turn sites —
-    ``stockfish_turn.py`` holds zero ``state.boards`` references and nothing
-    re-syncs it afterwards. So in a curriculum game on this fallback
-    ``state.boards`` trails ``state.cboards`` by one ply per SF move, and a
-    ``ply_index`` read off it names a ply the recorded position does not have.
-    resume.py's v3 replay check then rejects the file as ``ply_index_mismatch``.
-
-    Both stale readings are asserted against explicitly: ``Board.ply()`` (136,
-    what this PR first shipped) and ``len(move_stack)`` (0, the pre-v3 formula).
-    """
+    """A fallback SF move stays synchronized before the following net move."""
     state = _state_from_fen(_FEN_PLY_136)
-    state.has_c_ply = False
+    _force_python_fallback(state)
     board = state.boards[0]
 
-    # One curriculum Stockfish opponent ply, through the production helper.
     sf_move = chess.Move.from_uci("e2e4")
     sf_move_idx = int(move_to_index(sf_move, board))
     _push_curriculum_opponent_move(
@@ -136,43 +163,63 @@ def test_python_fallback_ply_survives_an_intervening_curriculum_sf_ply() -> None
     assert int(state.move_idx_history[0][-1]) == sf_move_idx
 
     true_ply = int(state.cboards[0].ply)
-    stale_ply = int(board.ply())
-    stale_stack_len = len(board.move_stack)
     assert true_ply == 137
-    # Ground truth for this regression. If this ever fails, `state.boards` has
-    # become authoritative again and the premise here needs re-deriving.
-    assert stale_ply == 136, "nothing re-syncs state.boards after an SF ply"
-    assert stale_stack_len == 0
+    assert board.ply() == true_ply
+    assert len(board.move_stack) == 1
+    assert board.fen() == state.cboards[0].fen()
 
-    # Mask/action come off the stale board because that is what the fallback
-    # itself falls back to; only ply_index is under test here.
-    mask = legal_move_mask(board)
-    action = int(np.flatnonzero(mask)[0])
-    probs = np.zeros((POLICY_SIZE,), dtype=np.float32)
-    probs[action] = 1.0
-    planes = input_plane_count(state.game.input_extra_features)
+    # The next action comes from the CBoard position and must be legal and
+    # position-preserving when decoded and pushed by the Python fallback.
+    rec = _append_python_net_move(state, "e7e5")
+    assert rec.ply_index == true_ply
+    assert board.ply() == true_ply + 1
+    assert len(state.move_idx_history[0]) == 2
+    assert board.fen() == state.cboards[0].fen()
 
-    _append_records_via_python(
-        state,
-        [0],
-        xs_batch=np.zeros((1, planes, 8, 8), dtype=np.float32),
-        pol_logits=np.zeros((1, POLICY_SIZE), dtype=np.float32),
-        wdl_est=np.array([[0.4, 0.2, 0.4]], dtype=np.float32),
-        probs_list=[probs],
-        actions=[action],
-        values_list=[0.0],
-        gumbel_diags=[None],
-        masks_list=[mask],
-        is_full=np.ones((1,), dtype=bool),
-        sample_weights=[1.0],
-        diff_focus=DiffFocusConfig(),
+
+def test_python_fallback_queen_check_mask_and_reply_match_cboard() -> None:
+    fen = "4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1"
+    state = _state_from_fen(fen)
+    _force_python_fallback(state)
+    sf_move = chess.Move.from_uci("e2e7")
+    sf_idx = int(move_to_index(sf_move, state.boards[0]))
+    _push_curriculum_opponent_move(
+        state, 0,
+        legal_indices=state.cboards[0].legal_move_indices(),
+        cand_idxs=[sf_idx], cand_scores=[0.0], regret_limit=float("inf"),
     )
 
-    rec = state.samples_per_game[0][0]
-    assert rec.ply_index == true_ply
-    assert rec.ply_index != stale_ply
-    assert rec.ply_index != stale_stack_len
+    assert state.boards[0].fen() == state.cboards[0].fen()
+    c_mask = np.zeros((POLICY_SIZE,), dtype=bool)
+    c_mask[state.cboards[0].legal_move_indices()] = True
+    np.testing.assert_array_equal(legal_move_mask(state.boards[0]), c_mask)
+    reply = chess.Move.from_uci("e8e7")
+    reply_idx = int(move_to_index(reply, chess.Board(state.cboards[0].fen())))
+    assert c_mask[reply_idx]
 
+    rec = _append_python_net_move(state, "e8e7")
+    assert rec.legal_mask[reply_idx]
+    assert state.boards[0].fen() == state.cboards[0].fen()
+
+
+def test_curriculum_sf_move_keeps_cboard_replay_authoritative_on_c_path() -> None:
+    state = _state_from_fen(chess.STARTING_FEN)
+    assert state.has_c_ply
+    before = state.boards[0].fen()
+    sf_move = chess.Move.from_uci("e2e4")
+    sf_idx = int(move_to_index(sf_move, state.boards[0]))
+
+    _push_curriculum_opponent_move(
+        state, 0,
+        legal_indices=state.cboards[0].legal_move_indices(),
+        cand_idxs=[sf_idx], cand_scores=[0.0], regret_limit=float("inf"),
+    )
+
+    expected = chess.Board(before)
+    expected.push(sf_move)
+    assert state.boards[0].fen() == before
+    assert state.cboards[0].fen() == expected.fen()
+    assert state.move_idx_history[0] == [sf_idx]
 
 def test_blindspot_reconstruction_matches_absolute_fen_ply() -> None:
     starting = chess.Board(_FEN_PLY_136)
