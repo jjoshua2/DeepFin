@@ -26,15 +26,21 @@ class ClassificationTests(unittest.TestCase):
     def test_consumer_default_propagates_to_child_and_log_is_persisted(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "consumer.log"
-            with patch.object(qualify.subprocess, "Popen") as popen:
-                popen.return_value.poll.return_value = 0
-                popen.return_value.returncode = 0
-                popen.return_value.stdout = io.BytesIO()
+            child = __import__("unittest.mock").mock.Mock()
+            child.poll.return_value = 0
+            child.returncode = 0
+            child.stdout = io.BytesIO()
+            captured = {}
+
+            def fake_popen(command, *, stdout, stderr, env, start_new_session):
+                captured.update(stdout=stdout, stderr=stderr, env=env,
+                                start_new_session=start_new_session)
+                return child
+
+            with patch.object(qualify.subprocess, "Popen", side_effect=fake_popen):
                 result = qualify.invoke("bun", Path("compiler"), Path("entry"),
                                         qualify.DEFAULT_CONSUMER_TIMEOUT_SECONDS, log)
-                self.assertEqual(
-                    popen.call_args.kwargs["stdout"], qualify.subprocess.PIPE
-                )
+                self.assertEqual(captured["stdout"], qualify.subprocess.PIPE)
             self.assertFalse(result["timed_out"])
             self.assertEqual(result["wall_limit_seconds"], 86_400)
             self.assertEqual(result["log_path"], str(log))
