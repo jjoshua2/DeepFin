@@ -14,14 +14,17 @@ def _safe_manifest_filename(value: object, *, default: str) -> str:
     return name or str(default)
 
 
-def _ensure_executable(path: Path) -> None:
-    """Best-effort chmod +x for POSIX systems."""
+def _ensure_executable(path: Path, *, strict: bool = False) -> None:
+    """Add execute bits on POSIX; optionally fail if the mode cannot be set."""
     try:
         if os.name != "nt":
             st = os.stat(path)
             os.chmod(path, st.st_mode | 0o111)
+            if strict and os.stat(path).st_mode & 0o111 != 0o111:
+                raise PermissionError(f"could not make {path} executable")
     except OSError:
-        pass  # stat/chmod refused by filesystem — downstream will fail loud if exec matters
+        if strict:
+            raise
 
 
 def _download(
@@ -31,6 +34,7 @@ def _download(
     timeout: float = 30.0,
     headers: dict[str, str] | None = None,
     expected_sha256: str | None = None,
+    make_executable: bool = False,
 ) -> None:
     try:
         import requests
@@ -57,6 +61,8 @@ def _download(
                     f"sha256 mismatch for {out_path.name}: got={got} "
                     f"expected={expected_sha256}",
                 )
+        if make_executable:
+            _ensure_executable(tmp, strict=True)
         os.replace(tmp, out_path)
     except Exception:
         if fd >= 0:
@@ -73,6 +79,7 @@ def _download_and_verify(
     expected_sha256: str | None,
     timeout: float = 30.0,
     headers: dict[str, str] | None = None,
+    make_executable: bool = False,
 ) -> None:
     """Download to a private temp file, verify it, then atomically publish.
 
@@ -85,6 +92,7 @@ def _download_and_verify(
         _download(
             url, out_path=out_path, timeout=timeout, headers=headers,
             expected_sha256=exp or None,
+            make_executable=make_executable,
         )
 
     try:
@@ -101,11 +109,19 @@ def _download_and_verify_shared(
     timeout: float = 30.0,
     headers: dict[str, str] | None = None,
     lock_timeout_s: float = 600.0,
+    make_executable: bool = False,
 ) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    def _existing_asset_is_valid() -> bool:
+        if expected_sha256 and _sha256_file(out_path) != str(expected_sha256):
+            return False
+        if make_executable:
+            _ensure_executable(out_path, strict=True)
+        return True
+
     if out_path.exists():
-        if not expected_sha256 or _sha256_file(out_path) == str(expected_sha256):
+        if _existing_asset_is_valid():
             return
         out_path.unlink(missing_ok=True)
 
@@ -121,7 +137,7 @@ def _download_and_verify_shared(
             have_lock = True
         except FileExistsError:
             if out_path.exists():
-                if not expected_sha256 or _sha256_file(out_path) == str(expected_sha256):
+                if _existing_asset_is_valid():
                     return
                 out_path.unlink(missing_ok=True)
             if time.time() >= deadline:
@@ -131,7 +147,7 @@ def _download_and_verify_shared(
 
     try:
         if out_path.exists():
-            if not expected_sha256 or _sha256_file(out_path) == str(expected_sha256):
+            if _existing_asset_is_valid():
                 return
             out_path.unlink(missing_ok=True)
         _download_and_verify(
@@ -140,6 +156,7 @@ def _download_and_verify_shared(
             expected_sha256=expected_sha256,
             timeout=timeout,
             headers=headers,
+            make_executable=make_executable,
         )
     finally:
         with contextlib.suppress(Exception):

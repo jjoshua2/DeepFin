@@ -624,6 +624,7 @@ Context:
 | F047 | Medium | Search Correctness | Gumbel C root handling | `chess_anti_engine/mcts/gumbel_c.py`, `tests/test_mcts_uci_parity_gates.py` | Gumbel C returned the raw NN WDL-derived value for an already-terminal checkmate root instead of the terminal root value. UCI/selfplay callers using the C path could report/search with a neutral value on a root where STM is already checkmated. | Root `values_out` was initialized from `root_qs = _wdl_to_q(...)` before the `root_cb.is_game_over()` branch, and that branch did not replace it with `CBoard.terminal_value()`. | Added root-contract tests that check both PUCT/Gumbel implementations against independent masks/terminal values across normal, ep, single-legal, checkmate, and draw-terminal roots, plus UCI TB shortcut/searchmoves/root-reuse behavior. Verified MCTS/UCI slice: `33 passed`. | fixed |
 | WLA-001 | Medium | Reliability | Worker pool startup | `chess_anti_engine/worker_pool.py`, `tests/test_worker_pool.py` | If a later worker Popen failed during initial startup, previously started children were outside the pool's cleanup try/finally and continued running without a supervisor. | Simulated the second spawn raising OSError after the first child launched; before the fix the child received no terminate call. Startup and the existing supervisor loop now share the same finally cleanup. | Regression verifies the earlier child is terminated after partial startup failure; worker-pool and shutdown slice passes. | fixed |
 | WLA-002 | Medium | Reliability | Worker asset cache | `chess_anti_engine/worker_assets.py`, `tests/test_worker_cached_assets.py` | Concurrent downloads targeting one cache path shared a fixed .tmp name. One downloader could rename that temp file while another was still writing, yielding FileNotFoundError or exposing incomplete/unverified content; the SHA check happened after publishing. | Deterministic two-thread mocked download reproduced the collision on the unhashed legacy opening-book path. Downloads now use unique temp files in the destination directory and verify expected SHA before atomic replace. | Concurrency regression verifies complete final bytes; checksum-negative regression verifies bad content never replaces the existing cache entry and temp files are cleaned. | fixed |
+| WLA-003 | Medium | Reliability | Stockfish worker cache | chess_anti_engine/worker.py, chess_anti_engine/worker_assets.py, tests/test_worker_stockfish_executable_cache.py | Worker-pulled Stockfish was SHA-verified and atomically published before _ensure_executable() ran. A concurrent cache consumer could observe the valid but non-executable file and call Popen, while a persistent old 0600 cache hit skipped the chmod permanently. | Real WorkerSession._sync_stockfish with valid 0600 SHA-correct fixtures and a fake Stockfish constructor asserting execute bits failed for a fresh session and matching last_sf_sha; a barrier at post-publish/pre-chmod reproduced the same race. Downloaded Stockfish now gets execute mode on the verified temp file before atomic replace; verified cache hits repair mode strictly before engine construction. | Tests cover both last-SHA states and a two-session publisher/consumer interleaving; the consumer never sees a non-executable published binary. | fixed |
 
 ## Review Passes
 
@@ -1109,7 +1110,7 @@ Files:
 Correctness/reliability/security:
 
 - [x] Upload endpoints authenticate correctly and validate shard size, path, archive, and schema.
-- [x] Downloads and asset cache writes are atomic under concurrent workers.
+- [x] Downloads and asset cache writes are atomic under concurrent workers; Stockfish execute bits are set before publication and repaired on cache hits.
 - [x] Leases are sticky enough for load balance but do not strand workers forever.
 - [x] Worker retry/backoff handles transient server/network/model errors without corrupting local state.
 - [x] Worker pool startup/shutdown handles child failures and signal propagation.
@@ -1129,6 +1130,7 @@ Tests:
 - [x] `tests/test_distributed_selfplay_backpressure.py`
 - [x] `tests/test_worker_pool.py`
 - [x] `tests/test_worker_cached_assets.py`
+- [x] `tests/test_worker_stockfish_executable_cache.py`
 - [x] `tests/test_worker_config_yaml.py`
 - [x] `tests/test_worker_small_uploads.py`
 - [x] `tests/test_e2e_smoke.py`
@@ -1165,6 +1167,26 @@ Worker delivery/process ownership first-pass addendum (2026-10-02; base 26910529
   cross-host shared filesystems and production Stockfish binary startup are
   not exercised; shared-cache configuration is documented as per-machine.
 
+- [x] Worker-pulled Stockfish cache mode follow-up: before the fix, the
+  fake constructor observed mode 0600 and raised for both a fresh session and
+  a session whose last SHA matched; a barrier after atomic publication also let
+  the consumer observe that non-executable inode before the publisher chmod.
+  After the fix, execute bits are present at the publication boundary and
+  cache-hit sessions repair older entries before Stockfish construction.
+  tests/test_worker_stockfish_executable_cache.py,
+  tests/test_worker_cached_assets.py, and
+  tests/test_worker_model_update.py::test_sync_stockfish_reinits_on_binary_or_hash_change
+  passed (11 passed; two-thread cap; peak process-tree RSS 593 MiB).
+- [x] Broader worker lifecycle/cache validation after WLA-003 passed:
+  tests/test_worker_stockfish_executable_cache.py, tests/test_worker_cached_assets.py,
+  tests/test_worker_pool.py, tests/test_worker_shutdown_signal.py,
+  tests/test_worker_model_update.py, tests/test_worker_upload_response.py,
+  tests/test_worker_small_uploads.py, tests/test_tune_distributed_worker_cmd.py,
+  tests/test_stockfish_pool.py, and tests/test_worker_boot_hang_watchdog.py
+  (170 passed; two-thread cap; 24-hour timeout; peak process-tree RSS 1.47 GiB).
+- [x] Local Codex review of the uncommitted WLA-003 diff found no actionable
+  regressions; its focused 11-test slice passed. No real Stockfish binary,
+  live worker, credentials, network service, or GPU was used.
 ### Stockfish Integration
 
 Status: `deep`. PID direction/state tests, worker-pool overlap, UCI timeout
