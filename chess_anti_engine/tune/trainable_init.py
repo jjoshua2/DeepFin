@@ -205,7 +205,8 @@ def _restore_from_ray_checkpoint(
         trainer.load(maybe)
         rr.startup_source = "checkpoint"
     if "lr" in config:
-        trainer.set_peak_lr(float(config["lr"]), rescale_current=False)
+        # Warmup consumes the restored group LR before the scheduler updates it.
+        trainer.set_peak_lr(float(config["lr"]), rescale_current=True)
     return restored_trial_meta, restored_rng_state
 
 
