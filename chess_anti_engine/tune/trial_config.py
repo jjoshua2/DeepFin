@@ -1330,3 +1330,8 @@ class RestoreResult:
   # (audit T10: a salvage restart used to start with an empty gate window while
   # a resume kept it, with nothing saying the two differed).
     restored_gate_state: dict | None = None
+  # True only when a checkpointed numpy Generator was installed into the
+  # sampling rng. DiskReplayBuffer then takes its prefetch seed without
+  # advancing that generator. False on a fresh start, a cross-trial fork,
+  # and any restore whose rng sidecar was missing or rejected.
+    sampling_rng_restored: bool = False
