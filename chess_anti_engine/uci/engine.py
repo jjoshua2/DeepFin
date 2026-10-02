@@ -475,7 +475,9 @@ class Engine:
         _println(format_readyok())
 
     def _handle_newgame(self) -> None:
-        self._wait_for_search()
+        if not self._wait_for_search():
+            _println("info string ucinewgame ignored; prior search is still running")
+            return
         self._worker.reset_tree()
         self._board = chess.Board()
         self._pending_fen = None
@@ -485,7 +487,9 @@ class Engine:
         self._popped_ponder_move = None
 
     def _handle_position(self, cmd: CmdPosition) -> None:
-        self._wait_for_search()
+        if not self._wait_for_search():
+            _println("info string position ignored; prior search is still running")
+            return
         if cmd.fen is None:
             start = chess.Board()
         else:
@@ -612,10 +616,14 @@ class Engine:
         self._applied_moves = tuple(target_moves)
 
     def _handle_go(self, cmd: CmdGo) -> None:
-        if self._search_thread is not None and self._search_thread.is_alive():
-  # UCI says you should `stop` before issuing another `go`. Be
-  # forgiving: stop the current one first.
-            self._handle_stop()
+  # Stop a current search first; UCI expects stop before starting the next go.
+        if (
+            self._search_thread is not None
+            and self._search_thread.is_alive()
+            and not self._handle_stop()
+        ):
+            _println("info string go ignored; prior search is still running")
+            return
   # Ponder mode: search at the position BEFORE opponent's predicted
   # reply. That node's root expansion creates a child for every legal
   # opponent move, so whichever one they play — predicted or not — we
@@ -678,7 +686,7 @@ class Engine:
         )
         self._search_thread.start()
 
-    def _handle_stop(self) -> None:
+    def _handle_stop(self) -> bool:
         if self._search_thread is not None:
             self._stop_event.set()
             self._search_thread.join(timeout=_JOIN_TIMEOUT_S)
@@ -686,10 +694,12 @@ class Engine:
   # Don't clear the handle: the thread may still be running a
   # C chunk that can't be interrupted. Bumping _search_gen
   # (in _handle_go) will invalidate any late bestmove. We
-  # retry the cleanup on the next isready / go.
+  # retry cleanup before the next command that needs exclusive worker access.
                 _println("info string search stop timed out; thread still running")
+                return False
             else:
                 self._search_thread = None
+        return True
 
     def _handle_ponderhit(self) -> None:
         """Opponent played our predicted move. Convert open-ended ponder
@@ -707,7 +717,9 @@ class Engine:
   # options must not mutate while a search thread is still reading them.
   # In particular SyzygyPath swaps the shared tablebase cache, which the
   # search thread probes through on every leaf batch.
-        self._wait_for_search()
+        if not self._wait_for_search():
+            _println("info string setoption ignored; prior search is still running")
+            return
         name = cmd.name.lower()
   # SyzygyPath is special: empty value is meaningful (sentinel for unset),
   # all others bail when value is None.
@@ -858,7 +870,9 @@ class Engine:
         so `UseVL=true` on an evaluator that cannot support it reports the path
         that actually ran rather than the one that was asked for.
         """
-        self._wait_for_search()
+        if not self._wait_for_search():
+            _println("info string searchconfig unavailable; prior search is still running")
+            return
         path = self._worker.realized_search_path()
         values = self._worker.realized_search_values()
         _println(
@@ -1767,21 +1781,27 @@ class Engine:
         from the UCI main loop's finally block so ``BatchCoalescingDispatcher``
         (if active) drains its non-daemon submitter before the interpreter
         tears down torch's CUDA context."""
-        self._wait_for_search()
+        thread = self._search_thread
+        if thread is not None and thread.is_alive():
+            self._stop_event.set()
+            with self._state_lock:
+                self._search_gen += 1
+            _println("info string engine close waiting for active search to exit")
+            thread.join()
+            self._search_thread = None
         if self._gil_probe is not None:
             self._gil_probe.close()
         self._worker.close()
 
   # -- helpers --------------------------------------------------------------
 
-    def _wait_for_search(self) -> None:
-        if self._search_thread is not None and self._search_thread.is_alive():
-            self._stop_event.set()
-            self._search_thread.join(timeout=_JOIN_TIMEOUT_S)
-            if self._search_thread.is_alive():
-                _println("info string search stop timed out; thread still running")
-            else:
-                self._search_thread = None
+    def _wait_for_search(self) -> bool:
+        """Stop and join the active search before mutating shared worker state.
+
+        A timed-out search still owns the worker/tree. Callers must defer their
+        operation instead of resetting, rebuilding, or closing that shared state.
+        """
+        return self._handle_stop()
 
 
 def _is_playable_fallback(

@@ -484,6 +484,25 @@ Current notes:
   comparing implementations. It found that Gumbel C returned the raw NN root
   value for an already-checkmated root instead of the terminal value. Gumbel C
   now seeds terminal root values from `CBoard.terminal_value()`.
+- Finding F050 opened/fixed in this cycle: when a stop/wait join timed out,
+  the Python UCI engine logged that its background search remained alive but
+  go, position, ucinewgame, setoption, searchconfig, and close proceeded against
+  the same SearchWorker anyway. A later go could overlap the previous worker
+  call; board/tree/options changes and shutdown could race it. Wait barriers now
+  return whether the worker is idle and defer state-mutating commands while the
+  search still owns it. Shutdown invalidates the outstanding result, waits for
+  the search to exit, then closes the worker so evaluator threads are drained.
+- Deterministic synthetic-worker regression failed before the fix (two
+  concurrent worker.run calls) and passed after it. It also checks no
+  board/tree/options mutation and no worker close while the old call remains
+  blocked.
+- Focused Python UCI protocol/session/time-control validation after F050 passed:
+  tests/test_uci_protocol.py, tests/test_uci_engine_state.py,
+  tests/test_uci_time_manager.py, tests/test_uci_searchmoves.py,
+  tests/test_uci_ponderhit_clock.py, tests/test_uci_smoke.py,
+  tests/test_uci_walker_pool.py, tests/test_stockfish_uci_timeout.py, and
+  tests/test_uci_stop_timeout_isolation.py (121 passed; two-thread cap; peak
+  process-tree RSS 2,041 MiB).
 - Focused MCTS/UCI parity validation after F047 passed:
   `python3 -m pytest tests/test_mcts_uci_parity_gates.py tests/test_gumbel_root_many_edge_cases.py tests/test_mcts_c_tree.py tests/test_uci_searchmoves.py -q`.
 - Follow-up S007 gate expansion added an independent persistent-root reuse
@@ -1233,7 +1252,7 @@ Files:
 Correctness/reliability:
 
 - [x] UCI parser accepts common GUI command sequences and rejects malformed input safely.
-- [x] `go`, `stop`, `ponderhit`, `isready`, `ucinewgame`, and `quit` state transitions are correct.
+- [x] `go`, `stop`, `ponderhit`, `isready`, `ucinewgame`, and `quit` state transitions are correct; after a stop timeout, commands that need exclusive worker access defer instead of racing the still-live search.
 - [x] Time manager uses the correct side clock/increment after move and ponder transitions.
 - [x] Search returns legal best moves and reasonable scores under empty/terminal/legal-limited states.
 - [x] Subprocess client handles child engine errors and shutdown.
@@ -1253,7 +1272,16 @@ Tests:
 - [x] `tests/test_uci_searchmoves.py`
 - [x] `tests/test_uci_ponderhit_clock.py`
 - [x] `tests/test_uci_walker_pool.py`
-- [x] `tests/test_stockfish_uci_timeout.py`
+- [x] tests/test_stockfish_uci_timeout.py
+- [x] tests/test_uci_stop_timeout_isolation.py
+
+Stop-timeout follow-up (2026-10-02; base 269105298285b6098ffbf80405cb18ec33186b38):
+
+- [x] Reproduce a worker that outlives the join timeout and verify a subsequent go cannot start a concurrent search.
+- [x] Verify timed-out position, ucinewgame, setoption, searchconfig, and close leave the shared worker/tree and engine state untouched.
+- [x] Check command parsing/FEN/move handling, clock-side selection, movetime/nodes/depth/searchmoves limits, ponderhit board/clock handoff, output fallback, subprocess timeout/cleanup, and normal stop/quit through the paths and tests listed above.
+- [x] Run the focused protocol/session/time-control suite including the new regression with CPU extensions, two-thread caps, and the 4-GiB process-tree RSS guard: 122 tests passed; peak RSS 2,041 MiB.
+- [ ] Hardware-specific proof of a real long uninterruptible CUDA chunk was not run; synthetic SearchWorker blocking validates the Python orchestration boundary without GPU.
 
 ### Evaluation, Benchmarks, and Operational Scripts
 
