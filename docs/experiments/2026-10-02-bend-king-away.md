@@ -29,14 +29,16 @@ five-part generator claim remain open.
 The unchanged compiler is `aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae`, Bend 2.0.21
 plus the existing U64 support. Its 84 compiler/Base/effect inputs have fingerprint
 `d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4`.
-Local host: Python 3.10.12 and Bun 1.4.2. Execution was in a separate josh-owned
+Local host: Python 3.10.12 and Bun 1.4.2. Execution was in a separate user-owned
 Ubuntu WSL worktree, CPU affinity 0,1, numerical thread settings 2 and nice 10.
 No training, arena, GPU, data, compiler or production source was changed.
 
-From repository root, with a source checkout matching the existing pin:
+From repository root, with a source checkout matching the existing pin and
+Bun 1.4.2 installed. Set `BUN` if it is installed outside the current user's
+standard Bun directory:
 
 ```bash
-BUN=/home/josh/.bun/bin/bun BEND_NO_TELEMETRY=1 \
+BUN="${BUN:-$HOME/.bun/bin/bun}" BEND_NO_TELEMETRY=1 \
   OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 \
   nice -n 10 taskset -c 0,1 python3 -m \
   native.bend_engine.standalone.proofs.generator_contract.qualify_king_away \
@@ -98,3 +100,21 @@ The exact proof sources, importing consumer, complete local gate and receipts ar
 unchanged. This new gate is reproducible locally; the proposed job requires a
 separately authorized workflow-capable publication before it becomes an automatic
 CI check. Existing CI is not claimed to execute this new gate.
+
+
+## Documentation portability correction
+
+The first hosted CPU suite on `2240c338722f807469a77095a6e388ad5af80474`
+reported one failure and 14,391 passes: the tracked-file portability guard found
+host-specific Bun paths in the two new command examples. The examples now derive
+the default from the current user's home and retain an explicit `BUN` override.
+The host ownership description also uses neutral wording.
+
+The original proof receipt and independent review remain unchanged. Neither
+Markdown file is an input in the complete source/control gate's 249-file manifest;
+all recorded proof, consumer, checker-pin and verifier-input identities still
+match. No expensive proof run was repeated for these documentation edits and no
+new checker acceptance is claimed. The documentation delta and targeted checks
+are banked separately in
+[the docs-only reconciliation](evidence/bend-king-away/docs-only-reconciliation.json).
+The proposed workflow remains uninstalled, and merge approval is separate.

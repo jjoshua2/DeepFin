@@ -44,9 +44,11 @@ array certificate or initialized-array premise is introduced.
 
 Reproduce from the repository root, using the unchanged compiler pinned in
 `standalone/toolchain.json`:
+Set `BUN` to your Bun 1.4.2 executable if it is installed elsewhere; the
+default below uses the current user's standard Bun installation.
 
 ```bash
-export BUN=/home/josh/.bun/bin/bun
+export BUN="${BUN:-$HOME/.bun/bin/bun}"
 export BEND_NO_TELEMETRY=1 OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2
 taskset -c 0,1 python3 -m native.bend_engine.standalone.proofs.generator_contract.qualify_king_away \
   /tmp/deepfin-king-away-checker-aaeb9bc --report /tmp/king-away-qualification.json

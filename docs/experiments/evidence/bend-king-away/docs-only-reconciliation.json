@@ -1,0 +1,133 @@
+{
+  "recorded_utc": "2026-10-02T05:44:39.648013+00:00",
+  "status": "PASS_UNCHANGED_CHECKED_INPUTS",
+  "previous_reviewed_head": "2240c338722f807469a77095a6e388ad5af80474",
+  "original_qualification_receipt_sha256": "6e20c442ca16b43a80803c3d2156bf6471da7414a6080d5507cccda6e432f800",
+  "original_proof_gate": "PASS",
+  "original_review_sha256": "bb0326ea8da3b26faa3329178a968d4a2f1edc561093f53f300d4a88da8afeb0",
+  "current_gate_input_count": 249,
+  "gate_input_mismatches": 0,
+  "current_manifest_equals_original": true,
+  "new_checker_run": false,
+  "reason_no_expensive_rerun": "Only documentation and evidence changed; the actual complete gate input manifest, all 249 source hashes, and original compiler fingerprint are identical.",
+  "documentation_changes": [
+    {
+      "path": "docs/experiments/2026-10-02-bend-king-away.md",
+      "old_sha256": "0049c3cbbb6c59e7779937e8f7595ed6af6c35ede73871ddd4330e580c0c10e1",
+      "new_sha256": "290d77c31a1181adcc325df02af4e1ceeaf024b35fdd2e719310fdfbe1992348",
+      "bash_syntax": [
+        {
+          "command": [
+            "bash",
+            "-n"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      ],
+      "resolved_relative_links": [
+        "../../native/bend_engine/standalone/proofs/generator_contract/KING_AWAY.md",
+        "evidence/bend-king-away/source.json",
+        "evidence/bend-king-away/host-validation.json",
+        "evidence/bend-king-away/independent-review.md",
+        "evidence/bend-king-away/proposed-workflow.yml",
+        "evidence/bend-king-away/docs-only-reconciliation.json"
+      ]
+    },
+    {
+      "path": "native/bend_engine/standalone/proofs/generator_contract/KING_AWAY.md",
+      "old_sha256": "6c065b84bb3c920818b678ff88a2d1a8d6ee84a9f8f489b1049fd1a139170bab",
+      "new_sha256": "3904c65759148e38e377d3f6a09050296710c4c535eb9e7211a41d5219071a7d",
+      "bash_syntax": [
+        {
+          "command": [
+            "bash",
+            "-n"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      ],
+      "resolved_relative_links": []
+    }
+  ],
+  "bun_default": {
+    "command": [
+      "bash",
+      "-c",
+      "BUN=\"${BUN:-$HOME/.bun/bin/bun}\"; \"$BUN\" --version"
+    ],
+    "exit_code": 0,
+    "stdout": "1.4.2\n",
+    "stderr": ""
+  },
+  "bun_override": {
+    "command": [
+      "bash",
+      "-c",
+      "BUN=\"${BUN:-$HOME/.bun/bin/bun}\"; printf \"%s\" \"$BUN\""
+    ],
+    "exit_code": 0,
+    "stdout": "/tmp/custom-bun-executable",
+    "stderr": ""
+  },
+  "compiler_identity_check": {
+    "command": [
+      "/home/josh/.bun/bin/bun",
+      "native/bend_engine/standalone/verify_compiler.js",
+      "/tmp/deepfin-king-away-checker-aaeb9bc"
+    ],
+    "exit_code": 0,
+    "stdout": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\n",
+    "stderr": ""
+  },
+  "portability_test": {
+    "command": "CAE_TEST_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 CUDA_VISIBLE_DEVICES= nice -n 10 taskset -c 0,1 python3 -m pytest -q tests/test_no_absolute_home_paths.py --junitxml=/tmp/king-away-portability.xml",
+    "tests": 11,
+    "failures": 0,
+    "errors": 0,
+    "log_sha256": "d583706715f2492ec261a4fb7fd44564dd5ae8eaa353e653b85b4f65c3c7bfc2",
+    "junit_sha256": "b2fb17ff25c341e02652525fb4d849277606b441dc9c34542f89a59d39393352"
+  },
+  "diff_check": {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "limits": [
+    "This is documentation identity reconciliation, not a new checker run or new theorem",
+    "Automatic KingAway workflow remains uninstalled",
+    "Merge approval remains pending; no merge authorized by this fix"
+  ],
+  "independent_docs_review": {
+    "reviewer": "/root/king_away_merge_readiness_review",
+    "verdict": "NO_ACTIONABLE_FINDINGS",
+    "coverage": [
+      "Actual three-file diff",
+      "Recomputed complete 249-file manifest equals original receipt",
+      "Original receipt/review unchanged",
+      "Old/new document hashes",
+      "Links and independently rerun bash syntax",
+      "Saved 11-test log and JUnit identities"
+    ],
+    "limits": "Read-only documentation and evidence review; no proof checker rerun, writes, posted comments, or merge."
+  },
+  "final_tracked_set_portability_checks": {
+    "tests": [
+      "test_no_tracked_file_leaks",
+      "test_no_tracked_file_carries_this_machines_identity"
+    ],
+    "passed": 2,
+    "failures": 0,
+    "errors": 0,
+    "log_sha256": "2ed77f22f62d5a2328a38c04ace1b5fd37d944d9dec7af6871bcd700254bb44c",
+    "junit_sha256": "2ccbff75d182835f0052daf216a8099182e9da7605312c4ecc660c632d13129c"
+  }
+}
