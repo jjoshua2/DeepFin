@@ -7,6 +7,7 @@ thousands of ``ReplaySample`` Python objects.
 """
 from __future__ import annotations
 
+import copy
 import fcntl
 import logging
 import os
@@ -413,6 +414,32 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
     return out
 
 
+def resume_open_capacity(
+    *,
+    current_window: int,
+    replay_window_max: int,
+    restored_window: int,
+    durable_resume: bool,
+) -> int:
+    """Capacity to pass into ``DiskReplayBuffer`` before ``__init__`` trims.
+
+    ``__init__`` calls ``_enforce_window`` before the caller can raise
+    ``capacity``. A same-trial resume or salvage whose checkpoint has no
+    ``current_window`` used to construct at ``replay_window_start`` and delete
+    the durable window; the later bump cannot put those shards back. Open at
+    the configured max in that case, and never below the capacity the caller
+    would already have used — an exploit pre-bump can sit above the max until
+    the caller caps ``buf.capacity``. A saved window and a fresh start return
+    ``current_window`` unchanged. The caller applies a positive
+    ``restored_window``, including the live ``replay_window_max`` cap, before
+    this function sees it.
+    """
+    window = int(current_window)
+    if int(restored_window) > 0 or not durable_resume:
+        return window
+    return int(replay_window_max)
+
+
 class DiskReplayBuffer:
     """Disk-backed replay buffer with array-backed hot shuffle storage.
 
@@ -457,6 +484,7 @@ class DiskReplayBuffer:
         diff_focus_pol_scale: float = 0.0,
         diff_focus_q_weight: float = 0.0,
         deterministic_refresh: bool = False,
+        preserve_sampling_rng: bool = False,
     ):
         self.capacity = int(capacity)
         self.rng = rng
@@ -498,7 +526,21 @@ class DiskReplayBuffer:
         self._shard_recency_exponent = validate_shard_recency_exponent(
             shard_recency_exponent,
         )
-        self._prefetch_rng = np.random.default_rng(int(rng.integers(0, 2**32 - 1)))
+  # The prefetch seed is one integers() draw from the sampling generator.
+  # A fresh trial draws it once, before any checkpoint, so the sidecar
+  # already excludes it. Resume installs that sidecar first; drawing again
+  # here shifts every later mirror decision and sample index by one
+  # variate. When the caller has just installed a checkpointed generator,
+  # take the seed and roll the parent back. The prefetch stream still
+  # starts from that integer. Fresh starts and cross-trial forks leave
+  # the flag false and keep today's one-draw advance.
+        if preserve_sampling_rng:
+            saved_state = copy.deepcopy(rng.bit_generator.state)
+            prefetch_seed = int(rng.integers(0, 2**32 - 1))
+            rng.bit_generator.state = saved_state
+        else:
+            prefetch_seed = int(rng.integers(0, 2**32 - 1))
+        self._prefetch_rng = np.random.default_rng(prefetch_seed)
   # OFF in production; ON makes the draw sequence a pure function of the seed.
   #
   # The shuffle-pool refresh has TWO implementations and picks between them by
