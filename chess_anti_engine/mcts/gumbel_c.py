@@ -280,7 +280,10 @@ def _start_gumbel_trailing_args(
 # policy/Q across two structural transpositions whose lc0_root_legacy_meta
 # history/search context differs, so this semantic correction gets the same
 # fail-fast treatment as W1 rather than waiting for a routine rebuild.
-_REQUIRED_MCTS_ABI = 5
+# Raised to 6 for root history identity: add_root binds context even when a
+# terminal shortcut completes before start_gumbel_sims, and reused roots expose
+# root_context_matches so changed history cannot retain solved/evaluated state.
+_REQUIRED_MCTS_ABI = 6
 
 # Mirrors the VLOSS_MODE_* defines in _mcts_tree.c (205-206). LEGACY scores a
 # pending leaf as a loss (parallel-PUCT pessimism); VIRTUAL_MEAN scores it at
@@ -809,8 +812,9 @@ def run_gumbel_root_many_c(
         raise RuntimeError(
             f"compiled _mcts_tree ABI_VERSION={_abi} < required {_REQUIRED_MCTS_ABI} "
             "(missing the start_gumbel_sims root-scale args, the audit-W1 "
-            "transposition-key fix, history-safe TT evaluation reuse and/or "
-            "batch_process_ply's search_wdl draw-mode args); rebuild the C "
+            "transposition-key fix, history-safe TT evaluation reuse, "
+            "batch_process_ply's search_wdl draw-mode args or bound root history); "
+            "rebuild the C "
             "extension: "
             "python3 scripts/build_production_extensions.py"
         )
@@ -1233,7 +1237,14 @@ def run_gumbel_root_many_c(
                 # `legal_idx` — the Python reference's semantic for a narrowed
                 # root — but they are counted apart: MISSING is the alarm, and
                 # NARROWED is routine and fires on ordinary winning-root plies.
-                if tree.is_expanded(rid):
+                # Equal legal actions do not establish evaluation/search
+                # identity: history affects input planes, repetition terminals
+                # and already-propagated solved state. Keep the old subtree
+                # intact and allocate a fresh root when that context changes.
+                if (
+                    tree.is_expanded(rid)
+                    and tree.root_context_matches(rid, root_cboards[i])
+                ):
                     _support = _classify_expanded_root_support(tree, rid, legal_idx)
                     if _support == _ROOT_SUPPORT_EQUAL:
                         root_ids[i] = rid
@@ -1244,7 +1255,7 @@ def run_gumbel_root_many_c(
                         _warn_root_support_narrowed()
 
             if not _reused:
-                rid = tree.add_root(1, float(root_qs[i]))
+                rid = tree.add_root(1, float(root_qs[i]), root_cboards[i])
                 root_ids[i] = rid
                 tree.expand(rid, legal_idx.astype(np.int32), priors)
 
