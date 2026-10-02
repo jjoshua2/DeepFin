@@ -1,0 +1,73 @@
+name: Bend off-home king castling exclusion
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/bend-king-away.yml'
+      - 'native/bend_engine/standalone/proofs/**'
+      - 'native/bend_engine/legal_probe/Chess.bend'
+      - 'native/bend_engine/bitboard_probe/Sliders.bend'
+      - 'native/bend_engine/standalone/verify_compiler.js'
+      - 'native/bend_engine/standalone/toolchain.json'
+      - 'native/bend_engine/install_ci_bend.sh'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bend-king-away-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  king-away:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      BEND_NO_TELEMETRY: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+      - name: Original compiler install and pin
+        run: bash native/bend_engine/install_ci_bend.sh
+      - name: Fail-closed wrapper and original compiler-pin tests
+        run: |
+          python -m unittest native.bend_engine.standalone.proofs.generator_contract.test_qualify_king_away
+          python -O -m unittest native.bend_engine.standalone.proofs.generator_contract.test_qualify_king_away
+          python -OO -m unittest native.bend_engine.standalone.proofs.generator_contract.test_qualify_king_away
+          bun test native/bend_engine/standalone/verify_compiler.test.js
+      - name: Complete actual-generator consumer and semantic controls
+        run: |
+          mkdir -p artifacts/bend-king-away
+          sudo systemd-run --wait --collect --pipe \
+            --unit="bend-king-away-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --property=CPUQuota=200% --property=MemoryMax=6G \
+            --property=MemorySwapMax=0 --property=RuntimeMaxSec=1200 \
+            --uid="$(id -u)" --working-directory="$PWD" \
+            /usr/bin/env BEND_NO_TELEMETRY=1 CUDA_VISIBLE_DEVICES= \
+            OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 \
+            BUN="$(command -v bun)" "$(command -v python)" -m \
+            native.bend_engine.standalone.proofs.generator_contract.qualify_king_away \
+            "$PWD/build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae" \
+            --report "$PWD/artifacts/bend-king-away/source.json"
+      - name: Record exact outcome and source stability
+        if: always()
+        run: |
+          if test -f artifacts/bend-king-away/source.json; then
+            cat artifacts/bend-king-away/source.json
+          fi
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-king-away
+          path: artifacts/bend-king-away/
+          if-no-files-found: warn
+          retention-days: 30

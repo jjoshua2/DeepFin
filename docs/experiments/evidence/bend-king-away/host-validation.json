@@ -1,0 +1,62 @@
+{
+  "recorded_utc": "2026-10-02T04:56:35.236916+00:00",
+  "base": "dd187ac09c8e60061bfcd2f8f00d748a7543c9ca",
+  "python": "Python 3.10.12",
+  "bun": "1.4.2",
+  "focused_lint": "PASS",
+  "whole_lint": {
+    "status": "BASE_EQUIVALENT_ENVIRONMENT_ERRORS",
+    "candidate_error_count": 277,
+    "base_error_count": 277,
+    "normalized_logs_equal": true,
+    "normalized_sha256": "c60747b89cc1633a3002d6c7b465618f9bbabce0798f70172aa92cd5bf7d4a8e",
+    "limitation": "Fresh code-only worktrees have no native extensions/locked development environment. No environment rebuild performed. Lint shell returned zero but diagnostics are explicitly errors, not a passing whole-repo result."
+  },
+  "log_sha256s": {
+    "/tmp/king-away-whole-lint.log": "ac2ec518469f3c071b2b19e4e7d617b3c0436afc5b65907b29eae0c57248fa4d",
+    "/tmp/king-away-base-lint.log": "46f015b3e75250b2bc1138da3e10f6d3b37e029555173817b26aa20c4ddb0470",
+    "/tmp/king-away-focused-lint-final.log": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc"
+  },
+  "wrapper_tests": [
+    {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "native.bend_engine.standalone.proofs.generator_contract.test_qualify_king_away"
+      ],
+      "exit_code": 0,
+      "raw_text": "...\n----------------------------------------------------------------------\nRan 3 tests in 0.001s\n\nOK\n",
+      "sha256": "921b60a7fd52e978fbb551cacd29df2d6708879400278e1fcc70fceeb0c6f8e0"
+    },
+    {
+      "command": [
+        "python3",
+        "-O",
+        "-m",
+        "unittest",
+        "native.bend_engine.standalone.proofs.generator_contract.test_qualify_king_away"
+      ],
+      "exit_code": 0,
+      "raw_text": "...\n----------------------------------------------------------------------\nRan 3 tests in 0.001s\n\nOK\n",
+      "sha256": "921b60a7fd52e978fbb551cacd29df2d6708879400278e1fcc70fceeb0c6f8e0"
+    },
+    {
+      "command": [
+        "python3",
+        "-OO",
+        "-m",
+        "unittest",
+        "native.bend_engine.standalone.proofs.generator_contract.test_qualify_king_away"
+      ],
+      "exit_code": 0,
+      "raw_text": "...\n----------------------------------------------------------------------\nRan 3 tests in 0.001s\n\nOK\n",
+      "sha256": "921b60a7fd52e978fbb551cacd29df2d6708879400278e1fcc70fceeb0c6f8e0"
+    }
+  ],
+  "compiler_pin_tests": {
+    "exit_code": 0,
+    "raw_text": "bun test v1.4.2 (744846f84)\n\nnative/bend_engine/standalone/verify_compiler.test.js:\n(pass) fetch and source verifier share the exact documented U64 pin [0.06ms]\n(pass) fingerprint is independent of checkout location [5.66ms]\n(pass) nested effects and core inputs all count [2.36ms]\n(pass) core mutation changes fingerprint [2.73ms]\n(pass) effect mutation changes fingerprint [2.45ms]\n(pass) extra effects are not silently ignored [2.70ms]\n(pass) renaming unchanged effect bytes changes the fingerprint [2.53ms]\n(pass) missing core input is rejected [2.39ms]\n(pass) core symlinks are rejected [2.32ms]\n(pass) effect directory symlinks are rejected [2.31ms]\n(pass) mismatched source fails without mutating the checkout [2.98ms]\n(pass) build derives revision and revision-keyed cache from the pin reader [0.08ms]\n\n 12 pass\n 0 fail\n 19 expect() calls\nRan 12 tests across 1 file. [46.00ms]\n",
+    "sha256": "156d6bd81742aff5336d8113f2db6aa6c1d26c421b20ba35e1d8728246ef6f44"
+  }
+}
