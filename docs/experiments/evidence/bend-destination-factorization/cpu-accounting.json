@@ -1,0 +1,47 @@
+{
+  "checker_prototypes": [
+    {
+      "name": "structural-01",
+      "cpu_seconds": 0.5827379999999999,
+      "wall_seconds": 0.605755094991764,
+      "timed_out": false,
+      "exit_code": 0
+    },
+    {
+      "name": "consumer-01",
+      "cpu_seconds": 2.474196,
+      "wall_seconds": 2.554997061000904,
+      "timed_out": false,
+      "exit_code": 1
+    },
+    {
+      "name": "consumer-02",
+      "cpu_seconds": 2.609765,
+      "wall_seconds": 3.2047342020086944,
+      "timed_out": false,
+      "exit_code": 0
+    }
+  ],
+  "qualification_runs": [
+    {
+      "destination_factorization_gate": "PASS",
+      "cpu_seconds": 11.071503,
+      "wall_seconds": 14.488950674014632
+    },
+    {
+      "destination_factorization_gate": "PASS",
+      "cpu_seconds": 9.544805,
+      "wall_seconds": 6.593866514012916
+    },
+    {
+      "destination_factorization_gate": "PASS",
+      "cpu_seconds": 11.008647,
+      "wall_seconds": 13.64102878299309
+    }
+  ],
+  "host_final_cpu_seconds": 272.62470200000007,
+  "host_failed_attempt_cpu_seconds": 1.3306760000000002,
+  "cpu_limit_seconds": 5400,
+  "note": "Measured subprocess CPU includes saved proof attempts, all complete gates and saved host runs. Lightweight source reads/writes and earlier tool-output-only focused tests/lint are not measured here; no heavy job or check timeout occurred.",
+  "measured_cpu_seconds": 311.24703200000005
+}
