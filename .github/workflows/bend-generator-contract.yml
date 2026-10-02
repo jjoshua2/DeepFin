@@ -23,7 +23,8 @@ concurrency:
 jobs:
   closed-builder:
     runs-on: ubuntu-24.04
-    timeout-minutes: 22
+    # GitHub Actions caps a job at 360 minutes even though the proof child defaults to 24h.
+    timeout-minutes: 360
     env:
       BEND_NO_TELEMETRY: '1'
       CUDA_VISIBLE_DEVICES: ''
@@ -53,7 +54,7 @@ jobs:
           sudo systemd-run --wait --collect --pipe \
             --unit="bend-generator-contract-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --property=CPUQuota=200% --property=MemoryMax=6G \
-            --property=MemorySwapMax=0 --property=RuntimeMaxSec=1100 \
+            --property=MemorySwapMax=0 --property=RuntimeMaxSec=87000 \
             --uid="$(id -u)" --working-directory="$PWD" \
             /usr/bin/env BEND_NO_TELEMETRY=1 CUDA_VISIBLE_DEVICES= \
             BUN="$(command -v bun)" "$(command -v python)" -m \
