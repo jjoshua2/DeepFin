@@ -1,0 +1,130 @@
+{
+  "status": "PASS",
+  "scope": "Checked structural actual-U64 ctz/index/range/selected-bit proof increment, stacked on PR #991.",
+  "theorem_contracts": [
+    {
+      "name": "popcount_lowbit_index(n,w)",
+      "premises": [],
+      "conclusion": "Word.count(n, Word.sub(n, lowbit_model(n,w), ClearStep.one(n))) == first_set(n,w); universal, including zero."
+    },
+    {
+      "name": "actual_ctz_index(a)",
+      "premises": [],
+      "conclusion": "U64.ctz(a) == U32.from_nat(first_set(64n, U64.to_word(a))); universal over U64."
+    },
+    {
+      "name": "actual_ctz_range(a,e)",
+      "premises": [
+        "U64.is_zero(a) == False"
+      ],
+      "conclusion": "Nat.is_lt(U32.to_nat(U64.ctz(a)),64n) == True."
+    },
+    {
+      "name": "actual_ctz_selects_bit(a,e)",
+      "premises": [
+        "U64.is_zero(a) == False"
+      ],
+      "conclusion": "U64.test_bit(a,U32.to_nat(U64.ctz(a))) == True."
+    }
+  ],
+  "compiler": {
+    "recorded_commit": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+    "version": "Bend 2.0.21 + U64",
+    "source_file_count": 84,
+    "source_fingerprint": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+    "base_bend_sha256": "86747736186e77ed9cb02555385026ef2eebe4e84efbcd29773e3b51b5f571a1",
+    "main_ts_sha256": "34c69df407a8abff02752f26821ee2ff7c0a303e97a32b8b5e0082b142e63f59",
+    "provenance_limit": "Pinned directory has no Git metadata; independent reviewer verified base.bend and main.ts hashes but could not authenticate recorded commit identifier from that directory."
+  },
+  "checker_limits": {
+    "cpu_affinity": [
+      0,
+      1
+    ],
+    "threads": 2,
+    "timeout_seconds_per_invocation": 180
+  },
+  "positive_checks": [
+    {
+      "entry": "WordCtzCore.bend",
+      "exit_code": 0,
+      "timed_out": false,
+      "result": "All terms check.",
+      "output_sha256": "6ca91675e8938f5145ce08172666f775090cd4127392202e74359482bb47789c",
+      "cpu_seconds": 0.73,
+      "wall_seconds": 0.49
+    },
+    {
+      "entry": "U64BitProbe.bend",
+      "exit_code": 0,
+      "timed_out": false,
+      "result": "All terms check.",
+      "output_sha256": "6ca91675e8938f5145ce08172666f775090cd4127392202e74359482bb47789c",
+      "cpu_seconds": 4.14,
+      "wall_seconds": 3.39
+    },
+    {
+      "entry": "EqZeroProbe.bend",
+      "exit_code": 0,
+      "timed_out": false,
+      "result": "All terms check.",
+      "output_sha256": "6ca91675e8938f5145ce08172666f775090cd4127392202e74359482bb47789c",
+      "cpu_seconds": 0.27,
+      "wall_seconds": 0.19
+    },
+    {
+      "entry": "TestBitBridge.bend",
+      "exit_code": 0,
+      "timed_out": false,
+      "result": "All terms check.",
+      "output_sha256": "6ca91675e8938f5145ce08172666f775090cd4127392202e74359482bb47789c",
+      "cpu_seconds": 4.56,
+      "wall_seconds": 3.72
+    }
+  ],
+  "positive_checker_cpu_seconds_total": 9.7,
+  "source_sha256": {
+    "EqZeroProbe.bend": "d1198810990e5da997b32e845a640e82303b04d527d2c7b9f7bc3478dd870d81",
+    "TestBitBridge.bend": "482c428f54ceae8f0804f7687d43390e5fff4759771af5526dca495895514cd6",
+    "U64BitProbe.bend": "aa89c0c2e53e7ba153a4f5667e7ba9185c51a64054f63e00fe7f25224d5c6c67",
+    "WordCtzCore.bend": "b85ea1379a4c16c34279716466d97d1dfd5f904c2fce21600d37a3219fb4a341"
+  },
+  "dependency_sha256": {
+    "bitboard_zero_bridge/Bridge.bend": "37f09e7e3adbeeef1f09f499b0d7e874e05cd2ffcea6ae295f51bdd7d58bb819",
+    "bitboard_inventory/ClearStep.bend": "c6228e39b7d3c2a3059f1d61c7ad96e4e2fff885e6123623d76bcc05fa23dc8a",
+    "successor/Borrow.bend": "55527289635c5191bb7857d123c67e6ccc4438d75bc16337e5318b2513302180",
+    "successor/Step.bend": "f41fd3776480069d9ef0e2b96a867254c71270c4100d048d664739fd040a2a6e",
+    "layout/Domain.bend": "5acad280e9df6975f63fa0fe51c18c08cb4f5ae9296c89a7e10673d5fa2e87b6"
+  },
+  "shift_coverage": {
+    "theorem": "U64BitProbe.bit_word_exact",
+    "indices_checked": 64,
+    "minimum": 0,
+    "maximum": 63,
+    "out_of_range": "Domain.impossible"
+  },
+  "valid_negative_controls": [
+    {
+      "name": "actual-ctz-definition-replaced-with-zero",
+      "exit_code": 1,
+      "timed_out": false,
+      "rejected_at": "actual_ctz_index",
+      "output_sha256": "58dbc4f79ac6957b6327a43089e9cef1252ce2d4690b9f3c4f4f843d5697647d"
+    },
+    {
+      "name": "actual-test-bit-definition-replaced-with-false",
+      "exit_code": 1,
+      "timed_out": false,
+      "rejected_at": "testbit_zero_struct",
+      "output_sha256": "a0812e4f2809045e490421696b6e5e76afeede66f14318fd1e706c4ea18c6f48"
+    }
+  ],
+  "negative_control_harness": "Mutants used a disposable copy of the pinned compiler; the original compiler sources were restored after checks.",
+  "forbidden_shortcuts": "No new axioms, assumptions, holes, admits, unsafe annotations, or compiler-definition changes.",
+  "stacked_base": {
+    "pull_request": 991,
+    "head": "8cea2a0986cbb001dc459968c81ad0c63d8c5013"
+  },
+  "independent_review": "PASS: internal independent reviewer checked exact portable theorem sources, imports, proof premises, shift coverage, hashes, and both valid negative controls; independently reran all four checks and controls. See independent-review.md.",
+  "review_provenance_limit": "Compiler pin directory has no Git metadata. Review independently verified base.bend and main.ts hashes, not the recorded compiler commit identifier."
+}
