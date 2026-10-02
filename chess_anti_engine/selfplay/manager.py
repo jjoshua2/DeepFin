@@ -217,7 +217,7 @@ def _wait_for_starved_sf(
         )
     elif state.pending_sf_labels:
         wait(
-            tuple(pending.future for pending in state.pending_sf_labels),
+            tuple(p.future for p in state.pending_sf_labels if p.future is not None),
             timeout=timeout_s,
             return_when=FIRST_COMPLETED,
         )
@@ -436,6 +436,21 @@ def play_batch(
 
         t0 = time.perf_counter()
         net_idxs, sp_opp_idxs, cur_opp_idxs, all_done = state.classify_active_slots()
+        # Finish recovered requests before this game's next net/SF turn. This
+        # bounds recovery admission and keeps its backlog from crowding out a
+        # newly-created label. Other slots continue while the pool works.
+        recovering = {
+            p.slot for p in state.pending_sf_labels if p.resumed
+            and p.record in state.samples_per_game[p.slot]
+        }
+        net_idxs = [i for i in net_idxs if i not in recovering]
+        sp_opp_idxs = [i for i in sp_opp_idxs if i not in recovering]
+        cur_opp_idxs = [i for i in cur_opp_idxs if i not in recovering]
+        next_labels = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
+        if recovering and len(state.pending_sf_labels) + next_labels > state.batch_size * 8:
+            # Reserve admission for the entire next turn, including other
+            # games. Near-full recovery must not crowd out their new rows.
+            net_idxs, sp_opp_idxs, cur_opp_idxs = [], [], []
         classified_count = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
         if state.pending_sf_moves:
             # Pending moves originate in cur_opp_idxs, and their boards do not
