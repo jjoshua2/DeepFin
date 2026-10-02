@@ -108,6 +108,9 @@ def _state(
     cboard = _FakeCBoard(legal_indices=legal_indices)
     return SimpleNamespace(
         batch_size=1,
+        # This stub supplies a CBoard and intentionally no Python board; match
+        # the production C-ply state contract used by curriculum processing.
+        has_c_ply=True,
         pending_sf_labels=[],
         pending_sf_moves={},
         stockfish=_FakePool(),
