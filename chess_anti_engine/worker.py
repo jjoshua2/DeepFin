@@ -4166,8 +4166,8 @@ class WorkerSession:
 
     def _suspend_inflight_games(self, state: Any) -> None:
         """play_batch on_suspend hook: persist this session's in-flight games."""
-        # _PendingSfLabel.slot; a label still in flight here dies with the
-        # session, so its ply resumes UNLABELLED. Counted, not hidden.
+        # Count games whose unfinished label descriptors must be re-fetched.
+        # Resume reconstructs their original reply positions before play continues.
         pending = [int(getattr(p, "slot", -1)) for p in state.pending_sf_labels]
         try:
             report = suspend_inflight_games(

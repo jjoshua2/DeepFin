@@ -60,7 +60,8 @@ if TYPE_CHECKING:
 
 _LOG = logging.getLogger("chess_anti_engine.selfplay.resume")
 
-# Bump whenever the on-disk layout or the meaning of a stored field changes.
+# Bump for incompatible layout or stored-field semantic changes. Optional
+# pending_sf_label_offsets extends v3; missing provenance uses the legacy tail.
 # A mismatch is a discard-with-reason, never a best-effort partial decode.
 # v3: ply_index is absolute game ply on BOTH C and Python play paths. v2 Python
 # fallback files stored move-stack-relative plies, so accepting one after this
@@ -119,14 +120,8 @@ class SuspendReport:
     # Empty slots, counted separately so the noise stays visible but apart.
     empty_slots: int = 0
     records: int = 0
-    # Games whose most recent record still had an SF label query in flight. The
-    # future dies with the session. On a CURRICULUM slot the label is re-bought:
-    # the board has not advanced, so the next step's opponent-move future is
-    # reused for the label (submit_async_sf_labels_from_curriculum_moves, gated
-    # on the same "latest record is unlabelled" test). On a SELFPLAY slot it is
-    # not — label queries are submitted for the record created in that same
-    # step — so that one ply stays unlabelled. Counted either way; it is the
-    # bound on what suspension costs in labels.
+    # Games with unfinished label requests. Their record offsets survive the
+    # session; resume reconstructs each original P1 and queues one replacement.
     games_with_label_refetch: int = 0
     reasons: dict[str, int] = field(default_factory=dict)
 
@@ -347,6 +342,41 @@ _SF_MULTIPV_COLS = 5
 _SF_LABEL_META_LEN = 6
 
 
+def _pending_original_payload(res: Any) -> dict[str, Any]:
+    """Keep the shallow result of an interrupted escalation, including PVs."""
+    def score(row: Any) -> dict[str, Any]:
+        return {
+            "wdl": None if row.wdl is None else np.asarray(row.wdl).tolist(),
+            "cp": row.cp, "mate": row.mate,
+        }
+
+    return {
+        **score(res), "bestmove_uci": res.bestmove_uci,
+        "nodes": res.nodes, "depth": res.depth,
+        "pvs": [{**score(pv), "move_uci": pv.move_uci} for pv in res.pvs],
+    }
+
+
+def _pending_original_result(data: dict[str, Any]) -> Any:
+    from chess_anti_engine.stockfish.uci import StockfishPV, StockfishResult
+
+    def wdl(row: dict[str, Any]) -> np.ndarray | None:
+        arr = row["wdl"]
+        if arr is None:
+            return None
+        vec = np.asarray(arr, dtype=np.float32)
+        if vec.shape != (3,) or not np.isfinite(vec).all():
+            raise ResumeStateError("bad_pending_labels", "invalid shallow WDL")
+        return vec
+
+    return StockfishResult(
+        bestmove_uci=data["bestmove_uci"], wdl=wdl(data),
+        cp=data["cp"], mate=data["mate"], nodes=data["nodes"], depth=data["depth"],
+        pvs=[StockfishPV(pv["move_uci"], wdl(pv), cp=pv["cp"], mate=pv["mate"])
+             for pv in data["pvs"]],
+    )
+
+
 def _game_payload(state: SelfplayState, i: int) -> dict[str, Any]:
     """Serialize slot ``i``'s in-flight game into npz-ready arrays + meta."""
     records: list[_NetRecord] = list(state.samples_per_game[i])
@@ -394,6 +424,23 @@ def _game_payload(state: SelfplayState, i: int) -> dict[str, Any]:
         # compatibility gate. As of v3 ply_index itself is absolute on BOTH
         # paths; the flag no longer changes the meaning of that field.
         "has_c_ply": bool(state.has_c_ply),
+    }
+
+    # Optional v3 extension: explicit empty means no work, so failed/cancelled
+    # queries are not retried on every restart. Old v3 readers ignore this key.
+    pending_records = {p.record for p in state.pending_sf_labels}
+    meta["pending_sf_label_offsets"] = [
+        int(rec.move_offset) for rec in records
+        if rec in pending_records and rec.has_policy and not rec.is_sf_refute_opp
+        and rec.sf_policy_target is None and rec.sf_move_index is None
+    ]
+
+    meta["pending_sf_label_originals"] = {
+        str(p.record.move_offset): _pending_original_payload(p.escalated_from_res)
+        for p in state.pending_sf_labels
+        if p.record in pending_records and p.record in records
+        and p.record.move_offset in meta["pending_sf_label_offsets"]
+        and p.escalated_from_res is not None
     }
 
     arrays: dict[str, np.ndarray] = {
@@ -561,7 +608,7 @@ def suspend_inflight_games(
             continue
         report.persisted += 1
         report.records += int(payload["meta"]["n_records"])
-        if i in awaiting:
+        if i in awaiting or payload["meta"]["pending_sf_label_offsets"]:
             report.games_with_label_refetch += 1
     _LOG.info(
         "selfplay resume: suspended games=%d records=%d skipped=%d empty_slots=%d "
@@ -676,6 +723,8 @@ class _DecodedGame:
     cboard: CBoard
     board: chess.Board
     records: list[_NetRecord]
+    label_boards: list[tuple[_NetRecord, CBoard]]
+    label_originals: dict[int, Any]
 
 
 def _record_fields(npz: Any, n: int) -> list[dict[str, Any]]:
@@ -875,8 +924,36 @@ def _replay_and_reencode(
     cb = _CBoard.from_board(opening_board)
     records: list[_NetRecord] = []
     by_offset = {off: idx for idx, off in enumerate(offsets)}
+    recovery_offsets = meta.get("pending_sf_label_offsets")
+    if recovery_offsets is None:
+        # Legacy v3 has no pending provenance. Only its eligible tail can be
+        # inferred; never turn historical interior failures into new work.
+        recovery_offsets = offsets[-1:]
+    if (
+        not isinstance(recovery_offsets, list)
+        or any(type(off) is not int or off not in by_offset for off in recovery_offsets)
+        or len(set(recovery_offsets)) != len(recovery_offsets)
+    ):
+        raise ResumeStateError("bad_pending_labels", "invalid pending record offsets")
+    recovery_offsets = set(recovery_offsets)
+    originals = meta.get("pending_sf_label_originals", {})
+    if not isinstance(originals, dict) or any(
+        str(off) not in {str(k) for k in recovery_offsets} for off in originals
+    ):
+        raise ResumeStateError("bad_pending_labels", "invalid escalation offsets")
+    label_originals = {
+        int(off): _pending_original_result(data) for off, data in originals.items()
+    }
+    label_boards: list[tuple[_NetRecord, CBoard]] = []
 
     for k in range(len(moves) + 1):
+        # P1 is exactly one played move after the record's validated P0.
+        if k - 1 in recovery_offsets:
+            rec = records[-1]
+            if (rec.has_policy and not rec.is_sf_refute_opp
+                    and rec.sf_policy_target is None and rec.sf_move_index is None
+                    and cb.legal_move_indices().size):
+                label_boards.append((rec, cb.copy()))
         r = by_offset.get(k)
         if r is not None:
             f = fields[r]
@@ -933,7 +1010,8 @@ def _replay_and_reencode(
         )
     return _DecodedGame(
         meta=meta, opening_board=opening_board, cboard=cb,
-        board=board, records=records,
+        board=board, records=records, label_boards=label_boards,
+        label_originals=label_originals,
     )
 
 
@@ -1074,6 +1152,9 @@ def _restore_into_slot(state: SelfplayState, i: int, game: _DecodedGame) -> None
     state.root_ids[i] = -1  # No tree carryover across a session.
     state.pending_sf_moves.pop(i, None)
     state.resumed_from_disk[i] = True
+    from chess_anti_engine.selfplay.stockfish_turn import queue_resumed_sf_labels
+
+    queue_resumed_sf_labels(state, i, game.label_boards, originals=game.label_originals)
 
 
 def _claim(path: Path) -> Path | None:
