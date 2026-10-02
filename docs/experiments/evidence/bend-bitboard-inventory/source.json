@@ -1,0 +1,263 @@
+{
+  "bitboard_inventory_gate": "PASS",
+  "accepted_candidate_definitions": 10,
+  "scope": "Actual Chess.bit_squares exact output for zero and each of the 64 bounded singleton U64.bit(sq) masks; actual scan_after, scan_step, scan and legal_moves consumer equalities for one-hot source/destination frontiers. Exact Array<U64> and Ply-tail preservation is stated for scan-stage equalities; the legal_moves equation retains its actual table-threading pipeline from an arbitrary input array. The separate all-U64 clear_lsb/popcount step is proved, but arbitrary-mask bit_squares membership/cardinality, ctz membership, piece-target geometry, attack answers and full legal-move correctness are not.",
+  "checks": [
+    {
+      "entry": "Inventory.bend",
+      "safe": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/home/josh/projects/chess-worktrees/bend-bitboard-inventory-20261002/native/bend_engine/standalone/proofs/bitboard_inventory/Inventory.bend",
+          "--check-only"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_limit_seconds": 180,
+        "seconds": 7.088117493985919,
+        "raw_text": "All terms check.\n",
+        "output_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+      }
+    },
+    {
+      "entry": "OneBit.bend",
+      "safe": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/home/josh/projects/chess-worktrees/bend-bitboard-inventory-20261002/native/bend_engine/standalone/proofs/bitboard_inventory/OneBit.bend",
+          "--check-only"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_limit_seconds": 180,
+        "seconds": 8.287692071025958,
+        "raw_text": "All terms check.\n",
+        "output_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+      }
+    },
+    {
+      "entry": "ClearStep.bend",
+      "safe": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/home/josh/projects/chess-worktrees/bend-bitboard-inventory-20261002/native/bend_engine/standalone/proofs/bitboard_inventory/ClearStep.bend",
+          "--check-only"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_limit_seconds": 180,
+        "seconds": 0.3507548339839559,
+        "raw_text": "All terms check.\n",
+        "output_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+      }
+    },
+    {
+      "entry": "consumer.bend",
+      "safe": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/home/josh/projects/chess-worktrees/bend-bitboard-inventory-20261002/native/bend_engine/standalone/proofs/bitboard_inventory/consumer.bend",
+          "--check-only"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_limit_seconds": 180,
+        "seconds": 7.233771525992779,
+        "raw_text": "All terms check.\n",
+        "output_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+      }
+    }
+  ],
+  "controls": [
+    {
+      "name": "actual-bit-square-key",
+      "target": "legal_probe/Chess.bend",
+      "expected_location": "singleton_indices",
+      "rejected": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/tmp/bend-bitboard-control-de7agj51/engine/standalone/proofs/bitboard_inventory/Inventory.bend",
+          "--check-only"
+        ],
+        "exit_code": 1,
+        "timed_out": false,
+        "wall_limit_seconds": 120,
+        "seconds": 0.6751196759869345,
+        "raw_text": "Error:\n- expected : [1]\n- observed : [0]\nContext:\n- e : {True{} == True{} : Bool}\nLocation: singleton_indices\n 9 |   match sq:\n10>|     case 0n: {==}\n11 |     case 1n: {==}\n",
+        "output_sha256": "7d38b306f47dbd9ba2932b31cfe05cb46fd17d577b2a7ac9885df6b51e4d3c57"
+      }
+    },
+    {
+      "name": "actual-destination-budget",
+      "target": "legal_probe/Chess.bend",
+      "expected_location": "cells",
+      "rejected": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/tmp/bend-bitboard-control-wv4v3c_z/engine/standalone/proofs/bitboard_inventory/consumer.bend",
+          "--check-only"
+        ],
+        "exit_code": 1,
+        "timed_out": false,
+        "wall_limit_seconds": 120,
+        "seconds": 7.551728818012634,
+        "raw_text": "Error:\n- expected : {(../storage/Observe.pack(c), ../../../legal_probe/Chess.destinations(63n, U64.is_zero(targets), targets, src, pawn, ep, tail)) == (../storage/Observe.pack(c), ../destination_factorization/Spec.expand(../../../legal_probe/Chess.bit_squares(64n, U64.is_zero(targets), targets, []), src, pawn, ep, tail)) : Sigma<&1, &1, Array<U64>, _ => List<&2, ../../../legal_probe/Chess.Ply>>}\n- observed : {(../storage/Observe.pack(c), ../../../legal_probe/Chess.destinations(64n, U64.is_zero(targets), targets, src, pawn, ep, tail)) == (../storage/Observe.pack(c), ../destination_factorization/Spec.expand(../../../legal_probe/Chess.bit_squares(64n, U64.is_zero(targets), targets, []), src, pawn, ep, tail)) : Sigma<&1, &1, Array<U64>, _ => List<&2, ../../../legal_probe/Chess.Ply>>}\nContext:\n- c       : ../storage/Observe.Cells\n- targets : U64\n- src     : U32\n- pawn    : Bool\n- ep      : U32\n- tail    : List<&2, ../../../legal_probe/Chess.Ply>\nLocation: ../destination_factorization/Scan.cells\n11 |     (O.pack(c),S.expand(Chess.bit_squares(64n,U64.is_zero(targets),targets,Nil{}),src,pawn,ep,tail)) : Array<U64> & List<&2,Chess.Ply>}:\n12>|   Equal.cong(List<&2,Chess.Ply>,Array<U64> & List<&2,Chess.Ply>,ms => (O.pack(c),ms),\n13 |     Chess.destinations(64n,U64.is_zero(targets),targets,src,pawn,ep,tail),\n",
+        "output_sha256": "3a0255cda8e86175c729c63096edc99b517f7d4e205795e33bd924232f07038c"
+      }
+    },
+    {
+      "name": "actual-scan-step-target-source",
+      "target": "legal_probe/Chess.bend",
+      "expected_location": "scan_step_onehot",
+      "rejected": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/tmp/bend-bitboard-control-cdt5gdyx/engine/standalone/proofs/bitboard_inventory/consumer.bend",
+          "--check-only"
+        ],
+        "exit_code": 1,
+        "timed_out": false,
+        "wall_limit_seconds": 120,
+        "seconds": 6.93336848198669,
+        "raw_text": "Error:\n- expected : ../../../legal_probe/Chess.scan_after(src, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_pawns(b), U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), ../../../legal_probe/Chess.get_ep(b), tail, ../../../legal_probe/Chess.exclude_targets(U64.or(../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), ../../../legal_probe/Chess.get_kings(b)), ../../../legal_probe/Chess.attack(Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_pawns(b), U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 0, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_knights(b), U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 1, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_bishops(b), U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 2, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_rooks(b), U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 3, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_queens(b), U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), 4, 5))))), table, src, ../../../legal_probe/Chess.get_turn(b), U64.or(../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)))))\n- observed : ../../../legal_probe/Chess.scan_after(src, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_pawns(b), U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), ../../../legal_probe/Chess.get_ep(b), tail, ../../../legal_probe/Chess.piece_targets(Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_pawns(b), U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), table, b, src))\nContext:\n- b      : ../../../legal_probe/Chess.Board\n- src    : U32\n- table  : Array<U64>\n- tail   : List<&2, ../../../legal_probe/Chess.Ply>\n- sq     : Nat\n- bound  : {Cmp.is_lt(Nat.cmp(sq, 64n)) == True{} : Bool}\n- target : {../../../legal_probe/Chess.piece_targets(Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_pawns(b), U64.shln.go(Nat.min(U32.to_nat(src), 64n), U64{1, 0})), U64{0, 0}))), table, b, src) == (table, U64.shln.go(Nat.min(sq, 64n), U64{1, 0})) : Sigma<&1, &1, Array<U64>, _ => U64>}\n- pawn   : Bool\n- ep     : U32\nLocation: OneBit.scan_step_onehot\n68 |     (table,Chess.put_move(S.promotes(pawn,U32.from_nat(sq)),src,U32.from_nat(sq),S.flag(pawn,U32.from_nat(sq),ep),tail)),\n69>|     {==},\n70 |     Equal.trans(Array<U64> & List<&2,Chess.Ply>,\n",
+        "output_sha256": "4060349c860447c4771c913ff8c5341b2418256fd27a96bb105b744ab4f9e7d7"
+      }
+    },
+    {
+      "name": "actual-clear-lsb-count-step",
+      "target": "standalone/proofs/bitboard_inventory/consumer.bend",
+      "expected_location": "use_clear_lsb_popcount_step",
+      "rejected": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/tmp/bend-bitboard-control-akjkpu1u/engine/standalone/proofs/bitboard_inventory/consumer.bend",
+          "--check-only"
+        ],
+        "exit_code": 1,
+        "timed_out": false,
+        "wall_limit_seconds": 120,
+        "seconds": 7.277394042990636,
+        "raw_text": "Error:\n- expected : {U32.from_nat(Word.count(64n, U64.to_word(a))) == U32.from_nat(Nat.add(Bool.pick(Nat, ClearStep.is_zero_word(64n, U64.to_word(a)), 0n, 1n), Word.count(64n, U64.to_word(U64.and(a, U64{4294967293, 4294967295}))))) : U32}\n- observed : {U32.from_nat(Word.count(64n, U64.to_word(a))) == U32.from_nat(Nat.add(Bool.pick(Nat, ClearStep.is_zero_word(64n, U64.to_word(a)), 0n, 1n), Word.count(64n, U64.to_word(U64.and(a, U64.sub(a, U64{1, 0})))))) : U32}\nContext:\n- a : U64\nLocation: use_clear_lsb_popcount_step\n62 |     Word.count(64n,U64.to_word(U64.clear_bit(a,1n))))) : U32}:\n63>|   ClearStep.clear_lsb_popcount_step(a)\n64 | \n",
+        "output_sha256": "b75809399c972eb7334040da5cfe1383f62ed9dbc3dd1146355006c5f57cd42f"
+      }
+    },
+    {
+      "name": "consumer-proof-call-disconnected",
+      "target": "standalone/proofs/bitboard_inventory/consumer.bend",
+      "expected_location": "use_actual_legal_moves_one_source",
+      "rejected": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/tmp/bend-bitboard-control-wxoh29kc/engine/standalone/proofs/bitboard_inventory/consumer.bend",
+          "--check-only"
+        ],
+        "exit_code": 1,
+        "timed_out": false,
+        "wall_limit_seconds": 120,
+        "seconds": 8.25525198399555,
+        "raw_text": "Error:\n- expected : ../../../legal_probe/Chess.filter_prepare(b, ../../../legal_probe/Chess.castle_side(b, False{}, ../../../legal_probe/Chess.castle_side(b, True{}, ../../../legal_probe/Chess.scan(../../../legal_probe/Chess.bit_squares(64n, U64.is_zero(../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), []), b, (table, [])))))\n- observed : ../../../legal_probe/Chess.filter_prepare(b, ../../../legal_probe/Chess.castle_side(b, False{}, ../../../legal_probe/Chess.castle_checked(Bool.and(Bool.not(Cmp.is_eq(U32.cmp(U32.and(../../../legal_probe/Chess.get_rights(b), U32.mul(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 1, 4), 1)), 0))), Bool.and(Bool.not(Cmp.is_eq(U64.cmp(U64.and(U64.and(../../../legal_probe/Chess.get_kings(b), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))), U64.shln.go(Nat.min(U32.to_nat(U32.add(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56), 4)), 64n), U64{1, 0})), U64{0, 0}))), Bool.and(Bool.not(Cmp.is_eq(U64.cmp(U64.and(U64.and(../../../legal_probe/Chess.get_rooks(b), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))), U64.shln.go(Nat.min(U32.to_nat(U32.add(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56), 7)), 64n), U64{1, 0})), U64{0, 0}))), U64.is_zero(U64.and(U64.or(../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56)), 64n), U64{96, 0})))))), table, b, U32.add(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56), 4), U32.add(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56), 6), U32.add(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56), 5), ../../../legal_probe/Chess.put_move(Bool.and(Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_pawns(b), U64.shln.go(Nat.min(U32.to_nat(U32.from_nat(src_sq)), 64n), U64{1, 0})), U64{0, 0}))), Bool.or(Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(dst_sq), 8), 0)), Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(dst_sq), 8), 7)))), U32.from_nat(src_sq), U32.from_nat(dst_sq), Bool.to_u32(Bool.and(Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_pawns(b), U64.shln.go(Nat.min(U32.to_nat(U32.from_nat(src_sq)), 64n), U64{1, 0})), U64{0, 0}))), Cmp.is_eq(U32.cmp(U32.from_nat(dst_sq), ../../../legal_probe/Chess.get_ep(b))))), []))))\nContext:\n- b         : ../../../legal_probe/Chess.Board\n- table     : Array<U64>\n- src_sq    : Nat\n- src_bound : {Cmp.is_lt(Nat.cmp(src_sq, 64n)) == True{} : Bool}\n- source    : {../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)) == U64.shln.go(Nat.min(src_sq, 64n), U64{1, 0}) : U64}\n- dst_sq    : Nat\n- dst_bound : {Cmp.is_lt(Nat.cmp(dst_sq, 64n)) == True{} : Bool}\n- target    : {../../../legal_probe/Chess.piece_targets(Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_pawns(b), U64.shln.go(Nat.min(U32.to_nat(U32.from_nat(src_sq)), 64n), U64{1, 0})), U64{0, 0}))), table, b, U32.from_nat(src_sq)) == (table, U64.shln.go(Nat.min(dst_sq, 64n), U64{1, 0})) : Sigma<&1, &1, Array<U64>, _ => U64>}\nLocation: use_actual_legal_moves_one_source\n56 |         U32.from_nat(dst_sq),Chess.get_ep(b)),Nil{}))))) : Array<U64> & List<&2,Chess.Ply>}:\n57>|   {==}\n58 | \n",
+        "output_sha256": "d42b562701257ba919cafe1b62cf2cf203c605d27106ddeb2541b685e93a2d81"
+      }
+    }
+  ],
+  "cpu_limit_seconds": 5400,
+  "compiler_identity": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\n",
+  "source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/bitboard_inventory/ClearStep.bend": "c6228e39b7d3c2a3059f1d61c7ad96e4e2fff885e6123623d76bcc05fa23dc8a",
+    "standalone/proofs/bitboard_inventory/Inventory.bend": "5d1df0516f8269643078b512564071dc69369d5d1b488c305651ee470ff783b9",
+    "standalone/proofs/bitboard_inventory/OneBit.bend": "1e0b4d1f1b288ef3ae5a198a9ec591b2a8481fa2e0e77001b5fd73219c492990",
+    "standalone/proofs/bitboard_inventory/README.md": "21a2d403a4149fcb912e35267a5b5b011c5a82936c8f92f59f3144ba7376a00f",
+    "standalone/proofs/bitboard_inventory/consumer.bend": "84b3159aae3d15e79768a2b97d4fee5d68bdb83154a3014af7fa778697f1f064",
+    "standalone/proofs/bitboard_inventory/qualify.py": "e7095862e85cc1dbf352bd2f8406ccadb80ea22f41f4062aa8b4b903dc232b9b",
+    "standalone/proofs/bitboard_inventory/test_qualify.py": "1a7101f1ebf2c2b9272f9e1126606c12eaa93a1f0c98c17c2a444f2a397ca503",
+    "standalone/proofs/board/Actual.bend": "c27ac87812368df1f565cfd2f0406a28ceaf212f4f1cd93d9e3c0f4f28ac4b5b",
+    "standalone/proofs/board/Rows.bend": "5a03bfbd266f4ef984127a86a9007a5e73a79e135a43acc6e90ce47bb831a342",
+    "standalone/proofs/board/Spec.bend": "d0e60648dc7a0b803fa715c05c53ad92274657995a994996470afb7fc45f581a",
+    "standalone/proofs/board/Words.bend": "614c05950398a65d56d5c4953882ec3c7952236b71029624ccabc5db2bd94fff",
+    "standalone/proofs/destination_factorization/Emission.bend": "7a4e2ac0c514d153091bb395ee47898f13e49216599d78337aa6841e02079d4a",
+    "standalone/proofs/destination_factorization/Factor.bend": "b8608efdc3495c4cff0e4d5823218243ab44df7fbd6b2871522ef6e424428778",
+    "standalone/proofs/destination_factorization/Scan.bend": "36d2ee18a5c6b4436b2899ef974e633ece6db5b3c11935bf62fb66b0ee0d0071",
+    "standalone/proofs/destination_factorization/Spec.bend": "107986b5ae795b60534ff61a5332a3e0a7e3055d2af47b63684136634af49571",
+    "standalone/proofs/destination_factorization/qualify.py": "0a0e11f7669e8fb7eb438ebd43a997be3a4758102a9747927e801f1de12f85be",
+    "standalone/proofs/generator_contract/qualify.py": "3993daf5e8866b029fb63f6271a82f1448d07feb04ba3238dc464e36cac60268",
+    "standalone/proofs/generator_contract/qualify_castles.py": "22b87bab59104467a4c2426a6291f401168d74b425146d440186fe5e8a0a089b",
+    "standalone/proofs/index/Bits.bend": "1fe9e204243efe2e651e14ec3db15f2ea2141ee7febf639fb0a7a8e4b5bc8afb",
+    "standalone/proofs/index/Nats.bend": "71da4b9b978f47cebf57b79352ee614f1aa6257c13c7dfc624b839c95ed38c5c",
+    "standalone/proofs/index/Words.bend": "6d08fbbc9e16d3194e2d1a7e224f17676eb81adea1ead37523e0c24cc0cccd81",
+    "standalone/proofs/layout/Domain.bend": "5acad280e9df6975f63fa0fe51c18c08cb4f5ae9296c89a7e10673d5fa2e87b6",
+    "standalone/proofs/move_update/Clear.bend": "d17e4cfa8bab35d0a97b01723c8967b554fe54204f51d1e30c2302c5e9de82c9",
+    "standalone/proofs/move_update/Core.bend": "03622895c74c320c298f5ffde8be5bb866c395be90fb51d7fd38dc0ad3987034",
+    "standalone/proofs/move_update/Ordinary.bend": "6ebcad3f9b60661ef8ba7053e5e369d94cb3820556709bb64bcbf104e499f4ad",
+    "standalone/proofs/move_update/Rows.bend": "664efb66f2afd0fe4287060ba808f34510cdac51190ee9ad6ad916527f3470e6",
+    "standalone/proofs/move_update/Selection.bend": "3e4def8b492e0136265d3da5155a4bada2d87e30b3bfef8949f2ce00c3554ee8",
+    "standalone/proofs/move_update/Spec.bend": "45dfe5836c7f0656cc8d76a63f1bf59e7c24d0c6b8d0ef9aad6808712695e901",
+    "standalone/proofs/move_update/Words.bend": "932612b475100accde1d82fdb27cd39686ce49e171ddc0fe72039f20b49de64b",
+    "standalone/proofs/promotion/Actual.bend": "5b420e12a41f2237ba2f954fe1515a6c4653a3937935e36ddb6fdad605ba2d42",
+    "standalone/proofs/promotion/Encoding.bend": "167d3aed732b5495a95c732d433975cece6293371efdfdf16efd1e270b41a133",
+    "standalone/proofs/promotion/LAWS.bend": "279235f5fd9706c74cce47a16ec73c6fec12a30e40ca566f253296ffa6e6ca7f",
+    "standalone/proofs/promotion/PROOF.bend": "35a41e1bb51f81f90d89ecae66931bcb00538ad3bcde498607a27eadf726d669",
+    "standalone/proofs/promotion/Spec.bend": "8c57db8af0a2c7428754864740762e80b284a6fd2e038445f52936f97fceea12",
+    "standalone/proofs/ray/Algebra.bend": "9b654dc68a5bb5c1d47232e2be23200eebcbd1bfa6b071a5bee60d7c7077ab69",
+    "standalone/proofs/ray/Frame.bend": "eacd6b86d18f3ead0dd56f4843f36b134b5c61630ae16fc6147dae7be8f8ccc9",
+    "standalone/proofs/ray/Grid.bend": "c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a",
+    "standalone/proofs/ray/Masking.bend": "c129c86d11aeda8ccc417f57906ebddbf8607550e8fe6bc881df89254d235149",
+    "standalone/proofs/ray/Path.bend": "92595303f046ac947264f179a3489b40cd7822b674807511d846955eda6269ad",
+    "standalone/proofs/ray/Rays.bend": "f90217fa004d1c221ecf5a83c69167cb7cf3044055ab97d7cf612a5e12400054",
+    "standalone/proofs/storage/Observe.bend": "51d1b811b9ed4933db9672d0348490e2e017110460dd473d33a0fe6bde6b292b",
+    "standalone/proofs/storage/Representation.bend": "1703fb62ab133fbfd4fa8155fa59dc19d1fa87ce2d838c92453eed516fbc9e2d",
+    "standalone/proofs/successor/Borrow.bend": "55527289635c5191bb7857d123c67e6ccc4438d75bc16337e5318b2513302180",
+    "standalone/proofs/successor/Spec.bend": "6179c0d02f97bdf6bf8d4ebea9b14dc0b48eba098a1af8c3c78ec977888e17c6",
+    "standalone/proofs/successor/Step.bend": "f41fd3776480069d9ef0e2b96a867254c71270c4100d048d664739fd040a2a6e",
+    "standalone/proofs/successor/Value.bend": "8e97a14a3659bda32dc061ae458338827d66b60dbb5749c71e2f3300140ceccf",
+    "standalone/proofs/table_preservation/_validation.py": "574d995076f22d28a05914711dcab84abf9df8587c8a10b4510ce94161a5e2b0",
+    "standalone/proofs/table_preservation/focused.py": "faff7e942d7d2464e795a4e6589ee01435f8ae2cc8c77ac5e8b0e45994908dc2",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "source_identity_count": 56,
+  "prior_king_away_receipt_sha256": "6e20c442ca16b43a80803c3d2156bf6471da7414a6080d5507cccda6e432f800",
+  "prior_input_count": 249,
+  "prior_inputs_unchanged": true,
+  "inherited_destination_gate": {
+    "exit_code": 0,
+    "receipt": "/home/josh/projects/chess-worktrees/bend-bitboard-inventory-20261002/docs/experiments/evidence/bend-bitboard-inventory/inherited-destination-factorization.json",
+    "receipt_sha256": "66a868fddd31d66b8b0a851621f21e32caff798804a80597e00339d5608e8e04"
+  },
+  "cpu_seconds": 80.603103,
+  "wall_seconds": 61.918457977008075,
+  "compiler_identity_after": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\n",
+  "source_unchanged": true
+}

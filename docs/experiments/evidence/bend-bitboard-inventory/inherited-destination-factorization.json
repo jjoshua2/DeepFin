@@ -1,0 +1,206 @@
+{
+  "destination_factorization_gate": "PASS",
+  "accepted_candidate_definitions": 4,
+  "scope": "Structural identity through actual bit_squares, independent move-block encoding and full-Ply multiplicity, arbitrary-table scan_after pair equality. No independent bitboard coverage or legal_moves correctness.",
+  "checks": [
+    {
+      "entry": "structural_consumer.bend",
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/home/josh/projects/chess-worktrees/bend-bitboard-inventory-20261002/native/bend_engine/standalone/proofs/destination_factorization/structural_consumer.bend",
+          "--check-only"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_limit_seconds": 180,
+        "seconds": 0.3670093560067471,
+        "raw_text": "All terms check.\n",
+        "output_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+      }
+    },
+    {
+      "entry": "consumer.bend",
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/home/josh/projects/chess-worktrees/bend-bitboard-inventory-20261002/native/bend_engine/standalone/proofs/destination_factorization/consumer.bend",
+          "--check-only"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_limit_seconds": 180,
+        "seconds": 1.687927822000347,
+        "raw_text": "All terms check.\n",
+        "output_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+      }
+    }
+  ],
+  "controls": [
+    {
+      "name": "actual-ordinary-flag",
+      "target": "legal_probe/Chess.bend",
+      "expected_location": "put",
+      "rejected": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/tmp/bend-destination-control-3vmkumvs/engine/standalone/proofs/destination_factorization/Emission.bend",
+          "--check-only"
+        ],
+        "exit_code": 1,
+        "timed_out": false,
+        "wall_limit_seconds": 120,
+        "seconds": 1.397262515994953,
+        "raw_text": "Error:\n- expected : ../../../legal_probe/Chess.Ply{src, dst, 0, 2} <> tail\n- observed : ../../../legal_probe/Chess.Ply{src, dst, 0, tag} <> tail\nContext:\n- src  : U32\n- dst  : U32\n- tag  : U32\n- tail : List<&2, ../../../legal_probe/Chess.Ply>\nLocation: put\n12 |     case True{}: Promotion.promotion_choices_exact(src,dst,tag,tail)\n13>|     case False{}: {==}\n14 | \n",
+        "output_sha256": "9fd1e07c33c4bc4eb203b10157e8e8a1fb4b3eff33724f61ba259ca0a7210b62"
+      }
+    },
+    {
+      "name": "actual-promotion-rank",
+      "target": "legal_probe/Chess.bend",
+      "expected_location": "structural",
+      "rejected": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/tmp/bend-destination-control-rst6s4ki/engine/standalone/proofs/destination_factorization/structural_consumer.bend",
+          "--check-only"
+        ],
+        "exit_code": 1,
+        "timed_out": false,
+        "wall_limit_seconds": 120,
+        "seconds": 0.44309206202160567,
+        "raw_text": "Error:\n- expected : {../../../legal_probe/Chess.destinations(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), src, pawn, ep, ../../../legal_probe/Chess.put_move(Bool.and(pawn, Bool.or(Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 0)), Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 6)))), src, U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), Bool.to_u32(Bool.and(pawn, Cmp.is_eq(U32.cmp(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), ep)))), Factor.emit(keys, src, pawn, ep, tail))) == Factor.emit(../../../legal_probe/Chess.bit_squares(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))) <> keys), src, pawn, ep, tail) : List<&2, ../../../legal_probe/Chess.Ply>}\n- observed : {../../../legal_probe/Chess.destinations(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), src, pawn, ep, ../../../legal_probe/Chess.put_move(Bool.and(pawn, Bool.or(Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 0)), Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 7)))), src, U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), Bool.to_u32(Bool.and(pawn, Cmp.is_eq(U32.cmp(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), ep)))), Factor.emit(keys, src, pawn, ep, tail))) == Factor.emit(../../../legal_probe/Chess.bit_squares(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))) <> keys), src, pawn, ep, tail) : List<&2, ../../../legal_probe/Chess.Ply>}\nContext:\n- p    : Nat\n- bb   : U64\n- src  : U32\n- pawn : Bool\n- ep   : U32\n- keys : List<&2, U32>\n- tail : List<&2, ../../../legal_probe/Chess.Ply>\n- dst  : U32\n- rest : U64\nLocation: Factor.structural\n24 |           +rest = U64.clear_lsb(bb)\n25>|           structural(p,U64.is_zero(rest),rest,src,pawn,ep,Con{dst,keys},tail)\n26 | \n",
+        "output_sha256": "eb53df9d54c5fc86099fc8c0b98b7f2081390fb36530ffcea0ea23163263aa5b"
+      }
+    },
+    {
+      "name": "actual-en-passant-tag",
+      "target": "legal_probe/Chess.bend",
+      "expected_location": "structural",
+      "rejected": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/tmp/bend-destination-control-pk984ucw/engine/standalone/proofs/destination_factorization/structural_consumer.bend",
+          "--check-only"
+        ],
+        "exit_code": 1,
+        "timed_out": false,
+        "wall_limit_seconds": 120,
+        "seconds": 0.345938402984757,
+        "raw_text": "Error:\n- expected : {../../../legal_probe/Chess.destinations(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), src, pawn, ep, ../../../legal_probe/Chess.put_move(Bool.and(pawn, Bool.or(Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 0)), Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 7)))), src, U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), Bool.to_u32(Bool.and(pawn, Cmp.is_eq(U32.cmp(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 65)))), Factor.emit(keys, src, pawn, ep, tail))) == Factor.emit(../../../legal_probe/Chess.bit_squares(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))) <> keys), src, pawn, ep, tail) : List<&2, ../../../legal_probe/Chess.Ply>}\n- observed : {../../../legal_probe/Chess.destinations(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), src, pawn, ep, ../../../legal_probe/Chess.put_move(Bool.and(pawn, Bool.or(Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 0)), Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 7)))), src, U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), Bool.to_u32(Bool.and(pawn, Cmp.is_eq(U32.cmp(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), ep)))), Factor.emit(keys, src, pawn, ep, tail))) == Factor.emit(../../../legal_probe/Chess.bit_squares(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))) <> keys), src, pawn, ep, tail) : List<&2, ../../../legal_probe/Chess.Ply>}\nContext:\n- p    : Nat\n- bb   : U64\n- src  : U32\n- pawn : Bool\n- ep   : U32\n- keys : List<&2, U32>\n- tail : List<&2, ../../../legal_probe/Chess.Ply>\n- dst  : U32\n- rest : U64\nLocation: Factor.structural\n24 |           +rest = U64.clear_lsb(bb)\n25>|           structural(p,U64.is_zero(rest),rest,src,pawn,ep,Con{dst,keys},tail)\n26 | \n",
+        "output_sha256": "f2d4b08e67f76442dde540dcb6eabdce391a5c13563b70d85878043d0b4357ec"
+      }
+    },
+    {
+      "name": "actual-bit-square-key",
+      "target": "legal_probe/Chess.bend",
+      "expected_location": "structural",
+      "rejected": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/tmp/bend-destination-control-uxb48vqk/engine/standalone/proofs/destination_factorization/structural_consumer.bend",
+          "--check-only"
+        ],
+        "exit_code": 1,
+        "timed_out": false,
+        "wall_limit_seconds": 120,
+        "seconds": 0.3891253680048976,
+        "raw_text": "Error:\n- expected : {../../../legal_probe/Chess.destinations(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), src, pawn, ep, ../../../legal_probe/Chess.put_move(Bool.and(pawn, Bool.or(Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 0)), Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 7)))), src, U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), Bool.to_u32(Bool.and(pawn, Cmp.is_eq(U32.cmp(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), ep)))), Factor.emit(keys, src, pawn, ep, tail))) == Factor.emit(../../../legal_probe/Chess.bit_squares(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), U32.xor(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 1) <> keys), src, pawn, ep, tail) : List<&2, ../../../legal_probe/Chess.Ply>}\n- observed : {../../../legal_probe/Chess.destinations(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), src, pawn, ep, ../../../legal_probe/Chess.put_move(Bool.and(pawn, Bool.or(Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 0)), Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 7)))), src, U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), Bool.to_u32(Bool.and(pawn, Cmp.is_eq(U32.cmp(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), ep)))), Factor.emit(keys, src, pawn, ep, tail))) == Factor.emit(../../../legal_probe/Chess.bit_squares(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))) <> keys), src, pawn, ep, tail) : List<&2, ../../../legal_probe/Chess.Ply>}\nContext:\n- p    : Nat\n- bb   : U64\n- src  : U32\n- pawn : Bool\n- ep   : U32\n- keys : List<&2, U32>\n- tail : List<&2, ../../../legal_probe/Chess.Ply>\n- dst  : U32\n- rest : U64\nLocation: Factor.structural\n24 |           +rest = U64.clear_lsb(bb)\n25>|           structural(p,U64.is_zero(rest),rest,src,pawn,ep,Con{dst,keys},tail)\n26 | \n",
+        "output_sha256": "5c3b02bbaadda23d1f9d3f007fcdfa4a859541a20e18fc1240af4241bc9c2b80"
+      }
+    },
+    {
+      "name": "consumer-proof-call-disconnected",
+      "target": "standalone/proofs/destination_factorization/consumer.bend",
+      "expected_location": "use_structural",
+      "rejected": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/tmp/bend-destination-control-ra3egg78/engine/standalone/proofs/destination_factorization/consumer.bend",
+          "--check-only"
+        ],
+        "exit_code": 1,
+        "timed_out": false,
+        "wall_limit_seconds": 120,
+        "seconds": 1.5751601560041308,
+        "raw_text": "Error:\n- expected : ../../../legal_probe/Chess.destinations(n, empty, bb, src, pawn, ep, Factor.emit(keys, src, pawn, ep, tail))\n- observed : Factor.emit(../../../legal_probe/Chess.bit_squares(n, empty, bb, keys), src, pawn, ep, tail)\nContext:\n- n     : Nat\n- empty : Bool\n- bb    : U64\n- src   : U32\n- pawn  : Bool\n- ep    : U32\n- keys  : List<&2, U32>\n- tail  : List<&2, ../../../legal_probe/Chess.Ply>\nLocation: use_structural\n12 |     F.emit(Chess.bit_squares(n,empty,bb,keys),src,pawn,ep,tail) : List<&2,Chess.Ply>}:\n13>|   {==}\n14 | \n",
+        "output_sha256": "67bde3fd684ae2e020631ceca6c1ff7f8afb3ea0b7fd6477636bf9271aa03c6d"
+      }
+    }
+  ],
+  "cpu_limit_seconds": 5400,
+  "compiler_identity": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\n",
+  "source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/board/Actual.bend": "c27ac87812368df1f565cfd2f0406a28ceaf212f4f1cd93d9e3c0f4f28ac4b5b",
+    "standalone/proofs/board/Rows.bend": "5a03bfbd266f4ef984127a86a9007a5e73a79e135a43acc6e90ce47bb831a342",
+    "standalone/proofs/board/Spec.bend": "d0e60648dc7a0b803fa715c05c53ad92274657995a994996470afb7fc45f581a",
+    "standalone/proofs/board/Words.bend": "614c05950398a65d56d5c4953882ec3c7952236b71029624ccabc5db2bd94fff",
+    "standalone/proofs/destination_factorization/Count.bend": "8606eca353cbdeb014315c02800ca15b08dbb723d7a3bf5f61fef2181de9c095",
+    "standalone/proofs/destination_factorization/Emission.bend": "7a4e2ac0c514d153091bb395ee47898f13e49216599d78337aa6841e02079d4a",
+    "standalone/proofs/destination_factorization/Factor.bend": "b8608efdc3495c4cff0e4d5823218243ab44df7fbd6b2871522ef6e424428778",
+    "standalone/proofs/destination_factorization/README.md": "7ac1796b3beee597823cc061a06a93d300f696caa72c1be1fc4637b5bcd141d4",
+    "standalone/proofs/destination_factorization/Scan.bend": "36d2ee18a5c6b4436b2899ef974e633ece6db5b3c11935bf62fb66b0ee0d0071",
+    "standalone/proofs/destination_factorization/Spec.bend": "107986b5ae795b60534ff61a5332a3e0a7e3055d2af47b63684136634af49571",
+    "standalone/proofs/destination_factorization/consumer.bend": "31e94ba62600e08cdee416d6f26fe500e97f2101d64b6f735c41b22a85b8b45e",
+    "standalone/proofs/destination_factorization/qualify.py": "0a0e11f7669e8fb7eb438ebd43a997be3a4758102a9747927e801f1de12f85be",
+    "standalone/proofs/destination_factorization/structural_consumer.bend": "798e44403e29adef58056e716789b141012860db90d6f848d037c0138c3f7de2",
+    "standalone/proofs/destination_factorization/test_qualify.py": "185da9b078708b2f837109229927f5a45811664f3656b68c59c69c11282a5b13",
+    "standalone/proofs/generator_contract/qualify.py": "3993daf5e8866b029fb63f6271a82f1448d07feb04ba3238dc464e36cac60268",
+    "standalone/proofs/generator_contract/qualify_castles.py": "22b87bab59104467a4c2426a6291f401168d74b425146d440186fe5e8a0a089b",
+    "standalone/proofs/move_update/Clear.bend": "d17e4cfa8bab35d0a97b01723c8967b554fe54204f51d1e30c2302c5e9de82c9",
+    "standalone/proofs/move_update/Core.bend": "03622895c74c320c298f5ffde8be5bb866c395be90fb51d7fd38dc0ad3987034",
+    "standalone/proofs/move_update/Ordinary.bend": "6ebcad3f9b60661ef8ba7053e5e369d94cb3820556709bb64bcbf104e499f4ad",
+    "standalone/proofs/move_update/Rows.bend": "664efb66f2afd0fe4287060ba808f34510cdac51190ee9ad6ad916527f3470e6",
+    "standalone/proofs/move_update/Selection.bend": "3e4def8b492e0136265d3da5155a4bada2d87e30b3bfef8949f2ce00c3554ee8",
+    "standalone/proofs/move_update/Spec.bend": "45dfe5836c7f0656cc8d76a63f1bf59e7c24d0c6b8d0ef9aad6808712695e901",
+    "standalone/proofs/move_update/Words.bend": "932612b475100accde1d82fdb27cd39686ce49e171ddc0fe72039f20b49de64b",
+    "standalone/proofs/promotion/Actual.bend": "5b420e12a41f2237ba2f954fe1515a6c4653a3937935e36ddb6fdad605ba2d42",
+    "standalone/proofs/promotion/Encoding.bend": "167d3aed732b5495a95c732d433975cece6293371efdfdf16efd1e270b41a133",
+    "standalone/proofs/promotion/LAWS.bend": "279235f5fd9706c74cce47a16ec73c6fec12a30e40ca566f253296ffa6e6ca7f",
+    "standalone/proofs/promotion/PROOF.bend": "35a41e1bb51f81f90d89ecae66931bcb00538ad3bcde498607a27eadf726d669",
+    "standalone/proofs/promotion/Spec.bend": "8c57db8af0a2c7428754864740762e80b284a6fd2e038445f52936f97fceea12",
+    "standalone/proofs/ray/Algebra.bend": "9b654dc68a5bb5c1d47232e2be23200eebcbd1bfa6b071a5bee60d7c7077ab69",
+    "standalone/proofs/ray/Frame.bend": "eacd6b86d18f3ead0dd56f4843f36b134b5c61630ae16fc6147dae7be8f8ccc9",
+    "standalone/proofs/ray/Grid.bend": "c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a",
+    "standalone/proofs/ray/Masking.bend": "c129c86d11aeda8ccc417f57906ebddbf8607550e8fe6bc881df89254d235149",
+    "standalone/proofs/ray/Path.bend": "92595303f046ac947264f179a3489b40cd7822b674807511d846955eda6269ad",
+    "standalone/proofs/ray/Rays.bend": "f90217fa004d1c221ecf5a83c69167cb7cf3044055ab97d7cf612a5e12400054",
+    "standalone/proofs/storage/Observe.bend": "51d1b811b9ed4933db9672d0348490e2e017110460dd473d33a0fe6bde6b292b",
+    "standalone/proofs/storage/Representation.bend": "1703fb62ab133fbfd4fa8155fa59dc19d1fa87ce2d838c92453eed516fbc9e2d",
+    "standalone/proofs/table_preservation/_validation.py": "574d995076f22d28a05914711dcab84abf9df8587c8a10b4510ce94161a5e2b0",
+    "standalone/proofs/table_preservation/focused.py": "faff7e942d7d2464e795a4e6589ee01435f8ae2cc8c77ac5e8b0e45994908dc2",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "inherited_receipt_sha256": "6e20c442ca16b43a80803c3d2156bf6471da7414a6080d5507cccda6e432f800",
+  "inherited_inputs": 249,
+  "inherited_inputs_unchanged": true,
+  "cpu_seconds": 10.386417999999999,
+  "wall_seconds": 7.166193410987034,
+  "compiler_identity_after": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\n",
+  "source_unchanged": true
+}
