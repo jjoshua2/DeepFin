@@ -13,6 +13,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [Actual destination factorization](2026-10-02-bend-destination-factorization.md) | Local checked ordinary-emission structure, full-Ply multiplicity and arbitrary-array scan pair; independent bitboard inventory and whole generator remain open |
+| [Actual U64 zero-predicate bridge](2026-10-02-bend-bitboard-zero-bridge.md) | Unconditional actual zero-to-structural-Word predicate bridge with two semantic controls; ctz range/selection remain open |
 | [Actual bitboard inventory at zero and singleton masks](2026-10-02-bend-bitboard-inventory.md) | Exact actual `bit_squares` zero/singleton outputs and one-hot `scan_after`/`scan`/`legal_moves` caller composition; arbitrary multi-bit inventory and whole-generator correctness remain open |
 | [Off-home king castling exclusion](2026-10-02-bend-king-away.md) | Qualified arbitrary-array actual optimized generator empty flag-2 projection under bounded off-home moving-king singleton; public-builder/history/full-generator obligations remain |
 | [Forward attack composition](2026-10-01-bend-forward-attacks.md) | Qualified source-forward witness bridge, complete initialized query pairs and direct castling composition; actual public-builder/history/ordinary/skip/full-generator obligations remain |
