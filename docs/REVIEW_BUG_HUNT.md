@@ -486,6 +486,10 @@ Current notes:
   now seeds terminal root values from `CBoard.terminal_value()`.
 - Focused MCTS/UCI parity validation after F047 passed:
   `python3 -m pytest tests/test_mcts_uci_parity_gates.py tests/test_gumbel_root_many_edge_cases.py tests/test_mcts_c_tree.py tests/test_uci_searchmoves.py -q`.
+- 2026-10-02 additive distributed-server pass at base `269105298285b6098ffbf80405cb18ec33186b38`: traced `run_server.py` startup and lease pruning, `create_app()` lifespan and route registration, worker lease negotiation/upload retry ownership, lease assignment locking, auth/stats persistence, upload staging/compaction/recovery, and worker-process stop/revive paths. No new defect confirmed.
+- No-finding areas exercised: manifest/model/artifact serving, trial routing and ID validation, auth/cache/revocation behavior, worker lease assignment and renewal, shard validation/dedup/retry/quarantine, arena-result caps and retention, upload compaction and crash recovery, telemetry counters, shutdown forced-flush attempt, and tune worker restart boundaries. Open issues #410 and #418 remain known registration/account-cap and seed-dole key-scope items; neither was changed.
+- Focused bounded CPU validation: `tests/test_server_*.py`, worker upload digest/response/small-upload tests, and distributed selfplay backpressure: `244 passed` in 45.04s, 2 Torch threads, one environment warning (`pynvml` deprecation). Initial collection required a local portable C-extension build from repository source; no dependencies were installed.
+- Deployment boundary: the supported `run_server.py` launcher passes a single app instance to Uvicorn with its default single process. Multi-process Uvicorn sharing is not qualified by this pass; process-local upload accumulators/caches are outside the supported topology. Multipart body bytes are spooled by Starlette before route-level size and lease checks, as already documented; network-level request-body limiting remains outside this audit's change scope.
 - Follow-up S007 gate expansion added an independent persistent-root reuse
   contract: after `advance_root`, the same tree/root child must remain active,
   the new root's children must match the new board's legal mask, and the next
@@ -1542,11 +1546,11 @@ pylint chess_anti_engine
 
 ## Current Focus
 
-Component: first full review pass complete
+Component: Distributed server (additive verification pass)
 
-Goal: fix the high-signal tracked-test regression, record open reliability findings, and keep the runtime checkout untouched.
+Goal: verify routing, durability, concurrency, validation, retry/reconnect, and shutdown contracts against the current supported single-process launcher.
 
-Last updated: 2026-05-08
+Last updated: 2026-10-02
 
 ## Triage Queue
 
