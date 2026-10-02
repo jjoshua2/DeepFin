@@ -590,3 +590,112 @@ def test_the_loaded_extension_announces_its_halving_revision(
     legacy = capsys.readouterr().err
     assert "gss_halving_rev=1" in legacy
     assert "W[root]/N[root]" in legacy
+
+
+@pytest.mark.parametrize("visited_non_candidate", [False, True])
+def test_prior_refresh_matches_fresh_root_in_a_16_candidate_c_round(
+    visited_non_candidate: bool,
+) -> None:
+    """Execute a production-width round; stale priors change the last survivor."""
+    cfg = GumbelConfig(simulations=16, topk=16, temperature=0.0, add_noise=False)
+    cb = CBoard.from_board(chess.Board(_FEN))
+    legal = cb.legal_move_indices().astype(np.int32, copy=False)
+    candidates = [int(a) for a in legal[:16]]
+    assert len(legal) > len(candidates)
+    current = np.zeros(POLICY_SIZE, dtype=np.float64)
+    current[legal] = (1.0 - 0.02 - 0.02 * math.exp(0.023) - 7 * 0.05) / (len(legal) - 9)
+    current[candidates[0]] = 0.02
+    current[candidates[1]] = 0.02 * math.exp(0.023)
+    current[candidates[2:9]] = 0.05
+    old = np.zeros_like(current)
+    old[legal] = 0.01 / (len(legal) - 1)
+    old[candidates[0]] = 0.99
+    gumbels = np.zeros_like(current)
+    gumbels[candidates[2:9]] = 1.6
+    child_q = [0.15, 0.149, *([0.10] * 7), *([-0.05] * 7)]
+
+    def run(stored_priors: np.ndarray) -> tuple[list[int], _Round]:
+        tree = MCTSTree()
+        rid = tree.add_root(1, 0.90)
+        tree.expand(rid, legal, stored_priors[legal])
+        if visited_non_candidate:
+            other = tree.find_child(rid, int(legal[16]))
+            tree.backprop(np.array([rid, other], dtype=np.int32), 0.05)
+        enc = np.empty((32, input_plane_count(cfg.input_extra_features), 8, 8), dtype=np.float32)
+        n_leaves = tree.start_gumbel_sims(
+            [cb], np.array([rid], dtype=np.int32), [candidates], [gumbels], [current],
+            np.array([16], dtype=np.int32), np.array([0.90], dtype=np.float64),
+            cfg.c_scale, cfg.c_visit, cfg.c_puct, cfg.fpu_reduction, cfg.full_tree, enc,
+            0, 1, c_input_history_mode(cfg.input_history_encoding),
+            None, _DELETED_Q_VISIT_EXP, _DELETED_Q_GLOBAL_SCALE, _DELETED_Q_VISIT_FLOOR,
+            cfg.halving_div, cfg.c_visit_root, cfg.c_scale_root, cfg.q_visit_exp_root, 0,
+        )
+        fed = 0
+        while n_leaves is not None:
+            n = int(n_leaves)
+            logits = np.array([_wdl_logits_for_q(-q) for q in child_q[fed:fed + n]], dtype=np.float32)
+            assert logits.shape == (n, 3)
+            fed += n
+            n_leaves = tree.continue_gumbel_sims(np.zeros((n, POLICY_SIZE), dtype=np.float32), logits)
+        assert fed == 16
+        rnd = _Round(-1, tree, rid, current, candidates, cfg)
+        actions, visits, qs = tree.get_children_q(rid, 0.0)
+        actual = {int(a): (int(n), float(q)) for a, n, q in zip(actions, visits, qs)}
+        for action, q in zip(candidates, child_q):
+            assert actual[action][0] == 1
+            assert actual[action][1] == pytest.approx(q, abs=1e-6)
+        return tree.get_gumbel_remaining()[0], rnd
+
+    carried, rnd = run(old)
+    fresh, _ = run(current)
+    current_scores = _reference_scores(rnd, raw_value=0.90)
+    stale_scores = _reference_scores(rnd, raw_value=0.90, mix_priors=old)
+
+    def survivors(scores: dict[int, float]) -> list[int]:
+        return sorted(candidates, key=lambda a: scores[a] + gumbels[a], reverse=True)[:8]
+
+    expected = survivors(current_scores)
+    stale = survivors(stale_scores)
+    assert candidates[0] in expected
+    assert candidates[1] not in expected
+    assert candidates[1] in stale
+    assert candidates[0] not in stale
+    assert carried == fresh == expected
+
+
+def test_root_prior_refresh_preserves_descendant_selection() -> None:
+    """Refresh only root edges; deeper policy still belongs to its leaf eval."""
+    cb = CBoard.from_board(chess.Board(_FEN))
+    legal = cb.legal_move_indices().astype(np.int32, copy=False)
+    first, second = (int(a) for a in legal[:2])
+    tree = MCTSTree()
+    rid = tree.add_root(1, 0.0)
+    old = np.zeros(POLICY_SIZE, dtype=np.float64)
+    old[legal] = 0.01 / (len(legal) - 1)
+    old[first] = 0.99
+    tree.expand(rid, legal, old[legal])
+    first_id = tree.find_child(rid, first)
+    child_cb = cb.copy()
+    child_cb.push_index(first)
+    replies = child_cb.legal_move_indices().astype(np.int32, copy=False)
+    reply_priors = np.full(len(replies), 0.01 / (len(replies) - 1), dtype=np.float64)
+    reply_priors[0] = 0.99
+    tree.expand(first_id, replies, reply_priors)
+    wanted_reply = tree.find_child(first_id, int(replies[0]))
+
+    def selected(root: int) -> int:
+        result = tree.select_leaves(np.array([root], dtype=np.int32), 1.0, 0.0, 0.0)
+        return int(result[0][0])
+
+    assert selected(first_id) == wanted_reply
+    current = old.copy()
+    current[first], current[second] = current[second], current[first]
+    enc = np.empty((1, 146, 8, 8), dtype=np.float32)
+    assert tree.start_gumbel_sims(
+        [cb], np.array([rid], dtype=np.int32), [[first, second]],
+        [np.zeros(POLICY_SIZE, dtype=np.float64)], [current],
+        np.array([0], dtype=np.int32), np.array([0.0], dtype=np.float64),
+        0.1, 50.0, 2.5, 1.2, True, enc,
+    ) is None
+    assert selected(rid) == tree.find_child(rid, second)
+    assert selected(first_id) == wanted_reply
