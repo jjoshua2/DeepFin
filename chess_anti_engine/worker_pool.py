@@ -101,21 +101,21 @@ def main() -> None:
 
     children: list[subprocess.Popen[bytes]] = []
     commands: list[list[str]] = []
-    for idx in range(num_workers):
-        worker_dir = pool_dir / f"worker_{idx:02d}"
-        worker_dir.mkdir(parents=True, exist_ok=True)
-        cmd = build_worker_command(
-            worker_args=list(worker_args),
-            worker_dir=worker_dir,
-            shared_cache_dir=shared_cache_dir,
-        )
-        commands.append(cmd)
-        proc = subprocess.Popen(cmd, cwd=str(Path(__file__).resolve().parents[1]))  # long-lived child process
-        children.append(proc)
-        if idx + 1 < num_workers and float(args.stagger_seconds) > 0.0:
-            time.sleep(float(args.stagger_seconds))
-
     try:
+        for idx in range(num_workers):
+            worker_dir = pool_dir / f"worker_{idx:02d}"
+            worker_dir.mkdir(parents=True, exist_ok=True)
+            cmd = build_worker_command(
+                worker_args=list(worker_args),
+                worker_dir=worker_dir,
+                shared_cache_dir=shared_cache_dir,
+            )
+            commands.append(cmd)
+            proc = subprocess.Popen(cmd, cwd=str(Path(__file__).resolve().parents[1]))  # long-lived child process
+            children.append(proc)
+            if idx + 1 < num_workers and float(args.stagger_seconds) > 0.0:
+                time.sleep(float(args.stagger_seconds))
+
         while not stop:
             time.sleep(1.0)
             if not bool(args.respawn):

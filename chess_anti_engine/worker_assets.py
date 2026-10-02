@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import time
 from pathlib import Path
 
@@ -29,6 +30,7 @@ def _download(
     out_path: Path,
     timeout: float = 30.0,
     headers: dict[str, str] | None = None,
+    expected_sha256: str | None = None,
 ) -> None:
     try:
         import requests
@@ -36,15 +38,32 @@ def _download(
         raise RuntimeError("worker requires requests; install with pip install -e '.[worker]' ") from e
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out_path.with_suffix(out_path.suffix + ".tmp")
-    with requests.get(url, stream=True, timeout=timeout, headers=headers) as r:
-        r.raise_for_status()
-        with tmp.open("wb") as f:
-            for chunk in r.iter_content(chunk_size=1024 * 1024):
-                if not chunk:
-                    continue
-                f.write(chunk)
-    tmp.replace(out_path)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{out_path.name}.", suffix=".tmp", dir=out_path.parent,
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            fd = -1
+            with requests.get(url, stream=True, timeout=timeout, headers=headers) as r:
+                r.raise_for_status()
+                for chunk in r.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+        if expected_sha256:
+            got = _sha256_file(tmp)
+            if got != str(expected_sha256):
+                raise RuntimeError(
+                    f"sha256 mismatch for {out_path.name}: got={got} "
+                    f"expected={expected_sha256}",
+                )
+        os.replace(tmp, out_path)
+    except Exception:
+        if fd >= 0:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _download_and_verify(
@@ -55,23 +74,22 @@ def _download_and_verify(
     timeout: float = 30.0,
     headers: dict[str, str] | None = None,
 ) -> None:
-    """Download a file and verify its sha256 if provided.
+    """Download to a private temp file, verify it, then atomically publish.
 
-    If verification fails, we delete and retry once.
+    If verification fails, retry once. Invalid bytes are never visible at
+    out_path and concurrent downloads cannot share a temporary file.
     """
     exp = str(expected_sha256 or "")
 
     def _once() -> None:
-        _download(url, out_path=out_path, timeout=timeout, headers=headers)
-        if exp:
-            got = _sha256_file(out_path)
-            if got != exp:
-                raise RuntimeError(f"sha256 mismatch for {out_path.name}: got={got} expected={exp}")
+        _download(
+            url, out_path=out_path, timeout=timeout, headers=headers,
+            expected_sha256=exp or None,
+        )
 
     try:
         _once()
     except Exception:
-        out_path.unlink(missing_ok=True)
         _once()
 
 

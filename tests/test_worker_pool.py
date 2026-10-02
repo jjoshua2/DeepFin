@@ -38,3 +38,54 @@ def test_build_worker_command_rejects_user_shared_cache_override():
             worker_dir=Path("/tmp/pool/worker_00"),
             shared_cache_dir=Path("/tmp/pool/shared_cache"),
         )
+
+
+def test_main_reaps_already_started_children_when_later_spawn_fails(tmp_path, monkeypatch):
+    import sys
+
+    import chess_anti_engine.worker_pool as worker_pool
+
+    class Child:
+        def __init__(self):
+            self.terminated = False
+            self.killed = False
+            self.reaped = False
+
+        def poll(self):
+            return 0 if self.terminated or self.killed else None
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            del timeout
+            self.reaped = True
+            return 0
+
+    child = Child()
+    calls = 0
+
+    def spawn(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return child
+        raise OSError("process quota reached")
+
+    monkeypatch.setattr(worker_pool.subprocess, "Popen", spawn)
+    monkeypatch.setattr(worker_pool.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(worker_pool.time, "sleep", lambda *_args: None)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["worker_pool", "--workers", "2", "--pool-work-dir", str(tmp_path)],
+    )
+
+    import pytest
+
+    with pytest.raises(OSError, match="process quota reached"):
+        worker_pool.main()
+
+    assert child.terminated

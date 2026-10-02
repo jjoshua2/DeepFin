@@ -124,3 +124,101 @@ def test_download_opening_book_does_not_trust_manifest_path_components(
     assert returned_sha == sha
     assert expected_path.exists()
     assert not (tmp_path.parent / "outside.bin").exists()
+
+
+def test_concurrent_legacy_downloads_publish_complete_files_atomically(tmp_path, monkeypatch):
+    import threading
+
+    import requests
+
+    from chess_anti_engine.worker_assets import _download
+
+    out_path = tmp_path / "opening.bin"
+    first_chunks_written = threading.Barrier(2)
+    published = threading.Event()
+    errors = []
+
+    class Response:
+        def __init__(self, is_second):
+            self.is_second = is_second
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_content(self, chunk_size):
+            del chunk_size
+            yield b"pay"
+            first_chunks_written.wait(timeout=5)
+            if self.is_second:
+                assert published.wait(timeout=5)
+            yield b"load"
+
+    monkeypatch.setattr(
+        requests, "get",
+        lambda *_args, **_kwargs: Response(threading.current_thread().name == "second"),
+    )
+
+    def download(is_second):
+        try:
+            _download("https://example.invalid/book", out_path=out_path)
+            if not is_second:
+                published.set()
+        except Exception as exc:
+            errors.append(exc)
+
+    first = threading.Thread(target=download, args=(False,), name="first")
+    second = threading.Thread(target=download, args=(True,), name="second")
+    first.start()
+    second.start()
+    first.join(timeout=10)
+    second.join(timeout=10)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert not errors
+    assert out_path.read_bytes() == b"payload"
+
+
+def test_checksum_mismatch_never_replaces_cached_asset(tmp_path, monkeypatch):
+    import hashlib
+
+    import pytest
+    import requests
+
+    from chess_anti_engine.worker_assets import _download_and_verify
+
+    out_path = tmp_path / "model.pt"
+    out_path.write_bytes(b"previous")
+    expected = hashlib.sha256(b"correct").hexdigest()
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_content(self, chunk_size):
+            del chunk_size
+            yield b"wrong"
+
+    monkeypatch.setattr(requests, "get", lambda *_args, **_kwargs: Response())
+
+    with pytest.raises(RuntimeError, match="sha256 mismatch"):
+        _download_and_verify(
+            "https://example.invalid/model",
+            out_path=out_path,
+            expected_sha256=expected,
+        )
+
+    assert out_path.read_bytes() == b"previous"
+    assert list(tmp_path.glob(".model.pt.*.tmp")) == []
