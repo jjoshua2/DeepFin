@@ -465,6 +465,18 @@ def _check_unknown(section: str, section_cfg: dict, allowed: set[str]) -> None:
 _SECTION_NAMES = frozenset({"stockfish", "selfplay", "train", "model", "tune"})
 
 
+def _check_section_mappings(cfg: dict[str, Any]) -> None:
+    """Refuse malformed nested sections instead of silently dropping them."""
+    for name in sorted(_SECTION_NAMES):
+        if name not in cfg or isinstance(cfg[name], dict):
+            continue
+        value = cfg[name]
+        raise ValueError(
+            f"YAML '{name}:' section must be a mapping/dict, "
+            f"got {type(value).__name__}"
+        )
+
+
 def _flatten_root_keys(cfg: dict[str, Any], out: dict[str, Any]) -> None:
     """Copy root-level keys (those not nested under sections) into ``out``.
 
@@ -541,9 +553,10 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     - flat keys matching argparse destinations (e.g. sf_nodes, sf_policy_temp)
     - nested sections: stockfish/selfplay/train/model/tune
 
-    Raises ValueError if a recognized section contains unknown keys.
+    Raises ValueError if a recognized section is not a mapping or contains unknown keys.
     """
     out: dict[str, Any] = {}
+    _check_section_mappings(cfg)
     _flatten_root_keys(cfg, out)
 
   # Nested sections override matching flat keys.

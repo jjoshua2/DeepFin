@@ -486,6 +486,10 @@ Current notes:
   now seeds terminal root values from `CBoard.terminal_value()`.
 - Focused MCTS/UCI parity validation after F047 passed:
   `python3 -m pytest tests/test_mcts_uci_parity_gates.py tests/test_gumbel_root_many_edge_cases.py tests/test_mcts_c_tree.py tests/test_uci_searchmoves.py -q`.
+- Finding F048 opened/fixed in this cycle: `flatten_run_config_defaults()` silently skipped recognized nested configuration sections when their YAML value was not a mapping (for example `selfplay: false`). The loader now rejects non-mapping values for `stockfish`, `selfplay`, `train`, `model`, and `tune` before flattening. Regression coverage exercises five malformed value classes across all five sections and accepts empty mappings.
+- Finding F049 opened/fixed in this cycle: worker YAML `upload_target_positions` and `upload_flush_seconds` overrode explicit CLI values because argparse populated hardcoded defaults indistinguishable from user input. These CLI defaults now use sentinels; merge precedence is explicit CLI, then YAML, then documented hardcoded defaults. Regression coverage checks both CLI-over-YAML and YAML/default fallback.
+- Focused config and worker validation after F048-F049 passed: `76 passed` across `tests/test_config_yaml.py`, `tests/test_trial_config.py`, `tests/test_yaml_failure_modes.py`, and `tests/test_worker_config_yaml.py`; Python compilation and Ruff checks passed.
+- Entrypoints/config/packaging pass coverage: run/train/tune CLI and wrapper wiring; YAML parsing/default flattening and validation; worker/server CLI/YAML precedence and persisted/runtime overrides; Tune typed configuration handoff; packaging metadata, extras, native extensions, and runtime dependency declarations. Clean cross-platform wheel installation was not exercised because this pass avoided dependency installation.
 - Follow-up S007 gate expansion added an independent persistent-root reuse
   contract: after `advance_root`, the same tree/root child must remain active,
   the new root's children must match the new board's legal mask, and the next
@@ -622,6 +626,8 @@ Context:
 | F015 | Medium | Training Quality / Reliability | Tune prefetch ingest | `chess_anti_engine/tune/distributed_runtime.py`, `tests/test_distributed_selfplay_backpressure.py` | A background prefetch load that finished just after `drain()` could queue a preloaded item for an inbox path the trainer fallback already processed and moved. The next drain would ingest the stale arrays again even though the original inbox shard no longer existed. | `_process_shard(..., preloaded=...)` trusted preloaded arrays without checking whether `sp` was still present in the inbox; the prefetch thread loads outside the consumer lock, so a path can become stale between load and queue. | Skip preloaded items whose inbox path no longer exists before adding arrays or metrics; regression test feeds a missing preloaded path and verifies zero matching games and zero replay positions. Verified distributed ingest/prefetch slice: `29 passed`. | fixed |
 | F016 | Low | Reliability / Observability | Tune reporting | `chess_anti_engine/tune/trainable_phases.py`, `tests/test_trainable_rng_checkpoint.py` | Compact `status.csv` rows reported `global_iter` one behind the completed iteration. Fresh iteration 1 wrote `iter=1, global_iter=0`, and resumed runs inherited the same off-by-one in the status file used for quick progress checks. | `trainable.py` increments `global_iter` only after `_finalize_iteration()`, but `_finalize_iteration()` passed the pre-increment `global_iter` into `_write_status_csv_row`; `_build_report_dict()` separately uses `iteration_idx`. | Write `iteration_idx` into the status row's `global_iter` column and cover it in the finalization regression. | fixed |
 | F047 | Medium | Search Correctness | Gumbel C root handling | `chess_anti_engine/mcts/gumbel_c.py`, `tests/test_mcts_uci_parity_gates.py` | Gumbel C returned the raw NN WDL-derived value for an already-terminal checkmate root instead of the terminal root value. UCI/selfplay callers using the C path could report/search with a neutral value on a root where STM is already checkmated. | Root `values_out` was initialized from `root_qs = _wdl_to_q(...)` before the `root_cb.is_game_over()` branch, and that branch did not replace it with `CBoard.terminal_value()`. | Added root-contract tests that check both PUCT/Gumbel implementations against independent masks/terminal values across normal, ep, single-legal, checkmate, and draw-terminal roots, plus UCI TB shortcut/searchmoves/root-reuse behavior. Verified MCTS/UCI slice: `33 passed`. | fixed |
+| F048 | Medium | Reliability / Config | Nested YAML section types | `chess_anti_engine/utils/config_yaml.py`, `tests/test_config_yaml.py` | Recognized nested config sections with scalar, sequence, null, or boolean values were silently skipped during flattening, making malformed configuration appear accepted and potentially falling back to unrelated defaults. | `flatten_run_config_defaults()` only merged section values when `isinstance(value, dict)` and ignored every other shape. | Validate all recognized section values as mappings before flattening. Added negative tests for five malformed value classes across five sections and positive tests for empty mappings. | fixed |
+| F049 | Medium | Config precedence | Worker upload CLI overrides | `chess_anti_engine/worker.py`, `tests/test_worker_config_yaml.py` | Explicit `--upload-target-positions` and `--upload-flush-seconds` values could be overwritten by persisted worker YAML values. | argparse hardcoded defaults were always merged as though explicitly supplied, and YAML unconditionally overwrote them. | Use `None` parser sentinels and merge explicit CLI over YAML over hardcoded defaults. Added precedence and fallback tests. | fixed |
 
 ## Review Passes
 
@@ -787,6 +793,7 @@ Efficiency/scalability:
 Tests:
 
 - [x] `tests/test_trial_config.py`
+- [x] `tests/test_config_yaml.py`
 - [x] `tests/test_worker_config_yaml.py`
 - [x] `tests/test_train_import_lazy.py`
 - [x] `tests/test_run_bootstrap.py`
@@ -1542,11 +1549,11 @@ pylint chess_anti_engine
 
 ## Current Focus
 
-Component: first full review pass complete
+Component: Entrypoints, Config, Packaging (additive verification pass)
 
-Goal: fix the high-signal tracked-test regression, record open reliability findings, and keep the runtime checkout untouched.
+Goal: verify production entrypoints, configuration precedence and validation, and package/runtime dependency flow; record confirmed findings with regression coverage.
 
-Last updated: 2026-05-08
+Last updated: 2026-10-02
 
 ## Triage Queue
 
