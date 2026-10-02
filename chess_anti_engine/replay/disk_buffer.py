@@ -427,9 +427,8 @@ def resume_open_capacity(
     ``capacity``. A same-trial resume or salvage whose checkpoint has no
     ``current_window`` used to construct at ``replay_window_start`` and delete
     the durable window; the later bump cannot put those shards back. Open at
-    the configured max in that case, and never below the capacity the caller
-    would already have used — an exploit pre-bump can sit above the max until
-    the caller caps ``buf.capacity``. A saved window and a fresh start return
+    exactly the configured maximum in that case, even if a transient pre-bump
+    computed a larger window. A saved window and a fresh start return
     ``current_window`` unchanged. The caller applies a positive
     ``restored_window``, including the live ``replay_window_max`` cap, before
     this function sees it.
