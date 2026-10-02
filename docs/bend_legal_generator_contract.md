@@ -218,3 +218,20 @@ and a home-king singleton. Historical entitlement and derivation of these premis
 general king-away positions, forward/reverse geometry composition and the closed
 public-builder bridge remain separate. This is genuine component closure inside
 milestone 1, not completion of that milestone or of the five-part top-level claim.
+
+
+## Qualified off-home king exclusion, 2 October 2026
+
+The [off-home king component](../native/bend_engine/standalone/proofs/generator_contract/KING_AWAY.md)
+now proves exact whole-array equality and an empty flag-2 projection for actual
+optimized legal_moves with an arbitrary input array and arbitrary Board. The
+four premises are Boolean turn, a moving-side king singleton U64.bit(sq), sq<64,
+and sq different from that side's home square. Both wings reject from the derived
+home-square king test; actual ordinary scan and both filter paths remain present.
+No initialized-array or attack-answer premise is used.
+
+The [dated receipt and review](experiments/2026-10-02-bend-king-away.md) preserve the
+unchanged compiler, complete consumer and both actual-source semantic controls.
+The caller still supplies the singleton/side/bounds premises. Deriving them from
+independent history, closing Tables.build and composing the full five-part claim
+remain separate obligations. The qualified home-king theorem is unchanged.
