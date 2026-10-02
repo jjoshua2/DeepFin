@@ -130,7 +130,7 @@ def invoke(bun: str, compiler: Path, entry: Path, seconds: int, log_path: Path |
             original_sigterm = signal.signal(signal.SIGTERM, interrupted)
         with log_path.open("wb") as log:
             process = subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 env={**os.environ, "BEND_NO_TELEMETRY": "1", "TERM": "dumb"},
                 start_new_session=os.name == "posix",
             )
