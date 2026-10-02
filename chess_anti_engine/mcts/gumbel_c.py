@@ -769,6 +769,16 @@ def run_gumbel_root_many_c(
     Same API as ``run_gumbel_root_many`` -- drop-in replacement, plus C-path
     controls the Python reference has no equivalent for:
 
+    When ``tree`` and ``root_node_ids`` reuse an expanded root, its priors,
+    visits, evaluations, and solved state are carried into this search. Reuse
+    requires the same board *and repetition history*; matching legal moves
+    alone is insufficient. Prefer creating reusable roots with
+    ``tree.add_root(N, W, board)`` so the tree can check the context. The
+    legacy ``tree.add_root(N, W)`` form leaves the root unbound: if such a root
+    already has reusable state, passing it here is a caller assertion that the
+    root belongs to the supplied board and history. If that cannot be
+    guaranteed, omit that root id and let the runner create a fresh root.
+
     ``allow_candidate_cap_truncation``
         False by default. The compiled sequential-halving scorer owns a fixed
         ``GSS_MAX_CANDS`` score buffer. If this search realizes more candidates
