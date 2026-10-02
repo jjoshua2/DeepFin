@@ -30,7 +30,7 @@ import numpy as np
 import chess
 
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import POLICY_SIZE, index_to_move
 from chess_anti_engine.moves.encode import uci_to_policy_index
 from chess_anti_engine.selfplay.state import SelfplayState, _NetRecord
 from chess_anti_engine.stockfish.pool import StockfishPool
@@ -1530,8 +1530,11 @@ def _push_curriculum_opponent_move(
     *, legal_indices: np.ndarray,
     cand_idxs: list[int], cand_scores: list[float], regret_limit: float,
 ) -> None:
-    """Pick a curriculum-strength opponent move + push it on the board + advance
-    the tree root for next-ply reuse. Marks the slot done if the push terminates."""
+    """Pick a curriculum move, advance the board(s), and update the tree root.
+
+    The Python fallback keeps state.boards in sync; the C-ply path replays
+    move_idx_history and intentionally leaves those boards at the opening.
+    """
     opp_move_idx = _choose_curriculum_opponent_move(
         rng=state.rng,
         legal_indices=legal_indices,
@@ -1545,7 +1548,12 @@ def _push_curriculum_opponent_move(
         rec.sf_played_move_index = int(opp_move_idx)
         rec.sf_played_rank = rank
         rec.sf_played_regret = regret
+    python_move: chess.Move | None = None
+    if not state.has_c_ply:
+        python_move = index_to_move(int(opp_move_idx), state.boards[idx])
     state.cboards[idx].push_index(opp_move_idx)
+    if python_move is not None:
+        state.boards[idx].push(python_move)
     state.move_idx_history[idx].append(opp_move_idx)
     if state.mcts_tree is not None and state.root_ids[idx] >= 0:
         state.root_ids[idx] = state.mcts_tree.find_child(
