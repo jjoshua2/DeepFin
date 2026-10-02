@@ -40,7 +40,10 @@ _REPO = Path(__file__).resolve().parents[1]
 _ROWS = 4
 
 
-def _open(tmp: Path, rng: np.random.Generator, *, preserve: bool) -> DiskReplayBuffer:
+def _open(tmp: Path, rng: np.random.Generator, *, preserve: bool | None) -> DiskReplayBuffer:
+    kwargs = {}
+    if preserve is not None:
+        kwargs["preserve_sampling_rng"] = preserve
     return DiskReplayBuffer(
         10,
         shard_dir=tmp,
@@ -48,7 +51,7 @@ def _open(tmp: Path, rng: np.random.Generator, *, preserve: bool) -> DiskReplayB
         read_only=False,
         refresh_interval=0,
         refresh_shards=0,
-        preserve_sampling_rng=preserve,
+        **kwargs,
     )
 
 
@@ -85,7 +88,7 @@ def test_default_construction_still_consumes_one_integers_draw(tmp_path: Path) -
     drawn = int(advanced.integers(0, 2**32 - 1))
     expected_prefetch = int(np.random.default_rng(drawn).integers(0, 2**32 - 1))
 
-    buf = _open(tmp_path / "replay", parent, preserve=False)
+    buf = _open(tmp_path / "replay", parent, preserve=None)
     try:
         assert parent.bit_generator.state == advanced.bit_generator.state
         assert int(buf._prefetch_rng.integers(0, 2**32 - 1)) == expected_prefetch
