@@ -93,7 +93,7 @@ def test_default_construction_still_consumes_one_integers_draw(tmp_path: Path) -
         buf.close()
 
 
-def test_resume_open_capacity_only_raises_a_missing_durable_window() -> None:
+def test_resume_open_capacity_preserves_saved_window_and_caps_missing_window() -> None:
     """A saved window and a fresh start construct at the caller's window."""
     assert resume_open_capacity(
         current_window=400_000,
