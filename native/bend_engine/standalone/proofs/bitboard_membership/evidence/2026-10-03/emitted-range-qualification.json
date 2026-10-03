@@ -7,7 +7,8 @@
     "base": "0908d932a0fa9c7d2690c9d33dacaea8cc8ff774",
     "archive_sha256": "a672d8386a8144521a8a293cf4319e51fc2b42a40fb1b2f84e6ff15d16a24f07",
     "archive_bytes": 47551881,
-    "archive_path_redacted": "<session-scratch>/source.tar.gz"
+    "archive_path_redacted": "<session-scratch>/source.tar.gz",
+    "archive_contains_new_module": false
   },
   "checker": {
     "revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
@@ -31,7 +32,8 @@
     "git_blob_sha1": "b4eb2c38799b889bf9c054bf406f86466177c634",
     "checked_against_snapshot_head": "8ce6640a1a20a4688ced0c7ebbfc61a648ab3f6d",
     "source_closure": "source-closure.json",
-    "closure_count": 44
+    "closure_count": 44,
+    "origin": "new proof source added after the immutable PR snapshot; exact proof bytes are separately bound by module.sha256 and git_blob_sha1"
   },
   "positive_checks": [
     {
@@ -75,7 +77,8 @@
       "time_log_sha256_before_redaction": "1b3bf5118de93d04c874e12293ba27ad3595c6cef5dbfefb4e4681de087b7458",
       "time_log_sha256_after_redaction": "c1dbfd541d55a4b4700e4bdf2ab750cdccf541b7246a4131381336c13a268c20",
       "expected_failure": "BitSquaresStep.bit_squares_step",
-      "stderr_confirms_obligation": true
+      "stderr_confirms_obligation": true,
+      "finished_at_utc": "2026-10-03T03:54:29.235828Z"
     },
     {
       "control": "clear-lsb-tail",
@@ -100,7 +103,8 @@
       "time_log_sha256_before_redaction": "dc7323f6213cbc22b114912715b4b8bca55c0c50be41d83ae593c0e17a54bab8",
       "time_log_sha256_after_redaction": "16e458bb9b84cb644a8e7608b991f5a96a061614dca8f0fd9144f9a66719b366",
       "expected_failure": "BitSquaresStep.bit_squares_step",
-      "stderr_confirms_obligation": true
+      "stderr_confirms_obligation": true,
+      "finished_at_utc": "2026-10-03T03:54:33.048564Z"
     }
   ],
   "redactions": {
