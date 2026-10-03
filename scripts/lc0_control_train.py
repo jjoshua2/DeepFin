@@ -992,13 +992,11 @@ def read_value_stamps(
     return ShardValueStamps(schemes=schemes, schemas=schemas, sources=sources)
 
 
-#: What a derived shard written before the history stamps existed holds: the
-#: deriver of that era reconstructed a bare FEN per row, so its planes are the
-#: zero-history distribution.  ⚑ Absent reads as THIS, deliberately: every
-#: pre-#497 corpus is that shape, and the gate must keep them launchable while
-#: still refusing to mix them with a history-aware one.
-UNSTAMPED_CORPUS_ROW_SCHEMA = 1
-UNSTAMPED_ZERO_HISTORY = True
+#: Unstamped shards include both bare-FEN derivations and history-filled LC0
+#: imports. Metadata alone cannot distinguish them. Keep legacy-only launches
+#: supported, but do not certify them as a stamped history family.
+UNSTAMPED_CORPUS_ROW_SCHEMA = "unstamped"
+UNSTAMPED_ZERO_HISTORY = None
 #: ``derive_corpus_targets.DERIVE_STATE_COMMITTED``, duplicated for the same
 #: reason the ``DERIVE_SCHEMA*`` constants above are (no deriver import here)
 #: and pinned by ``tests/test_derive_corpus_targets.py``.
@@ -1039,17 +1037,17 @@ def marked_shard_problem(attrs: Mapping[str, Any]) -> str | None:
 class ShardHistoryStamps:
     """What ``--shards`` says about the HISTORY its planes carry."""
 
-    #: ``derive_corpus_row_schema`` (an int, or ``"mixed"``) -> example shard.
+    #: Row schema (an int, "mixed", or "unstamped") -> example shard.
     row_schemas: dict[str, str]
-    #: ``zero_history`` -> example shard.
-    zero_history: dict[bool, str]
+    #: ``zero_history`` (None when unknown) -> example shard.
+    zero_history: dict[bool | None, str]
     #: Shards that are mixed WITHIN themselves: stamped ``"mixed"``, or with a
     #: ``derive_corpus_row_schema_counts`` naming more than one schema.
     mixed_within: dict[str, str] = dataclasses.field(default_factory=dict)
     #: Shards that carry the deriver's ``derive_identity_format`` marker and
     #: yet lack part of their identity, or are not in the committed state.
     #: ⚑ "Missing means legacy" applies ONLY to shards with no marker: every
-    #: pre-marker derivation was bare-FEN.  A marked shard with a missing
+    #: unstamped shard has unknown history. A marked shard with a missing
     #: identity is a fault, and no opt-in admits it.
     unidentified: dict[str, str] = dataclasses.field(default_factory=dict)
 
@@ -1074,7 +1072,7 @@ def read_history_stamps(
 ) -> ShardHistoryStamps:
     """Read every shard's history-identity attrs.  No policy, just the reading."""
     row_schemas: dict[str, str] = {}
-    zero_history: dict[bool, str] = {}
+    zero_history: dict[bool | None, str] = {}
     mixed_within: dict[str, str] = {}
     unidentified: dict[str, str] = {}
     for shard_dir in shard_dirs:
@@ -1087,9 +1085,8 @@ def read_history_stamps(
                 continue
             schema = str(attrs.get("derive_corpus_row_schema", UNSTAMPED_CORPUS_ROW_SCHEMA))
             row_schemas.setdefault(schema, where)
-            zero_history.setdefault(
-                bool(attrs.get("zero_history", UNSTAMPED_ZERO_HISTORY)), where,
-            )
+            history = attrs.get("zero_history", UNSTAMPED_ZERO_HISTORY)
+            zero_history.setdefault(None if history is None else bool(history), where)
             counts = dict(attrs.get("derive_corpus_row_schema_counts", {}) or {})
             if schema == "mixed" or len(counts) > 1:
                 mixed_within[where] = (
@@ -1132,7 +1129,10 @@ def history_identity_problems(
     if not stamps.mixed or allow_mixed_history:
         return problems
     schemas = ", ".join(f"{s} (e.g. {w})" for s, w in sorted(stamps.row_schemas.items()))
-    zero = ", ".join(f"{z} (e.g. {w})" for z, w in sorted(stamps.zero_history.items()))
+    zero = ", ".join(
+        f"{z} (e.g. {w})"
+        for z, w in sorted(stamps.zero_history.items(), key=lambda item: str(item[0]))
+    )
     within = "".join(
         f" Mixed WITHIN {w}: {why}." for w, why in sorted(stamps.mixed_within.items())
     )
@@ -1143,9 +1143,8 @@ def history_identity_problems(
         "repetition planes, and the champion flips 46.5% of its top-1 moves "
         "between the two. One replay buffer would sample both. Train one "
         "identity at a time, or pass --allow-mixed-history to record the mix "
-        f"deliberately. (An absent stamp reads as row schema "
-        f"{UNSTAMPED_CORPUS_ROW_SCHEMA}, zero_history {UNSTAMPED_ZERO_HISTORY}: "
-        "corpora derived before the stamps existed are the bare-FEN shape.)",
+        "deliberately. Unstamped shards have unknown history: legacy bare-FEN "
+        "derivations and history-filled LC0 imports both lack these stamps.",
         *problems,
     ]
 
@@ -1241,7 +1240,7 @@ def history_identity_record(
     """The summary's record of what the reader saw, mixed or not."""
     return {
         "row_schemas": sorted(stamps.row_schemas),
-        "zero_history": sorted(stamps.zero_history),
+        "zero_history": sorted(stamps.zero_history, key=str),
         "mixed_within": sorted(stamps.mixed_within),
         "unidentified": sorted(stamps.unidentified),
         "mixed": stamps.mixed,
