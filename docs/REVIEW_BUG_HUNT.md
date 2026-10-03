@@ -1583,3 +1583,24 @@ Finding F056: after the per-step non-finite gradient guard rejected an optimizer
 Validation used the already built source-identical Python 3.13 CPU environment, local native extensions, two CPU threads, a 4 GiB RSS ceiling, no CUDA devices, and per-job timeout below 600 seconds. The scoped loss/target, accumulation, optimizer, warmup, checkpoint, ZClip and SWA test slice passed. `ruff`, `py_compile`, and `git diff --check` passed. The independent internal review is tied to the final fix commit.
 
 Qualification gaps: no GPU, mixed-precision CUDA, production-sized model/corpus, or live multi-process Tune run was performed. The exact-corpus tests are synthetic; Windows/macOS/ARM and long-duration optimizer-state behavior remain outside this pass. No additional defect was confirmed in the audited normalization, parameter grouping, restore or metric-identity paths.
+
+
+Finding F057 follow-up on the same #1003 branch: AveragedModel starts as an
+initial-weight copy, while export_swa previously selected its module whenever
+SWA was configured, independent of n_averaged. With warmup_steps=0 and
+swa_start=1, a finite step 0 changes the raw model, then a rejected first
+eligible step 1 leaves the average count at zero; publication emitted the
+initial copy instead of current raw weights. The new end-to-end regression
+failed before the fix by digest mismatch and now checks the real save, exact
+resume, and export path with n_averaged=0. Empty-SWA export falls back to raw
+weights; optional BN recalibration also targets the model actually being
+published. The warning now describes only a non-empty average.
+
+The positive control records model weights at successful eligible update
+boundaries, interleaves a rejected eligible update, verifies the rejected step
+does not change the count, checks the exact expected mean of the two successful
+samples, and checks published tensors equal the SWA model. The empty checkpoint
+resume retains n_averaged=0. Focused SWA export/checkpoint, train-window sync,
+and training E2E tests pass (38 total); Ruff, py_compile, and diff checks pass.
+This behavior is conditional: the current production template disables SWA, so
+no live training incident is claimed.

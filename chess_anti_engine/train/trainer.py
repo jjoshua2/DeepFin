@@ -7211,26 +7211,33 @@ class Trainer:
         enabled. Production runs ``swa_start: -1``, so it never fires today
         (rl_loop_audit J10).
         """
+        swa_samples = (
+            0 if self._swa_model is None
+            else int(self._swa_model.n_averaged.item())
+        )
+        use_swa = self._swa_model is not None and swa_samples > 0
         if self._swa_model is not None and dataloader is not None:
             torch.optim.swa_utils.update_bn(
                 dataloader,
-                self._swa_model,
+                self._swa_model if use_swa else self.model,
                 device=torch.device(self.device),
             )
-        if self._swa_model is None:
+        if not use_swa:
             source = "model"
             raw_state = self.model.state_dict()
         else:
+            assert self._swa_model is not None
             source = "swa_model.module"
             raw_state = self._swa_model.module.state_dict()
             logging.getLogger(__name__).warning(
-                "export_swa: SWA is ENABLED, so %s carries the SWA average while "
-                "checkpoint trainer.pt['model'] carries the raw model. Every "
-                "consumer that reads the checkpoint -- the ratchet arena, "
-                "value_regret, audit_targets -- is measuring a DIFFERENT net "
-                "than the selfplay workers play. Point those tools at the "
-                "published file, or keep swa_start negative. (audit J10)",
-                path,
+                "export_swa: SWA has %d averaged samples, so %s carries the "
+                "SWA average while checkpoint trainer.pt['model'] carries the "
+                "raw model. Every consumer that reads the checkpoint -- the "
+                "ratchet arena, value_regret, audit_targets -- is measuring a "
+                "DIFFERENT net than the selfplay workers play. Point those "
+                "tools at the published file, or keep swa_start negative. "
+                "(audit J10)",
+                swa_samples, path,
             )
         state_dict = strip_compile_prefix(raw_state)
         export: dict[str, Any] = {"model": state_dict}
