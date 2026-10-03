@@ -510,12 +510,13 @@ Current notes:
   close are coordinated with the transition. The regression holds ponder work
   across `ponderhit` + `stop`, then verifies the real phase receives a set event
   and emits one bestmove.
-- Finding F052 opened/fixed in this cycle: startup `quit`/EOF could call
-  `Engine.close()` while the builder thread was still using the same worker for
-  `warmup_search()`. Engine shutdown now waits for warmup ownership to finish,
-  and the test covers both quit and EOF with a barrier-controlled worker. Close
-  also invalidates the generation atomically with the phase transition so no
-  pending ponder phase or stale bestmove escapes shutdown.
+- Finding F052 opened/fixed in this cycle: startup `quit`/EOF could call `Engine.close()` while the builder thread was
+  still using the same worker for `warmup_search()`, or return before a not-yet-
+  published engine could be closed. Engine shutdown waits for warmup ownership,
+  and `main()` waits for the background build result before cleanup on early quit.
+  Barrier-controlled tests cover quit/EOF during warmup and quit during blocked
+  model loading. Close also invalidates the generation atomically with the phase
+  transition so no pending ponder phase or stale bestmove escapes shutdown.
 - Focused follow-up validation after F051/F052: the new lifecycle regressions,
   existing warmup/search-option tests, adjacent UCI engine-state/protocol/timeout/
   smoke/ponder-clock tests, Ruff, py_compile and `git diff --check` all passed.

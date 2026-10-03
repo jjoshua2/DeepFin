@@ -130,7 +130,6 @@ def test_startup_warmup_owns_worker_until_main_shutdown(monkeypatch, raw):
     release_warmup = threading.Event()
     warmup_done = threading.Event()
     close_overlap = []
-    close_entered = threading.Event()
     worker = MagicMock()
     worker._chunk_sims = 8
 
@@ -145,14 +144,6 @@ def test_startup_warmup_owns_worker_until_main_shutdown(monkeypatch, raw):
     worker.run.side_effect = run
     worker.close.side_effect = lambda: close_overlap.append(not warmup_done.is_set())
     engine = Engine(worker=worker)
-    original_close = engine.close
-
-    def close_engine():
-        close_entered.set()
-        original_close()
-
-    engine.close = close_engine
-
     monkeypatch.setattr(sys, "argv", ["deepfin", "--checkpoint", "dummy"])
     monkeypatch.setattr(sys, "stdin", _StopDuringWarmupInput(warmup_entered, raw))
     monkeypatch.setattr(uci_main, "_pick_device", lambda _device: "cpu")
@@ -177,8 +168,8 @@ def test_startup_warmup_owns_worker_until_main_shutdown(monkeypatch, raw):
     main_thread.start()
     try:
         assert warmup_entered.wait(2)
-        assert close_entered.wait(1), "main did not enter shutdown while warmup owned the worker"
-        assert not warmup_done.is_set(), "warmup exited before shutdown attempted to close"
+        assert not done.wait(0.1), "main returned while startup warmup still owned the worker"
+        assert not warmup_done.is_set()
         release_warmup.set()
         assert warmup_done.wait(2), "startup warmup did not return"
         assert done.wait(2), "main did not finish after startup warmup was released"
@@ -188,3 +179,66 @@ def test_startup_warmup_owns_worker_until_main_shutdown(monkeypatch, raw):
 
     assert result == [0]
     assert close_overlap == [False], "worker.close overlapped startup warmup"
+
+
+def test_early_quit_waits_for_builder_and_closes_published_engine(monkeypatch):
+    load_entered = threading.Event()
+    release_load = threading.Event()
+    quit_yielded = threading.Event()
+    worker = MagicMock()
+    worker._chunk_sims = 8
+    engine = Engine(worker=worker)
+
+    class QuitAfterLoadStarts:
+        def __init__(self):
+            self.sent = False
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            if self.sent:
+                raise StopIteration
+            assert load_entered.wait(2), "background model load did not start"
+            self.sent = True
+            quit_yielded.set()
+            return "quit"
+
+    def load_models(*_args):
+        load_entered.set()
+        assert release_load.wait(2), "test did not release background model loading"
+        return [SimpleNamespace()]
+
+    monkeypatch.setattr(sys, "argv", ["deepfin", "--checkpoint", "dummy"])
+    monkeypatch.setattr(sys, "stdin", QuitAfterLoadStarts())
+    monkeypatch.setattr(uci_main, "_pick_device", lambda _device: "cpu")
+    monkeypatch.setattr(uci_main, "_resolve_multi_gpu_startup", lambda *_args: (False, False, False))
+    monkeypatch.setattr(uci_main, "_startup_engine_options", lambda *_args, **_kwargs: SimpleNamespace(
+        eval_cache_entries=0, max_batch=1, vl_gather=1,
+        use_multi_gpu_pucv=False, search_parallel="pucv",
+    ))
+    monkeypatch.setattr(uci_main, "_load_models", load_models)
+    monkeypatch.setattr(uci_main, "_make_evaluator_factory", lambda *_args, **_kwargs: lambda *_a, **_k: object())
+    monkeypatch.setattr(uci_main, "_engine_search_kwargs", lambda _args: {})
+    monkeypatch.setattr(uci_main, "_build_engine", lambda **_kwargs: engine)
+
+    done = threading.Event()
+    result = []
+
+    def run_main():
+        result.append(uci_main.main())
+        done.set()
+
+    main_thread = threading.Thread(target=run_main)
+    main_thread.start()
+    try:
+        assert quit_yielded.wait(2)
+        assert not done.wait(0.1), "main returned while the background builder still owned startup"
+        release_load.set()
+        assert done.wait(2), "main did not finish after the builder published its engine"
+    finally:
+        release_load.set()
+        main_thread.join(timeout=2)
+
+    assert result == [0]
+    worker.close.assert_called_once()
