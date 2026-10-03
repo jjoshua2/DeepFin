@@ -699,6 +699,12 @@ def read_cell(manifest: dict[str, Any]) -> dict[str, Any]:
     for key, digits in [("score", 5), ("score_se", 5), ("elo", 2)]:
         want = None if measured[key] is None else round(measured[key], digits)
         same(result.get(key), want, f"terminal {key}")
+    if "interval_status" in result:
+        same(
+            result.get("interval_status"),
+            measured["interval_status"],
+            "terminal interval status",
+        )
     same(
         result.get("elo_ci95"),
         [None if x is None else round(x, 2) for x in measured["elo_ci95"]],

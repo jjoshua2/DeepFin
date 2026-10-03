@@ -709,6 +709,7 @@ def _drive_match(
     argv: list[str],
     *,
     crash_after: int | None = None,
+    score_by_index: dict[int, float] | None = None,
 ) -> list[int]:
     """Run ``main()`` against fake engines; return the game indices PLAYED."""
     played: list[int] = []
@@ -718,8 +719,13 @@ def _drive_match(
         played.append(index)
         if crash_after is not None and len(played) > crash_after:
             raise _SimulatedCrash("simulated engine death")
+        score = None if score_by_index is None else score_by_index.get(index)
+        a_is_white = index % 2 == 0
         return module.GameRecord(
-            result=_MATCH_RESULTS[index],
+            result=(
+                _MATCH_RESULTS[index]
+                if score is None else _result_for(score, a_is_white=a_is_white)
+            ),
             plies=20 + index,
             start_board=start_board.copy(stack=False),
             moves=(),
@@ -881,16 +887,49 @@ def test_match_score_ci_uses_color_swapped_pairs() -> None:
         module._score_ci([1.0])
 
 
-def test_resumed_match_ci_uses_global_game_index_order() -> None:
+def test_resumed_match_ci_uses_global_game_index_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     module = _load_match_module()
-    # Resume reloads the two first colorings (indices 0 and 2), then plays
-    # indices 1 and 3. Global order yields two neutral pair means; append order
-    # would invent a win pair and a loss pair with a wide interval.
-    points = {0: 1.0, 2: 1.0}
-    points[1] = 0.0
-    points[3] = 0.0
-    assert module._score_ci([points[i] for i in range(4)]) is None
-    assert module._score_ci([points[i] for i in (0, 2, 1, 3)]) == pytest.approx((0.0, 1.0))
+    log_path = tmp_path / "interleaved.games.jsonl"
+    scores = {i: (1.0 if i % 2 == 0 else 0.0) for i in range(8)}
+    _drive_match(
+        monkeypatch, module, _match_argv(tmp_path, log_path, extra=[]),
+        score_by_index=scores,
+    )
+
+    # Keep only completed games 0 and 2 in the interrupted log. Resuming plays
+    # indices 1, 3, 4, 5, 6 and 7, so the production main path must reconstruct
+    # global game order rather than append new scores after reloaded scores.
+    complete = read_game_log(log_path)
+    rows = [r for r in complete.games if r["game_index"] in (0, 2)]
+    log_path.unlink()
+    with GameLogWriter(
+        log_path, driver=complete.header["driver"], settings=complete.settings,
+    ) as writer:
+        for row in rows:
+            writer.write_game(row)
+
+    seen: list[list[float]] = []
+    original = module._score_ci
+
+    def capture(points: list[float], *, z: float = 1.96):
+        seen.append(list(points))
+        return original(points, z=z)
+
+    monkeypatch.setattr(module, "_score_ci", capture)
+    played = _drive_match(
+        monkeypatch, module,
+        _match_argv(tmp_path, log_path, extra=["--resume"]),
+        score_by_index=scores,
+    )
+    assert played == [1, 3, 4, 5, 6, 7]
+    assert seen == [[1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0]]
+    assert (
+        "Score 95% CI: unavailable (zero observed between-opening variance)"
+        in capsys.readouterr().out
+    )
 
 
 def test_match_rejects_odd_game_count_before_starting_engines(

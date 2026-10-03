@@ -396,6 +396,17 @@ def test_forged_terminal_prefix_and_accounting_refused(make, change):
         tool.read_cell(m)
 
 
+def test_terminal_interval_status_mismatch_refused(make):
+    m = make(values=[0.0, 2.0] * 64, low=False)
+    mutate(
+        m,
+        "result",
+        lambda r: r.__setitem__("interval_status", "unavailable_zero_empirical_variance"),
+    )
+    with pytest.raises(tool.InvalidCell, match="terminal interval status"):
+        tool.read_cell(m)
+
+
 def test_missing_core_and_duplicate_or_torn_games_refused(make):
     m = make(values=[0.0, 2.0] * 100, order=[*range(127), *range(128, 200)])
     with pytest.raises(tool.InvalidCell, match="first128"):

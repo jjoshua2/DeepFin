@@ -1364,12 +1364,13 @@ installation or artifact download was performed.
 
 Bounded negative and regression checks:
 
-- `tests/test_match_resume.py -k "match_score_ci or resumed_match_ci or odd_game_count or resumed_match_equals or resumed_match_replays or match_schedule"` — 6 selected tests passed. The index-order fixture stores scores for indices 0 and 2 before playing 1 and 3, then proves global index order remains two neutral pairs while append order invents maximal variance.
+- `tests/test_match_resume.py -k "match_score_ci or resumed_match_ci or odd_game_count or resumed_match_equals or resumed_match_replays or match_schedule"` — 6 selected tests passed. The production-path fixture resumes only indices 0 and 2, plays indices 1, 3, 4, 5, 6 and 7, captures the score sequence passed from `main` into `_score_ci`, and proves it is in global index order; append order would invent variance.
 - `tests/test_arena_standard.py -k "pentanomial or print_summary"` — targeted run passed; includes the 10-neutral-pair sample from an iid population with (P(X=.5)=.9, P(X=1)=.1): the 0.348678 probability of observing all neutral yields the former false zero-width interval, now explicitly unavailable. Existing symmetric/asymmetric nondegenerate goldens are unchanged.
 - `tests/test_match_vs_uci_script.py -k score_ci` — 1 passed, including the degenerate mirrored case.
+- `tests/test_bt4_recipe_readout.py -k terminal_interval_status_mismatch` — 1 passed; contradictory pinned summary status is rejected.
 - `tests/test_identity_harness.py -k "summary"` — 3 passed; after asserting the single-complete-pair case, `-k "summary_drops_an_orphan"` — 1 passed.
 - All pytest invocations used a 600-second timeout and two-thread caps. Existing `pynvml` deprecation warning only.
-- Independent read-only `codex review --uncommitted`: no actionable regressions; reviewer’s focused selection passed 10 tests. Its broader aggregate run was inconclusive because the shared Python 3.10 venv has NumPy 2.2.6 while its native extension was built against NumPy 1.x. The worktree’s own Python 3.10 build and targeted test slices passed.
+- Independent read-only `codex review --uncommitted`: the first review identified an inadequate resume-order test and a missing pinned-status integrity check. Both were addressed; the final review found no actionable regressions and its seven focused tests passed. The separate test module run passed 66 tests but three CLI tests were blocked by the fixture rejecting matplotlib's attempt to create `/home/josh/.config/matplotlib`; targeted receipt validation passed separately. Earlier broader aggregate review was inconclusive because the shared Python 3.10 venv has NumPy 2.2.6 while its native extension was built against NumPy 1.x.
 
 Known qualification gaps: no real engine, Stockfish, checkpoint, GPU, or tablebase
 arena was launched; no long ladder or SPRT stop was executed. The documented
