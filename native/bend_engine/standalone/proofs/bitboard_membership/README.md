@@ -99,11 +99,12 @@ in the original `bb`. It also proves an all-U32 frequency corollary: for every
 query, including values at least 64, the occurrence count is exactly
 `Bool.pick(Nat, U64.test_bit(bb, U32.to_nat(query)), 1, 0)`. The out-of-range
 case establishes both zero occurrences and false `test_bit`; the in-range case
-reuses the already-checked frequency theorem. The proof is bound to the current
-PR #1000 source snapshot at `8ce6640a1a20a4688ced0c7ebbfc61a648ab3f6d`, archive
-SHA-256 `a672d8386a8144521a8a293cf4319e51fc2b42a40fb1b2f84e6ff15d16a24f07`,
-and the same pinned Bend tree above. Its 44-file import closure is enumerated
-in [the closure manifest](evidence/2026-10-03/emitted-range-source-closure.json).
+reuses the already-checked frequency theorem. The immutable dependency snapshot is PR #1000 head
+`8ce6640a1a20a4688ced0c7ebbfc61a648ab3f6d`, archive SHA-256
+`a672d8386a8144521a8a293cf4319e51fc2b42a40fb1b2f84e6ff15d16a24f07`. The new
+proof file was added after that snapshot and is separately bound by its SHA-256
+and Git blob in the receipt. The proof and all 43 imported source files form a
+44-file closure enumerated in [the closure manifest](evidence/2026-10-03/emitted-range-source-closure.json).
 
 The new module passed `--check-only` with `All terms check.`, exit code 0,
 4.72 seconds, and 691536 KiB peak RSS, with the same 86400-second timeout,
