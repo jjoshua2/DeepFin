@@ -347,6 +347,84 @@ def test_publish_exports_new_model_when_resume_step_changes(tmp_path: Path) -> N
     assert second_sha != first_sha
 
 
+def test_equal_step_cross_trial_restore_republishes_restored_donor_weights(tmp_path: Path) -> None:
+    class _NamedExportTrainer:
+        def __init__(self, payload: bytes) -> None:
+            self.payload = payload
+            self.exports = 0
+
+        def export_swa(self, path: Path) -> None:
+            self.exports += 1
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(self.payload)
+
+    model_cfg = _model_cfg()
+    recipient = _NamedExportTrainer(b"recipient-weights")
+    _publish_distributed_trial_state(
+        trainer=recipient,
+        config={},
+        model_cfg=model_cfg,
+        server_root=tmp_path,
+        trial_id="recipient",
+        training_iteration=10,
+        trainer_step=17,
+        sf_nodes=1000,
+        mcts_simulations=64,
+    )
+
+    from chess_anti_engine.tune.trainable import _reuse_published_model_on_resume
+    from chess_anti_engine.tune.trial_config import RestoreResult
+
+    donor_restore = _NamedExportTrainer(b"donor-weights")
+    reuse = _reuse_published_model_on_resume(
+        ckpt=object(), restore=RestoreResult(cross_trial_restore=True),
+    )
+    assert reuse is False
+    assert _reuse_published_model_on_resume(
+        ckpt=object(), restore=RestoreResult(cross_trial_restore=False),
+    ) is True
+
+    import ast
+    import inspect
+
+    from chess_anti_engine.tune import trainable
+
+    tree = ast.parse(inspect.getsource(trainable.train_trial))
+    wired_callers = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        call_name = node.func.id if isinstance(node.func, ast.Name) else ""
+        if call_name not in {"_publish_distributed_trial_state", "_run_selfplay_phase"}:
+            continue
+        reuse_arg = next(
+            (kw.value for kw in node.keywords
+             if kw.arg == "reuse_existing_model_for_same_step"),
+            None,
+        )
+        assert isinstance(reuse_arg, ast.Call), ast.dump(node)
+        assert isinstance(reuse_arg.func, ast.Name), ast.dump(reuse_arg)
+        assert reuse_arg.func.id == "_reuse_published_model_on_resume", ast.dump(reuse_arg)
+        wired_callers.add(call_name)
+    assert wired_callers == {"_publish_distributed_trial_state", "_run_selfplay_phase"}
+
+    _publish_distributed_trial_state(
+        trainer=donor_restore,
+        config={},
+        model_cfg=model_cfg,
+        server_root=tmp_path,
+        trial_id="recipient",
+        training_iteration=0,
+        trainer_step=17,
+        sf_nodes=1000,
+        mcts_simulations=64,
+        reuse_existing_model_for_same_step=reuse,
+    )
+
+    published = tmp_path / "trials" / "recipient" / "publish" / "latest_model.pt"
+    assert published.read_bytes() == b"donor-weights"
+    assert donor_restore.exports == 1
+
 def test_iteration_pause_metrics_reports_percent_paused() -> None:
     metrics = _iteration_pause_metrics(
         iteration_started_at=10.0,
