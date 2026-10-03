@@ -3,8 +3,10 @@
 from __future__ import annotations
 import hashlib
 import json
+import os
 import io
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 from fastapi.testclient import TestClient
@@ -23,7 +25,9 @@ from tests.test_server_upload_security import _sample
 TRIAL = "trial_00000"
 
 
-def _payload(tmp_path: Path, *, name: str, generated_at: int) -> tuple[str, bytes]:
+def _payload(
+    tmp_path: Path, *, name: str, generated_at: int, mtime_unix: int | None = None
+) -> tuple[str, bytes]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     shard = tmp_path / f"{name}.zarr"
     save_local_shard_arrays(
@@ -39,6 +43,9 @@ def _payload(tmp_path: Path, *, name: str, generated_at: int) -> tuple[str, byte
             generated_at_unix=generated_at,
         ),
     )
+    if mtime_unix is not None:
+        for path in [*shard.rglob("*"), shard]:
+            os.utime(path, (mtime_unix, mtime_unix))
     filename, stream = pack_shard_for_upload(shard)
     try:
         return filename, stream.getvalue()
@@ -92,7 +99,10 @@ def test_retry_after_compaction_and_restart_dedupes_payload_not_rows(
     root.mkdir()
     _seed_user(root)
     filename, original = _payload(
-        tmp_path / "original", name="original", generated_at=100
+        tmp_path / "original",
+        name="original",
+        generated_at=100,
+        mtime_unix=int(time.time()) - 8 * 3600,
     )
     filename2, same_rows_new_upload = _payload(
         tmp_path / "different", name="different", generated_at=101

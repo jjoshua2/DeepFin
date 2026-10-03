@@ -5687,6 +5687,17 @@ def create_app(
             return None
         return candidate
 
+    def _parse_pending_seen_at(name: str) -> float | None:
+        """Read the server acceptance second embedded in a staged upload name."""
+        stem = name[: -len(LOCAL_SHARD_SUFFIX)] if name.endswith(LOCAL_SHARD_SUFFIX) else name
+        first, separator, _rest = stem.partition("_")
+        if not separator or not first.isdecimal():
+            return None
+        try:
+            return float(int(first))
+        except (ValueError, OverflowError):
+            return None
+
     def _recover_in_flight_dirs(
         *,
         in_flight_root: Path,
@@ -5752,15 +5763,17 @@ def create_app(
                     upload_sha = _parse_pending_sha(entry.name)
                     if upload_sha is None:
                         continue
-                    try:
-                        mtime = float(entry.stat().st_mtime)
-                    except OSError:
-                        mtime = float(time.time())
+                    seen_at = _parse_pending_seen_at(entry.name)
+                    if seen_at is None:
+                        try:
+                            seen_at = float(entry.stat().st_mtime)
+                        except OSError:
+                            seen_at = float(time.time())
                     key = (trial_key, upload_sha)
                     # Index every committed payload before any fallible receipt
                     # write, so a partial write cannot admit another member of
                     # this same committed flush during this server lifetime.
-                    recent_upload_shas[key] = mtime
+                    recent_upload_shas[key] = seen_at
                     receipt_upload_shas.add(key)
                 for key in token_shas:
                     _trial, upload_sha = key
@@ -6064,7 +6077,8 @@ def create_app(
             )
             acc.pending_paths.append(entry)
             if upload_sha is not None:
-                recent_upload_shas[(trial_key, upload_sha)] = mtime
+                seen_at = _parse_pending_seen_at(entry.name)
+                recent_upload_shas[(trial_key, upload_sha)] = mtime if seen_at is None else seen_at
             recovered += 1
         return recovered
 
