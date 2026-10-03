@@ -871,7 +871,7 @@ def test_match_schedule_is_a_pure_function_of_the_game_index() -> None:
 def test_match_score_ci_uses_color_swapped_pairs() -> None:
     module = _load_match_module()
     # Perfectly balanced mirrored pairs have no between-opening variance.
-    assert module._score_ci([1.0, 0.0, 1.0, 0.0]) == pytest.approx((0.5, 0.5))
+    assert module._score_ci([1.0, 0.0, 1.0, 0.0]) is None
     # A decisive win/loss pair gives the full pair-level uncertainty.
     lo, hi = module._score_ci([1.0, 1.0, 0.0, 0.0])
     assert lo == pytest.approx(0.0)
@@ -879,6 +879,18 @@ def test_match_score_ci_uses_color_swapped_pairs() -> None:
     assert module._score_ci([1.0, 0.0]) is None  # variance needs two pairs
     with pytest.raises(ValueError, match="even number"):
         module._score_ci([1.0])
+
+
+def test_resumed_match_ci_uses_global_game_index_order() -> None:
+    module = _load_match_module()
+    # Resume reloads the two first colorings (indices 0 and 2), then plays
+    # indices 1 and 3. Global order yields two neutral pair means; append order
+    # would invent a win pair and a loss pair with a wide interval.
+    points = {0: 1.0, 2: 1.0}
+    points[1] = 0.0
+    points[3] = 0.0
+    assert module._score_ci([points[i] for i in range(4)]) is None
+    assert module._score_ci([points[i] for i in (0, 2, 1, 3)]) == pytest.approx((0.0, 1.0))
 
 
 def test_match_rejects_odd_game_count_before_starting_engines(

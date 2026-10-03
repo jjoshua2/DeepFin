@@ -461,6 +461,7 @@ def test_summary_drops_an_orphan_half_instead_of_imputing_it() -> None:
     assert s["pairs_dropped"] == 1
     assert s["games"] == 3
     assert s["score_se"] is None
+    assert s["interval_status"] == "unavailable_insufficient_pairs"
     assert s["score_ci95"] == [None, None]
     assert s["elo_ci95"] == [None, None]
 

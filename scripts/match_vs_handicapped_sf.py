@@ -934,7 +934,7 @@ def summarize(outcomes: Sequence[GameOutcome], *, regret: float) -> dict[str, An
 
     if pair_scores:
         summary = summarize_pentanomial(pentanomial_counts(pair_scores))
-        if summary.score_se is None:
+        if summary.interval_status != "available_normal_approximation":
             lo = hi = None
         else:
             lo = summary.score - 1.96 * summary.score_se
@@ -942,6 +942,7 @@ def summarize(outcomes: Sequence[GameOutcome], *, regret: float) -> dict[str, An
         out["ci_unit"] = "pair (pentanomial)"
         out["score"] = summary.score
         out["score_se"] = summary.score_se
+        out["interval_status"] = summary.interval_status
         out["score_ci95"] = [lo, hi]
         out["pentanomial"] = {
             "WW": summary.counts[0], "WD_DW": summary.counts[1],
@@ -960,6 +961,7 @@ def summarize(outcomes: Sequence[GameOutcome], *, regret: float) -> dict[str, An
         out["score"] = mean_g
         out["score_se"] = se_g
         out["score_ci95"] = [mean_g - 1.96 * se_g, mean_g + 1.96 * se_g]
+        out["interval_status"] = "unavailable_insufficient_pairs"
         out["elo"] = None
         out["elo_ci95"] = [None, None]
 

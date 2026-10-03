@@ -376,6 +376,7 @@ def summary(scores: list[float]) -> dict[str, Any]:
         "pairs": s.pairs,
         "score": s.score,
         "score_se": s.score_se,
+        "interval_status": s.interval_status,
         "elo": s.elo,
         "elo_ci95": list(s.elo_ci95),
         "pentanomial": dict(zip(("WW", "WD_DW", "DD_WL", "LD_DL", "LL"), s.counts)),

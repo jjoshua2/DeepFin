@@ -120,6 +120,8 @@ def _score_ci(points: list[float], *, z: float = 1.96) -> tuple[float, float] | 
         return None
     mean = sum(pair_scores) / n
     var = sum((p - mean) ** 2 for p in pair_scores) / (n - 1)
+    if var == 0.0:
+        return None
     half = z * math.sqrt(var / n)
     return max(0.0, mean - half), min(1.0, mean + half)
 
@@ -1427,6 +1429,17 @@ def main() -> None:
         print(f"  Score 95% CI: [{lo:.3f}, {hi:.3f}]")
         if elo_lo is not None and elo_hi is not None:
             print(f"  Elo 95% CI  : [{elo_lo:+.0f}, {elo_hi:+.0f}]")
+    else:
+        pair_points = [
+            (points[i] + points[i + 1]) / 2
+            for i in range(0, args.games, 2)
+        ]
+        reason = (
+            "zero observed between-opening variance"
+            if len(pair_points) >= 2 and len(set(pair_points)) == 1
+            else "fewer than two complete opening pairs"
+        )
+        print(f"  Score 95% CI: unavailable ({reason})")
     elo = _elo_from_score(score)
     if elo is not None:
         print(f"  Elo (A - B) ≈ {elo:+.0f}")
