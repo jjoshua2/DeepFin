@@ -5160,6 +5160,11 @@ def create_app(
                 }
 
             tmp.unlink(missing_ok=True)
+            # The worker sends SHA-256 of the exact packed tar as the retry
+            # identity; there is no independent upload UUID on this API. Thus
+            # byte-identical payloads within the six-hour window are retries
+            # (the pre-existing in-memory contract), while byte-distinct shards
+            # with repeated rows remain independent training examples.
             upload_seen_key = (trial_key, sha)
             now_unix = time.time()
             # Atomically promote the extracted zarr group to the pending dir
