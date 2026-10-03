@@ -1567,3 +1567,75 @@ Use this section after findings are recorded.
 - [x] What minimum hardware baseline should efficiency findings use: CPU-only, single CUDA GPU, or current production host?
 - [x] Which Stockfish version/path should be treated as the review baseline?
 - [x] Are benchmark regressions findings only after measurement, or should obvious hot-path issues be recorded from static review?
+
+
+### Board Encoding and Policy Mapping: Fresh System Pass (2026-10-03)
+
+Base: current origin/main 269105298285b6098ffbf80405cb18ec33186b38.
+Candidate: final audit/fix commit SHA is recorded in the commit metadata.
+
+Coverage checklist derived from current source and configuration (not assumed
+from historical 146/1858 defaults):
+
+- [x] Enumerate EXTRA_FEATURE_VERSIONS, normalization aliases, registered
+  extra-plane counts, and total tensor shapes from features.py / encode.py:
+  v1 146, v2_threats 175, v3_checks 179, v3_xray 181, v3_see
+  177, and v3_passers 183; all retain the 112-plane LC0 block.
+- [x] Trace model/config identity through model construction and checkpoint
+  metadata, encoding/model_inputs.py, scalar/batch Python encoders,
+  CBoard scalar/batch encoders, and native extension entrypoints. Production
+  template explicitly selects v2_threats; experimental configs select the
+  separate v3 variants. policy_encoding remains compact 1858 at model/training
+  boundaries; search/CBoard action IDs are full 4672.
+- [x] Trace all three history layouts: legacy per-frame side-to-move POV,
+  lc0_root stable root POV with interleaved repetition slots/root metadata,
+  and lc0_root_legacy_meta; check short history, repetition, castling, EP and
+  rule50 consumers against layout-aware readers. Ceres TPG is separately typed.
+- [x] Trace compact-1858 to AZ-4672 and Leela-1858 paths, including side-to-move
+  orientation, ambiguous promotion/back-rank slots, castling king-takes-rook
+  spelling, legal masks, mirroring and promotion legality. Search actions and
+  model outputs are distinct index spaces.
+- [x] Exercise Python/C encoder and move-generator parity, output shape/dtype,
+  native output-buffer validation, scalar/batch/fallback paths, and invalid
+  shape/context rejection. Full CBoard support for all registered widths is
+  now pinned by scalar and batch tests.
+- [x] Identify reachable crash: native CBoard.encode_full and
+  encode_full_batch parameter validation admitted only the first three
+  registered extra-plane widths, while model configs and Python/C feature
+  computation registered six. Before the fix, encode_cboard raised
+  ValueError for v3_xray (69), v3_see (65), and v3_passers (71), making
+  those selected model input paths fail before inference.
+- [x] Minimal fix: allow the three additional declared widths in the shared
+  _lc0_ext.c validator and update its diagnostic and CBoard feature contract
+  comment. Added batch/single parity, native buffer acceptance, empty-batch
+  shape, and extension-fallback tests for all six versions. Existing feature
+  semantics remain selected by their exact n_extra width; no plane values or
+  ordering were changed.
+
+Validation on isolated Linux x86_64 / Python 3.10.12 with native extensions
+built locally from this checkout:
+
+- Before-fix scalar reproduction: v1, v2_threats, v3_checks succeed;
+  all three registered v3 widths above fail at native validation with the
+  corresponding n_extra error.
+- After-fix focused suite: tests/test_encode_full_batch.py,
+  test_encode_optimization.py, test_threat_planes.py,
+  test_cboard_terminal.py, test_cboard_move_parity.py,
+  test_history_rep_fix.py, test_leela_index.py,
+  test_move_encoding_lc0_4672.py, test_mirror_augmentation.py, and
+  test_encode_buffer_plane_guard.py: 217 passed in 8.77s; peak RSS 844216 KiB.
+- Separate current-main pre-fix encoding/history/policy slice: 299 passed;
+  this included all three history profiles, LC0/Ceres mapping, C/Python feature
+  semantics, history transform fixtures, policy round trips, and native type/
+  shape negative tests. The final fix-only run above covers the changed paths.
+- All pytest runs used the project fixture's realized two Torch threads and
+  ulimit -t 600; no GPU, model weights, external network, or data corpus.
+- Static source audit found all dynamic producer callers derive plane count
+  from the model's declared feature version. In-place/pinned-buffer callers
+  invoke check_encode_buffer_planes at production entry boundaries.
+
+Not qualified: GPU or trained-model inference parity; production arena/training
+workloads for experimental v3 configs; Windows/ARM/big-endian builds; alternate
+Python/NumPy ABIs; max-depth game-history extremes. This is a first source plus
+bounded native/Python CPU pass for the board encoder and policy-mapping subsystem,
+not a deployment qualification.

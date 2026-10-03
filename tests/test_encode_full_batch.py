@@ -50,7 +50,9 @@ _HIST_ENCODINGS = (
     LC0_HISTORY_ROOT,
     LC0_HISTORY_ROOT_LEGACY_META,
 )
-_EXTRA_FEATURES = ("v1", "v2_threats")
+_EXTRA_FEATURES = (
+    "v1", "v2_threats", "v3_checks", "v3_xray", "v3_see", "v3_passers",
+)
 
 
 @pytest.mark.parametrize("input_history_encoding", _HIST_ENCODINGS)
@@ -84,19 +86,24 @@ def test_encode_cboard_batch_matches_per_board_stack(
 
 
 def test_encode_cboard_batch_empty() -> None:
-    empty_v1 = encode_cboard_batch([], input_extra_features="v1")
-    assert empty_v1.shape == (0, 146, 8, 8)
-    assert empty_v1.dtype == np.float32
-
-    empty_v2 = encode_cboard_batch([], input_extra_features="v2_threats")
-    assert empty_v2.shape == (0, 175, 8, 8)
-    assert empty_v2.dtype == np.float32
+    expected = {
+        "v1": 146,
+        "v2_threats": 175,
+        "v3_checks": 179,
+        "v3_xray": 181,
+        "v3_see": 177,
+        "v3_passers": 183,
+    }
+    for encoding, planes in expected.items():
+        empty = encode_cboard_batch([], input_extra_features=encoding)
+        assert empty.shape == (0, planes, 8, 8)
+        assert empty.dtype == np.float32
 
 
 def test_encode_full_batch_raw_matches_encode_full() -> None:
     boards = _boards_with_history()
     for hist_mode in (0, 1, 2):
-        for n_extra in (34, 63):
+        for n_extra in (34, 63, 67, 69, 65, 71):
             n_planes = 112 + n_extra
             out = np.empty((len(boards), n_planes, 8, 8), dtype=np.float32)
             # Dirty buffer must still be bit-identical to fresh encode_full.
@@ -127,19 +134,24 @@ def test_encode_full_batch_oversized_buffer() -> None:
     assert np.all(out[n:] == 0.5)
 
 
-def test_encode_cboard_batch_fallback_matches(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("input_extra_features", _EXTRA_FEATURES)
+def test_encode_cboard_batch_fallback_matches(
+    monkeypatch: pytest.MonkeyPatch, input_extra_features: str,
+) -> None:
     """Stale-extension fallback (no C symbol) must match the C batch path."""
     import chess_anti_engine.encoding._lc0_ext as _ext
     import chess_anti_engine.encoding.cboard_encode as ce
 
     boards = _boards_with_history()
     with_c = encode_cboard_batch(
-        boards, input_history_encoding=LC0_HISTORY_ROOT, input_extra_features="v2_threats"
+        boards, input_history_encoding=LC0_HISTORY_ROOT,
+        input_extra_features=input_extra_features,
     )
     monkeypatch.delattr(_ext, "encode_full_batch")
     assert getattr(ce._lc0_ext, "encode_full_batch", None) is None
     fallback = encode_cboard_batch(
-        boards, input_history_encoding=LC0_HISTORY_ROOT, input_extra_features="v2_threats"
+        boards, input_history_encoding=LC0_HISTORY_ROOT,
+        input_extra_features=input_extra_features,
     )
     assert fallback.dtype == np.float32
     assert np.array_equal(fallback, with_c)
