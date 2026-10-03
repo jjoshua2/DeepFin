@@ -81,6 +81,42 @@ def test_pentanomial_degenerate_score_has_no_elo():
     assert summary.elo_ci95[1] is None
 
 
+def test_zero_empirical_variance_does_not_claim_a_point_interval():
+    # For iid pair scores X=.5 with probability .9 and X=1 with probability
+    # .1, the true mean is .55. Ten neutral pairs occur with probability
+    # .9**10 and the zero-width plug-in interval would miss the truth.
+    summary = summarize_pentanomial((0, 0, 10, 0, 0))
+    assert summary.score == pytest.approx(0.5)
+    assert summary.score_se == 0.0
+    assert summary.elo_ci95 == (None, None)
+    assert summary.interval_status == "unavailable_zero_empirical_variance"
+    assert pytest.approx(0.3486784401) == 0.9 ** 10
+    record = build_result_record(
+        summary, mode="matched_sims", candidate="a", reference="b",
+        openings_path="x", opening_plies=None, sims_candidate=1,
+        sims_reference=1, ms_per_move=None, temperature=0.0,
+        gumbel_add_noise=False, max_plies=1, seed=1, device="cpu",
+        duration_s=0.0,
+    )
+    assert record["score_se"] == 0.0
+    assert record["interval_status"] == "unavailable_zero_empirical_variance"
+    assert record["elo_ci95"] == [None, None]
+
+
+def test_single_pair_does_not_claim_zero_uncertainty(capsys: pytest.CaptureFixture[str]):
+    summary = summarize_pentanomial((0, 0, 1, 0, 0))
+    assert summary.pairs == 1
+    assert summary.score == pytest.approx(0.5)
+    assert summary.score_se is None
+    assert summary.elo == pytest.approx(0.0)
+    assert summary.elo_ci95 == (None, None)
+    assert summary.interval_status == "unavailable_insufficient_pairs"
+
+    from scripts.arena_standard import print_summary
+    print_summary(summary)
+    assert "score 95% CI: n/a (unavailable_insufficient_pairs)" in capsys.readouterr().out
+
+
 def _tiny_model() -> torch.nn.Module:
     cfg = ModelConfig(
         kind="transformer",

@@ -111,11 +111,17 @@ def _elo_from_score(score: float) -> float | None:
 
 
 def _score_ci(points: list[float], *, z: float = 1.96) -> tuple[float, float] | None:
-    n = len(points)
+    """Normal CI over paired, color-swapped opening scores."""
+    if len(points) % 2:
+        raise ValueError("paired match score needs an even number of games")
+    pair_scores = [(points[i] + points[i + 1]) / 2 for i in range(0, len(points), 2)]
+    n = len(pair_scores)
     if n < 2:
         return None
-    mean = sum(points) / n
-    var = sum((p - mean) ** 2 for p in points) / (n - 1)
+    mean = sum(pair_scores) / n
+    var = sum((p - mean) ** 2 for p in pair_scores) / (n - 1)
+    if var == 0.0:
+        return None
     half = z * math.sqrt(var / n)
     return max(0.0, mean - half), min(1.0, mean + half)
 
@@ -937,7 +943,8 @@ def main() -> None:
     p.add_argument("--engine-b", required=True, help="UCI engine B (binary path or shell command)")
     p.add_argument("--label-a", default="A")
     p.add_argument("--label-b", default="B")
-    p.add_argument("--games", type=_positive_int, default=20)
+    p.add_argument("--games", type=_positive_int, default=20,
+                   help="total games; must be even (color-swapped opening pairs)")
     p.add_argument("--time-ms", type=_positive_int, default=200, help="fallback per-move time budget (ms)")
     p.add_argument("--time-ms-a", type=_positive_int, default=None, help="A per-move time budget (ms)")
     p.add_argument("--time-ms-b", type=_positive_int, default=None, help="B per-move time budget (ms)")
@@ -1014,6 +1021,8 @@ def main() -> None:
         help="maximum material count to probe for --syzygy-adjudicate-path",
     )
     args = p.parse_args()
+    if args.games % 2:
+        p.error("--games must be even (color-swapped opening pairs)")
 
     def _parse_opts(specs: list[str]) -> dict[str, str]:
         out: dict[str, str] = {}
@@ -1175,20 +1184,17 @@ def main() -> None:
             enforce_nodes=enforce_nodes_b,
         )
 
-        # Seeded from the resumed games so every tabulated number below (W/D/L,
-        # score, colour balance, plies, the CI over `points`) is what one
-        # uninterrupted match would have produced. `points` ends up ordered
-        # resumed-then-new rather than by game index; the mean and the CI are
-        # order-free, and nothing else reads the list.
+        # Keep scores indexed by global game number so both halves of each
+        # color-swapped opening pair stay adjacent across a resume.
         a_wins = a_draws = a_losses = 0
         a_white_count = 0
         a_black_count = 0
         total_plies = 0
-        points: list[float] = []
+        points: dict[int, float] = {}
         for _idx in sorted(done_games):
             _row = done_games[_idx]
             _point = float(_row["score_a"])
-            points.append(_point)
+            points[_idx] = _point
             if _point == 1.0:
                 a_wins += 1
             elif _point == 0.0:
@@ -1327,7 +1333,7 @@ def main() -> None:
                 result = record.result
                 plies = record.plies
                 point = _score_for_a(result, a_is_white=a_white)
-                points.append(point)
+                points[i] = point
                 if point == 1.0:
                     a_wins += 1
                 elif point == 0.0:
@@ -1415,7 +1421,7 @@ def main() -> None:
     print(f"  A losses : {a_losses}")
     print(f"  A score  : {score:.3f}  (incl. half for draws)")
     print(f"  A as W/B : {a_white_count}/{a_black_count}")
-    ci = _score_ci(points)
+    ci = _score_ci([points[i] for i in range(args.games)])
     if ci is not None:
         lo, hi = ci
         elo_lo = _elo_from_score(lo)
@@ -1423,6 +1429,17 @@ def main() -> None:
         print(f"  Score 95% CI: [{lo:.3f}, {hi:.3f}]")
         if elo_lo is not None and elo_hi is not None:
             print(f"  Elo 95% CI  : [{elo_lo:+.0f}, {elo_hi:+.0f}]")
+    else:
+        pair_points = [
+            (points[i] + points[i + 1]) / 2
+            for i in range(0, args.games, 2)
+        ]
+        reason = (
+            "zero observed between-opening variance"
+            if len(pair_points) >= 2 and len(set(pair_points)) == 1
+            else "fewer than two complete opening pairs"
+        )
+        print(f"  Score 95% CI: unavailable ({reason})")
     elo = _elo_from_score(score)
     if elo is not None:
         print(f"  Elo (A - B) ≈ {elo:+.0f}")
