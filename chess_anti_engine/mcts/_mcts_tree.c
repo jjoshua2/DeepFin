@@ -813,9 +813,12 @@ static int32_t tree_select_child(const TreeData *t, int32_t node_id,
         /* For an internal node, each pending descent below it is already
          * included in parent_vl and again in exactly one child counter. At
          * the search root, however, apply_vloss_path deliberately skips the
-         * root, so only child_pending is visible. Count the larger snapshot:
-         * this avoids double-counting below the root while remaining robust
-         * to the brief add/remove ordering window between adjacent counters. */
+         * root, so only child_pending is visible. Use the maximum as an
+         * approximate reconciliation of these independently sampled counts,
+         * not an exact union. For example, a removal on [R,P,A] paused after
+         * decrementing P interleaved with an addition on [R,P,B] paused after
+         * incrementing P can expose P=1 and child sum=1 while two partially
+         * installed reservations overlap. */
         int32_t pending = parent_vl > child_pending ? parent_vl : child_pending;
         parent_N = (double)(parent_visits + vloss_weight * pending);
         parent_W = atomic_load_double(&t->W[node_id]);
