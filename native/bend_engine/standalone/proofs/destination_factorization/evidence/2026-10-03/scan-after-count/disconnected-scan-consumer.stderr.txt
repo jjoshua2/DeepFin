@@ -1,0 +1,15 @@
+Error:
+- expected : Spec.count(../../../legal_probe/Chess.destinations(64n, U64.is_zero(targets), targets, src, pawn, ep, tail), query)
+- observed : Spec.tally(../../../legal_probe/Chess.bit_squares(64n, U64.is_zero(targets), targets, []), src, pawn, ep, query, Spec.count(tail, query))
+Context:
+- table   : Array<U64>
+- targets : U64
+- src     : U32
+- pawn    : Bool
+- ep      : U32
+- query   : ../../../legal_probe/Chess.Ply
+- tail    : List<&2, ../../../legal_probe/Chess.Ply>
+Location: use_scan_after_count
+54 |       src,pawn,ep,query,S.count(tail,query)) : Nat}:
+55>|   {==}
+56 | 

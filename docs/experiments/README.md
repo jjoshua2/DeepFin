@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Actual multi-bit scan_after full-Ply count](2026-10-03-bend-scan-after-count.md) | Actual arbitrary-mask scan_after full-Ply occurrence count with duplicate-tail preservation; legal target geometry and full-generator correctness remain open
 | [Actual destination factorization](2026-10-02-bend-destination-factorization.md) | Local checked ordinary-emission structure, full-Ply multiplicity and arbitrary-array scan pair; independent bitboard inventory and whole generator remain open |
 | [Actual U64 zero-predicate bridge](2026-10-02-bend-bitboard-zero-bridge.md) | Unconditional actual zero-to-structural-Word predicate bridge with two semantic controls; ctz range/selection remain open |
 | [Actual U64 ctz structural selector](2026-10-02-bend-bitboard-ctz-structural.md) | Universal Word lowbit/popcount index theorem, actual U64 ctz equality, and nonzero range/selected-bit bridges; depends on the zero bridge in PR #991 |

@@ -1,0 +1,17 @@
+Error:
+- expected : {../../../legal_probe/Chess.destinations(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), src, pawn, ep, ../../../legal_probe/Chess.put_move(Bool.and(pawn, Bool.or(Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 0)), Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 7)))), src, U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), Bool.to_u32(Bool.and(pawn, Cmp.is_eq(U32.cmp(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 65)))), Factor.emit(keys, src, pawn, ep, tail))) == Factor.emit(../../../legal_probe/Chess.bit_squares(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))) <> keys), src, pawn, ep, tail) : List<&2, ../../../legal_probe/Chess.Ply>}
+- observed : {../../../legal_probe/Chess.destinations(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), src, pawn, ep, ../../../legal_probe/Chess.put_move(Bool.and(pawn, Bool.or(Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 0)), Cmp.is_eq(U32.cmp(U32.div(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), 8), 7)))), src, U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), Bool.to_u32(Bool.and(pawn, Cmp.is_eq(U32.cmp(U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))), ep)))), Factor.emit(keys, src, pawn, ep, tail))) == Factor.emit(../../../legal_probe/Chess.bit_squares(p, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0})))) <> keys), src, pawn, ep, tail) : List<&2, ../../../legal_probe/Chess.Ply>}
+Context:
+- p    : Nat
+- bb   : U64
+- src  : U32
+- pawn : Bool
+- ep   : U32
+- keys : List<&2, U32>
+- tail : List<&2, ../../../legal_probe/Chess.Ply>
+- dst  : U32
+- rest : U64
+Location: Factor.structural
+24 |           +rest = U64.clear_lsb(bb)
+25>|           structural(p,U64.is_zero(rest),rest,src,pawn,ep,Con{dst,keys},tail)
+26 | 
