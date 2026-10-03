@@ -18,9 +18,11 @@ does not build move tables or evaluate attacks.
   `033774f6fecacbb079180705c16667ee609322b3` (the PR head when checks ran),
   based on PR #992 head `0908d932a0fa9c7d2690c9d33dacaea8cc8ff774`. The
   evidence/docs-only commits later advanced the draft branch to
-  `0449d6e3538154de277507b858bea401bdff35e8`. At that review head, all 43
-  transitive source-closure Git blobs matched this receipt; no proof module,
-  imported proof dependency, or toolchain input changed.
+  `0449d6e3538154de277507b858bea401bdff35e8` as an intermediate review head.
+  At that commit, all 43 transitive source-closure Git blobs matched this
+  receipt. Subsequent README/PR-description corrections also changed docs only;
+  no proof module, imported proof dependency, or toolchain input changed. The
+  current branch head is shown in the live PR metadata.
 - The exact PR1000 codeload snapshot SHA-256 is
   `0014c96625bd471b66a9660841b3cf71d7fa9d8eead6d1c5cefca886beb61d25`
   (47,542,300 bytes). The nine proof hashes and transitive Bend import closure
