@@ -516,7 +516,7 @@
   },
   "publication_redactions": {
     "reason": "The repository's tracked-file privacy validation rejects maintainer home-directory and local scratch paths in public evidence.",
-    "transformation": "Serialized command/time-log paths were normalized: /home/josh -> ~; task scratch roots under /tmp were represented as <session-scratch>/... . stdout and stderr checker output, timestamps, exit codes, resource measurements, and source hashes are unchanged.",
+    "transformation": "Serialized command/time-log paths were normalized: the maintainer-home prefix was represented as ~; task scratch roots were represented as <session-scratch>/... stdout and stderr checker output, timestamps, exit codes, resource measurements, and source hashes are unchanged.",
     "original_patch_sha256": "908f65e7d5f84744f633192ce1bf113b2792bddbc38a66c97e20db06d9d23bf3",
     "patch_note": "The companion Cardinality diff has the same seven import-only substitutions and identical non-import body; local path prefixes are privacy-redacted. Exact original diff digest is retained above."
   }
