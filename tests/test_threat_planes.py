@@ -362,26 +362,32 @@ def test_batch_encode_registered_plane_counts(version):
     n_planes = 112 + n_extra
     b = _midgame_board()
     cbs = [cboard_from_board_fast(b) for _ in range(3)]
-    encoders = (
-        (batch_encode_146, 0, np.float32),
-        (batch_encode_146_lc0_root, 1, np.float32),
-        (batch_encode_146_lc0_root_legacy_meta, 2, np.float32),
-        (batch_encode_146_bf16, 0, np.uint16),
-        (batch_encode_146_lc0_root_bf16, 1, np.uint16),
-        (batch_encode_146_lc0_root_legacy_meta_bf16, 2, np.uint16),
+    float_encoders = (
+        (batch_encode_146, 0),
+        (batch_encode_146_lc0_root, 1),
+        (batch_encode_146_lc0_root_legacy_meta, 2),
     )
-    for encoder, history_mode, dtype in encoders:
+    for encoder, history_mode in float_encoders:
         ref = cbs[0].encode_full(history_mode, n_extra)
-        out = np.empty((3, n_planes, 8, 8), dtype=dtype)
+        out = np.empty((3, n_planes, 8, 8), dtype=np.float32)
         encoder(cbs, out)
         for i in range(3):
-            if dtype == np.uint16:
-                as_f32 = np.frombuffer(
-                    (out[i].astype(np.uint32) << 16).tobytes(), dtype=np.float32,
-                ).reshape(n_planes, 8, 8)
-                np.testing.assert_allclose(as_f32, ref, atol=0.01)
-            else:
-                np.testing.assert_allclose(out[i], ref, atol=1e-6)
+            np.testing.assert_allclose(out[i], ref, atol=1e-6)
+
+    bf16_encoders = (
+        (batch_encode_146_bf16, 0),
+        (batch_encode_146_lc0_root_bf16, 1),
+        (batch_encode_146_lc0_root_legacy_meta_bf16, 2),
+    )
+    for encoder, history_mode in bf16_encoders:
+        ref = cbs[0].encode_full(history_mode, n_extra)
+        out = np.empty((3, n_planes, 8, 8), dtype=np.uint16)
+        encoder(cbs, out)
+        for i in range(3):
+            as_f32 = np.frombuffer(
+                (out[i].astype(np.uint32) << 16).tobytes(), dtype=np.float32,
+            ).reshape(n_planes, 8, 8)
+            np.testing.assert_allclose(as_f32, ref, atol=0.01)
 
 
 @pytest.mark.parametrize("version", EXTRA_FEATURE_VERSIONS)
