@@ -1,0 +1,22 @@
+--- scratch/Cardinality.bend
++++ published/bitboard_membership/Cardinality.bend
+@@ -1,12 +1,12 @@
+ # Exact emitted list cardinality from the structural Word count budget.
+ import Base
+-import <session-scratch>/bend-bitboard-zero-bridge/native/bend_engine/legal_probe/Chess.bend as Chess
+-import <session-scratch>/bend-bitboard-zero-bridge/native/bend_engine/standalone/proofs/u64/Words.bend as Old
+-import <session-scratch>/bend-bitboard-zero-bridge/native/bend_engine/standalone/proofs/fill_interval/Naturals.bend as NatProof
+-import <session-scratch>/bend-bitboard-zero-bridge/native/bend_engine/standalone/proofs/bitboard_inventory/ClearStep.bend as ClearStep
+-import <session-scratch>/bend-bitboard-zero-bridge/native/bend_engine/standalone/proofs/bitboard_zero_bridge/Bridge.bend as ZeroBridge
+-import <session-scratch>/multibit-recursion/RemainingBudget.bend as Budget
+-import <session-scratch>/multibit-prefix/PrefixDecomposition.bend as Prefix
++import ../../../legal_probe/Chess.bend as Chess
++import ../u64/Words.bend as Old
++import ../fill_interval/Naturals.bend as NatProof
++import ../bitboard_inventory/ClearStep.bend as ClearStep
++import ../bitboard_zero_bridge/Bridge.bend as ZeroBridge
++import ./RemainingBudget.bend as Budget
++import ./PrefixDecomposition.bend as Prefix
+ 
+ def nat_add_zero_right(+n: Nat) -> {Nat.add(n,0n) == n : Nat}:
+   match n:
