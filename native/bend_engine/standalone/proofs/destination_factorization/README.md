@@ -79,3 +79,12 @@ keys, or disconnect the symbolic consumer. Only semantic expected/observed error
 at the intended obligation count; timeout, backend, ownership, kind, warning and
 missing-file failures receive no control credit. Failed starts invalidate stale
 PASS receipts. Wrapper checks are also run under -O and -OO.
+
+
+## Actual arbitrary-mask scan_after counts
+
+`AfterCount.bend` composes the actual `Chess.scan_after` pair with the checked
+full-Ply destination tally and PR1000's actual `bit_squares` arbitrary-U32
+frequency and below-64 range theorems. It preserves the exact input table and
+retains caller-tail multiplicity. See the importing consumer and the dated
+[scan_after count record](../../../../../docs/experiments/2026-10-03-bend-scan-after-count.md).
