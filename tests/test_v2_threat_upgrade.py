@@ -280,7 +280,6 @@ def test_disk_buffer_upgrades_v1_shards_on_load(tmp_path):
         batch = buf.sample_batch_arrays(len(boards))
         assert batch["x"].shape[1] == V2_INPUT_PLANES
         by_upgrade[upgrade] = np.asarray(batch["x"])
-        buf.close()
     assert not by_upgrade[False][:, V1_INPUT_PLANES:].any()  # zero-pad baseline
     threat_rows = {bytes(r) for r in by_upgrade[True][:, V1_INPUT_PLANES:].astype(np.float16)}
     expect_rows = {bytes(r) for r in x_v2[:, V1_INPUT_PLANES:]}
