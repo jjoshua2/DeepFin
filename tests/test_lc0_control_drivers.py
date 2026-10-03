@@ -193,7 +193,7 @@ def test_the_history_identity_is_read_back_off_the_written_summary(
     """⚑ Fable (round 2 delta): ``corpus.history_identity`` off ``summary.json``
     as ``main`` writes it, not only via ``history_identity_record``.  One
     directory stamped history-aware (schema 3, ``zero_history: false``) and one
-    unstamped (the bare-FEN reading): refused without the flag, recorded as
+    unstamped (history unknown): refused without the flag, recorded as
     mixed with it.
     """
     import zarr
@@ -216,7 +216,7 @@ def test_the_history_identity_is_read_back_off_the_written_summary(
     assert rc == 0
     summary = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
     assert summary["corpus"]["history_identity"] == {
-        "row_schemas": ["1", "3"], "zero_history": [False, True],
+        "row_schemas": ["3", "unstamped"], "zero_history": [False, None],
         "mixed_within": [], "unidentified": [], "mixed": True,
         "allow_mixed_history": True,
     }
