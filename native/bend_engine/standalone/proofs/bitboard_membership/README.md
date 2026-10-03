@@ -81,13 +81,13 @@ Portable candidate source hashes:
 Both mutations were made only in disposable source copies and were rejected by the
 same checker:
 
-1. Replacing the head-equality contribution with `False{}` in the disposable
-   `PrefixDecomposition.occurrences_append` proof expansion caused that lemma to
-   fail (`expected occurrences(append)`; observed a spurious added head count).
-   This mutation targeted the proof's expansion of the counter, not the counter
-   definition itself. As the independent reviewer pointed out, changing the
-   counter definition globally to always return zero would preserve the append
-   lemma and instead invalidate the final frequency claim for set bits.
+1. In a disposable source copy, replacing the head-equality contribution with
+   `False{}` in the `PrefixDecomposition.occurrences_append` proof expansion caused
+   that lemma to fail (`expected occurrences(append)`; observed a spurious added
+   head count). This mutation targeted the proof's expansion of the counter, not
+   the counter definition itself. As the independent reviewer pointed out,
+   changing the counter definition globally to always return zero would preserve
+   the append lemma and instead invalidate the final frequency claim for set bits.
 2. Replacing `Chess.bit_squares(...)` in the actual-consumer theorem statement with
    `Nil{}` caused `actual_bit_squares_frequency` to fail because the actual output
    decomposition no longer matches the stated result.
