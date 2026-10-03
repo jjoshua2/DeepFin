@@ -1265,8 +1265,6 @@ def submit_async_sf_label_queries(state: SelfplayState, idxs: list[int]) -> int:
     max_pending = max(1, int(state.batch_size) * 8)
     submitted = 0
     for idx in idxs:
-        if len(state.pending_sf_labels) >= max_pending:
-            break
         if not _slot_latest_record_needs_sf_label(state, idx):
             continue
         legal_indices = state.cboards[idx].legal_move_indices()
@@ -1279,17 +1277,21 @@ def submit_async_sf_label_queries(state: SelfplayState, idxs: list[int]) -> int:
             nodes=_eff_sf_nodes(state, idx, for_move=False, for_label=True),
             syzygy_path=syzygy_path,
         )
-        state.pending_sf_labels.append(
-            _PendingSfLabel(
-                future=fut,
-                record=state.samples_per_game[idx][-1],
-                turn=bool(state.cboards[idx].turn),
-                legal_indices=np.asarray(legal_indices, dtype=np.int64).copy(),
-                query_fen=fen,
-                slot=int(idx),
-                syzygy_path=syzygy_path,
-            ),
+        pending = _PendingSfLabel(
+            future=fut,
+            record=state.samples_per_game[idx][-1],
+            turn=bool(state.cboards[idx].turn),
+            legal_indices=np.asarray(legal_indices, dtype=np.int64).copy(),
+            query_fen=fen,
+            slot=int(idx),
+            syzygy_path=syzygy_path,
         )
+        state.pending_sf_labels.append(pending)
+        if len(state.pending_sf_labels) > max_pending:
+            # A single synchronous spillover preserves the per-batch queue
+            # bound after this call while retaining escalation and error
+            # handling from the ordinary record-finalize path.
+            flush_async_sf_labels_for_records(state, [pending.record])
         submitted += 1
     return submitted
 
