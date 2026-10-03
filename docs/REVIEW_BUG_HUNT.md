@@ -623,6 +623,8 @@ Context:
 | F016 | Low | Reliability / Observability | Tune reporting | `chess_anti_engine/tune/trainable_phases.py`, `tests/test_trainable_rng_checkpoint.py` | Compact `status.csv` rows reported `global_iter` one behind the completed iteration. Fresh iteration 1 wrote `iter=1, global_iter=0`, and resumed runs inherited the same off-by-one in the status file used for quick progress checks. | `trainable.py` increments `global_iter` only after `_finalize_iteration()`, but `_finalize_iteration()` passed the pre-increment `global_iter` into `_write_status_csv_row`; `_build_report_dict()` separately uses `iteration_idx`. | Write `iteration_idx` into the status row's `global_iter` column and cover it in the finalization regression. | fixed |
 | F047 | Medium | Search Correctness | Gumbel C root handling | `chess_anti_engine/mcts/gumbel_c.py`, `tests/test_mcts_uci_parity_gates.py` | Gumbel C returned the raw NN WDL-derived value for an already-terminal checkmate root instead of the terminal root value. UCI/selfplay callers using the C path could report/search with a neutral value on a root where STM is already checkmated. | Root `values_out` was initialized from `root_qs = _wdl_to_q(...)` before the `root_cb.is_game_over()` branch, and that branch did not replace it with `CBoard.terminal_value()`. | Added root-contract tests that check both PUCT/Gumbel implementations against independent masks/terminal values across normal, ep, single-legal, checkmate, and draw-terminal roots, plus UCI TB shortcut/searchmoves/root-reuse behavior. Verified MCTS/UCI slice: `33 passed`. | fixed |
 
+| F061 | Medium | Search Correctness | PUCT virtual-mean accounting | chess_anti_engine/mcts/_mcts_tree.c, tests/test_batch_descend_puct.py | Nested in-flight PUCT descents in virtual-mean mode were counted once in the internal node virtual-loss total and again in its children total, inflating parent N and changing a low-budget child choice. | With parent N=3, one pending path through child A, priors 0.9/0.1, and controlled Q values, current native search chose A; the one-pending-visit formula chooses B. Regression failed before the fix and passes after counting max(parent pending, child pending). | Synthetic native tree on CPU; scoped MCTS/search suite and independent review. | fixed |
+
 ## Review Passes
 
 | Pass | Status | Goal | Main Outputs |
@@ -1567,3 +1569,31 @@ Use this section after findings are recorded.
 - [x] What minimum hardware baseline should efficiency findings use: CPU-only, single CUDA GPU, or current production host?
 - [x] Which Stockfish version/path should be treated as the review baseline?
 - [x] Are benchmark regressions findings only after measurement, or should obvious hot-path issues be recorded from static review?
+
+
+## MCTS/Search Deep Pass - 2026-10-03
+
+Base revision: 269105298285b6098ffbf80405cb18ec33186b38. The prior #988 PR (branch codex/fix-search-state-lifecycle, head d01f45950bae003d59a51a90b660b3ea9c583799) was open and not merged on this base. Its root history/identity and reset fixes were treated as already-reviewed context and were not duplicated here.
+
+Coverage checklist:
+
+- [x] Native MCTSTree Python entrypoints: root/expand/select/backprop, walker single/batch descend/integrate, child Q/visit results, output-array C-contiguous dtype/rank checks, input coercion, legal-policy bounds, buffer lengths, terminal row sentinels.
+- [x] PUCT child scoring and FPU: child W/N is converted to the parent frame; WDL logits become STM-relative Q; alternating backup; solved win/loss/draw propagation and solved-child selection.
+- [x] Terminal propagation: checkmate STM loss; stalemate/automatic game-over draw; CBoard search repetition draw path; walker/batch/Gumbel terminal backprop versus Python reference behavior.
+- [x] Gumbel root selection and sequential halving: top-m support, candidate order/retention, per-candidate budgets, configured halving divisor, candidate caps, final legal-action mapping and temperature sample.
+- [x] Completed-Q target transform: visited child Q sign, prior-weighted mixed value for unvisited children, root value anchor, max-visit sigma, play versus stored policy target, C/Python parity.
+- [x] Virtual-loss contracts: legacy pessimistic Q and virtual-mean Q; application/removal across paths; root exclusion; UCI walker exception cleanup; PUCV ping-pong batch outstanding rows and cache hit/miss identity.
+- [x] Transposition reuse: structural key, exact child-action set, donor history/repetition/halfmove/raw-EP context, priors/value reuse, context-reject fallback to evaluation.
+- [x] Result identity: ordered evaluator rows remain paired with paths/legal actions in UCI and PUCV; compacted cache misses are restored to original rows; Gumbel async group outputs stay with their own tree.
+- [x] Native-tree ownership/concurrency: reserves before concurrent expansion in UCI walker pool; tree/hash/expanded publication locks and acquire/release paths inspected.
+- [x] Candidate boundary tests and negative controls: undersized buffers reject; terminal rows skip integration; before-fix nested virtual-mean fixture selected the wrong child.
+
+Finding F061 was fixed by treating pending counts from parent and child as overlapping views: the effective pending-visit estimate uses max(parent_vl, sum(child_vl)). This accounts for root pending work because the root is deliberately omitted from virtual-loss paths, and avoids double-counting the ordinary nested case. The maximum is an approximate snapshot reconciliation, not an exact union of reservations under concurrent updates. For example, a removal on [R,P,A] paused after decrementing P, interleaved with an addition on [R,P,B] paused after incrementing P, can expose P=1 and A=1 even though two partially installed reservations are in flight. The selector may therefore undercount that interleaving; it is not a new persistent leak or counter corruption. The removal-before-backup gap predates this patch. Virtual-loss counters are atomically changed, while the selector's plain reads are snapshots; this patch does not claim race-free exact accounting or rewrite that existing concurrency model.
+
+Validation on the isolated Linux x86_64 / Python 3.13 current-main worktree:
+
+- Existing same-main native extension artifacts were reused to establish the failing baseline; native extensions were rebuilt after the C edit with the existing venv, 2 threads and 4 GiB RSS limit.
+- Scoped CPU/native tests: 313 passed, 2 skipped, 3 xfailed. New focused regression passed after the fix; before the fix it failed (selected node 2 instead of expected node 3).
+- Follow-up controls were run in the existing Python 3.10 native-extension environment: the focused nine-file MCTS/search slice passed (94 passed, 2 skipped, 1 warning) in 13.7 s at two Torch/BLAS threads; /usr/bin/time -v recorded peak RSS 1,185,824 KiB under the 600 s timeout. ./scripts/lint.sh tests/test_batch_descend_puct.py passed (ruff, basedpyright, vulture). The controls exercise root child-only pending, L+D, multiple sibling D paths, weight 16, zero/legacy behavior, and integration cleanup. No C runtime source changed in this follow-up.
+- No GPU, real model, production selfplay/arena, live network, or production tree was used.
+- Remaining unqualified areas: GPU evaluator/runtime ordering, sanitizer/race-detector builds, cross-platform native compilers, forced allocation failures, pathological 512-ply paths, and long-running live search. The C/Python reference repetition policy is not asserted as a shared contract beyond the tested call paths.
