@@ -31,7 +31,7 @@
     "bytes": 23644,
     "git_blob_sha1": "b4eb2c38799b889bf9c054bf406f86466177c634",
     "checked_against_snapshot_head": "8ce6640a1a20a4688ced0c7ebbfc61a648ab3f6d",
-    "source_closure": "source-closure.json",
+    "source_closure": "emitted-range-source-closure.json",
     "closure_count": 44,
     "origin": "new proof source added after the immutable PR snapshot; exact proof bytes are separately bound by module.sha256 and git_blob_sha1"
   },
