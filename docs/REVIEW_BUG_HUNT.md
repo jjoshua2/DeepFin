@@ -1567,3 +1567,13 @@ Use this section after findings are recorded.
 - [x] What minimum hardware baseline should efficiency findings use: CPU-only, single CUDA GPU, or current production host?
 - [x] Which Stockfish version/path should be treated as the review baseline?
 - [x] Are benchmark regressions findings only after measurement, or should obvious hot-path issues be recorded from static review?
+
+
+## Upload retry receipt follow-up — 2026-10-03
+
+- Base: `269105298285b6098ffbf80405cb18ec33186b38`.
+- F064 confirmed by `tests/test_server_upload_receipt_idempotency.py`: after upload compaction and process restart, the exact same packed payload was accepted a second time (two source uploads can become four replay positions). Distinct payloads with the same sample arrays remain valid separate uploads.
+- Fix: persist SHA receipts after a committed compaction and before removing its in-flight source witness; load and expire receipts on restart using the existing six-hour dedupe window. Recovery checks both `inbox/_compacted` and the trainer's `processed/_compacted`, and can rebuild receipts from retained in-flight source names. If receipt persistence fails, keep the in-flight recovery witness.
+- Regression injects one receipt write failure, relocates committed output to `processed/_compacted`, restarts the app, retries the original payload (must return `stored: false`, positions remain 2), then submits a byte-distinct payload containing the same rows (must return `stored: true`, positions become 4).
+- Validation: 11 focused server dedupe/compaction/crash-recovery tests pass; Ruff, py_compile and diff whitespace check pass. Peak RSS 714 MiB, 2 CPU affinity, 5.99 s. Independent Codex review found no actionable defects; its separate runtime rerun did not complete.
+- Scope limits: local single-process POSIX restart/recovery; no concurrent server processes, network filesystem guarantees, arbitrary power-loss matrix, or retry behavior after the six-hour TTL is claimed. No exact-once delivery claim.

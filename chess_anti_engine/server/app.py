@@ -2891,6 +2891,7 @@ def create_app(
     compact_max_age_seconds = max(1.0, float(upload_compact_max_age_seconds))
     upload_accumulators: dict[tuple[str | None, str, str], _BufferedUploadAccumulator] = {}
     recent_upload_shas: dict[tuple[str | None, str], float] = {}
+    receipt_upload_shas: set[tuple[str | None, str]] = set()
     upload_lock = threading.Lock()
     # ⚑ THE EVENT LOOP WAS SERIALISING THESE FOR FREE, AND A5 TOOK THAT AWAY.
     # Three unlocked read-modify-write cycles run on the upload path -- the two
@@ -3268,10 +3269,34 @@ def create_app(
             return False
 
         if compacted_path is not None:
-            # Compacted shard exists with ``flush_token`` in its name — this is
-            # the commit point. From here, the in-flight group is safe to
-            # delete; if we crash before this delete completes, recovery
-            # token-matches and deletes the leftover.
+            # Persist source payload digests after output commit, before deleting
+            # the only source-side recovery witness. Receipts share the existing
+            # six-hour dedupe lifetime and are scoped to this inbox/trial.
+            receipt_dir = inbox_root / "_upload_receipts"
+            try:
+                for _original, staged in moved:
+                    upload_sha = _parse_pending_sha(staged.name)
+                    if upload_sha is None:
+                        continue
+                    key = (acc.trial_id, upload_sha)
+                    seen_at = recent_upload_shas.get(key, float(now_unix))
+                    receipt_path = receipt_dir / f"{upload_sha}.json"
+                    if receipt_path.exists():
+                        try:
+                            seen_at = min(seen_at, float(json.loads(
+                                receipt_path.read_text(encoding="utf-8")
+                            )["seen_at_unix"]))
+                        except (OSError, ValueError, KeyError, TypeError):
+                            pass
+                    atomic_write_text(receipt_path, json.dumps({"seen_at_unix": float(seen_at)}, sort_keys=True))
+                    recent_upload_shas[key] = seen_at
+                    receipt_upload_shas.add(key)
+            except Exception:
+                log.exception("failed to persist upload receipts; retaining recovery witness %s", in_flight_dir)
+                acc.pending_paths.clear()
+                upload_accumulators.pop(acc_key, None)
+                _invalidate_queued_games_cache(acc.trial_id)
+                return True
             delete_shard_path(in_flight_dir)
             acc.pending_paths.clear()
         upload_accumulators.pop(acc_key, None)
@@ -3295,6 +3320,12 @@ def create_app(
             ]
             for key in stale_seen:
                 recent_upload_shas.pop(key, None)
+                if key in receipt_upload_shas:
+                    receipt_upload_shas.discard(key)
+                    trial_key, upload_sha = key
+                    receipt_path = _inbox_root(trial_key) / "_upload_receipts" / f"{upload_sha}.json"
+                    with contextlib.suppress(OSError):
+                        receipt_path.unlink()
 
             ready_keys: list[tuple[str | None, str, str]] = []
             for key, acc in upload_accumulators.items():
@@ -5647,6 +5678,7 @@ def create_app(
         *,
         in_flight_root: Path,
         compacted_dir: Path,
+        processed_compacted_dir: Path,
         trial_key: str | None,
     ) -> None:
         if not in_flight_root.is_dir():
@@ -5672,8 +5704,16 @@ def create_app(
             ]
             committed = any(
                 not is_tmp_shard_name(p.name)
-                for p in _iter_compacted_token_matches(compacted_dir, token)
+                for search_dir in (compacted_dir, processed_compacted_dir)
+                for p in _iter_compacted_token_matches(search_dir, token)
             )
+            token_shas = [
+                (trial_key, sha)
+                for entry in token_dir.iterdir()
+                if entry.name.endswith(LOCAL_SHARD_SUFFIX)
+                if (sha := _parse_pending_sha(entry.name)) is not None
+            ]
+            committed = committed or any(key in receipt_upload_shas for key in token_shas)
             # Either way this token's flush is over: a committed one renamed
             # its temp away, and an uncommitted one is about to be re-seeded
             # from ``_pending`` under a NEW token, so nothing will ever finish
@@ -5692,6 +5732,7 @@ def create_app(
                 # Compacted shard exists for this token → samples already
                 # durable. Backfill upload-sha dedupe keys before cleanup so
                 # a worker retry after restart cannot be accepted again.
+                receipt_write_failed = False
                 for entry in sorted(token_dir.iterdir()):
                     if not entry.name.endswith(LOCAL_SHARD_SUFFIX):
                         continue
@@ -5702,7 +5743,30 @@ def create_app(
                         mtime = float(entry.stat().st_mtime)
                     except OSError:
                         mtime = float(time.time())
-                    recent_upload_shas[(trial_key, upload_sha)] = mtime
+                    key = (trial_key, upload_sha)
+                    # Index every committed payload before any fallible receipt
+                    # write, so a partial write cannot admit another member of
+                    # this same committed flush during this server lifetime.
+                    recent_upload_shas[key] = mtime
+                    receipt_upload_shas.add(key)
+                for key in token_shas:
+                    _trial, upload_sha = key
+                    receipt_path = in_flight_root.parent / "_upload_receipts" / f"{upload_sha}.json"
+                    try:
+                        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+                        atomic_write_text(
+                            receipt_path,
+                            json.dumps({"seen_at_unix": float(recent_upload_shas[key])}, sort_keys=True),
+                        )
+                    except Exception:
+                        receipt_write_failed = True
+                        log.exception("failed to persist recovered upload receipt %s", receipt_path)
+                if receipt_write_failed:
+                    # Keep the in-flight filenames as the durable retry source;
+                    # continue recovering other token groups rather than
+                    # aborting startup's dedupe reconstruction.
+                    log.error("retaining committed recovery witness %s after receipt failure", token_dir)
+                    continue
                 delete_shard_path(token_dir)
                 continue
             # No matching compacted shard → flush never committed. Move
@@ -6075,12 +6139,35 @@ def create_app(
 
     legacy_unstamped_shards = _legacy_unstamped_shard_keys()
 
+    def _load_upload_receipts(*, inbox_root: Path, trial_key: str | None) -> None:
+        receipt_dir = inbox_root / "_upload_receipts"
+        if not receipt_dir.is_dir():
+            return
+        now = time.time()
+        for path in receipt_dir.glob("*.json"):
+            if len(path.stem) != 64 or any(c not in "0123456789abcdef" for c in path.stem):
+                continue
+            try:
+                seen_at = float(json.loads(path.read_text(encoding="utf-8"))["seen_at_unix"])
+            except (OSError, ValueError, KeyError, TypeError):
+                log.exception("ignoring unreadable upload receipt %s", path)
+                continue
+            key = (trial_key, path.stem)
+            if now - seen_at > 6.0 * 3600.0:
+                with contextlib.suppress(OSError):
+                    path.unlink()
+                continue
+            recent_upload_shas[key] = seen_at
+            receipt_upload_shas.add(key)
+
     def _recover_pending_uploads() -> None:
+        _load_upload_receipts(inbox_root=inbox, trial_key=None)
         # Default (no-trial) inbox.
         try:
             _recover_in_flight_dirs(
                 in_flight_root=inbox / _IN_FLIGHT_DIR_NAME,
                 compacted_dir=inbox / "_compacted",
+                processed_compacted_dir=root / "processed" / "_compacted",
                 trial_key=None,
             )
         except Exception:
@@ -6102,10 +6189,12 @@ def create_app(
                 if trial_key is None:
                     continue
                 trial_inbox = trial_dir / inbox_dir
+                _load_upload_receipts(inbox_root=trial_inbox, trial_key=trial_key)
                 try:
                     _recover_in_flight_dirs(
                         in_flight_root=trial_inbox / _IN_FLIGHT_DIR_NAME,
                         compacted_dir=trial_inbox / "_compacted",
+                        processed_compacted_dir=trial_dir / "processed" / "_compacted",
                         trial_key=trial_key,
                     )
                 except Exception:
