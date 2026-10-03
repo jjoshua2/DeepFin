@@ -1,19 +1,19 @@
 Command exited with non-zero status 1
 	Command being timed: "timeout --signal=TERM 120s taskset -c 0,1 env OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 RAYON_NUM_THREADS=2 BEND_NO_TELEMETRY=1 <BUN> --smol <SESSION_SCRATCH>/bend2/main.ts <SESSION_SCRATCH>/engine/standalone/proofs/destination_factorization/consumer.bend --check-only"
-	User time (seconds): 6.93
-	System time (seconds): 0.49
-	Percent of CPU this job got: 101%
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:07.29
+	User time (seconds): 6.37
+	System time (seconds): 0.53
+	Percent of CPU this job got: 137%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:05.04
 	Average shared text size (kbytes): 0
 	Average unshared data size (kbytes): 0
 	Average stack size (kbytes): 0
 	Average total size (kbytes): 0
-	Maximum resident set size (kbytes): 759408
+	Maximum resident set size (kbytes): 885276
 	Average resident set size (kbytes): 0
 	Major (requiring I/O) page faults: 0
-	Minor (reclaiming a frame) page faults: 209494
-	Voluntary context switches: 960
-	Involuntary context switches: 2658
+	Minor (reclaiming a frame) page faults: 248595
+	Voluntary context switches: 1704
+	Involuntary context switches: 1069
 	Swaps: 0
 	File system inputs: 0
 	File system outputs: 0

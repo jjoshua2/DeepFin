@@ -1,4 +1,4 @@
-"""Fail-closed qualification of the actual arbitrary-mask scan_after count increment."""
+"""Fail-closed qualification of the closed actual scan_after per-query count."""
 from __future__ import annotations
 
 import argparse
@@ -126,8 +126,8 @@ def main() -> None:
     report = {
         "gate": "NOT_COMPLETED",
         "scope": "Exact full-Ply count of actual Chess.scan_after for arbitrary U64 targets, U32 query, affine table and duplicate-containing Ply tail; count is factored through actual Chess.destinations and actual bit_squares frequency/range. No target geometry, board validity or legal-move completeness.",
-        "base_commit": "1690865e2fc59091d0b8947364fb2a5e64ea40b9",
-        "branch": "proof/bend-scan-after-20261003",
+        "base_commit": "123bb1a8201554ae18a8a44966b627d971452f01",
+        "branch": "proof/bend-scan-after-predicate-20261003",
         "compiler_pin": {},
         "source_sha256s": {},
         "positive_checks": [],
@@ -193,6 +193,7 @@ def main() -> None:
         write_report(args.report, report)
 
         for name, entry in (("AfterCount", SUITE / "AfterCount.bend"),
+                            ("QueryFactor", SUITE / "QueryFactor.bend"),
                             ("consumer", SUITE / "consumer.bend")):
             result = run_check(name, entry, compiler, bun, 86400, args.evidence_dir)
             report["positive_checks"].append(result)
@@ -204,19 +205,19 @@ def main() -> None:
             ("wrong-promotion-rank", "legal_probe/Chess.bend",
              "Bool.and(pawn, Bool.or(U32.is_zero(rank), U32.is_eq(rank, 7)))",
              "Bool.and(pawn, Bool.or(U32.is_zero(rank), U32.is_eq(rank, 6)))",
-             ("Factor.structural", "Emission.put", "Count.block", "scan_after_count")),
+             ("Factor.structural", "Emission.destinations", "Count.destinations", "actual_emission_count", "use_scan_after_closed_count")),
             ("wrong-en-passant-flag", "legal_probe/Chess.bend",
              "Bool.to_u32(Bool.and(pawn, U32.is_eq(dst, ep_sq)))",
              "Bool.to_u32(Bool.and(pawn, U32.is_eq(dst, 65)))",
-             ("Factor.structural", "Emission.put", "Count.block", "scan_after_count")),
+             ("Factor.structural", "Emission.destinations", "Count.destinations", "actual_emission_count", "use_scan_after_closed_count")),
             ("dropped-duplicate-tail", "standalone/proofs/destination_factorization/Spec.bend",
              "bump(same(head,query),count(rest,query))",
              "bump(same(head,query),0n)",
-             ("Count.block", "duplicate_tail_multiplicity", "use_duplicate_tail_multiplicity")),
+             ("Count.block", "duplicate_tail_multiplicity", "use_duplicate_tail_multiplicity", "use_scan_after_closed_count")),
             ("disconnected-scan-consumer", "standalone/proofs/destination_factorization/consumer.bend",
-             "AfterCount.scan_after_count(table,targets,src,pawn,ep,query,tail)",
+             "QFactor.scan_after_closed_count(table,targets,src,pawn,ep,query,tail)",
              "{==}",
-             ("use_scan_after_count",)),
+             ("use_scan_after_closed_count",)),
         ]
         for name, target, old, new, locations in controls:
             with tempfile.TemporaryDirectory(prefix="deepfin-scan-after-control-") as tmp:
