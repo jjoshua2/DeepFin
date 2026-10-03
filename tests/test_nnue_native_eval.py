@@ -1004,6 +1004,26 @@ def test_loader_rejects_an_l1_the_kernels_cannot_step(tmp_path: Path) -> None:
         _nnue_ext.load(str(path))
 
 
+@pytest.mark.parametrize("offset_delta", [0, 1], ids=["overlap", "unaligned"])
+def test_loader_rejects_noncanonical_tensor_offsets(
+    tmp_path: Path, offset_delta: int
+) -> None:
+    """Every tensor starts at a distinct 64-byte-aligned region in pack v1.
+
+    Per-tensor bounds alone accept an offset that aliases ft_bias or one byte
+    into the pack. The resulting mmap remains in-bounds but reads plausible
+    weights from the wrong tensor bytes, silently changing evaluations.
+    """
+    layout = _big_layout()
+    header = bytearray(layout.header)
+    # ft_weight (tensor 1) is large, so a range-local bounds check permits both.
+    struct.pack_into("<Q", header, 88 + 8, layout.offsets["ft_bias"] + offset_delta)
+    path = tmp_path / f"bad_offset_{offset_delta}.pack"
+    write_synthetic_pack(path, header=bytes(header))
+    with pytest.raises(ValueError, match=r"(overlap|64-byte aligned)"):
+        _nnue_ext.load(str(path))
+
+
 def test_loader_rejects_a_tensor_offset_that_wraps_uint64(tmp_path: Path) -> None:
     """⚑ The bounds check is a subtraction because addition wraps.
 
