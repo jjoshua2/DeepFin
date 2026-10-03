@@ -621,6 +621,7 @@ Context:
 | F014 | Medium | Reliability / Config | Tune worker lifecycle | `chess_anti_engine/tune/distributed_runtime.py`, `tests/test_tune_distributed_worker_cmd.py` | Live YAML reload could silently accept worker process-level settings without applying them to already-running workers. `_ensure_distributed_workers()` only restarted dead workers or count changes, so changes to SF worker count, threading, compile mode, upload cadence, auth/cache paths, or inference slot layout stayed stale until an external restart. | `trainable_config_ops.py` removed worker-level keys from `_TOPOLOGY_KEYS` because `_ensure_distributed_workers` supposedly spawned updated workers each iteration, but `distributed_runtime.py` returned immediately for any live process at the requested index. | Added a launch signature for CLI/auth/cache process settings and restart workers whose signature no longer matches the desired config; regression test covers a live `distributed_worker_sf_workers` change. Verified distributed runtime slice: `18 passed`. | fixed |
 | F015 | Medium | Training Quality / Reliability | Tune prefetch ingest | `chess_anti_engine/tune/distributed_runtime.py`, `tests/test_distributed_selfplay_backpressure.py` | A background prefetch load that finished just after `drain()` could queue a preloaded item for an inbox path the trainer fallback already processed and moved. The next drain would ingest the stale arrays again even though the original inbox shard no longer existed. | `_process_shard(..., preloaded=...)` trusted preloaded arrays without checking whether `sp` was still present in the inbox; the prefetch thread loads outside the consumer lock, so a path can become stale between load and queue. | Skip preloaded items whose inbox path no longer exists before adding arrays or metrics; regression test feeds a missing preloaded path and verifies zero matching games and zero replay positions. Verified distributed ingest/prefetch slice: `29 passed`. | fixed |
 | F016 | Low | Reliability / Observability | Tune reporting | `chess_anti_engine/tune/trainable_phases.py`, `tests/test_trainable_rng_checkpoint.py` | Compact `status.csv` rows reported `global_iter` one behind the completed iteration. Fresh iteration 1 wrote `iter=1, global_iter=0`, and resumed runs inherited the same off-by-one in the status file used for quick progress checks. | `trainable.py` increments `global_iter` only after `_finalize_iteration()`, but `_finalize_iteration()` passed the pre-increment `global_iter` into `_write_status_csv_row`; `_build_report_dict()` separately uses `iteration_idx`. | Write `iteration_idx` into the status row's `global_iter` column and cover it in the finalization regression. | fixed |
+| F055 | Medium | Corpus CLI reliability | `scripts/derive_corpus_targets.py`, `tests/test_derive_corpus_targets.py` | Negative `--limit` values were clamped to zero, which means the whole corpus, so a malformed bounded request could launch full derivation. | `main()` used `max(0, int(args.limit))`; `--limit 0` is explicitly documented as the whole corpus. | Reject negative values before corpus access; regression asserts no output is created. Pytest is locally blocked during import by missing `chess_anti_engine.encoding._lc0_ext`; py_compile and Ruff pass. | fixed, local dynamic test blocked |
 | F047 | Medium | Search Correctness | Gumbel C root handling | `chess_anti_engine/mcts/gumbel_c.py`, `tests/test_mcts_uci_parity_gates.py` | Gumbel C returned the raw NN WDL-derived value for an already-terminal checkmate root instead of the terminal root value. UCI/selfplay callers using the C path could report/search with a neutral value on a root where STM is already checkmated. | Root `values_out` was initialized from `root_qs = _wdl_to_q(...)` before the `root_cb.is_game_over()` branch, and that branch did not replace it with `CBoard.terminal_value()`. | Added root-contract tests that check both PUCT/Gumbel implementations against independent masks/terminal values across normal, ep, single-legal, checkmate, and draw-terminal roots, plus UCI TB shortcut/searchmoves/root-reuse behavior. Verified MCTS/UCI slice: `33 passed`. | fixed |
 
 ## Review Passes
@@ -1567,3 +1568,59 @@ Use this section after findings are recorded.
 - [x] What minimum hardware baseline should efficiency findings use: CPU-only, single CUDA GPU, or current production host?
 - [x] Which Stockfish version/path should be treated as the review baseline?
 - [x] Are benchmark regressions findings only after measurement, or should obvious hot-path issues be recorded from static review?
+
+## 2026-10-03 bootstrap / corpus / BT4 / Ceres source-to-training pass
+
+Base: `269105298285b6098ffbf80405cb18ec33186b38` (`origin/main`). Worktree:
+`/home/josh/projects/chess-worktrees/bootstrap-corpus-bt4-audit-20261003`, branch
+`audit/bootstrap-corpus-bt4-20261003`. This is an isolated source-only review;
+no corpus, teacher artifact, generator, trainer, or live checkout was opened for
+bulk processing. The known history-FEN proof gap remains explicitly unqualified.
+
+### Scoped contract checklist
+
+| Boundary | Production paths traced | Pass questions and result |
+|---|---|---|
+| Rooted source CLI / resume | `scripts/gen_sf_rooted_corpus.py` (`build_parser`, `config_stamp`, `resume_worker_state`, `ShardWriter`, `build_summary`, `main`) | Defaults/config identity, worker/game seed identity, per-worker append-only progress, torn-tail repair, complete-game rotation, dedup cache events, unlisted shard cleanup and incomplete-run stamps were traced against the adjacent resume contract and existing tests. No new defect confirmed. |
+| Target derivation / objective | `scripts/derive_corpus_targets.py` (`parse_value_scheme`, `wdl_target_from_result`, `game_value_targets`, `write_value_target`, `apply_value_scheme`, `enforce_value_scheme_take_effect`, `build_summary`, parser) | Row POV, raw outcome versus `search_wdl`, target blend construction, tail/drop semantics, CLI-to-options propagation, emitted-byte take-effect checks and per-shard schema/summary stamps were traced. No new defect confirmed. |
+| Raw BT4 adapter / admission | `scripts/adapt_raw_bt4_sidecars.py`, `scripts/bt4_policy_mix.py`, `scripts/bt4_derived_wdl_sidecar.py`, `chess_anti_engine/source/bt4_npz_unit_v1.py` | Manifest pins, row-key joins, corpus/shard coverage, summary/model/provider identity, legal support, source/history regimes and unit-only versus training-credit boundary were inspected. BT4 NPZ archive tests cannot collect here because `zstandard` is absent; import paths that reach `CBoard` also need `_lc0_ext`. |
+| Ceres input / saved source | `chess_anti_engine/encoding/ceres_tpg.py`, `ceres_stored_feed.py`; `chess_anti_engine/source/ceres_root_input.py`, `ceres_saved_game.py`, `ceres_owner_target.py` | Stored-f16 conversion and feed hashes, TPG canonicalization/history/repetition/EP/rule50 handling, row/legal map alignment and independent full-game validation boundaries were traced. The existing history-FEN limitation is not promoted into a claim. Pure TPG/root/stored-feed tests passed; saved-game tests are blocked during import by missing `_lc0_ext`. |
+| Teacher sidecars / row binding | `scripts/ceres_derived_sidecar.py`, `scripts/bt4_derived_wdl_sidecar.py`, `chess_anti_engine/encoding/ceres_tpg.py` | Complete chunks, source array hashes, row/game/ply identity, legal offsets/maps, provider/model/output contracts, source storage identities, feed digests, final input rechecks and atomic publication were inspected. Integrated fake-session tests are blocked by `_lc0_ext`. |
+| Policy target mix | `scripts/ceres_target_mix.py`, `scripts/bt4_policy_mix.py`, `scripts/sf_policy_rewrite.py` | Separately normalized legal-support distributions and temperature/weight semantics; exact mutation of `policy_target`; preservation of all other stored arrays; complete manifest membership and producer/input pins were traced. End-to-end synthetic mix tests are blocked by `_lc0_ext`. |
+| Value target mix | `scripts/ceres_value_mix.py`, `scripts/bt4_value_rewrite.py` | WDL order/POV and probability normalization; fixed SF/BT4/Ceres primary-secondary dose; exact mutation of `search_wdl`; preservation of all other arrays; and trainer-consumer effects were traced. End-to-end fake-teacher tests are blocked by `_lc0_ext`. |
+| Publication / qualification / admission | `scripts/ceres_materialize.py`, `scripts/ceres_corpus_qualification.py`, `scripts/audited_source_admission.py`, `scripts/common_input_batch.py`, `scripts/combined_corpus_train.py`, BT4/Ceres admission helpers | Fresh-output and STOP/deadline/disk guards, profile-specific pins, corpus inventory and storage identities, prospective-vs-completed qualification, selected-source flags, ordered cohort/role mapping, actual training argument construction, and distinct source/policy/value roots were inspected. Pure admission/combined-trainer synthetic tests passed. No corpus was executed or inventoried. |
+| Package/runtime dependencies | `pyproject.toml` | Confirmed Python floor, core replay/runtime dependencies, Zarr v2 pin, `deepfin` entrypoint, and test/dev extras (`zstandard`, native extension build/import requirements, ONNX stack). The shared Python 3.10 environment lacks both `zstandard` and built `chess_anti_engine.encoding._lc0_ext`; no install/build was attempted. |
+
+### Validation and disposition
+
+Pure CPU synthetic tests passed (pytest exit 0; 77 tests across
+`test_ceres_tpg_encoding.py`, `test_ceres_root_input.py`,
+`test_ceres_stored_feed.py`, `test_audited_source_admission.py`, and
+`test_combined_corpus_train.py`). Command used two-CPU affinity, `CAE_TEST_THREADS=2`,
+`CUDA_VISIBLE_DEVICES=''`, and a 600-second timeout; observed peak RSS was 685 MiB.
+
+The broader synthetic source/sidecar/mix/admission test selection was attempted
+with the same CPU/time bounds but stopped during test collection (exit 2), before
+assertions, because `zstandard` and `_lc0_ext` are absent. The repeat selection
+for BT4 adapter/policy-mix integrations likewise stopped at collection on
+`_lc0_ext` (exit 2, under 710 MiB RSS). These are environment prerequisites,
+not product failures. The package/build/integrated sidecar paths remain dynamically
+unqualified in this pass; do not treat static inspection as their runtime proof.
+
+Independent read-only INTERNAL Codex review at base
+`269105298285b6098ffbf80405cb18ec33186b38` found no confirmed defect in the
+mixers, BT4/Ceres source identity and feed checks, sidecar profile/output
+contracts, admission/qualification, or dependency declarations. It did not
+independently finish exhaustive review of generator resume/dedup, the entire
+target derivation implementation, every TPG consumer, or every package/runtime
+entrypoint. The primary pass traced the named methods above but also did not
+claim those entire files/entrypoint families as exhaustive; those remain explicit
+coverage gaps.
+
+Finding F055 was confirmed in the negative limit coercion and fixed with pre-input rejection plus a regression test. No other distinct, reachable defect survived source review with available evidence. Earlier fixes #986/#989,
+known history-FEN limitations, and PR #1001 terminal-only paired-estimator
+surfaces were checked for overlap and left outside this scope. This is a partial
+first pass, not a complete subsystem pass: static coverage is recorded for the
+tabled boundaries, while exhaustive edge coverage and integrated dynamic
+validation remain blocked or outstanding. No training/generation/GPU work or
+external artifacts were used.

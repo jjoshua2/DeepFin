@@ -7485,6 +7485,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.limit < 0:
+        raise ValueError(
+            f"--limit must be >= 0 (0 means the whole corpus), got {args.limit!r}",
+        )
     scheme = replace(
         parse_scheme(str(args.scheme)),
         policy_observation=args.policy_observation,
