@@ -1539,17 +1539,16 @@ def test_mixed_history_shards_are_refused_at_launch_unless_allowed(
         "mixed_within": [], "unidentified": [], "mixed": True,
         "allow_mixed_history": True,
     }
-    # An UNSTAMPED shard (pre-#497 deriver) reads as the bare-FEN shape, so a
-    # legacy directory and a zero-history one are one identity ... ⚑ A genuine
-    # legacy shard carries NO `derive_identity_format` either; a marked shard
-    # stripped of its identity is a fault the reader refuses by name
-    # (`test_history_identity_is_on_the_shard_at_commit_...`).
+    # A genuine legacy shard has no marker. It remains launchable alone,
+    # but absence cannot establish bare-FEN history: LC0 imports lack stamps too.
+    # A marked shard stripped of identity remains a fault (covered separately).
     for path in iter_shard_paths(zero_dir):
         group = zarr.open_group(str(path), mode="a")
         for key in ("derive_identity_format", *launcher.IDENTITY_KEYS,
                     "derive_run_finalized", "corpus_complete"):
             group.attrs.pop(key, None)
-    assert launcher.read_history_stamps([zero_dir]).row_schemas.keys() == {"1"}
+    assert launcher.read_history_stamps([zero_dir]).row_schemas.keys() == {"unstamped"}
+    assert launcher.history_identity_problems([zero_dir], allow_mixed_history=False) == []
     assert launcher.history_identity_problems(
         [zero_dir, hist_dir], allow_mixed_history=False,
     ), "... and still two identities beside a history-aware one"
@@ -6311,3 +6310,63 @@ def test_the_launchers_unstamped_value_source_is_the_derivers_own_constant() -> 
     from scripts.lc0_control_train import UNSTAMPED_VALUE_SOURCE
 
     assert UNSTAMPED_VALUE_SOURCE == derive.VALUE_SOURCE_DEEPEST
+
+
+def test_unstamped_converter_history_cannot_alias_zero_history(tmp_path: Path) -> None:
+    """Real converter shards and bare-FEN derivations share replay metadata."""
+    import scripts.lc0_control_train as launcher
+    from scripts.lc0_data_to_rows import ConvertOptions, VerifyStats, _write_shard, convert_game, parse_v6_stream
+    from tests.test_lc0_data_to_rows import make_game
+
+    options = ConvertOptions()
+    stats = VerifyStats()
+    rows = convert_game(
+        "fixture", parse_v6_stream(make_game(["e2e4", "e7e5", "g1f3"])),
+        stats, options, game_id=0, collect=True,
+    )
+    assert stats.ok
+    lc0_dir = tmp_path / "lc0"
+    lc0_dir.mkdir()
+    _write_shard(lc0_dir, 0, rows, options, stats)
+    group = zarr.open_group(str(iter_shard_paths(lc0_dir)[0]), mode="r")
+    assert "derive_identity_format" not in group.attrs
+    arrays, _meta = load_shard_arrays(iter_shard_paths(lc0_dir)[0], lazy=False)
+    assert np.any(arrays["x"][:, 13:104])
+
+    legacy = corpus_row(
+        fen=FEN_W, phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
+        result=1.0, result_pgn="1-0", schema=1,
+    )
+    zero_dir = tmp_path / "zero"
+    run_derive(write_corpus(tmp_path, [legacy], row_schema=1), zero_dir, "uniform-d9")
+    zero_group = zarr.open_group(str(iter_shard_paths(zero_dir)[0]), mode="r")
+    assert zero_group.attrs["zero_history"] is True
+    for key in ("input_history_encoding", "history_rep_fix"):
+        assert group.attrs[key] == zero_group.attrs[key]
+
+    assert launcher.history_identity_problems(
+        [lc0_dir, zero_dir], allow_mixed_history=False,
+    ), "converter history must not alias stamped bare-FEN history"
+    with pytest.raises(SystemExit, match="input-history identities"):
+        launcher.preflight(real_control_config(), [lc0_dir, zero_dir], allow_leak=True)
+    for dirs in ([lc0_dir], [zero_dir]):
+        assert launcher.history_identity_problems(dirs, allow_mixed_history=False) == []
+    assert launcher.history_identity_problems(
+        [lc0_dir, zero_dir], allow_mixed_history=True,
+    ) == []
+    record = launcher.history_identity_record(
+        launcher.read_history_stamps([lc0_dir, zero_dir]), allow_mixed_history=True,
+    )
+    assert record["mixed"] is True
+    assert None in record["zero_history"]
+    assert launcher.history_identity_record(
+        launcher.read_history_stamps([lc0_dir]), allow_mixed_history=False,
+    )["zero_history"] == [None]
+    # A second unstamped shard remains launchable: absence is an unknown family,
+    # not a fabricated zero-history stamp or a blanket legacy rejection.
+    second = tmp_path / "lc0_second"
+    second.mkdir()
+    _write_shard(second, 0, rows, options, stats)
+    assert launcher.history_identity_problems(
+        [lc0_dir, second], allow_mixed_history=False,
+    ) == []
