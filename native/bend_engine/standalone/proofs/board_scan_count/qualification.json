@@ -1,0 +1,86 @@
+{
+  "commands": {
+    "negative_checker": "same checker command with a 120s timeout and a temporary copy containing exactly the named negative-control mutation",
+    "positive_checker": "timeout --signal=TERM 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 RAYON_NUM_THREADS=2 BEND_NO_TELEMETRY=1 <BUN_1.4.2> --smol <PINNED_CHECKER>/bend2/main.ts standalone/proofs/board_scan_count/consumer.bend --check-only",
+    "qualifier": "PYTHONPATH=<ENGINE> python3 -m standalone.proofs.board_scan_count.qualify_board_scan_count <PINNED_CHECKER> --checker-manifest <VERIFIED_84_FILE_MANIFEST> --report <PRIVATE_RECEIPT> --evidence-dir <PRIVATE_EVIDENCE_DIR>"
+  },
+  "local_base_alias": {
+    "commit": "26708a5da76eaef9eaa449e7da1be3a0bd4ae9ca",
+    "note": "shallow local mirror alias; published draft will be based on exact remote PR1015 head",
+    "tree": "b1d8ce3a474883324469a404da5f5d4de9bf5ddc"
+  },
+  "local_receipt_sha256": "bbc125271f6809813115c873ecc9b210e615ac272c8642ce03c9bd0fb16049f4",
+  "negative_controls": [
+    {
+      "elapsed_wall_seconds": 5.208,
+      "exit_code": 1,
+      "max_rss_kib": 789396,
+      "name": "duplicate-source",
+      "raw_output_sha256": "7dd4f85660f9a483401aa6e030a530b51fce3289fe4a799704899b7732589579",
+      "rejected_at_expected_obligation": true
+    },
+    {
+      "elapsed_wall_seconds": 5.168,
+      "exit_code": 1,
+      "max_rss_kib": 828132,
+      "name": "omitted-source",
+      "raw_output_sha256": "c80a6509a081c39db252421edc1dc0c397623c0b9566091fc6d1411c8e4dc87f",
+      "rejected_at_expected_obligation": true
+    },
+    {
+      "elapsed_wall_seconds": 5.15,
+      "exit_code": 1,
+      "max_rss_kib": 814792,
+      "name": "wrong-initial-tail",
+      "raw_output_sha256": "41fd64ed9e43bb7d17dcf70cc3f4f0d2d66ad6fc5d5bc446d5196c9aff4f6891",
+      "rejected_at_expected_obligation": true
+    },
+    {
+      "elapsed_wall_seconds": 5.256,
+      "exit_code": 1,
+      "max_rss_kib": 894332,
+      "name": "disconnected-production-consumer",
+      "raw_output_sha256": "c5249a0270f1db5ba36c4de82fb0a7606d13f998eb30633e2667ddd62965bd13",
+      "rejected_at_expected_obligation": true
+    }
+  ],
+  "parent_commit": "c52bca097dda17770055a38dc99e942419d6f31d",
+  "positive": {
+    "elapsed_wall_seconds": 5.272,
+    "entry": "standalone/proofs/board_scan_count/consumer.bend",
+    "exit_code": 0,
+    "max_rss_kib": 915080,
+    "raw_output_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84",
+    "result": "All terms check.",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+  },
+  "proof_file_sha256s": {
+    "README.md": "e5c3b40ad05f69369323b5870ffb67242ff05b8c9a7c1ebba55dee31de19fe6c",
+    "StepProbe.bend": "bbc4d81cad64db14a72359561ce7e23f842b19a4171ebde59b5fb8844f0f4c9f",
+    "Traversal.bend": "97720689781d58e7ae9ebde864a5e792d9063b70e58425df1c879834212642db",
+    "consumer.bend": "ee212ab06839924e3fb15540e63312be0117557ac3f37faee07932d2a36dc6c8",
+    "qualify_board_scan_count.py": "cdb35e216227d54c29f2b6f8f10578f8ab017259b613a2a3e3b9dd6d0e2d23dc"
+  },
+  "qualification_finished_utc": "2026-10-03T14:18:10.697774+00:00",
+  "raw_diagnostics": "Excluded from this public summary; full receipt and checker streams remain local.",
+  "resource_limits": {
+    "address_space_bytes": 6442450944,
+    "cpu_affinity": "two CPUs",
+    "negative_wall_seconds": 120,
+    "positive_wall_seconds": 86400,
+    "stdout_stderr_file_bytes": 65536
+  },
+  "schema": "deepfin-bend-qualification-summary-v1",
+  "scope": "Actual Chess.scan recursive traversal for arbitrary U32 source lists, including duplicates and empty input, with arbitrary full-Ply queries and duplicate-containing initial tails. The checked result is the additive left-to-right occurrence fold of the actual source-level piece_targets/scan_step contributions, using the PR1000 destination factorization and scan_after full-Ply count. Exact table preservation is established by TableTargets.step and TableTargets.scan. The production legal_moves source-list input is instantiated before castle/filter preparation. No board-validity, target-geometry, legal-move, or king-safety claim.",
+  "source_identity_sha256": "dd9c4acc7c4ef0c8d77c3f03d94c429a753eef0783f46c3b73e39f334584477c",
+  "status": "PASS",
+  "toolchain": {
+    "bend": "2.0.21+U64",
+    "bun_version": "1.4.2",
+    "checker_files": 84,
+    "checker_fingerprint_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+    "checker_manifest_sha256": "384b5c91ffe52ca500d178b1be356bf2aef2e387c0e95ba7199b943820b40df1",
+    "revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae"
+  }
+}
