@@ -36,10 +36,12 @@ does not build move tables or evaluate attacks.
 - Git fetch stalled in WSL; the immutable codeload archive succeeded. Checks ran
   from that isolated extraction, not a live checkout.
 
-The recovered scratch Cardinality source and portable source are compared in
-[this exact diff](evidence/2026-10-03/Cardinality.scratch-to-portable.patch) with
-a [hash receipt](evidence/2026-10-03/Cardinality.scratch-to-portable.json). The
-diff contains only import-path changes; all other lines match. The recovered
+The recovered scratch Cardinality source and portable source are compared in a privacy-redacted import diff
+[evidence/2026-10-03/Cardinality.scratch-to-portable.patch] with a
+[hash receipt](evidence/2026-10-03/Cardinality.scratch-to-portable.json). The
+original unified-diff SHA-256 is preserved in that receipt; local absolute path
+prefixes were normalized for publication. The diff contains only import-path
+changes; all other lines match. The recovered
 scratch file hashes to `41422a1d4148f8bcbea9ada9917038e0a0ea5096f441e722a7da288ff372d654`,
 which differs from the earlier summary's cited
 `41422a1d4148f8bcbe9ada9917038e0a0ea5096f441e722a7da288ff372d654`. The
@@ -84,3 +86,10 @@ by the same pinned checker:
 
 Raw stdout/stderr, command, source and mutation hashes, exit codes, elapsed time,
 and peak RSS for both controls are in the qualification receipt.
+
+
+The first CI run after publication found local absolute paths in serialized
+commands and the scratch diff. Those paths have now been normalized in the
+durable receipt while preserving checker stdout/stderr, results, hashes, timings,
+resource measurements, and the original diff digest. A new CI result for the
+redacted evidence revision is pending.
