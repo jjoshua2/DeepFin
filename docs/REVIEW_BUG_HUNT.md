@@ -1572,7 +1572,7 @@ Use this section after findings are recorded.
 ## 2026-10-03 bootstrap / corpus / BT4 / Ceres source-to-training pass
 
 Base: `269105298285b6098ffbf80405cb18ec33186b38` (`origin/main`). Worktree:
-`/home/josh/projects/chess-worktrees/bootstrap-corpus-bt4-audit-20261003`, branch
+`~/projects/chess-worktrees/bootstrap-corpus-bt4-audit-20261003`, branch
 `audit/bootstrap-corpus-bt4-20261003`. This is an isolated source-only review;
 no corpus, teacher artifact, generator, trainer, or live checkout was opened for
 bulk processing. The known history-FEN proof gap remains explicitly unqualified.
@@ -1632,3 +1632,5 @@ Finding F055 and its test passed at the candidate revision. Earlier fixes #986/#
 and PR #1001's separate terminal-only paired-estimator work were checked for
 overlap and left outside this scope. No merge occurred; the candidate remains in
 draft PR #1002.
+
+Hosted CI follow-up for #1002: run 37093048940 passed 14,394 tests and failed only the no-absolute-home ratchet because this tracker recorded the private isolated worktree path. Replaced that documentation-only path with ; the focused ratchet now passes (11 tests). This was not a bootstrap implementation or missing-extension failure.
