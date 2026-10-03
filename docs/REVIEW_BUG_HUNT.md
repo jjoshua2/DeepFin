@@ -622,6 +622,7 @@ Context:
 | F015 | Medium | Training Quality / Reliability | Tune prefetch ingest | `chess_anti_engine/tune/distributed_runtime.py`, `tests/test_distributed_selfplay_backpressure.py` | A background prefetch load that finished just after `drain()` could queue a preloaded item for an inbox path the trainer fallback already processed and moved. The next drain would ingest the stale arrays again even though the original inbox shard no longer existed. | `_process_shard(..., preloaded=...)` trusted preloaded arrays without checking whether `sp` was still present in the inbox; the prefetch thread loads outside the consumer lock, so a path can become stale between load and queue. | Skip preloaded items whose inbox path no longer exists before adding arrays or metrics; regression test feeds a missing preloaded path and verifies zero matching games and zero replay positions. Verified distributed ingest/prefetch slice: `29 passed`. | fixed |
 | F016 | Low | Reliability / Observability | Tune reporting | `chess_anti_engine/tune/trainable_phases.py`, `tests/test_trainable_rng_checkpoint.py` | Compact `status.csv` rows reported `global_iter` one behind the completed iteration. Fresh iteration 1 wrote `iter=1, global_iter=0`, and resumed runs inherited the same off-by-one in the status file used for quick progress checks. | `trainable.py` increments `global_iter` only after `_finalize_iteration()`, but `_finalize_iteration()` passed the pre-increment `global_iter` into `_write_status_csv_row`; `_build_report_dict()` separately uses `iteration_idx`. | Write `iteration_idx` into the status row's `global_iter` column and cover it in the finalization regression. | fixed |
 | F047 | Medium | Search Correctness | Gumbel C root handling | `chess_anti_engine/mcts/gumbel_c.py`, `tests/test_mcts_uci_parity_gates.py` | Gumbel C returned the raw NN WDL-derived value for an already-terminal checkmate root instead of the terminal root value. UCI/selfplay callers using the C path could report/search with a neutral value on a root where STM is already checkmated. | Root `values_out` was initialized from `root_qs = _wdl_to_q(...)` before the `root_cb.is_game_over()` branch, and that branch did not replace it with `CBoard.terminal_value()`. | Added root-contract tests that check both PUCT/Gumbel implementations against independent masks/terminal values across normal, ep, single-legal, checkmate, and draw-terminal roots, plus UCI TB shortcut/searchmoves/root-reuse behavior. Verified MCTS/UCI slice: `33 passed`. | fixed |
+| F063 | Medium | Training Quality / Backpressure | Stockfish self-play labels | `chess_anti_engine/selfplay/stockfish_turn.py`, `tests/test_stockfish_label_gating.py` | When the bounded pending-label list reached `batch_size * 8`, admission broke out of the loop and silently omitted the current self-play turn's teacher query. The slot can advance and finalize with no matching pending label, despite the manager's per-turn labeling contract. | With an already-full pending list, submitting the current record made zero Stockfish calls and left `sf_policy_target`, `sf_move_index`, and `sf_wdl` unset; the finalization flush only waits for labels already pending. | Keep the pending-future count bounded and apply synchronous backpressure at the cap so the current record receives its target. Regression fills the cap and verifies immediate attachment. Focused label slice passed. | fixed |
 
 ## Review Passes
 
@@ -1134,12 +1135,49 @@ Tests:
 
 ### Stockfish Integration
 
-Status: `deep`. PID direction/state tests, worker-pool overlap, UCI timeout
-coverage, async label gating, and Syzygy path switching have been run.
+Status: `fresh system pass complete` for Linux x86_64 / Python 3.10 source paths
+and bounded local Stockfish. No other confirmed Stockfish integration defect
+was found in this pass beyond F063.
 
-Evidence:
+Coverage trace:
 
-- Included in UCI/Stockfish command below: `tests/test_pid_inverse_regret.py`, `tests/test_difficulty_state.py`, `tests/test_worker_pool.py`.
+- Worker/runtime entry: worker CLI and YAML defaults, required positive live
+  `sf_nodes`, manifest path/SHA verification, `_sync_stockfish` restart keys,
+  pool-vs-single engine selection, runtime node updates, and Syzygy handoff.
+- Config flow: `GameConfig` label cap/floor/escalation validation and
+  `_eff_sf_nodes` mapping for move vs label budgets; floor-aware curriculum
+  future reuse; self-play query gating and per-batch pending bound.
+- Request/target contract: current CBoard FEN, copied legal indices and STM
+  captured with each future; Stockfish WDL/CP/mate parsed/normalized then POV
+  flipped to the sampled network move; legal MultiPV candidates and fallback;
+  finalization flushes matching pending labels before replay emission.
+- UCI/pool: executable startup/options/readiness, FEN position, MultiPV and
+  node commands, root move validation, parser variations, timeout/desync,
+  cancellation, worker replacement, live option changes, and child cleanup.
+- Packaging/runtime: Python dependencies are declared in `pyproject.toml`;
+  Stockfish itself is an external executable configured by path/manifest, not
+  bundled in the wheel. Verified only the configured local Linux binary.
+- Repetition/history: CBoard game-over checks claimable threefold before a
+  query. Search requests are FEN-only by contract; reachable nonterminal
+  twofold was checked, but no stable independent fresh-process score/PV
+  divergence was established, so no history-loss finding is claimed.
+
+Focused evidence:
+
+- Bounded source-built Linux native extensions, then Stockfish/UCI/pool,
+  label-gating/escalation/POV, Syzygy, WDL and overlap modules passed
+  (204 tests; pytest's repo config suppresses the final summary line).
+- After F063, queue-cap regression plus adjacent gating/escalation/overlap
+  modules: 42 passed.
+- Queue-cap regression and neighboring label lifecycle tests: 42 passed.
+- Real Stockfish binary SHA256:
+  `2764e7ef36bee844347586c8025ba81464315352128ef250f8c609f76044a68e`;
+  bounded node searches and FEN/history control were inspected without
+  qualifying a reproducible mismatch.
+- Static checks and internal review are recorded with the final commit.
+
+Remaining qualification gaps: GPU/live training, production corpus labeling,
+Windows/macOS/ARM, a real tablebase set, and long-duration fleet congestion.
 
 Files:
 

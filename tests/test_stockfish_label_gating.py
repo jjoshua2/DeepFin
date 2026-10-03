@@ -153,6 +153,27 @@ def test_async_sf_labels_submit_for_replay_kept_records() -> None:
     assert state.stockfish.calls[0]["nodes"] == 100
 
 
+def test_async_sf_labels_apply_backpressure_instead_of_dropping_at_cap() -> None:
+    state = _state(has_policy=True)
+    rec = state.samples_per_game[0][0]
+    # Eight outstanding futures fill the production batch_size * 8 bound.
+    state.pending_sf_labels = [
+        SimpleNamespace(record=_record(has_policy=True), future=Future())
+        for _ in range(8)
+    ]
+
+    submitted = submit_async_sf_label_queries(state, [0])
+
+    assert submitted == 1
+    assert len(state.stockfish.calls) == 1
+    assert len(state.pending_sf_labels) == 8
+    # The ninth query is resolved synchronously so this network-turn row is
+    # not silently emitted without the label required by manager._run_step.
+    assert rec.sf_policy_target is not None
+    assert rec.sf_move_index is not None
+    assert rec.sf_wdl is not None
+
+
 def test_finalize_flush_waits_for_pending_replay_kept_labels() -> None:
     state = _state(has_policy=True)
     rec = state.samples_per_game[0][0]
