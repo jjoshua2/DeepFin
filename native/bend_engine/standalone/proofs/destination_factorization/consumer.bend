@@ -8,6 +8,8 @@ import ./Emission.bend as E
 import ./Count.bend as C
 import ./Scan.bend as Scan
 import ./AfterCount.bend as AfterCount
+import ./QueryFactor.bend as QFactor
+import ./QueryCount.bend as QCount
 
 def use_structural(n: Nat,empty: Bool,+bb: U64,+src: U32,+pawn: Bool,+ep: U32,
   +keys: List<&2,U32>,+tail: List<&2,Chess.Ply>) ->
@@ -59,3 +61,15 @@ def use_duplicate_tail_multiplicity(table: Array<U64>) ->
     Con{Chess.Ply{12,28,0,0},Con{Chess.Ply{12,28,0,0},Nil{}}},
     (table,U64.zero())),Chess.Ply{12,28,0,0}) == 2n : Nat}:
   AfterCount.duplicate_tail_multiplicity(table)
+
+def use_scan_after_closed_count(table: Array<U64>,+targets: U64,+src: U32,+pawn: Bool,+ep: U32,
+  +query: Chess.Ply,+tail: List<&2,Chess.Ply>) ->
+  {AfterCount.pair_count(Chess.scan_after(src,pawn,ep,tail,(table,targets)),query) ==
+    Nat.add(Bool.pick(Nat,Bool.and(Nat.is_lt(U32.to_nat(QCount.ply_destination(query)),64n),
+      U64.test_bit(targets,U32.to_nat(QCount.ply_destination(query)))),
+      QFactor.query_emission_count(src,pawn,ep,query),0n),S.count(tail,query)) : Nat}:
+  QFactor.scan_after_closed_count(table,targets,src,pawn,ep,query,tail)
+
+def use_query_bit_squares_range(+targets: U64) ->
+  {Squares.all_below64(Chess.bit_squares(64n,U64.is_zero(targets),targets,Nil{})) == True{} : Bool}:
+  QFactor.actual_keys_below64(targets)
