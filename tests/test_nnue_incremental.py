@@ -372,6 +372,29 @@ def test_incremental_qsearch_is_exactly_the_refresh_search(
     assert inc_stats == ref_stats
 
 
+@pytest.mark.parametrize("kernel", [True, False], ids=["simd", "scalar"])
+def test_incremental_king_capture_refreshes_moved_perspective_and_bucket(
+    dense_pack: Path, kernel: bool
+) -> None:
+    """Kxe2 moves the white king and crosses the 5-piece -> 4-piece bucket edge."""
+    if kernel and not _nnue_ext.HAVE_AVX2:
+        pytest.skip("build has no AVX2 kernels")
+    _nnue_ext.set_simd(kernel)
+    board = chess.Board("7k/8/8/8/8/8/4p3/4KBN1 w - - 0 1")
+    assert board.is_valid()
+    before_bucket = (len(board.piece_map()) - 1) // 4
+    child = board.copy()
+    child.push_san("Kxe2")
+    assert len(child.piece_map()) == 4
+    assert (len(child.piece_map()) - 1) // 4 == before_bucket - 1
+
+    incremental, incremental_stats = _run("nnue-qsearch", dense_pack, [board])
+    refreshed, refreshed_stats = _run("nnue-qsearch-refresh", dense_pack, [board])
+    assert incremental == refreshed
+    assert incremental_stats == refreshed_stats
+    assert incremental_stats["qnodes"] > 1
+
+
 def test_parity_fixture_really_exercises_qsearch(dense_pack: Path) -> None:
     boards = _sample_boards()
     static_values, _ = _run("nnue-static", dense_pack, boards)
