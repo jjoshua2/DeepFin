@@ -1583,44 +1583,52 @@ bulk processing. The known history-FEN proof gap remains explicitly unqualified.
 |---|---|---|
 | Rooted source CLI / resume | `scripts/gen_sf_rooted_corpus.py` (`build_parser`, `config_stamp`, `resume_worker_state`, `ShardWriter`, `build_summary`, `main`) | Defaults/config identity, worker/game seed identity, per-worker append-only progress, torn-tail repair, complete-game rotation, dedup cache events, unlisted shard cleanup and incomplete-run stamps were traced against the adjacent resume contract and existing tests. No new defect confirmed. |
 | Target derivation / objective | `scripts/derive_corpus_targets.py` (`parse_value_scheme`, `wdl_target_from_result`, `game_value_targets`, `write_value_target`, `apply_value_scheme`, `enforce_value_scheme_take_effect`, `build_summary`, parser) | Row POV, raw outcome versus `search_wdl`, target blend construction, tail/drop semantics, CLI-to-options propagation, emitted-byte take-effect checks and per-shard schema/summary stamps were traced. No new defect confirmed. |
-| Raw BT4 adapter / admission | `scripts/adapt_raw_bt4_sidecars.py`, `scripts/bt4_policy_mix.py`, `scripts/bt4_derived_wdl_sidecar.py`, `chess_anti_engine/source/bt4_npz_unit_v1.py` | Manifest pins, row-key joins, corpus/shard coverage, summary/model/provider identity, legal support, source/history regimes and unit-only versus training-credit boundary were inspected. BT4 NPZ archive tests cannot collect here because `zstandard` is absent; import paths that reach `CBoard` also need `_lc0_ext`. |
-| Ceres input / saved source | `chess_anti_engine/encoding/ceres_tpg.py`, `ceres_stored_feed.py`; `chess_anti_engine/source/ceres_root_input.py`, `ceres_saved_game.py`, `ceres_owner_target.py` | Stored-f16 conversion and feed hashes, TPG canonicalization/history/repetition/EP/rule50 handling, row/legal map alignment and independent full-game validation boundaries were traced. The existing history-FEN limitation is not promoted into a claim. Pure TPG/root/stored-feed tests passed; saved-game tests are blocked during import by missing `_lc0_ext`. |
-| Teacher sidecars / row binding | `scripts/ceres_derived_sidecar.py`, `scripts/bt4_derived_wdl_sidecar.py`, `chess_anti_engine/encoding/ceres_tpg.py` | Complete chunks, source array hashes, row/game/ply identity, legal offsets/maps, provider/model/output contracts, source storage identities, feed digests, final input rechecks and atomic publication were inspected. Integrated fake-session tests are blocked by `_lc0_ext`. |
-| Policy target mix | `scripts/ceres_target_mix.py`, `scripts/bt4_policy_mix.py`, `scripts/sf_policy_rewrite.py` | Separately normalized legal-support distributions and temperature/weight semantics; exact mutation of `policy_target`; preservation of all other stored arrays; complete manifest membership and producer/input pins were traced. End-to-end synthetic mix tests are blocked by `_lc0_ext`. |
-| Value target mix | `scripts/ceres_value_mix.py`, `scripts/bt4_value_rewrite.py` | WDL order/POV and probability normalization; fixed SF/BT4/Ceres primary-secondary dose; exact mutation of `search_wdl`; preservation of all other arrays; and trainer-consumer effects were traced. End-to-end fake-teacher tests are blocked by `_lc0_ext`. |
-| Publication / qualification / admission | `scripts/ceres_materialize.py`, `scripts/ceres_corpus_qualification.py`, `scripts/audited_source_admission.py`, `scripts/common_input_batch.py`, `scripts/combined_corpus_train.py`, BT4/Ceres admission helpers | Fresh-output and STOP/deadline/disk guards, profile-specific pins, corpus inventory and storage identities, prospective-vs-completed qualification, selected-source flags, ordered cohort/role mapping, actual training argument construction, and distinct source/policy/value roots were inspected. Pure admission/combined-trainer synthetic tests passed. No corpus was executed or inventoried. |
-| Package/runtime dependencies | `pyproject.toml` | Confirmed Python floor, core replay/runtime dependencies, Zarr v2 pin, `deepfin` entrypoint, and test/dev extras (`zstandard`, native extension build/import requirements, ONNX stack). The shared Python 3.10 environment lacks both `zstandard` and built `chess_anti_engine.encoding._lc0_ext`; no install/build was attempted. |
+| Raw BT4 adapter / admission | `scripts/adapt_raw_bt4_sidecars.py`, `scripts/bt4_policy_mix.py`, `scripts/bt4_derived_wdl_sidecar.py`, `chess_anti_engine/source/bt4_npz_unit_v1.py` | Manifest pins, row-key joins, corpus/shard coverage, summary/model/provider identity, legal support, source/history regimes and unit-only versus training-credit boundary were inspected. BT4 NPZ archive and adapter tests passed under the locked CPU environment with `zstandard` and project extensions built. |
+| Ceres input / saved source | `chess_anti_engine/encoding/ceres_tpg.py`, `ceres_stored_feed.py`; `chess_anti_engine/source/ceres_root_input.py`, `ceres_saved_game.py`, `ceres_owner_target.py` | Stored-f16 conversion and feed hashes, TPG canonicalization/history/repetition/EP/rule50 handling, row/legal map alignment and independent full-game validation boundaries were traced and exercised with synthetic saved-game tests. The existing history-FEN limitation is not promoted into a claim. |
+| Teacher sidecars / row binding | `scripts/ceres_derived_sidecar.py`, `scripts/bt4_derived_wdl_sidecar.py`, `chess_anti_engine/encoding/ceres_tpg.py` | Complete chunks, source array hashes, row/game/ply identity, legal offsets/maps, provider/model/output contracts, source storage identities, feed digests, final input rechecks and atomic publication were inspected and synthetic fake-session tests passed. |
+| Policy target mix | `scripts/ceres_target_mix.py`, `scripts/bt4_policy_mix.py`, `scripts/sf_policy_rewrite.py` | Separately normalized legal-support distributions and temperature/weight semantics; exact mutation of `policy_target`; preservation of all other stored arrays; complete manifest membership and producer/input pins were traced. Synthetic mix and recovery tests passed. |
+| Value target mix | `scripts/ceres_value_mix.py`, `scripts/bt4_value_rewrite.py` | WDL order/POV and probability normalization; fixed SF/BT4/Ceres primary-secondary dose; exact mutation of `search_wdl`; preservation of all other arrays; and trainer-consumer effects were traced. Synthetic rewrite and fake-teacher tests passed. |
+| Publication / qualification / admission | `scripts/ceres_materialize.py`, `scripts/ceres_corpus_qualification.py`, `scripts/audited_source_admission.py`, `scripts/common_input_batch.py`, `scripts/combined_corpus_train.py`, BT4/Ceres admission helpers | Fresh-output and STOP/deadline/disk guards, profile-specific pins, corpus inventory and storage identities, prospective-vs-completed qualification, selected-source flags, ordered cohort/role mapping, actual training argument construction, and distinct source/policy/value roots were inspected. Synthetic qualification, admission, and combined-trainer contract tests passed. No corpus was executed or inventoried. |
+| Package/runtime dependencies | `pyproject.toml` | Confirmed Python floor, core replay/runtime dependencies, Zarr v2 pin, `deepfin` entrypoint, and test/dev extras (`zstandard`, native extension build/import requirements, ONNX stack). Reused the documented setup in an isolated Python 3.13 `.venv` via `uv sync --locked --extra dev --extra cpu`; CPU-only Torch, `zstandard`, and all five local native extensions were available. The isolated build used two CPU threads; no global install or CUDA package was used. |
 
 ### Validation and disposition
 
-Pure CPU synthetic tests passed (pytest exit 0; 77 tests across
-`test_ceres_tpg_encoding.py`, `test_ceres_root_input.py`,
-`test_ceres_stored_feed.py`, `test_audited_source_admission.py`, and
-`test_combined_corpus_train.py`). Command used two-CPU affinity, `CAE_TEST_THREADS=2`,
-`CUDA_VISIBLE_DEVICES=''`, and a 600-second timeout; observed peak RSS was 685 MiB.
+The documented CPU development environment was created in the isolated worktree with
+`uv sync --locked --extra dev --extra cpu` (Python 3.13.15, Torch 2.14.0+cpu).
+`zstandard` and all five project native extensions imported from this worktree.
+CUDA was hidden; two-CPU affinity/thread caps, a 4 GiB RSS limit, an 86400-second
+job timeout, and temporary `MPLCONFIGDIR`/`XDG_CACHE_HOME` under
+`/tmp/deepfin-bootstrap-audit-20261003` were used.
 
-The broader synthetic source/sidecar/mix/admission test selection was attempted
-with the same CPU/time bounds but stopped during test collection (exit 2), before
-assertions, because `zstandard` and `_lc0_ext` are absent. The repeat selection
-for BT4 adapter/policy-mix integrations likewise stopped at collection on
-`_lc0_ext` (exit 2, under 710 MiB RSS). These are environment prerequisites,
-not product failures. The package/build/integrated sidecar paths remain dynamically
-unqualified in this pass; do not treat static inspection as their runtime proof.
+F055 was reproduced through the real CLI on both exact base
+`269105298285b6098ffbf80405cb18ec33186b38` and candidate
+`509fe8b9a09a1b2e1e743c2ee652a59d62d19eb9`, using `--limit -1`, a nonexistent
+corpus, and separate temporary output paths. Base exited at corpus access with
+`CorpusIntegrityError`; candidate rejected the limit first with the intended
+`ValueError`. Neither created its output path. The disposable base worktree
+used temporary symlinks to the candidate-built native binaries; all native source
+and setup files are identical between the two revisions.
 
-Independent read-only INTERNAL Codex review at base
-`269105298285b6098ffbf80405cb18ec33186b38` found no confirmed defect in the
-mixers, BT4/Ceres source identity and feed checks, sidecar profile/output
-contracts, admission/qualification, or dependency declarations. It did not
-independently finish exhaustive review of generator resume/dedup, the entire
-target derivation implementation, every TPG consumer, or every package/runtime
-entrypoint. The primary pass traced the named methods above but also did not
-claim those entire files/entrypoint families as exhaustive; those remain explicit
-coverage gaps.
+The scoped production-path test selection passed **887 tests** across corpus
+derivation/rooted-corpus resume, raw BT4 adapter/NPZ admission, BT4 sidecars and
+target mixers, Ceres TPG/root/saved-game/feed/sidecar/mix/materialize/qualification,
+source admission and combined-corpus argument wiring. Four harmless Python 3.13
+multiprocessing-fork deprecation warnings were emitted. Ruff, py_compile,
+and `git diff --check` pass.
 
-Finding F055 was confirmed in the negative limit coercion and fixed with pre-input rejection plus a regression test. No other distinct, reachable defect survived source review with available evidence. Earlier fixes #986/#989,
-known history-FEN limitations, and PR #1001 terminal-only paired-estimator
-surfaces were checked for overlap and left outside this scope. This is a partial
-first pass, not a complete subsystem pass: static coverage is recorded for the
-tabled boundaries, while exhaustive edge coverage and integrated dynamic
-validation remain blocked or outstanding. No training/generation/GPU work or
-external artifacts were used.
+Independent read-only INTERNAL Codex review of the F055 commit is recorded below.
+No other distinct, reachable defect survived review of the declared main-pipeline
+boundaries. The named table is the completed first pass for rooted corpus →
+derived targets → BT4/Ceres target construction → source admission and trainer
+wiring, supported by synthetic end-to-end fixtures. It is not a claim of
+exhaustive coverage of every historical one-off script or every branch inside
+each large module. Remaining qualifications are real corpus/teacher artifact
+content, full generator-scale resume/dedup workloads, every downstream TPG
+consumer, real trainer/GPU operation, and the known history-FEN proof limitation.
+Those were out of scope for CPU-only non-production validation and no large corpus,
+teacher artifact, training run, or GPU was touched.
+
+Finding F055 and its test passed at the candidate revision. Earlier fixes #986/#989
+and PR #1001's separate terminal-only paired-estimator work were checked for
+overlap and left outside this scope. No merge occurred; the candidate remains in
+draft PR #1002.
