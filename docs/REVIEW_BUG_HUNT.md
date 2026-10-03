@@ -1640,3 +1640,32 @@ workloads for experimental v3 configs; Windows/ARM/big-endian builds; alternate
 Python/NumPy ABIs; max-depth game-history extremes. This is a first source plus
 bounded native/Python CPU pass for the board encoder and policy-mapping subsystem,
 not a deployment qualification.
+
+
+Board/policy follow-up (same F062, discovered while tracing the production
+selfplay route; final fix commit pending at time of this note):
+
+- Expanded the reachable path audit from CBoard's _lc0_ext into
+  selfplay/network_turn.py -> _mcts_tree.batch_encode_146* and
+  _mcts_tree.batch_process_ply. These APIs independently hard-coded 146/175
+  plane validation, and batch_process_ply rejected every registered v3 width.
+  Thus the first validator fix alone left all experimental v3 selfplay root
+  evaluation and sample processing paths failing before network evaluation/
+  target encoding.
+- _mcts_tree.c also used a 175-float-plane bf16 stack scratch buffer. Once
+  the width validators admit v3_passers, the required maximum is 183 planes;
+  the scratch capacity now follows the widest registered extra-feature width.
+- The common C validator contract now covers every registered width; all six
+  batch_encode_146* variants (legacy/root/root-legacy-meta, float32/bf16)
+  and batch_process_ply are parameterized over the registry. The regressions
+  compare encoded values and shapes to CBoard references and feature semantics.
+- Direct negative-control on pre-fix native code: v3_xray, v3_see, and
+  v3_passers fail width validation through production CBoard and selfplay
+  APIs. Post-fix, the 12 all-width selfplay batch regressions pass. Broader
+  scoped suite (threat planes, full batch, batch parity, buffer guards, audit
+  history encoding, policy target reshape/index LUT, and Stockfish policy
+  boundary) also passes on Linux x86_64/Python 3.10.12 with native extensions
+  rebuilt from source, two Torch threads and the 600-second CPU limit.
+- F062's scoped change is a validator/capacity expansion only. It does not
+  change the registered plane values/order, policy index mapping, history
+  semantics, or default production feature version.
