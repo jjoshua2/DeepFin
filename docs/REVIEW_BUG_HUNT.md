@@ -495,7 +495,7 @@ Current notes:
   non-boolean values for every enumerated run.py store_true and BooleanOptionalAction destination; tests pin
   root/train/model/tune examples and both valid boolean inversion outcomes.
 
-- Focused config and worker validation after F048-F050 passed: 95 passed across tests/test_config_yaml.py, tests/test_trial_config.py, tests/test_yaml_failure_modes.py, and tests/test_worker_config_yaml.py; Python compilation and Ruff checks passed. Local Linux x86_64/Python 3.10 wheel build succeeded (no dependencies installed).
+- Focused config and worker validation after F048-F050 passed: 95 passed across tests/test_config_yaml.py, tests/test_trial_config.py, tests/test_yaml_failure_modes.py, and tests/test_worker_config_yaml.py; Python compilation and Ruff checks passed. UCI and server --help smoke checks passed. Local Linux x86_64/Python 3.10 wheel build succeeded from final revision (no dependencies installed).
 - Entrypoints/config/packaging pass coverage: run/train/tune CLI and wrapper wiring; YAML parsing/default flattening and validation; worker/server CLI/YAML precedence and persisted/runtime overrides; Tune typed configuration handoff; packaging metadata, extras, native extensions, and runtime dependency declarations. Clean cross-platform wheel installation was not exercised because this pass avoided dependency installation.
 - Follow-up S007 gate expansion added an independent persistent-root reuse
   contract: after `advance_root`, the same tree/root child must remain active,
@@ -1569,6 +1569,9 @@ Last updated: 2026-10-03
 - [x] Runtime config guards: sparse Stockfish policy fields, target-only/temperature constraints, and documented realized defaults are checked before execution; every run.py store_true and BooleanOptionalAction destination rejects non-boolean YAML values instead of applying truthiness.
 - [x] Worker entrypoint: parser sentinels and explicit CLI > persisted worker.yaml > hardcoded defaults; credentials/password-file and cleartext transport guard; effective upload thresholds flow into persisted runtime config and shard buffer flush consumer.
 - [x] Worker pool entrypoint: pool-owned work/cache directories cannot be overridden through forwarded child arguments; child command uses current interpreter/module invocation.
+- [x] UCI packaged console and module entrypoints: deepfin resolves to chess_anti_engine.uci.__main__:main; help parsing and parser-to-engine startup wiring checked.
+- [x] HTTP server entrypoint: run_server argparse defaults/options flow into create_app and uvicorn; the server launcher is CLI-configured and does not read a YAML file.
+- [x] Script launcher: scripts/train.sh resolves its config path, exports required CUDA probe env and launches run.py with --config; help/status paths inspected without starting training.
 - [x] Tune config handoff: run.py argument values flow through _build_tune_config_dict into Tune typed config construction; relevant existing TrialConfig tests included.
 - [x] Packaging metadata: Python floor, core and optional dependencies, deepfin console entry, package discovery, NumPy-backed native extension declarations, compiler portability flags, and uv lock environment reviewed against import/install docs.
 - [x] Negative/contract tests: malformed recognized YAML sections, quoted/non-boolean model bools, explicit worker CLI vs YAML, YAML fallback/casters, parser failures; focused suites rerun.
