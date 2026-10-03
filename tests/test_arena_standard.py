@@ -81,6 +81,18 @@ def test_pentanomial_degenerate_score_has_no_elo():
     assert summary.elo_ci95[1] is None
 
 
+def test_single_pair_does_not_claim_zero_uncertainty():
+    summary = summarize_pentanomial((0, 0, 1, 0, 0))
+    assert summary.pairs == 1
+    assert summary.score == pytest.approx(0.5)
+    assert summary.score_se is None
+    assert summary.elo == pytest.approx(0.0)
+    assert summary.elo_ci95 == (None, None)
+
+    from scripts.arena_standard import print_summary
+    print_summary(summary)
+
+
 def _tiny_model() -> torch.nn.Module:
     cfg = ModelConfig(
         kind="transformer",

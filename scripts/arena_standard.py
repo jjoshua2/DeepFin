@@ -901,7 +901,7 @@ class PentanomialSummary:
     pairs: int
     games: int
     score: float           # mean per-game score in [0, 1]
-    score_se: float        # standard error of the mean per-game score
+    score_se: float | None  # unavailable when fewer than two pairs
     elo: float | None
     elo_ci95: tuple[float | None, float | None]
 
@@ -973,10 +973,16 @@ def summarize_pentanomial(
         raise ValueError("no pairs")
     xs = tuple(s / 2.0 for s in PAIR_SCORES)
     mu = sum(c * x for c, x in zip(counts, xs)) / n
-    var = sum(c * (x - mu) ** 2 for c, x in zip(counts, xs)) / (n - 1) if n > 1 else 0.0
-    se = math.sqrt(var / n)
-    lo = mu - z * se
-    hi = mu + z * se
+    if n > 1:
+        var = sum(c * (x - mu) ** 2 for c, x in zip(counts, xs)) / (n - 1)
+        se = math.sqrt(var / n)
+        lo, hi = mu - z * se, mu + z * se
+        elo_ci95 = (_elo_from_score(lo), _elo_from_score(hi))
+    else:
+        # A single pair has no empirical variance estimate. Reporting zero
+        # would turn an uninformative sample into a point-width CI.
+        se = None
+        elo_ci95 = (None, None)
     return PentanomialSummary(
         counts=counts,
         pairs=n,
@@ -984,7 +990,7 @@ def summarize_pentanomial(
         score=mu,
         score_se=se,
         elo=_elo_from_score(mu),
-        elo_ci95=(_elo_from_score(lo), _elo_from_score(hi)),
+        elo_ci95=elo_ci95,
     )
 
 
@@ -2768,7 +2774,7 @@ def build_result_record(
         "device": device,
         "pentanomial": dict(zip(PAIR_LABELS, summary.counts)),
         "score": round(summary.score, 5),
-        "score_se": round(summary.score_se, 5),
+        "score_se": None if summary.score_se is None else round(summary.score_se, 5),
         "elo": None if summary.elo is None else round(summary.elo, 2),
         "elo_ci95": [
             None if elo_lo is None else round(elo_lo, 2),
@@ -2827,7 +2833,8 @@ def print_summary(summary: PentanomialSummary) -> None:
     print()
     print(f"[arena] {summary.games} games ({summary.pairs} opening pairs)")
     print(f"[arena] pentanomial (candidate POV): {counts}")
-    print(f"[arena] score: {summary.score:.4f} +/- {summary.score_se:.4f} (SE)")
+    se_text = "n/a" if summary.score_se is None else f"{summary.score_se:.4f}"
+    print(f"[arena] score: {summary.score:.4f} +/- {se_text} (SE)")
     # flush is LOAD-BEARING, not cosmetic, and this ONE line is by itself the
     # whole fix for the 2026-07-30/31 ratchet outage. Every caller redirects
     # stdout to a file, so it is block-buffered, and the ratchet runs this

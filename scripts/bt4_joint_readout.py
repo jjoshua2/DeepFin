@@ -243,6 +243,8 @@ def read_arm(
     if calibration_contract is not None:
         same(list(next(iter(modes))), calibration_contract["expected_execution"], "calibration execution")
     summary = summarize_pentanomial(pentanomial_counts([2 * s for s in scores]))
+    if summary.score_se is None:
+        raise ValueError("calibration requires at least two complete pairs")
     lo = summary.score - 1.96 * summary.score_se
     hi = summary.score + 1.96 * summary.score_se
     verdict = "SUCCESS" if lo > 0.5 else "KILL" if hi < 0.5 else "INCONCLUSIVE"

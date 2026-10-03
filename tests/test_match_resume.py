@@ -868,6 +868,35 @@ def test_match_schedule_is_a_pure_function_of_the_game_index() -> None:
     ]
 
 
+def test_match_score_ci_uses_color_swapped_pairs() -> None:
+    module = _load_match_module()
+    # Perfectly balanced mirrored pairs have no between-opening variance.
+    assert module._score_ci([1.0, 0.0, 1.0, 0.0]) == pytest.approx((0.5, 0.5))
+    # A decisive win/loss pair gives the full pair-level uncertainty.
+    lo, hi = module._score_ci([1.0, 1.0, 0.0, 0.0])
+    assert lo == pytest.approx(0.0)
+    assert hi == pytest.approx(1.0)
+    assert module._score_ci([1.0, 0.0]) is None  # variance needs two pairs
+    with pytest.raises(ValueError, match="even number"):
+        module._score_ci([1.0])
+
+
+def test_match_rejects_odd_game_count_before_starting_engines(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+):
+    module = _load_match_module()
+    opened: list[str] = []
+    monkeypatch.setattr(module, "_open_warm_engine", lambda *a, **k: opened.append("open"))
+    log_path = tmp_path / "odd.games.jsonl"
+    argv = _match_argv(tmp_path, log_path, extra=[])
+    argv[argv.index("--games") + 1] = "7"
+    monkeypatch.setattr("sys.argv", ["match_vs_uci.py", *argv])
+    with pytest.raises(SystemExit) as exc:
+        module.main()
+    assert exc.value.code == 2
+    assert opened == []
+
+
 @pytest.mark.parametrize("rolling", [True, False])
 def test_resume_reaches_the_matched_sims_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, rolling: bool,

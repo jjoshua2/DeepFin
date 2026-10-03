@@ -623,6 +623,9 @@ Context:
 | F016 | Low | Reliability / Observability | Tune reporting | `chess_anti_engine/tune/trainable_phases.py`, `tests/test_trainable_rng_checkpoint.py` | Compact `status.csv` rows reported `global_iter` one behind the completed iteration. Fresh iteration 1 wrote `iter=1, global_iter=0`, and resumed runs inherited the same off-by-one in the status file used for quick progress checks. | `trainable.py` increments `global_iter` only after `_finalize_iteration()`, but `_finalize_iteration()` passed the pre-increment `global_iter` into `_write_status_csv_row`; `_build_report_dict()` separately uses `iteration_idx`. | Write `iteration_idx` into the status row's `global_iter` column and cover it in the finalization regression. | fixed |
 | F047 | Medium | Search Correctness | Gumbel C root handling | `chess_anti_engine/mcts/gumbel_c.py`, `tests/test_mcts_uci_parity_gates.py` | Gumbel C returned the raw NN WDL-derived value for an already-terminal checkmate root instead of the terminal root value. UCI/selfplay callers using the C path could report/search with a neutral value on a root where STM is already checkmated. | Root `values_out` was initialized from `root_qs = _wdl_to_q(...)` before the `root_cb.is_game_over()` branch, and that branch did not replace it with `CBoard.terminal_value()`. | Added root-contract tests that check both PUCT/Gumbel implementations against independent masks/terminal values across normal, ep, single-legal, checkmate, and draw-terminal roots, plus UCI TB shortcut/searchmoves/root-reuse behavior. Verified MCTS/UCI slice: `33 passed`. | fixed |
 
+| F053 | Medium | Evaluation correctness | External UCI matches | `scripts/match_vs_uci.py`, `tests/test_match_resume.py` | The driver schedules two color-swapped games per opening but computed its score CI as if individual games were independent. Mirrored outcomes such as A winning as White and losing as Black therefore produced a wide interval despite zero between-opening variation; resume ordering also put all stored scores before newly played scores, breaking pair adjacency. Odd game counts additionally left a final half-pair. | Aggregate per-opening means using scores indexed by global game number; reject odd `--games` before opening engines. | Tests distinguish mirrored-pair variance, require no CI for one pair, reject odd games pre-engine, and check resumed summaries. | fixed |
+| F054 | Low | Evaluation correctness | Pentanomial summary | `scripts/arena_standard.py`, `scripts/match_vs_handicapped_sf.py`, `tests/test_arena_standard.py`, `tests/test_identity_harness.py` | A single complete pair took the `n == 1` fallback variance of zero and was reported with a zero-width score standard error/CI, although sample variance is not estimable. | Keep the point score/Elo but serialize `score_se` and Elo limits as `null`; console output reports `n/a`. Propagated through the handicapped-match summary and guarded the fixed calibration consumer. | One-pair balanced fixture asserts unavailable uncertainty; focused handicapped-match summary and print tests. | fixed |
+
 ## Review Passes
 
 | Pass | Status | Goal | Main Outputs |
@@ -1330,6 +1333,43 @@ Tests:
 - [x] `tests/test_profile_distributed.py`
 - [x] `tests/test_reinit_value_heads_script.py`
 - [x] `tests/test_status_script.py`
+
+#### 2026-10-03 evaluation and benchmark refresh (base `269105298285b6098ffbf80405cb18ec33186b38`)
+
+Scoped first pass traced contracts and call sites in `docs/eval_protocol.md`,
+`docs/toolchains.md`, `scripts/arena_standard.py`,
+`chess_anti_engine/eval/sprt.py`, `chess_anti_engine/eval/arena_pgn.py`,
+`chess_anti_engine/utils/game_log.py`, `scripts/match_vs_uci.py`,
+`scripts/match_checkpoints.py`, `scripts/elo_vs_sims.py`, and
+`pyproject.toml`. Coverage included paired opening/color schedule, game-count
+validation, result/score handling, confidence-unit selection, SPRT pair-prefix
+accounting, log fingerprints and resume/deduplication, partial-run truncation,
+checkpoint/command identity limits, ladder option forwarding, CLI defaults,
+the `deepfin` console entry point and core/extra runtime dependencies.
+
+Confirmed and fixed F053 and F054 above. `match_vs_uci` now estimates uncertainty
+over opening-pair means in global game-index order; it refuses an odd game count
+before opening engines. Pentanomial uncertainty is explicitly unavailable at a
+single pair and is represented as `null`/`n/a` downstream. The package metadata
+was read for contract coverage; no package metadata or dependency changes were
+needed. Local native extensions were built from repository sources only to run
+the handicapped-match tests; no package installation or artifact download was
+performed.
+
+Bounded negative and regression checks:
+
+- `tests/test_match_resume.py -k "match_score_ci or odd_game_count or resumed_match_equals or resumed_match_replays or match_schedule"` — 5 passed.
+- `tests/test_arena_standard.py -k "pentanomial or print_summary"` — 4 passed.
+- `tests/test_identity_harness.py -k "summary"` — 3 passed; after asserting the single-complete-pair case, `-k "summary_drops_an_orphan"` — 1 passed.
+- All pytest invocations used a 600-second timeout and two-thread caps. Existing `pynvml` deprecation warning only.
+- Independent read-only `codex review --uncommitted`: no actionable regressions; reviewer’s focused selection passed 10 tests. Its broader aggregate run was inconclusive because the shared Python 3.10 venv has NumPy 2.2.6 while its native extension was built against NumPy 1.x. The worktree’s own Python 3.10 build and targeted test slices passed.
+
+Known qualification gaps: no real engine, Stockfish, checkpoint, GPU, or tablebase
+arena was launched; no long ladder or SPRT stop was executed. The documented
+in-place checkpoint/binary replacement identity limitation remains. This pass
+covered the production paired arena and external UCI match paths deeply, and
+reviewed the ladder/checkpoint wrappers and packaging metadata statically; other
+one-off puzzle, profile and benchmark scripts were not exhaustively executed.
 
 ### Documentation and Specs
 
