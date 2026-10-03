@@ -290,3 +290,26 @@ def test_batch_descend_virtual_mean_pending_does_not_turn_pending_into_loss():
         1,
     )
     assert int(leaf_ids[0]) == good_vm
+
+def test_virtual_mean_counts_nested_pending_descents_once():
+    """A pending path through parent and child is one virtual visit, not two."""
+    board = chess.Board()
+    cb = CBoard.from_board(board)
+    root_action = int(cb.legal_move_indices()[0])
+    child_cb = cb.copy()
+    child_cb.push_index(root_action)
+    actions = child_cb.legal_move_indices().astype(np.int32)[:2]
+    tree = MCTSTree()
+    root = tree.add_root(0, 0.0)
+    tree.expand(root, np.array([root_action], dtype=np.int32), np.array([1.0]))
+    parent = tree.find_child(root, root_action)
+    tree.expand(parent, actions, np.array([0.9, 0.1]))
+    a = tree.find_child(parent, int(actions[0]))
+    expected = tree.find_child(parent, int(actions[1]))
+    for _ in range(2):
+        tree.backprop(np.array([parent, a], np.int32), 0.0)
+    tree.backprop(np.array([parent, expected], np.int32), -0.37)
+    tree.apply_vloss_path(np.array([root, parent, a], np.int32))
+    enc, leaf_ids, path_buf, path_lens, legal_buf, legal_lens, term_qs, is_term = _descend_buffers(1)
+    tree.batch_descend_puct(root, cb, 1, 1.0, 0.0, 0.0, 1, enc, leaf_ids, path_buf, path_lens, legal_buf, legal_lens, term_qs, is_term, 1)
+    assert int(leaf_ids[0]) == expected

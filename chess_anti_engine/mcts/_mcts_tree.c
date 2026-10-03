@@ -810,7 +810,14 @@ static int32_t tree_select_child(const TreeData *t, int32_t node_id,
             child_pending += t->virtual_loss[t->child_node[off + i]];
         }
         int32_t parent_visits = atomic_load_i32(&t->N[node_id]);
-        parent_N = (double)(parent_visits + vloss_weight * (parent_vl + child_pending));
+        /* For an internal node, each pending descent below it is already
+         * included in parent_vl and again in exactly one child counter. At
+         * the search root, however, apply_vloss_path deliberately skips the
+         * root, so only child_pending is visible. Count the larger snapshot:
+         * this avoids double-counting below the root while remaining robust
+         * to the brief add/remove ordering window between adjacent counters. */
+        int32_t pending = parent_vl > child_pending ? parent_vl : child_pending;
+        parent_N = (double)(parent_visits + vloss_weight * pending);
         parent_W = atomic_load_double(&t->W[node_id]);
         parent_Q = (parent_visits > 0) ? (parent_W / (double)parent_visits) : 0.0;
     } else {
