@@ -937,6 +937,7 @@ def summarize(outcomes: Sequence[GameOutcome], *, regret: float) -> dict[str, An
         if summary.interval_status != "available_normal_approximation":
             lo = hi = None
         else:
+            assert summary.score_se is not None
             lo = summary.score - 1.96 * summary.score_se
             hi = summary.score + 1.96 * summary.score_se
         out["ci_unit"] = "pair (pentanomial)"

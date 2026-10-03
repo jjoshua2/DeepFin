@@ -1340,7 +1340,7 @@ Scoped first pass traced contracts and call sites in `docs/eval_protocol.md`,
 `docs/toolchains.md`, `scripts/arena_standard.py`,
 `chess_anti_engine/eval/sprt.py`, `chess_anti_engine/eval/arena_pgn.py`,
 `chess_anti_engine/utils/game_log.py`, `scripts/match_vs_uci.py`,
-`scripts/match_checkpoints.py`, `scripts/elo_vs_sims.py`, and
+`scripts/match_checkpoints.py`, the Elo-vs-sims CLI, and
 `pyproject.toml`. Coverage included paired opening/color schedule, game-count
 validation, result/score handling, confidence-unit selection, SPRT pair-prefix
 accounting, log fingerprints and resume/deduplication, partial-run truncation,
@@ -1370,7 +1370,7 @@ Bounded negative and regression checks:
 - `tests/test_bt4_recipe_readout.py -k terminal_interval_status_mismatch` — 1 passed; contradictory pinned summary status is rejected.
 - `tests/test_identity_harness.py -k "summary"` — 3 passed; after asserting the single-complete-pair case, `-k "summary_drops_an_orphan"` — 1 passed.
 - All pytest invocations used a 600-second timeout and two-thread caps. Existing `pynvml` deprecation warning only.
-- Independent read-only `codex review --uncommitted`: the first review identified an inadequate resume-order test and a missing pinned-status integrity check. Both were addressed; the final review found no actionable regressions and its seven focused tests passed. The separate test module run passed 66 tests but three CLI tests were blocked by the fixture rejecting matplotlib's attempt to create `/home/josh/.config/matplotlib`; targeted receipt validation passed separately. Earlier broader aggregate review was inconclusive because the shared Python 3.10 venv has NumPy 2.2.6 while its native extension was built against NumPy 1.x.
+- Independent read-only `codex review --uncommitted`: the first review identified an inadequate resume-order test and a missing pinned-status integrity check. Both were addressed; the final review found no actionable regressions and its seven focused tests passed. The separate test module run passed 66 tests but three CLI tests were blocked by the fixture rejecting matplotlib's attempt to create `~/.config/matplotlib`; targeted receipt validation passed separately. Earlier broader aggregate review was inconclusive because the shared Python 3.10 venv has NumPy 2.2.6 while its native extension was built against NumPy 1.x.
 
 Known qualification gaps: no real engine, Stockfish, checkpoint, GPU, or tablebase
 arena was launched; no long ladder or SPRT stop was executed. The documented
