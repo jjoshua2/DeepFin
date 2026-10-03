@@ -3303,6 +3303,19 @@ def create_app(
         _invalidate_queued_games_cache(acc.trial_id)
         return True
 
+    def _expire_upload_receipt(key: tuple[str | None, str], *, now_unix: float) -> bool:
+        seen_at = recent_upload_shas.get(key)
+        if seen_at is None or now_unix - float(seen_at) <= 6.0 * 3600.0:
+            return False
+        recent_upload_shas.pop(key, None)
+        if key in receipt_upload_shas:
+            receipt_upload_shas.discard(key)
+            trial_key, upload_sha = key
+            receipt_path = _inbox_root(trial_key) / "_upload_receipts" / f"{upload_sha}.json"
+            with contextlib.suppress(OSError):
+                receipt_path.unlink()
+        return True
+
     def _flush_ready_upload_accumulators(
         *,
         trial_id: str | None = None,
@@ -3319,13 +3332,7 @@ def create_app(
                 if (now_unix - float(seen_at)) > 6.0 * 3600.0
             ]
             for key in stale_seen:
-                recent_upload_shas.pop(key, None)
-                if key in receipt_upload_shas:
-                    receipt_upload_shas.discard(key)
-                    trial_key, upload_sha = key
-                    receipt_path = _inbox_root(trial_key) / "_upload_receipts" / f"{upload_sha}.json"
-                    with contextlib.suppress(OSError):
-                        receipt_path.unlink()
+                _expire_upload_receipt(key, now_unix=now_unix)
 
             ready_keys: list[tuple[str | None, str, str]] = []
             for key, acc in upload_accumulators.items():
@@ -5262,6 +5269,7 @@ def create_app(
 
             def _accumulate_locked() -> bool:
                 stored_local = False
+                _expire_upload_receipt(upload_seen_key, now_unix=now_unix)
                 if upload_seen_key not in recent_upload_shas:
                     model_sha = str(meta.get("model_sha256") or sha)
                     acc_key = (trial_key, model_sha, _upload_identity_acc_key(meta))

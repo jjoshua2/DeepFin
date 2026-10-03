@@ -190,29 +190,28 @@ def test_receipt_expiry_uses_fixed_six_hour_wall_clock_window(
     assert receipt.is_file()
     receipt.write_text('{"seen_at_unix": 1000.0}', encoding="utf-8")
 
-    # Retry just before the existing six-hour expiry: still a duplicate, and
-    # retries do not extend the original receipt timestamp.
+    # Retry just before expiry: still a duplicate and does not renew the
+    # original timestamp. A wall-clock rollback keeps that receipt valid.
+
     monkeypatch.setattr(server_app.time, "time", lambda: 1000.0 + 6.0 * 3600.0 - 1.0)
-    with TestClient(create_app(**app_args)) as before_expiry:
-        retry = _post(before_expiry, filename, payload)
+    with TestClient(create_app(**app_args)) as clocked:
+        retry = _post(clocked, filename, payload)
         assert retry.status_code == 200, retry.text
         assert retry.json()["stored"] is False
-    assert json.loads(receipt.read_text(encoding="utf-8"))["seen_at_unix"] == 1000.0
+        assert json.loads(receipt.read_text(encoding="utf-8"))["seen_at_unix"] == 1000.0
 
-    # Wall-clock rollback extends the suppression window because this matches
-    # the pre-existing time.time-based cache; a forward jump beyond six hours
-    # expires the receipt at next startup, matching that same contract.
-    monkeypatch.setattr(server_app.time, "time", lambda: 900.0)
-    with TestClient(create_app(**app_args)) as rolled_back:
-        retry = _post(rolled_back, filename, payload)
+        monkeypatch.setattr(server_app.time, "time", lambda: 900.0)
+        retry = _post(clocked, filename, payload)
         assert retry.status_code == 200, retry.text
         assert retry.json()["stored"] is False
-    assert receipt.is_file()
+        assert receipt.is_file()
 
-    monkeypatch.setattr(server_app.time, "time", lambda: 1000.0 + 6.0 * 3600.0 + 1.0)
-    with TestClient(create_app(**app_args)) as after_expiry:
-        assert not receipt.exists()
-        retry = _post(after_expiry, filename, payload)
+        # A forward jump beyond six hours expires the receipt on the upload
+        # path itself, even without a manifest sweep or process restart.
+        monkeypatch.setattr(
+            server_app.time, "time", lambda: 1000.0 + 6.0 * 3600.0 + 1.0
+        )
+        retry = _post(clocked, filename, payload)
         assert retry.status_code == 200, retry.text
         assert retry.json()["stored"] is True
         assert _accepted_positions(root) == 4
