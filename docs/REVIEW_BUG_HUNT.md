@@ -1572,7 +1572,7 @@ Use this section after findings are recorded.
 ### Board Encoding and Policy Mapping: Fresh System Pass (2026-10-03)
 
 Base: current origin/main 269105298285b6098ffbf80405cb18ec33186b38.
-Candidate: final audit/fix commit SHA is recorded in the commit metadata.
+Fix commit: bca557f7497041f37870c659aae733b13d855164.
 
 Coverage checklist derived from current source and configuration (not assumed
 from historical 146/1858 defaults):
@@ -1630,6 +1630,7 @@ built locally from this checkout:
   shape negative tests. The final fix-only run above covers the changed paths.
 - All pytest runs used the project fixture's realized two Torch threads and
   ulimit -t 600; no GPU, model weights, external network, or data corpus.
+- Independent Codex review of fix commit bca557f found no actionable regressions; its focused encoding/threat-plane rerun passed 70 tests.
 - Static source audit found all dynamic producer callers derive plane count
   from the model's declared feature version. In-place/pinned-buffer callers
   invoke check_encode_buffer_planes at production entry boundaries.
