@@ -1561,10 +1561,12 @@ class Engine:
     def _run_search(self, limits: SearchLimits, gen: int, board: chess.Board) -> None:
   # Ponder search: no deadline yet; runs until ponderhit or stop.
         result = self._run_one_phase(limits, is_ponder=limits.ponder, board=board)
+        pending_real_limits: SearchLimits | None = None
         with self._phase_lock:
+            pending_real_limits = self._pending_real_limits
             start_real_phase = (
                 self._ponderhit_event.is_set()
-                and self._pending_real_limits is not None
+                and pending_real_limits is not None
                 and not self._closing
             )
             if start_real_phase:
@@ -1578,7 +1580,8 @@ class Engine:
   # one ply (the popped move) so the real phase searches at the
   # actual current position, reusing sims the ponder accumulated
   # below that child.
-            real_limits = self._pending_real_limits
+            assert pending_real_limits is not None
+            real_limits = pending_real_limits
             self._pending_real_limits = None
             real_board = board.copy(stack=False)
             popped = self._popped_ponder_move

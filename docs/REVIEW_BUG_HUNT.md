@@ -1616,3 +1616,15 @@ Use this section after findings are recorded.
 - [x] What minimum hardware baseline should efficiency findings use: CPU-only, single CUDA GPU, or current production host?
 - [x] Which Stockfish version/path should be treated as the review baseline?
 - [x] Are benchmark regressions findings only after measurement, or should obvious hot-path issues be recorded from static review?
+
+
+### Hosted CI follow-up for #998
+
+Run 37087026333 failed basedpyright at UCI ponder handoff: a boolean
+start_real_phase condition did not narrow self._pending_real_limits from
+SearchLimits | None. The handoff now snapshots pending limits under the phase
+lock, makes the same decision against that snapshot, and explicitly narrows it
+before calling _run_one_phase. This also avoids re-reading mutable handoff state
+after releasing the lock. Ruff and basedpyright pass; focused ponder handoff,
+search options, engine state, stop isolation, warmup, protocol, and ponder clock
+tests pass (165 tests) with source-identical Python 3.13 native extensions.
