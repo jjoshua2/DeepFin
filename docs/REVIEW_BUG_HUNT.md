@@ -503,6 +503,26 @@ Current notes:
   tests/test_uci_walker_pool.py, tests/test_stockfish_uci_timeout.py, and
   tests/test_uci_stop_timeout_isolation.py (121 passed; two-thread cap; peak
   process-tree RSS 2,041 MiB).
+- Finding F051 opened/fixed in this cycle: after `ponderhit`, a subsequent
+  `stop` could set the ponder-phase event while `_run_search` later replaced it
+  with a fresh event. The real timed phase then continued without honoring stop.
+  A phase lock now carries the cancellation into the handoff; stop/ponderhit and
+  close are coordinated with the transition. The regression holds ponder work
+  across `ponderhit` + `stop`, then verifies the real phase receives a set event
+  and emits one bestmove.
+- Finding F052 opened/fixed in this cycle: startup `quit`/EOF could call
+  `Engine.close()` while the builder thread was still using the same worker for
+  `warmup_search()`. Engine shutdown now waits for warmup ownership to finish,
+  and the test covers both quit and EOF with a barrier-controlled worker. Close
+  also invalidates the generation atomically with the phase transition so no
+  pending ponder phase or stale bestmove escapes shutdown.
+- Focused follow-up validation after F051/F052: the new lifecycle regressions,
+  existing warmup/search-option tests, adjacent UCI engine-state/protocol/timeout/
+  smoke/ponder-clock tests, Ruff, py_compile and `git diff --check` all passed.
+  The independent final Codex review found no actionable regressions; its
+  revalidation was limited by the shared main environment's NumPy/native ABI
+  mismatch, while the isolated Python 3.10 environment ran the tests cleanly.
+  No GPU test was run; Windows/ARM behavior remains unqualified.
 - Focused MCTS/UCI parity validation after F047 passed:
   `python3 -m pytest tests/test_mcts_uci_parity_gates.py tests/test_gumbel_root_many_edge_cases.py tests/test_mcts_c_tree.py tests/test_uci_searchmoves.py -q`.
 - Follow-up S007 gate expansion added an independent persistent-root reuse

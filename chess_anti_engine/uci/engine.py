@@ -399,6 +399,12 @@ class Engine:
         self._search_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
+        self._phase_lock = threading.Lock()
+        self._stop_after_ponderhit = False
+        self._closing = False
+        self._lifecycle_lock = threading.Lock()
+        self._warmup_done = threading.Event()
+        self._warmup_done.set()
   # While the current search is a `go ponder`, hold the "real" limits
   # here so ponderhit can swap them in.
         self._pending_real_limits: SearchLimits | None = None
@@ -651,8 +657,10 @@ class Engine:
             moves_horizon=self._options.moves_horizon,
             pieces=chess.popcount(search_board.occupied),
         )
-        self._stop_event = threading.Event()
-        self._ponderhit_event = threading.Event()
+        with self._phase_lock:
+            self._stop_event = threading.Event()
+            self._ponderhit_event = threading.Event()
+            self._stop_after_ponderhit = False
   # For `go ponder`, the ponder phase runs open-ended; ponderhit
   # converts to a real-deadline phase using the SAME underlying clock
   # args. We re-derive the "real" limits here by synthesizing a
@@ -688,7 +696,10 @@ class Engine:
 
     def _handle_stop(self) -> bool:
         if self._search_thread is not None:
-            self._stop_event.set()
+            with self._phase_lock:
+                self._stop_event.set()
+                if self._ponderhit_event.is_set():
+                    self._stop_after_ponderhit = True
             self._search_thread.join(timeout=_JOIN_TIMEOUT_S)
             if self._search_thread.is_alive():
   # Don't clear the handle: the thread may still be running a
@@ -709,8 +720,11 @@ class Engine:
             return
   # Signal the search loop: next iteration, swap ponder-deadline
   # for real-deadline.
-        self._ponderhit_event.set()
-        self._stop_event.set()
+        with self._phase_lock:
+            if self._closing:
+                return
+            self._ponderhit_event.set()
+            self._stop_event.set()
 
     def _handle_setoption(self, cmd: CmdSetOption) -> None:
   # Same barrier as _handle_position / _handle_newgame / _handle_isready:
@@ -1497,6 +1511,10 @@ class Engine:
         the budget so each active group can complete a full expand + gather
         batch during the first phase."""
         chunk = int(getattr(self._worker, "_chunk_sims", 512))
+        with self._lifecycle_lock:
+            if self._closing:
+                return
+            self._warmup_done.clear()
         max_nodes = max(256, chunk)
         pucv_pool = getattr(self._worker, "_pucv_pool", None)
         if pucv_pool is not None:
@@ -1535,20 +1553,33 @@ class Engine:
                 "warmup_search best-effort failure: %r", exc,
             )
         finally:
-            self._worker.reset_tree()
+            try:
+                self._worker.reset_tree()
+            finally:
+                self._warmup_done.set()
 
     def _run_search(self, limits: SearchLimits, gen: int, board: chess.Board) -> None:
   # Ponder search: no deadline yet; runs until ponderhit or stop.
         result = self._run_one_phase(limits, is_ponder=limits.ponder, board=board)
-        if self._ponderhit_event.is_set() and self._pending_real_limits is not None:
+        with self._phase_lock:
+            start_real_phase = (
+                self._ponderhit_event.is_set()
+                and self._pending_real_limits is not None
+                and not self._closing
+            )
+            if start_real_phase:
+                self._stop_event = threading.Event()
+                if self._stop_after_ponderhit:
+                    self._stop_event.set()
+                self._stop_after_ponderhit = False
+                self._ponderhit_event.clear()
+        if start_real_phase:
   # Ponderhit: opponent played our predicted move. Advance root by
   # one ply (the popped move) so the real phase searches at the
   # actual current position, reusing sims the ponder accumulated
   # below that child.
-            self._stop_event = threading.Event()
             real_limits = self._pending_real_limits
             self._pending_real_limits = None
-            self._ponderhit_event.clear()
             real_board = board.copy(stack=False)
             popped = self._popped_ponder_move
             self._popped_ponder_move = None
@@ -1781,11 +1812,16 @@ class Engine:
         from the UCI main loop's finally block so ``BatchCoalescingDispatcher``
         (if active) drains its non-daemon submitter before the interpreter
         tears down torch's CUDA context."""
-        thread = self._search_thread
-        if thread is not None and thread.is_alive():
+        with self._lifecycle_lock:
+            self._closing = True
+        with self._phase_lock:
+            self._closing = True
             self._stop_event.set()
             with self._state_lock:
                 self._search_gen += 1
+        self._warmup_done.wait()
+        thread = self._search_thread
+        if thread is not None and thread.is_alive():
             _println("info string engine close waiting for active search to exit")
             thread.join()
             self._search_thread = None
