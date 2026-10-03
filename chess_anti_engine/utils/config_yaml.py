@@ -462,7 +462,48 @@ def _check_unknown(section: str, section_cfg: dict, allowed: set[str]) -> None:
         )
 
 
+_RUN_BOOLEAN_KEYS = frozenset({
+    "resume", "salvage_dry_run", "salvage_copy_replay",
+    "salvage_restore_pid_state", "salvage_restore_donor_config",
+    "salvage_restore_full_trainer_state", "salvage_reinit_volatility_heads",
+    "distributed_worker_use_compile", "distributed_worker_auto_tune",
+    "distributed_inference_broker_enabled", "pbt_synch",
+    "search_smolgen", "search_nla", "search_optimizer",
+    "asha_optimizer_only", "search_feature_dropout_p",
+    "search_w_volatility", "search_volatility_source",
+    "reset_holdout_on_drift", "bootstrap_zero_policy_heads",
+    "exploit_replay_refresh_enabled", "exploit_replay_share_top_enabled",
+    "no_smolgen", "smolgen_relation_basis", "phase_output_adapter",
+    "phase_smolgen", "use_nla", "gradient_checkpointing",
+    "sf_pid_enabled", "progressive_mcts", "no_amp",
+    "use_compile", "syzygy_policy",
+})
+
+
 _SECTION_NAMES = frozenset({"stockfish", "selfplay", "train", "model", "tune"})
+
+
+def _check_boolean_run_values(cfg: dict[str, Any]) -> None:
+    """Reject truthy strings and numbers for argparse boolean settings."""
+    for key in sorted(_RUN_BOOLEAN_KEYS):
+        value = cfg.get(key)
+        if value is not None and not isinstance(value, bool):
+            raise ValueError(
+                f"YAML {key!r} must be a boolean (true/false), got "
+                f"{type(value).__name__}"
+            )
+
+
+def _check_section_mappings(cfg: dict[str, Any]) -> None:
+    """Refuse malformed nested sections instead of silently dropping them."""
+    for name in sorted(_SECTION_NAMES):
+        if name not in cfg or isinstance(cfg[name], dict):
+            continue
+        value = cfg[name]
+        raise ValueError(
+            f"YAML '{name}:' section must be a mapping/dict, "
+            f"got {type(value).__name__}"
+        )
 
 
 def _flatten_root_keys(cfg: dict[str, Any], out: dict[str, Any]) -> None:
@@ -518,7 +559,13 @@ def _apply_model_section(out: dict[str, Any], section: dict[str, Any]) -> None:
         out["model"] = section["kind"]
     _copy_section_keys(out, section, _MODEL_PASSTHROUGH)
     if "use_smolgen" in section:
-        out["no_smolgen"] = not bool(section["use_smolgen"])
+        use_smolgen = section["use_smolgen"]
+        if not isinstance(use_smolgen, bool):
+            raise ValueError(
+                "YAML model.use_smolgen must be a boolean (true/false), "
+                f"got {type(use_smolgen).__name__}"
+            )
+        out["no_smolgen"] = not use_smolgen
 
 
 def _apply_tune_section(out: dict[str, Any], section: dict[str, Any]) -> None:
@@ -541,9 +588,10 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     - flat keys matching argparse destinations (e.g. sf_nodes, sf_policy_temp)
     - nested sections: stockfish/selfplay/train/model/tune
 
-    Raises ValueError if a recognized section contains unknown keys.
+    Raises ValueError if a recognized section is not a mapping or contains unknown keys.
     """
     out: dict[str, Any] = {}
+    _check_section_mappings(cfg)
     _flatten_root_keys(cfg, out)
 
   # Nested sections override matching flat keys.
@@ -572,6 +620,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     _check_sparse_sf_policy_flags(flat)
     _check_volatility_search_unsupported(flat)
     _check_target_only_knobs_require_zero_temperature(flat)
+    _check_boolean_run_values(flat)
     return flat
 
 
