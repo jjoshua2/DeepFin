@@ -1026,8 +1026,9 @@ static void compute_features_threats(
  * Main: compute all extra feature planes into pre-allocated buffer
  *
  * out must point to n_extra*64 floats, pre-zeroed.
- * n_extra is FEAT_EXTRA_V1 (34), FEAT_EXTRA_V2 (63),
- * FEAT_EXTRA_V3_CHECKS (67), or FEAT_EXTRA_V3_XRAY (69).
+ * n_extra is one of the registered widths: FEAT_EXTRA_V1 (34),
+ * FEAT_EXTRA_V2 (63), FEAT_EXTRA_V3_CHECKS (67), FEAT_EXTRA_V3_XRAY (69),
+ * FEAT_EXTRA_V3_SEE (65), or FEAT_EXTRA_V3_PASSERS (71).
  * ================================================================ */
 
 static void compute_features_ext(

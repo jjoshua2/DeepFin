@@ -242,7 +242,9 @@ static PyObject* py_legal_move_policy_indices(PyObject *self, PyObject *args) {
 
 /* hist_mode: 0 = full history, 1 = lc0_root, 2 = lc0_root_legacy_meta
  * (same convention as input_history_lc0_root in _mcts_tree.c).
- * n_extra: 34 (v1) or 63 (v2_threats) extra feature planes.
+ * n_extra: one of the registered extra-feature widths: 34 (v1), 63
+ * (v2_threats), 67 (v3_checks), 69 (v3_xray), 65 (v3_see), or 71
+ * (v3_passers).
  *
  * Write into a caller-owned buffer of (112+n_extra)*64 floats. The buffer is
  * zeroed first: fill helpers only set 1.0 on active planes, matching
@@ -816,10 +818,16 @@ static int validate_encode_full_params(int hist_mode, int n_extra) {
         return 0;
     }
     if (n_extra != FEAT_EXTRA_V1 && n_extra != FEAT_EXTRA_V2
-            && n_extra != FEAT_EXTRA_V3_CHECKS) {
+            && n_extra != FEAT_EXTRA_V3_CHECKS
+            && n_extra != FEAT_EXTRA_V3_XRAY
+            && n_extra != FEAT_EXTRA_V3_SEE
+            && n_extra != FEAT_EXTRA_V3_PASSERS) {
         PyErr_Format(PyExc_ValueError,
-                     "n_extra must be %d (v1), %d (v2_threats), or %d (v3_checks), got %d",
-                     FEAT_EXTRA_V1, FEAT_EXTRA_V2, FEAT_EXTRA_V3_CHECKS, n_extra);
+                     "n_extra must be %d (v1), %d (v2_threats), %d (v3_checks), "
+                     "%d (v3_xray), %d (v3_see), or %d (v3_passers), got %d",
+                     FEAT_EXTRA_V1, FEAT_EXTRA_V2, FEAT_EXTRA_V3_CHECKS,
+                     FEAT_EXTRA_V3_XRAY, FEAT_EXTRA_V3_SEE, FEAT_EXTRA_V3_PASSERS,
+                     n_extra);
         return 0;
     }
     return 1;

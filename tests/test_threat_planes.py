@@ -348,26 +348,77 @@ def test_cboard_encode_full_v2_and_v1_compat():
     np.testing.assert_array_equal(x2[:112], cb.encode_146()[:112])
 
 
-def test_batch_encode_at_175_planes():
+@pytest.mark.parametrize("version", EXTRA_FEATURE_VERSIONS)
+def test_batch_encode_registered_plane_counts(version):
     from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
-    from chess_anti_engine.mcts._mcts_tree import batch_encode_146, batch_encode_146_bf16
+    from chess_anti_engine.mcts._mcts_tree import (
+        batch_encode_146, batch_encode_146_bf16,
+        batch_encode_146_lc0_root, batch_encode_146_lc0_root_bf16,
+        batch_encode_146_lc0_root_legacy_meta,
+        batch_encode_146_lc0_root_legacy_meta_bf16,
+    )
 
+    n_extra = extra_feature_plane_count(version)
+    n_planes = 112 + n_extra
     b = _midgame_board()
     cbs = [cboard_from_board_fast(b) for _ in range(3)]
-    ref = cbs[0].encode_full(0, 63)
+    float_encoders = (
+        (batch_encode_146, 0),
+        (batch_encode_146_lc0_root, 1),
+        (batch_encode_146_lc0_root_legacy_meta, 2),
+    )
+    for encoder, history_mode in float_encoders:
+        ref = cbs[0].encode_full(history_mode, n_extra)
+        out = np.empty((3, n_planes, 8, 8), dtype=np.float32)
+        encoder(cbs, out)
+        for i in range(3):
+            np.testing.assert_allclose(out[i], ref, atol=1e-6)
 
-    out = np.empty((3, 175, 8, 8), dtype=np.float32)
-    batch_encode_146(cbs, out)
-    for i in range(3):
-        np.testing.assert_allclose(out[i], ref, atol=1e-6)
+    bf16_encoders = (
+        (batch_encode_146_bf16, 0),
+        (batch_encode_146_lc0_root_bf16, 1),
+        (batch_encode_146_lc0_root_legacy_meta_bf16, 2),
+    )
+    for encoder, history_mode in bf16_encoders:
+        ref = cbs[0].encode_full(history_mode, n_extra)
+        out = np.empty((3, n_planes, 8, 8), dtype=np.uint16)
+        encoder(cbs, out)
+        for i in range(3):
+            as_f32 = np.frombuffer(
+                (out[i].astype(np.uint32) << 16).tobytes(), dtype=np.float32,
+            ).reshape(n_planes, 8, 8)
+            np.testing.assert_allclose(as_f32, ref, atol=0.01)
 
-    out16 = np.empty((3, 175, 8, 8), dtype=np.uint16)
-    batch_encode_146_bf16(cbs, out16)
-    as_f32 = np.frombuffer(
-        (out16[0].astype(np.uint32) << 16).tobytes(), dtype=np.float32,
-    ).reshape(175, 8, 8)
-    np.testing.assert_allclose(as_f32, ref, atol=0.01)  # bf16 precision
 
+@pytest.mark.parametrize("version", EXTRA_FEATURE_VERSIONS)
+def test_batch_process_ply_registered_plane_counts(version):
+    from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
+    from chess_anti_engine.mcts._mcts_tree import batch_process_ply
+
+    n_extra = extra_feature_plane_count(version)
+    n_planes = 112 + n_extra
+    b = _midgame_board()
+    cbs = [cboard_from_board_fast(b) for _ in range(2)]
+    legal = cbs[0].legal_move_indices()
+    action = int(legal[0])
+    n = 2
+    pol = np.zeros((n, 4672), dtype=np.float32)
+    wdl = np.zeros((n, 3), dtype=np.float32)
+    actions = np.full((n,), action, dtype=np.int32)
+    values = np.zeros((n,), dtype=np.float64)
+    probs = np.zeros((n, 4672), dtype=np.float32)
+    probs[:, action] = 1.0
+
+    result = batch_process_ply(
+        cbs, pol, wdl, actions, values, probs,
+        0, 0.0, 0.0, 1.0, 0.0,
+        0, n_extra,
+    )
+    x = result[0]
+    assert x.shape == (n, n_planes, 8, 8)
+    np.testing.assert_allclose(
+        x[0, 112:], extra_feature_planes_fast(b, version=version), atol=1e-6,
+    )
 
 def test_batch_process_ply_v2_planes():
     from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
