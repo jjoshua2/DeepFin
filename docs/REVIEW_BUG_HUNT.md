@@ -622,6 +622,7 @@ Context:
 | F015 | Medium | Training Quality / Reliability | Tune prefetch ingest | `chess_anti_engine/tune/distributed_runtime.py`, `tests/test_distributed_selfplay_backpressure.py` | A background prefetch load that finished just after `drain()` could queue a preloaded item for an inbox path the trainer fallback already processed and moved. The next drain would ingest the stale arrays again even though the original inbox shard no longer existed. | `_process_shard(..., preloaded=...)` trusted preloaded arrays without checking whether `sp` was still present in the inbox; the prefetch thread loads outside the consumer lock, so a path can become stale between load and queue. | Skip preloaded items whose inbox path no longer exists before adding arrays or metrics; regression test feeds a missing preloaded path and verifies zero matching games and zero replay positions. Verified distributed ingest/prefetch slice: `29 passed`. | fixed |
 | F016 | Low | Reliability / Observability | Tune reporting | `chess_anti_engine/tune/trainable_phases.py`, `tests/test_trainable_rng_checkpoint.py` | Compact `status.csv` rows reported `global_iter` one behind the completed iteration. Fresh iteration 1 wrote `iter=1, global_iter=0`, and resumed runs inherited the same off-by-one in the status file used for quick progress checks. | `trainable.py` increments `global_iter` only after `_finalize_iteration()`, but `_finalize_iteration()` passed the pre-increment `global_iter` into `_write_status_csv_row`; `_build_report_dict()` separately uses `iteration_idx`. | Write `iteration_idx` into the status row's `global_iter` column and cover it in the finalization regression. | fixed |
 | F047 | Medium | Search Correctness | Gumbel C root handling | `chess_anti_engine/mcts/gumbel_c.py`, `tests/test_mcts_uci_parity_gates.py` | Gumbel C returned the raw NN WDL-derived value for an already-terminal checkmate root instead of the terminal root value. UCI/selfplay callers using the C path could report/search with a neutral value on a root where STM is already checkmated. | Root `values_out` was initialized from `root_qs = _wdl_to_q(...)` before the `root_cb.is_game_over()` branch, and that branch did not replace it with `CBoard.terminal_value()`. | Added root-contract tests that check both PUCT/Gumbel implementations against independent masks/terminal values across normal, ep, single-legal, checkmate, and draw-terminal roots, plus UCI TB shortcut/searchmoves/root-reuse behavior. Verified MCTS/UCI slice: `33 passed`. | fixed |
+| F058 | High | Reliability / Training Data | Replay disk-buffer ownership | `chess_anti_engine/replay/disk_buffer.py`, `tests/test_replay_disk_buffer.py` | A second writable buffer targeting an active shard directory only logged the lock collision and continued writing. Independent shard counters let it persist duplicate rows, changing replay weighting and potentially placing equivalent samples into different train/holdout draws. | Bounded reproduction opened two writers on one directory; each persisted the same two rows, yielding two two-row shards (4 disk rows total). The second writable constructor now fails before resume-time capacity eviction or ingest. | Added refusal regression with capacity zero, proving failure happens before shard eviction or duplicate write; existing restart tests now close the previous owner before replacement. Focused disk-buffer suite: `32 passed`; wider replay/upload and holdout slices also passed. | fixed |
 
 ## Review Passes
 
@@ -985,6 +986,21 @@ Tests:
 - [x] `tests/test_bench_result_labeling.py`
 
 ### Replay and Training Data
+
+Replay/data first-pass extension (2026-10-03): traced writer ownership and shard
+admission/sealing, persisted schema validation, array/disk buffer paths,
+capacity/window eviction, refresh/prefetch lifecycle, game-boundary handling,
+worker upload and server compaction durability, and evaluation holdout
+contracts. F058 records a reproduced concurrent-writer duplication defect and
+its fail-closed fix. Bounded CPU evidence includes the disk-buffer suite (32
+passed), replay/prefetch/window/shard/NPZ slices, upload durability and worker
+response slices, and heldout/evaluation split tests. Existing tests explicitly
+exercise a per-row training diagnostic split; game-disjoint holdout evaluation
+is separately tested. No production corpus or live training run was used.
+Filesystem advisory-lock behavior on Windows/macOS/network filesystems,
+production corpus contents, and long-duration interrupted production runs
+remain unqualified; this is a source-and-synthetic-test first pass for those
+surfaces, not an artifact-backed runtime qualification.
 
 Status: `deep` for replay sample schema, sparse/dense policy and mask storage,
 array collation, augmentation, shard validation, disk replay sampling, and
