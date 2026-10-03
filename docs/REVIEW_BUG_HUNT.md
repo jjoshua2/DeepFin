@@ -1597,3 +1597,17 @@ Use this section after findings are recorded.
 - [x] What minimum hardware baseline should efficiency findings use: CPU-only, single CUDA GPU, or current production host?
 - [x] Which Stockfish version/path should be treated as the review baseline?
 - [x] Are benchmark regressions findings only after measurement, or should obvious hot-path issues be recorded from static review?
+
+
+### Hosted CI follow-up for #993
+
+Run 37082604309 failed only two parameterized cases for sf_pid_enabled in
+tests/test_construction_only_config_keys.py: the helper wrote numeric 4321,
+which the newer Boolean YAML validator correctly rejects before the reload
+contract is reached. The fixture now chooses a validator-accepted boolean for
+boolean keys, returns the parsed fixture value, and asserts startup reload
+against that value. Reproduction on the candidate passed with
+tests/test_construction_only_config_keys.py and tests/test_no_absolute_home_paths.py
+(115 passed). The Python 3.13 test run reused only native binaries whose tracked
+sources matched byte-for-byte across isolated worktrees. No product validator
+behavior was weakened.
