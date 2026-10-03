@@ -1400,7 +1400,7 @@ typedef struct {
     void *enc_data;
     int enc_is_bf16;
     int input_history_lc0_root;
-    int n_extra_planes;          /* 34 (v1) or 63 (v2_threats); from enc buffer dim 1 */
+    int n_extra_planes;          /* registered extra width from enc buffer dim 1 */
     int32_t enc_capacity;
     PyObject *enc_arr_ref;       /* Strong ref to keep enc buffer alive */
     uint8_t *rel_data;           /* Optional (cap,5,64,64) u8 relations buffer */
@@ -2418,7 +2418,7 @@ static PyObject *MCTSTree_backprop(MCTSTreeObject *self, PyObject *args) {
  *   - applies vloss along path[1:], encodes the leaf into enc_out[0], and
  *     returns terminal_q = None plus the legal-move indices at the leaf.
  *
- * enc_out must be a writable float32 array of shape (>=1, 146, 8, 8). Only
+ * enc_out must be writable float32 (>=1, registered_planes, 8, 8). Only
  * enc_out[0] is written. */
 static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *args) {
     int root_id;
@@ -2665,7 +2665,7 @@ static PyObject *MCTSTree_walker_integrate_leaf(MCTSTreeObject *self, PyObject *
  * walker pool / pure-Python single-thread loop at ~30k nps on this workload.
  *
  * Caller pre-allocates fixed-stride buffers:
- *   enc_buf    : (>=N, 146, 8, 8) float32, written.  Contiguous.
+ *   enc_buf    : (>=N, registered_planes, 8, 8) float32, written. Contiguous.
  *   leaf_ids   : (>=N,) int32,            written.
  *   path_buf   : (>=N*MCTS_MAX_PATH,) int32,   written. path[i] occupies
  *                rows [i*MAX, i*MAX + path_lens[i]).
@@ -5550,7 +5550,7 @@ static PyObject *py_batch_compute_relations(PyObject *self, PyObject *args) {
 }
 
 /* batch_encode_146(cboards_list, out_array)
- * Encode N CBoards into a pre-allocated (N, 146, 8, 8) float32 array.
+ * Encode N CBoards into a pre-allocated (N, registered_planes, 8, 8) float32 array.
  * GIL released during encoding for thread parallelism. */
 static PyObject *py_batch_encode_146(PyObject *self, PyObject *args) {
     PyObject *cboards_list;
@@ -5710,7 +5710,7 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta(PyObject *self, PyObje
 }
 
 /* batch_encode_146_bf16(cboards_list, out_array)
- * Encode N CBoards into a pre-allocated (N, 146, 8, 8) uint16 array holding
+ * Encode N CBoards into a pre-allocated (N, registered_planes, 8, 8) uint16 array holding
  * bfloat16 bit patterns. GIL released during encoding. */
 static PyObject *py_batch_encode_146_bf16(PyObject *self, PyObject *args) {
     PyObject *cboards_list;
@@ -6197,7 +6197,7 @@ static PyMethodDef module_methods[] = {
      "Dynamic board-relation matrices; GIL released."},
     {"batch_encode_146", py_batch_encode_146, METH_VARARGS,
      "batch_encode_146(cboards_list, out_array) -> None. "
-     "Encode CBoards into pre-allocated (N,146,8,8) float32 array. GIL released."},
+     "Encode CBoards into registered plane count float32 array. GIL released."},
     {"batch_encode_146_lc0_root", py_batch_encode_146_lc0_root, METH_VARARGS,
      "batch_encode_146_lc0_root(cboards_list, out_array) -> None. "
      "Encode CBoards with LC0 root-history layout into pre-allocated float32 array."},
@@ -6206,7 +6206,7 @@ static PyMethodDef module_methods[] = {
      "Encode CBoards with LC0 root-history and legacy EP/rule50 metadata into float32 array."},
     {"batch_encode_146_bf16", py_batch_encode_146_bf16, METH_VARARGS,
      "batch_encode_146_bf16(cboards_list, out_array) -> None. "
-     "Encode CBoards into pre-allocated (N,146,8,8) uint16 bfloat16-bit array. GIL released."},
+     "Encode CBoards into registered plane count uint16 bf16 array. GIL released."},
     {"batch_encode_146_lc0_root_bf16", py_batch_encode_146_lc0_root_bf16, METH_VARARGS,
      "batch_encode_146_lc0_root_bf16(cboards_list, out_array) -> None. "
      "Encode CBoards with LC0 root-history layout into pre-allocated bf16-bit array."},

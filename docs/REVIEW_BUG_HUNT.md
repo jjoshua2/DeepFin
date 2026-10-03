@@ -1643,7 +1643,7 @@ not a deployment qualification.
 
 
 Board/policy follow-up (same F062, discovered while tracing the production
-selfplay route; final fix commit pending at time of this note):
+selfplay route; fix commit 17547ae9534c53e321f0e4ed251faa38d40ca4d3):
 
 - Expanded the reachable path audit from CBoard's _lc0_ext into
   selfplay/network_turn.py -> _mcts_tree.batch_encode_146* and
