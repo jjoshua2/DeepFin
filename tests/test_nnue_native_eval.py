@@ -1004,24 +1004,81 @@ def test_loader_rejects_an_l1_the_kernels_cannot_step(tmp_path: Path) -> None:
         _nnue_ext.load(str(path))
 
 
-@pytest.mark.parametrize("offset_delta", [0, 1], ids=["overlap", "unaligned"])
-def test_loader_rejects_noncanonical_tensor_offsets(
-    tmp_path: Path, offset_delta: int
-) -> None:
-    """Every tensor starts at a distinct 64-byte-aligned region in pack v1.
-
-    Per-tensor bounds alone accept an offset that aliases ft_bias or one byte
-    into the pack. The resulting mmap remains in-bounds but reads plausible
-    weights from the wrong tensor bytes, silently changing evaluations.
-    """
+def test_loader_rejects_an_aligned_tensor_overlap(tmp_path: Path) -> None:
     layout = _big_layout()
     header = bytearray(layout.header)
-    # ft_weight (tensor 1) is large, so a range-local bounds check permits both.
-    struct.pack_into("<Q", header, 88 + 8, layout.offsets["ft_bias"] + offset_delta)
-    path = tmp_path / f"bad_offset_{offset_delta}.pack"
+    struct.pack_into("<Q", header, 88 + 8, layout.offsets["ft_bias"])
+    path = tmp_path / "aligned_overlap.pack"
     write_synthetic_pack(path, header=bytes(header))
-    with pytest.raises(ValueError, match=r"(overlap|64-byte aligned)"):
+
+    with pytest.raises(ValueError, match=r"pack tensors 0 and 1 overlap"):
         _nnue_ext.load(str(path))
+
+
+def test_loader_rejects_reverse_order_tensor_overlap(tmp_path: Path) -> None:
+    """Exercise the overlap predicate with the later tensor starting first."""
+    layout = _big_layout()
+    header = bytearray(layout.header)
+    # Tensor 0 is small; tensor 1 is large. Both offsets are aligned and legal
+    # individually, but [2304, 4352) intersects tensor 1's [256, ...) region.
+    struct.pack_into("<Q", header, 88 + 8 * 0, 2304)
+    struct.pack_into("<Q", header, 88 + 8 * 1, 256)
+    path = tmp_path / "reverse_overlap.pack"
+    write_synthetic_pack(path, header=bytes(header))
+
+    with pytest.raises(ValueError, match=r"pack tensors 0 and 1 overlap"):
+        _nnue_ext.load(str(path))
+
+
+@pytest.mark.parametrize("offset_delta", [1, 4, 32], ids=["byte", "int32-aligned", "last-free-slot"])
+def test_loader_rejects_disjoint_but_not_64_byte_aligned_fc2_bias(
+    tmp_path: Path, offset_delta: int,
+) -> None:
+    """A 32-byte tensor fits disjointly before the next 64-byte slot."""
+    layout = _big_layout()
+    original = layout.offsets["fc2_bias"]
+    next_offset = layout.offsets["fc2_weight"]
+    assert original == 111_261_440
+    assert layout.sizes["fc2_bias"] == 32
+    assert next_offset == 111_261_504
+    assert 88 + 8 * 9 == 160  # tensor 9's offset field in the v1 header
+    offset = original + offset_delta
+    assert offset + layout.sizes["fc2_bias"] <= next_offset
+
+    header = bytearray(layout.header)
+    struct.pack_into("<Q", header, 160, offset)
+    path = tmp_path / f"fc2_bias_unaligned_{offset_delta}.pack"
+    write_synthetic_pack(path, header=bytes(header))
+
+    with pytest.raises(
+        ValueError,
+        match=rf"pack tensor 9 offset {offset} is not 64-byte aligned",
+    ):
+        _nnue_ext.load(str(path))
+
+
+def test_loader_accepts_reverse_order_disjoint_adjacent_tensors(tmp_path: Path) -> None:
+    """Tensor order is not required when all declared regions are disjoint."""
+    layout = _big_layout()
+    assert layout.sizes["fc0_bias"] == layout.sizes["fc1_bias"] == 1024
+    header = bytearray(layout.header)
+    struct.pack_into("<Q", header, 88 + 8 * 5, layout.offsets["fc1_bias"])
+    struct.pack_into("<Q", header, 88 + 8 * 7, layout.offsets["fc0_bias"])
+    path = tmp_path / "reverse_disjoint_adjacent.pack"
+    write_synthetic_pack(path, header=bytes(header))
+
+    handle = _nnue_ext.load(str(path))
+    assert _nnue_ext.evaluate(handle, cboard(POSITIONS[0])) == 0
+
+
+def test_loader_accepts_adjacent_tensor_endpoint_and_exact_file_end(tmp_path: Path) -> None:
+    layout = _big_layout()
+    assert layout.offsets["fc0_bias"] + layout.sizes["fc0_bias"] == layout.offsets["fc0_weight"]
+    assert layout.offsets["fc2_weight"] + layout.sizes["fc2_weight"] == layout.total_size
+    path = tmp_path / "adjacent_endpoint_eof.pack"
+    write_synthetic_pack(path)
+
+    assert _nnue_ext.load(str(path))
 
 
 def test_loader_rejects_a_tensor_offset_that_wraps_uint64(tmp_path: Path) -> None:
