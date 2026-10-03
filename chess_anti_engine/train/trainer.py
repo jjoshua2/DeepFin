@@ -6061,6 +6061,7 @@ class Trainer:
 
                 if (
                     self._swa_model is not None
+                    and not bool(step_opt_stats.get("nonfinite_grad", 0.0))
                     and self.step >= self._swa_start
                     and self.step % self._swa_freq == 0
                 ):

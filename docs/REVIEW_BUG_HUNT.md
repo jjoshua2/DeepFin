@@ -1567,3 +1567,19 @@ Use this section after findings are recorded.
 - [x] What minimum hardware baseline should efficiency findings use: CPU-only, single CUDA GPU, or current production host?
 - [x] Which Stockfish version/path should be treated as the review baseline?
 - [x] Are benchmark regressions findings only after measurement, or should obvious hot-path issues be recorded from static review?
+
+### 2026-10-03 training, loss, optimizer and checkpoint pass (base `269105298285b6098ffbf80405cb18ec33186b38`)
+
+Fresh source-to-consumer coverage for the requested training invariants:
+
+- Update scaling: traced `TuneConfig.accum_steps` through `trainable_phases`, `Trainer.__init__`, `_run_optimizer_step`, and `train_steps`. Ordinary replay divides each microbatch objective by `accum_steps`; the exact without-replacement path additionally uses realized row count and preflighted per-head corpus masks to preserve the global masked objective for ragged batches. The synthetic accumulation/E2E and exact-epoch paths were included in the scoped regression slice.
+- Masked-head normalization: traced `compute_loss` masks, the 14 ordered objective terms, exact-epoch sum/count normalization, empty-mask behavior, and zero-weight non-finite disarming. Existing loss, target, phase-bucket, and zero-weight negative tests passed.
+- Parameter grouping: traced trainable-only decay buckets, matrix optimizer selection, tied-name deduplication through `named_parameters`, the shared matrix predicate used by gradient clipping, and constructor cross-checks against optimizer groups. Aurora, Muon and SODA grouping/state tests passed.
+- Optimizer and checkpoint state: traced save/load of model, optimizer, scheduler, step, ZClip and SWA state; exact resume is strict while ordinary warm start uses parameter names, shape checks and bounded cold-start fallbacks. Optimizer-state decrease, warmup, checkpoint-resume, SWA and ZClip state tests passed.
+- Numerical guard and step identity: the matrix and clipped-group gradient norms are checked on every optimizer step; rejected gradients restore ZClip statistics and exact epochs fail closed after consumed rows. Tune construction/load/report connects `trainer.step` with persisted state and reports `global_iter` from the completed iteration. Existing guard and reporting tests passed.
+
+Finding F056: after the per-step non-finite gradient guard rejected an optimizer update, `train_steps` still called `AveragedModel.update_parameters` for that step. SWA therefore counted unchanged model weights as a new sample and biased the exported average toward states whose updates had been rejected. The SWA update now also requires that the step was not marked `nonfinite_grad`. A deterministic CPU regression first failed on the original behavior (`n_averaged` became 1) and passes with the guard. Successful-step cadence, the existing per-step guard, training E2E, and SWA export tests passed.
+
+Validation used the already built source-identical Python 3.13 CPU environment, local native extensions, two CPU threads, a 4 GiB RSS ceiling, no CUDA devices, and per-job timeout below 600 seconds. The scoped loss/target, accumulation, optimizer, warmup, checkpoint, ZClip and SWA test slice passed. `ruff`, `py_compile`, and `git diff --check` passed. The independent internal review is tied to the final fix commit.
+
+Qualification gaps: no GPU, mixed-precision CUDA, production-sized model/corpus, or live multi-process Tune run was performed. The exact-corpus tests are synthetic; Windows/macOS/ARM and long-duration optimizer-state behavior remain outside this pass. No additional defect was confirmed in the audited normalization, parameter grouping, restore or metric-identity paths.
