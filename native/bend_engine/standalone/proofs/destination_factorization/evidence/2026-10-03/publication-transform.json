@@ -1,0 +1,384 @@
+{
+  "display_tokens": {
+    "<BUN>": "Bun executable selected by the BUN environment variable",
+    "<HOME>": "home-relative suffix retained only as a redacted display path",
+    "<REPO>": "author checkout root; following path is repository-relative",
+    "<SESSION_SCRATCH>": "temporary checker/control worktree or compiler directory"
+  },
+  "files": [
+    {
+      "artifact_role": "experiment_note",
+      "original_git_blob_sha1": "3ca8a3b42aae7d019cb040edda3d92a6ef53911c",
+      "original_sha256": "0c24757c8ab58c2cdf82c2ad302e16d23fa05b4c2caf447f4d980dc2ada854b5",
+      "path": "evidence/2026-10-03/scan-after-predicate/partial-check.md",
+      "published_sha256": "98401a805ce6dfaee15c846d543f50f43ea59c54d9dc234846802b1c598c92ee",
+      "redactions_by_rule": {
+        "bun_executable": 2,
+        "session_scratch": 2
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "captured_timing_or_command",
+      "original_git_blob_sha1": "f725495f052e24102b8732b3036bfad133c34daf",
+      "original_sha256": "deaec33797f64b4a51a16f24d28ae8aa33daa12ec7bf99b6d24d750fd7d1f693",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/AfterCount.time.txt",
+      "published_sha256": "1ed037b6d45e9399870f5bd0f8053f0f09f970b21e951c97f01a656e267ff5e5",
+      "redactions_by_rule": {
+        "bun_executable": 1,
+        "repo_root": 1,
+        "session_scratch": 1
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "captured_timing_or_command",
+      "original_git_blob_sha1": "4d4ff37e44f80aac179754208f4efbb54d6e1618",
+      "original_sha256": "6d146fb8202e4200070afb8784d5dbbbbb08eea5906ffd5de4960e01ea36752a",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/QueryFactor.time.txt",
+      "published_sha256": "73dedb395ecde317fd0632eddc97bf6f8ebaca69c15f53ca47eaf7080b00e46a",
+      "redactions_by_rule": {
+        "bun_executable": 1,
+        "repo_root": 1,
+        "session_scratch": 1
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "captured_timing_or_command",
+      "original_git_blob_sha1": "948316247dd72dd9cf1679b3e26159ab15c9dff8",
+      "original_sha256": "9987aab8e493d140c0cb1d53db0080a4cee9a14a7ea4f9d0758fa0abfb42509c",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/consumer.time.txt",
+      "published_sha256": "58966a687fef0ea5b6bde5d86d74151796e03801b815d9dde8b61e7ad9dcd416",
+      "redactions_by_rule": {
+        "bun_executable": 1,
+        "repo_root": 1,
+        "session_scratch": 1
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "captured_timing_or_command",
+      "original_git_blob_sha1": "8509dfcffa6911850e47f0cc0a5e550279eb308f",
+      "original_sha256": "478fd9a9e7cb7e613e7693ffcc3293ea3744b08466aa3c839ae61495c931b5c0",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/disconnected-scan-consumer.time.txt",
+      "published_sha256": "c3685b76acd530a6a72a116ee2691cf6989ec413e3b7ea957d82df03f056b3c3",
+      "redactions_by_rule": {
+        "bun_executable": 1,
+        "session_scratch": 2
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "captured_timing_or_command",
+      "original_git_blob_sha1": "989b84c2467ff6c7935323d0215d5ea3fe4effce",
+      "original_sha256": "1c6181162e75e024997a39902f58487b295b4037c9f15d8ba966ef2e0ef717cd",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/dropped-duplicate-tail.time.txt",
+      "published_sha256": "31ce305d48f4da3acb4cc7776466231310435e365896b5496dac883da537f21e",
+      "redactions_by_rule": {
+        "bun_executable": 1,
+        "session_scratch": 2
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "captured_timing_or_command",
+      "original_git_blob_sha1": "89b57e277c09fbbcca5eed90fecaf5d455a51199",
+      "original_sha256": "59abe5a336c4febf9a1d5d2d49f18b0ba4a9479d804812cd6f20954de44b020d",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/qualification-command.txt",
+      "published_sha256": "5e8caf6c6825d5ac8c777ce0ad6cc776838708ee541ea85d9d943cc152033866",
+      "redactions_by_rule": {
+        "bun_executable": 1,
+        "repo_root": 1,
+        "session_scratch": 2
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "qualification_record",
+      "original_git_blob_sha1": "7ee09c29e674256b597025ee6fc53177f2029e69",
+      "original_sha256": "150a7522e9c1815a4290e7a6f04b2755fb942f459aab0009d8d015a384c48359",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/qualification.json",
+      "published_sha256": "6e8f331064bfb744401cad128b5c6c04f72baad9971047e6f0ce67020a486996",
+      "redactions_by_rule": {
+        "bun_executable": 8,
+        "repo_root": 4,
+        "session_scratch": 13
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "captured_timing_or_command",
+      "original_git_blob_sha1": "f1ad1333e926593ae409050505ec38065b0397d8",
+      "original_sha256": "1bf7548c1209ce45406b898044f59e00700f61252dd7f5741bea15e803e4905e",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/wrong-en-passant-flag.time.txt",
+      "published_sha256": "806ade6d5475c3267252285c5753067ab855e0456e4a7046e2b781464fea4997",
+      "redactions_by_rule": {
+        "bun_executable": 1,
+        "session_scratch": 2
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "captured_timing_or_command",
+      "original_git_blob_sha1": "6a979c4ade6397efd0c2c68a47d209b99a583dad",
+      "original_sha256": "073f22819e3fe40a984247f39c3b837d5d4cf7e220049d5ea575e4024b231ca1",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/wrong-promotion-rank.time.txt",
+      "published_sha256": "c0449d7bf2b8bac13397c055dc202b2e1953b8104aeb2d677a41ba7c3c728b41",
+      "redactions_by_rule": {
+        "bun_executable": 1,
+        "session_scratch": 2
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "captured_timing_or_command",
+      "original_git_blob_sha1": "4727c76dcdac33ef754ff6b4acac06dafa874ed1",
+      "original_sha256": "b112d9ca6afe833c167e3be37b9fd6b3e7f8ca4d371e2ba52b728af57b654c25",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/AfterCount.time.txt",
+      "published_sha256": "768402b5a6841e73834ae28f1e7be8b94c5b48108c8387b5b77487b32a7eb9fe",
+      "redactions_by_rule": {
+        "bun_executable": 1,
+        "repo_root": 1,
+        "session_scratch": 1
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "captured_timing_or_command",
+      "original_git_blob_sha1": "56c6cb5e519f4fdc459c1dcca04ca336d3e20c39",
+      "original_sha256": "b295a98fcb486481ba6acb10bf8463ba04864bd5a302c55db76db7b3349c9b18",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/consumer.time.txt",
+      "published_sha256": "f6f26ea153e5e293ffbe00eeab912555d0ad05eb73468d46bdf2038c474cbe0f",
+      "redactions_by_rule": {
+        "bun_executable": 1,
+        "repo_root": 1,
+        "session_scratch": 1
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "captured_timing_or_command",
+      "original_git_blob_sha1": "403039534c7cb0d84cf011c8c31cb143f386ebdb",
+      "original_sha256": "92e040915a83f777fd5480468fddeeb363c9a6bbe90eec21f7c9b2ef485be0af",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/disconnected-scan-consumer.time.txt",
+      "published_sha256": "47f41cb650f8e71edb5e4bd1d0560cc8e821746f32b98a38e5a916d95b2cc206",
+      "redactions_by_rule": {
+        "bun_executable": 1,
+        "session_scratch": 2
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "captured_timing_or_command",
+      "original_git_blob_sha1": "ea75ca6e040b4c45371fbe75f2b261d28f9211d9",
+      "original_sha256": "5ec1325fa57f3e8a3bb47940f9b4fd80d677cab9987ad3e3d63afdcab31bbdfb",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/dropped-duplicate-tail.time.txt",
+      "published_sha256": "e33f80ee26222e169f31f54f6c14d0b7f70ff6e56baafd0e81e0f1e6519c297d",
+      "redactions_by_rule": {
+        "bun_executable": 1,
+        "session_scratch": 2
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "qualification_record",
+      "original_git_blob_sha1": "b2f8091aaef81bb1d781f6341c720ca63895e5cf",
+      "original_sha256": "093a8ac20f2cf6f59b47cd82096f2ea935d6727e619a4fd8e62a292ec986e897",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/prior-pr1000-qualification.json",
+      "published_sha256": "79682716e2bac43398c0f70c472a94690460b47683575d4724e1538df22399bf",
+      "redactions_by_rule": {
+        "bun_executable": 22,
+        "session_scratch": 33
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "qualification_record",
+      "original_git_blob_sha1": "9fccfd1d06c9dd1088cd14ec476dd3a47807a2f6",
+      "original_sha256": "c63d89d33185857c1f9352ef41cfb040ec4d3e74dc432731cf0620b356ba7dfa",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/qualification.json",
+      "published_sha256": "d5e1941ad1bf6e41d9dfa5b425444ee964289f298ec50863f97ce4d929a1fa55",
+      "redactions_by_rule": {
+        "bun_executable": 7,
+        "repo_root": 9,
+        "session_scratch": 12
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "captured_timing_or_command",
+      "original_git_blob_sha1": "3a12306fa8ee822548f7d2e2e84f82478fa0fef0",
+      "original_sha256": "7f50639c7c2b76657f0a307ccba49a7e5acdc806fa813629e959909e9ead67b8",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/wrong-en-passant-flag.time.txt",
+      "published_sha256": "fc64899ac6874b2ee46198aa477e017bb857ace00f2b60cd8d278859a4890d45",
+      "redactions_by_rule": {
+        "bun_executable": 1,
+        "session_scratch": 2
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "captured_timing_or_command",
+      "original_git_blob_sha1": "1676697e3f6a9aaf474b4868e07a4f23688c9e88",
+      "original_sha256": "9bd8b4be7c10ed8f90c6fd1d8d1f89ba6f3dc49274130e33b0c0c9323a687315",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/wrong-promotion-rank.time.txt",
+      "published_sha256": "448dcfe8bfba2447e616bd44ff52012b04f3abc5eff87d057040c014038bf9fd",
+      "redactions_by_rule": {
+        "bun_executable": 1,
+        "session_scratch": 2
+      },
+      "transformation": "redacted display paths; all non-path bytes retained"
+    },
+    {
+      "artifact_role": "runner_source",
+      "original_git_blob_sha1": "9f91e80da33c9541f4e61ce94278a370a768f24b",
+      "original_sha256": "e8bf35b2ceace9346a7cb656308f4a6c97d7f1d9a8e69ffe7ff611394f2990ed",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/qualify_after_count.py",
+      "published_sha256": "203ba5c0abea7cd761d760db23a6a3f696dd506e45b85d5c92a3bb7e4ff51dfe",
+      "redactions_by_rule": {
+        "portable_bun_default": 1
+      },
+      "transformation": "portable default path"
+    },
+    {
+      "artifact_role": "runner_source",
+      "original_git_blob_sha1": "5028903a70719185a6114d021d3cfcd29b4f504d",
+      "original_sha256": "f8da622ed00e29948ecf19ef4e0de2db8397ea02293474f81847dcf975302166",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/qualify_scan_after_closed_count.py",
+      "published_sha256": "c0425c988d7adaec7ea295f5335b224a11224d463f72769b98c1f42d46a77e1c",
+      "redactions_by_rule": {
+        "portable_bun_default": 1
+      },
+      "transformation": "portable default path"
+    }
+  ],
+  "historical_qualification_sources": [
+    {
+      "current_published_sha256": "f5c0e48c8ea4045acbd6882654287f0405092a93bf863dc99f67c306f78fc2f2",
+      "meaning": "The historic qualification source map records this README at its PR1006 version. The later PR1010 README edit is documentation only; original qualifying bytes are preserved locally and their exact Git/SHA identities are shown here.",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/README.md",
+      "qualification_source_commit": "1c7fbc68bc81f7b59ae1b6eb903ffb5450381dd5",
+      "qualification_source_git_blob_sha1": "95e43ccab0a98e5aaad3d3b0f76a63b4705afc76",
+      "qualification_source_sha256": "d7dbe955a34dbf2818b496f8b02c4a747338db293107a2b0fc3e767ec2ff4138"
+    },
+    {
+      "current_published_sha256": "b1e110b031178da215790dfc498e4f81e7c03b6d14f22ff3c734c36cdf07fab9",
+      "meaning": "The scan-after-count qualification was checked against the PR1006 consumer version before PR1010 extended the consumer. Original bytes are retained locally and their public Git/SHA identities are recorded here.",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/consumer.bend",
+      "qualification_source_commit": "1c7fbc68bc81f7b59ae1b6eb903ffb5450381dd5",
+      "qualification_source_git_blob_sha1": "c1d662f292a25e4747ce01368181b69a7c830b59",
+      "qualification_source_sha256": "5255fd0412c3b0c4ef82e789a01604a69cacfaf935202e7e1fad67ba58cbfc4d"
+    }
+  ],
+  "local_original_checkout_head": "60f8b756cd66ed2b7809dbca55f884ba8bf43ac2",
+  "local_original_set_id": "116b744ad6dac6c3ae48ef7898ec6304de886f1552cf7067fc823cb3f5c992bb",
+  "local_preservation_manifest": [
+    {
+      "git_blob_sha1": "3ca8a3b42aae7d019cb040edda3d92a6ef53911c",
+      "path": "evidence/2026-10-03/scan-after-predicate/partial-check.md",
+      "sha256": "0c24757c8ab58c2cdf82c2ad302e16d23fa05b4c2caf447f4d980dc2ada854b5"
+    },
+    {
+      "git_blob_sha1": "f725495f052e24102b8732b3036bfad133c34daf",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/AfterCount.time.txt",
+      "sha256": "deaec33797f64b4a51a16f24d28ae8aa33daa12ec7bf99b6d24d750fd7d1f693"
+    },
+    {
+      "git_blob_sha1": "4d4ff37e44f80aac179754208f4efbb54d6e1618",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/QueryFactor.time.txt",
+      "sha256": "6d146fb8202e4200070afb8784d5dbbbbb08eea5906ffd5de4960e01ea36752a"
+    },
+    {
+      "git_blob_sha1": "948316247dd72dd9cf1679b3e26159ab15c9dff8",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/consumer.time.txt",
+      "sha256": "9987aab8e493d140c0cb1d53db0080a4cee9a14a7ea4f9d0758fa0abfb42509c"
+    },
+    {
+      "git_blob_sha1": "8509dfcffa6911850e47f0cc0a5e550279eb308f",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/disconnected-scan-consumer.time.txt",
+      "sha256": "478fd9a9e7cb7e613e7693ffcc3293ea3744b08466aa3c839ae61495c931b5c0"
+    },
+    {
+      "git_blob_sha1": "989b84c2467ff6c7935323d0215d5ea3fe4effce",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/dropped-duplicate-tail.time.txt",
+      "sha256": "1c6181162e75e024997a39902f58487b295b4037c9f15d8ba966ef2e0ef717cd"
+    },
+    {
+      "git_blob_sha1": "89b57e277c09fbbcca5eed90fecaf5d455a51199",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/qualification-command.txt",
+      "sha256": "59abe5a336c4febf9a1d5d2d49f18b0ba4a9479d804812cd6f20954de44b020d"
+    },
+    {
+      "git_blob_sha1": "7ee09c29e674256b597025ee6fc53177f2029e69",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/qualification.json",
+      "sha256": "150a7522e9c1815a4290e7a6f04b2755fb942f459aab0009d8d015a384c48359"
+    },
+    {
+      "git_blob_sha1": "f1ad1333e926593ae409050505ec38065b0397d8",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/wrong-en-passant-flag.time.txt",
+      "sha256": "1bf7548c1209ce45406b898044f59e00700f61252dd7f5741bea15e803e4905e"
+    },
+    {
+      "git_blob_sha1": "6a979c4ade6397efd0c2c68a47d209b99a583dad",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/wrong-promotion-rank.time.txt",
+      "sha256": "073f22819e3fe40a984247f39c3b837d5d4cf7e220049d5ea575e4024b231ca1"
+    },
+    {
+      "git_blob_sha1": "4727c76dcdac33ef754ff6b4acac06dafa874ed1",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/AfterCount.time.txt",
+      "sha256": "b112d9ca6afe833c167e3be37b9fd6b3e7f8ca4d371e2ba52b728af57b654c25"
+    },
+    {
+      "git_blob_sha1": "56c6cb5e519f4fdc459c1dcca04ca336d3e20c39",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/consumer.time.txt",
+      "sha256": "b295a98fcb486481ba6acb10bf8463ba04864bd5a302c55db76db7b3349c9b18"
+    },
+    {
+      "git_blob_sha1": "403039534c7cb0d84cf011c8c31cb143f386ebdb",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/disconnected-scan-consumer.time.txt",
+      "sha256": "92e040915a83f777fd5480468fddeeb363c9a6bbe90eec21f7c9b2ef485be0af"
+    },
+    {
+      "git_blob_sha1": "ea75ca6e040b4c45371fbe75f2b261d28f9211d9",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/dropped-duplicate-tail.time.txt",
+      "sha256": "5ec1325fa57f3e8a3bb47940f9b4fd80d677cab9987ad3e3d63afdcab31bbdfb"
+    },
+    {
+      "git_blob_sha1": "b2f8091aaef81bb1d781f6341c720ca63895e5cf",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/prior-pr1000-qualification.json",
+      "sha256": "093a8ac20f2cf6f59b47cd82096f2ea935d6727e619a4fd8e62a292ec986e897"
+    },
+    {
+      "git_blob_sha1": "9fccfd1d06c9dd1088cd14ec476dd3a47807a2f6",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/qualification.json",
+      "sha256": "c63d89d33185857c1f9352ef41cfb040ec4d3e74dc432731cf0620b356ba7dfa"
+    },
+    {
+      "git_blob_sha1": "3a12306fa8ee822548f7d2e2e84f82478fa0fef0",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/wrong-en-passant-flag.time.txt",
+      "sha256": "7f50639c7c2b76657f0a307ccba49a7e5acdc806fa813629e959909e9ead67b8"
+    },
+    {
+      "git_blob_sha1": "1676697e3f6a9aaf474b4868e07a4f23688c9e88",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-count/wrong-promotion-rank.time.txt",
+      "sha256": "9bd8b4be7c10ed8f90c6fd1d8d1f89ba6f3dc49274130e33b0c0c9323a687315"
+    },
+    {
+      "git_blob_sha1": "9f91e80da33c9541f4e61ce94278a370a768f24b",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/qualify_after_count.py",
+      "sha256": "e8bf35b2ceace9346a7cb656308f4a6c97d7f1d9a8e69ffe7ff611394f2990ed"
+    },
+    {
+      "git_blob_sha1": "5028903a70719185a6114d021d3cfcd29b4f504d",
+      "path": "native/bend_engine/standalone/proofs/destination_factorization/qualify_scan_after_closed_count.py",
+      "sha256": "f8da622ed00e29948ecf19ef4e0de2db8397ea02293474f81847dcf975302166"
+    }
+  ],
+  "originals_preserved_local_only": true,
+  "purpose": "Remove author-machine paths from tracked PR1010 evidence while retaining hash linkage to exact locally preserved originals.",
+  "qualification_hash_semantics": "Existing qualification source_sha256s and checker stdout/stderr hashes describe the exact original qualification run. They are unchanged. The original qualification JSON and timing/command bytes are retained locally; published redacted copies have the separate SHA-256 values listed below.",
+  "schema": "deepfin.evidence-publication-transform.v1",
+  "source_head": "8956feb8a1d94d0bd58a682ec69e060aa00cd8b0",
+  "source_tree": "66651f5aeda4fc76c1e95e3ef05709e96dc7ca8a"
+}

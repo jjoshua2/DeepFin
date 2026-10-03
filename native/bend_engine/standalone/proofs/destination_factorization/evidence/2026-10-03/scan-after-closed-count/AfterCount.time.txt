@@ -1,4 +1,4 @@
-	Command being timed: "timeout --signal=TERM 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 RAYON_NUM_THREADS=2 BEND_NO_TELEMETRY=1 /home/josh/.bun/bin/bun --smol /tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts /home/josh/projects/chess-worktrees/deepfin-scan-after-predicate-20261003/native/bend_engine/standalone/proofs/destination_factorization/AfterCount.bend --check-only"
+	Command being timed: "timeout --signal=TERM 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 RAYON_NUM_THREADS=2 BEND_NO_TELEMETRY=1 <BUN> --smol <SESSION_SCRATCH>/bend2/main.ts <REPO>/native/bend_engine/standalone/proofs/destination_factorization/AfterCount.bend --check-only"
 	User time (seconds): 6.35
 	System time (seconds): 0.61
 	Percent of CPU this job got: 135%

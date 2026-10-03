@@ -1,6 +1,6 @@
-Working directory: /home/josh/projects/chess-worktrees/deepfin-scan-after-predicate-20261003
+Working directory: <REPO>
 Command:
-BUN=/home/josh/.bun/bin/bun python3 -m native.bend_engine.standalone.proofs.destination_factorization.qualify_scan_after_closed_count /tmp/deepfin-king-away-checker-aaeb9bc --checker-manifest /tmp/deepfin-pr1000-qualification-033774f6fecacbb079180705c16667ee609322b3/snapshot/native/bend_engine/standalone/proofs/bitboard_membership/evidence/2026-10-03/checker-tree.json --report native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/qualification.json --evidence-dir native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count
+BUN=<BUN> python3 -m native.bend_engine.standalone.proofs.destination_factorization.qualify_scan_after_closed_count <SESSION_SCRATCH> --checker-manifest <SESSION_SCRATCH>/snapshot/native/bend_engine/standalone/proofs/bitboard_membership/evidence/2026-10-03/checker-tree.json --report native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/qualification.json --evidence-dir native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count
 
 Qualification positive checks: AfterCount.bend, QueryFactor.bend, consumer.bend.
 Controls: wrong promotion rank, wrong en-passant flag, dropped duplicate tail, disconnected closed-count consumer.

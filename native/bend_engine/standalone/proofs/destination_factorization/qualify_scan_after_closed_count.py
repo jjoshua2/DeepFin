@@ -139,7 +139,7 @@ def main() -> None:
         os.environ.update({"OMP_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "2",
                            "MKL_NUM_THREADS": "2", "RAYON_NUM_THREADS": "2",
                            "BEND_NO_TELEMETRY": "1"})
-        bun = os.environ.get("BUN", "/home/josh/.bun/bin/bun")
+        bun = os.environ.get("BUN", str(Path.home() / ".bun" / "bin" / "bun"))
         version = subprocess.run([bun, "--version"], capture_output=True, text=True,
                                  check=True, timeout=15)
         report["bun_version"] = version.stdout.strip()

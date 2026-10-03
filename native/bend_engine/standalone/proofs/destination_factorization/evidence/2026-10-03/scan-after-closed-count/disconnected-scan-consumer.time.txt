@@ -1,5 +1,5 @@
 Command exited with non-zero status 1
-	Command being timed: "timeout --signal=TERM 120s taskset -c 0,1 env OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 RAYON_NUM_THREADS=2 BEND_NO_TELEMETRY=1 /home/josh/.bun/bin/bun --smol /tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts /tmp/deepfin-scan-after-control-yef_n8u1/engine/standalone/proofs/destination_factorization/consumer.bend --check-only"
+	Command being timed: "timeout --signal=TERM 120s taskset -c 0,1 env OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 RAYON_NUM_THREADS=2 BEND_NO_TELEMETRY=1 <BUN> --smol <SESSION_SCRATCH>/bend2/main.ts <SESSION_SCRATCH>/engine/standalone/proofs/destination_factorization/consumer.bend --check-only"
 	User time (seconds): 6.65
 	System time (seconds): 0.67
 	Percent of CPU this job got: 136%
