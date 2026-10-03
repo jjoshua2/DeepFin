@@ -88,8 +88,28 @@ Raw stdout/stderr, command, source and mutation hashes, exit codes, elapsed time
 and peak RSS for both controls are in the qualification receipt.
 
 
-The first CI run after publication found local absolute paths in serialized
-commands and the scratch diff. Those paths have now been normalized in the
-durable receipt while preserving checker stdout/stderr, results, hashes, timings,
-resource measurements, and the original diff digest. A new CI result for the
-redacted evidence revision is pending.
+The first CI run found local absolute paths in serialized commands and the scratch diff. Those paths were normalized in the durable receipt while preserving checker stdout/stderr, results, hashes, timings, resource measurements, and the original diff digest. The current PR #1000 head passed its hosted CPU, PEXT, and lint checks.
+
+
+## All emitted squares
+
+`AllEmittedSound.bend` proves that every value returned by the actual
+`Chess.bit_squares(64n, U64.is_zero(bb), bb, Nil{})` is below 64 and is set
+in the original `bb`. It also proves an all-U32 frequency corollary: for every
+query, including values at least 64, the occurrence count is exactly
+`Bool.pick(Nat, U64.test_bit(bb, U32.to_nat(query)), 1, 0)`. The out-of-range
+case establishes both zero occurrences and false `test_bit`; the in-range case
+reuses the already-checked frequency theorem. The proof is bound to the current
+PR #1000 source snapshot at `8ce6640a1a20a4688ced0c7ebbfc61a648ab3f6d`, archive
+SHA-256 `a672d8386a8144521a8a293cf4319e51fc2b42a40fb1b2f84e6ff15d16a24f07`,
+and the same pinned Bend tree above. Its 44-file import closure is enumerated
+in [the closure manifest](evidence/2026-10-03/emitted-range-source-closure.json).
+
+The new module passed `--check-only` with `All terms check.`, exit code 0,
+4.72 seconds, and 691536 KiB peak RSS, with the same 86400-second timeout,
+two-core affinity, and resource guards used above. Two disposable semantic
+mutations were rejected at `BitSquaresStep.bit_squares_step`: replacing the
+actual emitted `U64.ctz(bb)` head with zero, and changing the actual
+`clear_lsb` recursion to repeat the same bit. Exact source/mutation hashes,
+patches, normalized command/time logs, stdout/stderr, exit codes, and timestamps
+are in [the emitted-range receipt](evidence/2026-10-03/emitted-range-qualification.json).
