@@ -1,5 +1,5 @@
 {
-  "scratch_path": "/tmp/bend-multibit-prefix-20261002/Cardinality.bend",
+  "scratch_path": "<session-scratch>/multibit-prefix/Cardinality.bend",
   "scratch_sha256": "41422a1d4148f8bcbea9ada9917038e0a0ea5096f441e722a7da288ff372d654",
   "expected_scratch_sha256": "41422a1d4148f8bcbe9ada9917038e0a0ea5096f441e722a7da288ff372d654",
   "portable_path": "native/bend_engine/standalone/proofs/bitboard_membership/Cardinality.bend",
@@ -9,5 +9,8 @@
   "diff_lines": 22,
   "content_identical_after_import_adaptation": true,
   "recorded_summary_hash_matches_local_artifact": false,
-  "discrepancy": "The locally found scratch file's SHA-256 differs from the previous audit summary's cited value; the exact unified diff is retained. The bodies outside import lines are byte-for-byte identical after text decoding."
+  "discrepancy": "The locally found scratch file's SHA-256 differs from the previous audit summary's cited value; the exact unified diff is retained. The bodies outside import lines are byte-for-byte identical after text decoding.",
+  "diff_sha256_description": "SHA-256 of the exact original unified diff before publication redaction",
+  "published_patch_blob_sha1": "7c5a58421845ff129190460c8c075baa125f5d67",
+  "publication_redaction": "The companion patch preserves the seven import-only path adaptations and unchanged non-import body, but normalizes local absolute prefixes to <session-scratch> to pass repository privacy validation. The exact original diff digest above remains the comparison anchor."
 }
