@@ -516,3 +516,105 @@ def test_digest_is_key_order_independent_but_value_sensitive():
     changed = {"x": torch.ones(2, 2), "y": torch.zeros(3)}
     changed["y"][0] = 1.0
     assert state_dict_digest(a) != state_dict_digest(changed)
+
+
+
+def test_zero_sample_swa_export_uses_raw_weights_and_preserves_empty_resume_state(
+    tmp_path, monkeypatch,
+):
+    """A skipped first eligible step must not publish AveragedModel's init copy."""
+    from chess_anti_engine.train.trainer import state_dict_digest
+
+    def make_trainer(log_dir):
+        return Trainer(
+            _tiny_net(), device="cpu", lr=1e-2, log_dir=log_dir,
+            use_amp=False, feature_dropout_p=0.0, warmup_steps=0,
+            swa_start=1, swa_freq=1,
+        )
+
+    trainer = make_trainer(tmp_path / "tb")
+    initial = {k: v.detach().clone() for k, v in trainer.model.state_dict().items()}
+    buf = ReplayBuffer(8, rng=np.random.default_rng(42))
+    buf.add(_make_sample())
+
+    # Step 0 changes raw weights but precedes the SWA start boundary.
+    trainer.train_steps(buf, batch_size=1, steps=1)
+    assert int(trainer.step) == 1
+    assert int(trainer._swa_model.n_averaged) == 0
+    current = {k: v.detach().clone() for k, v in trainer.model.state_dict().items()}
+    assert any(not torch.equal(current[k], initial[k]) for k in current)
+
+    # Step 1 is eligible, but its non-finite gradient is rejected.
+    monkeypatch.setattr(trainer, "_matrix_grad_norm", lambda: float("nan"))
+    metrics = trainer.train_steps(buf, batch_size=1, steps=1)
+    assert metrics.grad_nonfinite_skip_rate == 1.0
+    assert int(trainer._swa_model.n_averaged) == 0
+
+    checkpoint = tmp_path / "empty_swa.pt"
+    trainer.save(checkpoint)
+    resumed = make_trainer(tmp_path / "resumed_tb")
+    resumed.load(checkpoint, exact_resume=True)
+    assert int(resumed._swa_model.n_averaged) == 0
+    resumed_state = resumed.model.state_dict()
+    assert all(torch.equal(current[k], resumed_state[k]) for k in current)
+
+    published = tmp_path / "published.pt"
+    resumed.export_swa(published)
+    exported = torch.load(published, map_location="cpu", weights_only=False)["model"]
+    assert state_dict_digest(exported) == state_dict_digest(resumed_state)
+    assert all(torch.equal(exported[k], resumed_state[k]) for k in resumed_state)
+    assert int(resumed._swa_model.n_averaged) == 0
+
+
+
+def test_swa_export_matches_exact_average_of_successful_eligible_updates(
+    tmp_path, monkeypatch,
+):
+    trainer = Trainer(
+        _tiny_net(), device="cpu", lr=1e-2, log_dir=tmp_path / "tb",
+        use_amp=False, feature_dropout_p=0.0, warmup_steps=0,
+        swa_start=1, swa_freq=1,
+    )
+    buf = ReplayBuffer(16, rng=np.random.default_rng(7))
+    for _ in range(4):
+        buf.add(_make_sample())
+
+    updates = []
+    original_update = torch.optim.swa_utils.AveragedModel.update_parameters
+
+    def capture_update(averaged, model):
+        updates.append({
+            name: value.detach().clone()
+            for name, value in model.named_parameters()
+        })
+        original_update(averaged, model)
+
+    monkeypatch.setattr(
+        torch.optim.swa_utils.AveragedModel, "update_parameters", capture_update,
+    )
+    trainer.train_steps(buf, batch_size=1, steps=2)
+    assert len(updates) == int(trainer._swa_model.n_averaged) == 1
+
+    real_matrix_grad_norm = trainer._matrix_grad_norm
+    monkeypatch.setattr(trainer, "_matrix_grad_norm", lambda: float("nan"))
+    rejected = trainer.train_steps(buf, batch_size=1, steps=1)
+    assert rejected.grad_nonfinite_skip_rate == 1.0
+    assert int(trainer._swa_model.n_averaged) == 1
+
+    monkeypatch.setattr(trainer, "_matrix_grad_norm", real_matrix_grad_norm)
+    trainer.train_steps(buf, batch_size=1, steps=1)
+
+    assert trainer._swa_model is not None
+    assert len(updates) == int(trainer._swa_model.n_averaged) == 2
+    averaged_parameters = dict(trainer._swa_model.module.named_parameters())
+    for name, actual in averaged_parameters.items():
+        expected = updates[0][name].clone()
+        for n, update in enumerate(updates[1:], start=2):
+            expected.add_((update[name] - expected) / n)
+        torch.testing.assert_close(actual, expected, rtol=1e-6, atol=1e-7)
+
+    path = tmp_path / "positive_swa.pt"
+    trainer.export_swa(path)
+    exported = torch.load(path, map_location="cpu", weights_only=False)["model"]
+    for name, value in trainer._swa_model.module.state_dict().items():
+        assert torch.equal(exported[name], value), name
