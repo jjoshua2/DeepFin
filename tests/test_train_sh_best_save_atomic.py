@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 
@@ -26,10 +27,12 @@ def _best_save_env(tmp_path: Path, *, fail_second_copy: bool) -> dict[str, str]:
     }))
     (replay / "shard.npz").write_bytes(b"replay")
     config_text = (REPO / "configs/pbt2_small.yaml").read_text()
-    config_text = config_text.replace(
-        "/home/josh/projects/chess/runs/pbt2_small/replay",
-        str(tmp_path / "replay-root"),
+    replay_root_line = re.compile(r"(?m)^(  tune_replay_root_override:\s*).*$")
+    config_text, replacements = replay_root_line.subn(
+        lambda match: f"{match.group(1)}{tmp_path / 'replay-root'}",
+        config_text,
     )
+    assert replacements == 1
     config = tmp_path / "config.yaml"
     config.write_text(config_text)
     env = os.environ | {
