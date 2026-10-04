@@ -57,7 +57,7 @@ def limits() -> None:
 
 
 def run_check(name: str, entry: Path, compiler: Path, bun: str, seconds: int,
-              output_dir: Path) -> dict:
+              output_dir: Path, cpu_affinity: str) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     stdout_path = output_dir / (name + ".stdout.txt")
     stderr_path = output_dir / (name + ".stderr.txt")
@@ -65,7 +65,7 @@ def run_check(name: str, entry: Path, compiler: Path, bun: str, seconds: int,
     command = [
         "/usr/bin/time", "-v", "-o", str(time_path),
         "timeout", "--signal=TERM", str(seconds) + "s",
-        "taskset", "-c", "0,1", "env",
+        "taskset", "-c", cpu_affinity, "env",
         "OMP_NUM_THREADS=2", "OPENBLAS_NUM_THREADS=2", "MKL_NUM_THREADS=2",
         "RAYON_NUM_THREADS=2", "BEND_NO_TELEMETRY=1", bun, "--smol",
         str(compiler / "bend2/main.ts"), str(entry), "--check-only",
@@ -104,7 +104,7 @@ def run_check(name: str, entry: Path, compiler: Path, bun: str, seconds: int,
         "raw_output_sha256": hashlib.sha256(raw).hexdigest(),
         "max_rss_kib": int(rss.group(1)) if rss else None,
         "max_output_bytes": OUTPUT_CAP, "address_space_cap_bytes": MEMORY_CAP,
-        "cpu_affinity": "0,1", "raw_text": text,
+        "cpu_affinity": cpu_affinity, "raw_text": text,
     }
     result["passed"] = (
         code == 0 and not timed_out and text == "All terms check.\n"
@@ -178,7 +178,7 @@ def main() -> None:
         "remote_base_commit": BASE,
         "local_base_commit": None,
         "local_base_tree": None,
-        "local_base_alias_note": "Exact PR1018 HEAD and tree required; every reused dependency is compared with its Git blob at that base.",
+        "local_base_alias_note": "Exact PR1018 base/tree pins reused dependencies. Supports a base overlay or clean published head; published source files must match HEAD Git blobs.",
         "branch": BRANCH,
         "compiler_pin": {},
         "source_sha256s": {},
@@ -187,7 +187,11 @@ def main() -> None:
     }
     affinity = os.sched_getaffinity(0)
     try:
-        os.sched_setaffinity(0, set(sorted(affinity)[:2]))
+        selected_cpus = sorted(affinity)[:2]
+        if not selected_cpus:
+            raise RuntimeError("no allowed CPUs")
+        cpu_affinity = ",".join(map(str, selected_cpus))
+        os.sched_setaffinity(0, set(selected_cpus))
         os.environ.update({"OMP_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "2",
                            "MKL_NUM_THREADS": "2", "RAYON_NUM_THREADS": "2",
                            "BEND_NO_TELEMETRY": "1"})
@@ -245,14 +249,59 @@ def main() -> None:
         before = source_hashes(paths)
         report["qualification_support_sha256s"] = source_hashes(support)
         report["source_sha256s"] = before
-        report["local_base_commit"] = subprocess.run(
+        report["local_head_commit"] = subprocess.run(
             ["git", "-C", str(PROJECT), "rev-parse", "HEAD"],
             capture_output=True, text=True, check=True, timeout=15).stdout.strip()
-        report["local_base_tree"] = subprocess.run(
+        report["local_head_tree"] = subprocess.run(
             ["git", "-C", str(PROJECT), "rev-parse", "HEAD^{tree}"],
             capture_output=True, text=True, check=True, timeout=15).stdout.strip()
-        if report["local_base_commit"] != BASE or report["local_base_tree"] != BASE_TREE:
-            raise RuntimeError("publication qualification requires exact PR1018 HEAD/tree")
+        base_tree = subprocess.run(
+            ["git", "-C", str(PROJECT), "rev-parse", BASE + "^{tree}"],
+            capture_output=True, text=True, check=True, timeout=15).stdout.strip()
+        if base_tree != BASE_TREE:
+            raise RuntimeError("PR1018 base tree identity mismatch")
+        report["local_base_commit"] = BASE
+        report["local_base_tree"] = base_tree
+        if report["local_head_commit"] == BASE:
+            if report["local_head_tree"] != BASE_TREE:
+                raise RuntimeError("base overlay HEAD tree identity mismatch")
+            report["input_mode"] = "base-overlay"
+        else:
+            allowed = {
+                "native/bend_engine/standalone/proofs/legal_fast_count/" + name
+                for name in ("FastCount.bend", "consumer.bend",
+                             "qualify_fast_count.py", "README.md")
+            }
+            changed = subprocess.run(
+                ["git", "-C", str(PROJECT), "diff", "--no-renames", "--name-only", BASE, "HEAD"],
+                capture_output=True, text=True, check=True, timeout=30).stdout.splitlines()
+            if not changed or set(changed) - allowed:
+                raise RuntimeError("published HEAD changes files outside this proof suite")
+            dirty = subprocess.run(
+                ["git", "-C", str(PROJECT), "status", "--porcelain", "--untracked-files=no"],
+                capture_output=True, text=True, check=True, timeout=15).stdout
+            if dirty:
+                raise RuntimeError("published-head qualification requires clean tracked files")
+            report["input_mode"] = "published-head"
+            report["published_delta_paths"] = sorted(changed)
+            head_listing = subprocess.run(
+                ["git", "-C", str(PROJECT), "ls-tree", "-r", "HEAD"],
+                capture_output=True, text=True, check=True, timeout=30).stdout
+            head_blobs = {}
+            for line in head_listing.splitlines():
+                metadata, path = line.split("\t", 1)
+                mode, kind, digest = metadata.split()
+                if kind == "blob":
+                    head_blobs[path] = digest
+            qualified = {}
+            for path in sorted(paths):
+                raw = (ENGINE / path).read_bytes()
+                blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+                if head_blobs.get("native/bend_engine/" + path) != blob:
+                    raise RuntimeError("qualified source differs from HEAD: " + path)
+                qualified[path] = blob
+            report["qualified_source_git_blobs"] = qualified
+            report["qualified_sources_match_head"] = True
         listing = subprocess.run(
             ["git", "-C", str(PROJECT), "ls-tree", "-r", BASE],
             capture_output=True, text=True, check=True, timeout=30).stdout
@@ -280,14 +329,15 @@ def main() -> None:
             json.dumps(before, sort_keys=True).encode()).hexdigest()
         report["resource_limits"] = {
             "positive_wall_timeout_seconds": 86400,
-            "negative_wall_timeout_seconds": 120, "cpu_affinity": "two CPUs",
+            "negative_wall_timeout_seconds": 120, "cpu_affinity": cpu_affinity,
+            "selected_cpus": selected_cpus, "inherited_allowed_cpus": sorted(affinity),
             "OMP_NUM_THREADS": 2, "address_space_cap_bytes": MEMORY_CAP,
             "stdout_stderr_file_cap_bytes": OUTPUT_CAP,
         }
         write_report(args.report, report)
 
         result = run_check("consumer", SUITE / "consumer.bend", compiler, bun,
-                           86400, args.evidence_dir)
+                           86400, args.evidence_dir, cpu_affinity)
         report["positive_checks"].append(result)
         write_report(args.report, report)
         if not result["passed"]:
@@ -304,7 +354,7 @@ def main() -> None:
                 mutate_declaration(target_path, declaration, old, new)
                 mutated = sha256(target_path)
                 entry = copy_engine / "standalone/proofs/legal_fast_count/consumer.bend"
-                result = run_check(name, entry, compiler, bun, 120, args.evidence_dir)
+                result = run_check(name, entry, compiler, bun, 120, args.evidence_dir, cpu_affinity)
                 result.update({
                     "mutation_target": target, "mutation_declaration": declaration, "baseline_sha256": baseline,
                     "mutated_sha256": mutated, "mutation_anchor": old,
