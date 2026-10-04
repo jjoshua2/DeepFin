@@ -28,5 +28,5 @@ Ruff/basedpyright/vulture validation passes with zero findings.
 
 Open-fix inspection on 2026-10-04 found no equivalent resume-result fix. PR #1001
 owns paired uncertainty/degenerate statistics and does not modify this loader.
-The change is submitted as a separate main-targeted draft PR; no merge, deployment,
+The change is submitted as [draft PR #1020](https://github.com/jjoshua2/DeepFin/pull/1020) against main; no merge, deployment,
 GPU work or scientific-strength claim is made.
