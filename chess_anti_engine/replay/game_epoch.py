@@ -45,6 +45,7 @@ import numpy as np
 
 from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding
 
+from .indexed_rows import RowIndexSelection, SelectedShard, selected_arrays
 from .target_overlay import BaseSeal
 from .disk_buffer import _concat_sparse_batches
 from .shard import (
@@ -117,10 +118,20 @@ class _ShardGames:
     row_field_bytes: tuple[tuple[str, int], ...]
     content_sha256: str
     objective_mask_weights: tuple[tuple[str, float], ...] = ()
+    row_selection: SelectedShard | None = field(default=None, repr=False)
+    indexed_source_decoded_bytes: int = 0
 
     @property
     def decoded_bytes(self) -> int:
         return int(self.scalar_bytes + self.rows * self.row_bytes)
+
+
+    @property
+    def validated_load_bytes(self) -> int:
+        source = self.indexed_source_decoded_bytes
+        return (VALIDATED_LOAD_PAYLOAD_COPIES * source + self.decoded_bytes
+                if self.row_selection is not None
+                else VALIDATED_LOAD_PAYLOAD_COPIES * self.decoded_bytes)
 
 
 @dataclass(frozen=True)
@@ -321,6 +332,10 @@ def _corpus_sha256(records: Sequence[_ShardGames]) -> str:
         digest.update(struct.pack("<I", len(resolved)))
         digest.update(resolved)
         digest.update(bytes.fromhex(record.content_sha256))
+        if record.row_selection is not None:
+            digest.update(b"physical-row-index/v1\0")
+            digest.update(struct.pack("<Q", len(record.row_selection.indices)))
+            digest.update(record.row_selection.indices.tobytes(order="C"))
     return digest.hexdigest()
 
 
@@ -415,12 +430,20 @@ def _input_history_identity(
     return next(iter(encodings)), next(iter(fixes))
 
 
-def _scan_shard(path: Path, *, allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None) -> _ShardGames:
+def _scan_shard(path: Path, *, allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None,
+                row_selection: SelectedShard | None = None) -> _ShardGames:
     # Freeze a staging symlink's target along with its bytes. Re-resolving the
     # link later could otherwise move an exact plan to another source tree.
     path = path.resolve(strict=True)
     content_sha256 = _storage_hash(path, allow_target_overlay, overlay_seal)
     with _storage_arrays(path, allow_target_overlay, overlay_seal=overlay_seal) as (arrs, _):
+        source_bytes = 0
+        if row_selection is not None:
+            if content_sha256 != row_selection.content_sha256:
+                raise ValueError("row-index source content differs from manifest")
+            row_bytes, scalar_bytes, _ = _declared_storage_bytes(arrs, rows=int(arrs["x"].shape[0]))
+            source_bytes = int(arrs["x"].shape[0]) * row_bytes + scalar_bytes
+            arrs = selected_arrays(arrs, row_selection, lazy=True)
         input_history_encoding, history_rep_fix = _input_history_identity(
             arrs, path=path,
         )
@@ -456,7 +479,8 @@ def _scan_shard(path: Path, *, allow_target_overlay: bool = False, overlay_seal:
                 row_bytes=0,
                 scalar_bytes=0,
                 row_field_bytes=(),
-                content_sha256=content_sha256,
+                content_sha256=content_sha256, row_selection=row_selection,
+                indexed_source_decoded_bytes=source_bytes,
             )
         validate_active_optional_values_present(arrs)
         if "game_id" not in arrs or "has_game_id" not in arrs:
@@ -497,10 +521,12 @@ def _scan_shard(path: Path, *, allow_target_overlay: bool = False, overlay_seal:
             row_bytes=row_bytes,
             scalar_bytes=scalar_bytes,
             row_field_bytes=row_field_bytes,
-            content_sha256=content_sha256,
+            content_sha256=content_sha256, row_selection=row_selection,
+                indexed_source_decoded_bytes=source_bytes,
         )
 
-def _scan_shards(paths: Sequence[Path], workers: int, *, allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None) -> list[_ShardGames]:
+def _scan_shards(paths: Sequence[Path], workers: int, *, allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None,
+                 row_selection: RowIndexSelection | None = None) -> list[_ShardGames]:
     resolved_paths: list[Path] = []
     staged_for_resolved: dict[Path, Path] = {}
     for staged_path in paths:
@@ -516,6 +542,14 @@ def _scan_shards(paths: Sequence[Path], workers: int, *, allow_target_overlay: b
 
     from functools import partial
     scan = partial(_scan_shard, allow_target_overlay=True, overlay_seal=overlay_seal) if allow_target_overlay else _scan_shard
+    if row_selection is not None:
+        row_selection.check_paths(list(paths))
+
+        def indexed_scan(path: Path) -> _ShardGames:
+            return _scan_shard(path, allow_target_overlay=allow_target_overlay, overlay_seal=overlay_seal,
+                               row_selection=row_selection.shards[path])
+
+        scan = indexed_scan
     n_workers = max(1, min(int(workers), len(resolved_paths)))
     if n_workers <= 1:
         records = [scan(path) for path in resolved_paths]
@@ -562,6 +596,8 @@ def _scan_shards(paths: Sequence[Path], workers: int, *, allow_target_overlay: b
                 scalar_bytes=record.scalar_bytes,
                 row_field_bytes=record.row_field_bytes,
                 content_sha256=record.content_sha256,
+                row_selection=record.row_selection,
+                indexed_source_decoded_bytes=record.indexed_source_decoded_bytes,
             ),
         )
     return namespaced
@@ -589,6 +625,8 @@ def _attach_objective_mask_weights(
         weights: tuple[tuple[str, float], ...] = ()
         if counter is not None:
             with _storage_arrays(record.path, allow_target_overlay, overlay_seal=overlay_seal) as (arrs, _):
+                if record.row_selection is not None:
+                    arrs = selected_arrays(arrs, record.row_selection, lazy=True)
                 raw = counter(arrs)
             weights = tuple(
                 (str(name), float(value)) for name, value in raw.items()
@@ -999,7 +1037,7 @@ def _plan_epoch(
             group_bytes = sum(record.decoded_bytes for record in group)
             observe(
                 validation_resident
-                + VALIDATED_LOAD_PAYLOAD_COPIES * group_bytes,
+                + sum(record.validated_load_bytes for record in group),
                 f"batch {batch_index} validated load",
             )
             validation_resident += group_bytes
@@ -1157,6 +1195,7 @@ class GameAwareEpochBuffer:
         host_batch_overlap: bool = False,
         overlay_storage_qualification: dict[str, str] | None = None,
         allow_packed_zarr: bool = False,
+        row_index_selection: dict[str, str] | None = None,
     ) -> None:
         if allow_packed_zarr and overlay_storage_qualification is not None:
             raise ValueError("packed ordinary shards do not support overlay qualification")
@@ -1176,8 +1215,18 @@ class GameAwareEpochBuffer:
             from .target_overlay import qualified_paths
             qualified, self._overlay_seal = qualified_paths(overlay_storage_qualification, paths)
         self._allow_target_overlay = allow_target_overlay
-        records = (_scan_shards(paths, int(plan_workers), allow_target_overlay=True, overlay_seal=self._overlay_seal)
-                   if allow_target_overlay else _scan_shards(paths, int(plan_workers)))
+        self._row_index_selection = (None if row_index_selection is None else RowIndexSelection(
+            Path(row_index_selection["path"]), row_index_selection["sha256"], row_index_selection["arm"],
+            max_metadata_bytes=int(max_working_set_bytes)))
+        self._row_index_receipt = (None if self._row_index_selection is None
+                                   else self._row_index_selection.receipt())
+        if self._row_index_selection is None:
+            records = (_scan_shards(paths, int(plan_workers), allow_target_overlay=True, overlay_seal=self._overlay_seal)
+                       if allow_target_overlay else _scan_shards(paths, int(plan_workers)))
+        else:
+            records = _scan_shards(paths, int(plan_workers), allow_target_overlay=allow_target_overlay,
+                                   overlay_seal=self._overlay_seal, row_selection=self._row_index_selection)
+            max_working_set_bytes -= self._row_index_selection.metadata_reserve_bytes
         if qualified is not None and any(
             record.content_sha256 != qualified[record.path] for record in records
         ):
@@ -1338,6 +1387,8 @@ class GameAwareEpochBuffer:
             raise RuntimeError(
                 f"{record.path} content changed during exact-epoch full decode",
             )
+        if record.row_selection is not None:
+            arrs = selected_arrays(arrs, record.row_selection, lazy=False)
         rows = int(arrs["x"].shape[0])
         if rows != record.rows:
             raise RuntimeError(
@@ -1552,10 +1603,9 @@ class GameAwareEpochBuffer:
         # their rows are consumed.
         for offset in range(0, len(records), max(1, workers)):
             group = records[offset:offset + max(1, workers)]
-            group_bytes = sum(record.decoded_bytes for record in group)
             self._observe_working_set(
                 self._resident_bytes
-                + VALIDATED_LOAD_PAYLOAD_COPIES * group_bytes,
+                + sum(record.validated_load_bytes for record in group),
                 phase=f"batch {self._batch_index} validated load",
             )
             register(group)
@@ -1768,6 +1818,8 @@ class GameAwareEpochBuffer:
             "realized_sha256": self._realized_digest.hexdigest(),
             "complete": bool(complete),
         }
+        if self._row_index_receipt is not None:
+            receipt.update({f"row_index_{key}": value for key, value in self._row_index_receipt.items()})
         if self.host_batch_overlap:
             receipt.update({
                 "delivered_batches": int(self._overlap_delivered_batches),
@@ -1786,6 +1838,11 @@ class GameAwareEpochBuffer:
             self._overlap_aborted = True
             self._overlap_window_open = False
         self._closed = True
+        if self._row_index_receipt is not None:
+            # The multi-epoch driver retains first for audit: release its large
+            # row maps while preserving all scalar receipts and record counts.
+            self._records = [replace(record, row_selection=None) for record in self._records]
+            self._row_index_selection = None
         self._chunks.clear()
         self._active.clear()
         self._remaining.clear()

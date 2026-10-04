@@ -14,6 +14,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Indexed bootstrap dose preparation](2026-10-04-indexed-bootstrap-dose-preparation.md) | Original-shard nested row loading, bounded metadata and CPU regression evidence; full scientific qualification pending |
 | [Off-home king castling exclusion](2026-10-02-bend-king-away.md) | Qualified arbitrary-array actual optimized generator empty flag-2 projection under bounded off-home moving-king singleton; public-builder/history/full-generator obligations remain |
 | [Forward attack composition](2026-10-01-bend-forward-attacks.md) | Qualified source-forward witness bridge, complete initialized query pairs and direct castling composition; actual public-builder/history/ordinary/skip/full-generator obligations remain |
 | [Complete generator contract and builder blocker](2026-10-01-bend-generator-contract.md) | Actual public-builder equality exceeded the 600-second hosted bound; zero accepted laws and zero executed controls; explicit end-to-end target and residual obligations |

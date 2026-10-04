@@ -1962,6 +1962,9 @@ def main(argv: list[str] | None = None) -> int:
              "requires game_epoch and --steps 0; sampling seed is seed+epoch-1. "
              "Optimizer, Torch RNG and augmentation RNG continue across epochs.",
     )
+    parser.add_argument("--row-index-manifest", type=Path, default=None, help="Pinned physical-row mask manifest over original qualified source shards")
+    parser.add_argument("--row-index-manifest-sha256", default=None)
+    parser.add_argument("--row-index-arm", choices=("retained", "union"), default=None)
     parser.add_argument(
         "--sampling-mode", choices=("replacement", "game_epoch"),
         default="replacement",
@@ -2109,6 +2112,11 @@ def main(argv: list[str] | None = None) -> int:
         or args.expected_overlay_storage_qualification_sha256 is not None
     ):
         parser.error("--allow-packed-zarr requires game_epoch without overlay qualification")
+    indexed_args = (args.row_index_manifest, args.row_index_manifest_sha256, args.row_index_arm)
+    if any(value is not None for value in indexed_args) and (
+        not all(value is not None for value in indexed_args) or args.sampling_mode != "game_epoch"
+    ):
+        parser.error("row-index selection requires all three manifest/pin/arm arguments and game_epoch")
     allow_packed_zarr = bool(args.allow_packed_zarr)
     if not math.isfinite(args.recovery_checkpoint_seconds) or args.recovery_checkpoint_seconds < 0 or args.recovery_checkpoint_keep < 1:
         parser.error("recovery interval must be finite/nonnegative and keep positive")
@@ -2338,6 +2346,9 @@ def main(argv: list[str] | None = None) -> int:
         }
         if overlay_ref is not None:
             epoch_buffer_kwargs["overlay_storage_qualification"] = overlay_ref
+        if args.row_index_manifest is not None:
+            epoch_buffer_kwargs["row_index_selection"] = {"path": str(args.row_index_manifest),
+                "sha256": str(args.row_index_manifest_sha256), "arm": str(args.row_index_arm)}
         buf: Any = GameAwareEpochBuffer(**epoch_buffer_kwargs, seed=int(args.seed))
         epoch_steps = buf.num_batches * args.epochs
         if int(args.steps) == 0:
