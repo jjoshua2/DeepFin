@@ -1674,3 +1674,56 @@ def test_a_resume_that_scores_no_new_pair_mixes_nothing(
         "a truncated run does not know which pair ids it scored, so the id "
         "check must not fire on it"
     )
+
+
+@pytest.mark.parametrize("half", [0, 1])
+@pytest.mark.parametrize("corruption", ["result", "score", "boolean_score", "string_score"])
+def test_arena_resume_refuses_corrupt_result_or_candidate_score(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, half: int, corruption: str,
+) -> None:
+    """The production resume path must refuse before dispatch or publication."""
+    log_path = tmp_path / "corrupt.games.jsonl"
+    _run_arena(monkeypatch, tmp_path, log_path=log_path)
+    rows = [json.loads(line) for line in log_path.read_text().splitlines()]
+    row = next(row for row in rows if row.get("kind") == "game"
+               and row["pair_id"] == 0 and row["half"] == half)
+    if corruption == "result":
+        row["result"] = "malformed-result"
+    elif corruption == "score":
+        row["score_candidate"] = 0.0  # Pair zero is a candidate win in both colors.
+    elif corruption == "boolean_score":
+        row["score_candidate"] = True
+    else:
+        row["score_candidate"] = "1.0"
+    log_path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    original = log_path.read_bytes()
+    import scripts.arena_standard as arena
+
+    def must_not_play(*_a: object, **_kw: object) -> list[float]:
+        raise AssertionError("corrupt resume dispatched games")
+
+    monkeypatch.setattr(arena, "play_paired_games_matched_time", must_not_play)
+    with pytest.raises(SystemExit, match=r"invalid result|score_candidate"):
+        _run_arena(monkeypatch, tmp_path, log_path=log_path,
+                   resume=True, stub_play=False)
+    assert log_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_arena_resume_preserves_valid_results_and_legacy_draw(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, legacy: bool,
+) -> None:
+    log_path = tmp_path / "valid.games.jsonl"
+    clean = _run_arena(monkeypatch, tmp_path, log_path=log_path)
+    rows = [json.loads(line) for line in log_path.read_text().splitlines()]
+    for row in rows:
+        if row.get("kind") != "game":
+            continue
+        if row["result"] == "1/2-1/2":
+            row["result"] = "*"  # Generic compatibility, not a strict-panel result.
+        if legacy:
+            row.pop("score_candidate", None)
+    log_path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    resumed = _run_arena(monkeypatch, tmp_path, log_path=log_path, resume=True)
+    assert resumed["resumed_pairs"] == 4
+    assert resumed["pentanomial"] == clean["pentanomial"]

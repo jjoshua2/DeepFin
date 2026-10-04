@@ -1114,6 +1114,8 @@ def score_from_result(result: str, *, a_is_white: bool) -> float:
     which would give the pooled fit a different population than the
     pentanomial).
     """
+    if result not in ("1-0", "0-1", "1/2-1/2", "*"):
+        raise ValueError(f"invalid result {result!r}")
     if result in ("1/2-1/2", "*"):
         return 0.5
     win = "1-0" if a_is_white else "0-1"
@@ -1356,9 +1358,24 @@ def load_arena_resume(
                     f"--resume: {path} pair {pair_id} half {half} has invalid "
                     "opening history. Refusing."
                 ) from exc
-        halves.setdefault(pair_id, {})[half] = score_from_result(
-            str(row["result"]), a_is_white=a_is_white,
-        )
+        result = row.get("result")
+        try:
+            if not isinstance(result, str):
+                raise ValueError(f"invalid result {result!r}")
+            score = score_from_result(result, a_is_white=a_is_white)
+        except ValueError as exc:
+            raise SystemExit(
+                f"--resume: {path} pair {pair_id} half {half}: {exc}"
+            ) from exc
+        if "score_candidate" in row:
+            declared = row["score_candidate"]
+            if type(declared) not in (int, float) or declared != score:
+                raise SystemExit(
+                    f"--resume: {path} pair {pair_id} half {half} records "
+                    f"score_candidate={declared!r}, but result {result!r} "
+                    f"with a_is_white={a_is_white} requires {score}"
+                )
+        halves.setdefault(pair_id, {})[half] = score
         tags.setdefault(pair_id, set()).add(row_compile_tag(row))
         htags.setdefault(pair_id, set()).add(row_hoist_tag(row))
     complete: list[int] = []

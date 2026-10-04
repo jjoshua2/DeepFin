@@ -10,6 +10,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-10-04: Generic arena resume result validation](2026-10-04-arena-resume-result-validation.md)
+
 | Record | Scope |
 | --- | --- |
 | [Off-home king castling exclusion](2026-10-02-bend-king-away.md) | Qualified arbitrary-array actual optimized generator empty flag-2 projection under bounded off-home moving-king singleton; public-builder/history/full-generator obligations remain |
