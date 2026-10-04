@@ -107,8 +107,8 @@ class RowIndexSelection:
                 raise ValueError('row-index mask length mismatch')
             if hashlib.sha256(masks).hexdigest() != cohort['sha256']:
                 raise ValueError('row-index mask hash mismatch')
-            retained = np.unpackbits(np.frombuffer(masks[:half], dtype=np.uint8), bitorder='little')
-            additional = np.unpackbits(np.frombuffer(masks[half:], dtype=np.uint8), bitorder='little')
+            retained = np.unpackbits(np.frombuffer(masks, dtype=np.uint8, count=half, offset=0), bitorder='little')
+            additional = np.unpackbits(np.frombuffer(masks, dtype=np.uint8, count=half, offset=half), bitorder='little')
             if np.any(retained[rows:]) or np.any(additional[rows:]) or np.any(retained & additional):
                 raise ValueError('row-index masks overlap or have nonzero padding')
             quota = int(cohort['rows_per_half'])
@@ -130,6 +130,8 @@ class RowIndexSelection:
                 offset += n
             if offset != rows:
                 raise ValueError('row-index source coverage mismatch')
+            # No cohort-sized array may survive into the next unpack allocation.
+            del retained, additional, chosen, masks
         expected = int(manifest['small_rows' if arm == 'retained' else 'large_rows'])
         if total != expected:
             raise ValueError('row-index total quota mismatch')

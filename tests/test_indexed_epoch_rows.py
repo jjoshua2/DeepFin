@@ -387,3 +387,48 @@ def test_dense_large_shard_index_scratch_rejected_before_mask_read(tmp_path, mon
     monkeypatch.setattr(Path, 'read_bytes', no_mask_read)
     with pytest.raises(ValueError, match='metadata reserve exceeds'):
         RowIndexSelection(pin[0], digest, 'union', max_metadata_bytes=100_000_000)
+
+
+def test_cross_cohort_temporaries_released_and_packed_halves_not_copied(tmp_path, monkeypatch):
+    import weakref
+    root, pin = setup(tmp_path)
+    doc = json.loads(pin[0].read_text())
+    template = doc['cohorts'][0]
+    cohorts = []
+    for i in range(3):
+        source = root / 'shard_000000.zarr' if i == 0 else write_source(tmp_path / f'source{i}')
+        mask = tmp_path / f'cohort{i}.bin'
+        payload = bytes(8) if i < 2 else Path(template['mask_path']).read_bytes()
+        mask.write_bytes(payload)
+        cohorts.append({**template, 'cohort': f'cohort{i}', 'mask_path': str(mask),
+            'sha256': hashlib.sha256(payload).hexdigest(),
+            'rows_per_half': 0 if i < 2 else 16,
+            'shards': [{'path': str(source), 'rows': 32, 'cohort_row_offset': 0,
+                        'content_sha256': _shard_content_sha256(source)}]})
+    doc['cohorts'] = cohorts
+    pin[0].write_text(json.dumps(doc))
+    digest = hashlib.sha256(pin[0].read_bytes()).hexdigest()
+    unpack, nonzero = np.unpackbits, np.flatnonzero
+    previous = []
+    calls = 0
+    def observed_unpack(values, **kwargs):
+        nonlocal calls
+        if calls and calls % 2 == 0:
+            assert all(ref() is None for ref in previous), 'prior cohort mask still retained'
+            previous.clear()
+        assert isinstance(values.base, bytes)
+        assert len(values.base) == 2 * len(values)
+        result = unpack(values, **kwargs)
+        previous.append(weakref.ref(result))
+        calls += 1
+        return result
+    def observed_nonzero(values):
+        previous.append(weakref.ref(values.base))
+        return nonzero(values)
+    monkeypatch.setattr(np, 'unpackbits', observed_unpack)
+    monkeypatch.setattr(np, 'flatnonzero', observed_nonzero)
+    selection = RowIndexSelection(pin[0], digest, 'union')
+    assert calls == 6
+    assert selection.rows == 32
+    assert all(ref() is None for ref in previous)
+    assert sorted(selection.shards[root.joinpath('shard_000000.zarr').resolve()].indices) == []
