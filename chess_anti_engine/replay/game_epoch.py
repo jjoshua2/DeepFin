@@ -441,8 +441,10 @@ def _scan_shard(path: Path, *, allow_target_overlay: bool = False, overlay_seal:
         if row_selection is not None:
             if content_sha256 != row_selection.content_sha256:
                 raise ValueError("row-index source content differs from manifest")
-            row_bytes, scalar_bytes, _ = _declared_storage_bytes(arrs, rows=int(arrs["x"].shape[0]))
-            source_bytes = int(arrs["x"].shape[0]) * row_bytes + scalar_bytes
+            source_rows = int(arrs["x"].shape[0])
+            if source_rows > 0:
+                row_bytes, scalar_bytes, _ = _declared_storage_bytes(arrs, rows=source_rows)
+                source_bytes = source_rows * row_bytes + scalar_bytes
             arrs = selected_arrays(arrs, row_selection, lazy=True)
         input_history_encoding, history_rep_fix = _input_history_identity(
             arrs, path=path,

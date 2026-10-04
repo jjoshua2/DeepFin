@@ -81,13 +81,15 @@ class RowIndexSelection:
         manifest = json.loads(raw)
         if manifest.get('status') != 'PASS_FROZEN_NESTED_PHYSICAL_ROW_SELECTION_ONLY':
             raise ValueError('row-index manifest selection is incomplete')
-        # Conservative metadata reserve: all persistentuint32 indices, four
-        # cohort-sized masks/temporaries, parsed JSON/path objects and mask bytes.
+        # Reserve persistent uint32 indices, masks/JSON, and the largest shard's
+        # temporary intp flatnonzero result, which coexists with its uint32 cast.
         expected = int(manifest["small_rows" if arm == "retained" else "large_rows"])
         self.metadata_reserve_bytes = (4 * expected
             + 4 * max(int(c["source_rows"]) for c in manifest["cohorts"])
             + 8 * len(raw) + 4096 * sum(len(c["shards"]) for c in manifest["cohorts"])
-            + 2 * max(int(c["bytes_per_half"]) for c in manifest["cohorts"]))
+            + 2 * max(int(c["bytes_per_half"]) for c in manifest["cohorts"])
+            + np.dtype(np.intp).itemsize * max(
+                int(shard["rows"]) for c in manifest["cohorts"] for shard in c["shards"]))
         if self.metadata_reserve_bytes >= max_metadata_bytes:
             raise ValueError("row-index metadata reserve exceeds working-set limit")
         self.manifest_sha256 = sha256

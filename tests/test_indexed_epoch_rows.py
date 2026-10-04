@@ -10,7 +10,7 @@ from chess_anti_engine.moves import COMPACT_POLICY_SIZE
 from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer, _shard_content_sha256
 from chess_anti_engine.replay.indexed_rows import IndexedArray, RowIndexSelection
 from chess_anti_engine.replay.sample import ReplaySample
-from chess_anti_engine.replay.shard import ShardMeta, samples_to_arrays, save_local_shard_arrays
+from chess_anti_engine.replay.shard import ShardMeta, load_shard_arrays, samples_to_arrays, save_local_shard_arrays
 
 
 def write_source(root, groups=16):
@@ -341,3 +341,49 @@ def test_close_releases_index_arrays_without_changing_receipt(tmp_path):
     assert buffer.receipt() == before
     buffer.close()
     assert buffer.receipt() == before
+
+
+def test_true_empty_source_reservation_is_hash_bound_and_not_scheduled(tmp_path):
+    root, pin = setup(tmp_path)
+    original, _ = load_shard_arrays(root / 'shard_000000.zarr')
+    empty = {name: np.asarray(value)[:0] if np.asarray(value).ndim >= 1
+             and np.asarray(value).shape[0] == 32 else np.asarray(value)
+             for name, value in original.items()}
+    # Quarantine reservations may prune optional per-row identity fields.
+    for name in ('game_id', 'has_game_id', 'ply_index', 'has_ply_index'):
+        empty.pop(name, None)
+    source = root / 'shard_000001.zarr'
+    save_local_shard_arrays(source, arrs=empty)
+    doc = json.loads(pin[0].read_text())
+    doc['cohorts'][0]['shards'].append({'path': str(source), 'rows': 0,
+        'cohort_row_offset': 32, 'content_sha256': _shard_content_sha256(source)})
+    pin[0].write_text(json.dumps(doc))
+    bound = (pin[0], hashlib.sha256(pin[0].read_bytes()).hexdigest())
+    buffer = open_buffer(root, bound)
+    rows = np.concatenate([b['ply_index'] for b in drain(buffer)])
+    assert sorted(rows.tolist()) == list(range(0, 32, 2))
+    assert buffer.plan.shard_count == 1
+    buffer.close()
+    (source / 'source-drift').write_text('changed')
+    with pytest.raises(ValueError, match='source content differs'):
+        open_buffer(root, bound)
+
+
+def test_dense_large_shard_index_scratch_rejected_before_mask_read(tmp_path, monkeypatch):
+    _root, pin = setup(tmp_path)
+    doc = json.loads(pin[0].read_text())
+    cohort = doc['cohorts'][0]
+    cohort.update(source_rows=10_000_000, bytes_per_half=1_250_000,
+                  rows_per_half=5_000_000)
+    cohort['shards'][0]['rows'] = 10_000_000
+    doc.update(small_rows=5_000_000, large_rows=10_000_000)
+    pin[0].write_text(json.dumps(doc))
+    digest = hashlib.sha256(pin[0].read_bytes()).hexdigest()
+    read = Path.read_bytes
+    def no_mask_read(path):
+        if path == Path(cohort['mask_path']):
+            pytest.fail('oversized index scratch must reject before mask allocation')
+        return read(path)
+    monkeypatch.setattr(Path, 'read_bytes', no_mask_read)
+    with pytest.raises(ValueError, match='metadata reserve exceeds'):
+        RowIndexSelection(pin[0], digest, 'union', max_metadata_bytes=100_000_000)
