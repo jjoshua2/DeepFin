@@ -16,12 +16,12 @@ The supplied-table lookup contracts remain assumptions. This suite proves neithe
 
 ## Qualification
 
-The intended base is exact PR1030 `ef601b76201f181a19217b2d17dc61825f3b4cf4`, tree `b8e92f1efb3dc6a5f55a9b74e864a8aed09f1a9e`. Only this new four-file suite changes. The harness verifies every qualified file against clean HEAD Git blobs and every reused dependency against that base. It verifies all 84 pinned checker files before and after, with Bend 2.0.21+U64 `aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae`, source fingerprint `d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4`, Bun 1.4.2.
+The intended base is exact PR1030 `ef601b76201f181a19217b2d17dc61825f3b4cf4`, tree `b8e92f1efb3dc6a5f55a9b74e864a8aed09f1a9e`. The new four-file suite and PR1030's portable README command correction change; both inherited Bend theorem and consumer files remain exact-base. The harness verifies every qualified file against clean HEAD Git blobs and every reused dependency against that base. It verifies all 84 pinned checker files before and after, with Bend 2.0.21+U64 `aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae`, source fingerprint `d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4`, Bun 1.4.2.
 
 Run from the project root, using a fresh external report and evidence directory:
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 BUN=/home/josh/.bun/bin/bun python3 -m \
+PYTHONDONTWRITEBYTECODE=1 BUN="$HOME/.bun/bin/bun" python3 -m \
   native.bend_engine.standalone.proofs.prepared_king_selection.qualify_prepared_king_selection \
   /tmp/deepfin-king-away-checker-aaeb9bc \
   --checker-manifest /path/to/checker-tree.json \
@@ -30,4 +30,4 @@ PYTHONDONTWRITEBYTECODE=1 BUN=/home/josh/.bun/bin/bun python3 -m \
 
 Each checker call allows 86400 seconds, at most two CPUs, 6 GiB address-space/RSS, and 16 MiB per output file. Pass requires exit zero, exactly `All terms check.`, and resource compliance. Controls run only in isolated external copies. There are 18 specified controls: 11 contract-coupling mutations and seven concrete false witnesses. Contract coupling shows that the existing proof body does not fit an altered premise/conclusion; it does not independently establish semantic falsity or necessity. The concrete false witnesses mutate actual computed multi-king, black/high, noncanonical-turn, kingless-range, opposite-side, colliding-decoder, and selected-king guard facts. Rejections count only at the named typed obligation with different expected/observed types; parser/import/linearity/resource/timeout failures do not count.
 
-Durable commands, outputs, timings, hashes, CI checkout evidence, independent review and manifests live outside the checkout at `/home/josh/chess-artifacts/deepfin-prepared-king-selection-20261004/evidence/2026-10-04/`.
+Durable commands, outputs, timings, hashes, CI checkout evidence, independent review and manifests live outside the checkout at `~/chess-artifacts/deepfin-prepared-king-selection-20261004/evidence/2026-10-04/`.

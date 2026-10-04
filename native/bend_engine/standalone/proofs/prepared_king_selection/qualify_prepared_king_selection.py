@@ -114,7 +114,7 @@ def main() -> None:
                 module_path = Path(filename).resolve()
                 if module_path.suffix == ".py" and module_path.is_relative_to(ENGINE):
                     support.add(str(module_path.relative_to(ENGINE)))
-        correction_paths: set[str] = set()
+        correction_paths = {"standalone/proofs/prepared_ray_coverage/README.md"}
         paths.update(support)
         paths.update(correction_paths)
         before = source_hashes(paths)
@@ -148,7 +148,7 @@ def main() -> None:
                 ["git", "-C", str(PROJECT), "diff", "--no-renames", "--name-only", BASE, "HEAD"],
                 capture_output=True, text=True, check=True, timeout=30).stdout.splitlines()
             if not changed or set(changed) - allowed:
-                raise RuntimeError("published HEAD changes files outside this proof suite")
+                raise RuntimeError("published HEAD changes outside this proof suite or portable inherited documentation")
             dirty = subprocess.run(
                 ["git", "-C", str(PROJECT), "status", "--porcelain", "--untracked-files=no"],
                 capture_output=True, text=True, check=True, timeout=15).stdout
