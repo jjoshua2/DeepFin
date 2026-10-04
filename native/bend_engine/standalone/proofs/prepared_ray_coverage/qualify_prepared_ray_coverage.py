@@ -1,4 +1,4 @@
-"""Fail-closed qualification of actual bounded owned-source provenance and filter composition."""
+"""Fail-closed qualification of actual prepared queen-path coverage and ordinary candidate composition."""
 from __future__ import annotations
 
 import argparse
@@ -20,9 +20,9 @@ from ..fast_full_equivalence.qualify_fast_full import (
 SUITE = Path(__file__).resolve().parent
 ENGINE = SUITE.parents[2]
 PROJECT = ENGINE.parents[1]
-BASE = "117fcf3909e4c086cb9242a29852766c54f2d321"
-BASE_TREE = "8de12e3ee3f9cec56ab3c2ddeb2f51b4f038a7ab"
-BRANCH = "proof/bend-candidate-source-provenance-20261004"
+BASE = "f73c27bc3ab2cbe4c8fd3a037087ea80fc2355b0"
+BASE_TREE = "18dda6ef1256344f51931a879ec25b0088bcdf9e"
+BRANCH = "proof/bend-prepared-ray-coverage-20261004"
 
 
 def source_hashes(paths: set[str]) -> dict[str, str]:
@@ -43,11 +43,11 @@ def main() -> None:
     args.evidence_dir.mkdir(parents=True, exist_ok=False)
     report: dict = {
         "gate": "NOT_COMPLETED",
-        "scope": "Actual pre-castling C.candidates generates only strict source-index-bounded and actual moving-color-owned sources. The arbitrary-tail predicate and both input-key certificates are preserved through actual generation. Actual member-derived certificates compose with PR1028 filter exclusion; old path coverage, lookup geometry, legal-board/table invariants and whole-legality remain explicit.",
+        "scope": "Each of the eight 7-step king paths is covered by the actual prepared queen query under separate exact-table-preserving rook and bishop unmasked-slider contracts, selected king equality and explicit input ranges. Coverage and route are derived for the actual member-based ordinary-ray consumer. No builder validity, unconditional arbitrary-table coverage, whole filter equivalence or full chess legality claim.",
         "remote_base_commit": BASE,
         "local_base_commit": None,
         "local_base_tree": None,
-        "local_base_alias_note": "Exact PR1028 base/tree pins reused dependencies. Supports a base overlay or clean published head; published source files must match HEAD Git blobs.",
+        "local_base_alias_note": "Exact PR1029 base/tree pins reused dependencies. Supports a base overlay or clean published head; published source files must match HEAD Git blobs.",
         "branch": BRANCH,
         "compiler_pin": {},
         "source_sha256s": {},
@@ -114,7 +114,12 @@ def main() -> None:
                 module_path = Path(filename).resolve()
                 if module_path.suffix == ".py" and module_path.is_relative_to(ENGINE):
                     support.add(str(module_path.relative_to(ENGINE)))
+        correction_paths = {
+            "standalone/proofs/candidate_source_provenance/qualify_candidate_source_provenance.py",
+            "standalone/proofs/candidate_source_provenance/README.md",
+        }
         paths.update(support)
+        paths.update(correction_paths)
         before = source_hashes(paths)
         report["qualification_support_sha256s"] = source_hashes(support)
         report["source_sha256s"] = before
@@ -128,7 +133,7 @@ def main() -> None:
             ["git", "-C", str(PROJECT), "rev-parse", BASE + "^{tree}"],
             capture_output=True, text=True, check=True, timeout=15).stdout.strip()
         if base_tree != BASE_TREE:
-            raise RuntimeError("PR1028 base tree identity mismatch")
+            raise RuntimeError("PR1029 base tree identity mismatch")
         report["local_base_commit"] = BASE
         report["local_base_tree"] = base_tree
         if report["local_head_commit"] == BASE:
@@ -137,10 +142,11 @@ def main() -> None:
             report["input_mode"] = "base-overlay"
         else:
             allowed = {
-                "native/bend_engine/standalone/proofs/candidate_source_provenance/" + name
-                for name in ("Source.bend", "consumer.bend",
-                             "qualify_candidate_source_provenance.py", "README.md")
+                "native/bend_engine/standalone/proofs/prepared_ray_coverage/" + name
+                for name in ("Coverage.bend", "Query.bend", "consumer.bend",
+                             "qualify_prepared_ray_coverage.py", "README.md")
             }
+            allowed.update("native/bend_engine/" + p for p in correction_paths)
             changed = subprocess.run(
                 ["git", "-C", str(PROJECT), "diff", "--no-renames", "--name-only", BASE, "HEAD"],
                 capture_output=True, text=True, check=True, timeout=30).stdout.splitlines()
@@ -182,7 +188,7 @@ def main() -> None:
                 base_blobs[path] = digest
         reused = {}
         for path in sorted(paths):
-            if path.startswith("standalone/proofs/candidate_source_provenance/"):
+            if path.startswith("standalone/proofs/prepared_ray_coverage/") or path in correction_paths:
                 continue
             raw = (ENGINE / path).read_bytes()
             blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
@@ -190,6 +196,7 @@ def main() -> None:
             if base_blobs.get(remote_path) != blob:
                 raise RuntimeError("dependency differs from intended base: " + path)
             reused[path] = blob
+        report["base_evidence_correction_paths"] = sorted(correction_paths)
         report["reused_dependency_git_blobs"] = reused
         report["reused_dependencies_match_exact_base"] = True
         report["remote_base_tree"] = BASE_TREE
@@ -212,15 +219,13 @@ def main() -> None:
         if not result["passed"]:
             raise RuntimeError("positive consumer check failed")
 
-        controls: tuple[tuple[str, str, str, str, str, tuple[str, ...]], ...] = (('omit-caller-tail-predicate', 'consumer.bend', 'use_put', 'good: C.every(m => N.source(b,m),tail)', 'good: Unit', ('use_put',)), ('omit-key-index-bound', 'consumer.bend', 'use_scan', 'All.all_below64(keys) == True{}', 'True{} == True{}', ('use_scan',)), ('omit-key-ownership', 'consumer.bend', 'use_scan', 'All.all_bits_set(keys,Chess.color(b,Chess.get_turn(b))) == True{}', 'True{} == True{}', ('use_scan',)), ('contract-coupling-disconnected-producer', 'consumer.bend', 'use_candidates', 'E.moves(C.candidates(table,b))', 'E.moves(Chess.scan(Nil{},b,(table,Nil{})))', ('use_candidates',)), ('omit-actual-candidate-membership', 'consumer.bend', 'use_member', 'here: E.member(m,E.moves(C.candidates(table,b)))', 'here: Unit', ('use_member',)), ('unowned-arbitrary-key', 'consumer.bend', 'unowned_scan_source', '== False{} : Bool', '== True{} : Bool', ('unowned_scan_source',)), ('out-of-range-caller-tail', 'consumer.bend', 'bad_tail_bound', '== False{} : Bool', '== True{} : Bool', ('bad_tail_bound',)), ('dropped-duplicate-tail', 'consumer.bend', 'duplicate_tail_count', '== 2n : Nat', '== 1n : Nat', ('duplicate_tail_count',)), ('wrong-color-plane', 'consumer.bend', 'opposite_source', '== False{} : Bool', '== True{} : Bool', ('opposite_source',)), ('vacuous-actual-bypass', 'consumer.bend', 'use_exclusion', 'Chess.filter_requires(S.sensitive(b,rays),m) == False{}', 'False{} == False{}', ('use_exclusion',)), ('omit-old-path-coverage', 'consumer.bend', 'use_ray', 'L.subset(P.attack(xs,Chess.occupied(b)),rays)', 'L.subset(U64.zero(),rays)', ('use_ray',)), ('disconnected-ordinary-ray', 'consumer.bend', 'use_ray', 'Chess.occupied(Chess.make_move(b,Chess.Ply{src,dst,0,0}))', 'U64.zero()', ('use_ray',)))
-        controls += (('actual-candidate-output-cannot-be-empty', 'consumer.bend', 'actual_candidate', 'Chess.Ply{2,10,0,0} <> Nil{} : List', 'Nil{} : List', ('actual_candidate',)),)
+        controls: tuple[tuple[str, str, str, str, str, tuple[str, ...]], ...] = (("omit-rook-pair-contract","consumer.bend","use_query","r: Q.rook(c,q,side,occ)","r: Unit",("use_query",)),("omit-bishop-pair-contract","consumer.bend","use_query","d: Q.bishop(c,q,side,occ)","d: Unit",("use_query",)),("omit-queen-diagonal-mask","consumer.bend","use_query","(O.pack(c),G.actual(q,occ))","(O.pack(c),Tables.slider(U32.from_nat(q),False{},occ,False{}))",("use_query",)),("wrong-returned-table","consumer.bend","use_query","(O.pack(c),G.actual(q,occ))","(O.pack(O.Cell{U64.zero()}),G.actual(q,occ))",("use_query",)),("omit-square-bound","consumer.bend","use_coverage","Nat.is_lt(q,64n) == True{}","True{} == True{}",("use_coverage",)),("omit-direction-bound","consumer.bend","use_coverage","Nat.is_lt(dir,8n) == True{}","True{} == True{}",("use_coverage",)),("omit-selected-king-equality","consumer.bend","use_coverage","Q.king(b) == U32.from_nat(q) : U32","0 == 0 : U32",("use_coverage",)),("wrong-masked-rook-contract","consumer.bend","use_coverage","r: Q.rook(c,q,Chess.get_turn(b),Chess.occupied(b))","r: {Chess.attack(3,O.pack(c),U32.from_nat(q),Chess.get_turn(b),Chess.occupied(b)) == (O.pack(c),Tables.slider(U32.from_nat(q),False{},Chess.occupied(b),True{})) : Array<U64> & U64}",("use_coverage",)),("omit-actual-member","consumer.bend","use_ray","here: E.member(Chess.Ply{src,dst,0,0},E.moves(C.candidates(generation_table,b)))","here: Unit",("use_ray",)),("vacuous-bypass","consumer.bend","use_ray","Chess.filter_requires(S.sensitive(b,Prepared.rays(c,b)),Chess.Ply{src,dst,0,0}) == False{}","False{} == False{}",("use_ray",)),("disconnected-post-move-occupancy","consumer.bend","use_ray","Chess.occupied(Chess.make_move(b,Chess.Ply{src,dst,0,0}))","U64.zero()",("use_ray",)),("wrong-new-empty-flag","consumer.bend","use_ray","Chess.occupied(Chess.make_move(b,Chess.Ply{src,dst,0,0})),False{},acc)","Chess.occupied(Chess.make_move(b,Chess.Ply{src,dst,0,0})),True{},acc)",("use_ray",)),("false-arbitrary-table-coverage","consumer.bend","uncovered_supplied_table","== False{} : Bool","== True{} : Bool",("uncovered_supplied_table",)),("missing-diagonal-union","Coverage.bend","geometry","U64.or(S.directional(q,0n,occ),S.directional(q,4n,occ))","S.directional(q,0n,occ)",("Coverage.geometric",)),("actual-pawn-output-cannot-be-empty","consumer.bend","actual_pawn_output","Chess.Ply{2,10,0,0} <> Nil{} : List","Nil{} : List",("actual_pawn_output",)),("nonwrapping-outside-test-bit","consumer.bend","outside_64","== False{} : Bool","== True{} : Bool",("outside_64",)),("queen-retains-diagonal","consumer.bend","queen_diagonal_present","G.actual(0n,U64.zero())","Tables.slider(0,False{},U64.zero(),False{})",("queen_diagonal_present",)))
         false_witnesses = {
-            "unowned-arbitrary-key", "out-of-range-caller-tail",
-            "dropped-duplicate-tail", "wrong-color-plane",
-            "actual-candidate-output-cannot-be-empty",
+            "false-arbitrary-table-coverage", "actual-pawn-output-cannot-be-empty",
+            "nonwrapping-outside-test-bit", "queen-retains-diagonal",
         }
         for name, filename, declaration, old, new, locations in controls:
-            target = "standalone/proofs/candidate_source_provenance/" + filename
+            target = "standalone/proofs/prepared_ray_coverage/" + filename
             with tempfile.TemporaryDirectory(prefix="deepfin-candidate-source-control-") as tmp:
                 copy_engine = Path(tmp) / "engine"
                 shutil.copytree(ENGINE, copy_engine, symlinks=True)
@@ -228,7 +233,7 @@ def main() -> None:
                 baseline = sha256(target_path)
                 mutate_declaration(target_path, declaration, old, new)
                 mutated = sha256(target_path)
-                entry = copy_engine / "standalone/proofs/candidate_source_provenance/consumer.bend"
+                entry = copy_engine / "standalone/proofs/prepared_ray_coverage/consumer.bend"
                 result = run_check(name, entry, compiler, bun, 86400, args.evidence_dir, cpu_affinity)
                 result.update({
                     "control_kind": ("concrete-false-witness" if name in false_witnesses else "contract-coupling"),

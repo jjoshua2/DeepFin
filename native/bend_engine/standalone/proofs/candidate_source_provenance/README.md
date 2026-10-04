@@ -22,8 +22,12 @@ the actual piece_targets result with the actual pawn test and EP metadata.
 Source.scan is a CPS theorem threading the caller accumulator predicate through
 actual Chess.scan, assuming both AllEmittedSound.all_below64(keys) and
 all_bits_set(keys,Chess.color(board,Chess.get_turn(board))). Duplicate input keys
-and duplicate caller moves are permitted. The strict key-bound and ownership
-premises are necessary for the general scan theorem.
+and duplicate caller moves are permitted. Both key certificates are explicit inputs to this proof. Deleting either from
+its signature rejects the current proof body; this is contract-coupling evidence,
+not proof that the premises are logically independent or both necessary.
+AllEmittedSound.u64_bit_outside and u64_test_bit_outside prove the exact actual
+U64 semantics: every Nat index >=64 yields bit zero and test_bit False for any
+U64. Thus out-of-range ownership cannot be asserted as an independent witness.
 
 Source.initial exactly matches actual C.candidates: own=color(board,get_turn),
 bit_squares(64n,is_zero(own),own,Nil), and scan from (table,Nil).
@@ -63,15 +67,21 @@ d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4.
 All reused source/check/mutation/classifier/closure helpers match the exact base.
 Every qualified source on a clean published head must match its HEAD Git blob.
 
-Each positive and semantic negative allowance is86400 seconds, CPUs1,3,
+Each positive and negative-control allowance is86400 seconds, CPUs1,3,
 maximum2CPU,6GiB AS/RSS and16MiB per-output caps. P2 CPUs30-31 are excluded.
 Qualified source, compiler identity and all prior evidence must stay unchanged.
 
-Twelve declaration-local controls reject missing tail/key/membership premises,
-a disconnected actual candidate producer, falsely owned arbitrary-key output,
-a falsely bounded source64 tail, dropped duplicate tail, wrong color plane,
-vacuous actual bypass, omitted old-path coverage and a disconnected actual
-ordinary ray. Only expected typed-obligation failures count; parser/import,
-linearity, resource/timeout/signal failures do not count.
+Thirteen declaration-local controls distinguish contract coupling from concrete
+false witnesses. Missing tail/key/membership premises, the disconnected-producer
+conclusion, vacuous bypass, omitted coverage and disconnected ordinary-ray
+conclusion test proof-contract coupling. In particular, the empty-scan provenance
+conclusion is true (Unit); rejecting the old proof body does not show semantic
+falsity. False owned arbitrary-key output, a falsely bounded source64 tail,
+dropped duplicate tail, wrong color and an empty actual pawn-producer output
+are concrete false-witness controls. The actual producer returns exactly
+[Ply{2,10,0,0}], with full-Ply membership also checked in consumer.bend.
+Only expected typed-obligation failures count; parser/import, linearity,
+resource/timeout/signal failures do not count. Control records label the two
+categories explicitly. This correction preserves the source-provenance theorem.
 Internal lightweight independent theorem-boundary review and a clean-head pinned
 receipt precede stacked draft publication. No merge, adoption or runtime changes.
