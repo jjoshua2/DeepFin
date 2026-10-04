@@ -9,6 +9,7 @@ import ../castle_emission/Spec.bend as E
 import ../castle_safety/Spec.bend as S
 import ../occupancy_insertion/Lattice.bend as L
 import ../ray/Rays.bend as Rays
+import ../bitboard_membership/AllEmittedSound.bend as All
 import ../ray/Trace.bend as Trace
 import ../../../legal_probe/Chess.bend as Chess
 import ../../Tables.bend as Tables
@@ -65,3 +66,18 @@ def diagonal_high() ->
 def first_blocker() ->
   L.subset(G.path(27n,0n,U64.bit(29n)),G.actual(27n,U64.bit(29n))):
   G.actual_coverage(27n,0n,U64.bit(29n),{==},{==})
+
+# Evidence discriminators, reusing the PR1029 actual producer arguments.
+# These concrete conclusions are false when mutated, unlike a true empty-scan
+# provenance predicate whose old proof body merely no longer fits its contract.
+def actual_pawn_output() ->
+  {E.moves(C.candidates(ALeaf{U64.zero()},Candidate.pawn_board(U64.from_u32(4)))) ==
+    Chess.Ply{2,10,0,0} <> Nil{} : List<&2,Chess.Ply>}: {==}
+def outside_test_bit(+bb: U64,+index: Nat,
+  outside: {Nat.is_le(64n,index) == True{} : Bool}) ->
+  {U64.test_bit(bb,index) == False{} : Bool}:
+  All.u64_test_bit_outside(bb,index,outside)
+def outside_64() ->
+  {U64.test_bit(U64{4294967295,4294967295},64n) == False{} : Bool}: {==}
+def queen_diagonal_present() ->
+  {U64.test_bit(G.actual(0n,U64.zero()),9n) == True{} : Bool}: {==}

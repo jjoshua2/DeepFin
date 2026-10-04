@@ -114,7 +114,12 @@ def main() -> None:
                 module_path = Path(filename).resolve()
                 if module_path.suffix == ".py" and module_path.is_relative_to(ENGINE):
                     support.add(str(module_path.relative_to(ENGINE)))
+        correction_paths = {
+            "standalone/proofs/candidate_source_provenance/qualify_candidate_source_provenance.py",
+            "standalone/proofs/candidate_source_provenance/README.md",
+        }
         paths.update(support)
+        paths.update(correction_paths)
         before = source_hashes(paths)
         report["qualification_support_sha256s"] = source_hashes(support)
         report["source_sha256s"] = before
@@ -141,6 +146,7 @@ def main() -> None:
                 for name in ("Coverage.bend", "Query.bend", "consumer.bend",
                              "qualify_prepared_ray_coverage.py", "README.md")
             }
+            allowed.update("native/bend_engine/" + p for p in correction_paths)
             changed = subprocess.run(
                 ["git", "-C", str(PROJECT), "diff", "--no-renames", "--name-only", BASE, "HEAD"],
                 capture_output=True, text=True, check=True, timeout=30).stdout.splitlines()
@@ -182,7 +188,7 @@ def main() -> None:
                 base_blobs[path] = digest
         reused = {}
         for path in sorted(paths):
-            if path.startswith("standalone/proofs/prepared_ray_coverage/"):
+            if path.startswith("standalone/proofs/prepared_ray_coverage/") or path in correction_paths:
                 continue
             raw = (ENGINE / path).read_bytes()
             blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
@@ -190,6 +196,7 @@ def main() -> None:
             if base_blobs.get(remote_path) != blob:
                 raise RuntimeError("dependency differs from intended base: " + path)
             reused[path] = blob
+        report["base_evidence_correction_paths"] = sorted(correction_paths)
         report["reused_dependency_git_blobs"] = reused
         report["reused_dependencies_match_exact_base"] = True
         report["remote_base_tree"] = BASE_TREE
@@ -212,7 +219,11 @@ def main() -> None:
         if not result["passed"]:
             raise RuntimeError("positive consumer check failed")
 
-        controls: tuple[tuple[str, str, str, str, str, tuple[str, ...]], ...] = (("omit-rook-pair-contract","consumer.bend","use_query","r: Q.rook(c,q,side,occ)","r: Unit",("use_query",)),("omit-bishop-pair-contract","consumer.bend","use_query","d: Q.bishop(c,q,side,occ)","d: Unit",("use_query",)),("omit-queen-diagonal-mask","consumer.bend","use_query","(O.pack(c),G.actual(q,occ))","(O.pack(c),Tables.slider(U32.from_nat(q),False{},occ,False{}))",("use_query",)),("wrong-returned-table","consumer.bend","use_query","(O.pack(c),G.actual(q,occ))","(O.pack(O.Cell{U64.zero()}),G.actual(q,occ))",("use_query",)),("omit-square-bound","consumer.bend","use_coverage","Nat.is_lt(q,64n) == True{}","True{} == True{}",("use_coverage",)),("omit-direction-bound","consumer.bend","use_coverage","Nat.is_lt(dir,8n) == True{}","True{} == True{}",("use_coverage",)),("omit-selected-king-equality","consumer.bend","use_coverage","Q.king(b) == U32.from_nat(q) : U32","0 == 0 : U32",("use_coverage",)),("wrong-masked-rook-contract","consumer.bend","use_coverage","r: Q.rook(c,q,Chess.get_turn(b),Chess.occupied(b))","r: {Chess.attack(3,O.pack(c),U32.from_nat(q),Chess.get_turn(b),Chess.occupied(b)) == (O.pack(c),Tables.slider(U32.from_nat(q),False{},Chess.occupied(b),True{})) : Array<U64> & U64}",("use_coverage",)),("omit-actual-member","consumer.bend","use_ray","here: E.member(Chess.Ply{src,dst,0,0},E.moves(C.candidates(generation_table,b)))","here: Unit",("use_ray",)),("vacuous-bypass","consumer.bend","use_ray","Chess.filter_requires(S.sensitive(b,Prepared.rays(c,b)),Chess.Ply{src,dst,0,0}) == False{}","False{} == False{}",("use_ray",)),("disconnected-post-move-occupancy","consumer.bend","use_ray","Chess.occupied(Chess.make_move(b,Chess.Ply{src,dst,0,0}))","U64.zero()",("use_ray",)),("wrong-new-empty-flag","consumer.bend","use_ray","Chess.occupied(Chess.make_move(b,Chess.Ply{src,dst,0,0})),False{},acc)","Chess.occupied(Chess.make_move(b,Chess.Ply{src,dst,0,0})),True{},acc)",("use_ray",)),("false-arbitrary-table-coverage","consumer.bend","uncovered_supplied_table","== False{} : Bool","== True{} : Bool",("uncovered_supplied_table",)),("missing-diagonal-union","Coverage.bend","geometry","U64.or(S.directional(q,0n,occ),S.directional(q,4n,occ))","S.directional(q,0n,occ)",("Coverage.geometric",)))
+        controls: tuple[tuple[str, str, str, str, str, tuple[str, ...]], ...] = (("omit-rook-pair-contract","consumer.bend","use_query","r: Q.rook(c,q,side,occ)","r: Unit",("use_query",)),("omit-bishop-pair-contract","consumer.bend","use_query","d: Q.bishop(c,q,side,occ)","d: Unit",("use_query",)),("omit-queen-diagonal-mask","consumer.bend","use_query","(O.pack(c),G.actual(q,occ))","(O.pack(c),Tables.slider(U32.from_nat(q),False{},occ,False{}))",("use_query",)),("wrong-returned-table","consumer.bend","use_query","(O.pack(c),G.actual(q,occ))","(O.pack(O.Cell{U64.zero()}),G.actual(q,occ))",("use_query",)),("omit-square-bound","consumer.bend","use_coverage","Nat.is_lt(q,64n) == True{}","True{} == True{}",("use_coverage",)),("omit-direction-bound","consumer.bend","use_coverage","Nat.is_lt(dir,8n) == True{}","True{} == True{}",("use_coverage",)),("omit-selected-king-equality","consumer.bend","use_coverage","Q.king(b) == U32.from_nat(q) : U32","0 == 0 : U32",("use_coverage",)),("wrong-masked-rook-contract","consumer.bend","use_coverage","r: Q.rook(c,q,Chess.get_turn(b),Chess.occupied(b))","r: {Chess.attack(3,O.pack(c),U32.from_nat(q),Chess.get_turn(b),Chess.occupied(b)) == (O.pack(c),Tables.slider(U32.from_nat(q),False{},Chess.occupied(b),True{})) : Array<U64> & U64}",("use_coverage",)),("omit-actual-member","consumer.bend","use_ray","here: E.member(Chess.Ply{src,dst,0,0},E.moves(C.candidates(generation_table,b)))","here: Unit",("use_ray",)),("vacuous-bypass","consumer.bend","use_ray","Chess.filter_requires(S.sensitive(b,Prepared.rays(c,b)),Chess.Ply{src,dst,0,0}) == False{}","False{} == False{}",("use_ray",)),("disconnected-post-move-occupancy","consumer.bend","use_ray","Chess.occupied(Chess.make_move(b,Chess.Ply{src,dst,0,0}))","U64.zero()",("use_ray",)),("wrong-new-empty-flag","consumer.bend","use_ray","Chess.occupied(Chess.make_move(b,Chess.Ply{src,dst,0,0})),False{},acc)","Chess.occupied(Chess.make_move(b,Chess.Ply{src,dst,0,0})),True{},acc)",("use_ray",)),("false-arbitrary-table-coverage","consumer.bend","uncovered_supplied_table","== False{} : Bool","== True{} : Bool",("uncovered_supplied_table",)),("missing-diagonal-union","Coverage.bend","geometry","U64.or(S.directional(q,0n,occ),S.directional(q,4n,occ))","S.directional(q,0n,occ)",("Coverage.geometric",)),("actual-pawn-output-cannot-be-empty","consumer.bend","actual_pawn_output","Chess.Ply{2,10,0,0} <> Nil{} : List","Nil{} : List",("actual_pawn_output",)),("nonwrapping-outside-test-bit","consumer.bend","outside_64","== False{} : Bool","== True{} : Bool",("outside_64",)),("queen-retains-diagonal","consumer.bend","queen_diagonal_present","G.actual(0n,U64.zero())","Tables.slider(0,False{},U64.zero(),False{})",("queen_diagonal_present",)))
+        false_witnesses = {
+            "false-arbitrary-table-coverage", "actual-pawn-output-cannot-be-empty",
+            "nonwrapping-outside-test-bit", "queen-retains-diagonal",
+        }
         for name, filename, declaration, old, new, locations in controls:
             target = "standalone/proofs/prepared_ray_coverage/" + filename
             with tempfile.TemporaryDirectory(prefix="deepfin-candidate-source-control-") as tmp:
@@ -225,6 +236,7 @@ def main() -> None:
                 entry = copy_engine / "standalone/proofs/prepared_ray_coverage/consumer.bend"
                 result = run_check(name, entry, compiler, bun, 86400, args.evidence_dir, cpu_affinity)
                 result.update({
+                    "control_kind": ("concrete-false-witness" if name in false_witnesses else "contract-coupling"),
                     "mutation_target": target, "mutation_declaration": declaration, "baseline_sha256": baseline,
                     "mutated_sha256": mutated, "mutation_anchor": old,
                     "replacement": new,
