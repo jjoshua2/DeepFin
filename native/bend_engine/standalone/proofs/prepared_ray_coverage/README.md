@@ -15,7 +15,7 @@ The caller supplies the two lookup contracts, square <64, direction <8, selected
 Use the existing pinned Bend 2.0.21+U64 checkout at `aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae`, Bun 1.4.2, and the verified 84-file checker manifest. The harness hashes the entire import/support closure, verifies reused dependencies against the exact base Git blobs, and on a clean committed head verifies every qualified file against HEAD. Prior evidence and compiler/source identities must remain unchanged.
 
 ```bash
-taskset -c 1,3 env BUN=/home/josh/.bun/bin/bun PYTHONPATH=. \
+taskset -c 1,3 env BUN="$HOME/.bun/bin/bun" PYTHONPATH=. \
   python3 -m native.bend_engine.standalone.proofs.prepared_ray_coverage.qualify_prepared_ray_coverage \
   /tmp/deepfin-king-away-checker-aaeb9bc \
   --checker-manifest /path/to/verified/checker-tree.json \
