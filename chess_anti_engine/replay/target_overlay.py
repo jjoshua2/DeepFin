@@ -322,7 +322,7 @@ def finish_policy_shard(base: Path, output: Path, seal_ref: dict[str, str], *, s
     overlay_content_sha256(output, seal=seal)
 
 
-def _validate_manifest(path: Path, *, seal: BaseSeal | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+def _validate_manifest(path: Path, *, seal: BaseSeal | None = None) -> tuple[dict[str, Any], dict[str, Any], str]:
     require(has_overlay(path), 'missing overlay manifest')
     require(not (path / MANIFEST).is_symlink(), 'linked overlay manifest')
     manifest = json.loads((path / MANIFEST).read_bytes())
@@ -335,7 +335,8 @@ def _validate_manifest(path: Path, *, seal: BaseSeal | None = None) -> tuple[dic
     entry = base_entry(manifest['base_seal'], base, seal=seal)
     require(manifest['identity'] == entry['identity']
             and manifest['base_content_sha256'] == entry['content_sha256'], 'overlay base identity differs')
-    require(_plain_content(path / POLICY) == manifest['target_content_sha256'], 'overlay target changed')
+    local_content, targets = _plain_content_digests(path, (POLICY,))
+    require(targets[POLICY] == manifest['target_content_sha256'], 'overlay target changed')
     local: Any = zarr.open_group(str(path), mode='r')
     original: Any = zarr.open_group(str(base), mode='r')
     require(set(local.array_keys()) == {POLICY}, 'unexpected overlay arrays')
@@ -347,7 +348,7 @@ def _validate_manifest(path: Path, *, seal: BaseSeal | None = None) -> tuple[dic
     target = local[POLICY]
     require(list(target.shape) == entry['identity']['policy_shape']
             and np.dtype(target.dtype).str == entry['identity']['policy_dtype'], 'overlay target layout changed')
-    return manifest, attrs
+    return manifest, attrs, local_content
 
 
 def _validated_overlay(path: Path, seal: BaseSeal) -> _ValidatedOverlay:
@@ -368,8 +369,7 @@ def _validated_overlay(path: Path, seal: BaseSeal) -> _ValidatedOverlay:
         require(tree_stamp(path) == before, 'overlay changed during identity read')
         seal.check_operation()
         return cached
-    manifest, attrs = _validate_manifest(path, seal=seal)
-    local = plain_content_sha256(path)
+    manifest, attrs, local = _validate_manifest(path, seal=seal)
     require(tree_stamp(path) == before, 'overlay changed during identity read')
     base_entry(manifest['base_seal'], Path(manifest['base']), seal=seal)
     seal.check_operation()
@@ -451,29 +451,47 @@ def shard_paths(root: Path) -> list[Path]:
     return sorted(root.glob("shard_*.zarr"))
 
 
-def plain_content_sha256(path: Path) -> str:
-    """Stream a deterministic digest over a Zarr tree's names and bytes."""
+def _plain_content_digests(path: Path, names: tuple[str, ...]) -> tuple[str, dict[str, str]]:
+    """Read each file once while retaining whole-tree and subtree hash formats."""
     root = path.resolve(strict=True)
     if not root.is_dir():
         raise ValueError(f"exact-epoch shard is not a directory: {path}")
+    targets = {name: hashlib.sha256() for name in names}
+    counts = dict.fromkeys(names, 0)
+    for name in names:
+        subtree = root / name
+        require(not has_overlay(subtree), 'overlay chains are unsupported')
+        if not subtree.resolve(strict=True).is_dir():
+            raise ValueError(f"exact-epoch shard is not a directory: {subtree}")
     digest = hashlib.sha256()
     files_seen = 0
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames.sort()
         for filename in sorted(filenames):
             file_path = Path(dirpath) / filename
-            relative = file_path.relative_to(root).as_posix().encode(
-                "utf-8", errors="surrogateescape",
-            )
+            relative_path = file_path.relative_to(root)
+            relative = relative_path.as_posix().encode("utf-8", errors="surrogateescape")
+            name = relative_path.parts[0]
+            target = targets.get(name) if len(relative_path.parts) > 1 else None
             before = file_path.stat()
             digest.update(struct.pack("<I", len(relative)))
             digest.update(relative)
             digest.update(struct.pack("<Q", int(before.st_size)))
+            if target is not None:
+                target_relative = file_path.relative_to(root / name).as_posix().encode(
+                    "utf-8", errors="surrogateescape",
+                )
+                target.update(struct.pack("<I", len(target_relative)))
+                target.update(target_relative)
+                target.update(struct.pack("<Q", int(before.st_size)))
+                counts[name] += 1
             bytes_read = 0
             with file_path.open("rb") as handle:
                 while block := handle.read(1024 * 1024):
                     bytes_read += len(block)
                     digest.update(block)
+                    if target is not None:
+                        target.update(block)
                 after = os.fstat(handle.fileno())
             if (
                 bytes_read != int(before.st_size)
@@ -485,9 +503,14 @@ def plain_content_sha256(path: Path) -> str:
                     f"{path} changed while its exact-epoch content was hashed",
                 )
             files_seen += 1
-    if files_seen == 0:
+    if files_seen == 0 or any(count == 0 for count in counts.values()):
         raise ValueError(f"exact-epoch shard contains no files: {path}")
-    return digest.hexdigest()
+    return digest.hexdigest(), {name: value.hexdigest() for name, value in targets.items()}
+
+
+def plain_content_sha256(path: Path) -> str:
+    """Stream a deterministic digest over a Zarr tree's names and bytes."""
+    return _plain_content_digests(path, ())[0]
 
 
 def qualified_paths(ref: dict[str, str], paths: list[Path]) -> tuple[dict[Path, str], BaseSeal]:
@@ -726,7 +749,7 @@ def finish_target_shard(base: Path, output: Path, seal_ref: dict[str, str], *,
 
 
 def _open_target_manifest(path: Path, manifest: dict[str, Any], *,
-                  seal: BaseSeal | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+                  seal: BaseSeal | None = None) -> tuple[dict[str, Any], dict[str, Any], str]:
     require(manifest.get('schema') == 2 and manifest.get('kind') == 'immutable-target-overlay',
                 'unsupported overlay type/replacement')
     names = _names(manifest['replacements'])
@@ -759,11 +782,12 @@ def _open_target_manifest(path: Path, manifest: dict[str, Any], *,
     require(manifest['identity'] == entry['identity']
                 and manifest['base_content_sha256'] == entry['content_sha256'], 'overlay base identity differs')
     require(set(manifest['target_content_sha256']) == set(names), 'replacement hashes differ')
+    local_content, targets = _plain_content_digests(path, tuple(names))
     for name in names:
-        require(_plain_content(path / name) == manifest['target_content_sha256'][name],
+        require(targets[name] == manifest['target_content_sha256'][name],
                     'overlay target changed')
     require(isinstance(manifest.get('recipe'), dict) and bool(manifest['recipe']), 'missing target recipe')
-    return manifest, _validate_local(path, base, names)
+    return manifest, _validate_local(path, base, names), local_content
 
 
 def qualify_target_roots(roots: list[Path], output: Path, *,
