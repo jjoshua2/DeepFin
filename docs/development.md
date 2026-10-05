@@ -181,3 +181,5 @@ Use checkpoint architecture metadata for comparisons and the resolved YAML for c
 values. For tablebases, inspect both `syzygy_path` and `stockfish_syzygy_path`: they can
 intentionally differ. Record each engine's actual paths and coverage; directory names
 alone do not prove which WDL/DTZ tables are installed.
+
+Overlay storage optimization and reuse boundaries are documented in [overlay qualification reuse](overlay_qualification_reuse.md).

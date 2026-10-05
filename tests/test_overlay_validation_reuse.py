@@ -34,7 +34,7 @@ def test_reuses_dense_validation_once_per_shard_and_preserves_epoch(
     calls: Counter[Path] = Counter()
     original = storage._open_target_manifest
 
-    def counted(path: Path, manifest: dict[str, Any], *, seal: storage.BaseSeal | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    def counted(path: Path, manifest: dict[str, Any], *, seal: storage.BaseSeal | None = None) -> tuple[dict[str, Any], dict[str, Any], str]:
         calls[path] += 1
         return original(path, manifest, seal=seal)
 
