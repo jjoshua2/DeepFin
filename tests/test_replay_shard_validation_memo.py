@@ -305,12 +305,13 @@ def test_a_shard_rewritten_during_the_decode_cannot_ride_a_stale_memo_hit(
     )
 
 
-def test_a_sealed_checksum_failure_drops_the_warm_memo(tmp_path: Path) -> None:
-    """A producer-seal rejection drops the footprint the memo was trusting.
+def test_a_sealed_declaration_failure_drops_the_warm_memo(tmp_path: Path) -> None:
+    """A same-length ``.zarray`` edit keeps the fingerprint and still drops the memo.
 
-    The seal raises inside the load, before the post-decode re-stat. The
-    warm entry has to go with that failure, or a later read of a colliding
-    footprint skips ``validate_arrays``.
+    Decode reshapes with ``order``. Replacing ``C`` with ``F`` does not change
+    the file count, total size, or restored mtime, so the warm entry would
+    skip ``validate_arrays``. The seal raises before that re-stat, and the
+    entry has to go with the failure.
     """
     shard_dir = _write_window(tmp_path, n=1)
     shard = local_shard_path(shard_dir, 0)
@@ -318,8 +319,17 @@ def test_a_sealed_checksum_failure_drops_the_warm_memo(tmp_path: Path) -> None:
 
     assert buf._try_load_shard(shard, context="test") is not None
     assert len(buf._validated_shards) == 1
+    before = buf._shard_validation_fingerprint(shard)
 
-    _poison_policy_rows(shard)
+    meta = shard / "x" / ".zarray"
+    st = meta.stat()
+    text = meta.read_text(encoding="utf-8")
+    needle = '"order": "C"'
+    assert needle in text
+    meta.write_text(text.replace(needle, '"order": "F"', 1), encoding="utf-8")
+    os.utime(meta, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert buf._shard_validation_fingerprint(shard) == before
+
     assert buf._try_load_shard(shard, context="test") is None
     assert buf._validated_shards == {}
 

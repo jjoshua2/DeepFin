@@ -1,10 +1,10 @@
-"""Directory producer density seal: missing chunks fail before fill decoding.
+"""Dense directory producer seal: missing chunks and .zarray edits fail closed.
 
 Synthetic shards only. A 520-row shard is the smallest fixture that makes
 ``save_local_shard_arrays`` emit a second chunk under the production 512-row
-chunker. Unsealed historical shards are not claimed valid: the legacy test
-below shows that stripping the manifest and every array attribute still
-zero-fills a deleted tail and can still complete an epoch.
+chunker. The seal binds raw ``.zarray`` bytes and the stored chunk-key
+inventory. It does not hash chunk payloads. Unsealed stores keep legacy fill,
+including sparse omission, and are not claimed valid.
 """
 from __future__ import annotations
 
@@ -20,9 +20,14 @@ import zarr
 from zarr.storage import DirectoryStore
 
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE
-from chess_anti_engine.replay import packed_zarr as packed
+from chess_anti_engine.replay import directory_seal, packed_zarr as packed
 from chess_anti_engine.replay.buffer import ReplaySample
-from chess_anti_engine.replay.directory_seal import SEAL_ATTR, SEAL_FILENAME
+from chess_anti_engine.replay.directory_seal import (
+    MAX_SEAL_BYTES,
+    SEAL_ATTR,
+    SEAL_FILENAME,
+    write_directory_producer_seal,
+)
 from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer
 from chess_anti_engine.replay.shard import (
     ShardMeta,
@@ -61,7 +66,6 @@ def _write(
     *,
     n: int = 520,
     tail_fill: bool = False,
-    density: str = "dense",
     name: str = "shard_000000.zarr",
 ) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
@@ -77,7 +81,6 @@ def _write(
             input_history_encoding="legacy",
             history_rep_fix=False,
         ),
-        chunk_density=density,
     )
     return path
 
@@ -125,32 +128,34 @@ def _seal(path: Path) -> dict[str, Any]:
     return doc
 
 
-def test_invalid_chunk_density_publishes_nothing(tmp_path: Path) -> None:
-    path = tmp_path / "shard_000000.zarr"
-    samples = [_sample(row, tail_fill=False) for row in range(2)]
-    with pytest.raises(ValueError, match="chunk_density"):
-        save_local_shard_arrays(
-            path,
-            arrs=samples_to_arrays(samples),
-            meta=ShardMeta(positions=2, policy_encoding="lc0_1858", policy_size=COMPACT_POLICY_SIZE),
-            chunk_density="sparse",
-        )
-    assert not path.exists()
-    assert list(tmp_path.glob("._tmp_*")) == []
+def _snapshot(path: Path) -> dict[str, bytes]:
+    return {
+        file.relative_to(path).as_posix(): file.read_bytes()
+        for file in sorted(path.rglob("*"))
+        if file.is_file()
+    }
 
 
-def test_sealed_dense_roundtrip_binds_checksums_outside_group_meta(tmp_path: Path) -> None:
+def _replace_zarray(path: Path, name: str, mutate) -> None:
+    meta = path / name / ".zarray"
+    doc = json.loads(meta.read_text(encoding="utf-8"))
+    assert isinstance(doc, dict)
+    mutate(doc)
+    meta.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_sealed_dense_roundtrip_binds_declaration_outside_group_meta(tmp_path: Path) -> None:
     path = _write(tmp_path / "replay", n=520, tail_fill=False)
     doc = _seal(path)
     assert doc["density"] == "dense"
     assert doc["kind"] == "directory-producer-density-seal"
     wdl = doc["arrays"]["wdl_target"]
     assert isinstance(wdl, dict)
-    assert wdl["elided"] == []
-    assert wdl["order"] == "C"
-    stored = wdl["stored"]
-    assert isinstance(stored, list)
-    assert [item["key"] for item in stored] == ["wdl_target/0", "wdl_target/1"]
+    assert set(wdl) == {"zarray_sha256", "stored"}
+    assert wdl["stored"] == ["wdl_target/0", "wdl_target/1"]
+    raw_zarray = (path / "wdl_target" / ".zarray").read_bytes()
+    assert wdl["zarray_sha256"] == hashlib.sha256(raw_zarray).hexdigest()
+    assert '"order":' in raw_zarray.decode("utf-8") or '"order": ' in raw_zarray.decode("utf-8")
     loaded, meta = load_shard_arrays(path)
     np.testing.assert_array_equal(loaded["wdl_target"], _expected_wdl(520, tail_fill=False))
     assert SEAL_ATTR not in meta
@@ -183,10 +188,6 @@ def test_dense_fill_chunk_stays_stored_and_deletion_fails(
 ) -> None:
     path = _write(tmp_path / "replay", n=520, tail_fill=True)
     assert (path / "wdl_target" / "1").is_file()
-    doc = _seal(path)
-    wdl = doc["arrays"]["wdl_target"]
-    assert isinstance(wdl, dict)
-    assert wdl["elided"] == []
     loaded, _meta = load_shard_arrays(path)
     np.testing.assert_array_equal(loaded["wdl_target"], _expected_wdl(520, tail_fill=True))
     (path / "wdl_target" / "1").unlink()
@@ -196,23 +197,12 @@ def test_dense_fill_chunk_stays_stored_and_deletion_fails(
     assert calls == {"getitem": 0, "decode": 0}
 
 
-def test_sparse_fill_omitted_tail_decodes_as_fill(tmp_path: Path) -> None:
-    path = _write(tmp_path / "replay", n=520, tail_fill=True, density="sparse-fill")
-    assert not (path / "wdl_target" / "1").exists()
-    assert (path / "wdl_target" / "0").is_file()
-    doc = _seal(path)
-    assert doc["density"] == "sparse-fill"
-    wdl = doc["arrays"]["wdl_target"]
-    assert isinstance(wdl, dict)
-    assert wdl["elided"] == ["wdl_target/1"]
-    loaded, _meta = load_shard_arrays(path)
-    np.testing.assert_array_equal(loaded["wdl_target"], _expected_wdl(520, tail_fill=True))
-    assert np.any(np.asarray(loaded["x"][TAIL:]) != 0)
-
-
-def test_sparse_fill_refuses_to_publish_an_omitted_nonzero_chunk(
+def test_missing_chunk_at_publish_preserves_the_existing_shard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    directory = tmp_path / "replay"
+    path = _write(directory, n=520, tail_fill=False)
+    before = _snapshot(path)
     real = DirectoryStore.__setitem__
 
     def skip(self: DirectoryStore, key: str, value: object) -> None:
@@ -221,45 +211,129 @@ def test_sparse_fill_refuses_to_publish_an_omitted_nonzero_chunk(
         real(self, key, value)
 
     monkeypatch.setattr(DirectoryStore, "__setitem__", skip)
+    with pytest.raises(ValueError, match="refusing to publish"):
+        _write(directory, n=520, tail_fill=False)
+    assert _snapshot(path) == before
+    assert list(directory.glob("._tmp_*")) == []
+
+
+def test_oversize_manifest_is_not_stored_and_preserves_the_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     directory = tmp_path / "replay"
+    path = _write(directory, n=8, tail_fill=False)
+    before = _snapshot(path)
+    monkeypatch.setattr(
+        directory_seal,
+        "_canonical_bytes",
+        lambda _doc: b"y" * (MAX_SEAL_BYTES + 1),
+    )
+    with pytest.raises(ValueError, match=f"cap is {MAX_SEAL_BYTES}; refusing to publish"):
+        _write(directory, n=8, tail_fill=False)
+    assert _snapshot(path) == before
+    assert list(directory.glob("._tmp_*")) == []
+    assert MAX_SEAL_BYTES == 4_000_000
+
+
+def test_oversize_manifest_publishes_nothing_when_the_path_is_new(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = tmp_path / "replay"
+    directory.mkdir()
+    monkeypatch.setattr(
+        directory_seal,
+        "_canonical_bytes",
+        lambda _doc: b"y" * (MAX_SEAL_BYTES + 1),
+    )
+    samples = [_sample(row, tail_fill=False) for row in range(2)]
     path = directory / "shard_000000.zarr"
     with pytest.raises(ValueError, match="refusing to publish"):
-        _write(directory, n=520, tail_fill=False, density="sparse-fill")
+        save_local_shard_arrays(
+            path,
+            arrs=samples_to_arrays(samples),
+            meta=ShardMeta(positions=2, policy_encoding="lc0_1858", policy_size=COMPACT_POLICY_SIZE),
+        )
     assert not path.exists()
     assert list(directory.glob("._tmp_*")) == []
 
 
-def test_swapped_chunk_bytes_fail_checksum(
+def test_writer_refuses_the_real_cap_before_assigning_the_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "group.zarr"
+    group = zarr.open_group(str(path), mode="w")
+    group.create_dataset("x", data=np.arange(4, dtype=np.float32), overwrite=True)
+    monkeypatch.setattr(
+        directory_seal,
+        "_canonical_bytes",
+        lambda _doc: b"y" * (MAX_SEAL_BYTES + 1),
+    )
+    with pytest.raises(ValueError, match=f"cap is {MAX_SEAL_BYTES}; refusing to publish"):
+        write_directory_producer_seal(group)
+    assert SEAL_FILENAME not in group.store
+    assert not (path / SEAL_FILENAME).exists()
+
+
+def test_reader_rejects_a_manifest_over_the_same_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _write(tmp_path / "replay", n=8, tail_fill=False)
+    (path / SEAL_FILENAME).write_bytes(b"x" * (MAX_SEAL_BYTES + 1))
+    calls = _forbid_fill_decode(monkeypatch)
+    with pytest.raises(ValueError, match=f"cap is {MAX_SEAL_BYTES}; refusing fill decode"):
+        load_shard_arrays(path)
+    assert calls == {"getitem": 0, "decode": 0}
+
+
+@pytest.mark.parametrize(
+    ("label", "mutate"),
+    [
+        ("order", lambda doc: doc.__setitem__("order", "F")),
+        ("dtype", lambda doc: doc.__setitem__("dtype", "<i4")),
+        ("fill_value", lambda doc: doc.__setitem__("fill_value", 1.0)),
+        ("shape", lambda doc: doc.__setitem__("shape", [int(doc["shape"][0]) + 1, *doc["shape"][1:]])),
+        ("chunks", lambda doc: doc.__setitem__("chunks", [max(1, int(doc["chunks"][0]) - 1), *doc["chunks"][1:]])),
+        ("compressor", lambda doc: doc["compressor"].__setitem__("clevel", int(doc["compressor"]["clevel"]) + 1)),
+        ("filters", lambda doc: doc.__setitem__("filters", [])),
+        (
+            "dimension_separator",
+            lambda doc: doc.__setitem__(
+                "dimension_separator",
+                "/" if doc.get("dimension_separator", ".") == "." else ".",
+            ),
+        ),
+    ],
+)
+def test_zarray_field_edit_fails_before_fill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, label: str, mutate,
+) -> None:
+    path = _write(tmp_path / "replay", n=8, tail_fill=False)
+    before = (path / "x" / ".zarray").read_bytes()
+    _replace_zarray(path, "x", mutate)
+    assert (path / "x" / ".zarray").read_bytes() != before, label
+    calls = _forbid_fill_decode(monkeypatch)
+    with pytest.raises(ValueError, match="declaration for 'x'"):
+        load_shard_arrays(path, validate=False)
+    assert calls == {"getitem": 0, "decode": 0}
+
+
+def test_verify_reads_the_manifest_and_zarray_not_chunk_payloads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = _write(tmp_path / "replay", n=520, tail_fill=False)
-    head = path / "wdl_target" / "0"
-    tail = path / "wdl_target" / "1"
-    head_bytes = head.read_bytes()
-    tail_bytes = tail.read_bytes()
-    assert head_bytes != tail_bytes
-    head.write_bytes(tail_bytes)
-    tail.write_bytes(head_bytes)
-    calls = _forbid_fill_decode(monkeypatch)
-    with pytest.raises(ValueError, match="checksum mismatch"):
-        load_shard_arrays(path)
-    assert calls == {"getitem": 0, "decode": 0}
+    seen: list[str] = []
+    real = directory_seal._raw_bytes
 
+    def wrapped(store: object, key: str, *, publish: bool) -> bytes:
+        seen.append(key)
+        return real(store, key, publish=publish)
 
-def test_fortran_order_edit_fails_before_fill(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``.zarray`` order reshapes each chunk. Checksums do not see that field."""
-    path = _write(tmp_path / "replay", n=8, tail_fill=False)
-    meta = path / "x" / ".zarray"
-    text = meta.read_text(encoding="utf-8")
-    needle = '"order": "C"'
-    assert needle in text
-    meta.write_text(text.replace(needle, '"order": "F"', 1), encoding="utf-8")
-    calls = _forbid_fill_decode(monkeypatch)
-    with pytest.raises(ValueError, match="order for 'x'"):
-        load_shard_arrays(path)
-    assert calls == {"getitem": 0, "decode": 0}
+    monkeypatch.setattr(directory_seal, "_raw_bytes", wrapped)
+    loaded, _meta = load_shard_arrays(path, lazy=True, validate=False)
+    assert int(loaded["x"].shape[0]) == 520
+    assert SEAL_FILENAME in seen
+    assert any(key.endswith(".zarray") for key in seen)
+    assert all(key == SEAL_FILENAME or key.endswith(".zarray") for key in seen)
 
 
 def test_extra_array_fails_closed_before_fill(
@@ -358,6 +432,43 @@ def test_unsealed_missing_tail_still_zero_fills_and_can_complete_an_epoch(
     assert buf.receipt()["rows_realized"] == 520
 
 
+def test_unsealed_sparse_omission_still_fill_decodes(tmp_path: Path) -> None:
+    """A store that never had this seal keeps Zarr fill-elision.
+
+    ``write_empty_chunks=False`` is the existing unsealed behavior. The omitted
+    fill chunk is not required, and the nonzero ``x`` tail is still the stored
+    chunk. This contract does not validate that store.
+    """
+    from numcodecs import Blosc
+
+    path = tmp_path / "plain.zarr"
+    samples = [_sample(row, tail_fill=True) for row in range(520)]
+    group = zarr.open_group(str(path), mode="w")
+    compressor = Blosc(cname="zstd", clevel=2, shuffle=Blosc.BITSHUFFLE)
+    for name, value in samples_to_arrays(samples).items():
+        if str(name).startswith("_"):
+            continue
+        arr = np.asarray(value)
+        lead = min(max(1, int(arr.shape[0])), 512)
+        chunks = (lead,) if arr.ndim == 1 else (lead, *arr.shape[1:])
+        group.create_dataset(
+            name,
+            data=arr,
+            chunks=chunks,
+            compressor=compressor,
+            overwrite=True,
+            write_empty_chunks=False,
+        )
+    assert not (path / "wdl_target" / "1").exists()
+    assert (path / "x" / "1.0.0.0").is_file()
+    assert not (path / SEAL_FILENAME).exists()
+    loaded, _meta = load_shard_arrays(path, validate=False)
+    np.testing.assert_array_equal(
+        np.asarray(loaded["wdl_target"]), _expected_wdl(520, tail_fill=True),
+    )
+    assert np.any(np.asarray(loaded["x"][TAIL:]) != 0)
+
+
 def test_zero_row_sealed_shard_loads_and_is_not_scheduled(tmp_path: Path) -> None:
     directory = tmp_path / "replay"
     path = _write(directory, n=4, tail_fill=False)
@@ -430,11 +541,10 @@ def test_packed_root_seal_is_opaque_and_a_missing_member_fails_before_decode(
 def test_overlay_branch_does_not_treat_a_copied_attribute_as_this_seal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Overlay policy attrs are copied from the base and are not this seal.
+    """Overlay loads skip this seal. A deleted tail still fill-decodes there.
 
-    The overlay branch never opens the directory group for this check. A
-    deleted nonzero tail therefore still fill-decodes there. Ordinary loads of
-    the same directory do not.
+    This test records that limitation. It does not claim the overlay tree is
+    protected. Ordinary loads of the same directory still refuse the hole.
     """
     from chess_anti_engine.replay import target_overlay
 

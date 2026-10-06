@@ -19,7 +19,6 @@ import zarr
 from .target_overlay import BaseSeal
 from .codec_safety import _reject_unsafe_shard_codecs
 from .directory_seal import (
-    DENSITIES,
     verify_directory_producer_seal,
     write_directory_producer_seal,
 )
@@ -1751,20 +1750,15 @@ def save_local_shard_arrays(
     *,
     arrs: dict[str, np.ndarray],
     meta: ShardMeta | dict[str, Any] | None = None,
-    chunk_density: str = "dense",
 ) -> Path:
-    """Write a directory Zarr shard and a producer density seal.
+    """Write a directory Zarr shard and a dense producer seal.
 
-    ``chunk_density`` is ``dense`` (every declared chunk is stored) or
-    ``sparse-fill`` (fill chunks may be omitted after the in-memory slice is
-    checked). The seal is written before the atomic rename. See
-    ``directory_seal`` for the reader contract, including legacy shards that
-    carry neither the manifest nor the per-array attribute.
+    The seal, including its size cap, is checked before the existing
+    delete-then-rename. A refusal removes the temporary directory and leaves
+    an existing destination in place. See ``directory_seal``. A shard with
+    neither the manifest nor the per-array attribute stays on the legacy fill
+    path and is not claimed to be validated.
     """
-    if chunk_density not in DENSITIES:
-        raise ValueError(
-            f"chunk_density must be 'dense' or 'sparse-fill', got {chunk_density!r}"
-        )
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     stored = prune_storage_arrays(arrs)
@@ -1782,22 +1776,14 @@ def save_local_shard_arrays(
         attrs = _meta_with_policy(meta, arrs=stored)
         g.attrs.update(attrs)
         compressor = Blosc(cname="zstd", clevel=2, shuffle=Blosc.BITSHUFFLE)
-        sources: dict[str, np.ndarray] = {}
         for name, value in stored.items():
             if str(name).startswith("_"):
                 continue
             arr = np.asarray(value)
-            sources[name] = arr
-            g.create_dataset(
-                name,
-                data=arr,
-                chunks=_local_chunks(arr),
-                compressor=compressor,
-                overwrite=True,
-                write_empty_chunks=chunk_density == "dense",
-            )
-        write_directory_producer_seal(g, sources, chunk_density)
-  # Atomic replace: remove old, rename new.
+            g.create_dataset(name, data=arr, chunks=_local_chunks(arr), compressor=compressor, overwrite=True)
+        write_directory_producer_seal(g)
+  # Existing replace: remove old, rename new. The seal check above has
+  # already finished; this gap is unchanged.
         if p.exists():
             shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
         tmp.rename(p)
@@ -1869,9 +1855,11 @@ def _load_shard_arrays(
     the untrusted-deserialization guard (issue #411) and runs before any chunk
     is decoded on every path. It also does not skip the directory producer
     seal: when the manifest or a per-array seal attribute is present, the
-    check runs before fill decoding on both the lazy and eager paths. Overlay
-    loads skip it. A shard with neither the manifest nor the attribute keeps
-    the legacy fill behavior and is not claimed to be validated.
+    check runs before fill decoding on both the lazy and eager paths. The
+    seal compares raw ``.zarray`` bytes and the chunk-key inventory. It does
+    not hash chunk payloads. Overlay loads skip it. A shard with neither the
+    manifest nor the attribute keeps the legacy fill behavior and is not
+    claimed to be validated.
 
     ⚑ DEFAULT True, AND THE DEFAULT IS THE POINT. Every other caller -- the
     server's upload handler, the boot-time pending-dir recovery, the inbox
