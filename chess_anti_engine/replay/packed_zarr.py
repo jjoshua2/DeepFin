@@ -16,6 +16,8 @@ import zipfile
 
 from zarr.storage import ZipStore
 
+from .directory_seal import SEAL_FILENAME
+
 
 SUFFIX = ".zarr.zip"
 _NAME = re.compile(r"shard_(\d+)\.zarr(?:\.zip)?\Z")
@@ -68,12 +70,15 @@ def _validate_members(archive: zipfile.ZipFile) -> None:
             or entry.file_size != entry.compress_size
         ):
             raise ValueError(f"unsafe or duplicate packed Zarr member: {name!r}")
-        # Ordinary Zarr v2 files plus the root provenance sidecar emitted by
-        # derivation. Its opaque bytes stay covered by the archive hash; it is
-        # never interpreted as a training array. An overlay or base-binding
-        # JSON cannot be silently ignored by directory-based overlay discovery.
+        # Ordinary Zarr v2 files plus two opaque root sidecars. Provenance
+        # bytes and the directory producer seal stay covered by the archive
+        # hash and are not training arrays. The seal is enforced by the
+        # directory reader when the member is present; this allowlist does not
+        # apply a dense chunk-grid rule. A nested copy of either sidecar, and
+        # any overlay or base-binding JSON, stays rejected.
         if not (
             parts == ["row_provenance.npz"]
+            or parts == [SEAL_FILENAME]
             or parts[-1] in (".zgroup", ".zattrs", ".zarray", ".zmetadata")
             or all(part.isdecimal() for part in parts[-1].split("."))
         ):

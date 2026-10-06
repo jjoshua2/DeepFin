@@ -13,6 +13,7 @@ from chess_anti_engine.replay import game_epoch as game_epoch_module
 from chess_anti_engine.replay import disk_buffer as disk_buffer_module
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.replay.buffer import ReplaySample
+from chess_anti_engine.replay.directory_seal import SEAL_ATTR, SEAL_FILENAME
 from chess_anti_engine.replay import game_epoch as epoch_tool
 from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer
 from chess_anti_engine.replay.shard import (
@@ -102,6 +103,20 @@ def _open(
         objective_mask_counter=objective_mask_counter,
         **kwargs,
     )
+
+
+def _drop_producer_seal(path: Path) -> None:
+    """Leave the legacy on-disk condition: no manifest and no array attribute.
+
+    A sealed shard refuses the following edits at load. These tests cover the
+    later semantic checks, which remain the ones that fire when both are absent.
+    """
+    group = zarr.open_group(str(path), mode="a")
+    if SEAL_FILENAME in group.store:
+        del group.store[SEAL_FILENAME]
+    for name in list(group.array_keys()):
+        if SEAL_ATTR in group[name].attrs:
+            del group[name].attrs[SEAL_ATTR]
 
 
 def _drain(buf: GameAwareEpochBuffer) -> list[list[tuple[int, int]]]:
@@ -812,7 +827,9 @@ def test_active_orphaned_optional_field_is_refused_during_plan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     shard_dir = _write(tmp_path / "replay", [[(0, 0), (1, 1)]])
-    shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
+    shard_path = shard_dir / "shard_000000.zarr"
+    _drop_producer_seal(shard_path)
+    shard = zarr.open_group(str(shard_path), mode="a")
     shard.create_dataset(
         "has_moves_left",
         data=np.array([1, 0], dtype=np.uint8),
@@ -1150,7 +1167,9 @@ def test_game_multiplicities_are_rechecked_after_planning(
 
     # Keep the same rows, schema and set of ids while moving one row from game
     # 0 to game 1.  Membership-only validation accepts this but the planned
-    # per-game deadlines no longer describe the decoded shard.
+    # per-game deadlines no longer describe the decoded shard. Drop the producer
+    # seal first: a sealed shard refuses the rewritten chunk bytes at load.
+    _drop_producer_seal(shard_dir / "shard_000000.zarr")
     shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
     shard["game_id"][:] = np.asarray([0, 1, 1, 1], dtype=np.int64)
     monkeypatch.setattr(
@@ -1187,6 +1206,7 @@ def test_objective_census_is_banked_and_rechecked_at_decode(
     assert buf.exact_objective_mask_weights == {"policy": 3.0}
     assert buf.plan.as_dict()["objective_mask_weights"] == {"policy": 3.0}
 
+    _drop_producer_seal(shard_dir / "shard_000000.zarr")
     shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
     shard["has_policy"][0] = False
     monkeypatch.setattr(

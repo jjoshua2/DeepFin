@@ -1570,6 +1570,11 @@ class DiskReplayBuffer:
             arrs, _ = load_shard_arrays(sp, lazy=False, validate=not already_validated)
         except Exception as exc:
             self._note_shard_load_failure(sp, exc, context=context)
+            # The producer seal raises before arrays exist, so the re-stat
+            # below never runs. A warm footprint must not survive a rejected
+            # read: the next load has to re-check.
+            with self._validation_memo_lock:
+                self._validated_shards.pop(key, None)
             return None
 
   # ⚑⚑ RE-STAT AFTER THE DECODE, AND THE PR THAT ADDED THIS MEMO GOT IT WRONG.
