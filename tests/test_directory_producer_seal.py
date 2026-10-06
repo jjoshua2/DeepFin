@@ -147,6 +147,7 @@ def test_sealed_dense_roundtrip_binds_checksums_outside_group_meta(tmp_path: Pat
     wdl = doc["arrays"]["wdl_target"]
     assert isinstance(wdl, dict)
     assert wdl["elided"] == []
+    assert wdl["order"] == "C"
     stored = wdl["stored"]
     assert isinstance(stored, list)
     assert [item["key"] for item in stored] == ["wdl_target/0", "wdl_target/1"]
@@ -241,6 +242,22 @@ def test_swapped_chunk_bytes_fail_checksum(
     tail.write_bytes(head_bytes)
     calls = _forbid_fill_decode(monkeypatch)
     with pytest.raises(ValueError, match="checksum mismatch"):
+        load_shard_arrays(path)
+    assert calls == {"getitem": 0, "decode": 0}
+
+
+def test_fortran_order_edit_fails_before_fill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``.zarray`` order reshapes each chunk. Checksums do not see that field."""
+    path = _write(tmp_path / "replay", n=8, tail_fill=False)
+    meta = path / "x" / ".zarray"
+    text = meta.read_text(encoding="utf-8")
+    needle = '"order": "C"'
+    assert needle in text
+    meta.write_text(text.replace(needle, '"order": "F"', 1), encoding="utf-8")
+    calls = _forbid_fill_decode(monkeypatch)
+    with pytest.raises(ValueError, match="order for 'x'"):
         load_shard_arrays(path)
     assert calls == {"getitem": 0, "decode": 0}
 

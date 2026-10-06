@@ -4,8 +4,11 @@
 Zarr store and records that file's sha256 on every array attribute
 ``directory_producer_seal_sha256``. The seal is a manifest of the chunk keys
 the producer actually stored, plus the sha256 of each key's raw store bytes
-(the compressed chunk file, not a decoded array). ``load_shard_arrays`` checks
-it after the codec allowlist and before any chunk is decoded.
+(the compressed chunk file, not a decoded array). It also binds each
+array's ``.zarray`` ``order``: decode reshapes a chunk with that field, so a
+C-to-F edit changes the returned values without touching the compressed
+bytes. ``load_shard_arrays`` checks the seal after the codec allowlist and
+before any chunk is decoded.
 
 Two producer densities, one per shard:
 
@@ -67,7 +70,8 @@ MAX_SEAL_BYTES = 4_000_000
 
 _DOC_KEYS = frozenset({"schema", "kind", "density", "arrays"})
 _ARRAY_KEYS = frozenset({
-    "shape", "chunks", "dtype", "fill_value", "dimension_separator", "stored", "elided",
+    "shape", "chunks", "dtype", "fill_value", "order", "dimension_separator",
+    "stored", "elided",
 })
 _STORED_KEYS = frozenset({"key", "sha256"})
 _HEX64 = frozenset("0123456789abcdef")
@@ -278,6 +282,7 @@ def _spec_for_array(arr: Any, source: np.ndarray, density: str) -> dict[str, Any
         "chunks": list(chunks),
         "dtype": np.dtype(arr.dtype).str,
         "fill_value": _encode_fill(arr.fill_value, np.dtype(arr.dtype)),
+        "order": _order_of(arr),
         "dimension_separator": separator,
         "stored": stored,
         "elided": elided,
@@ -308,6 +313,11 @@ def _verify_array(
         raise ValueError(
             f"directory producer seal dtype for {name!r} does not match the "
             "array; refusing fill decode"
+        )
+    if spec["order"] != _order_of(arr):
+        raise ValueError(
+            f"directory producer seal order for {name!r} does not match "
+            "the array; refusing fill decode"
         )
     if spec["dimension_separator"] != _separator_of(arr):
         raise ValueError(
@@ -389,6 +399,16 @@ def _chunks_of(arr: Any) -> tuple[int, ...]:
             "refusing the directory producer seal"
         )
     return chunks
+
+
+def _order_of(arr: Any) -> str:
+    order = arr.order
+    if order not in ("C", "F"):
+        raise ValueError(
+            f"{arr.path} order {order!r} is not 'C' or 'F'; "
+            "refusing the directory producer seal"
+        )
+    return str(order)
 
 
 def _separator_of(arr: Any) -> str:
