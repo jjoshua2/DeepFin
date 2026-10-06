@@ -9,7 +9,10 @@ The manifest is a dense inventory:
 - Each array entry is the sha256 of that array's raw ``.zarray`` bytes. Decode
   uses the whole file (shape, chunks, dtype, fill value, order, filters,
   compressor, dimension separator, zarr format), so any edit of those bytes
-  fails before fill decoding.
+  fails before fill decoding. Zarr caches that metadata at open and decode
+  keeps using the cache. The check therefore installs these approved bytes
+  onto the array object that will be decoded, so a file restored between the
+  open and this read cannot leave a different order or dtype in that cache.
 - Each array entry lists the stored chunk keys and nothing about their payload
   bytes. The list must equal the grid declared by the bound ``.zarray``. A
   missing, extra, or renamed key fails before fill decoding.
@@ -45,6 +48,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -112,10 +116,15 @@ def write_directory_producer_seal(group: Any) -> None:
             )
 
 
-def verify_directory_producer_seal(group: Any) -> None:
+def verify_directory_producer_seal(
+    group: Any,
+    opened: Mapping[str, Any] | None = None,
+) -> None:
     """No-op only when the seal file and every array attribute are absent.
 
     Any other shape fails closed before the caller decodes chunk bytes.
+    ``opened`` is the array objects decode will use. When a name is present
+    there, the approved ``.zarray`` bytes are installed onto that object.
     """
     store = group.store
     names = _array_names(group)
@@ -170,7 +179,7 @@ def verify_directory_producer_seal(group: Any) -> None:
     digest = hashlib.sha256(raw).hexdigest()
     listed = _store_keys(store)
     for name in names:
-        arr = group[name]
+        arr = opened[name] if opened is not None and name in opened else group[name]
         if SEAL_ATTR not in arr.attrs or arr.attrs[SEAL_ATTR] != digest:
             raise ValueError(
                 f"directory producer seal attribute on {name!r} does not match "
@@ -241,11 +250,13 @@ def _verify_array(
     listed: list[str],
 ) -> None:
     _require_v2(arr)
-    if _sha256(arr, publish=False) != _hex_digest(name, spec["zarray_sha256"]):
+    raw = _raw_bytes(arr.store, _zarray_key(arr), publish=False)
+    if hashlib.sha256(raw).hexdigest() != _hex_digest(name, spec["zarray_sha256"]):
         raise ValueError(
             f"directory producer seal declaration for {name!r} does not match "
             "the .zarray bytes; refusing fill decode"
         )
+    _install_approved_metadata(name, arr, raw)
     declared = _declared_keys(arr)
     stored = _stored_keys(name, spec["stored"])
     if stored != declared:
@@ -266,6 +277,83 @@ def _verify_array(
             f"directory producer seal stored chunk {missing[0]!r} for "
             f"{name!r} is missing; refusing fill decode"
         )
+
+
+class _ApprovedBytes:
+    """Store view that serves one already-hashed ``.zarray`` payload."""
+
+    def __init__(self, store: Any, key: str, raw: bytes) -> None:
+        self._store = store
+        self._key = key
+        self._raw = raw
+
+    def __getitem__(self, item: str) -> Any:
+        if item == self._key:
+            return self._raw
+        return self._store[item]
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._store, name)
+
+
+def _install_approved_metadata(name: str, arr: Any, raw: bytes) -> None:
+    """Reload ``arr`` from the bytes just hashed, not from a later file read.
+
+    ``group[name]`` constructs a new array, so this has to run on the object
+    the caller will decode. ``cache_metadata`` then keeps that metadata.
+    """
+    store = arr._store
+    key = _zarray_key(arr)
+    arr._store = _ApprovedBytes(store, key, raw)
+    try:
+        arr._load_metadata()
+    except Exception as exc:
+        raise ValueError(
+            f"directory producer seal declaration for {name!r} could not be "
+            "decoded; refusing fill decode"
+        ) from exc
+    finally:
+        arr._store = store
+    try:
+        decoded = store._metadata_class.decode_array_metadata(raw)
+    except Exception as exc:
+        raise ValueError(
+            f"directory producer seal declaration for {name!r} could not be "
+            "decoded; refusing fill decode"
+        ) from exc
+    cached = getattr(arr, "_meta", None)
+    if not isinstance(cached, Mapping) or not _meta_matches(cached, decoded):
+        raise ValueError(
+            f"directory producer seal declaration for {name!r} does not match "
+            "the cached .zarray metadata; refusing fill decode"
+        )
+
+
+def _meta_matches(cached: Any, decoded: Any) -> bool:
+    if isinstance(cached, Mapping) and isinstance(decoded, Mapping):
+        if set(cached) != set(decoded):
+            return False
+        return all(_meta_matches(cached[key], decoded[key]) for key in cached)
+    if isinstance(cached, (list, tuple)) and isinstance(decoded, (list, tuple)):
+        return len(cached) == len(decoded) and all(
+            _meta_matches(left, right) for left, right in zip(cached, decoded, strict=True)
+        )
+    if _both_nan(cached, decoded):
+        return True
+    return bool(cached == decoded)
+
+
+def _both_nan(left: Any, right: Any) -> bool:
+    if isinstance(left, (str, bytes, bool, int, Mapping, list, tuple)):
+        return False
+    if isinstance(right, (str, bytes, bool, int, Mapping, list, tuple)):
+        return False
+    try:
+        left_float = float(left)
+        right_float = float(right)
+    except (TypeError, ValueError):
+        return False
+    return math.isnan(left_float) and math.isnan(right_float)
 
 
 def _require_v2(arr: Any) -> None:

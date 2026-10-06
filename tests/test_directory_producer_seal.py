@@ -317,6 +317,75 @@ def test_zarray_field_edit_fails_before_fill(
     assert calls == {"getitem": 0, "decode": 0}
 
 
+def test_restored_zarray_must_match_the_metadata_cached_at_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Open caches order F. The sealed bytes are what get installed, even if the file is forged again after the hash."""
+    samples = []
+    for row in range(2):
+        grid = np.zeros((PLANES, 8, 8), dtype=np.float32)
+        grid[0, 0, 0] = 1.0
+        grid[1, 7, 7] = 2.0
+        policy = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.float32)
+        policy[0] = 1.0
+        legal = np.zeros_like(policy, dtype=np.uint8)
+        legal[0] = 1
+        item = ReplaySample(
+            x=grid,
+            policy_target=policy,
+            legal_mask=legal,
+            wdl_target=row % 3,
+            priority=1.0,
+            has_policy=True,
+            game_id=row,
+            ply_index=row,
+        )
+        item.input_history_encoding = "legacy"
+        item.history_rep_fix = False
+        samples.append(item)
+    path = tmp_path / "shard.zarr"
+    save_local_shard_arrays(
+        path,
+        arrs=samples_to_arrays(samples),
+        meta=ShardMeta(
+            positions=2,
+            policy_encoding="lc0_1858",
+            policy_size=COMPACT_POLICY_SIZE,
+            input_history_encoding="legacy",
+            history_rep_fix=False,
+        ),
+    )
+    original = (path / "x" / ".zarray").read_bytes()
+    forged_doc = json.loads(original)
+    forged_doc["order"] = "F"
+    forged = json.dumps(forged_doc).encode()
+    (path / "x" / ".zarray").write_bytes(forged)
+    from chess_anti_engine.replay import shard as shard_mod
+
+    real_guard = shard_mod._reject_unsafe_shard_codecs
+    restored = {"done": False}
+
+    def restore_after_open(proxies: dict[str, Any]) -> None:
+        if not restored["done"]:
+            (path / "x" / ".zarray").write_bytes(original)
+            restored["done"] = True
+        real_guard(proxies)
+
+    real_raw = directory_seal._raw_bytes
+
+    def forge_after_hash(store: object, key: str, *, publish: bool) -> bytes:
+        data = real_raw(store, key, publish=publish)
+        if key == "x/.zarray":
+            (path / "x" / ".zarray").write_bytes(forged)
+        return data
+
+    monkeypatch.setattr(shard_mod, "_reject_unsafe_shard_codecs", restore_after_open)
+    monkeypatch.setattr(directory_seal, "_raw_bytes", forge_after_hash)
+    loaded, _meta = load_shard_arrays(path, validate=True)
+    assert float(loaded["x"][0, 1, 7, 7]) == 2.0
+    assert json.loads((path / "x" / ".zarray").read_text(encoding="utf-8"))["order"] == "F"
+
+
 def test_verify_reads_the_manifest_and_zarray_not_chunk_payloads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

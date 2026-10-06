@@ -1856,7 +1856,8 @@ def _load_shard_arrays(
     is decoded on every path. It also does not skip the directory producer
     seal: when the manifest or a per-array seal attribute is present, the
     check runs before fill decoding on both the lazy and eager paths. The
-    seal compares raw ``.zarray`` bytes and the chunk-key inventory. It does
+    seal compares raw ``.zarray`` bytes and the chunk-key inventory, then
+    installs those bytes onto the opened arrays before fill decoding. It does
     not hash chunk payloads. Overlay loads skip it. A shard with neither the
     manifest nor the attribute keeps the legacy fill behavior and is not
     claimed to be validated.
@@ -1917,7 +1918,11 @@ def _load_shard_arrays(
     # worker, and the inbox loop) and would let the two walks drift apart.
     _reject_unsafe_shard_codecs(proxies)
     if group is not None:
-        verify_directory_producer_seal(group)
+        # Rebinds ``proxies`` onto the approved .zarray bytes. The guard above
+        # saw the metadata from open; decode uses the cache after this call,
+        # so the same guard runs on those objects again.
+        verify_directory_producer_seal(group, proxies)
+        _reject_unsafe_shard_codecs(proxies)
     if lazy:
         arrs: dict[str, Any] = proxies
         _attach_identity_meta_arrays(arrs, meta)
