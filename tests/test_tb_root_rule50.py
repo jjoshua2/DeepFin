@@ -206,7 +206,7 @@ def test_checkmate_at_high_clock_stays_a_certain_win(monkeypatch: pytest.MonkeyP
     assert picked[1] == 2
 
 
-def test_probe_error_skips_that_move(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_probe_error_falls_back_from_root_shortcut(monkeypatch: pytest.MonkeyPatch) -> None:
     board = chess.Board("8/8/k7/8/8/8/8/4K2R w - - 0 1")
     quiet = []
     for move in board.legal_moves:
@@ -229,7 +229,8 @@ def test_probe_error_skips_that_move(monkeypatch: pytest.MonkeyPatch) -> None:
         by_uci={kept.uci(): -4},
         default=-30,
     ))
-    assert tbmod.probe_best_move(board, "generated") == kept
+    assert tbmod.probe_best_move(board, "generated") is None
+    assert tbmod.try_tb_root_move(board, "generated") is None
 
 
 def test_available_fifty_move_claim_does_not_turn_a_loss_into_a_draw(
@@ -305,3 +306,64 @@ def test_ineligible_castling_position_is_not_probed(monkeypatch: pytest.MonkeyPa
     board = chess.Board()
     assert tbmod.probe_best_move(board, "generated") is None
     assert called is False
+
+
+def test_missing_winning_child_does_not_select_a_known_loss(monkeypatch: pytest.MonkeyPatch) -> None:
+    board = chess.Board("4k3/8/8/8/8/8/p7/R3K3 w - - 0 40")
+
+    class Partial(ScriptedTable):
+        def probe_wdl(self, child: chess.Board) -> int:
+            if child.turn != self.root_turn and child.halfmove_clock == 0:
+                raise KeyError("generated missing winning capture")
+            return super().probe_wdl(child)
+
+    _install(monkeypatch, Partial(
+        root_turn=chess.WHITE, pawn_square=chess.A2,
+        quiet_child_dtz=4, zero_child_dtz=-80,
+    ))
+    original = board.fen()
+    assert tbmod.try_tb_root_move(board, "generated") is None
+    assert board.fen() == original
+
+
+@pytest.mark.parametrize("clock", [100, 149])
+def test_immediate_mate_outranks_an_available_draw_claim(
+    monkeypatch: pytest.MonkeyPatch, clock: int,
+) -> None:
+    board = chess.Board(f"k7/8/1K6/8/8/8/8/6Q1 w - - {clock} 40")
+    _install(monkeypatch, MoveTable(root_turn=chess.WHITE, by_uci={}, default=-4))
+    assert tbmod.try_tb_root_move(board, "generated") == (chess.Move.from_uci("g1g8"), 2)
+
+
+def test_zeroing_win_after_available_claim_resets_the_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+    board = chess.Board("4k3/8/8/8/8/8/p7/R3K3 w - - 100 40")
+    _install(monkeypatch, ScriptedTable(
+        root_turn=chess.WHITE, pawn_square=chess.A2,
+        quiet_child_dtz=-20, zero_child_dtz=-80,
+    ))
+    assert tbmod.try_tb_root_move(board, "generated") == (chess.Move.from_uci("a1a2"), 2)
+
+
+@pytest.mark.parametrize("fen", [
+    "k7/8/1K6/8/8/8/8/6Q1 w - - 150 40",
+    "4k3/8/8/8/8/8/p7/R3K3 w - - 150 40",
+])
+def test_finished_seventyfive_move_draw_has_no_root_shortcut(
+    monkeypatch: pytest.MonkeyPatch, fen: str,
+) -> None:
+    board = chess.Board(fen)
+    assert board.is_seventyfive_moves()
+    monkeypatch.setattr(tbmod, "get_tablebase", lambda _path: pytest.fail("finished root probed"))
+    assert tbmod.probe_best_move(board, "generated") is None
+    assert tbmod.try_tb_root_move(board, "generated") is None
+
+
+def test_finished_fivefold_draw_has_no_root_shortcut(monkeypatch: pytest.MonkeyPatch) -> None:
+    board = chess.Board("7k/8/8/8/8/8/R7/K7 w - - 0 1")
+    for _ in range(4):
+        for uci in ("a2b2", "h8g8", "b2a2", "g8h8"):
+            board.push_uci(uci)
+    assert board.is_fivefold_repetition()
+    monkeypatch.setattr(tbmod, "get_tablebase", lambda _path: pytest.fail("finished root probed"))
+    assert tbmod.probe_best_move(board, "generated") is None
+    assert tbmod.try_tb_root_move(board, "generated") is None

@@ -328,6 +328,10 @@ def _select_dtz_move(
     """Best legal move and its DTZ from the mover's perspective."""
     if not is_tb_eligible(board):
         return None
+    # Automatic draws have already ended the game. A claimable draw may
+    # still be declined in favor of a zeroing move or immediate mate.
+    if board.is_game_over(claim_draw=False):
+        return None
     tablebase = get_tablebase(syzygy_path)
     if tablebase is None:
         return None
@@ -342,12 +346,13 @@ def _select_dtz_move(
             try:
                 dtz = _dtz_of_played_move(board, tablebase)
             except _TB_PROBE_ERRORS:
-                dtz = None
+                # Incomplete children cannot prove this root shortcut optimal.
+                return None
             except Exception as exc:
                 _log.debug(
                     "syzygy move probe failed %s %s: %r", board.fen(), move, exc,
                 )
-                dtz = None
+                return None
         finally:
             board.pop()
         if dtz is None:
@@ -369,7 +374,7 @@ def probe_best_move(board: chess.Board, syzygy_path: str) -> chess.Move | None:
     not by the next phase's DTZ. Non-zeroing moves add the root halfmove
     clock, so a short table distance that crosses the 50-move boundary loses
     to a zeroing move that keeps the win. Returns ``None`` if the position
-    is not eligible or every legal probe fails.
+    is ineligible, already finished, or any legal child probe fails.
     """
     picked = _select_dtz_move(board, syzygy_path)
     if picked is None:
@@ -430,6 +435,8 @@ def try_tb_root_move(
     with this counter (``dtz + halfmove_clock <= 100``); -2 means it still
     loses (``|dtz| + halfmove_clock <= 100``). +1 and -1 are results the
     50-move rule draws, which UCI's root shortcut already maps to score 0.
+    Zeroing moves reset the counter; immediate mate takes precedence over
+    a draw reached by that move. Already finished roots return ``None``.
     Raw ``probe_wdl`` assumes the counter is zero and is not what this returns.
 
     Used by UCI's root shortcut to bypass MCTS when the root is in TB range.
@@ -438,7 +445,11 @@ def try_tb_root_move(
     if picked is None:
         return None
     move, dtz = picked
-    return move, _wdl_adjusted_for_rule50(dtz, board.halfmove_clock)
+    child = board.copy(stack=False)
+    child.push(move)
+    # A zeroing move resets the counter; mate ends the game before a claim.
+    counter = 0 if child.halfmove_clock == 0 or child.is_checkmate() else board.halfmove_clock
+    return move, _wdl_adjusted_for_rule50(dtz, counter)
 
 
 # ---- In-search WDL overrides ------------------------------------------------
