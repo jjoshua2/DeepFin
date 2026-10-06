@@ -1147,14 +1147,20 @@ def test_foreign_net_audit_stamps_the_heads_it_RESOLVED_not_the_flags() -> None:
         history_fill="repeat", policy_output=None, wdl_output=None,
     )
     monkey = pytest.MonkeyPatch()
-    monkey.setattr(fna, "_session", lambda *a, **k: (_Sess(), "in", np.dtype(np.float32)))
+    monkey.setattr(fna, "_session", lambda *_a, **_k: (_Sess(), "in", np.dtype(np.float32)))
     try:
         _pol, _wdl, heads = fna._score_onnx([chess.Board()], args)
     finally:
         monkey.undo()
     # Widths are [3, 1858] with the WDL head FIRST — the resolved names cannot
-    # be recovered from the flags, both of which are None.
-    assert heads == {"policy_output": "policy", "wdl_output": "value"}
+    # be recovered from the flags, both of which are None. Zeros are
+    # non-negative but do not sum to 1, so the start-position probe freezes
+    # logits.
+    assert heads == {
+        "policy_output": "policy",
+        "wdl_output": "value",
+        "wdl_output_kind": "logits",
+    }
 
 
 def test_stored_mode_names_the_matched_rows_snapshot_in_the_stamp() -> None:
