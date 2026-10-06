@@ -38,10 +38,12 @@ attribute together is a new producer statement. Replacing a chunk's bytes
 without renaming the key is outside this contract.
 
 Window accounting reads the row count from the ``.zarray`` bytes that matched
-the seal. Every array still in the group must carry the manifest digest, and
-a missing sibling array does not zero the count. A digest or declaration
-mismatch counts as no rows, so rewriting one array's shape cannot inflate
-deletion. An unsealed shard still returns the shape stored on disk.
+the seal, and only when the chunk grid in those bytes equals the sealed
+inventory. Every array still in the group must carry the manifest digest. A
+missing sibling array does not zero the count. A mismatch counts as no rows,
+so a forged shape cannot inflate deletion. An unsealed shard still returns
+the shape stored on disk. A directory entry that decode will not open as a
+file, including a dangling symlink, is not a stored chunk.
 
 Overlay loads do not run this check. ``begin_policy_shard`` copies policy
 ``.zattrs``, so an overlay tree can carry the attribute without this manifest.
@@ -176,8 +178,9 @@ def sealed_row_count(group: Any, name: str) -> int | None:
     """Rows in a sealed ``.zarray``, or None when the shard is unsealed.
 
     Every array still in the group must carry the manifest digest. The count
-    is parsed from the ``.zarray`` bytes that matched the seal. A missing
-    sibling array is allowed. A declaration or digest mismatch raises.
+    is parsed from the ``.zarray`` bytes that matched the seal, and only when
+    the chunk grid in those bytes equals the sealed inventory. A missing
+    sibling array is allowed. A declaration, digest, or grid mismatch raises.
     """
     loaded = _manifest(group)
     if loaded is None:
@@ -196,7 +199,13 @@ def sealed_row_count(group: Any, name: str) -> int | None:
                 f"directory producer seal attribute on {present!r} does not "
                 "match the manifest bytes; refusing fill decode"
             )
-    raw = _declaration_bytes(name, group[name], arrays[name], digest)
+    spec = arrays[name]
+    raw = _declaration_bytes(name, group[name], spec, digest)
+    if _grid_keys(name, raw) != _stored_keys(name, spec["stored"]):
+        raise ValueError(
+            f"directory producer seal chunk grid for {name!r} does not match "
+            "the declared coordinates; refusing fill decode"
+        )
     return _rows_in_zarray(name, raw)
 
 
@@ -484,11 +493,89 @@ def _is_array_meta(arr: Any, key: str) -> bool:
 
 
 def _present_chunks(arr: Any, listed: list[str]) -> set[str]:
+    """Chunk keys decode can open. A dangling name is not one of them."""
+    store = arr.store
     prefix = _prefix(arr)
-    return {
-        key for key in listed
-        if key.startswith(prefix) and not _is_array_meta(arr, key)
-    }
+    present: set[str] = set()
+    for key in listed:
+        if not key.startswith(prefix) or _is_array_meta(arr, key):
+            continue
+        if _store_has_file(store, key):
+            present.add(key)
+    return present
+
+
+def _store_has_file(store: Any, key: str) -> bool:
+    """Whether ``key in store`` is true, the check chunk decode uses."""
+    try:
+        return bool(key in store)
+    except Exception as exc:
+        raise ValueError(
+            f"directory producer seal cannot stat {key!r}; "
+            "refusing the directory producer seal"
+        ) from exc
+
+
+def _grid_keys(name: str, raw: bytes) -> list[str]:
+    """Chunk keys declared by these ``.zarray`` bytes, in inventory order."""
+    try:
+        doc = json.loads(raw)
+        shape = doc["shape"]
+        chunks = doc["chunks"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ValueError(
+            f"directory producer seal declaration for {name!r} has no chunk "
+            "grid; refusing fill decode"
+        ) from exc
+    if (
+        not isinstance(shape, list)
+        or not isinstance(chunks, list)
+        or not shape
+        or len(shape) != len(chunks)
+    ):
+        raise ValueError(
+            f"directory producer seal declaration for {name!r} has no chunk "
+            "grid; refusing fill decode"
+        )
+    separator = doc.get("dimension_separator", ".")
+    if separator not in (".", "/"):
+        raise ValueError(
+            f"directory producer seal declaration for {name!r} has chunk "
+            f"separator {separator!r}; refusing fill decode"
+        )
+    dims: list[int] = []
+    product = 1
+    for index, (length, chunk) in enumerate(zip(shape, chunks, strict=True)):
+        if (
+            isinstance(length, bool)
+            or isinstance(chunk, bool)
+            or not isinstance(length, int)
+            or not isinstance(chunk, int)
+            or length < 0
+            or chunk <= 0
+        ):
+            raise ValueError(
+                f"directory producer seal declaration for {name!r} has axis "
+                f"{index} shape {length!r} chunk {chunk!r}; refusing fill decode"
+            )
+        count = math.ceil(length / chunk)
+        dims.append(count)
+        product *= count
+        if product > MAX_DECLARED_CHUNKS:
+            raise ValueError(
+                f"{name} declares {product} chunks; "
+                f"seal cap is {MAX_DECLARED_CHUNKS}"
+            )
+    if any(dim == 0 for dim in dims):
+        coords: list[tuple[int, ...]] = []
+    else:
+        coords = list(itertools.product(*(range(dim) for dim in dims)))
+    keys = [
+        f"{name}/{separator.join(str(coord) for coord in point)}"
+        for point in coords
+    ]
+    keys.sort()
+    return keys
 
 
 def _declared_keys(arr: Any) -> list[str]:
