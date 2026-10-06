@@ -262,7 +262,16 @@ def _dtz_of_played_move(child: chess.Board, tablebase: chess.syzygy.Tablebase) -
     """
     if child.is_checkmate():
         return 1
-    if child.is_stalemate() or child.is_insufficient_material() or child.can_claim_draw():
+    # A claim the side to move could reach by playing on is not a draw yet:
+    # can_claim_draw() is true at halfmove 99 whenever a quiet move exists.
+    # Stockfish zeros DTZ only for a draw that has already happened
+    # (is_draw / is_repetition at one ply).
+    if (
+        child.is_stalemate()
+        or child.is_insufficient_material()
+        or child.is_fifty_moves()
+        or child.is_repetition(3)
+    ):
         return 0
     if child.halfmove_clock == 0:
         our_wdl = -int(tablebase.probe_wdl(child))
@@ -281,27 +290,35 @@ def _dtz_of_played_move(child: chess.Board, tablebase: chess.syzygy.Tablebase) -
 def _rule50_dtz_key(dtz: int, halfmove_clock: int) -> tuple[int, int]:
     """Higher is better. ``halfmove_clock`` is the counter before the move.
 
-    Class order is Stockfish ``root_probe``: a win that satisfies
-    ``dtz + counter <= 99``, then a win that does not, then a draw, then a
-    loss the 50-move rule saves, then a loss it does not. Inside a winning
-    class the shorter DTZ wins; inside a losing class the longer DTZ wins.
-    The certain-loss predicate is Stockfish's ``-dtz * 2 + counter < 100``.
+    These classes are Stockfish ``root_probe``'s rank buckets, not the
+    score. A win with ``dtz + counter <= 99`` outranks every later win,
+    including one that still wins at ``== 100``. A loss in the
+    ``-dtz * 2 + counter < 100`` bucket outranks no softer loss; inside a
+    losing bucket the longer distance is better. The score of the chosen
+    move is :func:`_wdl_adjusted_for_rule50`.
     """
     if dtz > 0:
-        certain = dtz + halfmove_clock <= 99
-        return (2 if certain else 1, -dtz)
+        strict = dtz + halfmove_clock <= 99
+        return (2 if strict else 1, -dtz)
     if dtz < 0:
-        certain_loss = (-dtz * 2 + halfmove_clock) < 100
-        return (-2 if certain_loss else -1, -dtz)
+        hard_loss = (-dtz * 2 + halfmove_clock) < 100
+        return (-2 if hard_loss else -1, -dtz)
     return (0, 0)
 
 
 def _wdl_adjusted_for_rule50(dtz: int, halfmove_clock: int) -> int:
-    """±2 only when the chosen line still has that result at this counter."""
+    """±2 when that result still holds at this counter.
+
+    A win survives through ``dtz + counter == 100`` (the move that lands
+    on the boundary still zeroed in time, or the opponent is not yet able
+    to claim). A loss is certain through ``|dtz| + counter == 100``. The
+    stricter ``<= 99`` and ``* 2`` tests are rank buckets only; using them
+    here reports a real win or loss as a draw.
+    """
     if dtz > 0:
-        return 2 if dtz + halfmove_clock <= 99 else 1
+        return 2 if dtz + halfmove_clock <= 100 else 1
     if dtz < 0:
-        return -2 if (-dtz * 2 + halfmove_clock) < 100 else -1
+        return -2 if -dtz + halfmove_clock <= 100 else -1
     return 0
 
 
@@ -409,11 +426,11 @@ def try_tb_root_move(
 ) -> tuple[chess.Move, int] | None:
     """Return the DTZ-optimal move and the rule50-adjusted WDL of that move.
 
-    The WDL is from the side to move and is ±2 only when
-    ``dtz + halfmove_clock`` still preserves a certain win or loss. A table
-    win that the current counter draws is returned as +1, which UCI's root
-    shortcut already maps to a draw score. Raw ``probe_wdl`` assumes the
-    counter is zero and is not what this returns.
+    The WDL is from the side to move. +2 means the chosen line still wins
+    with this counter (``dtz + halfmove_clock <= 100``); -2 means it still
+    loses (``|dtz| + halfmove_clock <= 100``). +1 and -1 are results the
+    50-move rule draws, which UCI's root shortcut already maps to score 0.
+    Raw ``probe_wdl`` assumes the counter is zero and is not what this returns.
 
     Used by UCI's root shortcut to bypass MCTS when the root is in TB range.
     """

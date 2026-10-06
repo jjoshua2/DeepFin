@@ -232,6 +232,67 @@ def test_probe_error_skips_that_move(monkeypatch: pytest.MonkeyPatch) -> None:
     assert tbmod.probe_best_move(board, "generated") == kept
 
 
+def test_available_fifty_move_claim_does_not_turn_a_loss_into_a_draw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Child clock 99 can claim by playing on. The quiet line is a two-ply
+    # loss; the capture is a blessed loss. The claim must not outrank it.
+    board = chess.Board("4k3/8/8/8/8/8/p7/R3K3 w - - 98 40")
+    quiet = chess.Move.from_uci("e1f2")
+    capture = chess.Move.from_uci("a1a2")
+    board.push(quiet)
+    assert board.halfmove_clock == 99
+    assert board.can_claim_fifty_moves()
+    assert not board.is_fifty_moves()
+    board.pop()
+    _install(monkeypatch, ScriptedTable(
+        root_turn=chess.WHITE, pawn_square=chess.A2,
+        quiet_child_dtz=1, zero_child_dtz=-80,
+        child_wdl=1,
+    ))
+    picked = tbmod.try_tb_root_move(board, "generated")
+    assert picked is not None
+    assert picked[0] == capture
+    assert picked[1] == -1
+
+
+def test_boundary_win_at_clock_99_is_still_a_win(monkeypatch: pytest.MonkeyPatch) -> None:
+    board = chess.Board("4k3/8/8/8/8/8/p7/R3K3 w - - 99 40")
+    capture = chess.Move.from_uci("a1a2")
+    _install(monkeypatch, ScriptedTable(
+        root_turn=chess.WHITE, pawn_square=chess.A2,
+        quiet_child_dtz=-4, zero_child_dtz=-80,
+    ))
+    picked = tbmod.try_tb_root_move(board, "generated")
+    assert picked is not None
+    assert picked[0] == capture
+    assert picked[1] == 2
+
+
+def test_loss_within_100_plies_is_a_certain_loss(monkeypatch: pytest.MonkeyPatch) -> None:
+    board = chess.Board("8/8/k7/8/8/8/8/4K2R w - - 0 1")
+    _install(monkeypatch, MoveTable(
+        root_turn=chess.WHITE, by_uci={}, default=60,
+        root_wdl=-2, child_wdl=2,
+    ))
+    picked = tbmod.try_tb_root_move(board, "generated")
+    assert picked is not None
+    assert picked[1] == -2
+
+
+def test_loss_past_100_plies_stays_a_draw_under_the_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    board = chess.Board("8/8/k7/8/8/8/8/4K2R w - - 50 40")
+    _install(monkeypatch, MoveTable(
+        root_turn=chess.WHITE, by_uci={}, default=60,
+        root_wdl=-2, child_wdl=2,
+    ))
+    picked = tbmod.try_tb_root_move(board, "generated")
+    assert picked is not None
+    assert picked[1] == -1
+
+
 def test_ineligible_castling_position_is_not_probed(monkeypatch: pytest.MonkeyPatch) -> None:
     called = False
 
