@@ -2489,11 +2489,12 @@ def _validated_optimizer_scalar(
     that loop has a `finally:` and zero `except` — so an out-of-range value
     typed into the live file does not get rejected, it takes the trial down
     mid-iteration (CLAUDE.md, "Working on a live run"). These three keys are
-    construction-only by design: `tune/trainable_config_ops.py` documents them
-    as per-group VALUE knobs that are read once, by `trainer_kwargs_from_config`
-    on the way into `Trainer.__init__`, and are re-applied to the live optimizer
-    groups only from the snapshot taken there. So a mid-run edit to one of them
-    does nothing until the next restart, and the restart IS the construction —
+    construction-only by design: `tune/trainable_config_ops.py` lists them in
+    `_STARTUP_ONLY_TRIAL_KEYS`. They are read once, by
+    `trainer_kwargs_from_config` on the way into `Trainer.__init__`, and are
+    re-applied to the live optimizer groups only from the snapshot taken there.
+    A live reload refuses a mid-run edit instead of copying it into `config`
+    while the groups keep the launch value, and the restart IS the construction —
     which means construction-site validation covers the entire window in which
     the value can take effect, at zero live-reload hazard. A `from_dict`
     validator would cover the same window and add a way to kill a running trial.
@@ -2698,9 +2699,13 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "compile_mode": str(config.get("compile_mode", "reduce-overhead")),
         "optimizer": str(config.get("optimizer", "nadamw")),
         "matrix_optimizer_scope": str(config.get("matrix_optimizer_scope", "default")),
-        "matrix_lr_multiplier": _f("matrix_lr_multiplier", 20.0),
-        "matrix_weight_decay": _f("matrix_weight_decay", 1e-4),
-        "aux_weight_decay": _f("aux_weight_decay", 1e-4),
+        # Literal `config.get`, not `_f`. These three, plus `aurora_uw_floor`
+        # below, are startup-only (`_STARTUP_ONLY_TRIAL_KEYS`). The derivation
+        # cannot see an `_f` read, and declaring them startup-only while it
+        # cannot see them is the hand-override that test forbids.
+        "matrix_lr_multiplier": float(config.get("matrix_lr_multiplier", 20.0)),
+        "matrix_weight_decay": float(config.get("matrix_weight_decay", 1e-4)),
+        "aux_weight_decay": float(config.get("aux_weight_decay", 1e-4)),
         "global_board_preprocess_lr_multiplier": _f("global_board_preprocess_lr_multiplier", 1.0),
         "global_board_preprocess_weight_decay": _f("global_board_preprocess_weight_decay", 0.0),
         "global_board_adapter_lr_multiplier": _f("global_board_adapter_lr_multiplier", 1.0),
@@ -2708,7 +2713,7 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "weight_decay_mode": str(config.get("weight_decay_mode", "weight_decay")),
         "soda_scope": str(config.get("soda_scope", "decay")),
         "soda_start_step": _f("soda_start_step", 0, int),
-        "aurora_uw_floor": _f("aurora_uw_floor", 0.0),
+        "aurora_uw_floor": float(config.get("aurora_uw_floor", 0.0)),
         "aurora_pp_iterations": _f("aurora_pp_iterations", 2, int),
         "aurora_pp_beta": _f("aurora_pp_beta", 0.5),
         "aurora_polar_steps": _f("aurora_polar_steps", 12, int),

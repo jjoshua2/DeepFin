@@ -629,6 +629,18 @@ _STARTUP_ONLY_TRIAL_KEYS = frozenset({
   # provably cannot reach the loss. The WEIGHT `w_sf_shape` is NOT here -- it is
   # live-pushed every iteration off `TRAINER_WEIGHT_KEYS`.
     "sf_shape_temp_cp",
+  # Optimizer group VALUE knobs. Read once by `trainer_kwargs_from_config` into
+  # the param groups, then re-applied after `Trainer.load` from that
+  # construction snapshot (rl_loop_audit I13). Unlike `lr` and the aurora polar
+  # knobs, `_apply_lr_gamma_weights` does not push them, so a live edit used to
+  # land in `config`, echo back as the running value, and leave the groups on
+  # the launch numbers. `matrix_lr_multiplier` is the Aurora matrix group's
+  # whole step size. Spelled as literal `config.get` so the startup-only
+  # derivation can see the read; an `_f` read is invisible to it.
+    "matrix_lr_multiplier",
+    "matrix_weight_decay",
+    "aux_weight_decay",
+    "aurora_uw_floor",
 })
 
 # `lr_schedule` is skipped by the live reload alone (the trainer's scheduler is

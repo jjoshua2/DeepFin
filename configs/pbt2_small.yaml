@@ -620,7 +620,9 @@ train:
   # hyperparameter from the checkpoint on resume, and weight_decay had no
   # re-application path, so the yaml value was a permanent silent no-op
   # (docs/rl_loop_audit.md I13). The re-application now exists, which makes the
-  # yaml authoritative. Set to 0.0001 = WHAT ACTUALLY RAN, so turning the
+  # yaml authoritative at the next process start. A live edit is refused
+  # (restart required) and the running groups keep the launch value. Set to
+  # 0.0001 = WHAT ACTUALLY RAN, so turning the
   # control surface back on changes nothing today. Changing this value is now a
   # REAL training change (~6e-8/step decoupled decay at the matrix group's LR)
   # and needs a ledger entry with a pre-committed yardstick before it goes live.

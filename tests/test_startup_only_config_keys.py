@@ -43,6 +43,8 @@ from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 
+import pytest
+
 from chess_anti_engine.tune.trainable_config_ops import (
     _STARTUP_ONLY_TRIAL_KEYS,
     construction_only_config_keys,
@@ -325,3 +327,32 @@ def test_a_startup_only_key_can_no_longer_be_called_a_running_value() -> None:
     assert "PENDING-RESTART sf_pid_enabled" in joined, joined
     assert any("restart required" in f for f in findings), findings
     assert "RELOAD-NOT-APPLIED" not in joined, joined
+
+
+@pytest.mark.parametrize("key", [
+    "matrix_lr_multiplier",
+    "matrix_weight_decay",
+    "aux_weight_decay",
+    "aurora_uw_floor",
+])
+def test_optimizer_group_value_knobs_are_pending_restart(key: str) -> None:
+    """The provenance tool must not call the launch value the running one.
+
+    These four are the Aurora/AdamW group scalars. A yaml-vs-params difference
+    used to fall through to the live branch and print that the running value
+    was the new one, while the groups still held the launch one.
+    """
+    from scripts.audit_realized_config import classify_config_provenance
+
+    report, findings = classify_config_provenance(
+        params={key: 1.0},
+        flat_yaml={key: 2.0},
+        realized={key: 1.0},
+        restart_keys=restart_required_config_keys(),
+        construction_only_keys=construction_only_config_keys(),
+        dead_keys={},
+    )
+    joined = "\n".join(report)
+    assert f"PENDING-RESTART {key}" in joined, joined
+    assert any("restart required" in finding for finding in findings), findings
+    assert "the running value is correct" not in joined
