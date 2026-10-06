@@ -670,6 +670,82 @@ def test_stale_chunk_grid_does_not_inflate_the_window(tmp_path: Path) -> None:
         buf.close()
 
 
+def _retarget_x_hash(path: Path) -> bytes:
+    seal = _seal(path)
+    arrays = seal["arrays"]
+    assert isinstance(arrays, dict)
+    spec = arrays["x"]
+    assert isinstance(spec, dict)
+    raw_x = (path / "x" / ".zarray").read_bytes()
+    spec["zarray_sha256"] = hashlib.sha256(raw_x).hexdigest()
+    payload = directory_seal._canonical_bytes(seal)
+    (path / SEAL_FILENAME).write_bytes(payload)
+    return payload
+
+
+def test_same_grid_shape_edit_does_not_inflate_the_window(tmp_path: Path) -> None:
+    """A longer shape that keeps the chunk keys is not a larger window."""
+    directory = tmp_path / "replay"
+    honest = _write(directory, n=8, name="shard_000000.zarr")
+    forged = _write(directory, n=520, name="shard_000001.zarr")
+    _replace_zarray(forged, "x", lambda doc: doc["shape"].__setitem__(0, 1024))
+    raw_x = (forged / "x" / ".zarray").read_bytes()
+    assert directory_seal._grid_keys("x", raw_x) == _seal(forged)["arrays"]["x"]["stored"]
+    payload = _retarget_x_hash(forged)
+    digest = hashlib.sha256(payload).hexdigest()
+    group = zarr.open_group(str(forged), mode="a")
+    for name in list(group.array_keys()):
+        group[name].attrs[SEAL_ATTR] = digest
+    assert shard_positions(honest) == 8
+    assert shard_positions(forged) == 0
+    with pytest.raises(ValueError, match="policy_target N mismatch"):
+        load_shard_arrays(forged)
+    buf = _window(directory, 1024)
+    try:
+        assert honest.exists()
+        assert forged.exists()
+        assert buf._tracked_shard_positions() == 8
+    finally:
+        buf.close()
+
+
+def test_same_key_rewrite_without_sibling_declarations_does_not_inflate(
+    tmp_path: Path,
+) -> None:
+    """Removing sibling .zarray files still leaves their seal attributes behind."""
+    directory = tmp_path / "replay"
+    honest = _write(directory, n=8, name="shard_000000.zarr")
+    forged = _write(directory, n=8, name="shard_000001.zarr")
+    for child in forged.iterdir():
+        if child.is_dir() and child.name != "x":
+            declaration = child / ".zarray"
+            if declaration.exists():
+                declaration.unlink()
+
+    def _one_chunk(doc: dict[str, Any]) -> None:
+        doc["shape"][0] = 100
+        doc["chunks"][0] = 100
+
+    _replace_zarray(forged, "x", _one_chunk)
+    raw_x = (forged / "x" / ".zarray").read_bytes()
+    assert directory_seal._grid_keys("x", raw_x) == ["x/0.0.0.0"]
+    payload = _retarget_x_hash(forged)
+    group = zarr.open_group(str(forged), mode="a")
+    assert list(group.array_keys()) == ["x"]
+    group["x"].attrs[SEAL_ATTR] = hashlib.sha256(payload).hexdigest()
+    assert shard_positions(honest) == 8
+    assert shard_positions(forged) == 0
+    with pytest.raises(ValueError, match="array set does not match"):
+        load_shard_arrays(forged)
+    buf = _window(directory, 100)
+    try:
+        assert honest.exists()
+        assert forged.exists()
+        assert buf._tracked_shard_positions() == 8
+    finally:
+        buf.close()
+
+
 def test_restored_zarray_must_match_the_metadata_cached_at_open(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

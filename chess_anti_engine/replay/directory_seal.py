@@ -39,8 +39,9 @@ without renaming the key is outside this contract.
 
 Window accounting reads the row count from the ``.zarray`` bytes that matched
 the seal, and only when the chunk grid in those bytes equals the sealed
-inventory. Every array still in the group must carry the manifest digest. A
-missing sibling array does not zero the count. A mismatch counts as no rows,
+inventory. Present arrays must agree on that row count and carry the
+manifest digest. A sibling removed entirely does not zero the count; a
+leftover ``.zattrs`` must still match. A mismatch counts as no rows,
 so a forged shape cannot inflate deletion. An unsealed shard still returns
 the shape stored on disk. A directory entry that decode will not open as a
 file, including a dangling symlink, is not a stored chunk.
@@ -177,10 +178,11 @@ def verify_directory_producer_seal(
 def sealed_row_count(group: Any, name: str) -> int | None:
     """Rows in a sealed ``.zarray``, or None when the shard is unsealed.
 
-    Every array still in the group must carry the manifest digest. The count
-    is parsed from the ``.zarray`` bytes that matched the seal, and only when
-    the chunk grid in those bytes equals the sealed inventory. A missing
-    sibling array is allowed. A declaration, digest, or grid mismatch raises.
+    Every array still in the group must carry the manifest digest and the
+    same row count, taken from ``.zarray`` bytes whose chunk grid matches the
+    sealed inventory. A sibling array that is gone entirely does not zero the
+    count. A ``.zattrs`` left behind by a removed declaration must still carry
+    the manifest digest. A declaration, digest, grid, or length mismatch raises.
     """
     loaded = _manifest(group)
     if loaded is None:
@@ -192,21 +194,84 @@ def sealed_row_count(group: Any, name: str) -> int | None:
             f"directory producer seal does not declare {name!r}; "
             "refusing fill decode"
         )
-    for present in _array_names(group):
-        arr = group[present]
+    present = _array_names(group)
+    for found in present:
+        arr = group[found]
         if SEAL_ATTR not in arr.attrs or arr.attrs[SEAL_ATTR] != digest:
             raise ValueError(
-                f"directory producer seal attribute on {present!r} does not "
+                f"directory producer seal attribute on {found!r} does not "
                 "match the manifest bytes; refusing fill decode"
             )
-    spec = arrays[name]
-    raw = _declaration_bytes(name, group[name], spec, digest)
-    if _grid_keys(name, raw) != _stored_keys(name, spec["stored"]):
+    if name not in present:
         raise ValueError(
-            f"directory producer seal chunk grid for {name!r} does not match "
-            "the declared coordinates; refusing fill decode"
+            f"directory producer seal array {name!r} is missing; "
+            "refusing fill decode"
         )
-    return _rows_in_zarray(name, raw)
+    for missing in sorted(set(arrays).difference(present)):
+        _require_no_conflicting_attr(group.store, missing, digest)
+    rows: int | None = None
+    for found in present:
+        spec = arrays.get(found)
+        if not isinstance(spec, dict):
+            raise ValueError(
+                f"directory producer seal entry for {found!r} has unexpected "
+                "fields; refusing fill decode"
+            )
+        raw = _declaration_bytes(found, group[found], spec, digest)
+        if _grid_keys(found, raw) != _stored_keys(found, spec["stored"]):
+            raise ValueError(
+                f"directory producer seal chunk grid for {found!r} does not "
+                "match the declared coordinates; refusing fill decode"
+            )
+        count = _rows_in_zarray(found, raw)
+        if rows is None:
+            rows = count
+        elif count != rows:
+            raise ValueError(
+                f"directory producer seal row count for {found!r} is {count}, "
+                f"not {rows}; refusing fill decode"
+            )
+    if rows is None:
+        raise ValueError(
+            "directory producer seal has no array row count; refusing fill decode"
+        )
+    return rows
+
+
+def _require_no_conflicting_attr(store: Any, name: Any, digest: str) -> None:
+    """A removed array may leave no attribute. A leftover one must match."""
+    if (
+        not isinstance(name, str)
+        or not name
+        or "/" in name
+        or "\\" in name
+        or name.startswith(".")
+    ):
+        raise ValueError(
+            f"directory producer seal refuses array name {name!r}"
+        )
+    key = f"{name}/.zattrs"
+    try:
+        present = key in store
+    except Exception as exc:
+        raise ValueError(
+            f"directory producer seal cannot stat {key!r}; refusing fill decode"
+        ) from exc
+    if not present:
+        return
+    raw = _raw_bytes(store, key, publish=False)
+    try:
+        doc = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"directory producer seal attribute on {name!r} is not utf-8 JSON; "
+            "refusing fill decode"
+        ) from exc
+    if not isinstance(doc, dict) or doc.get(SEAL_ATTR) != digest:
+        raise ValueError(
+            f"directory producer seal attribute on {name!r} does not match "
+            "the manifest bytes; refusing fill decode"
+        )
 
 
 def _manifest(group: Any) -> tuple[dict[str, Any], str] | None:

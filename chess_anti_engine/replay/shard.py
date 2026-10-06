@@ -856,9 +856,9 @@ def shard_positions(path: str | Path) -> int:
     A sealed shard whose declaration does not match counts as 0, so window
     deletion cannot treat a forged shape as rows. The count is the shape in
     the ``.zarray`` bytes that matched the seal, and only when that shape's
-    chunk grid equals the sealed inventory. Every array still present must
-    carry that manifest digest. A missing sibling array does not zero the
-    count. An unsealed shard still returns the shape on disk.
+    chunk grid equals the sealed inventory. Present arrays must agree on that
+    count and carry the manifest digest. A sibling removed entirely does not
+    zero the count. An unsealed shard still returns the shape on disk.
     """
     p = Path(path)
     try:
