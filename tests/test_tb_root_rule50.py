@@ -312,10 +312,10 @@ def test_missing_winning_child_does_not_select_a_known_loss(monkeypatch: pytest.
     board = chess.Board("4k3/8/8/8/8/8/p7/R3K3 w - - 0 40")
 
     class Partial(ScriptedTable):
-        def probe_wdl(self, child: chess.Board) -> int:
-            if child.turn != self.root_turn and child.halfmove_clock == 0:
+        def probe_wdl(self, board: chess.Board) -> int:
+            if board.turn != self.root_turn and board.halfmove_clock == 0:
                 raise KeyError("generated missing winning capture")
-            return super().probe_wdl(child)
+            return super().probe_wdl(board)
 
     _install(monkeypatch, Partial(
         root_turn=chess.WHITE, pawn_square=chess.A2,

@@ -341,7 +341,6 @@ def _select_dtz_move(
     best_dtz = 0
     for move in board.legal_moves:
         board.push(move)
-        dtz: int | None = None
         try:
             try:
                 dtz = _dtz_of_played_move(board, tablebase)
@@ -355,8 +354,6 @@ def _select_dtz_move(
                 return None
         finally:
             board.pop()
-        if dtz is None:
-            continue
         key = _rule50_dtz_key(dtz, halfmove)
         if best_key is None or key > best_key:
             best_key = key
