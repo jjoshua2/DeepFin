@@ -42,7 +42,10 @@ the seal, and only when the chunk grid in those bytes equals the sealed
 inventory. Present arrays must agree on that row count and carry the
 manifest digest. Removing ``priority`` entirely does not zero the count.
 Any other declared array that is gone refuses it, so a forged ``x`` cannot
-inflate deletion by deleting the siblings that would disagree. A leftover
+inflate deletion by deleting the siblings that would disagree. The manifest
+must declare ``x``, ``policy_target``, ``wdl_target``, and ``has_policy``
+before the window will count rows. The load check requires the arrays that
+are present to share one row count before decode. A leftover
 ``.zattrs`` refuses the count, including one restamped with the new digest.
 The chunk count is the integer grid; a float division that
 would report fewer chunks is refused. A mismatch counts as no rows, so a
@@ -83,6 +86,9 @@ MAX_SEAL_BYTES = 4_000_000
 # Quarantine strips ``priority`` and still needs the honest row count.
 # Every other declared array must remain, or the window count is refused.
 _WINDOW_OPTIONAL_ARRAYS = frozenset({"priority"})
+# These names carry one row per position. A manifest that drops one of them
+# can no longer prove the siblings agree, so the window count is refused.
+_WINDOW_REQUIRED_ARRAYS = ("x", "policy_target", "wdl_target", "has_policy")
 
 _DOC_KEYS = frozenset({"schema", "kind", "density", "arrays"})
 _ARRAY_KEYS = frozenset({"zarray_sha256", "stored"})
@@ -166,6 +172,7 @@ def verify_directory_producer_seal(
             "refusing fill decode"
         )
     listed = _store_keys(group.store)
+    rows: int | None = None
     for name in names:
         arr = opened[name] if opened is not None and name in opened else group[name]
         if SEAL_ATTR not in arr.attrs or arr.attrs[SEAL_ATTR] != digest:
@@ -179,7 +186,14 @@ def verify_directory_producer_seal(
                 f"directory producer seal entry for {name!r} has unexpected "
                 "fields; refusing fill decode"
             )
-        _verify_array(name, arr, spec, listed)
+        count = _verify_array(name, arr, spec, listed)
+        if rows is None:
+            rows = count
+        elif count != rows:
+            raise ValueError(
+                f"directory producer seal row count for {name!r} is {count}, "
+                f"not {rows}; refusing fill decode"
+            )
 
 
 def sealed_row_count(group: Any, name: str) -> int | None:
@@ -202,6 +216,7 @@ def sealed_row_count(group: Any, name: str) -> int | None:
             f"directory producer seal does not declare {name!r}; "
             "refusing fill decode"
         )
+    _require_declared_rows(arrays)
     present = _array_names(group)
     for found in present:
         arr = group[found]
@@ -249,6 +264,16 @@ def sealed_row_count(group: Any, name: str) -> int | None:
             "directory producer seal has no array row count; refusing fill decode"
         )
     return rows
+
+
+def _require_declared_rows(arrays: Mapping[str, Any]) -> None:
+    """The row-bearing arrays have to be in the manifest, not only on disk."""
+    absent = [name for name in _WINDOW_REQUIRED_ARRAYS if name not in arrays]
+    if absent:
+        raise ValueError(
+            "directory producer seal does not declare "
+            f"{', '.join(absent)}; refusing fill decode"
+        )
 
 
 def _require_no_conflicting_attr(store: Any, name: Any) -> None:
@@ -426,7 +451,7 @@ def _verify_array(
     arr: Any,
     spec: Mapping[str, Any],
     listed: list[str],
-) -> None:
+) -> int:
     _require_v2(arr)
     raw = _raw_bytes(arr.store, _zarray_key(arr), publish=False)
     if hashlib.sha256(raw).hexdigest() != _hex_digest(name, spec["zarray_sha256"]):
@@ -455,6 +480,7 @@ def _verify_array(
             f"directory producer seal stored chunk {missing[0]!r} for "
             f"{name!r} is missing; refusing fill decode"
         )
+    return _rows_in_zarray(name, raw)
 
 
 class _ApprovedBytes:

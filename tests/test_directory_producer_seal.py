@@ -699,7 +699,9 @@ def test_same_grid_shape_edit_does_not_inflate_the_window(tmp_path: Path) -> Non
         group[name].attrs[SEAL_ATTR] = digest
     assert shard_positions(honest) == 8
     assert shard_positions(forged) == 0
-    with pytest.raises(ValueError, match="policy_target N mismatch"):
+    with pytest.raises(ValueError, match="row count for"):
+        verify_directory_producer_seal(zarr.open_group(str(forged), mode="r"))
+    with pytest.raises(ValueError, match="row count for"):
         load_shard_arrays(forged)
     buf = _window(directory, 1024)
     try:
@@ -819,6 +821,50 @@ def test_removed_siblings_do_not_let_x_inflate_the_window(tmp_path: Path) -> Non
         assert buf._tracked_shard_positions() == 8
     finally:
         buf.close()
+
+
+def test_manifest_reduced_to_x_does_not_inflate_the_window(tmp_path: Path) -> None:
+    """Dropping sibling names from the manifest is not a one-array seal."""
+    directory = tmp_path / "replay"
+    honest = _write(directory, n=8, name="shard_000000.zarr")
+    forged = _write(directory, n=8, name="shard_000001.zarr")
+    for child in list(forged.iterdir()):
+        if child.is_dir() and child.name != "x":
+            shutil.rmtree(child)
+
+    def _one_chunk(doc: dict[str, Any]) -> None:
+        doc["shape"][0] = 100
+        doc["chunks"][0] = 100
+
+    _replace_zarray(forged, "x", _one_chunk)
+    raw_x = (forged / "x" / ".zarray").read_bytes()
+    seal = _seal(forged)
+    seal["arrays"] = {
+        "x": {
+            "zarray_sha256": hashlib.sha256(raw_x).hexdigest(),
+            "stored": ["x/0.0.0.0"],
+        }
+    }
+    payload = directory_seal._canonical_bytes(seal)
+    (forged / SEAL_FILENAME).write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    attrs_path = forged / "x" / ".zattrs"
+    attrs = json.loads(attrs_path.read_text(encoding="utf-8"))
+    assert isinstance(attrs, dict)
+    attrs[SEAL_ATTR] = digest
+    attrs_path.write_text(json.dumps(attrs), encoding="utf-8")
+    assert list(zarr.open_group(str(forged), mode="r").array_keys()) == ["x"]
+    assert shard_positions(honest) == 8
+    assert shard_positions(forged) == 0
+    buf = _window(directory, 20)
+    try:
+        assert honest.exists()
+        assert forged.exists()
+        assert buf._tracked_shard_positions() == 8
+    finally:
+        buf.close()
+    with pytest.raises(KeyError, match="policy_target"):
+        load_shard_arrays(forged)
 
 
 def test_collapsed_float_chunk_grid_does_not_inflate_the_window(
