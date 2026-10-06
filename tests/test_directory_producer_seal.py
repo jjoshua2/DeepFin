@@ -17,7 +17,7 @@ import zipfile
 import numpy as np
 import pytest
 import zarr
-from zarr.storage import DirectoryStore
+from zarr.storage import DirectoryStore, MemoryStore
 
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE
 from chess_anti_engine.replay import directory_seal, packed_zarr as packed
@@ -26,6 +26,7 @@ from chess_anti_engine.replay.directory_seal import (
     MAX_SEAL_BYTES,
     SEAL_ATTR,
     SEAL_FILENAME,
+    verify_directory_producer_seal,
     write_directory_producer_seal,
 )
 from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer
@@ -272,6 +273,128 @@ def test_writer_refuses_the_real_cap_before_assigning_the_manifest(
         write_directory_producer_seal(group)
     assert SEAL_FILENAME not in group.store
     assert not (path / SEAL_FILENAME).exists()
+
+
+def _uint8_two_chunk_group() -> tuple[MemoryStore, Any]:
+    store = MemoryStore()
+    group = zarr.group(store=store)
+    group.create_dataset(
+        "v",
+        data=np.zeros(2, dtype=np.uint8),
+        chunks=(1,),
+        overwrite=True,
+    )
+    return store, group
+
+
+def _store_key_count(path: Path) -> int:
+    group = zarr.open_group(str(path), mode="r")
+    return len(directory_seal._store_keys(group.store))
+
+
+def test_writer_and_reader_share_the_final_store_key_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sol shape: one uint8 array, two chunks, four keys before the seal.
+
+    The manifest and the array ``.zattrs`` make six keys. A cap of four or
+    five must refuse before those keys are stored. A cap of six is the
+    inclusive boundary for both the writer and the reader.
+    """
+    store, group = _uint8_two_chunk_group()
+    initial = sorted(store.keys())
+    assert initial == [".zgroup", "v/.zarray", "v/0", "v/1"]
+
+    for cap in (4, 5):
+        monkeypatch.setattr(directory_seal, "MAX_STORE_KEYS", cap)
+        with pytest.raises(ValueError, match=f"more than {cap} keys"):
+            write_directory_producer_seal(group)
+        assert sorted(store.keys()) == initial
+        assert SEAL_FILENAME not in store
+
+    monkeypatch.setattr(directory_seal, "MAX_STORE_KEYS", 6)
+    write_directory_producer_seal(group)
+    final = sorted(store.keys())
+    assert final == [
+        ".zgroup",
+        SEAL_FILENAME,
+        "v/.zarray",
+        "v/.zattrs",
+        "v/0",
+        "v/1",
+    ]
+    verify_directory_producer_seal(group)
+
+    monkeypatch.setattr(directory_seal, "MAX_STORE_KEYS", 5)
+    with pytest.raises(ValueError, match="more than 5 keys"):
+        verify_directory_producer_seal(group)
+    monkeypatch.setattr(directory_seal, "MAX_STORE_KEYS", 6)
+    verify_directory_producer_seal(group)
+
+
+def test_existing_array_zattrs_counts_once_toward_the_final_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, group = _uint8_two_chunk_group()
+    group["v"].attrs["keep"] = 1
+    initial = sorted(store.keys())
+    assert initial == [".zgroup", "v/.zarray", "v/.zattrs", "v/0", "v/1"]
+
+    monkeypatch.setattr(directory_seal, "MAX_STORE_KEYS", 5)
+    with pytest.raises(ValueError, match="more than 5 keys"):
+        write_directory_producer_seal(group)
+    assert sorted(store.keys()) == initial
+
+    monkeypatch.setattr(directory_seal, "MAX_STORE_KEYS", 6)
+    write_directory_producer_seal(group)
+    assert sorted(store.keys()) == sorted([*initial, SEAL_FILENAME])
+    verify_directory_producer_seal(group)
+
+
+def test_final_key_cap_preserves_destination_and_matches_the_reader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = tmp_path / "replay"
+    path = _write(directory, n=8, tail_fill=False)
+    before = _snapshot(path)
+    final = _store_key_count(path)
+    assert final > 4
+
+    monkeypatch.setattr(directory_seal, "MAX_STORE_KEYS", final - 1)
+    with pytest.raises(ValueError, match=f"more than {final - 1} keys"):
+        _write(directory, n=8, tail_fill=False)
+    assert _snapshot(path) == before
+    assert list(directory.glob("._tmp_*")) == []
+    with pytest.raises(ValueError, match=f"more than {final - 1} keys"):
+        load_shard_arrays(path)
+
+    monkeypatch.setattr(directory_seal, "MAX_STORE_KEYS", final)
+    loaded, _meta = load_shard_arrays(path)
+    assert int(loaded["x"].shape[0]) == 8
+    _write(directory, n=8, tail_fill=False)
+    assert _store_key_count(path) == final
+    reloaded, _meta = load_shard_arrays(path)
+    assert int(reloaded["x"].shape[0]) == 8
+    assert list(directory.glob("._tmp_*")) == []
+
+
+def test_actual_key_count_blocks_publish_when_the_projection_undercounts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = tmp_path / "replay"
+    path = _write(directory, n=8, tail_fill=False)
+    before = _snapshot(path)
+    final = _store_key_count(path)
+    monkeypatch.setattr(directory_seal, "MAX_STORE_KEYS", final - 1)
+    monkeypatch.setattr(
+        directory_seal,
+        "_projected_store_key_count",
+        lambda _listed, _group, _names: final - 1,
+    )
+    with pytest.raises(ValueError, match=f"more than {final - 1} keys"):
+        _write(directory, n=8, tail_fill=False)
+    assert _snapshot(path) == before
+    assert list(directory.glob("._tmp_*")) == []
 
 
 def test_reader_rejects_a_manifest_over_the_same_cap(

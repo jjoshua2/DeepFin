@@ -1753,11 +1753,11 @@ def save_local_shard_arrays(
 ) -> Path:
     """Write a directory Zarr shard and a dense producer seal.
 
-    The seal, including its size cap, is checked before the existing
-    delete-then-rename. A refusal removes the temporary directory and leaves
-    an existing destination in place. See ``directory_seal``. A shard with
-    neither the manifest nor the per-array attribute stays on the legacy fill
-    path and is not claimed to be validated.
+    The seal, including its manifest-byte cap and its final store-key cap, is
+    checked before the existing delete-then-rename. A refusal removes the
+    temporary directory and leaves an existing destination in place. See
+    ``directory_seal``. A shard with neither the manifest nor the per-array
+    attribute stays on the legacy fill path and is not claimed to be validated.
     """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)

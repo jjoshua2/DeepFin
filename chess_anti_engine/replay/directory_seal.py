@@ -25,13 +25,17 @@ closed. Removing the file and every array attribute together is the legacy
 path again.
 
 The writer refuses a manifest larger than ``MAX_SEAL_BYTES`` before it stores
-the file. ``save_local_shard_arrays`` runs that check before its existing
-delete-then-rename, so a refusal leaves the previous destination in place and
-does not publish the temporary directory. This module does not change that
-replace. The seal is not a MAC: a rewrite that updates the ``.zarray`` bytes,
-the chunk keys, the manifest, and every array attribute together is a new
-producer statement. Replacing a chunk's bytes without renaming the key is
-outside this contract.
+the file. It also refuses when the final key count, including this manifest
+and every array ``.zattrs``, would exceed ``MAX_STORE_KEYS``. A projected
+overrun is refused before the manifest is stored. The reader counts those
+final keys, so a count taken before the manifest and attributes exist would
+publish a store the reader rejects. ``save_local_shard_arrays`` runs both
+checks before its existing delete-then-rename, so a refusal leaves the
+previous destination in place and does not publish the temporary directory.
+This module does not change that replace. The seal is not a MAC: a rewrite that
+updates the ``.zarray`` bytes, the chunk keys, the manifest, and every array
+attribute together is a new producer statement. Replacing a chunk's bytes
+without renaming the key is outside this contract.
 
 Overlay loads do not run this check. ``begin_policy_shard`` copies policy
 ``.zattrs``, so an overlay tree can carry the attribute without this manifest.
@@ -41,7 +45,8 @@ member. It does not apply a dense chunk-grid rule.
 
 Verification re-reads the manifest and each ``.zarray`` on every load,
 including ``validate=False``. It does not read chunk payloads. Caps: 100_000
-declared chunks per array, 200_000 store keys, 4_000_000 manifest bytes.
+declared chunks per array, 200_000 final store keys, 4_000_000 manifest bytes.
+The store-key cap is that final count on both the writer and the reader.
 """
 from __future__ import annotations
 
@@ -72,8 +77,11 @@ def write_directory_producer_seal(group: Any) -> None:
     """Bind a dense inventory to the arrays just written into ``group``.
 
     Raises before the caller publishes the directory when a declared chunk is
-    missing or the manifest exceeds ``MAX_SEAL_BYTES``. The oversized bytes
-    are not stored.
+    missing, the manifest exceeds ``MAX_SEAL_BYTES``, or the final store key
+    count would exceed ``MAX_STORE_KEYS``. An oversized manifest is not stored.
+    A projected key-count overrun is refused before the manifest is stored.
+    The actual key count is checked again after the manifest and attributes
+    are bound, still before the caller publishes.
     """
     names = _array_names(group)
     store = group.store
@@ -93,6 +101,7 @@ def write_directory_producer_seal(group: Any) -> None:
             f"directory producer seal is {len(payload)} bytes; cap is "
             f"{MAX_SEAL_BYTES}; refusing to publish"
         )
+    _refuse_store_key_count(_projected_store_key_count(listed, group, names))
     store[SEAL_FILENAME] = payload
     stored = _raw_bytes(store, SEAL_FILENAME, publish=True)
     if stored != payload:
@@ -114,6 +123,9 @@ def write_directory_producer_seal(group: Any) -> None:
                 "binding directory producer seal attributes rewrote .zarray; "
                 "refusing to publish"
             )
+    # Reader ``_store_keys`` counts the manifest and per-array attributes.
+    # Recount after they exist, while the caller still holds the temp directory.
+    _store_keys(store)
 
 
 def verify_directory_producer_seal(
@@ -425,15 +437,31 @@ def _declared_keys(arr: Any) -> list[str]:
     return keys
 
 
+def _projected_store_key_count(listed: list[str], group: Any, names: list[str]) -> int:
+    """Keys after the manifest and any missing per-array ``.zattrs`` are added."""
+    present = set(listed)
+    count = len(listed)
+    if SEAL_FILENAME not in present:
+        count += 1
+    for name in names:
+        if f"{_prefix(group[name])}.zattrs" not in present:
+            count += 1
+    return count
+
+
+def _refuse_store_key_count(count: int) -> None:
+    if count > MAX_STORE_KEYS:
+        raise ValueError(
+            "directory producer seal store lists more than "
+            f"{MAX_STORE_KEYS} keys; refusing the directory producer seal"
+        )
+
+
 def _store_keys(store: Any) -> list[str]:
     found: list[str] = []
     for key in store:
         found.append(key if isinstance(key, str) else str(key))
-        if len(found) > MAX_STORE_KEYS:
-            raise ValueError(
-                "directory producer seal store lists more than "
-                f"{MAX_STORE_KEYS} keys; refusing the directory producer seal"
-            )
+        _refuse_store_key_count(len(found))
     return found
 
 
