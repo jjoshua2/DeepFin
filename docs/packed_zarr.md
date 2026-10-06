@@ -12,6 +12,9 @@ compressed ZIP entries, duplicate/unsafe names, symlinks and special entries,
 missing root metadata, and non-Zarr members such as overlay/base-binding manifests.
 Existing codec, dtype, shape and target validation remain active. Archives must be
 complete and immutable before admission; a partial ZIP is not a resumable shard.
+Every chunk a `.zarray` declares must be stored under that chunk's key. A
+missing or renamed chunk is rejected at admission and is not read back as
+that array's fill value.
 
 Packing must preserve source-directory partitions. Game identity is the resolved
 shard parent plus source-local `game_id`. Do not flatten independently numbered
