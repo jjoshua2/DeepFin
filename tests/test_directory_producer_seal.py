@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import shutil
 from pathlib import Path
 from typing import Any
@@ -738,6 +739,107 @@ def test_same_key_rewrite_without_sibling_declarations_does_not_inflate(
     with pytest.raises(ValueError, match="array set does not match"):
         load_shard_arrays(forged)
     buf = _window(directory, 100)
+    try:
+        assert honest.exists()
+        assert forged.exists()
+        assert buf._tracked_shard_positions() == 8
+    finally:
+        buf.close()
+
+
+def test_restamped_leftover_attrs_do_not_inflate_the_window(tmp_path: Path) -> None:
+    """A leftover .zattrs restamped with the new digest is not a removed array."""
+    directory = tmp_path / "replay"
+    honest = _write(directory, n=8, name="shard_000000.zarr")
+    forged = _write(directory, n=8, name="shard_000001.zarr")
+    for child in forged.iterdir():
+        if child.is_dir() and child.name != "x":
+            declaration = child / ".zarray"
+            if declaration.exists():
+                declaration.unlink()
+
+    def _one_chunk(doc: dict[str, Any]) -> None:
+        doc["shape"][0] = 13
+        doc["chunks"][0] = 13
+
+    _replace_zarray(forged, "x", _one_chunk)
+    raw_x = (forged / "x" / ".zarray").read_bytes()
+    assert directory_seal._grid_keys("x", raw_x) == ["x/0.0.0.0"]
+    payload = _retarget_x_hash(forged)
+    digest = hashlib.sha256(payload).hexdigest()
+    for child in forged.iterdir():
+        attrs = child / ".zattrs"
+        if not child.is_dir() or not attrs.is_file():
+            continue
+        doc = json.loads(attrs.read_text(encoding="utf-8"))
+        assert isinstance(doc, dict)
+        doc[SEAL_ATTR] = digest
+        attrs.write_text(json.dumps(doc), encoding="utf-8")
+    assert shard_positions(honest) == 8
+    assert shard_positions(forged) == 0
+    with pytest.raises(ValueError, match="array set does not match"):
+        load_shard_arrays(forged)
+    buf = _window(directory, 20)
+    try:
+        assert honest.exists()
+        assert forged.exists()
+        assert buf._tracked_shard_positions() == 8
+    finally:
+        buf.close()
+
+
+def test_collapsed_float_chunk_grid_does_not_inflate_the_window(
+    tmp_path: Path,
+) -> None:
+    """A shape past the float mantissa must not keep a one-key inventory."""
+    directory = tmp_path / "replay"
+    honest = _write(directory, n=8, name="shard_000000.zarr")
+    forged = _write(directory, n=8, name="shard_000001.zarr")
+    stored_before = _seal(forged)["arrays"]["x"]["stored"]
+    assert stored_before == ["x/0.0.0.0"]
+    huge = 2**53
+
+    def _collapse(doc: dict[str, Any]) -> None:
+        doc["shape"][0] = huge + 1
+        doc["chunks"][0] = huge
+
+    for child in forged.iterdir():
+        if child.is_dir() and (child / ".zarray").is_file():
+            _replace_zarray(forged, child.name, _collapse)
+    seal = _seal(forged)
+    arrays = seal["arrays"]
+    assert isinstance(arrays, dict)
+    for name, spec in arrays.items():
+        assert isinstance(spec, dict)
+        raw = (forged / name / ".zarray").read_bytes()
+        spec["zarray_sha256"] = hashlib.sha256(raw).hexdigest()
+    payload = directory_seal._canonical_bytes(seal)
+    (forged / SEAL_FILENAME).write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    raw_x = (forged / "x" / ".zarray").read_bytes()
+    edited = json.loads(raw_x)
+    assert math.ceil(edited["shape"][0] / edited["chunks"][0]) == 1
+    assert (edited["shape"][0] + edited["chunks"][0] - 1) // edited["chunks"][0] == 2
+    assert _seal(forged)["arrays"]["x"]["stored"] == stored_before
+    for child in forged.iterdir():
+        attrs = child / ".zattrs"
+        if not child.is_dir() or not attrs.is_file():
+            continue
+        doc = json.loads(attrs.read_text(encoding="utf-8"))
+        assert isinstance(doc, dict)
+        doc[SEAL_ATTR] = digest
+        attrs.write_text(json.dumps(doc), encoding="utf-8")
+    group = zarr.open_group(str(forged), mode="r")
+    cdata = group["x"].cdata_shape
+    assert isinstance(cdata, tuple)
+    assert cdata[0] == 1
+    with pytest.raises(ValueError, match="not the float grid"):
+        directory_seal._grid_keys("x", raw_x)
+    assert shard_positions(honest) == 8
+    assert shard_positions(forged) == 0
+    with pytest.raises(ValueError, match="not the float grid"):
+        verify_directory_producer_seal(zarr.open_group(str(forged), mode="r"))
+    buf = _window(directory, 20)
     try:
         assert honest.exists()
         assert forged.exists()

@@ -40,10 +40,12 @@ without renaming the key is outside this contract.
 Window accounting reads the row count from the ``.zarray`` bytes that matched
 the seal, and only when the chunk grid in those bytes equals the sealed
 inventory. Present arrays must agree on that row count and carry the
-manifest digest. A sibling removed entirely does not zero the count; a
-leftover ``.zattrs`` must still match. A mismatch counts as no rows,
-so a forged shape cannot inflate deletion. An unsealed shard still returns
-the shape stored on disk. A directory entry that decode will not open as a
+manifest digest. A sibling removed entirely does not zero the count. A
+leftover ``.zattrs`` refuses the count, including one restamped with the
+new digest. The chunk count is the integer grid; a float division that
+would report fewer chunks is refused. A mismatch counts as no rows, so a
+forged shape cannot inflate deletion. An unsealed shard still returns the
+shape stored on disk. A directory entry that decode will not open as a
 file, including a dangling symlink, is not a stored chunk.
 
 Overlay loads do not run this check. ``begin_policy_shard`` copies policy
@@ -179,10 +181,10 @@ def sealed_row_count(group: Any, name: str) -> int | None:
     """Rows in a sealed ``.zarray``, or None when the shard is unsealed.
 
     Every array still in the group must carry the manifest digest and the
-    same row count, taken from ``.zarray`` bytes whose chunk grid matches the
-    sealed inventory. A sibling array that is gone entirely does not zero the
-    count. A ``.zattrs`` left behind by a removed declaration must still carry
-    the manifest digest. A declaration, digest, grid, or length mismatch raises.
+    same row count, taken from ``.zarray`` bytes whose integer chunk grid
+    matches the sealed inventory. A sibling array that is gone entirely does
+    not zero the count. A ``.zattrs`` left behind by a removed declaration
+    refuses the count. A declaration, digest, grid, or length mismatch raises.
     """
     loaded = _manifest(group)
     if loaded is None:
@@ -208,7 +210,7 @@ def sealed_row_count(group: Any, name: str) -> int | None:
             "refusing fill decode"
         )
     for missing in sorted(set(arrays).difference(present)):
-        _require_no_conflicting_attr(group.store, missing, digest)
+        _require_no_conflicting_attr(group.store, missing)
     rows: int | None = None
     for found in present:
         spec = arrays.get(found)
@@ -238,8 +240,8 @@ def sealed_row_count(group: Any, name: str) -> int | None:
     return rows
 
 
-def _require_no_conflicting_attr(store: Any, name: Any, digest: str) -> None:
-    """A removed array may leave no attribute. A leftover one must match."""
+def _require_no_conflicting_attr(store: Any, name: Any) -> None:
+    """A removed array may leave nothing. A leftover attribute refuses the count."""
     if (
         not isinstance(name, str)
         or not name
@@ -259,19 +261,10 @@ def _require_no_conflicting_attr(store: Any, name: Any, digest: str) -> None:
         ) from exc
     if not present:
         return
-    raw = _raw_bytes(store, key, publish=False)
-    try:
-        doc = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(
-            f"directory producer seal attribute on {name!r} is not utf-8 JSON; "
-            "refusing fill decode"
-        ) from exc
-    if not isinstance(doc, dict) or doc.get(SEAL_ATTR) != digest:
-        raise ValueError(
-            f"directory producer seal attribute on {name!r} does not match "
-            "the manifest bytes; refusing fill decode"
-        )
+    raise ValueError(
+        f"directory producer seal attribute on {name!r} remains after its "
+        "declaration was removed; refusing fill decode"
+    )
 
 
 def _manifest(group: Any) -> tuple[dict[str, Any], str] | None:
@@ -623,7 +616,7 @@ def _grid_keys(name: str, raw: bytes) -> list[str]:
                 f"directory producer seal declaration for {name!r} has axis "
                 f"{index} shape {length!r} chunk {chunk!r}; refusing fill decode"
             )
-        count = math.ceil(length / chunk)
+        count = _chunk_count(length, chunk)
         dims.append(count)
         product *= count
         if product > MAX_DECLARED_CHUNKS:
@@ -643,13 +636,39 @@ def _grid_keys(name: str, raw: bytes) -> list[str]:
     return keys
 
 
-def _declared_keys(arr: Any) -> list[str]:
-    chunks = tuple(int(dim) for dim in arr.chunks)
-    if len(chunks) != len(arr.shape) or any(dim <= 0 for dim in chunks):
+def _chunk_count(length: int, chunk: int) -> int:
+    """Chunks that cover ``length``. Refuse a float division that collapses."""
+    exact = (length + chunk - 1) // chunk if length else 0
+    try:
+        floated = math.ceil(length / chunk)
+    except OverflowError as exc:
         raise ValueError(
-            f"{arr.path} has chunks {chunks} for shape {tuple(arr.shape)}; "
+            f"directory producer seal chunk count for length {length} "
+            f"chunk {chunk} is not an exact integer grid"
+        ) from exc
+    if type(floated) is not int or exact != floated:
+        raise ValueError(
+            f"directory producer seal chunk count for length {length} "
+            f"chunk {chunk} is {exact}, not the float grid {floated}"
+        )
+    return exact
+
+
+def _declared_keys(arr: Any) -> list[str]:
+    shape = tuple(int(dim) for dim in arr.shape)
+    chunks = tuple(int(dim) for dim in arr.chunks)
+    if len(chunks) != len(shape) or any(dim <= 0 for dim in chunks):
+        raise ValueError(
+            f"{arr.path} has chunks {chunks} for shape {shape}; "
             "refusing the directory producer seal"
         )
+    for length, chunk in zip(shape, chunks, strict=True):
+        if length < 0:
+            raise ValueError(
+                f"{arr.path} has shape {shape} and chunks {chunks}; "
+                "refusing the directory producer seal"
+            )
+        _chunk_count(length, chunk)
     cdata = tuple(int(dim) for dim in arr.cdata_shape)
     if any(dim < 0 for dim in cdata):
         raise ValueError(f"{arr.path} declared a negative chunk grid {cdata}")
