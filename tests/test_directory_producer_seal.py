@@ -788,6 +788,39 @@ def test_restamped_leftover_attrs_do_not_inflate_the_window(tmp_path: Path) -> N
         buf.close()
 
 
+def test_removed_siblings_do_not_let_x_inflate_the_window(tmp_path: Path) -> None:
+    """Deleting every array except x is not the priority-only quarantine strip."""
+    directory = tmp_path / "replay"
+    honest = _write(directory, n=8, name="shard_000000.zarr")
+    forged = _write(directory, n=8, name="shard_000001.zarr")
+    for child in list(forged.iterdir()):
+        if child.is_dir() and child.name != "x":
+            shutil.rmtree(child)
+
+    def _one_chunk(doc: dict[str, Any]) -> None:
+        doc["shape"][0] = 13
+        doc["chunks"][0] = 13
+
+    _replace_zarray(forged, "x", _one_chunk)
+    raw_x = (forged / "x" / ".zarray").read_bytes()
+    assert directory_seal._grid_keys("x", raw_x) == ["x/0.0.0.0"]
+    payload = _retarget_x_hash(forged)
+    group = zarr.open_group(str(forged), mode="a")
+    assert list(group.array_keys()) == ["x"]
+    group["x"].attrs[SEAL_ATTR] = hashlib.sha256(payload).hexdigest()
+    assert shard_positions(honest) == 8
+    assert shard_positions(forged) == 0
+    with pytest.raises(ValueError, match="array set does not match"):
+        load_shard_arrays(forged)
+    buf = _window(directory, 20)
+    try:
+        assert honest.exists()
+        assert forged.exists()
+        assert buf._tracked_shard_positions() == 8
+    finally:
+        buf.close()
+
+
 def test_collapsed_float_chunk_grid_does_not_inflate_the_window(
     tmp_path: Path,
 ) -> None:

@@ -40,9 +40,11 @@ without renaming the key is outside this contract.
 Window accounting reads the row count from the ``.zarray`` bytes that matched
 the seal, and only when the chunk grid in those bytes equals the sealed
 inventory. Present arrays must agree on that row count and carry the
-manifest digest. A sibling removed entirely does not zero the count. A
-leftover ``.zattrs`` refuses the count, including one restamped with the
-new digest. The chunk count is the integer grid; a float division that
+manifest digest. Removing ``priority`` entirely does not zero the count.
+Any other declared array that is gone refuses it, so a forged ``x`` cannot
+inflate deletion by deleting the siblings that would disagree. A leftover
+``.zattrs`` refuses the count, including one restamped with the new digest.
+The chunk count is the integer grid; a float division that
 would report fewer chunks is refused. A mismatch counts as no rows, so a
 forged shape cannot inflate deletion. An unsealed shard still returns the
 shape stored on disk. A directory entry that decode will not open as a
@@ -78,6 +80,9 @@ DENSITY_DENSE = "dense"
 MAX_DECLARED_CHUNKS = 100_000
 MAX_STORE_KEYS = 200_000
 MAX_SEAL_BYTES = 4_000_000
+# Quarantine strips ``priority`` and still needs the honest row count.
+# Every other declared array must remain, or the window count is refused.
+_WINDOW_OPTIONAL_ARRAYS = frozenset({"priority"})
 
 _DOC_KEYS = frozenset({"schema", "kind", "density", "arrays"})
 _ARRAY_KEYS = frozenset({"zarray_sha256", "stored"})
@@ -182,9 +187,10 @@ def sealed_row_count(group: Any, name: str) -> int | None:
 
     Every array still in the group must carry the manifest digest and the
     same row count, taken from ``.zarray`` bytes whose integer chunk grid
-    matches the sealed inventory. A sibling array that is gone entirely does
-    not zero the count. A ``.zattrs`` left behind by a removed declaration
-    refuses the count. A declaration, digest, grid, or length mismatch raises.
+    matches the sealed inventory. ``priority`` may be absent. Any other
+    declared array that is absent refuses the count. A ``.zattrs`` left
+    behind by a removed declaration refuses the count. A declaration,
+    digest, grid, or length mismatch raises.
     """
     loaded = _manifest(group)
     if loaded is None:
@@ -211,6 +217,11 @@ def sealed_row_count(group: Any, name: str) -> int | None:
         )
     for missing in sorted(set(arrays).difference(present)):
         _require_no_conflicting_attr(group.store, missing)
+        if missing not in _WINDOW_OPTIONAL_ARRAYS:
+            raise ValueError(
+                f"directory producer seal array {missing!r} is missing; "
+                "refusing fill decode"
+            )
     rows: int | None = None
     for found in present:
         spec = arrays.get(found)

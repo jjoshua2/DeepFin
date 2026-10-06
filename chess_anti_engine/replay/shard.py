@@ -857,9 +857,10 @@ def shard_positions(path: str | Path) -> int:
     deletion cannot treat a forged shape as rows. The count is the shape in
     the ``.zarray`` bytes that matched the seal, and only when that shape's
     chunk grid equals the sealed inventory. Present arrays must agree on that
-    count and carry the manifest digest. A sibling removed entirely does not
-    zero the count. A leftover ``.zattrs`` refuses the count. An unsealed
-    shard still returns the shape on disk.
+    count and carry the manifest digest. Removing ``priority`` entirely does
+    not zero the count. Any other declared array that is gone refuses it. A
+    leftover ``.zattrs`` refuses the count. An unsealed shard still returns
+    the shape on disk.
     """
     p = Path(path)
     try:
