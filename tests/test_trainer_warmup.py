@@ -1008,6 +1008,159 @@ def test_load_resets_scheduler_when_optimizer_state_is_incompatible(tmp_path: Pa
     assert loaded._base_lrs()[0] == loaded._base_lrs()[2] * 20.0
 
 
+def _aurora_at(tmp_path: Path, label: str, *, lr: float) -> Trainer:
+    return Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=lr,
+        optimizer="aurora",
+        matrix_lr_multiplier=20.0,
+        warmup_steps=72,
+        warmup_lr_start=1e-6,
+        lr_schedule="sqrt_release",
+        lr_release_cycle_steps=0,
+        use_amp=False,
+        log_dir=tmp_path / label,
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+
+
+def _fill_grads(trainer: Trainer, *, value: float) -> None:
+    for param in trainer.model.parameters():
+        param.grad = torch.full_like(param, value)
+
+
+def test_cold_start_load_does_not_let_donor_peak_crush_fresh_bases(tmp_path: Path) -> None:
+    # AdamW has two groups and Aurora has four, so load cold-starts. The donor
+    # peak used to be adopted anyway, and the production set_peak_lr call then
+    # scaled the fresh bases by configured_lr / donor_peak.
+    donor = Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer="adamw",
+        warmup_steps=4,
+        use_amp=False,
+        log_dir=tmp_path / "donor",
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+    _fill_grads(donor, value=1.0)
+    donor.opt.step()
+    donor._update_lr()
+    donor.step = 20
+    ckpt = tmp_path / "adamw.pt"
+    donor.save(ckpt)
+    assert float(torch.load(ckpt, map_location="cpu", weights_only=False)["peak_lr"]) == 1e-3
+
+    def _after_ray(label: str) -> Trainer:
+        trainer = _aurora_at(tmp_path, label, lr=3e-5)
+        trainer.load(ckpt)
+        trainer.set_peak_lr(3e-5, rescale_current=False)
+        trainer.set_peak_lr(3e-5, rescale_current=True)
+        return trainer
+
+    loaded = _after_ray("ray")
+    fresh = _aurora_at(tmp_path, "fresh", lr=3e-5)
+    fresh.set_peak_lr(3e-5, rescale_current=False)
+    fresh.set_peak_lr(3e-5, rescale_current=True)
+
+    assert loaded.step == 0
+    assert loaded._peak_lr == pytest.approx(3e-5)
+    assert not any(loaded.opt.state.values())
+    assert loaded._base_lrs() == pytest.approx(fresh._base_lrs())
+    loaded._set_train_window_release_lr(local_step=0, cycle_steps=800)
+    fresh._set_train_window_release_lr(local_step=0, cycle_steps=800)
+    assert [float(pg["lr"]) for pg in loaded.opt.param_groups] == pytest.approx(
+        [float(pg["lr"]) for pg in fresh.opt.param_groups]
+    )
+
+    salvage = _aurora_at(tmp_path, "salvage", lr=3e-5)
+    salvage.load(ckpt)
+    salvage.set_peak_lr(3e-5, rescale_current=True)
+    assert salvage.step == 0
+    assert salvage._peak_lr == pytest.approx(3e-5)
+    assert salvage._base_lrs() == pytest.approx(fresh._base_lrs())
+
+
+def test_successful_aurora_load_still_adopts_donor_peak_and_rebases(tmp_path: Path) -> None:
+    donor = _aurora_at(tmp_path, "donor", lr=1e-3)
+    donor._warmup_steps = 4
+    _fill_grads(donor, value=0.5)
+    donor.opt.step()
+    donor._update_lr()
+    donor.step = 6
+    ckpt = tmp_path / "aurora.pt"
+    donor.save(ckpt)
+
+    loaded = _aurora_at(tmp_path, "loaded", lr=3e-5)
+    loaded.load(ckpt)
+
+    assert loaded.step == 6
+    assert loaded._peak_lr == pytest.approx(1e-3)
+    assert any(state.get("momentum_buffer") is not None for state in loaded.opt.state.values())
+    loaded.set_peak_lr(3e-5, rescale_current=True)
+
+    fresh = _aurora_at(tmp_path, "fresh", lr=3e-5)
+    assert loaded._base_lrs() == pytest.approx(fresh._base_lrs())
+    assert loaded._peak_lr == pytest.approx(3e-5)
+
+
+def test_aurora_optimizer_state_round_trips_and_continues(tmp_path: Path) -> None:
+    src = _aurora_at(tmp_path, "src", lr=3e-5)
+    src._warmup_steps = 8
+    gen = torch.Generator()
+    gen.manual_seed(7)
+    for _ in range(3):
+        src.opt.zero_grad(set_to_none=True)
+        for param in src.model.parameters():
+            param.grad = torch.randn(param.shape, generator=gen)
+        src.opt.step()
+        src._update_lr()
+        src.step += 1
+    ckpt = tmp_path / "round.pt"
+    src.save(ckpt)
+
+    dst = _aurora_at(tmp_path, "dst", lr=3e-5)
+    dst._warmup_steps = 8
+    dst.load(ckpt)
+
+    assert dst.step == src.step
+    assert dst._peak_lr == pytest.approx(src._peak_lr)
+    assert [float(pg["lr"]) for pg in dst.opt.param_groups] == pytest.approx(
+        [float(pg["lr"]) for pg in src.opt.param_groups]
+    )
+    src_names = [name for name, _param in src.model.named_parameters()]
+    dst_names = [name for name, _param in dst.model.named_parameters()]
+    assert src_names == dst_names
+    for (_src_name, src_param), (_dst_name, dst_param) in zip(
+        src.model.named_parameters(), dst.model.named_parameters(), strict=True,
+    ):
+        src_state = src.opt.state.get(src_param, {})
+        dst_state = dst.opt.state.get(dst_param, {})
+        assert src_state.keys() == dst_state.keys()
+        for key, src_value in src_state.items():
+            dst_value = dst_state[key]
+            if torch.is_tensor(src_value):
+                assert torch.equal(src_value, dst_value)
+            else:
+                assert dst_value == src_value
+
+    cont = torch.Generator()
+    cont.manual_seed(99)
+    saved = [(torch.randn(param.shape, generator=cont), param.shape) for param in src.model.parameters()]
+    for trainer in (src, dst):
+        trainer.opt.zero_grad(set_to_none=True)
+        for (grad, _shape), param in zip(saved, trainer.model.parameters(), strict=True):
+            param.grad = grad.clone()
+        trainer.opt.step()
+        trainer._update_lr()
+        trainer.step += 1
+    for src_param, dst_param in zip(src.model.parameters(), dst.model.parameters(), strict=True):
+        assert torch.equal(src_param, dst_param)
+
+
 def test_soda_weight_decay_mode_replaces_only_decay_groups(tmp_path: Path) -> None:
     trainer = Trainer(
         _TinyMuonModel(),
