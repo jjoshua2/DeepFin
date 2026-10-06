@@ -443,6 +443,38 @@ def test_zarray_field_edit_fails_before_fill(
     assert calls == {"getitem": 0, "decode": 0}
 
 
+def _window(directory: Path, capacity: int) -> DiskReplayBuffer:
+    return DiskReplayBuffer(
+        capacity,
+        shard_dir=directory,
+        rng=np.random.default_rng(0),
+        read_only=False,
+        shuffle_cap=16,
+        shard_size=1000,
+        refresh_shards=1,
+        deterministic_refresh=True,
+        input_planes=PLANES,
+    )
+
+
+def _rewrite_only_x_seal(path: Path, rows: int) -> None:
+    """Point the manifest and x's attribute at a new x shape. Leave the rest."""
+    _replace_zarray(path, "x", lambda doc: doc["shape"].__setitem__(0, rows))
+    doc = _seal(path)
+    arrays = doc["arrays"]
+    assert isinstance(arrays, dict)
+    spec = arrays["x"]
+    assert isinstance(spec, dict)
+    raw_x = (path / "x" / ".zarray").read_bytes()
+    spec["zarray_sha256"] = hashlib.sha256(raw_x).hexdigest()
+    payload = directory_seal._canonical_bytes(doc)
+    (path / SEAL_FILENAME).write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    group = zarr.open_group(str(path), mode="a")
+    group["x"].attrs[SEAL_ATTR] = digest
+    assert group["game_id"].attrs[SEAL_ATTR] != digest
+
+
 def test_forged_sealed_shape_does_not_delete_the_honest_shard(tmp_path: Path) -> None:
     directory = tmp_path / "replay"
     honest = _write(directory, n=8, name="shard_000000.zarr")
@@ -470,6 +502,85 @@ def test_forged_sealed_shape_does_not_delete_the_honest_shard(tmp_path: Path) ->
     stripped = _write(tmp_path / "stripped", n=8, name="shard_000000.zarr")
     shutil.rmtree(stripped / "priority")
     assert shard_positions(stripped) == 8
+
+
+def test_partial_attribute_rewrite_does_not_inflate_window_deletion(
+    tmp_path: Path,
+) -> None:
+    """A new digest on x alone is not a row count the window may trust.
+
+    The manifest hash for x is rewritten to a 13-row shape and only x's seal
+    attribute is updated. The other arrays still carry the old digest, which
+    is the same mismatch a full load rejects. Capacity 20 must keep the honest
+    8-row shard: 13 plus 8 would have deleted it.
+    """
+    directory = tmp_path / "replay"
+    honest = _write(directory, n=8, name="shard_000000.zarr")
+    forged = _write(directory, n=8, name="shard_000001.zarr")
+    _rewrite_only_x_seal(forged, 13)
+    assert shard_positions(honest) == 8
+    assert shard_positions(forged) == 0
+    with pytest.raises(ValueError, match="does not match"):
+        load_shard_arrays(forged)
+    buf = _window(directory, 20)
+    try:
+        assert honest.exists()
+        assert forged.exists()
+        assert buf._tracked_shard_positions() == 8
+    finally:
+        buf.close()
+
+
+def test_window_count_is_the_shape_in_the_hashed_zarray_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A file swapped after the hash read is not the count that was hashed.
+
+    The scan records 8 from the bytes that matched the seal, then the file
+    becomes shape 100. Capacity 20 therefore keeps both shards. A later read
+    of that forged file counts as 0.
+    """
+    directory = tmp_path / "replay"
+    honest = _write(directory, n=8, name="shard_000000.zarr")
+    attacked = _write(directory, n=8, name="shard_000001.zarr")
+    original = (attacked / "x" / ".zarray").read_bytes()
+    forged_doc = json.loads(original)
+    assert isinstance(forged_doc, dict)
+    shape = forged_doc["shape"]
+    assert isinstance(shape, list)
+    shape[0] = 100
+    forged = json.dumps(forged_doc).encode("utf-8")
+    real_raw = directory_seal._raw_bytes
+    attacked_path = attacked.resolve()
+
+    def swap_after_hash(store: object, key: str, *, publish: bool) -> bytes:
+        data = real_raw(store, key, publish=publish)
+        store_path = getattr(store, "path", None)
+        if (
+            key == "x/.zarray"
+            and isinstance(store_path, str)
+            and Path(store_path).resolve() == attacked_path
+        ):
+            (attacked / "x" / ".zarray").write_bytes(forged)
+        return data
+
+    monkeypatch.setattr(directory_seal, "_raw_bytes", swap_after_hash)
+    assert shard_positions(attacked) == 8
+    assert json.loads((attacked / "x" / ".zarray").read_text(encoding="utf-8"))["shape"][0] == 100
+    (attacked / "x" / ".zarray").write_bytes(original)
+    buf = _window(directory, 20)
+    try:
+        assert honest.exists()
+        assert attacked.exists()
+        assert buf._tracked_shard_positions() == 16
+    finally:
+        buf.close()
+    assert json.loads((attacked / "x" / ".zarray").read_text(encoding="utf-8"))["shape"][0] == 100
+    monkeypatch.setattr(directory_seal, "_raw_bytes", real_raw)
+    assert shard_positions(attacked) == 0
+    assert shard_positions(honest) == 8
+    assert honest.exists()
+    assert attacked.exists()
 
 
 def test_restored_zarray_must_match_the_metadata_cached_at_open(

@@ -37,6 +37,12 @@ updates the ``.zarray`` bytes, the chunk keys, the manifest, and every array
 attribute together is a new producer statement. Replacing a chunk's bytes
 without renaming the key is outside this contract.
 
+Window accounting reads the row count from the ``.zarray`` bytes that matched
+the seal. Every array still in the group must carry the manifest digest, and
+a missing sibling array does not zero the count. A digest or declaration
+mismatch counts as no rows, so rewriting one array's shape cannot inflate
+deletion. An unsealed shard still returns the shape stored on disk.
+
 Overlay loads do not run this check. ``begin_policy_shard`` copies policy
 ``.zattrs``, so an overlay tree can carry the attribute without this manifest.
 That copy is not a seal of the overlay, and a missing overlay chunk can still
@@ -131,26 +137,77 @@ def write_directory_producer_seal(group: Any) -> None:
 def verify_directory_producer_seal(
     group: Any,
     opened: Mapping[str, Any] | None = None,
-    *,
-    shape_of: str | None = None,
 ) -> None:
     """No-op only when the seal file and every array attribute are absent.
 
     Any other shape fails closed before the caller decodes chunk bytes.
     ``opened`` is the array objects decode will use. When a name is present
     there, the approved ``.zarray`` bytes are installed onto that object.
-
-    ``shape_of`` checks only that array's raw ``.zarray`` against the seal.
-    Window accounting uses it so a forged shape cannot inflate a deletion,
-    while a missing sibling array still leaves this array's row count readable.
-    It does not install metadata and it does not require the other chunk keys.
     """
+    loaded = _manifest(group)
+    if loaded is None:
+        return
+    doc, digest = loaded
+    names = _array_names(group)
+    arrays = doc["arrays"]
+    if not isinstance(arrays, dict) or not _exact_keys(arrays, frozenset(names)):
+        raise ValueError(
+            "directory producer seal array set does not match the group; "
+            "refusing fill decode"
+        )
+    listed = _store_keys(group.store)
+    for name in names:
+        arr = opened[name] if opened is not None and name in opened else group[name]
+        if SEAL_ATTR not in arr.attrs or arr.attrs[SEAL_ATTR] != digest:
+            raise ValueError(
+                f"directory producer seal attribute on {name!r} does not match "
+                "the manifest bytes; refusing fill decode"
+            )
+        spec = arrays[name]
+        if not isinstance(spec, dict) or not _exact_keys(spec, _ARRAY_KEYS):
+            raise ValueError(
+                f"directory producer seal entry for {name!r} has unexpected "
+                "fields; refusing fill decode"
+            )
+        _verify_array(name, arr, spec, listed)
+
+
+def sealed_row_count(group: Any, name: str) -> int | None:
+    """Rows in a sealed ``.zarray``, or None when the shard is unsealed.
+
+    Every array still in the group must carry the manifest digest. The count
+    is parsed from the ``.zarray`` bytes that matched the seal. A missing
+    sibling array is allowed. A declaration or digest mismatch raises.
+    """
+    loaded = _manifest(group)
+    if loaded is None:
+        return None
+    doc, digest = loaded
+    arrays = doc["arrays"]
+    if not isinstance(arrays, dict) or name not in arrays:
+        raise ValueError(
+            f"directory producer seal does not declare {name!r}; "
+            "refusing fill decode"
+        )
+    for present in _array_names(group):
+        arr = group[present]
+        if SEAL_ATTR not in arr.attrs or arr.attrs[SEAL_ATTR] != digest:
+            raise ValueError(
+                f"directory producer seal attribute on {present!r} does not "
+                "match the manifest bytes; refusing fill decode"
+            )
+    raw = _declaration_bytes(name, group[name], arrays[name], digest)
+    return _rows_in_zarray(name, raw)
+
+
+def _manifest(group: Any) -> tuple[dict[str, Any], str] | None:
+    """The canonical manifest and its digest, or None when the shard is unsealed."""
     store = group.store
     names = _array_names(group)
     bound = [name for name in names if _attr_bound(group[name])]
     present = SEAL_FILENAME in store
     if not present and not bound:
-        return
+        return None
     if not present:
         raise ValueError(
             "directory producer seal file is missing while array attributes "
@@ -185,41 +242,11 @@ def verify_directory_producer_seal(
             f"directory producer seal density {doc['density']!r} is not "
             "dense; refusing fill decode"
         )
-    arrays = doc["arrays"]
-    if shape_of is None:
-        if not isinstance(arrays, dict) or not _exact_keys(arrays, frozenset(names)):
-            raise ValueError(
-                "directory producer seal array set does not match the group; "
-                "refusing fill decode"
-            )
-    elif not isinstance(arrays, dict) or shape_of not in arrays:
-        raise ValueError(
-            f"directory producer seal does not declare {shape_of!r}; "
-            "refusing fill decode"
-        )
     if _canonical_bytes(doc) != raw:
         raise ValueError(
             "directory producer seal is not canonical JSON; refusing fill decode"
         )
-    digest = hashlib.sha256(raw).hexdigest()
-    if shape_of is not None:
-        _require_declaration_only(shape_of, group[shape_of], arrays[shape_of], digest)
-        return
-    listed = _store_keys(store)
-    for name in names:
-        arr = opened[name] if opened is not None and name in opened else group[name]
-        if SEAL_ATTR not in arr.attrs or arr.attrs[SEAL_ATTR] != digest:
-            raise ValueError(
-                f"directory producer seal attribute on {name!r} does not match "
-                "the manifest bytes; refusing fill decode"
-            )
-        spec = arrays[name]
-        if not isinstance(spec, dict) or not _exact_keys(spec, _ARRAY_KEYS):
-            raise ValueError(
-                f"directory producer seal entry for {name!r} has unexpected "
-                "fields; refusing fill decode"
-            )
-        _verify_array(name, arr, spec, listed)
+    return doc, hashlib.sha256(raw).hexdigest()
 
 
 def _array_names(group: Any) -> list[str]:
@@ -271,13 +298,13 @@ def _spec_for_array(arr: Any, listed: list[str]) -> dict[str, Any]:
     }
 
 
-def _require_declaration_only(
+def _declaration_bytes(
     name: str,
     arr: Any,
     spec: Mapping[str, Any],
     digest: str,
-) -> None:
-    """Match one array's raw ``.zarray`` to the seal. Do not walk chunk keys."""
+) -> bytes:
+    """Raw ``.zarray`` bytes that match the seal. The caller parses these bytes."""
     _require_v2(arr)
     if SEAL_ATTR not in arr.attrs or arr.attrs[SEAL_ATTR] != digest:
         raise ValueError(
@@ -295,6 +322,25 @@ def _require_declaration_only(
             f"directory producer seal declaration for {name!r} does not match "
             "the .zarray bytes; refusing fill decode"
         )
+    return raw
+
+
+def _rows_in_zarray(name: str, raw: bytes) -> int:
+    try:
+        doc = json.loads(raw)
+        shape = doc["shape"]
+        rows = shape[0]
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+        raise ValueError(
+            f"directory producer seal declaration for {name!r} has no row "
+            "count; refusing fill decode"
+        ) from exc
+    if isinstance(rows, bool) or not isinstance(rows, int) or rows < 0:
+        raise ValueError(
+            f"directory producer seal declaration for {name!r} has row count "
+            f"{rows!r}; refusing fill decode"
+        )
+    return rows
 
 
 def _verify_array(
