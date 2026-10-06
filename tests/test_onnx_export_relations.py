@@ -87,6 +87,30 @@ def test_relation_weights_nested_under_module_are_refused(tmp_path: Path) -> Non
     assert not (tmp_path / "wrapped.onnx").exists()
 
 
+def test_relation_weights_nested_under_model_are_refused(tmp_path: Path) -> None:
+    torch.manual_seed(0)
+    inner = _tiny(trunk=True, policy=False)
+    _fill(inner, "dynamic_relation_weight", 0.75)
+
+    class _Holds(torch.nn.Module):
+        def __init__(self, child: torch.nn.Module) -> None:
+            super().__init__()
+            self.model = child
+            self.input_extra_features = getattr(child, "input_extra_features", None)
+
+        def forward(self, x: torch.Tensor, relations: torch.Tensor | None = None):
+            if relations is None:
+                return self.model(x)
+            return self.model(x, relations=relations)
+
+    wrapped = _Holds(inner)
+    x, relations = _planes_and_relations(wrapped)
+    assert _policy_moves(wrapped, x, relations)
+    with pytest.raises(ValueError, match="dynamic_relation_weight"):
+        export_onnx(wrapped, out_path=tmp_path / "child.onnx", device="cpu")
+    assert not (tmp_path / "child.onnx").exists()
+
+
 def test_policy_relation_weights_alone_are_enough_to_refuse_export(tmp_path: Path) -> None:
     torch.manual_seed(0)
     model = _tiny(trunk=False, policy=True)

@@ -50,8 +50,8 @@ def _relation_parameters(model: nn.Module) -> list[str]:
     The ONNX wrapper traces ``model(x)`` and publishes a single ``input_planes``
     input. A relation-enabled trunk or policy head then exports as the
     no-relation function: the weights are accepted and never read. Zero-init
-    hides that, because the bias is zero either way. AOT, the slot clients,
-    and PUCT refuse this transport instead of dropping it.
+    hides that, because the bias is zero either way. The weights may sit on
+    the module passed in, on any registered child, or on ``_orig_mod``.
     """
     pending = [model]
     seen: set[int] = set()
@@ -65,13 +65,14 @@ def _relation_parameters(model: nn.Module) -> list[str]:
         for name in ("dynamic_relation_weight", "policy_relation_weight"):
             if getattr(module, name, None) is not None and name not in found:
                 found.append(name)
-        # torch.compile stores the eager module on _orig_mod. AveragedModel
-        # and similar wrappers store it on module. Either can be what the
-        # caller passes to export while the parameters live one level down.
-        for attr in ("_orig_mod", "module"):
-            inner = getattr(module, attr, None)
-            if isinstance(inner, nn.Module):
-                pending.append(inner)
+        # Every registered child. A whitelist of `.module` misses the
+        # `.model` attribute `_OnnxWrapper` itself uses, and that wrapper
+        # then traces the no-relation forward.
+        pending.extend(module.children())
+        # torch.compile's eager module is not always a registered child.
+        inner = getattr(module, "_orig_mod", None)
+        if isinstance(inner, nn.Module):
+            pending.append(inner)
     return found
 
 
