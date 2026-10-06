@@ -51,8 +51,21 @@ class LineReader:
                     f"engine exited before {needle!r}; got:\n" + "\n".join(lines[-20:])
                 )
             lines.append(line)
-            if needle in line:
+            if _response_matches(line, needle):
                 return lines
+
+
+def _response_matches(line: str, needle: str) -> bool:
+    """True when ``needle`` is the whole line or its first UCI token.
+
+    A substring test treats ``info string bestmove_fallback_used=...`` as
+    the bestmove the caller is waiting for and leaves the real ``bestmove``
+    line queued, so the next read attributes it to the following command.
+    """
+    if line == needle:
+        return True
+    token, sep, _rest = line.partition(" ")
+    return sep == " " and token == needle
 
 
 def send_line(proc: subprocess.Popen[str], line: str) -> None:

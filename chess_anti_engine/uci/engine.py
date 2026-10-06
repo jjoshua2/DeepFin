@@ -1526,6 +1526,14 @@ class Engine:
     def _run_search(self, limits: SearchLimits, gen: int, board: chess.Board) -> None:
   # Ponder search: no deadline yet; runs until ponderhit or stop.
         result = self._run_one_phase(limits, is_ponder=limits.ponder, board=board)
+  # The worker can return before the GUI does. A mated root, a tablebase
+  # hit, a declined draw, a full hash, or a search exception is not a
+  # ponder release: this phase is still the position *before* the predicted
+  # reply, and its bestmove belongs to the opponent. UCI stays in ponder
+  # until ``stop`` or ``ponderhit``, both of which set ``_stop_event``.
+  # Publishing early lets the GUI play that pre-reply move after ponderhit.
+        if limits.ponder and not self._stop_event.is_set():
+            self._stop_event.wait()
         if self._ponderhit_event.is_set() and self._pending_real_limits is not None:
   # Ponderhit: opponent played our predicted move. Advance root by
   # one ply (the popped move) so the real phase searches at the
