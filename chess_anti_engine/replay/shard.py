@@ -850,9 +850,17 @@ def shard_index(path: str | Path) -> int:
 
 
 def shard_positions(path: str | Path) -> int:
+    """Row count from ``x``.
+
+    A sealed shard whose ``x`` ``.zarray`` does not match the manifest counts
+    as 0, so window deletion cannot treat a forged shape as rows. A missing
+    sibling array does not zero the count. An unsealed shard still returns
+    the shape on disk, forged or not.
+    """
     p = Path(path)
     try:
         g = zarr.open_group(str(p), mode="r")
+        verify_directory_producer_seal(g, shape_of="x")
         return _shape_of(g["x"])[0]
     except Exception:
         return 0

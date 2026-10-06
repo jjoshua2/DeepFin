@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 import zipfile
@@ -30,11 +31,13 @@ from chess_anti_engine.replay.directory_seal import (
     write_directory_producer_seal,
 )
 from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer
+from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.replay.shard import (
     ShardMeta,
     load_shard_arrays,
     samples_to_arrays,
     save_local_shard_arrays,
+    shard_positions,
 )
 
 PLANES = 8
@@ -438,6 +441,35 @@ def test_zarray_field_edit_fails_before_fill(
     with pytest.raises(ValueError, match="declaration for 'x'"):
         load_shard_arrays(path, validate=False)
     assert calls == {"getitem": 0, "decode": 0}
+
+
+def test_forged_sealed_shape_does_not_delete_the_honest_shard(tmp_path: Path) -> None:
+    directory = tmp_path / "replay"
+    honest = _write(directory, n=8, name="shard_000000.zarr")
+    forged = _write(directory, n=8, name="shard_000001.zarr")
+    _replace_zarray(forged, "x", lambda doc: doc["shape"].__setitem__(0, 100))
+    assert shard_positions(honest) == 8
+    assert shard_positions(forged) == 0
+    buf = DiskReplayBuffer(
+        20,
+        shard_dir=directory,
+        rng=np.random.default_rng(0),
+        read_only=False,
+        shuffle_cap=16,
+        shard_size=1000,
+        refresh_shards=1,
+        deterministic_refresh=True,
+        input_planes=PLANES,
+    )
+    try:
+        assert honest.exists()
+        assert forged.exists()
+        assert buf._tracked_shard_positions() == 8
+    finally:
+        buf.close()
+    stripped = _write(tmp_path / "stripped", n=8, name="shard_000000.zarr")
+    shutil.rmtree(stripped / "priority")
+    assert shard_positions(stripped) == 8
 
 
 def test_restored_zarray_must_match_the_metadata_cached_at_open(

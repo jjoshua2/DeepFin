@@ -131,12 +131,19 @@ def write_directory_producer_seal(group: Any) -> None:
 def verify_directory_producer_seal(
     group: Any,
     opened: Mapping[str, Any] | None = None,
+    *,
+    shape_of: str | None = None,
 ) -> None:
     """No-op only when the seal file and every array attribute are absent.
 
     Any other shape fails closed before the caller decodes chunk bytes.
     ``opened`` is the array objects decode will use. When a name is present
     there, the approved ``.zarray`` bytes are installed onto that object.
+
+    ``shape_of`` checks only that array's raw ``.zarray`` against the seal.
+    Window accounting uses it so a forged shape cannot inflate a deletion,
+    while a missing sibling array still leaves this array's row count readable.
+    It does not install metadata and it does not require the other chunk keys.
     """
     store = group.store
     names = _array_names(group)
@@ -179,9 +186,15 @@ def verify_directory_producer_seal(
             "dense; refusing fill decode"
         )
     arrays = doc["arrays"]
-    if not isinstance(arrays, dict) or not _exact_keys(arrays, frozenset(names)):
+    if shape_of is None:
+        if not isinstance(arrays, dict) or not _exact_keys(arrays, frozenset(names)):
+            raise ValueError(
+                "directory producer seal array set does not match the group; "
+                "refusing fill decode"
+            )
+    elif not isinstance(arrays, dict) or shape_of not in arrays:
         raise ValueError(
-            "directory producer seal array set does not match the group; "
+            f"directory producer seal does not declare {shape_of!r}; "
             "refusing fill decode"
         )
     if _canonical_bytes(doc) != raw:
@@ -189,6 +202,9 @@ def verify_directory_producer_seal(
             "directory producer seal is not canonical JSON; refusing fill decode"
         )
     digest = hashlib.sha256(raw).hexdigest()
+    if shape_of is not None:
+        _require_declaration_only(shape_of, group[shape_of], arrays[shape_of], digest)
+        return
     listed = _store_keys(store)
     for name in names:
         arr = opened[name] if opened is not None and name in opened else group[name]
@@ -253,6 +269,32 @@ def _spec_for_array(arr: Any, listed: list[str]) -> dict[str, Any]:
         "zarray_sha256": _sha256(arr, publish=True),
         "stored": declared,
     }
+
+
+def _require_declaration_only(
+    name: str,
+    arr: Any,
+    spec: Mapping[str, Any],
+    digest: str,
+) -> None:
+    """Match one array's raw ``.zarray`` to the seal. Do not walk chunk keys."""
+    _require_v2(arr)
+    if SEAL_ATTR not in arr.attrs or arr.attrs[SEAL_ATTR] != digest:
+        raise ValueError(
+            f"directory producer seal attribute on {name!r} does not match "
+            "the manifest bytes; refusing fill decode"
+        )
+    if not isinstance(spec, dict) or not _exact_keys(spec, _ARRAY_KEYS):
+        raise ValueError(
+            f"directory producer seal entry for {name!r} has unexpected "
+            "fields; refusing fill decode"
+        )
+    raw = _raw_bytes(arr.store, _zarray_key(arr), publish=False)
+    if hashlib.sha256(raw).hexdigest() != _hex_digest(name, spec["zarray_sha256"]):
+        raise ValueError(
+            f"directory producer seal declaration for {name!r} does not match "
+            "the .zarray bytes; refusing fill decode"
+        )
 
 
 def _verify_array(
