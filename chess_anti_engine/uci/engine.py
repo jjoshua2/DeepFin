@@ -399,6 +399,10 @@ class Engine:
         self._search_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
+  # Set only by a GUI command that ends ponder (stop, ponderhit, quit,
+  # or a command that waits out the search). A pool fault sets
+  # ``_stop_event`` and then raises; that is not one of those commands.
+        self._ponder_release = threading.Event()
   # While the current search is a `go ponder`, hold the "real" limits
   # here so ponderhit can swap them in.
         self._pending_real_limits: SearchLimits | None = None
@@ -645,6 +649,7 @@ class Engine:
         )
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
+        self._ponder_release = threading.Event()
   # For `go ponder`, the ponder phase runs open-ended; ponderhit
   # converts to a real-deadline phase using the SAME underlying clock
   # args. We re-derive the "real" limits here by synthesizing a
@@ -681,6 +686,7 @@ class Engine:
     def _handle_stop(self) -> None:
         if self._search_thread is not None:
             self._stop_event.set()
+            self._ponder_release.set()
             self._search_thread.join(timeout=_JOIN_TIMEOUT_S)
             if self._search_thread.is_alive():
   # Don't clear the handle: the thread may still be running a
@@ -701,6 +707,7 @@ class Engine:
   # for real-deadline.
         self._ponderhit_event.set()
         self._stop_event.set()
+        self._ponder_release.set()
 
     def _handle_setoption(self, cmd: CmdSetOption) -> None:
   # Same barrier as _handle_position / _handle_newgame / _handle_isready:
@@ -1530,10 +1537,11 @@ class Engine:
   # hit, a declined draw, a full hash, or a search exception is not a
   # ponder release: this phase is still the position *before* the predicted
   # reply, and its bestmove belongs to the opponent. UCI stays in ponder
-  # until ``stop`` or ``ponderhit``, both of which set ``_stop_event``.
-  # Publishing early lets the GUI play that pre-reply move after ponderhit.
-        if limits.ponder and not self._stop_event.is_set():
-            self._stop_event.wait()
+  # until ``stop`` or ``ponderhit``. Those commands set ``_ponder_release``.
+  # ``_stop_event`` does not: a pool fault sets it and then raises, and
+  # treating that as a release publishes the pre-reply fallback.
+        if limits.ponder and not self._ponder_release.is_set():
+            self._ponder_release.wait()
         if self._ponderhit_event.is_set() and self._pending_real_limits is not None:
   # Ponderhit: opponent played our predicted move. Advance root by
   # one ply (the popped move) so the real phase searches at the
@@ -1785,6 +1793,7 @@ class Engine:
     def _wait_for_search(self) -> None:
         if self._search_thread is not None and self._search_thread.is_alive():
             self._stop_event.set()
+            self._ponder_release.set()
             self._search_thread.join(timeout=_JOIN_TIMEOUT_S)
             if self._search_thread.is_alive():
                 _println("info string search stop timed out; thread still running")

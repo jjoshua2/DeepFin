@@ -2,9 +2,10 @@
 
 ``SearchWorker.run`` returns immediately for a mated root, a tablebase hit,
 a declined draw, a full hash, or an exception. Those are not UCI events.
-``go ponder`` searches the position *before* the predicted reply, so that
-early result is the opponent's move. Publishing it lets the GUI play it
-after ``ponderhit``.
+A pool fault also sets the search stop event before it raises. That event
+is not ``stop`` or ``ponderhit``. ``go ponder`` searches the position
+*before* the predicted reply, so that early result is the opponent's move.
+Publishing it lets the GUI play it after ``ponderhit``.
 """
 from __future__ import annotations
 
@@ -115,6 +116,48 @@ class _BlockingWorker(_ImmediateWorker):
             self.started.set()
             if not stop_event.wait(timeout=3.0):
                 raise TimeoutError("ponder phase was not released")
+        return super().run(
+            board,
+            stop_event=stop_event,
+            deadline=deadline,
+            max_nodes=max_nodes,
+            max_depth=max_depth,
+            optimum_ms=optimum_ms,
+            abort_factor=abort_factor,
+            root_moves=root_moves,
+            info_cb=info_cb,
+            include_ponder=include_ponder,
+            allow_terminal_shortcuts=allow_terminal_shortcuts,
+        )
+
+
+class _FaultThenRun(_ImmediateWorker):
+    """First phase sets the search stop event and raises, as a pool fault does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._calls = 0
+
+    def run(
+        self,
+        board: chess.Board,
+        *,
+        stop_event: threading.Event,
+        deadline: Deadline,
+        max_nodes: int | None = None,
+        max_depth: int | None = None,
+        optimum_ms: int | None = None,
+        abort_factor: float = 0.0,
+        root_moves: tuple[str, ...] = (),
+        info_cb: object = None,
+        include_ponder: bool = False,
+        allow_terminal_shortcuts: bool = True,
+    ) -> SearchResult:
+        self._calls += 1
+        if self._calls == 1:
+            self.started.set()
+            stop_event.set()
+            raise RuntimeError("pool evaluator failed")
         return super().run(
             board,
             stop_event=stop_event,
@@ -243,6 +286,43 @@ def test_blocking_ponder_still_hands_off_on_ponderhit(
     assert worker.turns == [chess.BLACK, chess.WHITE]
     assert worker.deadline_finite == [False, True]
     assert _bestmoves(lines) == [f"bestmove {worker.moves[1]}"]
+
+
+def test_pool_fault_during_ponder_holds_until_ponderhit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines = _capture(monkeypatch)
+    worker = _FaultThenRun()
+    engine = _engine(worker)
+    _start_ponder(engine, worker)
+    _assert_quiet(lines, seconds=0.15)
+    thread = engine._search_thread
+    assert thread is not None
+    assert thread.is_alive()
+    assert worker.turns == []
+
+    engine.dispatch(CmdPonderHit())
+    assert thread.join(timeout=2.0) is None
+    assert worker.turns == [chess.WHITE]
+    assert worker.deadline_finite == [True]
+    assert _bestmoves(lines) == [f"bestmove {worker.moves[0]}"]
+
+
+def test_stop_after_pool_fault_emits_one_pre_reply_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines = _capture(monkeypatch)
+    worker = _FaultThenRun()
+    engine = _engine(worker)
+    _start_ponder(engine, worker)
+    _assert_quiet(lines, seconds=0.05)
+    engine.dispatch(CmdStop())
+    thread = engine._search_thread
+    assert thread is None or not thread.is_alive()
+    assert worker.turns == []
+    pre_reply = chess.Board()
+    pre_reply.push_uci("e2e4")
+    assert _bestmoves(lines) == [f"bestmove {next(iter(pre_reply.legal_moves)).uci()}"]
 
 
 def test_non_ponder_search_still_publishes_immediately(
