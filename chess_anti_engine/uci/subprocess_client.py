@@ -64,8 +64,8 @@ def _response_matches(line: str, needle: str) -> bool:
     """
     if line == needle:
         return True
-    token, sep, _rest = line.partition(" ")
-    return sep == " " and token == needle
+    tokens = line.split(maxsplit=1)
+    return bool(tokens) and tokens[0] == needle
 
 
 def send_line(proc: subprocess.Popen[str], line: str) -> None:

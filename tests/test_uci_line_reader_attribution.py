@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from chess_anti_engine.uci.subprocess_client import LineReader, send_line
 
 
@@ -60,4 +62,45 @@ def test_bestmove_wait_skips_info_substring_and_keeps_the_next_reply(
     finally:
         if proc.poll() is None:
             proc.kill()
+        proc.wait(timeout=5)
+
+
+@pytest.mark.parametrize(
+    ("reply", "needle"),
+    [
+        ("bestmove\te2e4", "bestmove"),
+        ("bestmove \t e2e4", "bestmove"),
+        (" \tbestmove\te2e4", "bestmove"),
+        (" \treadyok \t", "readyok"),
+        ("readyok", "readyok"),
+        ("bestmove e2e4 ponder e7e5", "bestmove e2e4 ponder e7e5"),
+    ],
+    ids=["tab", "mixed", "leading", "padded-token", "exact-token", "whole-line"],
+)
+def test_whitespace_responses_preserve_consecutive_attribution(reply: str, needle: str) -> None:
+    diagnostic = "info string " + needle + " is not a response"
+    lines = [diagnostic, reply, "info string bestmove_fallback_used=1", "bestmove d2d4"]
+    script = "import sys; sys.stdout.write(" + repr("\n".join(lines) + "\n") + "); sys.stdout.flush()"
+    with subprocess.Popen(
+        [sys.executable, "-u", "-c", script],
+        stdout=subprocess.PIPE,
+        text=True,
+    ) as proc:
+        reader = LineReader(proc)
+        assert reader.read_until(needle, timeout_s=2.0) == [diagnostic, reply]
+        assert reader.read_until("bestmove", timeout_s=2.0) == lines[2:]
+        proc.wait(timeout=5)
+
+
+@pytest.mark.parametrize("line", [" \t", "bestmove\te2e4"])
+def test_whole_line_needle_requires_exact_text(line: str) -> None:
+    script = "print(" + repr(line) + ", flush=True)"
+    with subprocess.Popen(
+        [sys.executable, "-u", "-c", script],
+        stdout=subprocess.PIPE,
+        text=True,
+    ) as proc:
+        reader = LineReader(proc)
+        with pytest.raises(RuntimeError, match="engine exited before"):
+            reader.read_until("bestmove e2e4", timeout_s=2.0)
         proc.wait(timeout=5)
