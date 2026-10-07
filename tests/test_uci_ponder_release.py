@@ -306,6 +306,12 @@ def test_pool_fault_during_ponder_holds_until_ponderhit(
     assert worker.turns == [chess.WHITE]
     assert worker.deadline_finite == [True]
     assert _bestmoves(lines) == [f"bestmove {worker.moves[0]}"]
+    assert engine.bestmove_fallback_used == 1
+    diagnostics = [line for line in lines if "bestmove_fallback_used=" in line]
+    assert len(diagnostics) == 1
+    assert "phase=ponder" in diagnostics[0]
+    assert "move=g8h6" in diagnostics[0]
+    assert worker.moves[0] == "g1h3"
 
 
 def test_stop_after_pool_fault_emits_one_pre_reply_fallback(
@@ -323,6 +329,11 @@ def test_stop_after_pool_fault_emits_one_pre_reply_fallback(
     pre_reply = chess.Board()
     pre_reply.push_uci("e2e4")
     assert _bestmoves(lines) == [f"bestmove {next(iter(pre_reply.legal_moves)).uci()}"]
+    assert engine.bestmove_fallback_used == 1
+    diagnostics = [line for line in lines if "bestmove_fallback_used=" in line]
+    assert len(diagnostics) == 1
+    assert "phase=ponder" in diagnostics[0]
+    assert "move=g8h6" in diagnostics[0]
 
 
 def test_non_ponder_search_still_publishes_immediately(

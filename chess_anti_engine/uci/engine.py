@@ -387,9 +387,9 @@ class Engine:
   # ``_handle_isready`` re-warms the configured path before ``readyok``
   # so the first real ``go`` never pays cold capture on the clock.
         self._warmup_dirty = False
-  # Times this process answered a `go` from the bestmove fallback instead of a
-  # searched tree. Surfaced as an `info string` on every increment so a match
-  # log carries the evidence; see the `bestmove_fallback_used` property.
+  # Search-phase exceptions that selected a bestmove fallback. A ponder
+  # fallback may be replaced after ponderhit; its fault still counts. Every
+  # increment emits its phase; see the `bestmove_fallback_used` property.
         self._bestmove_fallback_used = 0
   # Times the C search DECLINED the root and the move came from the raw prior
   # with no simulation. Deliberately separate from the fault counter above —
@@ -1654,7 +1654,8 @@ class Engine:
             self._bestmove_fallback_used += 1
             _println(
                 f"info string bestmove_fallback_used={self._bestmove_fallback_used} "
-                f"source={source} move={fallback} exception={type(exc).__name__}"
+                f"source={source} move={fallback} exception={type(exc).__name__} "
+                f"phase={'ponder' if is_ponder else 'main'}"
             )
             return SearchResult(
                 bestmove_uci=fallback, ponder_uci=None, nodes=0, pv=(), score_cp=0, tbhits=0,
@@ -1723,11 +1724,13 @@ class Engine:
 
     @property
     def bestmove_fallback_used(self) -> int:
-        """How many times this process answered a `go` from the fallback path.
+        """How many search-phase exceptions selected a bestmove fallback.
 
         Monotonic for the life of the engine (a GUI plays many games in one
         process), so it is a session total, not a per-game one. Zero is the only
-        healthy value; every increment is one move the search did not produce.
+        healthy value. Each diagnostic identifies the phase: a ponder fallback
+        may be replaced by a successful main phase after ponderhit, but that
+        earlier search fault still counts.
         """
         return self._bestmove_fallback_used
 

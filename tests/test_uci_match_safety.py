@@ -148,6 +148,7 @@ def test_search_exception_falls_back_to_root_policy_argmax(width: int, capsys) -
     assert "info string search error: RuntimeError" in out
     assert "bestmove_fallback_used=1 source=root_policy move=e2e4" in out
     assert "exception=RuntimeError" in out
+    assert "phase=main" in out
     assert engine.bestmove_fallback_used == 1
 
 
