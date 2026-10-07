@@ -849,10 +849,18 @@ def _run_pid_and_eval(
     pid_ema_wr = float(pid.ema_winrate) if pid is not None else 0.0
     sf_nodes_next = int(sf_nodes_used)
 
-    if pid is not None and (total_w + total_d + total_l) > 0:
+    # Node floor/ceiling (and the other live knobs) apply on every completed
+    # iteration. A zero curriculum W/D/L total is not an observation: observe()
+    # stays behind that total so the EMA, lever history, and held sample do
+    # not move (PR #83/#85). The bound clamp is not that hold (PR #73).
+    # Selfplay games can finish an iteration with no curriculum outcome
+    # (production selfplay_fraction 0.50); skipping the clamp left the next
+    # DifficultyState.from_pid, and the manifest it publishes, on the old nodes.
+    if pid is not None:
         pid.refresh_live_params(config)
-        pid_update = pid.observe(wins=total_w, draws=total_d, losses=total_l, force=True)
-        pid_ema_wr = float(pid_update.ema_winrate)
+        if (total_w + total_d + total_l) > 0:
+            pid_update = pid.observe(wins=total_w, draws=total_d, losses=total_l, force=True)
+            pid_ema_wr = float(pid_update.ema_winrate)
         sf_nodes_next = int(pid.nodes)
         if sf is not None:
             sf.set_nodes(int(sf_nodes_next))
