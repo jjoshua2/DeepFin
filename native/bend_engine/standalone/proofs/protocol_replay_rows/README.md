@@ -49,7 +49,7 @@ timeout, parser/import/resource/inference errors. Prior controls remain unchange
 From `native/bend_engine` in this isolated checkout:
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 BUN=/home/josh/.bun/bin/bun taskset -c 1,3 \
+PYTHONDONTWRITEBYTECODE=1 BUN="$HOME/.bun/bin/bun" taskset -c 1,3 \
   python3 -m standalone.proofs.protocol_replay_rows.qualify_protocol_replay_rows \
   /tmp/deepfin-king-away-checker-aaeb9bc \
   --checker-manifest /absolute/new-evidence/checker-tree.json \
