@@ -10,6 +10,7 @@ Publishing it lets the GUI play it after ``ponderhit``.
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 import time
 from typing import cast
 
@@ -171,6 +172,49 @@ class _FaultThenRun(_ImmediateWorker):
             include_ponder=include_ponder,
             allow_terminal_shortcuts=allow_terminal_shortcuts,
         )
+
+
+class _DeclineThenRun(_ImmediateWorker):
+    """Return a declined prior in ponder, optionally again in the main phase."""
+
+    def __init__(self, *, decline_main: bool = False) -> None:
+        super().__init__()
+        self._calls = 0
+        self.decline_main = decline_main
+
+    def run(
+        self,
+        board: chess.Board,
+        *,
+        stop_event: threading.Event,
+        deadline: Deadline,
+        max_nodes: int | None = None,
+        max_depth: int | None = None,
+        optimum_ms: int | None = None,
+        abort_factor: float = 0.0,
+        root_moves: tuple[str, ...] = (),
+        info_cb: object = None,
+        include_ponder: bool = False,
+        allow_terminal_shortcuts: bool = True,
+    ) -> SearchResult:
+        self._calls += 1
+        result = super().run(
+            board,
+            stop_event=stop_event,
+            deadline=deadline,
+            max_nodes=max_nodes,
+            max_depth=max_depth,
+            optimum_ms=optimum_ms,
+            abort_factor=abort_factor,
+            root_moves=root_moves,
+            info_cb=info_cb,
+            include_ponder=include_ponder,
+            allow_terminal_shortcuts=allow_terminal_shortcuts,
+        )
+
+        if self._calls == 1 or self.decline_main:
+            return replace(result, nodes=0, root_declined="threefold repetition")
+        return result
 
 
 def _engine(worker: _ImmediateWorker) -> Engine:
@@ -352,3 +396,53 @@ def test_non_ponder_search_still_publishes_immediately(
     assert elapsed < 0.5
     assert worker.turns == [chess.WHITE]
     assert _bestmoves(lines) == [f"bestmove {worker.moves[0]}"]
+
+
+@pytest.mark.parametrize(
+    ("stop", "decline_main", "expected_count", "expected_move"),
+    [(False, False, 0, "g1h3"), (True, False, 1, "g8h6"), (False, True, 1, "g1h3")],
+    ids=["ponderhit-searched", "stop-prior", "ponderhit-main-prior"],
+)
+def test_prior_only_counter_counts_only_the_published_result(
+    monkeypatch: pytest.MonkeyPatch,
+    stop: bool,
+    decline_main: bool,
+    expected_count: int,
+    expected_move: str,
+) -> None:
+    lines = _capture(monkeypatch)
+    worker = _DeclineThenRun(decline_main=decline_main)
+    engine = _engine(worker)
+    _start_ponder(engine, worker)
+    _assert_quiet(lines, seconds=0.05)
+    thread = engine._search_thread
+    assert thread is not None
+    try:
+        assert engine.prior_only_roots == 0
+        assert not any("prior_only_root=" in line for line in lines)
+    finally:
+        engine.dispatch(CmdStop() if stop else CmdPonderHit())
+        thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    assert _bestmoves(lines) == [f"bestmove {expected_move}"]
+    assert engine.prior_only_roots == expected_count
+    assert engine.bestmove_fallback_used == 0
+    diagnostics = [line for line in lines if "prior_only_root=" in line]
+    assert len(diagnostics) == expected_count
+    if diagnostics:
+        assert f"move={expected_move} nodes=0" in diagnostics[0]
+
+
+def test_main_declined_root_is_counted_when_published(monkeypatch: pytest.MonkeyPatch) -> None:
+    lines = _capture(monkeypatch)
+    worker = _DeclineThenRun()
+    engine = _engine(worker)
+    engine.dispatch(CmdGo(args=GoArgs(wtime_ms=30_000, btime_ms=30_000)))
+    thread = engine._search_thread
+    assert thread is not None
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    assert _bestmoves(lines) == ["bestmove g1h3"]
+    assert engine.prior_only_roots == 1
+    assert engine.bestmove_fallback_used == 0
+    assert len([line for line in lines if "prior_only_root=" in line]) == 1

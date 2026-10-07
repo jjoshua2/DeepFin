@@ -330,8 +330,10 @@ def test_engine_announces_and_counts_a_declined_root(capsys) -> None:
     engine = Engine(worker=worker)
     limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
 
-    for _ in range(2):
-        engine._run_one_phase(limits, is_ponder=False, board=chess.Board())
+    for count in range(2):
+        result = engine._run_one_phase(limits, is_ponder=False, board=chess.Board())
+        assert engine.prior_only_roots == count
+        engine._emit_bestmove(result)
 
     out = capsys.readouterr().out
     assert "info string prior_only_root=1 reason=threefold repetition" in out

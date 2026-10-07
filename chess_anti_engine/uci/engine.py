@@ -1625,7 +1625,6 @@ class Engine:
                 include_ponder=self._options.ponder,
                 allow_terminal_shortcuts=not is_ponder and not limits.is_open_ended(),
             )
-            self._report_declined_root(result)
             if not is_ponder and last_emitted_nodes[0] != result.nodes:
                 self._emit_info(
                     nodes=result.nodes,
@@ -1662,7 +1661,7 @@ class Engine:
             )
 
     def _report_declined_root(self, result: SearchResult) -> None:
-        """Announce and count a bestmove the search REFUSED to produce.
+        """Announce and count a published bestmove the search REFUSED to produce.
 
         Distinct from `bestmove_fallback_used` on purpose. A raise is a *fault*
         — evaluator, walker, CUDA, OOM — and `bestmove_fallback_used` is a
@@ -1778,6 +1777,7 @@ class Engine:
         )))
 
     def _emit_bestmove(self, result: SearchResult) -> None:
+        self._report_declined_root(result)
         ponder = result.ponder_uci if self._options.ponder else None
         _println(format_bestmove(result.bestmove_uci, ponder=ponder))
 
