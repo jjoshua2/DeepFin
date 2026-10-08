@@ -682,7 +682,8 @@ def test_owned_stage_rechecks_preexec_snapshot_before_stamping_workload(tmp_path
         monkeypatch.setattr(Path, 'read_text', changed_child)
         with pytest.raises(ValueError, match='workload child changed'):
             arena.run_owned_stage(command, tmp_path / 'stage', 35, None, 'arena', {}, manifest={})
-        assert injected and changed
+        assert injected
+        assert changed
         assert release.is_file()
         assert (tmp_path / 'stage/failed.json').is_file()
         return
