@@ -393,6 +393,116 @@ def test_play_one_game_logs_time_loss_attempt(
     assert record.move_records[0].white_clock_after_s == pytest.approx(-0.4)
 
 
+@pytest.mark.parametrize("flip_colors", [False, True], ids=["white-flags", "black-flags"])
+@pytest.mark.parametrize(
+    ("fen", "draw"),
+    [
+        ("7k/8/8/8/8/8/8/KQ6 w - - 0 1", True),  # Bare king cannot mate.
+        ("6nk/8/8/8/8/8/8/KQ6 w - - 0 1", True),  # Knight vs king/queen.
+        ("6bk/8/8/8/8/8/8/KQ6 w - - 0 1", True),  # Bishop vs king/queen.
+        ("5nnk/8/8/8/8/8/8/KQ6 w - - 0 1", False),  # Two knights can mate.
+        ("6nk/8/8/8/8/8/8/KR6 w - - 0 1", False),  # Enemy rook can enable selfmate.
+        ("6bk/8/8/8/8/8/8/KQN5 w - - 0 1", False),  # Enemy knight can enable selfmate.
+        ("6rk/8/8/8/8/8/8/KQ6 w - - 0 1", False),
+    ],
+    ids=["bare-king", "knight-vs-queen", "bishop-vs-queen", "two-knights", "knight-vs-rook", "bishop-vs-knight", "rook"],
+)
+def test_clock_forfeit_respects_opponents_mating_material(
+    monkeypatch: pytest.MonkeyPatch, fen: str, draw: bool, flip_colors: bool,
+) -> None:
+    module = _load_match_vs_uci_module()
+    board = chess.Board(fen)
+    if flip_colors:
+        board = board.mirror()
+    assert board.is_valid()
+    assert not board.is_game_over(claim_draw=True)
+    move = next(iter(board.legal_moves))
+    callbacks = []
+    times = iter([10.0, 10.5])
+    monkeypatch.setattr(module, "_play_move", lambda *_args, **_kwargs: module.MoveResult(move, {"nodes": 5, "time": 0.5}))
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(times))
+
+    record = module.play_one_game(
+        object(), object(),
+        limit_w=chess.engine.Limit(time=1), limit_b=chess.engine.Limit(time=1),
+        enforce_nodes_w=False, enforce_nodes_b=False,
+        clock_base_w_ms=100, clock_base_b_ms=100, max_plies=1,
+        start_board=board, move_callback=callbacks.append,
+    )
+
+    loss = "0-1" if board.turn else "1-0"
+    assert record.result == ("1/2-1/2" if draw else loss)
+    assert record.termination == "time"
+    assert record.plies == 0
+    assert record.moves == ()
+    assert record.start_board.fen() == board.fen()
+    assert len(record.move_records) == 1
+    assert callbacks == [record.move_records[0]]
+    attempt = record.move_records[0]
+    assert attempt.move == move.uci()
+    assert attempt.nodes == 5
+    assert attempt.elapsed_s == pytest.approx(0.5)
+    assert attempt.white_clock_before_s == attempt.black_clock_before_s == 0.1
+    loser_clock = attempt.white_clock_after_s if board.turn else attempt.black_clock_after_s
+    opponent_clock = attempt.black_clock_after_s if board.turn else attempt.white_clock_after_s
+    assert loser_clock == pytest.approx(-0.4)
+    assert opponent_clock == 0.1
+
+
+@pytest.mark.parametrize("flip_colors", [False, True])
+def test_clock_forfeit_uses_material_before_the_unplayed_capture(
+    monkeypatch: pytest.MonkeyPatch, flip_colors: bool,
+) -> None:
+    module = _load_match_vs_uci_module()
+    board = chess.Board("1r5k/8/8/8/8/8/8/KQ6 w - - 0 1")
+    move = chess.Move.from_uci("b1b8")
+    if flip_colors:
+        board = board.mirror()
+        move = chess.Move.from_uci("b8b1")
+    assert move in board.legal_moves
+    assert board.is_capture(move)
+    after = board.copy(stack=True)
+    after.push(move)
+    assert after.has_insufficient_material(not board.turn)
+    times = iter([10.0, 10.5])
+    monkeypatch.setattr(module, "_play_move", lambda *_args, **_kwargs: module.MoveResult(move, {}))
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(times))
+    record = module.play_one_game(
+        object(), object(),
+        limit_w=chess.engine.Limit(time=1), limit_b=chess.engine.Limit(time=1),
+        enforce_nodes_w=False, enforce_nodes_b=False,
+        clock_base_w_ms=100, clock_base_b_ms=100, max_plies=1, start_board=board,
+    )
+    assert record.result == ("0-1" if board.turn else "1-0")
+    assert record.termination == "time"
+    assert record.moves == ()
+    assert record.plies == 0
+
+
+@pytest.mark.parametrize("nodes", [None, 1], ids=["fixed-time", "fixed-nodes"])
+def test_nonclock_move_is_played_even_with_insufficient_opponent_material(
+    monkeypatch: pytest.MonkeyPatch, nodes: int | None,
+) -> None:
+    module = _load_match_vs_uci_module()
+    board = chess.Board("7k/8/8/8/8/8/8/KQ6 w - - 0 1")
+    move = chess.Move.from_uci("b1b2")
+    times = iter([10.0, 10.5])
+    monkeypatch.setattr(module, "_play_move", lambda *_args, **_kwargs: module.MoveResult(move, {}))
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(times))
+    limit = chess.engine.Limit(nodes=nodes) if nodes else chess.engine.Limit(time=0.1)
+    record = module.play_one_game(
+        object(), object(), limit_w=limit, limit_b=limit,
+        enforce_nodes_w=nodes is not None, enforce_nodes_b=nodes is not None,
+        max_plies=1, start_board=board,
+    )
+    assert record.result == "1/2-1/2"
+    assert record.termination == "max_plies"
+    assert record.plies == 1
+    assert record.moves == (move,)
+    assert record.move_records[0].white_clock_after_s is None
+    assert record.move_records[0].black_clock_after_s is None
+
+
 def test_main_quits_engine_a_if_engine_b_open_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

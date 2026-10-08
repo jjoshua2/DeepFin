@@ -550,6 +550,13 @@ def _play_move(
     return MoveResult(result.move, dict(result.info))
 
 
+def _clock_forfeit_result(board: chess.Board) -> str:
+    """Adjudicate a flag on the pre-move board using conservative material rules."""
+    if board.has_insufficient_material(not board.turn):
+        return "1/2-1/2"
+    return "0-1" if board.turn == chess.WHITE else "1-0"
+
+
 def play_one_game(
     eng_w: chess.engine.SimpleEngine,
     eng_b: chess.engine.SimpleEngine,
@@ -677,7 +684,9 @@ def play_one_game(
                         white_after_s=white_clock_s,
                         black_after_s=black_clock_s,
                     )
-                    return GameRecord("0-1", plies, initial, tuple(moves), tuple(move_records), "time")
+                    return GameRecord(
+                        _clock_forfeit_result(board), plies, initial, tuple(moves), tuple(move_records), "time"
+                    )
                 white_clock_s += white_inc_s
             else:
                 black_clock_s -= elapsed_s
@@ -687,7 +696,9 @@ def play_one_game(
                         white_after_s=white_clock_s,
                         black_after_s=black_clock_s,
                     )
-                    return GameRecord("1-0", plies, initial, tuple(moves), tuple(move_records), "time")
+                    return GameRecord(
+                        _clock_forfeit_result(board), plies, initial, tuple(moves), tuple(move_records), "time"
+                    )
                 black_clock_s += black_inc_s
         append_move_record(
             move.uci(),
