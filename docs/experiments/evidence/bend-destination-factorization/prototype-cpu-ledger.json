@@ -1,0 +1,23 @@
+[
+  {
+    "name": "structural-01",
+    "cpu_seconds": 0.5827379999999999,
+    "wall_seconds": 0.605755094991764,
+    "timed_out": false,
+    "exit_code": 0
+  },
+  {
+    "name": "consumer-01",
+    "cpu_seconds": 2.474196,
+    "wall_seconds": 2.554997061000904,
+    "timed_out": false,
+    "exit_code": 1
+  },
+  {
+    "name": "consumer-02",
+    "cpu_seconds": 2.609765,
+    "wall_seconds": 3.2047342020086944,
+    "timed_out": false,
+    "exit_code": 0
+  }
+]

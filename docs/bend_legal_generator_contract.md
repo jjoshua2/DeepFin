@@ -235,3 +235,22 @@ unchanged compiler, complete consumer and both actual-source semantic controls.
 The caller still supplies the singleton/side/bounds premises. Deriving them from
 independent history, closing Tables.build and composing the full five-part claim
 remain separate obligations. The qualified home-king theorem is unchanged.
+
+
+## Qualified zero/singleton bitboard inventory, 2 October 2026
+
+The [bounded actual inventory](../native/bend_engine/standalone/proofs/bitboard_inventory/README.md)
+proves the real `Chess.bit_squares` output for zero and each one-bit `U64` mask,
+then connects that result to actual `scan_after`, `scan_step`, `scan` and the
+`legal_moves` caller pipeline from an arbitrary input array. Scan-stage equalities
+preserve the complete array and Ply tail; the `legal_moves` equality retains the
+actual threaded filter/castle pipeline without asserting its output array is
+unchanged. Source
+and target singleton premises are explicit. The actual filter and both castle
+calls remain in the final equality.
+
+This closes neither general multi-bit inventory nor piece-target geometry,
+attack correctness, move-class soundness/completeness, skipped-filter safety or
+whole-generator legality. The [dated receipt](experiments/2026-10-02-bend-bitboard-inventory.md)
+records the exact compiler, source closure, inherited factorization checks,
+semantic controls and independent review.
