@@ -644,7 +644,12 @@ def test_owned_stage_rechecks_preexec_snapshot_before_stamping_workload(tmp_path
     monkeypatch.setattr(arena, 'RUNTIME', tmp_path)
     monkeypatch.setattr(arena, 'disk_guard', lambda _path: None)
     monkeypatch.setattr(arena, 'environment', lambda _gpu=False: {'CUDA_VISIBLE_DEVICES': ''})
-    command = [sys.executable, '-c', 'import time; time.sleep(2); print("exec confirmed")']
+    release = tmp_path / 'release-workload'
+    command = [sys.executable, '-c',
+               'import sys,time; from pathlib import Path; '
+               'release=Path(sys.argv[1]); '
+               '\nwhile not release.exists(): time.sleep(0.01)'
+               '\nprint("exec confirmed")', str(release)]
     wrapped = arena.timeout_command(command, 35)
     original_read = Path.read_bytes
     injected = []
@@ -655,19 +660,30 @@ def test_owned_stage_rechecks_preexec_snapshot_before_stamping_workload(tmp_path
             if snapshot_kind.startswith('empty'):
                 return b''
             snapshot = [*command, '--unexpected'] if snapshot_kind == 'unexpected' else wrapped
+            if snapshot_kind == 'unexpected':
+                release.touch()
             return ('\0'.join(snapshot) + '\0').encode()
-        return original_read(path)
+        raw = original_read(path)
+        if (str(path).startswith('/proc/') and path.name == 'cmdline'
+                and raw.decode().strip('\0').split('\0') == command):
+            release.touch()
+        return raw
 
     monkeypatch.setattr(Path, 'read_bytes', first_preexec_snapshot)
     if snapshot_kind == 'empty_pid_change':
         original_text = Path.read_text
+        changed = []
         def changed_child(path, *args, **kwargs):
             if str(path).startswith('/proc/') and path.name == 'children' and injected:
+                changed.append(str(path))
+                release.touch()
                 return '999999'
             return original_text(path, *args, **kwargs)
         monkeypatch.setattr(Path, 'read_text', changed_child)
         with pytest.raises(ValueError, match='workload child changed'):
             arena.run_owned_stage(command, tmp_path / 'stage', 35, None, 'arena', {}, manifest={})
+        assert injected and changed
+        assert release.is_file()
         assert (tmp_path / 'stage/failed.json').is_file()
         return
     receipt = arena.run_owned_stage(command, tmp_path / 'stage', 35, None, 'arena', {}, manifest={})
