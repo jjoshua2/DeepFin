@@ -274,3 +274,49 @@ def test_load_lease_rejects_path_traversal_id(tmp_path: Path) -> None:
     outside.write_text('{"username": "worker"}', encoding="utf-8")
 
     assert load_lease(leases_root=leases_root, lease_id="../outside") is None
+
+
+def test_reconsider_balanced_assignment_excludes_departing_worker(tmp_path: Path) -> None:
+    from chess_anti_engine.server.lease import lease_counts_by_trial, prune_expired_leases
+
+    root = tmp_path / "leases"
+    workers = {}
+    for name in ("a1", "b1", "a2", "b2"):
+        workers[name] = assign_trial_lease(
+            leases_root=root, username="worker", worker_info={"worker_id": name},
+            available_trials=["trial_a", "trial_b"],
+            manifest_loader=lambda _tid: {"training_iteration": 10},
+            now_unix=100,
+        )
+    assert workers["b1"]["trial_id"] == "trial_b"
+    reconsidered = assign_trial_lease(
+        leases_root=root, username="worker", worker_info={"worker_id": "b1"},
+        available_trials=["trial_a", "trial_b"],
+        manifest_loader=lambda _tid: {"training_iteration": 10}, now_unix=101,
+    )
+    assert reconsidered["lease_id"] == workers["b1"]["lease_id"]
+    assert reconsidered["trial_id"] == "trial_b"
+    assert lease_counts_by_trial(active_leases=prune_expired_leases(
+        leases_root=root, now_unix=101,
+    )) == {"trial_a": 2, "trial_b": 2}
+
+
+def test_reconsider_can_move_worker_above_source_floor(tmp_path: Path) -> None:
+    from chess_anti_engine.server.lease import lease_counts_by_trial, prune_expired_leases
+
+    root = tmp_path / "leases"
+    for name in ("a1", "a2"):
+        assign_trial_lease(
+            leases_root=root, username="worker", worker_info={"worker_id": name},
+            available_trials=["trial_a", "trial_b"], requested_trial_id="trial_a",
+            manifest_loader=lambda _tid: {"training_iteration": 10}, now_unix=100,
+        )
+    moved = assign_trial_lease(
+        leases_root=root, username="worker", worker_info={"worker_id": "a2"},
+        available_trials=["trial_a", "trial_b"],
+        manifest_loader=lambda _tid: {"training_iteration": 10}, now_unix=101,
+    )
+    assert moved["trial_id"] == "trial_b"
+    assert lease_counts_by_trial(active_leases=prune_expired_leases(
+        leases_root=root, now_unix=101,
+    )) == {"trial_a": 1, "trial_b": 1}

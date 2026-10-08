@@ -2322,8 +2322,8 @@ class WorkerSession:
 
     def _periodic_manifest_poll(self) -> None:
         """Tier 0: every 30s, re-poll for task/pause/trial-reassign/reco changes."""
+        old_tid = self.leased_trial_id
         try:
-            old_tid = self.leased_trial_id
             manifest = self._poll_manifest()
             if manifest is None:
   # _poll_manifest returns None on pause or transient failure.
@@ -2369,6 +2369,10 @@ class WorkerSession:
                 _exc,
                 exc_info=True,
             )
+        finally:
+            # Negotiation can commit a new trial before a fallible manifest fetch.
+            if self.leased_trial_id != old_tid:
+                self._stop_selfplay = True
 
     def _resolve_local_manifest_path(self) -> Path | None:
         """Lazily compute the on-disk manifest path; cached on self."""
