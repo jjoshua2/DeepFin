@@ -1,0 +1,115 @@
+{
+  "qualification_kind": "all-emitted-squares range, set-membership, and all-U32 frequency corollary",
+  "snapshot": {
+    "pr": 1000,
+    "head": "8ce6640a1a20a4688ced0c7ebbfc61a648ab3f6d",
+    "base_pr": 992,
+    "base": "0908d932a0fa9c7d2690c9d33dacaea8cc8ff774",
+    "archive_sha256": "a672d8386a8144521a8a293cf4319e51fc2b42a40fb1b2f84e6ff15d16a24f07",
+    "archive_bytes": 47551881,
+    "archive_path_redacted": "<session-scratch>/source.tar.gz",
+    "archive_contains_new_module": false
+  },
+  "checker": {
+    "revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+    "version": "Bend 2.0.21 + U64",
+    "file_count": 84,
+    "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+    "runtime": "Bun 1.4.2",
+    "resource_guards": {
+      "timeout_seconds": 86400,
+      "cpu_affinity": "0,1",
+      "OMP_NUM_THREADS": 2,
+      "memory_cap": "6 GiB RSS",
+      "disk_cap": "16 GiB",
+      "telemetry": "disabled"
+    }
+  },
+  "module": {
+    "path": "native/bend_engine/standalone/proofs/bitboard_membership/AllEmittedSound.bend",
+    "sha256": "070241d0bc9075607c80d66c252bcaa039e71356bc7d1c22aba874d76a162dd0",
+    "bytes": 23644,
+    "git_blob_sha1": "b4eb2c38799b889bf9c054bf406f86466177c634",
+    "checked_against_snapshot_head": "8ce6640a1a20a4688ced0c7ebbfc61a648ab3f6d",
+    "source_closure": "emitted-range-source-closure.json",
+    "closure_count": 44,
+    "origin": "new proof source added after the immutable PR snapshot; exact proof bytes are separately bound by module.sha256 and git_blob_sha1"
+  },
+  "positive_checks": [
+    {
+      "module": "AllEmittedSound.bend",
+      "source_sha256": "070241d0bc9075607c80d66c252bcaa039e71356bc7d1c22aba874d76a162dd0",
+      "command": "timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 bun --smol <pinned-checker> native/bend_engine/standalone/proofs/bitboard_membership/AllEmittedSound.bend --check-only",
+      "started_at_utc": "2026-10-03T03:49:32Z",
+      "finished_at_utc": "2026-10-03T03:49:37Z",
+      "elapsed_wall_seconds": 4.72,
+      "exit_code": 0,
+      "max_rss_kib": 691536,
+      "result": "PASS",
+      "stdout_raw": "All terms check.\n",
+      "stderr_raw": "",
+      "time_log_raw": "\tCommand being timed: \"timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 bun --smol <pinned-checker> native/bend_engine/standalone/proofs/bitboard_membership/AllEmittedSound.bend --check-only\"\n\tUser time (seconds): 5.97\n\tSystem time (seconds): 0.49\n\tPercent of CPU this job got: 136%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:04.72\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 691536\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 184816\n\tVoluntary context switches: 1585\n\tInvoluntary context switches: 1040\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n",
+      "time_log_raw_sha256_before_redaction": "a8fdb23887a582d89bb12ef2bc66b32acc6a7072fb9e12289808ba933971e682",
+      "time_log_sha256_after_redaction": "f03a2b7f25f4439ac15073d296571bc2dd0f7f50ab794b5467675816e95aed39"
+    }
+  ],
+  "negative_controls": [
+    {
+      "control": "ctz-head",
+      "mutation": "Replace the actual emitted U64.ctz(bb) head with U32.from_nat(0n).",
+      "mutated_file": "native/bend_engine/legal_probe/Chess.bend",
+      "baseline_sha256": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+      "mutated_sha256": "947f52ef187779bc6fc3635221ffbf0ba54e8afe831b12b0a34c740ce9f5b8cb",
+      "baseline_git_blob_sha1": "c51e21cc682ab80eaf1a5104200c65c6dc2fc136",
+      "mutated_git_blob_sha1": "9a3d88f4575d614434199a304f49a77316c8d045",
+      "mutation_patch_sha256": "fc306c33a350060ac38f7b7d926d525f7001d856f4f8872e00197843d7959a5f",
+      "mutation_patch": "--- baseline/native/bend_engine/legal_probe/Chess.bend\n+++ mutant/native/bend_engine/legal_probe/Chess.bend\n@@ -262,7 +262,7 @@\n         case True{}: acc\n         case False{}:\n           +rest = U64.clear_lsb(bb)\n-          bit_squares(p, U64.is_zero(rest), rest, Con{U64.ctz(bb), acc})\n+          bit_squares(p, U64.is_zero(rest), rest, Con{U32.from_nat(0n), acc})\n \n def scan_after(src: U32, pawn: Bool, ep_sq: U32, acc: List<&2, Ply>, r: Array<U64> & U64) -> Array<U64> & List<&2, Ply>:\n   (table, +targets) = r\n",
+      "command": "timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 bun --smol <pinned-checker> native/bend_engine/standalone/proofs/bitboard_membership/AllEmittedSound.bend --check-only",
+      "started_at_utc": "2026-10-03T03:54:25Z",
+      "elapsed_wall_seconds": 3.795,
+      "exit_code": 1,
+      "max_rss_kib": 630140,
+      "result": "PASS_EXPECTED_REJECTION",
+      "stdout_raw": "",
+      "stderr_raw": "Error:\n- expected : ../../../legal_probe/Chess.bit_squares(63n, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), [0])\n- observed : ../../../legal_probe/Chess.bit_squares(63n, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), [U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0}))))])\nContext:\n- bb : U64\n- e  : {U64.is_zero(bb) == False{} : Bool}\nLocation: BitSquaresStep.bit_squares_step\n18 |       U64.is_zero(bb),False{},e),\n19>|     {==})\n20 | \n",
+      "stderr_sha256": "e9090dd9d49be46d486ab793450f141283f5adf587e73cff15772e3aa3bd736c",
+      "time_log_raw": "Command exited with non-zero status 1\n\tCommand being timed: \"timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 bun --smol <pinned-checker> native/bend_engine/standalone/proofs/bitboard_membership/AllEmittedSound.bend --check-only\"\n\tUser time (seconds): 4.28\n\tSystem time (seconds): 0.86\n\tPercent of CPU this job got: 135%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:03.79\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 630140\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 163448\n\tVoluntary context switches: 1353\n\tInvoluntary context switches: 919\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 1\n",
+      "time_log_sha256_before_redaction": "1b3bf5118de93d04c874e12293ba27ad3595c6cef5dbfefb4e4681de087b7458",
+      "time_log_sha256_after_redaction": "c1dbfd541d55a4b4700e4bdf2ab750cdccf541b7246a4131381336c13a268c20",
+      "expected_failure": "BitSquaresStep.bit_squares_step",
+      "stderr_confirms_obligation": true,
+      "finished_at_utc": "2026-10-03T03:54:29.235828Z"
+    },
+    {
+      "control": "clear-lsb-tail",
+      "mutation": "Replace clear_lsb in the actual bit_squares recursive step so it repeatedly emits the first set bit.",
+      "mutated_file": "native/bend_engine/legal_probe/Chess.bend",
+      "baseline_sha256": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+      "mutated_sha256": "2fe6748a874d4c17051b50475378468c5a4cc0ee16cd27f540fdeb25a6e42ecd",
+      "baseline_git_blob_sha1": "c51e21cc682ab80eaf1a5104200c65c6dc2fc136",
+      "mutated_git_blob_sha1": "80f58192e115952943250aa4fe7e0461cbbc8807",
+      "mutation_patch_sha256": "a42ef19489874ddccea7b84954e23637835c89cf04baf827294a495a8a7efe2b",
+      "mutation_patch": "--- baseline/native/bend_engine/legal_probe/Chess.bend\n+++ mutant/native/bend_engine/legal_probe/Chess.bend\n@@ -261,7 +261,7 @@\n       match empty:\n         case True{}: acc\n         case False{}:\n-          +rest = U64.clear_lsb(bb)\n+          +rest = bb\n           bit_squares(p, U64.is_zero(rest), rest, Con{U64.ctz(bb), acc})\n \n def scan_after(src: U32, pawn: Bool, ep_sq: U32, acc: List<&2, Ply>, r: Array<U64> & U64) -> Array<U64> & List<&2, Ply>:\n",
+      "command": "timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 bun --smol <pinned-checker> native/bend_engine/standalone/proofs/bitboard_membership/AllEmittedSound.bend --check-only",
+      "started_at_utc": "2026-10-03T03:54:29Z",
+      "elapsed_wall_seconds": 3.812,
+      "exit_code": 1,
+      "max_rss_kib": 625424,
+      "result": "PASS_EXPECTED_REJECTION",
+      "stdout_raw": "",
+      "stderr_raw": "Error:\n- expected : ../../../legal_probe/Chess.bit_squares(63n, U64.is_zero(bb), bb, [U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0}))))])\n- observed : ../../../legal_probe/Chess.bit_squares(63n, U64.is_zero(U64.and(bb, U64.sub(bb, U64{1, 0}))), U64.and(bb, U64.sub(bb, U64{1, 0})), [U32.from_nat(Word.count(64n, U64.to_word(U64.sub(U64.and(bb, U64.sub(U64{0, 0}, bb)), U64{1, 0}))))])\nContext:\n- bb : U64\n- e  : {U64.is_zero(bb) == False{} : Bool}\nLocation: BitSquaresStep.bit_squares_step\n18 |       U64.is_zero(bb),False{},e),\n19>|     {==})\n20 | \n",
+      "stderr_sha256": "cdd8e1026f0c65f001057c10e918c9a02173f1cfd47eec76ae70c3a6c6ff895b",
+      "time_log_raw": "Command exited with non-zero status 1\n\tCommand being timed: \"timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 bun --smol <pinned-checker> native/bend_engine/standalone/proofs/bitboard_membership/AllEmittedSound.bend --check-only\"\n\tUser time (seconds): 4.59\n\tSystem time (seconds): 0.63\n\tPercent of CPU this job got: 137%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:03.81\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 625424\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 169348\n\tVoluntary context switches: 1317\n\tInvoluntary context switches: 848\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 1\n",
+      "time_log_sha256_before_redaction": "dc7323f6213cbc22b114912715b4b8bca55c0c50be41d83ae593c0e17a54bab8",
+      "time_log_sha256_after_redaction": "16e458bb9b84cb644a8e7608b991f5a96a061614dca8f0fd9144f9a66719b366",
+      "expected_failure": "BitSquaresStep.bit_squares_step",
+      "stderr_confirms_obligation": true,
+      "finished_at_utc": "2026-10-03T03:54:33.048564Z"
+    }
+  ],
+  "redactions": {
+    "local_scratch_and_home_prefixes_normalized_in_time_logs_and_commands": true,
+    "checker_stdout_stderr_semantics_preserved": true,
+    "time_log_sha256_before_and_after_redaction_recorded": true
+  }
+}

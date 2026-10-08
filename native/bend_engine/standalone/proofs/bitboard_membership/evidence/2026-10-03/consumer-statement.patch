@@ -1,0 +1,11 @@
+--- a/native/bend_engine/standalone/proofs/bitboard_membership/FrequencyIteration.bend
++++ b/native/bend_engine/standalone/proofs/bitboard_membership/FrequencyIteration.bend
+@@ -165,7 +165,7 @@
+ 
+ def actual_bit_squares_frequency(+bb: U64,+query: U32,
+   +bound: {Nat.is_lt(U32.to_nat(query),64n) == True{} : Bool}) ->
+-  {Prefix.occurrences(Chess.bit_squares(64n,U64.is_zero(bb),bb,Nil{}),query) ==
++  {Prefix.occurrences(Nil{},query) ==
+     Bool.pick(Nat,U64.test_bit(bb,U32.to_nat(query)),1n,0n) : Nat}:
+   Equal.trans(Nat,
+     Prefix.occurrences(Chess.bit_squares(64n,U64.is_zero(bb),bb,Nil{}),query),
