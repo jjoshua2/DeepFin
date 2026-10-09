@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 import pytest
+import torch
 
 from chess_anti_engine.tune.trainable_config_ops import (
     _OPTIMIZER_CONSTRUCTION_KEYS,
@@ -923,3 +924,113 @@ def test_the_startup_reload_seeds_the_baseline_without_warning(
     with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
         _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
     assert any("rebuild_sf_targets" in m for m in _reload_warnings(caplog))
+
+
+class _MatrixBlock(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ffn = torch.nn.Linear(4, 4)
+        self.out_proj = torch.nn.Linear(4, 4)
+
+
+class _MatrixTiny(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.blocks = torch.nn.ModuleList([_MatrixBlock()])
+        self.head = torch.nn.Linear(4, 2)
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        del x
+        return {"policy": self.head.weight[:1], "wdl": self.head.weight[:1]}
+
+
+_OPTIMIZER_VALUE_KEYS = (
+    "matrix_lr_multiplier",
+    "matrix_weight_decay",
+    "aux_weight_decay",
+    "aurora_uw_floor",
+)
+
+
+def test_live_reload_refuses_optimizer_group_value_knobs(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A mid-run edit must not read back as the value the optimizer is using.
+
+    The four knobs are folded into param groups at Trainer construction and
+    are not pushed by `_apply_lr_gamma_weights`. Before they were classified,
+    the live reload copied the new numbers into `config` with no warning and
+    the groups kept the launch values. `aurora_pp_iterations` is the sibling
+    that IS pushed, so the same reload must still move that one.
+    """
+    from chess_anti_engine.train.trainer import Trainer
+
+    trainer = Trainer(
+        _MatrixTiny(),
+        device="cpu",
+        lr=3e-5,
+        optimizer="aurora",
+        matrix_optimizer_scope="mlp_out",
+        matrix_lr_multiplier=20.0,
+        matrix_weight_decay=1e-4,
+        aux_weight_decay=1e-4,
+        aurora_uw_floor=0.0,
+        aurora_pp_iterations=3,
+        warmup_steps=0,
+        use_amp=False,
+        log_dir=tmp_path,
+        tb_log_interval=10**9,
+        prefetch_batches=False,
+    )
+    launch = {
+        "lr": 3e-5,
+        "matrix_lr_multiplier": 20.0,
+        "matrix_weight_decay": 1e-4,
+        "aux_weight_decay": 1e-4,
+        "aurora_uw_floor": 0.0,
+        "aurora_pp_iterations": 3,
+    }
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        "\n".join([
+            "train:",
+            "  lr: 0.00003",
+            "  matrix_lr_multiplier: 10",
+            "  matrix_weight_decay: 0",
+            "  aux_weight_decay: 0.01",
+            "  aurora_uw_floor: 0.2",
+            "  aurora_pp_iterations: 7",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+    config = dict(launch)
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+    warnings = [record.getMessage() for record in caplog.records]
+
+    assert config["aurora_pp_iterations"] == 7
+    for key in _OPTIMIZER_VALUE_KEYS:
+        assert config[key] == launch[key], key
+        assert any(
+            message.startswith(f"YAML reload: {key} changed")
+            and "requires restart" in message
+            for message in warnings
+        ), warnings
+
+    _apply_lr_gamma_weights(trainer, config, rescale_current_lr=True)
+    groups = trainer.opt.param_groups
+    assert groups[0]["use_aurora"] is True
+    assert groups[0]["lr"] == pytest.approx(3e-5 * 20.0)
+    assert groups[0]["weight_decay"] == pytest.approx(1e-4)
+    assert groups[0]["aurora_uw_floor"] == pytest.approx(0.0)
+    assert groups[0]["aurora_pp_iterations"] == 7
+    assert groups[2]["weight_decay"] == pytest.approx(1e-4)
+    assert len(groups[0]["params"]) == 2
+
+    restarted = dict(launch)
+    _reload_yaml_into_config(restarted, str(yaml_path), live_reload=False)
+    assert restarted["matrix_lr_multiplier"] == 10
+    assert restarted["matrix_weight_decay"] == 0
+    assert restarted["aux_weight_decay"] == pytest.approx(0.01)
+    assert restarted["aurora_uw_floor"] == pytest.approx(0.2)

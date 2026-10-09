@@ -1563,3 +1563,130 @@ def test_train_steps_reports_iteration_mean_lr_not_the_release_trough(
     # The duty cycle predicts ~0.88 of the plateau; the trough is 10x below it.
     assert metrics.opt_lr_mean == pytest.approx(base_lr * 0.88, rel=0.05)
     assert metrics.opt_lr_mean > 5.0 * trough
+
+
+@pytest.mark.parametrize("optimizer", ["aurora", "muon"])
+@pytest.mark.parametrize(("phase", "eta_min"), [
+    ("warmup", 0.0), ("release_window", 0.0), ("cosine", 0.0), ("cosine", 1e-5),
+])
+@pytest.mark.parametrize("multiplier", [0.5, 10.0, 20.0])
+def test_resume_applies_configured_matrix_lr_ratio_preserving_phase(
+    tmp_path: Path, optimizer: str, phase: str, eta_min: float, multiplier: float,
+) -> None:
+    import copy
+
+    def make(label: str, matrix_multiplier: float) -> Trainer:
+        return Trainer(
+            _TinyMuonModel(), device="cpu", lr=3e-5, optimizer=optimizer,
+            matrix_lr_multiplier=matrix_multiplier,
+            warmup_steps=10 if phase == "warmup" else 0,
+            warmup_lr_start=1e-6, lr_eta_min=eta_min,
+            lr_schedule="cosine" if phase == "cosine" else "sqrt_release",
+            lr_T0=10, lr_release_cycle_steps=0,
+            lr_release_start_frac=0.5, lr_release_min_scale=0.1,
+            use_amp=False, log_dir=tmp_path / label,
+            tb_log_interval=10**9, prefetch_batches=False,
+        )
+
+    donor = make("donor", 20.0)
+    # Real optimizer moments distinguish a warm start from an optimizer reset.
+    for parameter in donor.model.parameters():
+        parameter.grad = torch.ones_like(parameter)
+    donor.opt.step()
+    donor.opt.zero_grad()
+    donor.step = 3 if phase == "warmup" else 7
+    if phase == "release_window":
+        donor._set_train_window_release_lr(local_step=7, cycle_steps=10)
+    else:
+        donor._update_lr()
+    old_lrs = [float(group["lr"]) for group in donor.opt.param_groups]
+    old_bases = donor._base_lrs()
+    old_scheduler = copy.deepcopy(donor._scheduler.state_dict())
+    old_state = copy.deepcopy(donor.opt.state_dict()["state"])
+    checkpoint = tmp_path / "tiny.pt"
+    donor.save(checkpoint)
+
+    loaded = make("loaded", multiplier)
+    loaded.load(checkpoint)
+    expected_factors = [
+        multiplier / 20.0 if group.get("use_aurora") or group.get("use_muon") else 1.0
+        for group in loaded.opt.param_groups
+    ]
+    assert loaded.step == donor.step
+    assert loaded._peak_lr == donor._peak_lr
+    assert loaded._scheduler.last_epoch == donor._scheduler.last_epoch
+    assert loaded._base_lrs() == pytest.approx([
+        base * factor for base, factor in zip(old_bases, expected_factors, strict=True)
+    ])
+    def expected_lrs(bases: list[float], active: list[float]) -> list[float]:
+        if phase == "cosine":
+            import math
+
+            scheduler = donor._scheduler
+            assert isinstance(scheduler, torch.optim.lr_scheduler.CosineAnnealingWarmRestarts)
+            scale = (1.0 + math.cos(math.pi * scheduler.T_cur / scheduler.T_i)) / 2.0
+            return [
+                eta_min + (base * factor - eta_min) * scale
+                for base, factor in zip(bases, expected_factors, strict=True)
+            ]
+        return [value * factor for value, factor in zip(active, expected_factors, strict=True)]
+
+    assert [float(group["lr"]) for group in loaded.opt.param_groups] == pytest.approx(
+        expected_lrs(old_bases, old_lrs)
+    )
+    assert loaded._scheduler._last_lr == pytest.approx(
+        expected_lrs(old_bases, old_scheduler["_last_lr"])
+    )
+    restored_state = loaded.opt.state_dict()["state"]
+    assert restored_state.keys() == old_state.keys()
+    assert old_state
+    for slot, values in old_state.items():
+        assert restored_state[slot].keys() == values.keys()
+        for key, value in values.items():
+            if isinstance(value, torch.Tensor):
+                torch.testing.assert_close(restored_state[slot][key], value, rtol=0, atol=0)
+            else:
+                assert restored_state[slot][key] == value
+
+    # Global peak rebasing and the next production LR update retain the new ratio.
+    loaded.set_peak_lr(6e-5, rescale_current=True)
+    donor.set_peak_lr(6e-5, rescale_current=True)
+    if phase == "release_window":
+        loaded._set_train_window_release_lr(local_step=8, cycle_steps=10)
+        donor._set_train_window_release_lr(local_step=8, cycle_steps=10)
+    else:
+        loaded.step += 1
+        donor.step += 1
+        loaded._update_lr()
+        donor._update_lr()
+    assert [float(group["lr"]) for group in loaded.opt.param_groups] == pytest.approx(
+        expected_lrs(donor._base_lrs(), [float(group["lr"]) for group in donor.opt.param_groups])
+    )
+    donor.writer.close()
+    loaded.writer.close()
+
+
+@pytest.mark.parametrize("optimizer", ["aurora", "muon"])
+def test_exact_resume_preserves_donor_matrix_lr_ratio(tmp_path: Path, optimizer: str) -> None:
+    def make(label: str, multiplier: float) -> Trainer:
+        return Trainer(
+            _TinyMuonModel(), device="cpu", lr=3e-5, optimizer=optimizer,
+            matrix_lr_multiplier=multiplier, warmup_steps=0,
+            lr_schedule="sqrt_release", lr_release_cycle_steps=0,
+            use_amp=False, log_dir=tmp_path / label,
+            tb_log_interval=10**9, prefetch_batches=False,
+        )
+
+    donor = make("donor", 20.0)
+    donor._set_train_window_release_lr(local_step=7, cycle_steps=10)
+    checkpoint = tmp_path / "tiny.pt"
+    donor.save(checkpoint)
+    loaded = make("loaded", 10.0)
+    loaded.load(checkpoint, exact_resume=True)
+    assert loaded._base_lrs() == donor._base_lrs()
+    assert [group["lr"] for group in loaded.opt.param_groups] == [
+        group["lr"] for group in donor.opt.param_groups
+    ]
+    assert loaded._scheduler.state_dict() == donor._scheduler.state_dict()
+    donor.writer.close()
+    loaded.writer.close()

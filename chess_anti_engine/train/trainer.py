@@ -2130,7 +2130,7 @@ _RAW_SUM_LOSS_KEYS: frozenset[str] = frozenset(
 
 
 # Param-group keys the CHECKPOINT legitimately owns on resume: the schedule's
-# phase (`lr` is re-applied by set_peak_lr right after load, `initial_lr` is
+# phase (`lr` amplitudes are reconciled after load, `initial_lr` is
 # scheduler bookkeeping) and per-group counters (SODA's step). EVERY other
 # param-group key is config-derived and must be re-applied from this run's
 # config after a load — see Trainer._reapply_configured_param_group_hparams.
@@ -2489,11 +2489,12 @@ def _validated_optimizer_scalar(
     that loop has a `finally:` and zero `except` — so an out-of-range value
     typed into the live file does not get rejected, it takes the trial down
     mid-iteration (CLAUDE.md, "Working on a live run"). These three keys are
-    construction-only by design: `tune/trainable_config_ops.py` documents them
-    as per-group VALUE knobs that are read once, by `trainer_kwargs_from_config`
-    on the way into `Trainer.__init__`, and are re-applied to the live optimizer
-    groups only from the snapshot taken there. So a mid-run edit to one of them
-    does nothing until the next restart, and the restart IS the construction —
+    construction-only by design: `tune/trainable_config_ops.py` lists them in
+    `_STARTUP_ONLY_TRIAL_KEYS`. They are read once, by
+    `trainer_kwargs_from_config` on the way into `Trainer.__init__`, and are
+    re-applied to the live optimizer groups only from the snapshot taken there.
+    A live reload refuses a mid-run edit instead of copying it into `config`
+    while the groups keep the launch value, and the restart IS the construction —
     which means construction-site validation covers the entire window in which
     the value can take effect, at zero live-reload hazard. A `from_dict`
     validator would cover the same window and add a way to kill a running trial.
@@ -2698,9 +2699,13 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "compile_mode": str(config.get("compile_mode", "reduce-overhead")),
         "optimizer": str(config.get("optimizer", "nadamw")),
         "matrix_optimizer_scope": str(config.get("matrix_optimizer_scope", "default")),
-        "matrix_lr_multiplier": _f("matrix_lr_multiplier", 20.0),
-        "matrix_weight_decay": _f("matrix_weight_decay", 1e-4),
-        "aux_weight_decay": _f("aux_weight_decay", 1e-4),
+        # Literal `config.get`, not `_f`. These three, plus `aurora_uw_floor`
+        # below, are startup-only (`_STARTUP_ONLY_TRIAL_KEYS`). The derivation
+        # cannot see an `_f` read, and declaring them startup-only while it
+        # cannot see them is the hand-override that test forbids.
+        "matrix_lr_multiplier": float(config.get("matrix_lr_multiplier", 20.0)),
+        "matrix_weight_decay": float(config.get("matrix_weight_decay", 1e-4)),
+        "aux_weight_decay": float(config.get("aux_weight_decay", 1e-4)),
         "global_board_preprocess_lr_multiplier": _f("global_board_preprocess_lr_multiplier", 1.0),
         "global_board_preprocess_weight_decay": _f("global_board_preprocess_weight_decay", 0.0),
         "global_board_adapter_lr_multiplier": _f("global_board_adapter_lr_multiplier", 1.0),
@@ -2708,7 +2713,7 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "weight_decay_mode": str(config.get("weight_decay_mode", "weight_decay")),
         "soda_scope": str(config.get("soda_scope", "decay")),
         "soda_start_step": _f("soda_start_step", 0, int),
-        "aurora_uw_floor": _f("aurora_uw_floor", 0.0),
+        "aurora_uw_floor": float(config.get("aurora_uw_floor", 0.0)),
         "aurora_pp_iterations": _f("aurora_pp_iterations", 2, int),
         "aurora_pp_beta": _f("aurora_pp_beta", 0.5),
         "aurora_polar_steps": _f("aurora_polar_steps", 12, int),
@@ -3233,6 +3238,12 @@ class Trainer:
   # Snapshot the CONFIGURED param-group hyperparameters before any checkpoint
   # restore can overwrite them. See _reapply_configured_param_group_hparams.
         self._configured_param_group_hparams = self._snapshot_param_group_hparams()
+        # Store relative amplitudes before warmup or a checkpoint can change LR.
+        # The checkpoint owns schedule phase; construction config owns group ratios.
+        self._configured_param_group_lr_ratios = (
+            [float(group["lr"]) / float(lr) for group in self.opt.param_groups]
+            if float(lr) > 0.0 else []
+        )
   # Gradient-clip scope. Muon/Aurora take the POLAR FACTOR of the gradient,
   # which is scale-invariant, so a global norm clip is exactly inert for that
   # group while still inflating the norm the clip decides on — measured on
@@ -6828,9 +6839,9 @@ class Trainer:
         key is inherited from whatever checkpoint the run happens to resume
         from, and the config value is silently discarded.
 
-        Two keys survived that by accident: ``lr`` (``set_peak_lr`` re-applies
-        it right after ``load``) and the ``aurora_*`` polar knobs
-        (``_apply_lr_gamma_weights`` re-pushes them every iteration).
+        LR amplitudes are reconciled separately after scheduler restore; the
+        aurora polar knobs are also re-pushed by _apply_lr_gamma_weights
+        every iteration.
         ``weight_decay`` had no such path, which is how ``matrix_weight_decay:
         0`` sat in the yaml for seven weeks while the live Aurora group ran at
         ``1e-4`` — a config key that could not be changed (rl_loop_audit I13).
@@ -6864,6 +6875,51 @@ class Trainer:
                         idx, key, group.get(key), value,
                     )
             group.update(hparams)
+
+    def _reapply_configured_lr_ratios(self) -> None:
+        """Apply constructor group ratios without resetting the restored LR phase.
+
+        set_peak_lr rescales every group uniformly, so it cannot repair a
+        donor's matrix multiplier. Rebase individual amplitudes at the donor's
+        peak first; the caller can then change the overall peak as usual.
+        """
+        ratios = self._configured_param_group_lr_ratios
+        groups = self.opt.param_groups
+        if len(ratios) != len(groups):
+            return
+        old_bases = self._resolve_old_bases(len(groups))
+        new_bases = [float(self._peak_lr) * ratio for ratio in ratios]
+        scheduler: Any = self._scheduler
+        last_lrs = list(getattr(scheduler, "_last_lr", []))
+        for idx, (group, old_base, new_base) in enumerate(zip(groups, old_bases, new_bases, strict=True)):
+            if math.isclose(old_base, new_base, rel_tol=1e-12, abs_tol=0.0):
+                new_bases[idx] = old_base
+                continue
+            if idx < len(last_lrs):
+                last_lrs[idx] = float(last_lrs[idx]) * (new_base / old_base) if old_base > 0.0 else new_base
+            if "initial_lr" in group:
+                group["initial_lr"] = (
+                    float(group["initial_lr"]) * (new_base / old_base) if old_base > 0.0 else new_base
+                )
+            if (
+                isinstance(scheduler, torch.optim.lr_scheduler.CosineAnnealingWarmRestarts)
+                and self.step >= self._warmup_steps
+            ):
+                # Cosine's floor is absolute: scaling the old LR would scale
+                # eta_min too. Evaluate the restored phase at the new base.
+                scale = (1.0 + math.cos(math.pi * scheduler.T_cur / scheduler.T_i)) / 2.0
+                active_lr = scheduler.eta_min + (new_base - scheduler.eta_min) * scale
+                group["lr"] = active_lr
+                if idx < len(last_lrs):
+                    last_lrs[idx] = active_lr
+            else:
+                self._rescale_active_lr_for_group(
+                    group, old_base=old_base, new_base=new_base,
+                    scheduler_last_lr_for_group=float(last_lrs[idx]) if idx < len(last_lrs) else None,
+                )
+        scheduler.base_lrs = list(new_bases)
+        if hasattr(scheduler, "_last_lr"):
+            scheduler._last_lr = last_lrs
 
     def load(self, path: Path, *, exact_resume: bool = False) -> None:
         from chess_anti_engine.model import (
@@ -7124,9 +7180,11 @@ class Trainer:
   # replaces every group's hyperparameters wholesale. Put this run's
   # configured values back (rl_loop_audit I13).
         self._reapply_configured_param_group_hparams()
+        scheduler_state_loaded = False
         if "scheduler" in ckpt and optimizer_state_loaded:
             try:
                 self._scheduler.load_state_dict(ckpt["scheduler"])
+                scheduler_state_loaded = True
             except (ValueError, KeyError, RuntimeError) as exc:
                 logging.getLogger(__name__).warning(
                     "Scheduler state incompatible with current optimizer layout, "
@@ -7169,6 +7227,8 @@ class Trainer:
                     "SWA model state incompatible, reinitialising: %s", exc,
                 )
         self.step = int(ckpt.get("step", 0))
+        if optimizer_state_loaded and scheduler_state_loaded:
+            self._reapply_configured_lr_ratios()
   # Emitted AFTER `self.step` is set so the point lands on the resumed step
   # rather than on 0. This is the observation that distinguishes "restored"
   # from "accepted and ignored" on a real restart without reading a log:

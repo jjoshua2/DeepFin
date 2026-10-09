@@ -177,6 +177,22 @@ _STARTUP_ONLY_READER_FILES: dict[str, set[str]] = {
         "chess_anti_engine/train/trainer.py",
         "chess_anti_engine/tune/trial_config.py",
     },
+    # Optimizer group values. The Trainer constructor is the only config read.
+    # `aurora.py`'s `group.get("aurora_uw_floor")` matches the config-read
+    # pattern and is the per-step consumer of the GROUP field written at
+    # construction, not a second read of the yaml key.
+    **{
+        key: {"chess_anti_engine/train/trainer.py"}
+        for key in (
+            "matrix_lr_multiplier",
+            "matrix_weight_decay",
+            "aux_weight_decay",
+        )
+    },
+    "aurora_uw_floor": {
+        "chess_anti_engine/train/trainer.py",
+        "chess_anti_engine/train/aurora.py",
+    },
 }
 
 # A config READ, as opposed to a mention: `tc.key`, `config["key"]`,
