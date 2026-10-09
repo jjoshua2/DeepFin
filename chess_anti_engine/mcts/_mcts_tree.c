@@ -35,6 +35,11 @@
 #include "../encoding/_cboard_impl.h"
 /* Feature planes for fused encode_146 */
 #include "../encoding/_features_impl.h"
+
+#define IS_SUPPORTED_EXTRA_FEATURES(n) \
+    ((n) == FEAT_EXTRA_V1 || (n) == FEAT_EXTRA_V2 || \
+     (n) == FEAT_EXTRA_V3_CHECKS || (n) == FEAT_EXTRA_V3_XRAY || \
+     (n) == FEAT_EXTRA_V3_SEE || (n) == FEAT_EXTRA_V3_PASSERS)
 /* Eval-plugin seam: the tree holds a POINTER to a value provider, never a
  * hard-wired evaluator call. The NNUE provider is the first one; a leaf qsearch
  * composes by holding an inner {provider, ctx} pair and recursing through
@@ -1395,7 +1400,7 @@ typedef struct {
     void *enc_data;
     int enc_is_bf16;
     int input_history_lc0_root;
-    int n_extra_planes;          /* 34 (v1) or 63 (v2_threats); from enc buffer dim 1 */
+    int n_extra_planes;          /* registered extra width from enc buffer dim 1 */
     int32_t enc_capacity;
     PyObject *enc_arr_ref;       /* Strong ref to keep enc buffer alive */
     uint8_t *rel_data;           /* Optional (cap,5,64,64) u8 relations buffer */
@@ -2413,7 +2418,7 @@ static PyObject *MCTSTree_backprop(MCTSTreeObject *self, PyObject *args) {
  *   - applies vloss along path[1:], encodes the leaf into enc_out[0], and
  *     returns terminal_q = None plus the legal-move indices at the leaf.
  *
- * enc_out must be a writable float32 array of shape (>=1, 146, 8, 8). Only
+ * enc_out must be writable float32 (>=1, registered_planes, 8, 8). Only
  * enc_out[0] is written. */
 static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *args) {
     int root_id;
@@ -2445,12 +2450,11 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
     PyArrayObject *enc_arr = FROMANY_4D_RW(enc_obj, NPY_FLOAT32);
     if (!enc_arr) return NULL;
     if (PyArray_DIM(enc_arr, 0) < 1 ||
-        (PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(enc_arr, 1) - 112) ||
         PyArray_DIM(enc_arr, 2) != 8 ||
         PyArray_DIM(enc_arr, 3) != 8) {
         Py_DECREF(enc_arr);
-        PyErr_SetString(PyExc_ValueError, "enc_out must be shape (>=1, 146 or 175, 8, 8) float32");
+        PyErr_SetString(PyExc_ValueError, "enc_out must have a registered plane count (>=1, planes, 8, 8) float32");
         return NULL;
     }
     int enc_n_extra = (int)PyArray_DIM(enc_arr, 1) - 112;
@@ -2661,7 +2665,7 @@ static PyObject *MCTSTree_walker_integrate_leaf(MCTSTreeObject *self, PyObject *
  * walker pool / pure-Python single-thread loop at ~30k nps on this workload.
  *
  * Caller pre-allocates fixed-stride buffers:
- *   enc_buf    : (>=N, 146, 8, 8) float32, written.  Contiguous.
+ *   enc_buf    : (>=N, registered_planes, 8, 8) float32, written. Contiguous.
  *   leaf_ids   : (>=N,) int32,            written.
  *   path_buf   : (>=N*MCTS_MAX_PATH,) int32,   written. path[i] occupies
  *                rows [i*MAX, i*MAX + path_lens[i]).
@@ -2743,8 +2747,7 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
         return NULL;
     }
     if (PyArray_DIM(enc_arr, 0) < n_leaves ||
-        (PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(enc_arr, 1) - 112) ||
         PyArray_DIM(enc_arr, 2) != 8 ||
         PyArray_DIM(enc_arr, 3) != 8 ||
         PyArray_DIM(leaf_ids_arr, 0) < n_leaves ||
@@ -3815,10 +3818,10 @@ static PyObject *MCTSTree_batch_wdl_to_q(MCTSTreeObject *self, PyObject *args) {
 
 /*
  * Encode a CBoard into (112 + n_extra) float32 planes (112 LC0 + extra
- * features; n_extra = 34 for v1 or 63 for v2_threats).
+ * features; n_extra is a registered feature width).
  * Writes into a pre-allocated buffer — no Python/numpy allocation.
  */
-#define ENC_PLANES_MAX (112 + FEAT_EXTRA_V2)
+#define ENC_PLANES_MAX (112 + FEAT_EXTRA_V3_PASSERS)
 
 static void cboard_encode_planes_into_ex(const CBoard *b, float * restrict out, int n_extra, int feat_prezeroed) {
     /* Targeted zeroing instead of a full memset.
@@ -4011,14 +4014,13 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
             "root_ids/budget/root_qs must have at least n_boards elements");
         return NULL;
     }
-    if ((PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+    if (!IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(enc_arr, 1) - 112) ||
         PyArray_DIM(enc_arr, 2) != 8 ||
         PyArray_DIM(enc_arr, 3) != 8) {
         Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
         Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
         PyErr_SetString(PyExc_ValueError,
-            "enc_buf must have shape (>=N, 146 or 175, 8, 8)");
+            "enc_buf must have shape (>=N, registered planes, 8, 8)");
         return NULL;
     }
     int n_extra_planes = (int)PyArray_DIM(enc_arr, 1) - 112;
@@ -5165,10 +5167,10 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
                         "df_norm_scale > 0 requires df_norm_slope > 0");
         return NULL;
     }
-    if (n_extra != FEAT_EXTRA_V1 && n_extra != FEAT_EXTRA_V2) {
+    if (!IS_SUPPORTED_EXTRA_FEATURES(n_extra)) {
         PyErr_Format(PyExc_ValueError,
-                     "n_extra must be %d (v1) or %d (v2_threats), got %d",
-                     FEAT_EXTRA_V1, FEAT_EXTRA_V2, n_extra);
+                     "n_extra must be a registered feature width (34, 63, 65, 67, 69, or 71), got %d",
+                     n_extra);
         return NULL;
     }
 
@@ -5548,7 +5550,7 @@ static PyObject *py_batch_compute_relations(PyObject *self, PyObject *args) {
 }
 
 /* batch_encode_146(cboards_list, out_array)
- * Encode N CBoards into a pre-allocated (N, 146, 8, 8) float32 array.
+ * Encode N CBoards into a pre-allocated (N, registered_planes, 8, 8) float32 array.
  * GIL released during encoding for thread parallelism. */
 static PyObject *py_batch_encode_146(PyObject *self, PyObject *args) {
     PyObject *cboards_list;
@@ -5570,12 +5572,11 @@ static PyObject *py_batch_encode_146(PyObject *self, PyObject *args) {
 
     /* Verify output array is large enough */
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, registered planes, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -5625,12 +5626,11 @@ static PyObject *py_batch_encode_146_lc0_root(PyObject *self, PyObject *args) {
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, registered planes, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -5677,12 +5677,11 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta(PyObject *self, PyObje
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, registered planes, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -5711,7 +5710,7 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta(PyObject *self, PyObje
 }
 
 /* batch_encode_146_bf16(cboards_list, out_array)
- * Encode N CBoards into a pre-allocated (N, 146, 8, 8) uint16 array holding
+ * Encode N CBoards into a pre-allocated (N, registered_planes, 8, 8) uint16 array holding
  * bfloat16 bit patterns. GIL released during encoding. */
 static PyObject *py_batch_encode_146_bf16(PyObject *self, PyObject *args) {
     PyObject *cboards_list;
@@ -5732,12 +5731,11 @@ static PyObject *py_batch_encode_146_bf16(PyObject *self, PyObject *args) {
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, registered planes, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -5784,12 +5782,11 @@ static PyObject *py_batch_encode_146_lc0_root_bf16(PyObject *self, PyObject *arg
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, registered planes, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -5836,12 +5833,11 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta_bf16(PyObject *self, P
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, registered planes, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -6201,7 +6197,7 @@ static PyMethodDef module_methods[] = {
      "Dynamic board-relation matrices; GIL released."},
     {"batch_encode_146", py_batch_encode_146, METH_VARARGS,
      "batch_encode_146(cboards_list, out_array) -> None. "
-     "Encode CBoards into pre-allocated (N,146,8,8) float32 array. GIL released."},
+     "Encode CBoards into registered plane count float32 array. GIL released."},
     {"batch_encode_146_lc0_root", py_batch_encode_146_lc0_root, METH_VARARGS,
      "batch_encode_146_lc0_root(cboards_list, out_array) -> None. "
      "Encode CBoards with LC0 root-history layout into pre-allocated float32 array."},
@@ -6210,7 +6206,7 @@ static PyMethodDef module_methods[] = {
      "Encode CBoards with LC0 root-history and legacy EP/rule50 metadata into float32 array."},
     {"batch_encode_146_bf16", py_batch_encode_146_bf16, METH_VARARGS,
      "batch_encode_146_bf16(cboards_list, out_array) -> None. "
-     "Encode CBoards into pre-allocated (N,146,8,8) uint16 bfloat16-bit array. GIL released."},
+     "Encode CBoards into registered plane count uint16 bf16 array. GIL released."},
     {"batch_encode_146_lc0_root_bf16", py_batch_encode_146_lc0_root_bf16, METH_VARARGS,
      "batch_encode_146_lc0_root_bf16(cboards_list, out_array) -> None. "
      "Encode CBoards with LC0 root-history layout into pre-allocated bf16-bit array."},
