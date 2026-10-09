@@ -97,6 +97,10 @@ from chess_anti_engine.onnx.load import (
     INPUT_FORMAT_CERES_TPG,
     INPUT_FORMAT_LC0_PLANES,
     ONNX_INPUT_FORMATS,
+    WDL_OUTPUT_AUTO,
+    WDL_OUTPUT_KINDS,
+    WDL_OUTPUT_LOGITS,
+    WDL_OUTPUT_PROBABILITIES,
     encode_ceres_onnx_input,
     onnx_input_contract,
 )
@@ -154,19 +158,55 @@ def _session(
     return sess, name, dtype
 
 
-def _to_wdl_probs(raw: np.ndarray) -> np.ndarray:
-    """Cache WDL as a probability distribution so the downstream Brier/ECE are
-    valid. Probabilities are non-negative AND sum to ~1; a logits net (negatives,
-    or rows that merely sum near 1 in a tiny smoke run) must still be softmaxed.
-    Use both signals — mirrors OnnxChessNet — so the audit numbers aren't
-    computed against invalid distributions. Ceres's `value` is LOGITS
-    (`NNEvaluatorONNX` is constructed with ``valueHeadLogistic: true``)."""
-    w = raw.astype(np.float64)
-    is_probs = bool((w >= -1e-4).all()) and np.allclose(w.sum(axis=1), 1.0, atol=0.1)
-    if is_probs:
+def _wdl_kind_from_values(raw: np.ndarray) -> str:
+    """The start-position probe. Same two signals as ``OnnxChessNet._probe_wdl_kind``.
+
+    Probabilities are non-negative and each row sums to about 1. Anything else
+    is logits. This is a property of the head, decided once per run. Applying it
+    to whatever rows happen to share a scoring batch makes one position's cached
+    WDL depend on its neighbours: ``[0.2, 0.3, 0.5]`` passes through alone and
+    is softmaxed beside a negative row.
+    """
+    w = np.asarray(raw, dtype=np.float64)
+    is_probs = (
+        bool((w >= -1e-4).all())
+        and bool(np.allclose(w.sum(axis=-1), 1.0, atol=0.1))
+    )
+    return WDL_OUTPUT_PROBABILITIES if is_probs else WDL_OUTPUT_LOGITS
+
+
+def _to_wdl_probs(raw: np.ndarray, *, kind: str) -> np.ndarray:
+    """Cache WDL as probabilities for downstream Brier/ECE.
+
+    ``kind`` is logits or probabilities for the whole run. Logits are softmaxed.
+    Probabilities are stored as emitted, including a row a per-batch heuristic
+    would have softmaxed because a neighbour looked like logits. Ceres ``value``
+    is logits (``valueHeadLogistic: true``). BT4 emits probabilities. Our own
+    checkpoint head emits logits.
+    """
+    w = np.asarray(raw, dtype=np.float64)
+    if kind == WDL_OUTPUT_PROBABILITIES:
         return w
+    if kind != WDL_OUTPUT_LOGITS:
+        raise ValueError(
+            f"wdl kind must be {WDL_OUTPUT_LOGITS!r} or {WDL_OUTPUT_PROBABILITIES!r}; "
+            f"got {kind!r}",
+        )
     w = np.exp(w - w.max(axis=1, keepdims=True))
     return w / w.sum(axis=1, keepdims=True)
+
+
+def _checkpoint_wdl_kind(requested: str) -> str:
+    """Our checkpoint ``wdl`` head emits logits. ``auto`` selects that.
+
+    An explicit ``probabilities`` request would store those logits unchanged and
+    the calibration table would treat them as a distribution. Refuse it.
+    """
+    if requested in (WDL_OUTPUT_AUTO, WDL_OUTPUT_LOGITS):
+        return WDL_OUTPUT_LOGITS
+    raise SystemExit(
+        "checkpoint WDL is logits; --wdl-output-kind probabilities does not apply",
+    )
 
 
 def _score_onnx(
@@ -201,22 +241,26 @@ def _score_onnx(
         e = encode_position(b, add_features=False, input_history_encoding=args.history)
         return fill_lc0_history_repeat(e) if args.history_fill == "repeat" else e
 
-    if args.input_format == INPUT_FORMAT_CERES_TPG:
-        # `fill_in_history=True` is Ceres's own FEN-only behaviour, and it is the
-        # same convention as `--history-fill repeat` on the LC0 side, so the two
-        # nets are being asked the same question about a rootless position.
-        feats = encode_ceres_onnx_input(boards, in_dtype)
-    else:
-        feats = np.stack([_enc_lc0(b) for b in boards]).astype(np.float32)
-    feats = feats.astype(in_dtype, copy=False)
+    def _encode(chunk: list[chess.Board]) -> np.ndarray:
+        if args.input_format == INPUT_FORMAT_CERES_TPG:
+            # `fill_in_history=True` is Ceres's own FEN-only behaviour, and it is the
+            # same convention as `--history-fill repeat` on the LC0 side, so the two
+            # nets are being asked the same question about a rootless position.
+            encoded = encode_ceres_onnx_input(chunk, in_dtype)
+        else:
+            encoded = np.stack([_enc_lc0(b) for b in chunk]).astype(np.float32)
+        return encoded.astype(in_dtype, copy=False)
 
+    feats = _encode(boards)
     out_names = [o.name for o in sess.get_outputs()]
     pol = np.empty((len(boards), COMPACT_POLICY_SIZE), dtype=np.float32)
     wdl = np.empty((len(boards), 3), dtype=np.float32)
     bs = int(args.batch_size)
     pol_idx = wdl_idx = -1
-    for s in range(0, len(boards), bs):
-        out = [np.asarray(o) for o in sess.run(None, {in_name: feats[s:s + bs]})]
+
+    def _forward(batch_feats: np.ndarray) -> list[np.ndarray]:
+        nonlocal pol_idx, wdl_idx
+        out = [np.asarray(o) for o in sess.run(None, {in_name: batch_feats})]
         if pol_idx < 0:
             # Prefer the caller's names; otherwise pick by width, not position:
             # some LC0/BT4 ONNX graphs emit WDL (3-wide) before policy
@@ -235,16 +279,39 @@ def _score_onnx(
                     f"{widths}. Pass an LC0/Ceres net with a WDL value head."
                 )
             print(f"[audit] policy={out_names[pol_idx]} wdl={out_names[wdl_idx]}")
+        return out
+
+    requested = getattr(args, "wdl_output_kind", WDL_OUTPUT_AUTO)
+    if requested == WDL_OUTPUT_AUTO:
+        # One start position, then frozen. Re-deciding inside the batch loop
+        # made the cached row depend on --batch-size and on which other
+        # positions shared the chunk.
+        probe = _forward(_encode([chess.Board()]))
+        kind = _wdl_kind_from_values(probe[wdl_idx])
+    elif requested in (WDL_OUTPUT_LOGITS, WDL_OUTPUT_PROBABILITIES):
+        kind = requested
+    else:
+        raise SystemExit(
+            f"--wdl-output-kind must be one of {WDL_OUTPUT_KINDS}; got {requested!r}",
+        )
+    print(f"[audit] wdl_output_kind={kind}")
+
+    for s in range(0, len(boards), bs):
+        out = _forward(feats[s:s + bs])
         pol[s:s + bs] = out[pol_idx][:, :COMPACT_POLICY_SIZE]
-        wdl[s:s + bs] = _to_wdl_probs(out[wdl_idx])
+        wdl[s:s + bs] = _to_wdl_probs(out[wdl_idx], kind=kind)
         if s % (bs * 8) == 0:
             print(f"[audit] {s + min(bs, len(boards) - s)}/{len(boards)}", flush=True)
-    return pol, wdl, {"policy_output": out_names[pol_idx],
-                      "wdl_output": out_names[wdl_idx]}
+    return pol, wdl, {
+        "policy_output": out_names[pol_idx],
+        "wdl_output": out_names[wdl_idx],
+        "wdl_output_kind": kind,
+    }
 
 
 def _score_checkpoint(
     boards: list[chess.Board], checkpoint: str, *, device: str, batch_size: int,
+    wdl_kind: str,
 ) -> tuple[np.ndarray, np.ndarray]:
     """(policy widened to OUR 4672 order, WDL probabilities) for our own net.
 
@@ -289,7 +356,9 @@ def _score_checkpoint(
                 pol_logits, policy_encoding=pol_enc, fill_value=-1e9,
             )
         pol_chunks.append(pol_logits)
-        wdl_chunks.append(_to_wdl_probs(np.asarray(net_wdl, dtype=np.float32)))
+        wdl_chunks.append(_to_wdl_probs(
+            np.asarray(net_wdl, dtype=np.float32), kind=wdl_kind,
+        ))
         print(f"[audit] {min(s + batch_size, len(boards))}/{len(boards)}", flush=True)
     return np.concatenate(pol_chunks), np.concatenate(wdl_chunks).astype(np.float32)
 
@@ -330,6 +399,14 @@ def main() -> None:
                          "output, which for Ceres is `value` (the primary head, "
                          "NNEvaluatorONNX's ValuesRaw). `value2` is the secondary "
                          "head Ceres blends in at 0.4 weight, not a WDL twin.")
+    ap.add_argument("--wdl-output-kind", choices=WDL_OUTPUT_KINDS,
+                    default=WDL_OUTPUT_AUTO,
+                    help="logits are softmaxed into the cache; probabilities are "
+                         "stored as emitted. auto probes the start position once "
+                         "and freezes that choice for every batch (it is not "
+                         "re-decided from the batch). Ceres value is logits; BT4 "
+                         "emits probabilities. A checkpoint head is logits: auto "
+                         "selects logits, and probabilities is refused.")
     ap.add_argument("--ort-threads", type=int, default=0,
                     help="cap ORT's intra-op pool (0 = ORT default). Use a small "
                          "value when a training run owns the machine.")
@@ -360,14 +437,20 @@ def main() -> None:
     boards = [chess.Board(p.fen) for p in positions]
     if args.checkpoint:
         net_label = args.checkpoint
+        # The head is logits by construction (docs/model_heads.md). There is no
+        # output-name choice to record; the kind is recorded because Brier/ECE
+        # read the cached probabilities and a logits row left unsoftmaxed is a
+        # different number.
+        wdl_kind = _checkpoint_wdl_kind(args.wdl_output_kind)
         pol_full, wdl = _score_checkpoint(
             boards, args.checkpoint, device=args.device, batch_size=int(args.batch_size),
+            wdl_kind=wdl_kind,
         )
         pol = None
-        # Our own net has one policy head and one WDL head, read off the model —
-        # there is nothing to select, so there is nothing to record. An empty
-        # dict says that; a null-valued key would claim a choice was made.
-        input_contract: dict[str, str] = {"input_format": "checkpoint"}
+        input_contract: dict[str, str] = {
+            "input_format": "checkpoint",
+            "wdl_output_kind": wdl_kind,
+        }
     else:
         net_label = f"{args.onnx} [{args.input_format}]"
         pol, wdl, heads = _score_onnx(boards, args)
@@ -461,6 +544,7 @@ def main() -> None:
     lines = [f"# Frozen-audit-set policy regret @ {net_label}", "",
              f"- audit set: {args.audit_set} ({len(cache_rows)} scored)",
              f"- {encoding_note}",
+             f"- wdl output kind: {input_contract['wdl_output_kind']}",
              f"- provenance: {stamp_summary(stamp)}",
              "", "| group | E[regret] cp | top-1 cp | n |", "|---|---|---|---|"]
     for g in groups:
