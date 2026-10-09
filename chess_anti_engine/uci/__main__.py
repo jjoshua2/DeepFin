@@ -1332,6 +1332,11 @@ def main() -> int:
             if engine.quit_requested:
                 break
     finally:
+  # Quit can arrive before the background builder publishes its Engine.
+  # Wait for ownership to transfer (or for the build to fail) so the
+  # finally block can close any worker the builder created.
+        if not engine_ready.is_set():
+            engine_ready.wait()
   # Close whatever evaluator is CURRENT at shutdown time, not a
   # one-shot snapshot — ``MaxBatch`` setoption rebuilds the evaluator
   # via ``SearchWorker.set_evaluator``, which already closes the old
