@@ -11,7 +11,8 @@ assumption, initialized-table premise, child row or home-piece premise, or assum
 child conclusion. The proof actually uses only the white kingside parent check;
 canonical turn and the other three parent checks can be omitted for this increment.
 
-The other three child checks remain unproved. This is not a theorem of full child
+The other three child checks are not proved by this original increment. The shared
+all-four extension is documented in [README_FOUR_RIGHTS.md](README_FOUR_RIGHTS.md). This is not a theorem of full child
 `Position.valid`, preservation of king counts with nonzero rights, legal-move
 completeness, replay preservation, or reachability from a conventional root.
 
