@@ -25,9 +25,20 @@ BUN=bun python -m native.bend_engine.standalone.proofs.generator_contract.qualif
 ```
 
 The new GitHub workflow uses the existing compiler installer and pin checker.
-The complete hosted qualifier runs in a transient cgroup limited to two CPU
-cores of quota, 6 GiB RAM, no swap and 1,100 seconds. The positive compiler child
-has a 600-second wall limit; each of two controls has 180 seconds.
+The positive compiler child defaults to an 86,400-second (24-hour) wall limit.
+Use `--consumer-timeout-seconds` for an explicit job override. A time-based warning
+is emitted after one hour; it reports elapsed time only and does not imply semantic
+progress. The checker log is retained as an artifact; exceeding the 16 MiB output
+threshold terminates qualification. The report includes the last 1 MiB and captured-output digest, and refuses to classify truncated output as success or semantic rejection.
+Each of two semantic controls retains its explicit 180-second wall limit.
+
+The hosted workflow preserves its 200% CPU quota, 6 GiB RAM and no-swap cgroup
+limits, with a 24-hour 10-minute cgroup ceiling so Python can record its own timeout.
+GitHub Actions imposes a separate 360-minute maximum job/step duration, which binds
+first on GitHub-hosted runners; therefore hosted CI cannot support the full 24-hour
+default. The 24-hour default applies to local or other runners whose outer service
+allows it. The hosted workflow asks for GitHub's maximum 360 minutes and does not
+claim a 24-hour hosted run is possible.
 These are qualification resource bounds, not theorem premises. Timeout,
 out-of-memory, signals, unsafe output, parser/import/ownership errors or a missing
 report are failures, never a proof or a successful negative control.
