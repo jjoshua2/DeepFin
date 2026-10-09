@@ -3705,8 +3705,12 @@ class WorkerSession:
                     out_path=sf_cached,
                     expected_sha256=sf_sha,
                     headers=_worker_headers(),
+                    make_executable=True,
                 )
-                _ensure_executable(sf_cached)
+            else:
+                # A previous worker version may have published before chmod,
+                # and SHA-cache hits otherwise skip the downloader entirely.
+                _ensure_executable(sf_cached, strict=True)
             self.last_sf_sha = sf_sha
             stockfish_path = str(sf_cached)
 
