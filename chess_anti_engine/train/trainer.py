@@ -7133,10 +7133,21 @@ class Trainer:
                     "reinitialising scheduler: %s", exc,
                 )
                 self._scheduler.load_state_dict(fresh_scheduler_state)
-        if "peak_lr" in ckpt:
-            self._peak_lr = float(ckpt["peak_lr"])
-        else:
-            self._peak_lr = self._reference_lr_from_bases()
+  # Peak belongs to the optimizer state that survived this load. The cold-start
+  # handlers revert the optimizer and the scheduler to the pre-load snapshot,
+  # and that snapshot's peak already matches its bases. Adopting the donor peak
+  # anyway makes the next set_peak_lr — Ray restore passes rescale_current=False
+  # and the salvage iteration passes True — take
+  # ref_old = max(donor_peak, min(fresh bases)). A donor saved at 1e-3 and
+  # restored into lr 3e-5 therefore scales every fresh base by 0.03, and the
+  # Ray call writes _peak_lr first so the later True sync cannot undo it.
+  # Successful loads still adopt the peak: that is the value the rebase scales
+  # from.
+        if optimizer_state_loaded:
+            if "peak_lr" in ckpt:
+                self._peak_lr = float(ckpt["peak_lr"])
+            else:
+                self._peak_lr = self._reference_lr_from_bases()
   # Gated on `optimizer_state_loaded` for the same reason the scheduler is:
   # that branch only fails when the model's parameter layout no longer
   # matches the donor's, and an EMA of gradient norms taken over a
@@ -7168,7 +7179,13 @@ class Trainer:
                 logging.getLogger(__name__).warning(
                     "SWA model state incompatible, reinitialising: %s", exc,
                 )
-        self.step = int(ckpt.get("step", 0))
+  # Same gate as the peak. The cold-start snapshot is the pre-load optimizer,
+  # so the pre-load step (0 at process start) is the one that matches it. The
+  # donor step would skip warmup on that fresh optimizer: both _update_lr and
+  # the sqrt-release window gate key off self.step. A successful load still
+  # resumes the donor step.
+        if optimizer_state_loaded:
+            self.step = int(ckpt.get("step", 0))
   # Emitted AFTER `self.step` is set so the point lands on the resumed step
   # rather than on 0. This is the observation that distinguishes "restored"
   # from "accepted and ignored" on a real restart without reading a log:
