@@ -714,8 +714,6 @@ def submit_async_sf_labels_from_curriculum_moves(state: SelfplayState, idxs: lis
     submitted = 0
     max_pending = max(1, int(state.batch_size) * 8)
     for idx in idxs:
-        if len(state.pending_sf_labels) >= max_pending:
-            break
         fut = state.pending_sf_moves.get(idx)
         if fut is None or not _slot_latest_record_needs_sf_label(state, idx):
             continue
@@ -727,10 +725,11 @@ def submit_async_sf_labels_from_curriculum_moves(state: SelfplayState, idxs: lis
         # the reply), so capturing the escalation context from the board here
         # matches the query — the same assumption the turn/legal_indices
         # snapshot above already makes.
+        record = state.samples_per_game[idx][-1]
         state.pending_sf_labels.append(
             _PendingSfLabel(
                 future=fut,
-                record=state.samples_per_game[idx][-1],
+                record=record,
                 turn=bool(state.cboards[idx].turn),
                 legal_indices=np.asarray(legal_indices, dtype=np.int64).copy(),
                 query_fen=state.cboards[idx].fen(),
@@ -738,6 +737,13 @@ def submit_async_sf_labels_from_curriculum_moves(state: SelfplayState, idxs: lis
                 syzygy_path=_sf_syzygy_path_for_slot(state, idx),
             ),
         )
+        if len(state.pending_sf_labels) > max_pending:
+            # The cap is shared with selfplay label admission. Breaking here
+            # drops this net row's teacher target: move completion applies
+            # the reply with attach_labels=False, and finalize only waits
+            # for labels already queued. Spill this record now. The move
+            # future stays in pending_sf_moves for the board update.
+            flush_async_sf_labels_for_records(state, [record])
         submitted += 1
     return submitted
 

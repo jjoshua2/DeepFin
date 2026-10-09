@@ -240,6 +240,73 @@ def test_curriculum_move_future_reused_for_label_when_nodes_are_shared() -> None
     assert rec.sf_policy_target is not None
 
 
+def test_curriculum_label_reuse_below_cap_stays_queued() -> None:
+    """Uncongested curriculum admission must not block on the reused future.
+
+    The move future is already complete in this fake, so a synchronous flush
+    would attach the teacher target before the caller asks. Below the cap the
+    row stays unlabeled until an explicit flush, and the queue grows by one.
+    """
+    state = _state(has_policy=True, sf_move_nodes=0)
+    rec = state.samples_per_game[0][0]
+    state.pending_sf_labels = [
+        SimpleNamespace(record=_record(has_policy=True), future=Future())
+        for _ in range(7)
+    ]
+
+    submit_async_curriculum_move_queries(state, [0])
+    submitted = submit_async_sf_labels_from_curriculum_moves(state, [0])
+
+    assert submitted == 1
+    assert len(state.pending_sf_labels) == 8
+    assert rec.sf_policy_target is None
+    assert rec.sf_wdl is None
+    attached, failed = flush_async_sf_labels_for_records(state, [rec])
+    assert (attached, failed) == (1, 0)
+    assert rec.sf_policy_target is not None
+    assert rec.sf_wdl is not None
+    assert len(state.pending_sf_labels) == 7
+
+
+def test_curriculum_label_reuse_backpressures_instead_of_dropping_at_cap() -> None:
+    """Production curriculum labels reuse the move future (sf_move_nodes=0).
+
+    ``batch_size * 8`` is one shared pending list. Once it is full, breaking
+    out of this loop leaves the current net row with no teacher target, and
+    the later move completion does not attach one (``attach_labels=False``).
+    The row is still finalized. Spill the current record synchronously and
+    keep going so a later slot in the same call is not discarded either.
+    Other games' unfinished labels stay queued.
+    """
+    state = _state(has_policy=True, sf_move_nodes=0)
+    state.batch_size = 1
+    state.cboards.append(_FakeCBoard())
+    state.samples_per_game.append([_record(has_policy=True)])
+    state.last_net_full.append(True)
+    state.pending_sf_moves = {}
+    others = [_record(has_policy=True) for _ in range(8)]
+    other_futures = [Future() for _ in range(8)]
+    state.pending_sf_labels = [
+        SimpleNamespace(record=rec, future=fut)
+        for rec, fut in zip(others, other_futures, strict=True)
+    ]
+    current = [state.samples_per_game[0][0], state.samples_per_game[1][0]]
+
+    submit_async_curriculum_move_queries(state, [0, 1])
+    submitted = submit_async_sf_labels_from_curriculum_moves(state, [0, 1])
+
+    assert submitted == 2
+    assert len(state.stockfish.calls) == 2
+    assert [rec.sf_policy_target is not None for rec in current] == [True, True]
+    assert [rec.sf_move_index is not None for rec in current] == [True, True]
+    assert [rec.sf_wdl is not None for rec in current] == [True, True]
+    assert len(state.pending_sf_labels) == 8
+    assert [pending.future for pending in state.pending_sf_labels] == other_futures
+    assert all(not fut.done() for fut in other_futures)
+    # The reused move futures remain owned by the curriculum move applicator.
+    assert set(state.pending_sf_moves) == {0, 1}
+
+
 def test_curriculum_label_reuse_refused_below_the_floor() -> None:
     """PR #354 review H1: with sf_move_nodes=0 (production) the curriculum
     label REUSES the move future, which was submitted for_move and takes
