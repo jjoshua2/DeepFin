@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import fcntl
 import logging
-import os
 import threading
 import time
 from pathlib import Path
@@ -222,6 +220,7 @@ def test_resumed_buffer_samples_from_pruned_optional_shards(tmp_path) -> None:
 
     buf.add_many([_sample() for _ in range(6)])
     buf.flush()
+    buf.close()  # A replacement process takes ownership only after its predecessor exits.
 
     resumed = DiskReplayBuffer(
         50,
@@ -277,6 +276,7 @@ def test_resumed_shuffle_cache_survives_deleted_shard_directories(tmp_path) -> N
 
     buf.add_many([_sample() for _ in range(6)])
     buf.flush()
+    buf.close()  # A replacement process takes ownership only after its predecessor exits.
 
     resumed = DiskReplayBuffer(
         12,
@@ -740,39 +740,30 @@ def test_priority_mass_excludes_fast_row_kl_and_seed_scan(tmp_path) -> None:
     buf2.close()
 
 
-def test_second_writer_into_one_shard_dir_is_reported(tmp_path, caplog) -> None:
-    """Audit G7: two writers into one window dir duplicate every row silently.
-
-    On 2026-07-11 that ran for 87 minutes and left 20.5k byte-identical
-    duplicate rows in the window (and in a salvage revert point). Nothing
-    detected it. The lock is advisory: the second writer still writes, so the
-    only thing this asserts is that it SAYS so.
-    """
+def test_second_writer_into_one_shard_dir_is_refused_before_duplicate_ingest(tmp_path) -> None:
     shard_dir = tmp_path / "replay"
-    shard_dir.mkdir()
-    fd = os.open(str(shard_dir / ".writer.lock"), os.O_CREAT | os.O_RDWR, 0o644)
-    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    os.pwrite(fd, b"424242\n", 0)
+    owner = DiskReplayBuffer(
+        100, shard_dir=shard_dir, rng=np.random.default_rng(0), read_only=False,
+        shuffle_cap=100, shard_size=2, refresh_interval=0,
+    )
     try:
-        buf = DiskReplayBuffer(
-            100, shard_dir=shard_dir, rng=np.random.default_rng(0), read_only=False,
-            shuffle_cap=100, shard_size=2,
-        )
-        with caplog.at_level(logging.ERROR, logger="chess_anti_engine.replay.disk_buffer"):
-            buf.add_many([_sample() for _ in range(2)])
-            buf.flush()
-        assert "CONCURRENT WRITER" in caplog.text
-        assert "424242" in caplog.text
-        # Reported once, not once per shard.
-        buf.add_many([_sample() for _ in range(2)])
-        buf.flush()
-        assert caplog.text.count("CONCURRENT WRITER") == 1
-        assert len(iter_shard_paths(shard_dir)) == 2
-        buf.close()
-    finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
+        owner.add_many([_sample(), _sample()])
+        owner.flush()
+        assert len(iter_shard_paths(shard_dir)) == 1
 
+        with pytest.raises(RuntimeError, match="already has an active writer"):
+            DiskReplayBuffer(
+                0, shard_dir=shard_dir, rng=np.random.default_rng(1),
+                read_only=False, shuffle_cap=100, shard_size=2,
+                refresh_interval=0,
+            )
+
+        # The rejected writer cannot create a second copy of those two rows.
+        assert len(iter_shard_paths(shard_dir)) == 1
+        assert sum(int(load_shard_arrays(path)[0]["x"].shape[0])
+                   for path in iter_shard_paths(shard_dir)) == 2
+    finally:
+        owner.close()
 
 def test_sole_writer_is_silent_and_releases_the_lock_on_close(tmp_path, caplog) -> None:
     shard_dir = tmp_path / "replay"
