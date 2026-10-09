@@ -622,6 +622,9 @@ Context:
 | F015 | Medium | Training Quality / Reliability | Tune prefetch ingest | `chess_anti_engine/tune/distributed_runtime.py`, `tests/test_distributed_selfplay_backpressure.py` | A background prefetch load that finished just after `drain()` could queue a preloaded item for an inbox path the trainer fallback already processed and moved. The next drain would ingest the stale arrays again even though the original inbox shard no longer existed. | `_process_shard(..., preloaded=...)` trusted preloaded arrays without checking whether `sp` was still present in the inbox; the prefetch thread loads outside the consumer lock, so a path can become stale between load and queue. | Skip preloaded items whose inbox path no longer exists before adding arrays or metrics; regression test feeds a missing preloaded path and verifies zero matching games and zero replay positions. Verified distributed ingest/prefetch slice: `29 passed`. | fixed |
 | F016 | Low | Reliability / Observability | Tune reporting | `chess_anti_engine/tune/trainable_phases.py`, `tests/test_trainable_rng_checkpoint.py` | Compact `status.csv` rows reported `global_iter` one behind the completed iteration. Fresh iteration 1 wrote `iter=1, global_iter=0`, and resumed runs inherited the same off-by-one in the status file used for quick progress checks. | `trainable.py` increments `global_iter` only after `_finalize_iteration()`, but `_finalize_iteration()` passed the pre-increment `global_iter` into `_write_status_csv_row`; `_build_report_dict()` separately uses `iteration_idx`. | Write `iteration_idx` into the status row's `global_iter` column and cover it in the finalization regression. | fixed |
 | F047 | Medium | Search Correctness | Gumbel C root handling | `chess_anti_engine/mcts/gumbel_c.py`, `tests/test_mcts_uci_parity_gates.py` | Gumbel C returned the raw NN WDL-derived value for an already-terminal checkmate root instead of the terminal root value. UCI/selfplay callers using the C path could report/search with a neutral value on a root where STM is already checkmated. | Root `values_out` was initialized from `root_qs = _wdl_to_q(...)` before the `root_cb.is_game_over()` branch, and that branch did not replace it with `CBoard.terminal_value()`. | Added root-contract tests that check both PUCT/Gumbel implementations against independent masks/terminal values across normal, ep, single-legal, checkmate, and draw-terminal roots, plus UCI TB shortcut/searchmoves/root-reuse behavior. Verified MCTS/UCI slice: `33 passed`. | fixed |
+| F059 | High | Reliability / State Continuity | Tune checkpoint publication | `chess_anti_engine/tune/trainable_report.py`, `chess_anti_engine/tune/trainable_phases.py`, `tests/test_tune_restart_state_carryover.py`, `tests/test_trainable_rng_checkpoint.py` | A `trial_meta.json` write failure after `trainer.pt` or a PID state write failure was swallowed, and the trainable could still report a checkpoint that lacked ownership/controller state. An exploited donor could then be misclassified as same-trial, and an enabled PID controller could resume without its integral/history. | Injected `OSError` at each sidecar write: base `_save_trial_checkpoint` still returned `Checkpoint.from_directory`, and `_finalize_iteration` still reached `tune.report`. | Required trial metadata and enabled PID state writes now propagate failure before checkpoint/report publication. New regressions assert neither returns/reports on injected sidecar failure. Focused checkpoint/restore suite passed. | fixed |
+| F060 | High | Training Correctness | Cross-trial model publication | `chess_anti_engine/tune/trainable.py`, `chess_anti_engine/tune/distributed_runtime.py`, `tests/test_distributed_selfplay_backpressure.py` | After cross-trial donor restore, the recipient's prior published model was reused whenever its manifest trainer step equaled the donor step, even if donor weights differed. | Synthetic recipient and donor trainers with distinct exported bytes at the same step reproduced the base behavior: the publish helper kept `recipient-weights` and never exported `donor-weights`. Both production callsites treated any checkpoint as eligible for same-step reuse. | Reuse is now allowed only for same-trial checkpoint resume. Cross-trial restore forces export. Regression checks distinct donor bytes at equal step and retains same-trial reuse / different-step export controls. | fixed |
+
 
 ## Review Passes
 
@@ -1168,6 +1171,33 @@ Tests:
 - [x] `tests/test_worker_pool.py`
 
 ### Tune and PBT Runtime
+
+Lifecycle pass extension (2026-10-03, source/synthetic CPU scope):
+
+- Same-trial checkpoint path: model topology peek/build, Trainer and optimizer
+  construction, Trainer restore, active-LR synchronization (covered separately
+  by open PR #987), RNG/iteration/window metadata restoration, replay opening
+  (covered separately by open PR #989), YAML key baseline, holdout/PID/gate
+  state, and live reload ordering.
+- Cross-trial exploit path: checkpoint owner detection, optimizer mismatch
+  model-only fallback, recipient config retention, donor RNG fork, donor EMA,
+  replay exchange selection, best-record reset, and resumed versus local
+  iteration counters.
+- Persistence/publication: Ray staging versus durable trial directories,
+  checkpoint index guard/retention, trainer and JSON sidecars, report timing,
+  and published model cache behavior keyed by trial and trainer step.
+- Lifecycle: process cleanup in `finally`, child worker/broker stop/reap,
+  async evaluation snapshot/source-iteration handling, prefetch stop/join, and
+  Tune actor reuse disabled for the function-style trainable.
+
+F059 reproduces incomplete checkpoint publication on required metadata/PID
+sidecar errors and makes those writes fail closed. F060 reproduces a cross-trial
+equal-step stale model publication and restricts same-step reuse to same-trial
+resume. CPU coverage used synthetic directories and distinct model bytes; no
+Ray cluster, production checkpoint, or live training was used. Real Ray
+scheduler callback ordering and remote-filesystem sync behavior remain
+unqualified; Ray's pinned source was inspected but not exercised. Cross-platform
+actor/process behavior and long-running crash/restart are also unqualified.
 
 Files:
 

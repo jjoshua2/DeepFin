@@ -86,6 +86,19 @@ _AVG_BATCH_RE = _re.compile(rb"avg=([0-9.]+)")
 _OPP_EMA_ALPHA = 0.3
 
 
+def _reuse_published_model_on_resume(
+    *, ckpt: object | None, restore: RestoreResult,
+) -> bool:
+    """Reuse a same-step publish only for same-trial checkpoint resumes.
+
+    Cross-trial exploitation restores donor weights into the recipient's
+    existing trial identity and publish directory. The donor can have the same
+    optimizer step as the recipient's last export while containing different
+    weights, so the recipient's model hash cannot identify the restored model.
+    """
+    return ckpt is not None and not restore.cross_trial_restore
+
+
 def _set_log_level(config: dict) -> None:
     """Set chess_anti_engine logger level from env or yaml; log if DEBUG."""
     lvl_name = (os.environ.get("CHESS_LOG_LEVEL") or config.get("log_level") or "INFO").upper()
@@ -995,7 +1008,9 @@ def train_trial(config: dict):
         wdl_regret=float(pid.wdl_regret) if pid is not None else -1.0,
         pause_selfplay=False,
         pause_reason="",
-        reuse_existing_model_for_same_step=(ckpt is not None),
+        reuse_existing_model_for_same_step=_reuse_published_model_on_resume(
+            ckpt=ckpt, restore=restore,
+        ),
   # A resume mid-hold must not lift the brake for one publish. This is the
   # only publish outside _publish_iteration_model, so it takes the raw path
   # rather than the controller; note_published() is deliberately NOT called --
@@ -1118,7 +1133,9 @@ def train_trial(config: dict):
                 current_window=current_window,
                 in_salvage_startup_grace=in_salvage_startup_grace,
                 prefetcher=shard_prefetcher,
-                reuse_existing_model_for_same_step=(ckpt is not None),
+                reuse_existing_model_for_same_step=_reuse_published_model_on_resume(
+                    ckpt=ckpt, restore=restore,
+                ),
                 hold=gate_hold,
             )
             t_selfplay_secs = time.monotonic() - t_selfplay_start
