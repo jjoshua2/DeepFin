@@ -92,5 +92,13 @@ No existing frozen run is converted by this option.
 
 Root-level `row_provenance.npz` from derivation may be retained as opaque provenance.
 It is covered by the archive content hash and never interpreted as a training
-array. Other auxiliary filenames and nested provenance files remain rejected, as
-do overlays, duplicate names, paths escaping the root and nonregular members.
+array. Root-level `directory_producer_seal.json` is the same kind of opaque
+member: packed admission does not interpret it and does not apply a dense
+chunk-grid rule. The directory reader enforces that seal before fill-decoding
+when the member or its per-array attribute is present. The seal binds each
+array's raw `.zarray` bytes and the stored chunk-key inventory, and installs
+those bytes onto the opened arrays before fill decoding. It does not
+hash chunk payloads. A shard with neither keeps the legacy directory read,
+including unsealed fill-elision, and is not newly validated. Other auxiliary
+filenames and nested provenance or seal files remain rejected, as do overlays,
+duplicate names, paths escaping the root and nonregular members.

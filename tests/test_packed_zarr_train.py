@@ -9,6 +9,7 @@ import zarr
 from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer
 from scripts import lc0_control_train as train
 from scripts.lc0_data_to_rows import shard_dir_search_wdl_coverage
+from tests.test_game_aware_epoch_replay import _drop_producer_seal
 from tests.test_lc0_control_drivers import _tiny_config, _write_game_rows
 from tests.test_packed_zarr_epoch import pack
 
@@ -94,7 +95,9 @@ def test_zip_coverage_stays_lazy_and_reaches_preflight(tmp_path, monkeypatch):
     monkeypatch.setattr(zarr.Array, '__getitem__', guarded)
     assert shard_dir_search_wdl_coverage(packed, allow_packed_zarr=True) == (8, 8)
     # An absent label on one packed row must be observed, not defaulted away.
+    # The edit is not a new producer publication, so it drops the seal first.
     raw = tmp_path / 'source' / 'shard_000000.zarr'
+    _drop_producer_seal(raw)
     group = zarr.open_group(str(raw), mode='a')
     group['has_search_wdl'][0] = 0
     (packed / 'shard_000000.zarr.zip').unlink()
