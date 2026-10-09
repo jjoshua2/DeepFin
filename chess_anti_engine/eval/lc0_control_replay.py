@@ -83,6 +83,13 @@ PER_RUN_KWARGS: dict[str, str] = {
         "iteration. This is the one asymmetry the rig exists to guarantee, so "
         "it is a class rather than a deviation."
     ),
+    "preserve_sampling_rng": (
+        "True only after a same-trial resume installs a checkpointed numpy "
+        "Generator. A fresh control corpus has no restored sampling stream, "
+        "so the constructor default -- one prefetch-seed draw -- is the "
+        "production fresh-start behaviour. It is not a yaml knob and must "
+        "not enter the live replay pin."
+    ),
 }
 
 # (2) Read straight off `TrialConfig`, exactly as `tune/trainable_init.py` does.

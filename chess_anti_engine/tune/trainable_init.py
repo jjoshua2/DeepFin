@@ -30,6 +30,7 @@ from chess_anti_engine.model import (
 )
 from chess_anti_engine.moves import policy_size_for_encoding
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
+from chess_anti_engine.replay.disk_buffer import resume_open_capacity
 from chess_anti_engine.replay.shard import copy_or_link_shard, iter_shard_paths, load_shard_arrays
 from chess_anti_engine.tune._utils import (
     DURABLE_GATE_STATE,
@@ -479,6 +480,11 @@ def _restore_checkpoint_or_salvage(
     if restored_rng_state is not None and not rr.cross_trial_restore:
         try:
             rng.bit_generator.state = restored_rng_state
+  # Set only after the checkpointed generator is actually installed. A
+  # missing sidecar, a rejected state, and a cross-trial fork leave it
+  # false, so the buffer still consumes one prefetch seed from a fresh
+  # stream.
+            rr.sampling_rng_restored = True
         except (ValueError, TypeError, KeyError) as exc:
             log.warning(
                 "[trial] failed to restore RNG state from checkpoint (%s); continuing with current rng",
@@ -689,9 +695,20 @@ def _init_replay_buffers(
   # honoring a live-reduced replay_window_max after restart.
     if restore.restored_window > 0:
         current_window = min(max(current_window, restore.restored_window), tc.replay_window_max)
+  # No saved window on a resume or salvage: __init__ would delete down to
+  # replay_window_start, and the capacity bump below cannot restore shards
+  # it already unlinked. Open at the configured max instead. A positive
+  # restored_window still constructs at current_window, so an intentional
+  # shrink keeps trimming.
+    open_capacity = resume_open_capacity(
+        current_window=current_window,
+        replay_window_max=tc.replay_window_max,
+        restored_window=restore.restored_window,
+        durable_resume=ckpt is not None or restore.seed_warmstart_used,
+    )
 
     buf = DiskReplayBuffer(
-        current_window,
+        open_capacity,
         shard_dir=replay_shard_dir,
         rng=rng,
   # The production writer: this is the buffer live training ingests shards
@@ -712,6 +729,7 @@ def _init_replay_buffers(
         fast_low_surprise_priority=tc.replay_fast_low_surprise_priority,
         diff_focus_pol_scale=tc.diff_focus_pol_scale,
         diff_focus_q_weight=tc.diff_focus_q_weight,
+        preserve_sampling_rng=restore.sampling_rng_restored,
     )
 
   # Preserve intentionally seeded replay (resume, salvage warmstart, shared-shard
