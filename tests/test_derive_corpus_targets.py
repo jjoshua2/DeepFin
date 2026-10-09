@@ -1880,6 +1880,19 @@ def test_a_populated_out_dir_is_refused(tmp_path: Path) -> None:
     assert iter_shard_paths(out) == []
 
 
+def test_negative_limit_is_refused_before_opening_or_creating_output(
+    tmp_path: Path,
+) -> None:
+    corpus_dir = tmp_path / "missing-corpus"
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match=r"--limit must be >= 0"):
+        derive.main([
+            "--corpus", str(corpus_dir), "--out", str(out),
+            "--scheme", "uniform-d9", "--limit", "-1",
+        ])
+    assert not out.exists()
+
+
 def test_limit_caps_the_rows_read_and_is_stamped(tmp_path: Path) -> None:
     rows = [
         corpus_row(
