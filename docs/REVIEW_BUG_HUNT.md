@@ -622,6 +622,7 @@ Context:
 | F015 | Medium | Training Quality / Reliability | Tune prefetch ingest | `chess_anti_engine/tune/distributed_runtime.py`, `tests/test_distributed_selfplay_backpressure.py` | A background prefetch load that finished just after `drain()` could queue a preloaded item for an inbox path the trainer fallback already processed and moved. The next drain would ingest the stale arrays again even though the original inbox shard no longer existed. | `_process_shard(..., preloaded=...)` trusted preloaded arrays without checking whether `sp` was still present in the inbox; the prefetch thread loads outside the consumer lock, so a path can become stale between load and queue. | Skip preloaded items whose inbox path no longer exists before adding arrays or metrics; regression test feeds a missing preloaded path and verifies zero matching games and zero replay positions. Verified distributed ingest/prefetch slice: `29 passed`. | fixed |
 | F016 | Low | Reliability / Observability | Tune reporting | `chess_anti_engine/tune/trainable_phases.py`, `tests/test_trainable_rng_checkpoint.py` | Compact `status.csv` rows reported `global_iter` one behind the completed iteration. Fresh iteration 1 wrote `iter=1, global_iter=0`, and resumed runs inherited the same off-by-one in the status file used for quick progress checks. | `trainable.py` increments `global_iter` only after `_finalize_iteration()`, but `_finalize_iteration()` passed the pre-increment `global_iter` into `_write_status_csv_row`; `_build_report_dict()` separately uses `iteration_idx`. | Write `iteration_idx` into the status row's `global_iter` column and cover it in the finalization regression. | fixed |
 | F047 | Medium | Search Correctness | Gumbel C root handling | `chess_anti_engine/mcts/gumbel_c.py`, `tests/test_mcts_uci_parity_gates.py` | Gumbel C returned the raw NN WDL-derived value for an already-terminal checkmate root instead of the terminal root value. UCI/selfplay callers using the C path could report/search with a neutral value on a root where STM is already checkmated. | Root `values_out` was initialized from `root_qs = _wdl_to_q(...)` before the `root_cb.is_game_over()` branch, and that branch did not replace it with `CBoard.terminal_value()`. | Added root-contract tests that check both PUCT/Gumbel implementations against independent masks/terminal values across normal, ep, single-legal, checkmate, and draw-terminal roots, plus UCI TB shortcut/searchmoves/root-reuse behavior. Verified MCTS/UCI slice: `33 passed`. | fixed |
+| NNUE-001 | Medium | Model Correctness / Reliability | NNUE pack loader | `chess_anti_engine/nnue/_nnue_impl.h`, `tests/test_nnue_native_eval.py` | The loader bounded each tensor independently but did not enforce pack v1's 64-byte offset alignment or reject overlapping tensor regions. A corrupted but in-bounds offset could alias one tensor onto another, letting evaluation silently use plausible bytes from the wrong weights. | On a valid sparse pack fixture, changing `off[1]` (ft_weight) to `off[0]` or `off[0] + 1` was accepted before the fix. The loader now rejects overlap and misalignment after overflow-safe range checks. | Added synthetic negative tests for both forms. | fixed |
 
 ## Review Passes
 
@@ -1451,6 +1452,31 @@ Review:
 - [x] Identify tests that are flaky, time-dependent, network-dependent, or too slow for regular use.
 - [x] Map each high/critical finding to a regression test before fixing.
 
+### NNUE Backend: Incrementality and Model Contract
+
+Status: first pass complete for the scoped backend and its search/provider seams.
+
+Base revision: `269105298285b6098ffbf80405cb18ec33186b38`.
+Isolated branch: `audit/nnue-backend-20261002`.
+
+Production paths and contracts reviewed:
+
+- [x] Source-model parsing: `scripts/nnue_parse.py` validates NNUE version, feature-transformer/network/layer hashes, exact LEB128 cardinality, layer stacks, and EOF; `scripts/nnue_pack.py` maps the big-net tensors to the v1 little-endian, 64-byte-aligned pack schema.
+- [x] Native schema/load boundary: `chess_anti_engine/nnue/_nnue_impl.h` checks pack/version, supported dimensions, relational layer widths, mapped-file length, tensor ranges, threat-table dimensions, and cache identity on file replacement. First pass found the missing alignment/non-overlap invariant (NNUE-001); it now rejects both before binding tensor pointers.
+- [x] Position and model feature contract: `cae_nnue_pos_from_cboard()` converts the production CBoard adapter to the Stockfish feature color/piece indexing and rejects malformed masks/kings/pawns; active HalfKA and FullThreats indexes were compared to the NumPy reference for both perspectives across the fixed position set.
+- [x] Refresh/update contract: `_nnue_state.h` root refresh, changed-square HalfKA deltas, sorted FullThreats multiset deltas, sibling copy ownership, cache invalidation, and per-perspective king-square refresh were traced. A targeted synthetic Kxe2 qsearch case crosses the five-to-four-piece bucket boundary and compares the production incremental provider to full refresh.
+- [x] Bucket and arithmetic contract: current position piece count selects the layer stack on each evaluation; transform clipping/product division, PSQT division, int16 wrapping, int8 widening, layer clamps, and output scales were reviewed against the Python reference and synthetic sensitivity gates.
+- [x] Evaluator/search integration: `_nnue_ext.c` direct and arm surfaces, provider registry in `_arm_providers.h`, capsule installation in `_mcts_tree.c`, and check resolution were followed. Incremental/refresh, DAG parity, FastQ, provider, malformed-position, and check-resolver test paths were reviewed.
+
+Coverage evidence (Linux x86_64 WSL, CPython 3.10.12, GCC 11.4; all test jobs capped at 2 threads, 600 seconds, and 4 GiB process-tree RSS):
+
+- [x] On a portable build with `HAVE_AVX2=0`, incremental, native evaluator/loader, DAG, and resolver tests passed: 192 passed, 29 skipped; peak process-tree RSS 852 MiB.
+- [x] On this AVX2-capable host, a forced `-mavx2` build enabled `HAVE_AVX2=1`; the same CPU suite plus FastQ and qsearch-DAG parity passed with both scalar and SIMD kernels: 276 passed, 57 skipped; peak process-tree RSS 986 MiB.
+- [x] The two new offset regressions failed on unmodified main because the loader accepted both malformed files, then passed after the fix. Ruff and `git diff --check` are clean for the changed Python/test diff.
+- [x] Internal `codex review --uncommitted` found no actionable issues; its focused native evaluator/loader suite passed.
+
+Limits: no real Stockfish NNUE pack was available, so the optional real-network incremental parity and external Stockfish parity gate were not run. The portable scalar and AVX2/scalar runtime-selection paths were exercised on this host; Windows, ARM, big-endian, and other compiler/CPU builds remain unqualified. The 128-relation overflow fallback was inspected but not forced by the legal-position suite. The lone warning is an existing torch pynvml deprecation warning. No GPU, model download, corpus, or live system was used.
+
 ## Review Procedure
 
 Use this procedure for each component.
@@ -1567,3 +1593,6 @@ Use this section after findings are recorded.
 - [x] What minimum hardware baseline should efficiency findings use: CPU-only, single CUDA GPU, or current production host?
 - [x] Which Stockfish version/path should be treated as the review baseline?
 - [x] Are benchmark regressions findings only after measurement, or should obvious hot-path issues be recorded from static review?
+
+NNUE test-gap follow-up at 25e6ab7ee50cbccd856a6773d69e7fe6046e112d: replaced the permissive combined malformed-offset test with an aligned same-offset overlap negative and a reverse-order overlap negative. Alignment negatives now use tensor 9 (c2_bias): offset 111261440 + deltas 1, 4, and 32; its size is 32 bytes and the next slot starts at 111261504, so all three remain in-bounds and disjoint. Header offset field is byte 160. Each case asserts the exact 
+ot 64-byte aligned error. Positive cases accept reverse-order disjoint adjacent tensors, an adjacent tensor endpoint, and a tensor ending exactly at EOF. Intentional alignment-guard deletion made all three disjoint unaligned cases fail; restored-source focused run passed 7 tests. Independent Codex found no actionable defects; its Python 3.10 rerun was blocked at collection by NumPy 2 versus NumPy-1-built native extension ABI mismatch. The Python 3.13 restored-source run passed. 32-bit remains unqualified and outside the CI/package platform matrix (Linux x86-64); no speculative runtime change was made.
