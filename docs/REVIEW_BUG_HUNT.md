@@ -880,6 +880,45 @@ Tests:
 - [x] `tests/test_onnx_export_smoke.py`
 - [x] `tests/test_onnx_export_int8_smoke.py`
 
+Model/inference first-pass addendum (2026-10-02; base 269105298285b6098ffbf80405cb18ec33186b38):
+
+- [x] Trace checkpoint architecture schema 20, manifest parsing/serialization,
+  resume reconstruction, strict unknown/new-schema rejection, model identity,
+  and state-dict loading through the UCI loader.
+- [x] Trace model head families and consumers: training/full forward, inference
+  forward, legal-move forward, compact 1858 policy expansion, WDL semantics,
+  auxiliary heads, and export output ordering/shapes.
+- [x] Trace eager CPU inference input/output shapes and dtypes, no-grad/eval
+  boundaries, wrapper dispatch, batching, cache key identity, and UCI evaluator
+  rebuild behavior for MaxBatch/cache/thread-path changes.
+- [x] Trace ONNX FP32/INT8 export and LC0/Ceres adapters, declared input dtype,
+  Ceres byte input, policy reorder/expansion, WDL interpretation, and optional
+  moves-left fallback.
+- [x] Review runtime/package dependencies and Python entrypoint wiring for
+  model loading and inference; no model weights, GPU, datagen, or external
+  dependency installs were used.
+- [x] Search current issues/PRs before triage. No model/export issue or PR
+  overlapped this pass. AOT broker/shared-memory protocol work in issue #420
+  is explicitly excluded to avoid duplicate scope.
+- [x] No actionable defect found in the reviewed CPU/eager or ONNX paths.
+  Negative coverage passed: tests/test_transformer_forward.py,
+  tests/test_aux_policy_head_dim.py, tests/test_categorical_head_coupled.py,
+  tests/test_model_config_identity_key.py,
+  tests/test_resume_model_config_from_arch.py,
+  tests/test_uci_model_loader.py, tests/test_worker_checkpoint_load_safety.py,
+  tests/test_worker_model_update.py, tests/test_onnx_export_smoke.py,
+  tests/test_onnx_export_int8_smoke.py, tests/test_onnx_chessnet_remap.py,
+  tests/test_ceres_onnx_byte_input.py (257 passed); also
+  tests/test_inference_cache.py, tests/test_inference_cache_empty_relations.py,
+  tests/test_uci_evaluator_factory.py, tests/test_gpu_dispatcher.py,
+  tests/test_threaded_dispatcher.py, tests/test_uci_walker_pool.py
+  (66 passed). Both runs used two threads and completed well under 600 seconds;
+  peak RSS was 1.21 GiB and 1.13 GiB respectively.
+- [x] Gaps: CUDA/FP8/compile/cudagraph execution and accelerator backend parity
+  were not exercised. A 4 GiB address-space limit prevented libtorch_cpu.so
+  mapping, so successful reruns used a 600-second timeout and direct RSS
+  measurement.
+
 ### MCTS and Search
 
 Status: `deep` for Python Gumbel/PUCT, C-backed Gumbel/PUCT interfaces,
