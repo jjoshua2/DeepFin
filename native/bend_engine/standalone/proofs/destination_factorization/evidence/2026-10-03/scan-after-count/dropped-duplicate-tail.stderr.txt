@@ -1,0 +1,13 @@
+Error:
+- expected : Spec.bump(Spec.same(../../../legal_probe/Chess.Ply{src, dst, 1, 0}, query), 0n)
+- observed : Spec.bump(Spec.same(../../../legal_probe/Chess.Ply{src, dst, 1, 0}, query), Spec.bump(Spec.same(../../../legal_probe/Chess.Ply{src, dst, 2, 0}, query), Spec.bump(Spec.same(../../../legal_probe/Chess.Ply{src, dst, 3, 0}, query), Spec.bump(Spec.same(../../../legal_probe/Chess.Ply{src, dst, 4, 0}, query), Spec.count(tail, query)))))
+Context:
+- src   : U32
+- dst   : U32
+- tag   : U32
+- query : ../../../legal_probe/Chess.Ply
+- tail  : List<&2, ../../../legal_probe/Chess.Ply>
+Location: Count.block
+10 |   match promote:
+11>|     case True{}: {==}
+12 |     case False{}: {==}

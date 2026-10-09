@@ -1,0 +1,8 @@
+Working directory: <REPO>
+Command:
+BUN=<BUN> python3 -m native.bend_engine.standalone.proofs.destination_factorization.qualify_scan_after_closed_count <SESSION_SCRATCH> --checker-manifest <SESSION_SCRATCH>/snapshot/native/bend_engine/standalone/proofs/bitboard_membership/evidence/2026-10-03/checker-tree.json --report native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count/qualification.json --evidence-dir native/bend_engine/standalone/proofs/destination_factorization/evidence/2026-10-03/scan-after-closed-count
+
+Qualification positive checks: AfterCount.bend, QueryFactor.bend, consumer.bend.
+Controls: wrong promotion rank, wrong en-passant flag, dropped duplicate tail, disconnected closed-count consumer.
+Per-positive wall bound: 86400 seconds. Per-control bound: 120 seconds.
+CPU affinity: 2. Address-space cap: 6442450944 bytes. Per-file output cap: 65536 bytes.

@@ -79,3 +79,35 @@ keys, or disconnect the symbolic consumer. Only semantic expected/observed error
 at the intended obligation count; timeout, backend, ownership, kind, warning and
 missing-file failures receive no control credit. Failed starts invalidate stale
 PASS receipts. Wrapper checks are also run under -O and -OO.
+
+
+## Actual arbitrary-mask scan_after counts
+
+`AfterCount.bend` composes the actual `Chess.scan_after` pair with the checked
+full-Ply destination tally and PR1000's actual `bit_squares` arbitrary-U32
+frequency and below-64 range theorems. It preserves the exact input table and
+retains caller-tail multiplicity. See the importing consumer and the dated
+[scan_after count record](../../../../../docs/experiments/2026-10-03-bend-scan-after-count.md).
+
+
+## Closed full-Ply occurrence count
+
+QueryFactor.bend closes the arbitrary-mask query count. For arbitrary targets,
+source, pawn flag, EP square, full-Ply query, exact input table and arbitrary tail,
+the count of scan_after is:
+
+    count(scan_after(src,pawn,ep,tail,(table,targets)), query)
+      = count(tail,query)
+        + pick(in_range(query.dst) && test_bit(targets,query.dst),
+            query_emission_count(src,pawn,ep,query), 0)
+
+query_emission_count compares every non-destination Ply field against the
+actual query. It enumerates promotions 1 through 4 with flag 0 for pawn
+back-rank destinations; otherwise it compares the ordinary promotion-0 move
+with flag Bool.to_u32(pawn && dst == ep). The gate is an actual destination
+whose bit is set. The proof uses PR1000's all-U32 bit_squares frequency theorem
+and range result, and it preserves the tail as Spec.count(tail,query), so
+duplicates remain multiplicative. The result is composed through
+Count.destinations, Emission.destinations, and #1006's exact-table
+AfterCount.scan_after_count theorem. It adds no board-validity, target-geometry,
+or full legal-move correctness premise.
