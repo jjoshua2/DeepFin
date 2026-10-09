@@ -76,3 +76,67 @@ def test_worker_config_empty_password_is_not_treated_as_secret(tmp_path):
     p = tmp_path / "worker.yaml"
     save_worker_config(p, {"username": "alice", "password": ""})
     assert load_worker_config(p)["username"] == "alice"
+
+def test_explicit_worker_cli_upload_settings_override_persisted_yaml():
+    import argparse
+
+    from chess_anti_engine.worker import _merge_cli_with_yaml_defaults
+
+    args = argparse.Namespace(
+        server_url="http://127.0.0.1:45453",
+        allow_cleartext_http=False,
+        trial_id=None,
+        username="alice",
+        stockfish_path="/tmp/stockfish",
+        shared_cache_dir=None,
+        password_file=None,
+        self_update=False,
+        stockfish_from_server=False,
+        sf_workers=1,
+        sf_nice=0,
+        games_per_batch=2,
+        upload_target_positions=123,
+        upload_flush_seconds=4.5,
+    )
+    _merge_cli_with_yaml_defaults(
+        args,
+        {"upload_target_positions": 999, "upload_flush_seconds": 999.0},
+    )
+    assert args.upload_target_positions == 123
+    assert args.upload_flush_seconds == 4.5
+
+
+def test_worker_upload_yaml_values_fill_absent_cli_defaults():
+    import argparse
+
+    from chess_anti_engine.worker import _merge_cli_with_yaml_defaults
+
+    args = argparse.Namespace(
+        server_url="http://127.0.0.1:45453",
+        allow_cleartext_http=False,
+        trial_id=None,
+        username="alice",
+        stockfish_path="/tmp/stockfish",
+        shared_cache_dir=None,
+        password_file=None,
+        self_update=False,
+        stockfish_from_server=False,
+        sf_workers=1,
+        sf_nice=0,
+        games_per_batch=2,
+        upload_target_positions=None,
+        upload_flush_seconds=None,
+    )
+    _merge_cli_with_yaml_defaults(
+        args,
+        {"upload_target_positions": "750", "upload_flush_seconds": "12.5"},
+    )
+    assert args.upload_target_positions == 750
+    assert args.upload_flush_seconds == 12.5
+
+    defaults = argparse.Namespace(**vars(args))
+    defaults.upload_target_positions = None
+    defaults.upload_flush_seconds = None
+    _merge_cli_with_yaml_defaults(defaults, {})
+    assert defaults.upload_target_positions == 500
+    assert defaults.upload_flush_seconds == 60.0
