@@ -446,3 +446,102 @@ def test_qualification_retains_matching_directory_and_zip_symlinks(corpus, tmp_p
     assert result["status"] == "PASS_MATCHED_PACKED_ZARR_SAMPLER"
     assert result["runs"][0]["rows"] == result["runs"][1]["rows"] == 16
     assert result["runs"][0]["sequence_sha256"] == result["runs"][1]["sequence_sha256"]
+
+
+def _repack_without(source_zip: Path, target_zip: Path, member: str) -> None:
+    with zipfile.ZipFile(source_zip) as src, zipfile.ZipFile(
+        target_zip, "w", compression=zipfile.ZIP_STORED,
+    ) as dst:
+        found = False
+        for info in src.infolist():
+            if info.filename == member:
+                found = True
+                continue
+            dst.writestr(info.filename, src.read(info))
+    if not found:
+        raise AssertionError(f"{member} was not in {source_zip}")
+
+
+@pytest.mark.parametrize("member", ["x/0.0.0.0", "wdl_target/0", "legal_mask/0.0"])
+def test_missing_declared_chunk_rejected_before_fill(corpus, tmp_path, member):
+    _, target = corpus
+    source = target / "shard_000000.zarr.zip"
+    kept = target / "shard_000001.zarr.zip"
+    # The untouched sibling is a complete archive and stays admissible.
+    assert len(packed.content_sha256(kept)) == 64
+    partial_root = tmp_path / member.replace("/", "_")
+    partial_root.mkdir()
+    dropped = partial_root / "shard_000000.zarr.zip"
+    _repack_without(source, dropped, member)
+    with pytest.raises(ValueError, match="stored 0 chunks but declares 1"):
+        packed.content_sha256(dropped)
+    with (
+        pytest.raises(ValueError, match="stored 0 chunks but declares 1"),
+        packed.open_store(dropped),
+    ):
+        pass
+    with pytest.raises(ValueError, match="partial archive"):
+        buffer(partial_root, allow_packed_zarr=True)
+    with pytest.raises(ValueError, match="partial archive"):
+        load_shard_arrays(dropped)
+
+
+def _write_grid(path: Path, *, shape: object, chunks: object, keys: list[str],
+                separator: str = ".") -> None:
+    meta = {
+        "shape": shape,
+        "chunks": chunks,
+        "dtype": "<f4",
+        "fill_value": 0.0,
+        "order": "C",
+        "zarr_format": 2,
+        "filters": None,
+        "compressor": None,
+        "dimension_separator": separator,
+    }
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr(".zgroup", '{"zarr_format": 2}')
+        archive.writestr(".zattrs", "{}")
+        archive.writestr("x/.zarray", json.dumps(meta))
+        for key in keys:
+            archive.writestr(key, b"chunk")
+
+
+def test_partial_second_chunk_rejected_and_complete_grid_admitted(tmp_path):
+    complete = tmp_path / "shard_000000.zarr.zip"
+    partial = tmp_path / "shard_000001.zarr.zip"
+    _write_grid(
+        complete, shape=[8, 1], chunks=[4, 1],
+        keys=["x/0.0", "x/1.0"],
+    )
+    _write_grid(
+        partial, shape=[8, 1], chunks=[4, 1],
+        keys=["x/0.0"],
+    )
+    assert len(packed.content_sha256(complete)) == 64
+    with pytest.raises(ValueError, match=r"array 'x' stored 1 chunks but declares 2"):
+        packed.content_sha256(partial)
+    slash = tmp_path / "shard_000002.zarr.zip"
+    _write_grid(
+        slash, shape=[8, 1], chunks=[4, 1], separator="/",
+        keys=["x/0/0", "x/1/0"],
+    )
+    assert len(packed.content_sha256(slash)) == 64
+    renamed = tmp_path / "shard_000003.zarr.zip"
+    _write_grid(
+        renamed, shape=[8, 1], chunks=[4, 1],
+        keys=["x/0.0", "x/9.0"],
+    )
+    with pytest.raises(ValueError, match="partial archive"):
+        packed.content_sha256(renamed)
+
+
+def test_hostile_chunk_grid_rejected_without_enumeration(tmp_path):
+    huge = tmp_path / "shard_000000.zarr.zip"
+    _write_grid(huge, shape=[100_001, 100_001], chunks=[1, 1], keys=[])
+    with pytest.raises(ValueError, match="too many chunks"):
+        packed.content_sha256(huge)
+    boolean = tmp_path / "shard_000001.zarr.zip"
+    _write_grid(boolean, shape=[True], chunks=[1], keys=["x/0"])
+    with pytest.raises(ValueError, match="malformed"):
+        packed.content_sha256(boolean)
