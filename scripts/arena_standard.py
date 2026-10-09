@@ -901,7 +901,8 @@ class PentanomialSummary:
     pairs: int
     games: int
     score: float           # mean per-game score in [0, 1]
-    score_se: float        # standard error of the mean per-game score
+    score_se: float | None  # None when fewer than two pairs
+    interval_status: str
     elo: float | None
     elo_ci95: tuple[float | None, float | None]
 
@@ -964,27 +965,42 @@ def summarize_pentanomial(
     """Elo point estimate + CI from pentanomial pair counts.
 
     The pair is the sampling unit: per-pair normalized scores are
-    x in {1, 0.75, 0.5, 0.25, 0} and the CI uses the empirical variance of x
-    across pairs. This correctly accounts for the within-pair correlation
-    that a trinomial (per-game W/D/L) variance would miss.
+    x in {1, 0.75, 0.5, 0.25, 0} and the normal-approximation interval uses
+    the empirical variance of x across pairs. This accounts for within-pair
+    correlation that a per-game variance would miss. The interval is
+    unavailable when fewer than two pairs or zero empirical variance leaves no
+    evidence about between-pair uncertainty.
     """
     n = sum(counts)
     if n <= 0:
         raise ValueError("no pairs")
     xs = tuple(s / 2.0 for s in PAIR_SCORES)
     mu = sum(c * x for c, x in zip(counts, xs)) / n
-    var = sum(c * (x - mu) ** 2 for c, x in zip(counts, xs)) / (n - 1) if n > 1 else 0.0
-    se = math.sqrt(var / n)
-    lo = mu - z * se
-    hi = mu + z * se
+    if n > 1:
+        var = sum(c * (x - mu) ** 2 for c, x in zip(counts, xs)) / (n - 1)
+        se = math.sqrt(var / n)
+        if var > 0.0:
+            lo, hi = mu - z * se, mu + z * se
+            elo_ci95 = (_elo_from_score(lo), _elo_from_score(hi))
+            interval_status = "available_normal_approximation"
+        else:
+            elo_ci95 = (None, None)
+            interval_status = "unavailable_zero_empirical_variance"
+    else:
+        # A single pair has no empirical variance estimate. Reporting zero
+        # would turn an uninformative sample into a point-width CI.
+        se = None
+        elo_ci95 = (None, None)
+        interval_status = "unavailable_insufficient_pairs"
     return PentanomialSummary(
         counts=counts,
         pairs=n,
         games=2 * n,
         score=mu,
         score_se=se,
+        interval_status=interval_status,
         elo=_elo_from_score(mu),
-        elo_ci95=(_elo_from_score(lo), _elo_from_score(hi)),
+        elo_ci95=elo_ci95,
     )
 
 
@@ -2785,7 +2801,8 @@ def build_result_record(
         "device": device,
         "pentanomial": dict(zip(PAIR_LABELS, summary.counts)),
         "score": round(summary.score, 5),
-        "score_se": round(summary.score_se, 5),
+        "score_se": None if summary.score_se is None else round(summary.score_se, 5),
+        "interval_status": summary.interval_status,
         "elo": None if summary.elo is None else round(summary.elo, 2),
         "elo_ci95": [
             None if elo_lo is None else round(elo_lo, 2),
@@ -2844,7 +2861,10 @@ def print_summary(summary: PentanomialSummary) -> None:
     print()
     print(f"[arena] {summary.games} games ({summary.pairs} opening pairs)")
     print(f"[arena] pentanomial (candidate POV): {counts}")
-    print(f"[arena] score: {summary.score:.4f} +/- {summary.score_se:.4f} (SE)")
+    se_text = "n/a" if summary.score_se is None else f"{summary.score_se:.4f}"
+    print(f"[arena] score: {summary.score:.4f} +/- {se_text} (SE)")
+    if summary.interval_status != "available_normal_approximation":
+        print(f"[arena] score 95% CI: n/a ({summary.interval_status})")
     # flush is LOAD-BEARING, not cosmetic, and this ONE line is by itself the
     # whole fix for the 2026-07-30/31 ratchet outage. Every caller redirects
     # stdout to a file, so it is block-buffered, and the ratchet runs this

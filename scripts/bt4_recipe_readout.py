@@ -376,6 +376,7 @@ def summary(scores: list[float]) -> dict[str, Any]:
         "pairs": s.pairs,
         "score": s.score,
         "score_se": s.score_se,
+        "interval_status": s.interval_status,
         "elo": s.elo,
         "elo_ci95": list(s.elo_ci95),
         "pentanomial": dict(zip(("WW", "WD_DW", "DD_WL", "LD_DL", "LL"), s.counts)),
@@ -698,6 +699,12 @@ def read_cell(manifest: dict[str, Any]) -> dict[str, Any]:
     for key, digits in [("score", 5), ("score_se", 5), ("elo", 2)]:
         want = None if measured[key] is None else round(measured[key], digits)
         same(result.get(key), want, f"terminal {key}")
+    if "interval_status" in result:
+        same(
+            result.get("interval_status"),
+            measured["interval_status"],
+            "terminal interval status",
+        )
     same(
         result.get("elo_ci95"),
         [None if x is None else round(x, 2) for x in measured["elo_ci95"]],

@@ -53,13 +53,21 @@ def calibration(tmp_path: Path) -> tuple[Path, dict[str, Any], list[dict[str, An
         volatility_candidate=None, uci_args="", syzygy_path=None, tb_max_pieces=0,
     )
     bank = tmp_path / "games.jsonl"
+    pair_scores = (0.5, 1.0, 0.0, 0.5)
     with GameLogWriter(bank, driver="arena_standard", settings=settings) as writer:
         for pair, opening in enumerate(panel):
             for half in (0, 1):
+                score = pair_scores[pair]
+                if score == 0.5:
+                    result = "1/2-1/2"
+                elif (score == 1.0) == (half == 0):
+                    result = "1-0"
+                else:
+                    result = "0-1"
                 writer.write_game({"pair_id": pair, "half": half, "a_is_white": half == 0,
                                    "opening_index": pair, "opening_fen": opening["fen"],
-                                   "start_fen": opening["fen"], "result": "1/2-1/2",
-                                   "score_candidate": 0.5, "seed": 42, "loop": "rolling",
+                                   "start_fen": opening["fen"], "result": result,
+                                   "score_candidate": score, "seed": 42, "loop": "rolling",
                                    "compile": "on", "eval_hoist": "4096"})
     contract = {"schema": 1, "checkpoint": pin(checkpoint), "candidate_prior_temperature": 0.7,
                 "reference_prior_temperature": 1.3, "sims": 200, "expected_pairs": 4,
@@ -102,6 +110,17 @@ def test_explicit_contract_cli_reports_only_complete_selected_temperature_contra
     assert result["cell"]["result"]["score"] == 0.5
     assert not result["launch_qualification_verified"]
     assert "training improvement" in " ".join(result["limitations"])
+
+
+def test_explicit_calibration_refuses_zero_empirical_pair_variance(calibration) -> None:
+    path, contract, rows = calibration
+    for row in rows:
+        row["result"] = "1/2-1/2"
+        row["score_candidate"] = 0.5
+    save_bank(path, contract, rows)
+
+    with pytest.raises(ValueError, match="calibration requires an estimable interval: unavailable_zero_empirical_variance"):
+        tool.read_calibration_contract(path)
 
 
 @pytest.mark.parametrize("mutation", ["candidate", "reference", "both_checkpoints", "candidate_prior",

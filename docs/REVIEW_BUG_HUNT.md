@@ -623,6 +623,9 @@ Context:
 | F016 | Low | Reliability / Observability | Tune reporting | `chess_anti_engine/tune/trainable_phases.py`, `tests/test_trainable_rng_checkpoint.py` | Compact `status.csv` rows reported `global_iter` one behind the completed iteration. Fresh iteration 1 wrote `iter=1, global_iter=0`, and resumed runs inherited the same off-by-one in the status file used for quick progress checks. | `trainable.py` increments `global_iter` only after `_finalize_iteration()`, but `_finalize_iteration()` passed the pre-increment `global_iter` into `_write_status_csv_row`; `_build_report_dict()` separately uses `iteration_idx`. | Write `iteration_idx` into the status row's `global_iter` column and cover it in the finalization regression. | fixed |
 | F047 | Medium | Search Correctness | Gumbel C root handling | `chess_anti_engine/mcts/gumbel_c.py`, `tests/test_mcts_uci_parity_gates.py` | Gumbel C returned the raw NN WDL-derived value for an already-terminal checkmate root instead of the terminal root value. UCI/selfplay callers using the C path could report/search with a neutral value on a root where STM is already checkmated. | Root `values_out` was initialized from `root_qs = _wdl_to_q(...)` before the `root_cb.is_game_over()` branch, and that branch did not replace it with `CBoard.terminal_value()`. | Added root-contract tests that check both PUCT/Gumbel implementations against independent masks/terminal values across normal, ep, single-legal, checkmate, and draw-terminal roots, plus UCI TB shortcut/searchmoves/root-reuse behavior. Verified MCTS/UCI slice: `33 passed`. | fixed |
 
+| F053 | Medium | Evaluation correctness | External UCI matches | `scripts/match_vs_uci.py`, `tests/test_match_resume.py` | The driver schedules two color-swapped games per opening but computed its score CI as if individual games were independent. Mirrored outcomes such as A winning as White and losing as Black therefore produced a wide interval despite zero between-opening variation; resume ordering also put all stored scores before newly played scores, breaking pair adjacency. Odd game counts additionally left a final half-pair. | Aggregate per-opening means using scores indexed by global game number; reject odd `--games` before opening engines. | Tests distinguish mirrored-pair variance, require no CI for one pair, reject odd games pre-engine, and check resumed summaries. | fixed |
+| F054 | Medium | Evaluation correctness | Pentanomial summary | `scripts/arena_standard.py`, `scripts/match_vs_handicapped_sf.py`, `scripts/bt4_joint_readout.py`, `scripts/bt4_recipe_readout.py`, `scripts/match_vs_uci.py` and summary tests | Both one-pair fallback and repeated identical pair outcomes could publish point-width normal CIs despite no empirical between-pair variance. | Preserve the pair-level estimator and SE=0 for repeated outcomes, but mark score/Elo intervals unavailable with explicit status. Use the status in arena receipts/console, handicapped and BT4 readouts, and the calibration gate. Paired UCI output also reports unavailable when pair variance is zero. | Bernoulli counterexample, zero-variance and one-pair cases, nondegenerate golden intervals, all summary consumers, and a resumed-index ordering counterexample. | fixed |
+
 ## Review Passes
 
 | Pass | Status | Goal | Main Outputs |
@@ -1330,6 +1333,51 @@ Tests:
 - [x] `tests/test_profile_distributed.py`
 - [x] `tests/test_reinit_value_heads_script.py`
 - [x] `tests/test_status_script.py`
+
+#### 2026-10-03 evaluation and benchmark refresh (base `269105298285b6098ffbf80405cb18ec33186b38`)
+
+Scoped first pass traced contracts and call sites in `docs/eval_protocol.md`,
+`docs/toolchains.md`, `scripts/arena_standard.py`,
+`chess_anti_engine/eval/sprt.py`, `chess_anti_engine/eval/arena_pgn.py`,
+`chess_anti_engine/utils/game_log.py`, `scripts/match_vs_uci.py`,
+`scripts/match_checkpoints.py`, the Elo-vs-sims CLI, and
+`pyproject.toml`. Coverage included paired opening/color schedule, game-count
+validation, result/score handling, confidence-unit selection, SPRT pair-prefix
+accounting, log fingerprints and resume/deduplication, partial-run truncation,
+checkpoint/command identity limits, ladder option forwarding, CLI defaults,
+the `deepfin` console entry point and core/extra runtime dependencies.
+
+Confirmed and fixed F053 and F054 above. `match_vs_uci` estimates uncertainty
+over opening-pair means in global game-index order; it refuses an odd game count
+before opening engines. The interval remains a normal approximation over
+independent opening-pair means. Its empirical SE is retained, but an interval
+is unavailable when fewer than two pairs or zero empirical variance provides no
+between-pair uncertainty estimate. Arena JSONL records serialize
+`interval_status`, and score/Elo limits are null when unavailable. Console,
+handicapped-match, BT4 recipe, and BT4 calibration consumers use that status;
+a zero-variance calibration is refused instead of producing a point-width
+verdict. The pair estimator and nondegenerate interval values are unchanged.
+The package metadata was read for contract coverage; no package metadata or
+dependency changes were needed. Local native extensions were built from
+repository sources only to run the handicapped-match tests; no package
+installation or artifact download was performed.
+
+Bounded negative and regression checks:
+
+- `tests/test_match_resume.py -k "match_score_ci or resumed_match_ci or odd_game_count or resumed_match_equals or resumed_match_replays or match_schedule"` — 6 selected tests passed. The production-path fixture resumes only indices 0 and 2, plays indices 1, 3, 4, 5, 6 and 7, captures the score sequence passed from `main` into `_score_ci`, and proves it is in global index order; append order would invent variance.
+- `tests/test_arena_standard.py -k "pentanomial or print_summary"` — targeted run passed; includes the 10-neutral-pair sample from an iid population with (P(X=.5)=.9, P(X=1)=.1): the 0.348678 probability of observing all neutral yields the former false zero-width interval, now explicitly unavailable. Existing symmetric/asymmetric nondegenerate goldens are unchanged.
+- `tests/test_match_vs_uci_script.py -k score_ci` — 1 passed, including the degenerate mirrored case.
+- `tests/test_bt4_recipe_readout.py -k terminal_interval_status_mismatch` — 1 passed; contradictory pinned summary status is rejected.
+- `tests/test_identity_harness.py -k "summary"` — 3 passed; after asserting the single-complete-pair case, `-k "summary_drops_an_orphan"` — 1 passed.
+- All pytest invocations used a 600-second timeout and two-thread caps. Existing `pynvml` deprecation warning only.
+- Independent read-only `codex review --uncommitted`: the first review identified an inadequate resume-order test and a missing pinned-status integrity check. Both were addressed; the final review found no actionable regressions and its seven focused tests passed. The separate test module run passed 66 tests but three CLI tests were blocked by the fixture rejecting matplotlib's attempt to create `~/.config/matplotlib`; targeted receipt validation passed separately. Earlier broader aggregate review was inconclusive because the shared Python 3.10 venv has NumPy 2.2.6 while its native extension was built against NumPy 1.x.
+
+Known qualification gaps: no real engine, Stockfish, checkpoint, GPU, or tablebase
+arena was launched; no long ladder or SPRT stop was executed. The documented
+in-place checkpoint/binary replacement identity limitation remains. This pass
+covered the production paired arena and external UCI match paths deeply, and
+reviewed the ladder/checkpoint wrappers and packaging metadata statically; other
+one-off puzzle, profile and benchmark scripts were not exhaustively executed.
 
 ### Documentation and Specs
 
