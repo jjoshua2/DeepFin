@@ -1,0 +1,7 @@
+{
+  "artifact_type": "redacted summary of superseded failed attempt",
+  "status": "not the final qualification result",
+  "failure_class": "target-pair Data/Type failure during an intermediate attempt",
+  "raw_receipt_sha256": "791ecf38df1baa0c40df37c591b82341ab473d22da30d16bb965bf72723e9026",
+  "note": "Raw diagnostic content is excluded. The final qualification is recorded in qualification.json."
+}
