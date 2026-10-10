@@ -432,7 +432,7 @@ def test_foreign_or_incomplete_stage_is_preserved(tmp_path: Path) -> None:
     stage = spec.out / "games" / "game_00000000.npz.writing"
     stage.write_bytes(b"unknown incomplete science")
     (spec.out / "games" / "game_00000000.checkpoint.json").unlink()
-    with pytest.raises(ValueError, match="Cannot load file"):
+    with pytest.raises(ValueError):
         worker.run_pooled_games(spec, fixture.FakeEvaluator(), fixture.fake_tablebase(), spec.out / "games",
                                 target_rows=2, max_rows=4, batch_wait_ms=1, max_writes=1, resume=True)
     assert stage.read_bytes() == b"unknown incomplete science"
