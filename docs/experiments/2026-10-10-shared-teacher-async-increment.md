@@ -109,3 +109,35 @@ fit, VRAM, CPU headroom, fairness under production load, throughput or playing
 strength. Real dual-owner wiring, production Ceres callbacks/client adoption and
 exclusive GPU qualification remain before deployment. The full distributed
 selfplay/replay/train smoke is not run under this task's no-training-launch scope.
+
+## Isolated physical Ceres callback increment
+
+`ceres_raw_backend.py` retains the reviewed parameterized own-root adapter from
+`ceres_parameterized_fixture_backend_20261010.py` (source SHA256
+`bda20a7e844fb3da68764e5d62294599e8f984ad20b4897c0f7cd5d4392df44b`).
+The inference implementation retains its packing/gather/scatter path, with modern
+imports, a boundary type annotation and legal-index validation moved to inference.
+Unused actor-selection/encoding code
+and static model/batch constants were removed from the label-only module; a model
+constant would not enforce session identity. No model/session loader or second
+encoder was introduced. The original frozen fixed32 runtime remains unchanged.
+
+`bind_ceres_raw_backend` adapts its outputs/receipt return value to the existing
+pipelined service callback, retaining four fixed successful validated inference
+accounting fields. Failed attempted session calls are excluded; these fields
+cannot serve as a compute-budget meter. Physical32 is the default; physical256/512
+require an explicit argument.
+The adapter preserves uint8 TPG packing, repeat-last tail padding, the independent
+legal move oracle, immutable prepared board/history checks and full FP16
+policy/value/value2 heads. The caller supplies the existing admitted session and
+gather functions; session/provider/source proof validation remains its obligation.
+
+CPU fake-session tests run the actual service with two300-row game requests,
+logical512+88 dispatch and physical32/256/512 calls. Exact ordered game/root/feed
+identity and all three raw heads reach the publication callback; padded rows do
+not become labels. Invalid geometry, legal oracle mismatch, board mutation and
+wrong head dtype fail closed. These synthetic tests do not open ORT, models or
+data and do not qualify actual GPU packing, numerical parity, fit or throughput.
+The prepared GPU correctness probe remains blocked by the canonical exclusive
+training lease (errno11). Production immutable-history loader/publisher, client
+pipelining, shared CUDA proof and resource admission still require owner binding.

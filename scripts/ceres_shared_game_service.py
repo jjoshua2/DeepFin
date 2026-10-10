@@ -19,6 +19,39 @@ import numpy as np
 
 from chess_anti_engine.teacher_dispatch import TeacherDispatcher
 from scripts.shared_teacher_generation import CompletedGameLabels
+from scripts import ceres_raw_backend
+
+
+def bind_ceres_raw_backend(
+    *, session: Any, physical_batch: int = 32,
+    gather_context: Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]],
+    gather_indices: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    accounting: dict[str, int],
+) -> Callable[[Sequence[Any]], Sequence[Any]]:
+    """Bind the reviewed raw adapter to RPC without opening a teacher session.
+
+    Default32 remains fixed. Explicit256/512 are isolated shape experiments;
+    owner admission, pinned session/provider proof and GPU qualification precede
+    production use. Accounting has four fixed keys for successful validated
+    inference only; failed attempted calls are excluded, so it is not a budget
+    meter. No call history is retained.
+    """
+    if type(physical_batch) is not int or physical_batch not in (32, 256, 512):
+        raise ValueError("isolated physical batch must be32/256/512")
+    if accounting:
+        raise ValueError("fresh physical accounting required")
+    accounting.update(calls=0, real_rows=0, padding_rows=0, physical_rows=0)
+
+    def infer(roots: Sequence[Any]) -> Sequence[Any]:
+        values, receipt = ceres_raw_backend.infer_raw_roots(
+            roots, session=session, physical_batch=physical_batch,
+            gather_context=gather_context, gather_indices=gather_indices,
+        )
+        for key in ("calls", "real_rows", "padding_rows", "physical_rows"):
+            accounting[key] += getattr(receipt, key)
+        return values
+
+    return infer
 
 
 def checked_ceres_backend(
