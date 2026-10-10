@@ -81,10 +81,26 @@ low-volume draining, duplicate/backpressure/fatal coverage and bounded telemetry
 
 The actual actor entry point retains the existing normal 32-game and research
 128-game budgets, with research capacity at most 64 games. Requesting a row target
-of 512 does not produce 512 useful actor rows at that capacity. The next necessary
-increment is a finite cross-unit adapter that preserves canonical unit/game IDs,
-seeds, raw writers and checkpoints while sharing the dispatcher across units.
-512/768/1024 live-game profiles are not implemented or qualified here.
+of 512 does not produce 512 useful actor rows at that capacity.
+
+The opt-in `run_pooled_units` API now shares one dispatcher and one bounded writer
+across a frozen, finite roster of existing canonical units. Each unit retains its
+local game IDs, SeedSequence, launch manifest, raw files and per-game checkpoints.
+Unit names namespace async routing only. A rotating controller gives every unit
+admission turns under row and write backpressure; aggregate live actors, rows,
+units, writes and operation time have explicit bounds. STOP on the coordinator or
+any unit pauses the entire roster before move/RNG application. Resume checks the
+exact ordered roster, geometry and each unit's existing science contract.
+
+CPU tests prepare distinct full 512/768/1024-root batches using 8/12/16 canonical
+research units of capacity64, then STOP before application. Smaller completed
+units establish exact raw/history/RNG parity, durable restart, post-publication
+failure recovery, and asymmetric one/four-ply progress with row capacity1. The
+roster is copied before control callbacks can mutate the caller's mapping. These
+are CPU protocol profiles, with explicit fixture fill waits; they do not qualify
+production timing, headroom or GPU throughput. The API has no production CLI or
+resource-owner binding. Existing CUDA evaluator proof publication targets one
+output; shared-session proof binding across units remains caller integration work.
 
 Logical cross-game Ceres batching does not itself change the injected backend's
 physical batch shape; the frozen fixed32 backend remains fixed32 unless a

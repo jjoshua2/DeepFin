@@ -30,6 +30,8 @@ import numpy as np
 from chess_anti_engine import tablebase
 from chess_anti_engine.encoding import _lc0_ext, rep_fix
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
+from chess_anti_engine.teacher_dispatch import TeacherDispatcher
+from scripts.shared_teacher_generation import BT4GamePool, DurableWriter
 from scripts import bt4_generation_evaluator
 from scripts.bt4_policy_dump import file_sha256, open_session
 from scripts.bt4_root_policy_stepper import (
@@ -509,29 +511,12 @@ def write_finalized_game(
     }
 
 
-def run_pooled_games(
-    spec: WorkerSpec, evaluator: RootEvaluator, match_tablebase: chess.syzygy.Tablebase, games_dir: Path, *,
-    target_rows: int, max_rows: int, batch_wait_ms: float, max_writes: int,
-    stop: Callable[[], bool] | None = None, resume: bool = False,
-) -> dict[str, Any]:
-    """Actual worker callsite: canonical board/history/RNG/outcome and raw NPZ.
-
-    This API leaves session/resource admission with the existing owner. It
-    publishes raw files before a durable per-game checkpoint. On commit retry,
-    a matching orphan NPZ is validated against the retained finalized outcome.
-    """
-    spec.validate()
-    if rep_fix.current() is not True:
-        raise RuntimeError("shared generation requires actual history_rep_fix=True")
-    if spec.requested_provider == "cuda" and not isinstance(evaluator, CudaQualifiedEvaluator):
-        raise TypeError("CUDA shared generation requires profiled evaluator")
-    tablebase.SyzygyProbe(spec.syzygy_path, max_pieces=6, rule50_aware=True, tablebase=match_tablebase)
-
-    def should_stop() -> bool:
-        return stop() if stop is not None else (spec.out / "STOP").exists()
-
-    def evaluate(rows: Sequence[tuple[chess.Board, np.ndarray]]) -> Sequence[bt4_generation_evaluator.BT4RootOutput]:
-        outputs = evaluator.evaluate_roots([board for board, _ in rows], np.stack([x for _, x in rows]))
+def _evaluate_shared_roots(
+    evaluator: RootEvaluator, rows: Sequence[tuple[chess.Board, np.ndarray]], specs: Sequence[WorkerSpec],
+) -> Sequence[bt4_generation_evaluator.BT4RootOutput]:
+    """Canonical evaluator packing and unchanged per-unit provider proof checks."""
+    outputs = evaluator.evaluate_roots([board for board, _ in rows], np.stack([x for _, x in rows]))
+    for spec in specs:
         if spec.requested_provider == "cuda":
             proof = json.loads((spec.out / "provider_proof.json").read_text())
             providers = proof.get("providers_after_first_call")
@@ -539,8 +524,17 @@ def run_pooled_games(
                     or providers[0] != "CUDAExecutionProvider"
                     or proof.get("profile_sha256") != file_sha256(spec.out / "provider_profile.json")):
                 raise RuntimeError("CUDA root inference has no unchanged provider proof")
-        return outputs
+    return outputs
 
+
+
+def _make_pooled_unit(
+    spec: WorkerSpec, match_tablebase: chess.syzygy.Tablebase, games_dir: Path,
+    dispatcher: TeacherDispatcher[tuple[chess.Board, np.ndarray], bt4_generation_evaluator.BT4RootOutput], *,
+    max_writes: int, resume: bool, namespace: str = "", writer: DurableWriter | None = None,
+    control: Callable[[], None] = lambda: None,
+) -> BT4GamePool:
+    """One canonical unit's board/RNG/raw/checkpoint contract, shared by both callers."""
     def make(game_id: int, rng: np.random.Generator) -> BT4RootPolicyStepper:
         return BT4RootPolicyStepper(
             {game_id: chess.Board(spec.initial_fen)}, {game_id: rng},
@@ -551,7 +545,6 @@ def run_pooled_games(
             match_tablebase=match_tablebase,
         )
 
-    writer_seconds = 0.0
     completed: dict[int, dict[str, Any]] = {}
     if resume:
         validate_resume_contract(spec)
@@ -574,25 +567,47 @@ def run_pooled_games(
             completed[game_id] = receipt
 
     def commit(game: BT4FinalizedGame) -> dict[str, Any]:
-        nonlocal writer_seconds
-        start = time.monotonic()
+        control()
         receipt = reconcile_raw_game(game, games_dir, initial_fen=spec.initial_fen)
         receipt["launch_sha256"] = file_sha256(spec.out / "launch.json")
         _atomic_json(games_dir / f"game_{game.slot_id:08d}.checkpoint.json", receipt)
         fsync_directory(games_dir)
-        writer_seconds += time.monotonic() - start
         return receipt
 
-    from chess_anti_engine.teacher_dispatch import TeacherDispatcher
-    from scripts.shared_teacher_generation import BT4GamePool
+    return BT4GamePool(
+        games=spec.games, capacity=min(spec.parallel_games, spec.games), seed=spec.seed,
+        temperature=spec.temperature, make_stepper=make, dispatcher=dispatcher,
+        commit=commit, max_writes=max_writes, completed=completed, namespace=namespace, writer=writer,
+    )
 
-    dispatcher = TeacherDispatcher(evaluate, target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms)
+
+def run_pooled_games(
+    spec: WorkerSpec, evaluator: RootEvaluator, match_tablebase: chess.syzygy.Tablebase, games_dir: Path, *,
+    target_rows: int, max_rows: int, batch_wait_ms: float, max_writes: int,
+    stop: Callable[[], bool] | None = None, resume: bool = False,
+) -> dict[str, Any]:
+    """Actual worker callsite: canonical board/history/RNG/outcome and raw NPZ.
+
+    This API leaves session/resource admission with the existing owner. It
+    publishes raw files before a durable per-game checkpoint. On commit retry,
+    a matching orphan NPZ is validated against the retained finalized outcome.
+    """
+    spec.validate()
+    if rep_fix.current() is not True:
+        raise RuntimeError("shared generation requires actual history_rep_fix=True")
+    if spec.requested_provider == "cuda" and not isinstance(evaluator, CudaQualifiedEvaluator):
+        raise TypeError("CUDA shared generation requires profiled evaluator")
+    tablebase.SyzygyProbe(spec.syzygy_path, max_pieces=6, rule50_aware=True, tablebase=match_tablebase)
+
+    def should_stop() -> bool:
+        return stop() if stop is not None else (spec.out / "STOP").exists()
+
+    dispatcher = TeacherDispatcher[tuple[chess.Board, np.ndarray], bt4_generation_evaluator.BT4RootOutput](
+                                   lambda rows: _evaluate_shared_roots(evaluator, rows, (spec,)),
+                                   target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms)
     try:
-        pool = BT4GamePool(
-            games=spec.games, capacity=min(spec.parallel_games, spec.games), seed=spec.seed,
-            temperature=spec.temperature, make_stepper=make, dispatcher=dispatcher,
-            commit=commit, max_writes=max_writes, completed=completed,
-        )
+        pool = _make_pooled_unit(spec, match_tablebase, games_dir, dispatcher,
+                                 max_writes=max_writes, resume=resume)
     except BaseException:
         dispatcher.close(timeout=30)
         raise
@@ -606,7 +621,7 @@ def run_pooled_games(
             # Cooperative poll only; evaluation and writes run independently.
             time.sleep(0.001)
         return {"receipts": [pool.receipts[i] for i in sorted(pool.receipts)],
-                "histogram": dispatcher.histogram, "writer_seconds": writer_seconds,
+                "histogram": dispatcher.histogram, "writer_seconds": pool.writer_seconds,
                 "paused": paused, "restart_active": "replay_from_frozen_seed_and_initial_board"}
     finally:
         try:
@@ -697,24 +712,12 @@ def validate_resume_contract(spec: Any) -> None:
 
 
 
-def run_worker(
-    spec: WorkerSpec, evaluator: RootEvaluator,
-    match_tablebase: chess.syzygy.Tablebase,
-    *, shared_dispatch: tuple[int, int, float, int] | None = None,
+def _worker_manifest(
+    spec: WorkerSpec, match_tablebase: chess.syzygy.Tablebase,
+    shared_dispatch: tuple[int, int, float, int] | None, table_inventory: dict[str, Any],
 ) -> dict[str, Any]:
-    """Run a finite seeded corpus. A missing strict probe aborts without summary."""
-    spec.validate()
-    if spec.requested_provider == "cuda" and not isinstance(evaluator, CudaQualifiedEvaluator):
-        raise TypeError("CUDA run requires the first-root profiled evaluator")
-    if rep_fix.current() is not True:
-        raise RuntimeError("history_rep_fix must be configured before BT4 boards")
-    # Recheck the passed handle before creating output; do not trust its type.
-    tablebase.SyzygyProbe(
-        spec.syzygy_path, max_pieces=6, rule50_aware=True, tablebase=match_tablebase,
-    )
-    table_inventory = table_file_inventory(spec.syzygy_path)
+    """The existing unit manifest payload; no cross-unit science schema."""
     root = Path(__file__).resolve().parents[1]
-    run_started = time.monotonic()
     manifest: dict[str, Any] = {
         "schema": SCHEMA, "status": "launched", "actor": "bt4_root_policy_no_search",
         "outcome_mode": spec.outcome_mode, "minimum_emitted_root_pieces": 7,
@@ -749,6 +752,164 @@ def run_worker(
         "source_sha256": {name: file_sha256(root / name) for name in _SOURCE_FILES},
         "native_encoder_sha256": file_sha256(Path(_lc0_ext.__file__)),
     }
+    return manifest
+
+
+def run_pooled_units(
+    units: Mapping[str, tuple[WorkerSpec, chess.syzygy.Tablebase]], evaluator: RootEvaluator, out: Path, *,
+    max_units: int, max_live_games: int, target_rows: int, max_rows: int,
+    batch_wait_ms: float, max_writes: int, deadline_seconds: float,
+    resume: bool = False, control: Callable[[], None] = lambda: None,
+) -> dict[str, Any]:
+    """Finite cross-unit API: canonical local IDs/seeds, one dispatcher and writer.
+
+    Unit WorkerSpecs retain their existing limits. Unit IDs namespace only async
+    request routing; raw metadata, seed streams and checkpoints remain local.
+    The ordered roster and aggregate bounds are frozen before actor admission.
+    Production owner/resource admission and session proof remain with the caller.
+    No queue/replay admission or physical/GPU geometry qualification is implied.
+    """
+    units = dict(units)  # freeze caller-owned roster before any control callback
+    if (any(type(value) is not int or value < 1 for value in (max_units, max_live_games, max_writes))
+            or not 1 <= len(units) <= max_units or max_writes > max_live_games
+            or not math.isfinite(deadline_seconds) or deadline_seconds <= 0):
+        raise ValueError("finite explicit cross-unit budgets required")
+    if rep_fix.current() is not True:
+        raise RuntimeError("cross-unit generation requires actual history_rep_fix=True")
+    ids = tuple(units)
+    if any(type(name) is not str or not name or ":" in name or len(name.encode()) > 128 for name in ids):
+        raise ValueError("distinct bounded unit namespaces required")
+    specs = tuple(units[name][0] for name in ids)
+    directories = tuple(spec.out.resolve() for spec in specs)
+    coordinator = out.resolve()
+    if (len(set(directories)) != len(directories)
+            or any(a in b.parents or b in a.parents for i, a in enumerate(directories) for b in directories[i + 1:])
+            or any(coordinator == path or path in coordinator.parents for path in directories)):
+        raise ValueError("distinct nonoverlapping unit output directories required")
+    same_teacher = {(spec.model_sha256, spec.requested_provider, spec.providers,
+                     tuple(sorted(spec.provider_options.items()))) for spec in specs}
+    if len(same_teacher) != 1:
+        raise ValueError("one frozen shared teacher/provider contract required")
+    if specs[0].requested_provider == "cuda" and not isinstance(evaluator, CudaQualifiedEvaluator):
+        raise TypeError("CUDA cross-unit generation requires profiled evaluator")
+    inventory = {}
+    for name, (spec, handle) in units.items():
+        spec.validate()  # never loosen the canonical per-unit geometry
+        tablebase.SyzygyProbe(spec.syzygy_path, max_pieces=6, rule50_aware=True, tablebase=handle)
+        inventory[name] = table_file_inventory(spec.syzygy_path)
+    actors = sum(min(spec.parallel_games, spec.games) for spec in specs)
+    if actors > max_live_games:
+        raise ValueError("unit actor capacities exceed explicit aggregate bound")
+    if not resume and (coordinator.exists() or any(path.exists() for path in directories)):
+        raise FileExistsError("cross-unit outputs already exist; explicit frozen resume required")
+    geometry = (target_rows, max_rows, batch_wait_ms, max_writes)
+    deadline = time.monotonic() + deadline_seconds
+
+    def evaluate(rows: Sequence[tuple[chess.Board, np.ndarray]]) -> Sequence[bt4_generation_evaluator.BT4RootOutput]:
+        control()
+        return _evaluate_shared_roots(evaluator, rows, specs)
+
+    dispatcher = TeacherDispatcher(evaluate, target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms)
+    try:
+        writer = DurableWriter(capacity=max_writes)
+    except BaseException:
+        dispatcher.close(timeout=min(deadline_seconds, 30))
+        raise
+    pools: dict[str, BT4GamePool] = {}
+    peak_live = 0
+    paused = False
+    try:
+        control()
+        if not resume:
+            coordinator.mkdir(parents=True, exist_ok=False)
+            for name, (spec, handle) in units.items():
+                spec.out.mkdir(parents=True, exist_ok=False)
+                (spec.out / "games").mkdir()
+                _atomic_json(spec.out / "launch.json", _worker_manifest(spec, handle, geometry, inventory[name]))
+                fsync_directory(spec.out)
+        contract = {
+            "kind": "finite_bt4_cross_unit_v1", "shared_dispatch": list(geometry),
+            "max_units": max_units, "max_live_games": max_live_games,
+            "units": [{"unit_id": name, "out": str(spec.out.resolve()),
+                       "launch_sha256": file_sha256(spec.out / "launch.json")}
+                      for name, (spec, _) in units.items()],
+        }
+        launch = coordinator / "cross_unit_launch.json"
+        if resume:
+            if json.loads(launch.read_text()) != contract:
+                raise ValueError("cross-unit frozen roster/geometry changed on resume")
+            for spec in specs:
+                validate_resume_contract(spec)
+        else:
+            _atomic_json(launch, contract)
+            fsync_directory(coordinator)
+        for name, (spec, handle) in units.items():
+            pools[name] = _make_pooled_unit(
+                spec, handle, spec.out / "games", dispatcher, resume=resume, namespace=name,
+                max_writes=min(max_writes, spec.parallel_games, spec.games), writer=writer, control=control,
+            )
+        cursor = 0
+        while True:
+            control()
+            if time.monotonic() >= deadline:
+                raise TimeoutError("finite cross-unit operation budget expired; artifacts retained")
+            paused = (coordinator / "STOP").exists() or any((spec.out / "STOP").exists() for spec in specs)
+            remaining = False
+            # Rotating the first unit gives shared writer and row admission fair
+            # turns. Every unit advances even when an earlier unit has work.
+            for name in ids[cursor:] + ids[:cursor]:
+                unit_remaining = pools[name].advance(stopped=paused)
+                remaining = unit_remaining or remaining
+            cursor = (cursor + 1) % len(ids)
+            live = sum(len(pool.active) for pool in pools.values())
+            peak_live = max(peak_live, live)
+            if live > max_live_games:
+                raise RuntimeError("cross-unit actor bound violated")
+            if paused or not remaining:
+                break
+            time.sleep(0.001)
+        for name, (spec, _) in units.items():
+            if table_file_inventory(spec.syzygy_path) != inventory[name]:
+                raise RuntimeError("unit table provenance changed during cross-unit generation")
+    finally:
+        # Both owners get a finite join attempt, including setup/control errors.
+        try:
+            dispatcher.close(timeout=min(deadline_seconds, 30))
+        finally:
+            writer.close(timeout=min(deadline_seconds, 30))
+
+    for pool in pools.values():
+        pool.drain_writes()
+    result = {
+        "status": "PAUSED_NOT_ADMISSION" if paused else "COMPLETE_NOT_ADMISSION",
+        "cross_unit_launch_sha256": file_sha256(launch), "peak_live_games": peak_live,
+        "logical_batch_histogram": dict(dispatcher.histogram),
+        "unit_receipts": {name: [pool.receipts[i] for i in sorted(pool.receipts)] for name, pool in pools.items()},
+        "writer_seconds": sum(pool.writer_seconds for pool in pools.values()),
+    }
+    _atomic_json(coordinator / ("cross_unit_paused.json" if paused else "cross_unit_complete.json"), result)
+    fsync_directory(coordinator)
+    return result
+
+
+def run_worker(
+    spec: WorkerSpec, evaluator: RootEvaluator,
+    match_tablebase: chess.syzygy.Tablebase,
+    *, shared_dispatch: tuple[int, int, float, int] | None = None,
+) -> dict[str, Any]:
+    """Run a finite seeded corpus. A missing strict probe aborts without summary."""
+    spec.validate()
+    if spec.requested_provider == "cuda" and not isinstance(evaluator, CudaQualifiedEvaluator):
+        raise TypeError("CUDA run requires the first-root profiled evaluator")
+    if rep_fix.current() is not True:
+        raise RuntimeError("history_rep_fix must be configured before BT4 boards")
+    # Recheck the passed handle before creating output; do not trust its type.
+    tablebase.SyzygyProbe(
+        spec.syzygy_path, max_pieces=6, rule50_aware=True, tablebase=match_tablebase,
+    )
+    table_inventory = table_file_inventory(spec.syzygy_path)
+    run_started = time.monotonic()
+    manifest = _worker_manifest(spec, match_tablebase, shared_dispatch, table_inventory)
     spec.out.mkdir(parents=True, exist_ok=False)
     games_dir = spec.out / "games"
     games_dir.mkdir()

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import math
 import queue
 import threading
+import time
 from typing import Any, Generic, TypeVar
 
 import chess
@@ -106,11 +107,14 @@ class BT4GamePool:
         dispatcher: TeacherDispatcher[tuple[chess.Board, np.ndarray], BT4RootOutput],
         commit: Callable[[BT4FinalizedGame], dict[str, Any]], max_writes: int,
         completed: dict[int, dict[str, Any]] | None = None,
+        namespace: str = "", writer: DurableWriter | None = None,
     ) -> None:
         if (any(type(value) is not int for value in (games, capacity, seed, max_writes))
                 or seed < 0 or not math.isfinite(temperature) or temperature < 0
                 or not 1 <= capacity <= games or not 1 <= max_writes <= capacity):
             raise ValueError("finite game and writer capacities required")
+        if type(namespace) is not str or ":" in namespace or len(namespace.encode()) > 128:
+            raise ValueError("bounded unit namespace required")
         self.games = games
         self.capacity = capacity
         self.seed = seed
@@ -119,16 +123,26 @@ class BT4GamePool:
         self.dispatcher = dispatcher
         self.commit = commit
         self.max_writes = max_writes
+        self.namespace = namespace
+        self.writer_seconds = 0.0
         self.next_id = 0
         self.active: dict[int, _Game] = {}
         self.receipts = dict(completed or {})
         if any(type(i) is not int or not 0 <= i < games for i in self.receipts):
             raise ValueError("checkpoint game IDs exceed frozen budget")
         self._ready: deque[int] = deque()
-        self._writer = DurableWriter(capacity=max_writes)
+        self._owns_writer = writer is None
+        self._writer = writer if writer is not None else DurableWriter(capacity=max_writes)
 
-    def advance(self, *, stopped: bool = False) -> bool:
-        """Poll completed work without waiting on any game or backend call."""
+    def _commit(self, game: BT4FinalizedGame) -> dict[str, Any]:
+        started = time.monotonic()
+        try:
+            return self.commit(game)
+        finally:
+            self.writer_seconds += time.monotonic() - started
+
+    def drain_writes(self) -> None:
+        """Collect acknowledgments without admitting writes, roots or games."""
         for game_id, game in tuple(self.active.items()):
             if game.writing is not None and game.writing.done():
                 writing = game.writing
@@ -136,12 +150,19 @@ class BT4GamePool:
                 receipt = writing.result()
                 self.receipts[game_id] = receipt
                 del self.active[game_id]
+
+    def advance(self, *, stopped: bool = False) -> bool:
+        """Poll completed work without waiting on any game or backend call."""
+        self.drain_writes()
         writing_count = sum(game.writing is not None for game in self.active.values())
         for game_id, game in tuple(self.active.items()):
             if game.finalized is not None:
                 if game.writing is None and writing_count < self.max_writes:
                     finalized = game.finalized
-                    game.writing = self._writer.submit(lambda outcome=finalized: self.commit(outcome))
+                    try:
+                        game.writing = self._writer.submit(lambda outcome=finalized: self._commit(outcome))
+                    except BufferError:
+                        continue  # a shared writer retains independently bounded ownership
                     writing_count += 1
                 continue
             if stopped:
@@ -172,7 +193,7 @@ class BT4GamePool:
                 boards, inputs = game.batch.inference_inputs()
                 try:
                     game.result = self.dispatcher.submit(
-                        f"bt4:{game_id}:{game.batch.generation}", list(zip(boards, inputs)),
+                        f"bt4:{self.namespace}:{game_id}:{game.batch.generation}", list(zip(boards, inputs)),
                     )
                 except BufferError:
                     # Keep prepared root; no second prepare or RNG/move advance.
@@ -190,7 +211,8 @@ class BT4GamePool:
         return bool(self.active or self.next_id < self.games)
 
     def close(self, *, timeout: float = 30) -> None:
-        self._writer.close(timeout=timeout)
+        if self._owns_writer:
+            self._writer.close(timeout=timeout)
 
 
 Root = TypeVar("Root")
