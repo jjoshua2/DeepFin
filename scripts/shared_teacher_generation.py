@@ -14,14 +14,15 @@ import math
 import queue
 import threading
 import time
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import chess
 import numpy as np
 
 from chess_anti_engine.teacher_dispatch import TeacherDispatcher
-from scripts.bt4_generation_evaluator import BT4RootOutput
-from scripts.bt4_root_policy_stepper import BT4FinalizedGame, BT4RootPolicyStepper, PreparedBatch
+if TYPE_CHECKING:
+    from scripts.bt4_generation_evaluator import BT4RootOutput
+    from scripts.bt4_root_policy_stepper import BT4FinalizedGame, BT4RootPolicyStepper, PreparedBatch
 
 
 class DurableWriter:
@@ -91,6 +92,8 @@ class _Game:
     result: Future[tuple[BT4RootOutput, ...]] | None = None
     finalized: BT4FinalizedGame | None = None
     writing: Future[dict[str, Any]] | None = None
+    raw_receipt: dict[str, Any] | None = None
+    acknowledgment: Future[dict[str, Any]] | None = None
 
 
 class BT4GamePool:
@@ -108,6 +111,7 @@ class BT4GamePool:
         commit: Callable[[BT4FinalizedGame], dict[str, Any]], max_writes: int,
         completed: dict[int, dict[str, Any]] | None = None,
         namespace: str = "", writer: DurableWriter | None = None,
+        acknowledge: Callable[[int, dict[str, Any]], dict[str, Any] | Future[dict[str, Any]]] | None = None,
     ) -> None:
         if (any(type(value) is not int for value in (games, capacity, seed, max_writes))
                 or seed < 0 or not math.isfinite(temperature) or temperature < 0
@@ -125,6 +129,7 @@ class BT4GamePool:
         self.max_writes = max_writes
         self.namespace = namespace
         self.writer_seconds = 0.0
+        self.acknowledge = acknowledge
         self.next_id = 0
         self.active: dict[int, _Game] = {}
         self.receipts = dict(completed or {})
@@ -141,23 +146,48 @@ class BT4GamePool:
         finally:
             self.writer_seconds += time.monotonic() - started
 
-    def drain_writes(self) -> None:
+    def drain_writes(self, *, stopped: bool = False) -> None:
         """Collect acknowledgments without admitting writes, roots or games."""
         for game_id, game in tuple(self.active.items()):
             if game.writing is not None and game.writing.done():
                 writing = game.writing
                 game.writing = None  # failures retain finalized outcome for retry
-                receipt = writing.result()
-                self.receipts[game_id] = receipt
-                del self.active[game_id]
+                game.raw_receipt = writing.result()
+            if game.raw_receipt is None:
+                continue
+            receipt = game.raw_receipt
+            if self.acknowledge is not None:
+                if game.acknowledgment is None:
+                    if stopped:
+                        continue  # no new companion admission after STOP
+                    try:
+                        ack = self.acknowledge(game_id, dict(receipt))
+                    except BufferError:
+                        continue
+                    if isinstance(ack, Future):
+                        game.acknowledgment = ack
+                    else:
+                        if any(ack.get(key) != value for key, value in receipt.items()):
+                            raise ValueError("acknowledgment changed canonical raw receipt")
+                        self.receipts[game_id] = ack
+                        del self.active[game_id]
+                        continue
+                if not game.acknowledgment.done():
+                    continue
+                ack = game.acknowledgment.result()
+                if any(ack.get(key) != value for key, value in receipt.items()):
+                    raise ValueError("acknowledgment changed canonical raw receipt")
+                receipt = ack
+            self.receipts[game_id] = receipt
+            del self.active[game_id]
 
     def advance(self, *, stopped: bool = False) -> bool:
         """Poll completed work without waiting on any game or backend call."""
-        self.drain_writes()
+        self.drain_writes(stopped=stopped)
         writing_count = sum(game.writing is not None for game in self.active.values())
         for game_id, game in tuple(self.active.items()):
             if game.finalized is not None:
-                if game.writing is None and writing_count < self.max_writes:
+                if game.raw_receipt is None and game.writing is None and writing_count < self.max_writes:
                     finalized = game.finalized
                     try:
                         game.writing = self._writer.submit(lambda outcome=finalized: self._commit(outcome))

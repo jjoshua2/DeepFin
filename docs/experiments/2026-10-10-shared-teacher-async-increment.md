@@ -98,16 +98,15 @@ units establish exact raw/history/RNG parity, durable restart, post-publication
 failure recovery, and asymmetric one/four-ply progress with row capacity1. The
 roster is copied before control callbacks can mutate the caller's mapping. These
 are CPU protocol profiles, with explicit fixture fill waits; they do not qualify
-production timing, headroom or GPU throughput. The API has no production CLI or
-resource-owner binding. Existing CUDA evaluator proof publication targets one
-output; shared-session proof binding across units remains caller integration work.
+production timing, headroom or GPU throughput. At that increment the API had no
+owner route or shared proof binding; the following isolated owner increment adds
+those concrete callsites while retaining the qualification boundary.
 
 Logical cross-game Ceres batching does not itself change the injected backend's
 physical batch shape; the frozen fixed32 backend remains fixed32 unless a
 separately reviewed shape adapter is supplied. CPU tests do not establish teacher
 fit, VRAM, CPU headroom, fairness under production load, throughput or playing
-strength. Real dual-owner wiring, production Ceres callbacks/client adoption and
-exclusive GPU qualification remain before deployment. The full distributed
+strength. Real owner admission and exclusive GPU qualification remain before deployment. The full distributed
 selfplay/replay/train smoke is not run under this task's no-training-launch scope.
 
 ## Isolated physical Ceres callback increment
@@ -139,5 +138,73 @@ not become labels. Invalid geometry, legal oracle mismatch, board mutation and
 wrong head dtype fail closed. These synthetic tests do not open ORT, models or
 data and do not qualify actual GPU packing, numerical parity, fit or throughput.
 The prepared GPU correctness probe remains blocked by the canonical exclusive
-training lease (errno11). Production immutable-history loader/publisher, client
-pipelining, shared CUDA proof and resource admission still require owner binding.
+training lease (errno11). The following increment binds the immutable-history
+loader/publisher and pipelined client; physical GPU qualification remains pending.
+
+## Isolated inherited-owner and durable client binding
+
+The worker's explicit CPU roster CLI reaches the same finite controller with one
+existing session and tablebase handle. Standalone CUDA roster execution rejects
+before session/custody; an existing admitted owner must use `run_owned_roster`.
+Its per-unit descriptors are validated by the retained v3 entry, and its actual
+runtime closure checker rechecks interpreter/native/source pins before startup.
+The prepared runtime overlay must contain the unchanged reviewed owner helpers
+and the new pinned teacher sources; loading the old entry from its old directory
+does not satisfy that closure. No live runtime overlay or queue is modified here.
+
+The caller supplies an explicit whole-roster authorizer and aggregate retained
+OwnerGuard. Each descriptor's STOP paths must be covered by that guard; yield is
+checked before custody/startup. The authorizer receives a separate deep copy.
+The existing `canonical_gpu_lock_consumer(..., custody_profile="all_three")`
+validates inherited GPU/IO/supervisor custody and duplicates its GPU descriptor;
+no new flock is acquired. Per-unit SQLite attempts begin before startup/raw
+directories. The existing fixed BT4 loader is called once, retaining fixed model,
+CUDA2GiB/DEFAULT/workspace0 controls. The measured same-session proof is published
+against each unit's exact launch SHA before shared actor outputs are applied.
+
+Dual mode constructs the retained Companion directly from its reviewed template
+and a separately validated finite deployment config. The immutable template stays
+in checkpoint science bindings across attempts; changing attempt paths cannot
+change the template/model/provider recipe. PipelinedCompanion adds bounded
+nonblocking request/result routing to that already-owned child. It creates no
+subprocess, session, watchdog or cleanup owner. Global wire IDs are ordinal roster
+index*128+local game; saved IDs and labels remain local. The original Companion
+retains private-process startup/birth/handshake/cleanup and the outer queue's hard
+reaper remains responsible for blocked native IO or cleanup deadlines.
+
+The child calls retained `game_roots`, `comparison.pack`, `label_contract`,
+`verify_companion`, and create-only durable NPZ/JSON publication. Full saved-x,
+original move history/FEN/input-key, native TPG, legal oracle and all three raw
+FP16 heads are preserved. Per-game physical counts are null with an explicit
+shared-service scope; aggregate counters count successful complete inference
+receipts once. Old dynamic-service numeric per-game summation is incompatible
+with these new scoped receipts. Historical receipts lacking the new unit namespace
+are rejected unchanged. Explicit real256/512 child startup is rejected as unarmed;
+fake CPU32/256/512 exercises physical packing without loading ORT/models.
+
+Raw publication alone cannot release an actor slot or earn an owner checkpoint.
+The pool retains raw receipts until the complete verified Ceres Future is
+acknowledged on the controller thread, preserving SQLite thread ownership.
+Temporary BufferError retries retain the same raw output. Failed acknowledgments
+remain fail-closed until owner restart. The retained bounded128-name reconciler
+checks prior science-bound raw roots and durable labels before new actor admission;
+committed restart skips every completed local game without inference. Conflicting
+or foreign roots/receipts are rejected. Raw/Ceres orphans retain their original
+immutable paths and hashes. Descriptor OwnerGuard STOP raises and retains state
+for owner restart; it is distinct from the controller's graceful STOP marker.
+
+The retained guard enforces its existing deadline/output/exhaustion checks.
+Physical IO delta is measurement only and its disk check rejects exhaustion at0;
+reuse does not enforce every proposed limit key or a compute quota. No memory,
+VRAM, sustained concurrency or cleanup timing qualification is inferred.
+
+CPU fixtures use copied exact retained entry/checkpoint modules in an isolated
+overlay, actual runtime closure verification, native histories and durable SQLite.
+Output allowlist, aggregate guard, tablebase, custody and CUDA session/profile
+boundaries are explicit CPU seams. Complete two-unit128-game execution, all-three custody call,
+begin-before-startup, full dual256-game child publication/ACK, committed restart
+without inference, lost owner ACK recovery and scope/source/native/STOP/yield/
+geometry/authority negatives are exercised. Live authorization, actual inherited
+canonical leases, Ceres CUDA runtime origin/provider proof and real GPU numerical,
+headroom/fit/throughput qualification remain independent deployment gates. No
+authorization artifact is armed and no queue insertion/admission is performed.

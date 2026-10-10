@@ -42,10 +42,7 @@ class TeacherDispatcher(Generic[Input, Output]):
         self, backend: Callable[[Sequence[Input]], Sequence[Output]], *,
         target_rows: int, max_rows: int, batch_wait_ms: float,
     ) -> None:
-        if (type(target_rows) is not int or type(max_rows) is not int
-                or not 1 <= target_rows <= max_rows
-                or not math.isfinite(batch_wait_ms) or batch_wait_ms < 0):
-            raise ValueError("explicit bounded teacher geometry and wait required")
+        self.validate_geometry(target_rows, max_rows, batch_wait_ms)
         self.backend = backend
         self.target_rows = target_rows
         self.max_rows = max_rows
@@ -61,6 +58,14 @@ class TeacherDispatcher(Generic[Input, Output]):
         self._cond = threading.Condition()
         self._thread = threading.Thread(target=self._run, name="TeacherDispatcher", daemon=True)
         self._thread.start()
+
+    @staticmethod
+    def validate_geometry(target_rows: int, max_rows: int, batch_wait_ms: float) -> None:
+        """The same no-thread preflight for callers that own model startup."""
+        if (type(target_rows) is not int or type(max_rows) is not int
+                or not 1 <= target_rows <= max_rows
+                or not math.isfinite(batch_wait_ms) or batch_wait_ms < 0):
+            raise ValueError("explicit bounded teacher geometry and wait required")
 
     def submit(self, key: str, rows: Sequence[Input]) -> Future[tuple[Output, ...]]:
         rows = tuple(rows)

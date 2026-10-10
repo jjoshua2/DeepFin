@@ -19,6 +19,7 @@ import tempfile
 import time
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
@@ -251,13 +252,33 @@ def open_worker_session(
 class CudaQualifiedEvaluator:
     """Profile the first root call before allowing a sampled move or game file."""
 
-    def __init__(self, base: RootEvaluator, session: Any, out: Path) -> None:
+    def __init__(
+        self, base: RootEvaluator, session: Any, out: Path, *, proof_outputs: Sequence[Path] = (),
+    ) -> None:
         self.base = base
         self.session = session
         self.out = out
         self.proof: dict[str, Any] | None = None
         self.qualification_seconds = 0.0
         self.qualified_at: float | None = None
+        self.proof_outputs = tuple(dict.fromkeys(Path(path).resolve() for path in proof_outputs))
+        self._published_outputs: set[Path] = set()
+
+    def _publish_shared_proof(self) -> None:
+        """Reuse the measured profile for this same live session, as RollingCudaProof does."""
+        assert self.proof is not None
+        for out in self.proof_outputs:
+            if out in self._published_outputs or out == self.out.resolve():
+                continue
+            profile = (self.out / "provider_profile.json").read_bytes()
+            if hashlib.sha256(profile).hexdigest() != self.proof["profile_sha256"]:
+                raise RuntimeError("original measured shared CUDA profile changed")
+            proof = dict(self.proof, qualification_reused_same_live_session=True,
+                         live_process_pid=os.getpid(), shared_unit_launch_sha256=file_sha256(out / "launch.json"))
+            _atomic_bytes(out / "provider_profile.json", profile)
+            _atomic_json(out / "provider_proof.json", proof)
+            fsync_directory(out)
+            self._published_outputs.add(out)
 
     def evaluate_roots(
         self, boards: list[chess.Board], x_batch: np.ndarray,
@@ -265,7 +286,9 @@ class CudaQualifiedEvaluator:
         if self.proof is not None:
             if self.session.get_providers()[0] != "CUDAExecutionProvider":
                 raise RuntimeError("CUDA provider changed after qualification")
-            return self.base.evaluate_roots(boards, x_batch)
+            outputs = self.base.evaluate_roots(boards, x_batch)
+            self._publish_shared_proof()
+            return outputs
         started = time.monotonic()
         outputs = self.base.evaluate_roots(boards, x_batch)
         profile_path = Path(self.session.end_profiling())
@@ -284,6 +307,7 @@ class CudaQualifiedEvaluator:
         _atomic_json(self.out / "provider_proof.json", proof)
         self.proof = proof
         self.qualified_at = time.monotonic()
+        self._publish_shared_proof()
         return outputs
 
 
@@ -524,6 +548,9 @@ def _evaluate_shared_roots(
                     or providers[0] != "CUDAExecutionProvider"
                     or proof.get("profile_sha256") != file_sha256(spec.out / "provider_profile.json")):
                 raise RuntimeError("CUDA root inference has no unchanged provider proof")
+            if ("shared_unit_launch_sha256" in proof
+                    and proof["shared_unit_launch_sha256"] != file_sha256(spec.out / "launch.json")):
+                raise RuntimeError("shared CUDA proof launch binding changed")
     return outputs
 
 
@@ -533,6 +560,8 @@ def _make_pooled_unit(
     dispatcher: TeacherDispatcher[tuple[chess.Board, np.ndarray], bt4_generation_evaluator.BT4RootOutput], *,
     max_writes: int, resume: bool, namespace: str = "", writer: DurableWriter | None = None,
     control: Callable[[], None] = lambda: None,
+    owner_completed: dict[int, dict[str, Any]] | None = None,
+    acknowledge: Callable[[int, dict[str, Any]], dict[str, Any] | Future[dict[str, Any]]] | None = None,
 ) -> BT4GamePool:
     """One canonical unit's board/RNG/raw/checkpoint contract, shared by both callers."""
     def make(game_id: int, rng: np.random.Generator) -> BT4RootPolicyStepper:
@@ -545,8 +574,8 @@ def _make_pooled_unit(
             match_tablebase=match_tablebase,
         )
 
-    completed: dict[int, dict[str, Any]] = {}
-    if resume:
+    completed: dict[int, dict[str, Any]] = dict(owner_completed or {})
+    if resume and owner_completed is None:
         validate_resume_contract(spec)
         for checkpoint in games_dir.glob("game_*.checkpoint.json"):
             receipt = json.loads(checkpoint.read_text())
@@ -578,6 +607,7 @@ def _make_pooled_unit(
         games=spec.games, capacity=min(spec.parallel_games, spec.games), seed=spec.seed,
         temperature=spec.temperature, make_stepper=make, dispatcher=dispatcher,
         commit=commit, max_writes=max_writes, completed=completed, namespace=namespace, writer=writer,
+        acknowledge=acknowledge,
     )
 
 
@@ -755,11 +785,26 @@ def _worker_manifest(
     return manifest
 
 
+def validate_cross_unit_budgets(names: Sequence[str], *, max_units: int, max_live_games: int,
+                               max_writes: int, deadline_seconds: float, target_rows: int,
+                               max_rows: int, batch_wait_ms: float) -> None:
+    """Preflight the existing controller bounds before caller-owned startup."""
+    if (any(type(value) is not int or value < 1 for value in (max_units, max_live_games, max_writes))
+            or not 1 <= len(names) <= max_units or max_writes > max_live_games
+            or not math.isfinite(deadline_seconds) or deadline_seconds <= 0):
+        raise ValueError("finite explicit cross-unit budgets required")
+    if any(type(name) is not str or not name or ":" in name or len(name.encode()) > 128 for name in names):
+        raise ValueError("distinct bounded unit namespaces required")
+    TeacherDispatcher.validate_geometry(target_rows, max_rows, batch_wait_ms)
+
+
 def run_pooled_units(
     units: Mapping[str, tuple[WorkerSpec, chess.syzygy.Tablebase]], evaluator: RootEvaluator, out: Path, *,
     max_units: int, max_live_games: int, target_rows: int, max_rows: int,
     batch_wait_ms: float, max_writes: int, deadline_seconds: float,
     resume: bool = False, control: Callable[[], None] = lambda: None,
+    owner_completed: Mapping[str, dict[int, dict[str, Any]]] | None = None,
+    acknowledge: Callable[[str, int, dict[str, Any]], dict[str, Any] | Future[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Finite cross-unit API: canonical local IDs/seeds, one dispatcher and writer.
 
@@ -770,15 +815,16 @@ def run_pooled_units(
     No queue/replay admission or physical/GPU geometry qualification is implied.
     """
     units = dict(units)  # freeze caller-owned roster before any control callback
-    if (any(type(value) is not int or value < 1 for value in (max_units, max_live_games, max_writes))
-            or not 1 <= len(units) <= max_units or max_writes > max_live_games
-            or not math.isfinite(deadline_seconds) or deadline_seconds <= 0):
-        raise ValueError("finite explicit cross-unit budgets required")
+    if owner_completed is not None:
+        owner_completed = {name: dict(values) for name, values in owner_completed.items()}
+    validate_cross_unit_budgets(tuple(units), max_units=max_units, max_live_games=max_live_games,
+        max_writes=max_writes, deadline_seconds=deadline_seconds, target_rows=target_rows,
+        max_rows=max_rows, batch_wait_ms=batch_wait_ms)
     if rep_fix.current() is not True:
         raise RuntimeError("cross-unit generation requires actual history_rep_fix=True")
     ids = tuple(units)
-    if any(type(name) is not str or not name or ":" in name or len(name.encode()) > 128 for name in ids):
-        raise ValueError("distinct bounded unit namespaces required")
+    if owner_completed is not None and set(owner_completed) != set(ids):
+        raise ValueError("owner completed roster changed")
     specs = tuple(units[name][0] for name in ids)
     directories = tuple(spec.out.resolve() for spec in specs)
     coordinator = out.resolve()
@@ -847,6 +893,9 @@ def run_pooled_units(
             pools[name] = _make_pooled_unit(
                 spec, handle, spec.out / "games", dispatcher, resume=resume, namespace=name,
                 max_writes=min(max_writes, spec.parallel_games, spec.games), writer=writer, control=control,
+                owner_completed=None if owner_completed is None else owner_completed[name],
+                acknowledge=None if acknowledge is None else
+                lambda game, receipt, unit=name: acknowledge(unit, game, receipt),
             )
         cursor = 0
         while True:
@@ -879,7 +928,7 @@ def run_pooled_units(
             writer.close(timeout=min(deadline_seconds, 30))
 
     for pool in pools.values():
-        pool.drain_writes()
+        pool.drain_writes(stopped=paused)
     result = {
         "status": "PAUSED_NOT_ADMISSION" if paused else "COMPLETE_NOT_ADMISSION",
         "cross_unit_launch_sha256": file_sha256(launch), "peak_live_games": peak_live,
@@ -1058,12 +1107,51 @@ def main() -> None:
     parser.add_argument("--shared-max-rows", type=int)
     parser.add_argument("--shared-batch-wait-ms", type=float)
     parser.add_argument("--shared-max-writes", type=int)
+    parser.add_argument("--shared-unit-roster", type=Path)
+    parser.add_argument("--shared-unit-roster-sha256")
+    parser.add_argument("--shared-max-units", type=int)
+    parser.add_argument("--shared-max-live-games", type=int)
+    parser.add_argument("--shared-deadline-seconds", type=float)
+    parser.add_argument("--shared-resume", action="store_true")
     args = parser.parse_args()
     shared_values = (args.shared_target_rows, args.shared_max_rows,
                      args.shared_batch_wait_ms, args.shared_max_writes)
     if any(value is not None for value in shared_values) and any(value is None for value in shared_values):
         parser.error("shared generation requires all four explicit row/wait/writer controls")
     shared_dispatch = shared_values if all(value is not None for value in shared_values) else None
+    roster_values = (args.shared_unit_roster, args.shared_max_units,
+                     args.shared_max_live_games, args.shared_deadline_seconds)
+    if any(value is not None for value in roster_values):
+        if shared_dispatch is None or any(value is None for value in roster_values):
+            parser.error("cross-unit roster requires all explicit shared and aggregate controls")
+        if args.provider != "cpu":
+            parser.error("cross-unit CUDA requires the reviewed inherited owner adapter; standalone CLI cannot acquire its custody")
+        if not args.shared_unit_roster_sha256:
+            parser.error("cross-unit roster requires its explicit SHA256")
+    elif args.shared_resume or args.shared_unit_roster_sha256:
+        parser.error("shared resume requires an explicit finite unit roster")
+    roster = None
+    if args.shared_unit_roster is not None:
+        with args.shared_unit_roster.open("rb") as stream:
+            raw = stream.read(2 * 1024 ** 2 + 1)
+        if len(raw) > 2 * 1024 ** 2 or hashlib.sha256(raw).hexdigest() != args.shared_unit_roster_sha256:
+            raise ValueError("bounded exact unit roster SHA256 required")
+        roster = json.loads(raw)
+        if (not isinstance(roster, list) or not 1 <= len(roster) <= args.shared_max_units
+                or any(not isinstance(item, dict) or set(item) != {"unit_id", "ordinal"}
+                       or type(item["unit_id"]) is not str or not item["unit_id"]
+                       or ":" in item["unit_id"] or len(item["unit_id"].encode()) > 128
+                       or type(item["ordinal"]) is not int or item["ordinal"] < 0 for item in roster)
+                or len({item["unit_id"] for item in roster}) != len(roster)
+                or len({item["ordinal"] for item in roster}) != len(roster)):
+            raise ValueError("closed finite unit roster required")
+        if (type(args.shared_max_live_games) is not int or args.shared_max_live_games < 1
+                or len(roster) * min(args.parallel_games, args.games) > args.shared_max_live_games
+                or not math.isfinite(args.shared_deadline_seconds) or args.shared_deadline_seconds <= 0
+                or not 1 <= args.shared_target_rows <= args.shared_max_rows
+                or not math.isfinite(args.shared_batch_wait_ms) or args.shared_batch_wait_ms < 0
+                or not 1 <= args.shared_max_writes <= args.shared_max_live_games):
+            raise ValueError("finite aggregate roster geometry required before session startup")
     if args.threads not in (1, 2):
         parser.error("experimental worker requires --threads 1 or 2")
     if args.provider == "cuda":
@@ -1129,7 +1217,20 @@ def main() -> None:
                 CudaQualifiedEvaluator(evaluator, sess, realized.out)
                 if args.provider == "cuda" else evaluator
             )
-            print(json.dumps(run_worker(realized, actor, tb, shared_dispatch=shared_dispatch), sort_keys=True))
+            if roster is None:
+                result = run_worker(realized, actor, tb, shared_dispatch=shared_dispatch)
+            else:
+                units = {item["unit_id"]: (replace(realized, seed=args.seed + item["ordinal"],
+                         out=realized.out / f"unit-{item['ordinal']:012d}" / "raw"), tb) for item in roster}
+                assert shared_dispatch is not None
+                result = run_pooled_units(
+                    units, actor, realized.out, max_units=args.shared_max_units,
+                    max_live_games=args.shared_max_live_games, target_rows=shared_dispatch[0],
+                    max_rows=shared_dispatch[1], batch_wait_ms=shared_dispatch[2],
+                    max_writes=shared_dispatch[3], deadline_seconds=args.shared_deadline_seconds,
+                    resume=args.shared_resume,
+                )
+            print(json.dumps(result, sort_keys=True))
     finally:
         tb.close()
 
