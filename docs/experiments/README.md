@@ -14,6 +14,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Local arena adapter reuse source packet](2026-10-10-local-arena-adapter-reuse.md) | Reviewed operational adapter reuse, 11 isolated CPU contracts and future-launch preparation; no live adoption |
 | [Actual multi-bit scan_after full-Ply count](2026-10-03-bend-scan-after-count.md) | Actual arbitrary-mask scan_after full-Ply occurrence count with duplicate-tail preservation; legal target geometry and full-generator correctness remain open
 | [Closed actual multi-bit scan_after count](2026-10-03-bend-scan-after-closed-count.md) | Exact per-query in-range bit contribution plus arbitrary full-Ply tail count, checked through actual Chess.destinations and scan_after; legal geometry remains separate
 | [Actual destination factorization](2026-10-02-bend-destination-factorization.md) | Local checked ordinary-emission structure, full-Ply multiplicity and arbitrary-array scan pair; independent bitboard inventory and whole generator remain open |

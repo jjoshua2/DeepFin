@@ -1,0 +1,42 @@
+{
+  "status": "PASS_PORTABLE_PACKET_CPU_TESTS_AND_INDEPENDENT_REVIEW",
+  "upstream_main_revision": "bd4ab349529093cc0d6e2c2ea63dfc7fbd8f989d",
+  "reviewed_production_revision": "870d9aa84d58e48a90e44fafac24bf263fb65167",
+  "tests": 11,
+  "seconds": 0.557,
+  "returncode": 0,
+  "command": "CUDA_VISIBLE_DEVICES=-1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 taskset -c 28 nice -n 19 /usr/bin/python3.10 -B -m unittest -v test_adapter_reuse",
+  "placement": "docs/experiments/evidence/arena-adapter-reuse-20261010",
+  "scope": "Source/evidence publication draft; no live adoption",
+  "GPU_jobs": false,
+  "corpus_scans": false,
+  "model_payload_reads": false,
+  "canonical_lock_probes": false,
+  "live_edits": false,
+  "production_hashes": {
+    "fresh_epoch1_arena_phase_adapter_20261010.py": "a9e8d1c6174c90612a6191914d27e38a5ff3e5e3418e8d87bd34fbd44e527a02",
+    "short-e-evaluation-owner-v4\\arena_phase_adapter_pair_bound_v4.py": "5e7133d525db7854ded59af42a309f58316082e8410e6d1d92755f1e967fb497"
+  },
+  "baseline_fixture_hashes": {
+    "fresh_epoch1_arena_phase_adapter_20261010.py": "2f01463b53e5c7ba8e71677ff3a470680f86ec6e7decbe28360184a8086c216a",
+    "short-e-evaluation-owner-v4\\arena_phase_adapter_pair_bound_v4.py": "70777653e0a6579b138e5b69cb4139cad09bbaecdda710242f7c0ce8b08a19fa"
+  },
+  "production_diff_net_lines_removed": 484,
+  "test_portability_delta": "Read immutable SHA-256 checked original fixtures instead of unavailable local Git commit",
+  "independent_review": {
+    "reviewed_revision": "4e78c1942db482ce4bc382c43ed656ded6dcec79",
+    "result": "No findings",
+    "independent_tests": 11,
+    "seconds": 0.208,
+    "limitations": "Scoped source export, not a full main checkout or end-to-end arena; Windows Git could not independently resolve the historical WSL worktree ancestry",
+    "final_delta": "Index placement reviewed with no findings; production and tests unchanged, prior independent 11-test PASS applies; upstream apply-check not independently repeated"
+  },
+  "integration_check": {
+    "draft_revision": "4e78c1942db482ce4bc382c43ed656ded6dcec79",
+    "upstream": "bd4ab349529093cc0d6e2c2ea63dfc7fbd8f989d",
+    "command": "git apply --check arena-adapter-reuse-repository.patch",
+    "result": "PASS against actual upstream worktree with teacher draft index entry preserved",
+    "warning": "Existing worktree README file mode 100755 differs from patch 100644; no content rejection",
+    "source_worktree_modified": false
+  }
+}
