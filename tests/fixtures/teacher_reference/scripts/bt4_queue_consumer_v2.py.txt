@@ -1,0 +1,146 @@
+"""Bounded long-block consumer below the existing durable queue's owner gate.
+
+No scheduler, shell, approval receipt, second lease or background thread.
+The queue must validate its genuine GO/request/review before calling this API.
+"""
+import os,time,math,hashlib,json
+from pathlib import Path
+from scripts.bt4_inherited_owner_v2 import inherited,canonical_gpu_lock_consumer,birth
+from scripts.bt4_unit_runtime_v2 import run_unit
+
+def cgroup_memory_observation(relative, root=Path('/sys/fs/cgroup')):
+ """Read the nearest visible kernel ancestor; never hide access failures."""
+ root=root.resolve();requested=(root/relative.lstrip('/')).resolve()
+ if not requested.is_relative_to(root):raise RuntimeError('invalid kernel cgroup path')
+ selected=requested
+ while not (selected/'memory.current').exists() or not (selected/'memory.max').exists():
+  if selected==root:raise RuntimeError('kernel cgroup memory counters unavailable')
+  selected=selected.parent
+ current=int((selected/'memory.current').read_text());maximum=(selected/'memory.max').read_text().strip()
+ return dict(cgroup_current_bytes=current,cgroup_memory_max=maximum,
+             cgroup_headroom_bytes=None if maximum=='max' else int(maximum)-current,
+             cgroup_requested_path=str(requested),cgroup_counter_scope=str(selected),
+             cgroup_ancestor_fallback=selected!=requested)
+
+class OwnerGuard:
+ def __init__(self,parent,leases,limits,physical_baseline,physical_sample,output_sample,stop_paths,output_root):
+  keys={'deadline_unix','physical_io_bytes','minimum_disk_bytes','output_bytes'}
+  if set(limits)!=keys or any(type(v) not in (int,float) or not math.isfinite(v) or v<=0 for v in limits.values()):raise ValueError('exact finite owner limits')
+  self.parent=parent;self.leases=leases;self.limits=limits;self.baseline=physical_baseline;self.sample=physical_sample;self.output_sample=output_sample;self.stop_paths=tuple(map(Path,stop_paths));self.output_root=Path(output_root);self.logical_read=0
+  self.check()
+ def charge(self,n):
+  if type(n)is not int or n<0:raise ValueError('logical read charge')
+  self.logical_read+=n;self.check()
+ def check(self):
+  inherited(self.parent,self.leases)
+  if any(os.path.lexists(p) for p in self.stop_paths):raise RuntimeError('owner STOP/drain')
+  if time.time()>=self.limits['deadline_unix']:raise RuntimeError('accepted owner deadline')
+  physical=self.sample()
+  self.physical_io_observation=dict(counter_bytes=physical,baseline_bytes=self.baseline,delta_bytes=physical-self.baseline,counter_reset=physical<self.baseline,scope='shared kernel counter; measurement only')
+  rss=int(next(line.split()[1] for line in Path('/proc/self/status').read_text().splitlines() if line.startswith('VmRSS:')))*1024
+  meminfo={line.split(':')[0]:int(line.split()[1])*1024 for line in Path('/proc/meminfo').read_text().splitlines() if line.startswith(('MemAvailable:','MemTotal:'))}
+  relative=next(line.split(':',2)[2] for line in Path('/proc/self/cgroup').read_text().splitlines() if line.startswith('0::'))
+  cgroup=cgroup_memory_observation(relative)
+  current=cgroup['cgroup_current_bytes'];maximum=cgroup['cgroup_memory_max']
+  pss_private={}
+  for line in Path('/proc/self/smaps_rollup').read_text().splitlines():
+   if line.startswith(('Pss:','Private_Clean:','Private_Dirty:')):pss_private[line.split(':')[0]]=int(line.split()[1])*1024
+  self.memory_observation=dict(host=meminfo,process_rss_bytes=rss,process=pss_private,**cgroup)
+  if meminfo.get('MemAvailable',0)<=0 or (maximum!='max' and current>=int(maximum)):raise RuntimeError('actual platform memory exhausted')
+  if self.output_sample()>self.limits['output_bytes']:raise RuntimeError('owner measured output cap')
+  disk=os.statvfs(self.output_root)
+  self.disk_observation=dict(available_bytes=disk.f_bavail*disk.f_frsize)
+  if self.disk_observation['available_bytes']<=0:raise RuntimeError('actual platform disk exhausted')
+
+class RollingCudaProof:
+ """Republish original measured proof for the same live CUDA session."""
+ def __init__(self,worker,evaluator,session,first_out,guard,charge):
+  self.worker=worker;self.actor=worker.CudaQualifiedEvaluator(evaluator,session,first_out);self.guard=guard;self.charge=charge;self.out=first_out;self.profile=None
+ def set_unit(self,out):self.out=out;self.actor.out=out
+ def evaluate_roots(self,boards,x_batch):
+  self.guard();outputs=self.actor.evaluate_roots(boards,x_batch)
+  if self.profile is None:
+   from scripts.prepare_bt4_novel_campaign import read_bounded
+   self.profile=read_bounded(self.out/'provider_profile.json',2*1024**2);self.charge(len(self.profile))
+   if hashlib.sha256(self.profile).hexdigest()!=self.actor.proof['profile_sha256']:raise RuntimeError('measured original CUDA proof differs')
+  elif not (self.out/'provider_proof.json').exists():
+   proof=dict(self.actor.proof,qualification_reused_same_live_session=True,live_process_pid=os.getpid())
+   self.worker._atomic_bytes(self.out/'provider_profile.json',self.profile)
+   self.worker._atomic_json(self.out/'provider_proof.json',proof)
+  self.guard();return outputs
+
+class GuardedEvaluator:
+ def __init__(self,evaluator,guard):self.evaluator=evaluator;self.guard=guard
+ def evaluate_roots(self,boards,x_batch):
+  self.guard();result=self.evaluator.evaluate_roots(boards,x_batch);self.guard();return result
+
+def guarded_cuda_actor(worker,rolling,guard):
+ class Actor(worker.CudaQualifiedEvaluator):
+  @property
+  def qualification_seconds(self):return rolling.actor.qualification_seconds
+  @property
+  def qualified_at(self):return rolling.actor.qualified_at
+  def evaluate_roots(self,boards,x_batch):
+   guard();result=rolling.evaluate_roots(boards,x_batch);guard();return result
+ return Actor.__new__(Actor)
+
+def consume_rolling(worker,units,checkpoint,tablebase,guard,startup,parent,leases,custody_profile='all_three',companion_config=None,companion_priority=lambda:False):
+ """One already-authorized queue job, one live evaluator across finite units.
+ Startup must hash/pin model and realize CUDA schema/profile under the same guard.
+ Queue's existing hard deadline/reaping handles blocked native calls.
+ """
+ if not 1<=len(units)<=4096 or len({u['ordinal'] for u in units})!=len(units):raise ValueError('bounded distinct rolling units')
+ guard.check()
+ lock=canonical_gpu_lock_consumer(worker,parent,leases,custody_profile=custody_profile)
+ fd=lock()
+ companion=None
+ try:
+  # No model/session creation is allowed until all inherited custody and guards pass.
+  evaluator,session,schema=startup(guard.check)
+  worker.verify_cuda_model_schema(session,**schema)
+  rolling=RollingCudaProof(worker,evaluator,session,units[0]['spec'].out,guard.check,guard.charge)
+  guarded=guarded_cuda_actor(worker,rolling,guard.check);results=[]
+  from dataclasses import replace
+  providers,options=worker.verify_cuda_session(session,gpu_mem_gb=2,cudnn_conv_algo_search='DEFAULT',cudnn_conv_use_max_workspace=0)
+  if companion_config is not None:
+   from scripts.ceres_game_companion_client import Companion
+   companion=Companion(companion_config,fd,guard.check,guard.charge,priority=companion_priority,service_output=units[0]['spec'].out.parent/'ceres_service')
+  unit_runner=run_unit
+  if companion_config is not None:
+   overlap=json.loads(Path(companion_config).read_text()).get('overlap',False)
+   if type(overlap) is not bool:raise ValueError('explicit overlap boolean required')
+   if overlap:
+    from scripts.bt4_unit_overlap_v1 import run_unit_overlap
+    unit_runner=run_unit_overlap
+  for unit in units:
+   guard.check();rolling.set_unit(unit['spec'].out)
+   spec=replace(unit['spec'],providers=providers,provider_options=options)
+   spec.validate()
+   attempt=checkpoint.begin(unit['ordinal'],birth(os.getpid()),str(unit['spec'].out))
+   results.append(unit_runner(worker,spec,guarded,tablebase,checkpoint,attempt,unit['ordinal'],unit['prior_roots'],guard.check,guard.charge,companion))
+  return dict(units=len(results),results=results,logical_read_bytes=guard.logical_read,physical_counter_scope='shared owner window including concurrent owner children',training_credit=0)
+ finally:
+  try:
+   if companion is not None:companion.close()
+  finally:os.close(fd)
+
+
+
+def fixed_bt4_startup(worker,profile_root,guard):
+ """Established BT4 session; callable only after reviewed owner activation."""
+ from scripts.bt4_tpg_bridge_v2 import MODEL_SHA
+ model='/home/<user>/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx'
+ guard();before=Path(model).stat()
+ if worker.file_sha256(Path(model))!=MODEL_SHA:raise ValueError('fixed distinct BT4 model SHA')
+ after=Path(model).stat()
+ if (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns,before.st_ctime_ns)!=(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns):raise ValueError('model changed while hashing')
+ guard()
+ session,input_name,dtype,providers,options=worker.open_worker_session(model,requested_provider='cuda',gpu_mem_gb=2,threads=1,profile_prefix=Path(profile_root)/'bt4-profile',cudnn_conv_algo_search='DEFAULT',cudnn_conv_use_max_workspace=0)
+ schema=dict(input_name='/input/planes',input_dtype='float32',policy_output='/output/policy',wdl_output='/output/wdl',wdl_kind='probabilities')
+ worker.verify_cuda_model_schema(session,**schema);guard()
+ actor=worker.bt4_generation_evaluator.BT4OnnxEvaluator(session,input_name=input_name,input_dtype=dtype,policy_output=schema['policy_output'],wdl_output=schema['wdl_output'],wdl_kind='probabilities',input_history_encoding=worker.INPUT_HISTORY_ENCODING,input_extra_features=worker.INPUT_EXTRA_FEATURES,model_sha256=MODEL_SHA,history_rep_fix=True)
+ return actor,session,schema
+
+
+
+

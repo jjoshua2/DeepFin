@@ -1,0 +1,233 @@
+{
+  "schema": 2,
+  "scope": "CPU-only reference fixtures: eleven original bodies and six derivatives with declared neutral path substitutions; original and fixture identities are separate. Never production admission.",
+  "files": [
+    {
+      "relative": "scripts/bt4_inherited_owner_v2.py",
+      "fixture": "scripts/bt4_inherited_owner_v2.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/bt4_inherited_owner_v2.py",
+      "sha256": "67da0437fe4e634b411d45bebcb39ffe5982f596f17765a16e252664bfb05fca",
+      "bytes": 3900,
+      "original_sha256": "cfcae5b3d75e7926e5ce1a39e7d17c0d6ad2c468aa2057bbea7b894ebf0b9c59",
+      "original_bytes": 3896,
+      "path_relocations": {
+        "home": 2,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "scripts/bt4_longblock_checkpoint_v2.py",
+      "fixture": "scripts/bt4_longblock_checkpoint_v2.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/bt4_longblock_checkpoint_v2.py",
+      "sha256": "3e340183934fc06437979898b968d2555cf4931254daafa05c317680b75b9ae9",
+      "bytes": 7788,
+      "original_sha256": "3e340183934fc06437979898b968d2555cf4931254daafa05c317680b75b9ae9",
+      "original_bytes": 7788,
+      "path_relocations": {
+        "home": 0,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "scripts/bt4_queue_consumer_v2.py",
+      "fixture": "scripts/bt4_queue_consumer_v2.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/bt4_queue_consumer_v2.py",
+      "sha256": "c8679418873526e8814e1f0bef3837bc4f1a6c6a7602463e6fd09900f93cca93",
+      "bytes": 9626,
+      "original_sha256": "ad8c585093399a76b25d355bae46b5a0e432d733da955f87ea61c42744d12e41",
+      "original_bytes": 9624,
+      "path_relocations": {
+        "home": 1,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "scripts/bt4_raw_recovery_v2.py",
+      "fixture": "scripts/bt4_raw_recovery_v2.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/bt4_raw_recovery_v2.py",
+      "sha256": "78845b83d4c4de4f244305332df1ccddda7430eb0f1baaf10d6072ea037037b0",
+      "bytes": 3841,
+      "original_sha256": "78845b83d4c4de4f244305332df1ccddda7430eb0f1baaf10d6072ea037037b0",
+      "original_bytes": 3841,
+      "path_relocations": {
+        "home": 0,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "scripts/bt4_tpg_bridge_v2.py",
+      "fixture": "scripts/bt4_tpg_bridge_v2.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/bt4_tpg_bridge_v2.py",
+      "sha256": "ad289a07479f7116b55ce40d90162aa36aea1260beb30ece4ff9f4a94ef5c990",
+      "bytes": 3870,
+      "original_sha256": "ad289a07479f7116b55ce40d90162aa36aea1260beb30ece4ff9f4a94ef5c990",
+      "original_bytes": 3870,
+      "path_relocations": {
+        "home": 0,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "scripts/bt4_unit_runtime_v2.py",
+      "fixture": "scripts/bt4_unit_runtime_v2.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/bt4_unit_runtime_v2.py",
+      "sha256": "18aaed7e9a9faa5738ca5c96b2e756bae9c47a455fe45997e3ab1d954a66410a",
+      "bytes": 2209,
+      "original_sha256": "18aaed7e9a9faa5738ca5c96b2e756bae9c47a455fe45997e3ab1d954a66410a",
+      "original_bytes": 2209,
+      "path_relocations": {
+        "home": 0,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "scripts/bt4_queue_worker_entry_v3.py",
+      "fixture": "scripts/bt4_queue_worker_entry_v3.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/bt4_queue_worker_entry_v3.py",
+      "sha256": "5142b65918e22ceb4ed8f97dde72f4e91756de50442d3ac0f28bda7f6ec6024e",
+      "bytes": 28225,
+      "original_sha256": "4f406e01d64d46132a4b5f201f961aa70c6d4815253d3fc22910751d3cbc7c8e",
+      "original_bytes": 28219,
+      "path_relocations": {
+        "home": 3,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "scripts/ceres_game_companion_client.py",
+      "fixture": "scripts/ceres_game_companion_client.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/ceres_game_companion_client.py",
+      "sha256": "7fd9145499a6f8503efc21e3c902cc0089445a3ffc114de808056246d885b05d",
+      "bytes": 5318,
+      "original_sha256": "7fd9145499a6f8503efc21e3c902cc0089445a3ffc114de808056246d885b05d",
+      "original_bytes": 5318,
+      "path_relocations": {
+        "home": 0,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "scripts/ceres_dynamic_game_service.py",
+      "fixture": "scripts/ceres_dynamic_game_service.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/ceres_dynamic_game_service.py",
+      "sha256": "ea1cb8da49f0b8f44a2000aae4276a5abaf922f4b25d866e6cd05628638027a3",
+      "bytes": 10262,
+      "original_sha256": "ea1cb8da49f0b8f44a2000aae4276a5abaf922f4b25d866e6cd05628638027a3",
+      "original_bytes": 10262,
+      "path_relocations": {
+        "home": 0,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "scripts/ceres_atomic_publication_v1.py",
+      "fixture": "scripts/ceres_atomic_publication_v1.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/ceres_atomic_publication_v1.py",
+      "sha256": "4e34271ddacdb13a5e3a13f55eee24479ffa3a9bc049763ef8f16e789374ff47",
+      "bytes": 1211,
+      "original_sha256": "4e34271ddacdb13a5e3a13f55eee24479ffa3a9bc049763ef8f16e789374ff47",
+      "original_bytes": 1211,
+      "path_relocations": {
+        "home": 0,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "scripts/dual_companion_config.json",
+      "fixture": "scripts/dual_companion_config.json.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/dual_companion_config.json",
+      "sha256": "b8076ce5517671462a26afd71dafcee50afcb063225b528db2f98c57dab5d821",
+      "bytes": 156924,
+      "original_sha256": "3d36d0fac2896b098b3ff913c4ceddab3d78ed1876d463a8636dfbebcce848bd",
+      "original_bytes": 156955,
+      "path_relocations": {
+        "home": 4,
+        "workspace": 1
+      }
+    },
+    {
+      "relative": "scripts/comparison_priority.py",
+      "fixture": "scripts/comparison_priority.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/comparison_priority.py",
+      "sha256": "4765dce4a087a51114059b4389d7d7d784d648579e4e9f3b0a232a5e381fe8be",
+      "bytes": 7536,
+      "original_sha256": "d88d357c59944f408e45d16933dcecc960c6c6e718db7a20d2d16e98b0cc30ea",
+      "original_bytes": 7518,
+      "path_relocations": {
+        "home": 9,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "scripts/phase_consumption.py",
+      "fixture": "scripts/phase_consumption.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/phase_consumption.py",
+      "sha256": "74059f1c88311cb24dd1f525aa9d4e0c9595181a985f52f59482d59e197522d1",
+      "bytes": 6824,
+      "original_sha256": "74059f1c88311cb24dd1f525aa9d4e0c9595181a985f52f59482d59e197522d1",
+      "original_bytes": 6824,
+      "path_relocations": {
+        "home": 0,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "reference/compare.py",
+      "fixture": "reference/compare.py.txt",
+      "source": "/tmp/deepfin-bt4-ceres-same-position-compare-20261008-v9/compare.py",
+      "sha256": "cde393fced54bdea5b030f9e8566c876cca3bcd64aab7700c23f37d4f8255f65",
+      "bytes": 35401,
+      "original_sha256": "f2462476262a9cc2b06a00bca3a64f989075ea85335326c4b131d6ec0689ca2a",
+      "original_bytes": 35387,
+      "path_relocations": {
+        "home": 7,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "encoding/ceres_tpg.py",
+      "fixture": "encoding/ceres_tpg.py.txt",
+      "source": "/tmp/ceres-phase-runtime-py313-20260923/chess_anti_engine/encoding/ceres_tpg.py",
+      "sha256": "ea0bc14c31eedd18abe67b9b90287b2d1b20245ec42aed4faa0d69d21df229b0",
+      "bytes": 20169,
+      "original_sha256": "ea0bc14c31eedd18abe67b9b90287b2d1b20245ec42aed4faa0d69d21df229b0",
+      "original_bytes": 20169,
+      "path_relocations": {
+        "home": 0,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "ad/c3_backend.py",
+      "fixture": "ad/c3_backend.py.txt",
+      "source": "/tmp/ceres-own-source-adapter-20260923/c3_backend.py",
+      "sha256": "a62fb45047ae8e20128a559b7346f76b43d198515bd64c1f6e3b1ef5d7949c2c",
+      "bytes": 8072,
+      "original_sha256": "a62fb45047ae8e20128a559b7346f76b43d198515bd64c1f6e3b1ef5d7949c2c",
+      "original_bytes": 8072,
+      "path_relocations": {
+        "home": 0,
+        "workspace": 0
+      }
+    },
+    {
+      "relative": "cleanup/finite_natural_gpu_gap_bridge_v2.py",
+      "fixture": "cleanup/finite_natural_gpu_gap_bridge_v2.py.txt",
+      "source": "<workspace>/finite_natural_gpu_gap_bridge_v2.py",
+      "sha256": "e44e42ee984d00084a1820da0ebb4b13965d169769f8dcd6a536770ecfc76b9b",
+      "bytes": 10971,
+      "original_sha256": "e44e42ee984d00084a1820da0ebb4b13965d169769f8dcd6a536770ecfc76b9b",
+      "original_bytes": 10971,
+      "path_relocations": {
+        "home": 0,
+        "workspace": 0
+      }
+    }
+  ],
+  "transformation": {
+    "name": "neutral_reference_paths_v1",
+    "home_placeholder": "/home/<user>",
+    "workspace_placeholder": "<workspace>",
+    "scope": "literal path prefixes only; no executable logic replacement"
+  }
+}

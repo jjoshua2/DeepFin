@@ -1,0 +1,41 @@
+"""Create-only durable publication; retain uncredited provisional evidence."""
+import json
+import os
+import uuid
+from pathlib import Path
+
+
+def provisional(path):
+    path = Path(path)
+    if path.parent.resolve() != path.parent or path.parent.is_symlink():
+        raise ValueError("canonical publication directory required")
+    return path.with_name("." + path.name + ".provisional-" + uuid.uuid4().hex)
+
+
+def publish(staged, path):
+    # No replace or deletion. A partial provisional never occupies final name.
+    os.link(staged, path, follow_symlinks=False)
+    fd = os.open(Path(path).parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def durable_json(path, document):
+    staged = provisional(path)
+    with staged.open("x") as stream:
+        json.dump(document, stream, sort_keys=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    publish(staged, path)
+
+
+def durable_npz(np, path, arrays):
+    staged = provisional(path)
+    with staged.open("xb") as stream:
+        np.savez_compressed(stream, **arrays)
+        stream.flush()
+        os.fsync(stream.fileno())
+    publish(staged, path)

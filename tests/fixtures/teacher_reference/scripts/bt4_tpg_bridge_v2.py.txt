@@ -1,0 +1,46 @@
+"""CPU bridge to the exact frozen census encoder, not a training admission seal."""
+import hashlib,json,stat,types
+from pathlib import Path
+import chess
+import numpy as np
+
+ENCODER_PATH=Path('/tmp/ceres-phase-runtime-py313-20260923/chess_anti_engine/encoding/ceres_tpg.py')
+ENCODER_SHA='ea0bc14c31eedd18abe67b9b90287b2d1b20245ec42aed4faa0d69d21df229b0'
+MODEL_SHA='1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0'
+IDENTITY='ceres-tpg-bytes-sha256-v1'
+
+def need(ok,message):
+ if not ok:raise ValueError(message)
+
+def encoder():
+ # Exact verified bytes are executed, never a second mutable loader read.
+ from scripts.prepare_bt4_novel_campaign import read_bounded
+ raw=read_bounded(ENCODER_PATH,1<<20)
+ need(len(raw)<1<<20 and hashlib.sha256(raw).hexdigest()==ENCODER_SHA,'frozen census encoder hash')
+ m=types.ModuleType('_frozen_bt4_census_encoder');exec(compile(raw,str(ENCODER_PATH),'exec'),m.__dict__);return m
+
+def bridge(metadata,arrays,*,frozen_encoder,compact_index):
+ need(metadata['schema']=='bt4_root_policy_games_v1' and metadata['status']=='completed','complete raw BT4 game only')
+ rows=metadata['rows'];n=len(rows)
+ need(n<=400 and metadata['discarded_rows']==0 and metadata['attempted_plies']==n,'complete bounded row coverage')
+ x=arrays['x'];policy=arrays['policy_t1'];wdl=arrays['wdl_raw']
+ need(x.dtype==np.float32 and x.shape==(n,175,8,8),'original float32 BT4 history inputs')
+ need(policy.shape==(n,1858) and wdl.shape==(n,3),'teacher widths')
+ need(np.isfinite(x).all() and np.isfinite(policy).all() and np.isfinite(wdl).all(),'finite teacher data')
+ need((policy>=0).all() and (wdl>=0).all() and np.allclose(policy.sum(1),1,atol=1e-5,rtol=0) and np.allclose(wdl.sum(1),1,atol=1e-5,rtol=0),'normalized probabilities')
+ board=chess.Board(metadata['initial_fen']);digests=[]
+ for i,row in enumerate(rows):
+  teacher=row['teacher'];need(row['index']==i and row['ply_index']==board.ply() and row['pov_white']==board.turn,'ordered complete game-root history')
+  need(chess.Board(row['fen']).fen(en_passant='fen')==board.fen(en_passant='fen') and chess.popcount(board.occupied)>=7,'legal root replay/FEN parity')
+  need(teacher['model_sha256']==MODEL_SHA and teacher['kind']=='root_inference_no_search' and teacher['policy_encoding']=='lc0_1858_compact','fixed separate BT4 teacher')
+  need(teacher['wdl_kind']=='probabilities' and teacher['wdl_pov']=='side_to_move' and teacher['wdl_order']==['win','draw','loss'],'native WDL semantics')
+  need(teacher['input_history_encoding']=='lc0_root_legacy_meta' and teacher['history_rep_fix'] is True and teacher['input_extra_features']=='v2_threats','exact history contract')
+  key=hashlib.blake2b(np.ascontiguousarray(x[i],dtype=np.float32).tobytes(),digest_size=16).hexdigest();need(key==row['input_key'],'original BT4 float input key')
+  legal={compact_index(board,move) for move in board.legal_moves};need(all(value==0 or j in legal for j,value in enumerate(policy[i])),'compact policy legality/orientation')
+  replay=frozen_encoder.encode_ceres_tpg_bytes(board)
+  stored=frozen_encoder.stored_x_to_ceres_tpg_bytes(x[i].astype(np.float16),input_history_encoding='lc0_root_legacy_meta',history_rep_fix=True)
+  need(replay.dtype==np.uint8 and replay.shape==(64,137) and np.array_equal(replay,stored),'frozen TPG replay/stored history byte parity')
+  digests.append(hashlib.sha256(replay.tobytes(order='C')).digest())
+  move=chess.Move.from_uci(row['move_uci']);need(move in board.legal_moves,'legal played move');board.push(move)
+ return {'identity_version':IDENTITY,'feed_hashes':digests,'policy_t':policy.copy(),'search_wdl':wdl.copy(),'has_policy':np.ones(n,dtype=np.float32),'has_search_wdl':np.ones(n,dtype=np.float32),'sf_value_weight':0,'search_value_weight':1,'outcome_borne_frac':0,'training_credit':0,'admission':'pending source/CUDA/readback/global novelty/split qualification'}
+

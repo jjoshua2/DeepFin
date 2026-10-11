@@ -1,0 +1,71 @@
+"""Persistent diagnostic child using reviewed private-session cleanup, not ownership."""
+import hashlib,importlib.util,json,os,select,subprocess,sys,time
+from pathlib import Path
+
+def module(name,path):
+    s=importlib.util.spec_from_file_location(name,path);m=importlib.util.module_from_spec(s);sys.modules[name]=m;s.loader.exec_module(m);return m
+def sha(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+class Companion:
+    def __init__(self,config,gpu_fd,guard,charge,priority=lambda:False,fake_cpu=False,service_output=None):
+        self.config=json.loads(Path(config).read_text());self.guard=guard;self.charge=charge;self.priority=priority;self.child=None;self.identity=None;self.seen=[];self.fake_cpu=fake_cpu
+        ref=self.config['cleanup_source']
+        if sha(ref['path'])!=ref['sha256']:raise ValueError('reviewed cleanup source drift')
+        self.cleanup=module('dual_owned_cleanup',ref['path'])
+        command=[self.config['python'],'-B',self.config['service_source']['path'],'--config',str(config),'--gpu-fd',str(gpu_fd)]
+        if service_output is not None:command+=['--service-output',str(service_output)]
+        if sha(self.config['service_source']['path'])!=self.config['service_source']['sha256']:raise ValueError('service source drift')
+        if fake_cpu:command+=['--fake-cpu']
+        self.guard();self.check_priority()
+        env=dict(os.environ);env['LD_LIBRARY_PATH']=self.config['qualified_plan']['teacher_env']['ceres']['LD_LIBRARY_PATH'];env['OMP_NUM_THREADS']='1';env['OPENBLAS_NUM_THREADS']='1';env['PYTHONDONTWRITEBYTECODE']='1'
+        self.log=Path(str(service_output or self.config['service_output'])+'.log').open('x')
+        try:
+            self.child=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log,text=True,bufsize=1,env=env,start_new_session=True,pass_fds=() if fake_cpu else (gpu_fd,))
+            self.identity=self.cleanup.birth(self.child.pid,include_zombie=True)
+            if self.identity is None:raise RuntimeError('service exited before verified birth')
+            if os.getsid(self.child.pid)!=self.child.pid:raise ValueError('private service session required')
+            ready=self.read()
+            if ready['state']!='READY_FOR_GAME' or ready['fake_cpu']!=fake_cpu:raise ValueError('service startup identity')
+        except BaseException:self.close();raise
+    def check_priority(self):
+        if self.priority():raise RuntimeError('higher-priority job; stop only owned C3 service')
+    def read(self):
+        while True:
+            self.guard();self.check_priority()
+            self.seen.extend(i for i in self.cleanup.members(self.child.pid)+self.cleanup.descendants(self.child.pid) if i not in self.seen)
+            if select.select([self.child.stdout],[],[],.1)[0]:
+                line=self.child.stdout.readline()
+                if not line:raise RuntimeError('C3 service exited: '+str(self.child.poll()))
+                return json.loads(line)
+            if self.child.poll() is not None:raise RuntimeError('C3 service failed: '+str(self.child.returncode))
+    def __call__(self,raw_verify,path,game):
+        raw=raw_verify(path,game);self.guard();self.check_priority()
+        self.child.stdin.write(json.dumps({'op':'game','game_id':game,'raw_path':str(path),'raw_sha256':raw['sha256']})+'\n');self.child.stdin.flush();reply=self.read()
+        if reply['state']!='GAME_DURABLE' or reply['game_id']!=game or reply['real_rows']!=raw['rows']:raise ValueError('C3 companion actual game coverage')
+        ref=reply['companion'];p=Path(ref['path'])
+        expected=Path(path).parent.parent/'ceres_companions'
+        if p!=expected/(Path(path).stem+'.json') or sha(p)!=ref['sha256']:raise ValueError('C3 durable companion binding')
+        receipt=json.loads(p.read_text());labels=Path(receipt['labels']['path'])
+        if labels!=expected/Path(path).name or sha(labels)!=receipt['labels']['sha256']:raise ValueError('C3 durable labels binding')
+        if receipt['raw_sha256']!=raw['sha256'] or receipt['game_id']!=game or receipt['real_rows']!=raw['rows']:raise ValueError('C3 companion raw identity')
+        self.charge(p.stat().st_size+labels.stat().st_size)
+        return {**raw,'ceres_companion':ref}
+    def close(self):
+        child=self.child
+        if child is not None:
+            identity=self.identity or {'pid':child.pid,'start_ticks':None,'boot_id':None}
+            try:
+                if child.poll() is None:
+                    try:child.stdin.write('{"op":"stop"}\n');child.stdin.flush()
+                    except (BrokenPipeError,OSError):pass
+                end=time.monotonic()+1
+                while child.poll() is None and time.monotonic()<end:time.sleep(.05)
+                self.cleanup.stop_group(child,identity,self.seen)
+            except BaseException:
+                while child.poll() is None or self.cleanup.members(child.pid) or self.cleanup.active(self.seen):time.sleep(.1)
+                raise
+            finally:
+                if child.poll() is not None and not self.cleanup.members(child.pid) and not self.cleanup.active(self.seen):
+                    child.stdin.close();child.stdout.close();self.log.close()
+            self.child=None
+    def __enter__(self):return self
+    def __exit__(self,*args):self.close()
