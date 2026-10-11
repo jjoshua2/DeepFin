@@ -1,0 +1,109 @@
+"""Read-only exact completed-training qualification; READY-EVAL remains priority.
+
+The official result has no authorization field. Authorization is therefore
+checked separately against its exact plan, output root and runtime source map.
+No receipts/markers are created or altered here.
+"""
+import hashlib, json, os, stat
+from pathlib import Path
+
+_checkpoint_cache = {}
+
+def sha(path):
+    h=hashlib.sha256()
+    with Path(path).open('rb') as f:
+        for b in iter(lambda:f.read(2**20),b''):h.update(b)
+    return h.hexdigest()
+
+def checked(ref):
+    p=Path(ref['path'])
+    if p.resolve(strict=True)!=p or sha(p)!=ref['sha256']:
+        raise ValueError('phase source binding changed: '+str(p))
+    return json.loads(p.read_text())
+
+def completed(config, read):
+    """False for absent/incomplete result; malformed/access errors propagate."""
+    auth=checked(config['authorization']); plan=checked(config['plan'])
+    if auth.get('status')!='EXECUTABLE_EXACT_BOOTSTRAP_QUEUE_OWNER_AUTHORIZATION' or auth.get('executable') is not True:
+        return False
+    if auth.get('plan')!=config['plan'] or auth.get('output_root')!=config['output_root']:
+        return False
+    preflight=checked(auth['sampler_preflight'])
+    expected=preflight.get('run_identity',{})
+    if preflight.get('status')!='PASS_ACTUAL_EXACT_BOOTSTRAP_PREFLIGHT_NO_CUDA' or expected.get('plan')!=config['plan']:
+        return False
+    try:r,rr=read(Path(config['output_root'])/'training/RESULT.json')
+    except FileNotFoundError:return False
+    i=r.get('run_identity',{})
+    if not (r.get('status')=='PASS_EXACT_BOOTSTRAP_ONE_PASS_TRAINING_PENDING_EVALUATION'
+            and r.get('rows_realized')==100000000 and r.get('optimizer_updates')==195313
+            and r.get('sampling',{}).get('complete') is True
+            and r.get('evaluation_complete') is False
+            and i.get('plan')==config['plan']
+            and i.get('runtime_source_pins')==auth.get('runtime_source_pins')
+            and i.get('native_pins')==auth.get('native_pins')
+            and all(i.get(k)==expected.get(k) for k in ('config','qualification','row_index','initial_optimizer_step'))
+            and all(i.get(k)==plan.get(k) for k in ('seed','batch_size','rows','window_steps','recipe','model_config'))):
+        return False
+    cp=Path(config['output_root'])/'training/checkpoint.pt'
+    s=cp.lstat()
+    if not stat.S_ISREG(s.st_mode) or cp.resolve(strict=True)!=cp:
+        raise ValueError('actual checkpoint must be canonical regular file')
+    key=(str(cp),s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
+    if key not in _checkpoint_cache:
+        digest=sha(cp);after=cp.lstat()
+        if (after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns)!=key[1:]:
+            raise ValueError('checkpoint changed during completion qualification')
+        _checkpoint_cache.clear();_checkpoint_cache[key]=digest
+    return _checkpoint_cache[key]==r.get('checkpoint_sha256')
+
+def withdrawn(ref,config):
+    """One user-withdrawn plan after reviewed actual zero-update termination."""
+    w=config.get('withdrawn')
+    if not w or ref!=w['plan'] or ref!=config['plan']:return False
+    receipt=checked(w['termination']);before=receipt['before']
+    review=checked(receipt['independent_review']);checked(receipt['prior_prepared'])
+    if not (receipt.get('status')=='AUTHORIZED_PAUSED_ADOPTED_NATIVE_PRE_GPU_SIGTERM_EXIT_VERIFIED'
+            and review.get('status','').startswith('PASS') and review.get('helper_sha256')==receipt['helper']['sha256']
+            and all(receipt.get(k) is True for k in ('native_identity_gone','captured_descendants_gone','canonical_io_free_verified','no_native_preflight_or_training_outputs','no_optimizer_updates_source_phase_verified'))
+            and before['plan']==w['execution_plan'] and before['authorization']==w['authorization']
+            and receipt.get('cooperative_pause_claim') is False and receipt.get('native_preflight_claim') is False):return False
+    original=checked(ref);execution=checked(w['execution_plan']);auth=checked(w['authorization'])
+    if {k:v for k,v in original.items() if k!='output_root'}!={k:v for k,v in execution.items() if k!='output_root'}:return False
+    if auth['plan']!=w['execution_plan'] or auth['output_root']!=before['output_root'] or execution['output_root']!=before['output_root']:return False
+    target=before['identity']
+    try:
+        s=Path(f"/proc/{target['pid']}/stat").read_text().rsplit(')',1)[1].split()
+        if s[0]!='Z' and int(s[19])==target['start_ticks'] and Path('/proc/sys/kernel/random/boot_id').read_text().strip()==target['boot_id']:return False
+    except FileNotFoundError:pass
+    checked(receipt['pause_marker_preserved'])
+    out=Path(before['output_root'])
+    if any(os.path.lexists(p) for p in (out/'PREFLIGHT.json',out/'training',out/'HEARTBEAT.json',out.with_name(out.name+'.GPU-READY.json'),out.with_name(out.name+'.GPU-GATE.json'))):return False
+    return True
+
+def requested(paths, ready_plan_refs, config, read):
+    # All explicit controls win, particularly evaluation readiness. This does
+    # not claim evaluation completed merely because training completed.
+    if any(os.path.lexists(p) for p in paths):return True
+    ready=[ref for ref in ready_plan_refs() if not withdrawn(ref,config)]
+    if any(ref!=config['plan'] for ref in ready):return True
+    return bool(ready) and not completed(config,read)
+
+def ready_refs(namespaces, admission, read):
+    """Keep each genuine namespace's exact plan reference, never fold to bool."""
+    try:a,ar=read(admission)
+    except FileNotFoundError:return []
+    found=[]
+    for plan,pf,arm in namespaces:
+        try:p,pr=read(plan);f,fr=read(pf)
+        except FileNotFoundError:continue
+        row={**a['row_index'],'arm':'exact'} if arm else a.get('row_index')
+        if (a.get('status')=='PASS_EXACT100M_MIXED_STORAGE_AND_PHYSICAL_ROW_INDEX_ADMISSION'
+            and a.get('rows')==100000000 and a.get('gpu_access') is False and a.get('optimizer_updates')==0
+            and p.get('status')=='REVIEWED_EXACT_BOOTSTRAP_EXECUTION_PLAN' and p.get('rows')==100000000
+            and p.get('seed')==131 and p.get('batch_size')==512 and p.get('epochs')==1 and p.get('admission')==ar
+            and p.get('window_steps')==88 and p.get('recipe')=={'sf_wdl_frac':0.0,'search_wdl_frac':1.0,'sf_wdl_frac_floor':0.0,'policy_target_temp':1.0,'rebuild_categorical_target':False}
+            and f.get('status')=='PASS_ACTUAL_EXACT_BOOTSTRAP_PREFLIGHT_NO_CUDA' and f.get('gpu_access') is False
+            and f.get('optimizer_updates')==0 and f.get('run_identity',{}).get('plan')==pr
+            and f.get('run_identity',{}).get('qualification')==a.get('qualification') and f.get('run_identity',{}).get('row_index')==row):found.append(pr)
+    return found
