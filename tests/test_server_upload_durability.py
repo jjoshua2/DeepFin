@@ -364,7 +364,11 @@ def test_recovery_drops_in_flight_when_compacted_token_match_exists(tmp_path) ->
     # crash that wrote the compacted shard but didn't delete the staging dir.
     staging = _in_flight_dir(server_root) / token
     staging.mkdir(parents=True, exist_ok=True)
-    leftover_zarr = staging / f"123_{upload_sha}_leftoverpending{LOCAL_SHARD_SUFFIX}"
+    # Preserve a recent server acceptance time in the reconstructed pending
+    # name. The dedupe contract expires upload hashes after six hours, and
+    # this test is about token-match recovery rather than TTL expiry.
+    accepted_at = compacted_name.split("_", 1)[0]
+    leftover_zarr = staging / f"{accepted_at}_{upload_sha}_leftoverpending{LOCAL_SHARD_SUFFIX}"
     save_local_shard_arrays(
         leftover_zarr,
         arrs=samples_to_arrays([_sample(0), _sample(1)]),
