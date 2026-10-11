@@ -1,0 +1,405 @@
+"""Sequential persistent BT4/Ceres comparison. No standalone GPU owner."""
+from __future__ import annotations
+import argparse,hashlib,importlib.util,json,os,pathlib,random,stat,subprocess,sys,time,select,statistics,resource,threading
+P=pathlib.Path
+BT=P('/tmp/bt4-accounting-race-runtime-20261008-0533-v2')
+C3=P('/tmp/ceres-phase-runtime-py313-20260923')
+AD=P('/tmp/ceres-own-source-adapter-20260923')
+FROZEN=C3/'chess_anti_engine/encoding/ceres_tpg.py'
+ROOT=P('/tmp/deepfin-bt4-ceres-same-position-compare-20261008-v9')
+HISTORY='lc0_root_legacy_meta'
+MODELS={'bt4':{'path':'/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx','sha256':'1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0'},'ceres':{'path':'/home/josh/projects/chess/data/ceres/C3-768-30-pre8-I8/C3-768-30-pre8-I8.onnx','sha256':'44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3'}}
+PYTHONS={'bt4':'/usr/bin/python3.10','ceres':'/tmp/deepfin-ceres-collector-ort129/bin/python'}
+DEADLINE=None
+OUTPUT_CAP=4*2**30
+def deadline_guard():
+    if DEADLINE is not None:need(time.monotonic()<DEADLINE,'proposed finite comparison wall bound')
+def need(ok,m):
+    if not ok:raise ValueError(m)
+def sha(p):
+    h=hashlib.sha256()
+    with P(p).open('rb') as f:
+        for b in iter(lambda:f.read(1<<20),b''):deadline_guard();h.update(b)
+    return h.hexdigest()
+def digest(a):return hashlib.sha256(a.tobytes(order='C')).hexdigest()
+def write(p,d):
+    deadline_guard()
+    with P(p).open('x') as f:json.dump(d,f,indent=2);f.write('\n')
+    deadline_guard()
+def module(name,path):
+    raw=P(path).read_bytes();spec=importlib.util.spec_from_loader(name,loader=None)
+    m=importlib.util.module_from_spec(spec);m.__file__=str(path);sys.modules[name]=m
+    exec(compile(raw,str(path),'exec'),m.__dict__);return m
+def imports(teacher):
+    runtime=BT if teacher=='bt4' else C3
+    sys.path.insert(0,str(runtime))
+    import numpy as np,chess
+    from chess_anti_engine.encoding import rep_fix
+    rep_fix.apply(True)
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+    from chess_anti_engine.encoding.cboard_encode import encode_cboard
+    from chess_anti_engine.moves.leela_index import compact_index_for_move,leela_index_for_move,leela_gather_indices
+    return np,chess,CBoard,encode_cboard,compact_index_for_move,leela_index_for_move,leela_gather_indices,module('frozen_tpg',FROZEN),module('comparison_c3',AD/'c3_backend.py')
+def replay(chess,r):
+    b=chess.Board(r['initial_fen'])
+    for u in r['moves']:
+        m=chess.Move.from_uci(u);need(m in b.legal_moves,'illegal fixed driver');b.push(m)
+    need(b.fen()==r['fen'],'history/FEN mismatch');return b
+def make_roster(n):
+    api=imports('bt4');np,chess=api[:2];enc=api[-2];out=[];seen=set();game=0
+    while len(out)<n:
+        b=chess.Board();rng=random.Random(202610081733+game)
+        for ply in range(80):
+            if b.is_game_over() or chess.popcount(b.occupied)<7:break
+            h=digest(enc.encode_ceres_tpg_bytes(b))
+            if ply>=8 and h not in seen:
+                seen.add(h);out.append({'id':len(out),'driver_game':game,'initial_fen':chess.STARTING_FEN,'moves':[m.uci() for m in b.move_stack],'fen':b.fen(),'feed_sha256':h})
+                if len(out)==n:return out
+            moves=sorted(b.legal_moves,key=lambda m:m.uci());b.push(moves[rng.randrange(len(moves))])
+        game+=1;need(game<10000,'roster failed')
+def pins():
+    files=[P(__file__),FROZEN,AD/'c3_backend.py']
+    for rt in (BT,C3):
+        for sub in ('scripts','chess_anti_engine'):files.extend((rt/sub).rglob('*.py'))
+        files.extend((rt/'chess_anti_engine/encoding').glob('*.so'))
+        files.extend((rt/'chess_anti_engine/mcts').glob('*.so'))
+    return {str(p):sha(p) for p in sorted(set(files)) if p.is_file()}
+def checkpins(p):
+    need(all(sha(f)==h for f,h in p['source_pins'].items()),'runtime/source pin drift')
+def lease(fd,path,identity):
+    need(fd>=0,'inherited canonical FD required');a=os.fstat(fd);b=os.lstat(path)
+    need((a.st_dev,a.st_ino)==tuple(identity)==(b.st_dev,b.st_ino) and stat.S_ISREG(a.st_mode),'lease identity drift')
+    ancestors=set();pid=os.getppid()
+    for _ in range(64):
+        if pid<=1:break
+        ancestors.add(pid);pid=int(P('/proc',str(pid),'stat').read_text().split(') ',1)[1].split()[1])
+    dev=f'{os.major(a.st_dev):02x}:{os.minor(a.st_dev):02x}:{a.st_ino}'
+    entries=[line.split()[1:] for line in P('/proc/self/fdinfo',str(fd)).read_text().splitlines() if line.startswith('lock:')]
+    need(any(len(x)>5 and x[1]=='FLOCK' and x[3]=='WRITE' and x[5]==dev and int(x[4]) in ancestors for x in entries),'inherited same-open-description EX lock must already be held by ancestor')
+def guard(a,p):
+    deadline_guard()
+    lease(a.gpu_fd,'/home/josh/projects/chess/scratchpad/gpu0_experiment.lock',[2096,81348917])
+def private_output(path,fake=False):
+    base=ROOT if fake else P('/home/josh/chess-artifacts/operations')
+    need(path.is_absolute() and path.parent.resolve()==base.resolve(),'exact private output parent')
+    need(path.resolve(strict=False)==path and base.stat().st_dev==P('/home/josh').stat().st_dev,'resolved WSL-local output')
+    need(not path.exists() and not path.is_symlink(),'fresh output required')
+def private_worker_output(out,p,teacher,fake=False):
+    root=out.parent.parent
+    approved=ROOT if fake else P('/home/josh/chess-artifacts/operations')
+    need(out.is_absolute() and out.resolve(strict=False)==out,'resolved private worker output')
+    need(root.parent.resolve()==approved.resolve(),'private worker root parent')
+    need(fake or root==P(p['output']),'exact planned worker output')
+    arms={f'{i:02d}-{arm}':arm for i,arm in enumerate(p['order'])}
+    need(out.parent.name in arms and out.name==teacher and teacher in p['teachers'][arms[out.parent.name]],'exact arm/teacher output')
+    need(not out.exists() and not out.is_symlink(),'fresh worker output')
+def private_caches(out):
+    # Process-local cache/temp custody; inputs and canonical leases untouched.
+    import tempfile
+    for key,leaf in {'CUDA_CACHE_PATH':'cuda_cache','TORCHINDUCTOR_CACHE_DIR':'inductor_cache','TRITON_CACHE_DIR':'triton_cache','TORCH_HOME':'torch_cache','XDG_CACHE_HOME':'xdg_cache','TMPDIR':'tmp'}.items():
+        target=out/leaf;target.mkdir(mode=0o700);os.environ[key]=str(target)
+    tempfile.tempdir=os.environ['TMPDIR']
+    os.environ['PYTHONDONTWRITEBYTECODE']='1';sys.dont_write_bytecode=True
+def prepare(a):
+    need(a.rows in (1024,2048),'1024/2048 fixed roster');r=a.plan.with_name(a.plan.stem+'-ROSTER.json')
+    write(r,make_roster(a.rows))
+    p={'schema':1,'status':'PREPARED_NOT_AUTHORIZATION','rows':a.rows,'batch':32,'order':['A','B','B','A'],'teachers':{'A':['bt4'],'B':['bt4','ceres']},'roster':str(r),'roster_sha256':sha(r),'models':MODELS,'pythons':PYTHONS,'source_pins':pins(),'backends':{'bt4':{'numpy':'1.26.2','ort':'1.23.2'},'ceres':{'numpy':'2.2.6','ort':'1.29.0'}},'output':'/home/josh/chess-artifacts/operations/bt4-ceres-same-position-compare-20261008-v9','semantics':'A BT4-only residency; B both independent sessions resident, sequential BT4 then C3 per same replay batch. No overlap claim; labels not used to choose moves.','warmup_calls_per_session':3,'teacher_env':{'bt4':{'LD_LIBRARY_PATH':''},'ceres':{'LD_LIBRARY_PATH':'/tmp/deepfin-ceres-collector-ort129/lib/python3.13/site-packages/nvidia/cu13/lib:/tmp/deepfin-ceres-collector-ort129/lib/python3.13/site-packages/nvidia/cudnn/lib'}},'gpu_telemetry_interval_seconds':1.,'proposed_diagnostic_rpc_timeout_seconds':180,'proposed_diagnostic_bounds':{'whole_wall_seconds':600,'deadline_semantics':'Checked at RPC/file-hash/batch/final-validation/publication boundaries; blocking native IO needs owner external process-group timeout with cleanup grace. Not an absolute uninterruptible-IO guarantee.','output_bytes':4*2**30,'authority':'Proposed finite diagnostic bounds for independent review; not inherited production quotas or GPU launch authorization'},'note':'BT4 inherits verified owner emptyLD behavior; CUDA12 libraries are also loaded by existing torch2.11+cu128 adapter imports. C3 exactqualified cu13/cudnn path. No newbackend qualification asserted until actual providerproof.'}
+    write(a.plan,p);return {'plan':str(a.plan),'sha256':sha(a.plan),'rows':a.rows,'source_files':len(p['source_pins'])}
+class Fake:
+    def __init__(self,np,t):self.np=np;self.t=t;self.calls=[]
+    def get_outputs(self):
+        from types import SimpleNamespace
+        return [SimpleNamespace(name=n,shape=[None,w],type='tensor(float)') for n,w in [('policy',1858),('wdl',3)]]
+    def run(self,names,feeds):
+        np=self.np;arr=next(iter(feeds.values()));self.calls.append(len(arr));n=len(arr)
+        if self.t=='bt4':return [np.full((n,1858),1/1858,np.float32),np.tile(np.array([.2,.3,.5],np.float32),(n,1))]
+        return [np.tile(np.arange(1858,dtype=np.float16)[None],(n,1)),np.tile(np.array([1,2,3],np.float16),(n,1)),np.tile(np.array([4,5,6],np.float16),(n,1))]
+def encode(rows,api):
+    np,chess,CBoard,encx,compact,leela,gather,tpg,c=api
+    tick=time.perf_counter();boards=[replay(chess,r) for r in rows];timers={'replay_seconds':time.perf_counter()-tick}
+    tick=time.perf_counter()
+    x=np.stack([encx(CBoard.from_board(b),input_history_encoding=HISTORY,input_extra_features='v2_threats') for b in boards])
+    timers['native_x_encode_seconds']=time.perf_counter()-tick;tick=time.perf_counter()
+    feeds=np.stack([tpg.encode_ceres_tpg_bytes(b) for b in boards])
+    stored=tpg.stored_x_to_ceres_tpg_bytes(x.astype(np.float16),input_history_encoding=HISTORY,history_rep_fix=True)
+    need(feeds.dtype==np.uint8 and np.array_equal(feeds,stored),'frozen replay/stored parity')
+    need([digest(f) for f in feeds]==[r['feed_sha256'] for r in rows],'common identity SHA mismatch')
+    timers['extra_tpg_identity_seconds']=time.perf_counter()-tick;tick=time.perf_counter()
+    roots=tuple(c.Root(r['id'],b,b.fen(),tuple(b.move_stack),tuple(b.legal_moves),tuple(compact(b,m) for m in b.legal_moves),tuple(leela(b,m) for m in b.legal_moves),f) for r,b,f in zip(rows,boards,feeds))
+    timers['legal_root_prepare_seconds']=time.perf_counter()-tick
+    return boards,x,roots,timers
+
+class TimedSession:
+    def __init__(self,base):self.base=base;self.seconds=0.;self.calls=[]
+    def __getattr__(self,key):return getattr(self.base,key)
+    def run(self,names,feeds):
+        n=len(next(iter(feeds.values())));tick=time.perf_counter()
+        result=self.base.run(names,feeds)
+        self.seconds+=time.perf_counter()-tick;self.calls.append(n);return result
+def telemetry():
+    r=subprocess.run(['nvidia-smi','--id=0','--query-gpu=timestamp,uuid,utilization.gpu,memory.used,memory.total','--format=csv,noheader,nounits'],capture_output=True,text=True,timeout=10,check=True)
+    return {'raw_csv':r.stdout.strip(),'scope':'instantaneous device-wide snapshot under inherited owner lease'}
+def encode_shared(rows,api,msg,out,fake):
+    np,chess,CBoard,encx,compact,leela,gather,tpg,c=api
+    d=msg['shared_input'];p=P(d['path'])
+    need(p.parent==out.parent/'bt4' and not p.is_symlink() and p.name.startswith('inputs_') and p.suffix=='.npz','shared input path scope')
+    tick=time.perf_counter();need(sha(p)==d['sha256'],'shared input SHA')
+    with np.load(p,allow_pickle=False) as z:
+        need(set(z.files)=={'x','feed','root_id'},'shared input schema');x=z['x'];feeds=z['feed'];ids=z['root_id']
+    timers={'shared_input_read_hash_seconds':time.perf_counter()-tick}
+    need(x.dtype==np.float32 and x.shape==(len(rows),175,8,8) and feeds.dtype==np.uint8 and feeds.shape==(len(rows),64,137) and ids.tolist()==msg['ids'],'shared input layout')
+    tick=time.perf_counter();boards=[replay(chess,r) for r in rows]
+    direct=np.stack([tpg.encode_ceres_tpg_bytes(b) for b in boards])
+    stored=tpg.stored_x_to_ceres_tpg_bytes(x.astype(np.float16),input_history_encoding=HISTORY,history_rep_fix=True)
+    need(np.array_equal(feeds,direct) and np.array_equal(feeds,stored) and [digest(f) for f in feeds]==[r['feed_sha256'] for r in rows],'shared full replay/TPG identity')
+    if fake:
+        native=np.stack([encx(CBoard.from_board(b),input_history_encoding=HISTORY,input_extra_features='v2_threats') for b in boards])
+        need(np.array_equal(x,native),'actual native310/native313 x parity')
+    timers['shared_replay_stored_identity_validation_seconds']=time.perf_counter()-tick;tick=time.perf_counter()
+    roots=tuple(c.Root(r['id'],b,b.fen(),tuple(b.move_stack),tuple(b.legal_moves),tuple(compact(b,m) for m in b.legal_moves),tuple(leela(b,m) for m in b.legal_moves),f) for r,b,f in zip(rows,boards,feeds))
+    timers['legal_root_prepare_seconds']=time.perf_counter()-tick
+    return boards,x,roots,timers
+
+def fake_eval(t,s,api):
+    np=api[0]
+    if t=='ceres':return lambda boards,x,roots:c3_call(s,api,roots)
+    from scripts.bt4_generation_evaluator import BT4OnnxEvaluator
+    ev=BT4OnnxEvaluator(s,input_name='input',input_dtype=np.dtype('float32'),policy_output='policy',wdl_output='wdl',wdl_kind='probabilities',input_history_encoding=HISTORY,input_extra_features='v2_threats',model_sha256=MODELS[t]['sha256'],history_rep_fix=True)
+    return lambda boards,x,roots:ev.evaluate_roots(boards,x)
+def c3_call(session,api,roots):
+    values,receipt=api[-1].infer_raw_roots(roots,session=session,gather_context=api[-2].ceres_tpg_gather_context,gather_indices=api[6])
+    need(receipt.real_rows==len(roots) and receipt.physical_rows==32*((len(roots)+31)//32) and receipt.padding_rows==receipt.physical_rows-len(roots),'C3 physical receipt mismatch')
+    return values
+def real_eval(t,p,out,api):
+    import onnxruntime as ort
+    from types import SimpleNamespace
+    np=api[0];need(np.__version__==p['backends'][t]['numpy'] and ort.__version__==p['backends'][t]['ort'],'backend mismatch')
+    if t=='ceres':
+        from scripts.ceres_derived_sidecar import open_teacher,provider_proof
+        sess=TimedSession(open_teacher(SimpleNamespace(onnx=p['models'][t]['path'],invocation=str(out),pad_final_batch=True,retain_value2=True)))
+        return sess,fake_eval(t,sess,api),provider_proof
+    from scripts.bt4_root_policy_worker import open_worker_session,cuda_profile_proof
+    from scripts.bt4_generation_evaluator import BT4OnnxEvaluator
+    sess,name,dtype,providers,opts=open_worker_session(p['models'][t]['path'],requested_provider='cuda',gpu_mem_gb=8,threads=2,profile_prefix=out/'ort_profile',cudnn_conv_algo_search='DEFAULT',cudnn_conv_use_max_workspace=0)
+    sess=TimedSession(sess)
+    ev=BT4OnnxEvaluator(sess,input_name=name,input_dtype=dtype,policy_output=None,wdl_output='/output/wdl',wdl_kind='probabilities',input_history_encoding=HISTORY,input_extra_features='v2_threats',model_sha256=MODELS[t]['sha256'],history_rep_fix=True)
+    return sess,lambda boards,x,roots:ev.evaluate_roots(boards,x),cuda_profile_proof
+def label_contract(teacher,values):
+    need(bool(values),'label contract requires actual adapter output')
+    first=values[0]
+    if teacher=='bt4':
+        return {'policy_field':'policy_t1','policy_semantics':'legal-normalized compact LC0-1858 root T1 probabilities; not raw graph policy and not search-improved','policy_graph_output':first.policy_output,'wdl_field':'wdl_raw','wdl_graph_output':first.wdl_output,'wdl_kind':first.wdl_kind,'wdl_dtype':first.wdl_raw.dtype.name,'wdl_order':['win','draw','loss'],'wdl_pov':'side_to_move','input_name':first.input_name,'input_dtype':first.input_dtype,'input_history_encoding':first.input_history_encoding,'input_extra_features':first.input_extra_features,'history_rep_fix':first.history_rep_fix,'model_sha256':first.model_sha256}
+    return {'graph_outputs':['policy','value','value2'],'stored_fields':['policy_logits','value_logits','value2_logits'],'policy_semantics':'full native Leela-1858 FP16 logits, untransformed; legal mapping independently verified by C3 adapter','wdl_kind':'primary and secondary native FP16 raw logits, not blended or normalized','wdl_order':['win','draw','loss'],'wdl_pov':'side_to_move','input_name':'squares_byte','input_dtype':'uint8','input_shape':[32,64,137],'model_sha256':MODELS['ceres']['sha256']}
+def pack(t,v,np):
+    if t=='bt4':return {'policy_t1':np.stack([o.policy_t1 for o in v]),'wdl_raw':np.stack([o.wdl_raw for o in v]),'input_keys':np.array([o.input_key for o in v]),'onnx_feed_sha256':np.array([o.onnx_feed_sha256 for o in v])}
+    return {'policy_logits':np.stack([o.policy_logits for o in v]),'value_logits':np.stack([o.value_logits for o in v]),'value2_logits':np.stack([o.value2_logits for o in v]),'feed_sha256':np.array([o.feed_sha256 for o in v])}
+def emit(d):print(json.dumps(d),flush=True)
+def worker(a,p):
+    out=P(a.worker_output);private_worker_output(out,p,a.teacher,a.fake)
+    if not a.fake:
+        guard(a,p);need(os.environ.get('CUDA_VISIBLE_DEVICES')=='0','GPU owner visibility')
+        need(sha(p['models'][a.teacher]['path'])==p['models'][a.teacher]['sha256'],'distinct actual model hash')
+    out.mkdir();private_caches(out)
+    api=imports(a.teacher);np=api[0];data=json.loads(P(p['roster']).read_text())
+    need(sha(p['roster'])==p['roster_sha256'],'roster pin')
+    cpu_start=resource.getrusage(resource.RUSAGE_SELF);tick=time.perf_counter()
+    if a.fake:sess=TimedSession(Fake(np,a.teacher));ev=fake_eval(a.teacher,sess,api)
+    else:sess,ev,proof_fn=real_eval(a.teacher,p,out,api)
+    setup=time.perf_counter()-tick;warm=encode(data[:32],api);tick=time.perf_counter()
+    for _ in range(3):warm_values=ev(*warm[:3])
+    sess.seconds=0.;sess.calls=[]
+    warm_s=time.perf_counter()-tick;contract=label_contract(a.teacher,warm_values)
+    from importlib.metadata import version
+    runtime={'python':sys.version,'executable':sys.executable,'numpy':np.__version__,'onnxruntime_gpu_distribution':version('onnxruntime-gpu'),'ld_library_path':os.environ.get('LD_LIBRARY_PATH','')}
+    if not a.fake:
+        profile=P(sess.end_profiling());proof=proof_fn(json.loads(profile.read_text()))
+        write(out/'PROVIDER.json',{'proof':proof,'profile_sha256':sha(profile),'providers':sess.get_providers(),'options':sess.get_provider_options(),'warmup_calls':3,'scope':'actual persistent session; warmup profile, same session timed calls'})
+    emit({'state':'READY','teacher':a.teacher,'setup_seconds':setup,'warmup_seconds':warm_s,'warmup_calls':3,'backend':runtime,'declared_backend':p['backends'][a.teacher],'plan_sha256':a.plan_sha256,'model':p['models'][a.teacher],'label_contract':contract,'model_payload_hash_verified':not a.fake,'gpu_access':not a.fake})
+    ids=[];totals={};batch=0
+    for line in sys.stdin:
+        deadline_guard();msg=json.loads(line)
+        if msg['op']=='stop':break
+        need(msg['op']=='batch' and 0<=msg['start']<len(data),'batch descriptor')
+        count=msg['count'];need(1<=count<=32 and msg['start']+count<=len(data),'batch size')
+        if not a.fake:guard(a,p)
+        rows=data[msg['start']:msg['start']+count]
+        need(msg['ids']==[r['id'] for r in rows],'exact fixed driver root IDs')
+        tick=time.perf_counter();prepared=encode_shared(rows,api,msg,out,a.fake) if a.teacher=='ceres' and msg.get('shared_input') else encode(rows,api);t=prepared[-1]
+        infer_before=sess.seconds;calls_before=len(sess.calls)
+        start=time.perf_counter();values=ev(*prepared[:3])
+        t['adapter_validation_inference_host_sync_seconds']=time.perf_counter()-start
+        need(len(values)==count,'real row coverage');need(label_contract(a.teacher,values)==contract,'teacher label/input contract drift')
+        t['session_run_host_sync_seconds']=sess.seconds-infer_before
+        t['adapter_validation_postprocess_seconds']=max(0.,t['adapter_validation_inference_host_sync_seconds']-t['session_run_host_sync_seconds'])
+        arr=pack(a.teacher,values,np);arr['common_feed_sha256']=np.array([r['feed_sha256'] for r in rows]);arr['root_id']=np.array(msg['ids'],dtype=np.int64);arr['original_float32_input_key']=np.array([hashlib.blake2b(np.ascontiguousarray(x,dtype=np.float32).tobytes(),digest_size=16).hexdigest() for x in prepared[1]])
+        start=time.perf_counter();target=out/f'raw_{batch:04d}.npz'
+        with target.open('xb') as f:np.savez_compressed(f,**arr);f.flush();os.fsync(f.fileno())
+        t['raw_storage_seconds']=time.perf_counter()-start;start=time.perf_counter()
+        with np.load(target,allow_pickle=False) as back:
+            need(set(back.files)==set(arr) and all(np.array_equal(back[k],v) for k,v in arr.items()),'raw readback parity')
+        t['raw_readback_seconds']=time.perf_counter()-start
+        shared=None
+        if a.teacher=='bt4' and msg.get('publish_shared'):
+            start=time.perf_counter();shared_path=out/f'inputs_{batch:04d}.npz'
+            with shared_path.open('xb') as f:np.savez_compressed(f,x=prepared[1],feed=np.stack([r.feed for r in prepared[2]]),root_id=np.array(msg['ids'],dtype=np.int64))
+            shared={'path':str(shared_path),'sha256':sha(shared_path)};t['shared_input_write_hash_seconds']=time.perf_counter()-start
+        for k,v in t.items():totals[k]=totals.get(k,0)+v
+        ids.extend(msg['ids']);batch+=1
+        emit({'state':'BATCH','teacher':a.teacher,'ids':msg['ids'],'feed_sha256':[r['feed_sha256'] for r in rows],'timers':t,'work_wall_seconds':time.perf_counter()-tick,'batch':batch,'shared_input':shared,'session_calls':len(sess.calls)-calls_before,'real_rows':count,'physical_rows':sum(sess.calls[calls_before:]),'padding_rows':sum(sess.calls[calls_before:])-count})
+    if not a.fake:guard(a,p)
+    checkpins(p)
+    write(out/'RESULT.json',{'status':'PASS_FAKE_CPU_ADAPTER' if a.fake else 'PASS_REAL_GPU_LABEL_MICROBENCHMARK_NOT_ADMISSION','teacher':a.teacher,'plan_sha256':a.plan_sha256,'model':p['models'][a.teacher],'backend':runtime,'label_contract':contract,'model_payload_hash_verified':not a.fake,'root_ids':ids,'rows':len(ids),'batches':batch,'roster_sha256':p['roster_sha256'],'timers':totals,'setup_seconds':setup,'warmup_seconds':warm_s,'warmup_calls':3,'physical_call_rows':sess.calls,'session_run_seconds':sess.seconds,'teacher_evaluations_per_session_second':len(ids)/sess.seconds if sess.seconds else None,'cpu_user_seconds':resource.getrusage(resource.RUSAGE_SELF).ru_utime-cpu_start.ru_utime,'cpu_system_seconds':resource.getrusage(resource.RUSAGE_SELF).ru_stime-cpu_start.ru_stime,'peak_rss_kib':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,'output_bytes':sum(f.stat().st_size for f in out.rglob('*') if f.is_file()),'source_preserved':True,'optimizer_updates':0,'training_credit':0})
+    emit({'state':'STOPPED','rows':len(ids)})
+def read_reply(child,timeout=180):
+    # One bounded short JSON frame per requested operation, no async scheduler.
+    deadline=min(time.monotonic()+timeout,DEADLINE) if DEADLINE is not None else time.monotonic()+timeout
+    buf=bytearray()
+    while True:
+        remaining=deadline-time.monotonic()
+        need(remaining>0,'teacher RPC timeout')
+        need(select.select([child.stdout],[],[],remaining)[0],'teacher RPC timeout')
+        b=os.read(child.stdout.fileno(),1)
+        need(bool(b),'teacher worker exited; inspect stderr log')
+        if b==b'\n':return json.loads(buf)
+        buf.extend(b);need(len(buf)<1048576,'oversized teacher RPC')
+
+class GpuMonitor:
+    """Bounded diagnostic sampling only; never schedules model work."""
+    def __init__(self,interval):
+        need(interval==1.,'pinned sampling interval');self.interval=interval;self.stop=threading.Event();self.samples=[];self.errors=[];self.thread=None;self.result=None
+    def sample(self):
+        tick=time.monotonic()
+        try:
+            r=subprocess.run(['nvidia-smi','--id=0','--query-gpu=uuid,utilization.gpu,memory.used,memory.total','--format=csv,noheader,nounits'],capture_output=True,text=True,timeout=3,check=True)
+            values=[v.strip() for v in r.stdout.strip().split(',')]
+            need(len(values)==4 and values[0]=='GPU-74f4e66d-9989-28ea-b243-6afea9e766b2','GPU UUID/telemetry schema')
+            self.samples.append({'monotonic_seconds':tick,'utc':__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),'utilization_percent':float(values[1]),'memory_used_mib':float(values[2]),'memory_total_mib':float(values[3])})
+        except Exception as e:self.errors.append({'monotonic_seconds':tick,'error':str(e)})
+    def loop(self):
+        while not self.stop.wait(self.interval):self.sample()
+    def start(self):
+        self.sample();self.thread=threading.Thread(target=self.loop,daemon=True);self.thread.start()
+    def finish(self):
+        if self.result is not None:return self.result
+        self.stop.set()
+        if self.thread:self.thread.join(timeout=4);need(not self.thread.is_alive(),'telemetry child timeout')
+        self.sample();end=time.monotonic()
+        need(bool(self.samples),'no actual GPU telemetry samples')
+        weights=[max(0.,(self.samples[i+1]['monotonic_seconds'] if i+1<len(self.samples) else end)-v['monotonic_seconds']) for i,v in enumerate(self.samples)]
+        self.result={'samples':self.samples,'errors':self.errors,'interval_seconds':self.interval,'observed_peak_used_mib':max(v['memory_used_mib'] for v in self.samples),'observed_min_free_mib':min(v['memory_total_mib']-v['memory_used_mib'] for v in self.samples),'time_weighted_sample_utilization_percent':sum(w*v['utilization_percent'] for w,v in zip(weights,self.samples))/sum(weights) if sum(weights) else None,'limits':'Sampled device-wide utilization and observed memory peak; short peaks can be missed. No true-overlap or allocation-headroom guarantee.'}
+        return self.result
+
+def cleanup(children,handles,monitor):
+    errors=[]
+    try:
+        if monitor is not None:monitor.finish()
+    except BaseException as e:errors.append(e)
+    finally:
+        # Every owned child is attempted even if telemetry or another cleanup fails.
+        for child in children.values():
+            try:
+                if child.poll() is None:
+                    child.terminate()
+                    try:child.wait(timeout=10)
+                    except subprocess.TimeoutExpired:child.kill();child.wait(timeout=10)
+                else:child.wait(timeout=1)
+            except BaseException as e:errors.append(e)
+        for f in handles:
+            try:f.close()
+            except BaseException as e:errors.append(e)
+    if errors:raise RuntimeError('diagnostic cleanup failure after all owned children attempted') from errors[0]
+
+def run_arms(a,p,fake=False):
+    benchmark_start=time.perf_counter()
+    if not fake:guard(a,p)
+    output=P(a.test_output) if fake else P(p['output'])
+    private_output(output,fake);output.mkdir()
+    data=json.loads(P(p['roster']).read_text());need(sha(p['roster'])==p['roster_sha256'],'roster binding')
+    n=65 if fake else p['rows'];results=[];batch_hashes={'bt4':[],'ceres':[]}
+    for arm_index,arm in enumerate(p['order']):
+        children={};handles=[];armout=output/f'{arm_index:02d}-{arm}';armout.mkdir()
+        started=time.perf_counter();monitor=None
+        try:
+            ready={}
+            for t in p['teachers'][arm]:
+                log=(armout/f'{t}.stderr').open('xb');handles.append(log)
+                argv=[p['pythons'][t],'-B',str(P(__file__).resolve()),'--plan',str(a.plan),'--plan-sha256',a.plan_sha256,'--teacher',t,'--worker-output',str(armout/t)]
+                if fake:argv+=['--fake']
+                else:argv+=['--execute','--gpu-fd',str(a.gpu_fd)]
+                env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1',OMP_NUM_THREADS='2',OPENBLAS_NUM_THREADS='1',MKL_NUM_THREADS='1',CUDA_VISIBLE_DEVICES='-1' if fake else '0');env.update(p['teacher_env'][t]);env['DEEPFIN_COMPARE_DEADLINE']=str(DEADLINE)
+                child=subprocess.Popen(argv,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=log,text=True,env=env,pass_fds=() if fake else (a.gpu_fd,))
+                children[t]=child;ready[t]=read_reply(child);need(ready[t]['state']=='READY','worker readiness')
+            setup_ipc=time.perf_counter()-started;calls=[];monitor=None if fake else GpuMonitor(p['gpu_telemetry_interval_seconds']);monitor.start() if monitor else None;work=time.perf_counter()
+            for start in range(0,n,32):
+                deadline_guard();need(sum(f.stat().st_size for f in output.rglob('*') if f.is_file())<OUTPUT_CAP,'proposed output bound')
+                rows=data[start:min(start+32,n)];descriptor={'publish_shared':arm=='B','op':'batch','start':start,'count':len(rows),'ids':[r['id'] for r in rows]};replies=[]
+                for t,child in children.items():
+                    tick=time.perf_counter();child.stdin.write(json.dumps(descriptor)+'\n');child.stdin.flush();r=read_reply(child)
+                    need(r['state']=='BATCH' and r['ids']==descriptor['ids'],'aligned label IPC')
+                    r['ipc_roundtrip_seconds']=time.perf_counter()-tick;replies.append(r)
+                    if t=='bt4' and arm=='B':descriptor['shared_input']=r['shared_input']
+                need(all(r['feed_sha256']==[v['feed_sha256'] for v in rows] for r in replies),'cross-teacher feed identity')
+                calls.append(replies)
+            work_s=time.perf_counter()-work;gpu_samples=monitor.finish() if monitor else None
+            for t,child in children.items():
+                child.stdin.write('{"op":"stop"}\n');child.stdin.flush();need(read_reply(child)['state']=='STOPPED','worker shutdown')
+                need(child.wait(timeout=30)==0,'worker failure')
+            for t in children:
+                rawfiles=sorted((armout/t).glob('raw_*.npz'))
+                batch_hashes[t].append([sha(f) for f in rawfiles])
+                receipt=json.loads((armout/t/'RESULT.json').read_text())
+                need(receipt['rows']==n and receipt['root_ids']==list(range(n)),'once-only exact root coverage')
+                if fake:
+                    expected=[32,32,32] if t=='ceres' else [32,32,1]
+                    need(receipt['physical_call_rows']==expected,'warmup/timed physical count or padding drift')
+            results.append({'arm':arm,'residency':'BT4-only' if arm=='A' else 'BT4 and Ceres sessions both resident','sequential_teacher_order':list(children),'setup_warmup_ipc_seconds':setup_ipc,'ready':ready,'timed_pipeline_seconds':work_s,'batches':calls,'gpu_telemetry':gpu_samples,'whole_arm_wall_seconds':time.perf_counter()-started,'accepted_unique_positions_per_pipeline_second':n/work_s,'physical_teacher_evaluations_per_pipeline_second':sum(r['physical_rows'] for replies in calls for r in replies)/work_s})
+        finally:
+            cleanup(children,handles,monitor)
+    if not fake:guard(a,p)
+    checkpins(p)
+    result={'status':'PASS_CPU_REAL_ADAPTER_FAKE_SESSION_ABBA' if fake else 'PASS_GPU_SEQUENTIAL_ABBA_NOT_ADMISSION','plan_sha256':a.plan_sha256,'rows_per_arm':n,'roster_sha256':p['roster_sha256'],'results':results,'limits':'No overlap, teacher strength, training admission or independent-game production throughput claim. BT4 baseline includes separately timed frozen-TPG identity instrumentation. B shares encoded float32 x and byte feed via compressed IPC file, C3 validates replay/TPG/stored parity but does not re-encode native x in real mode. IPC storage/read/hash cost included. GPU telemetry is sampled device-wide utilization with observed peak memory, not a guaranteed allocation bound. Host-return session timer includes synchronization.'}
+    result['raw_file_byte_parity']={t:all(x==groups[0] for x in groups) for t,groups in batch_hashes.items()}
+    # NPZ ZIP timestamps can differ; actual array equality is the deciding check.
+    import numpy as np
+    array_parity={}
+    for t in ('bt4','ceres'):
+        dirs=[output/f'{i:02d}-{arm}'/t for i,arm in enumerate(p['order']) if t in p['teachers'][arm]]
+        matches=True
+        for base in sorted(dirs[0].glob('raw_*.npz')):
+            deadline_guard()
+            with np.load(base,allow_pickle=False) as first:
+                for peer in dirs[1:]:
+                    deadline_guard()
+                    with np.load(peer/base.name,allow_pickle=False) as other:
+                        for key in first.files:
+                            deadline_guard();matches &= key in other.files and np.array_equal(first[key],other[key])
+                        matches &= set(first.files)==set(other.files)
+        array_parity[t]=bool(matches)
+    result['actual_label_array_parity']=array_parity
+    result['numerical_comparison']='exact stored-array parity' if all(array_parity.values()) else 'INCONCLUSIVE_NUMERICAL_DRIFT_NO_THRESHOLD_WIDENING'
+    result['median_pipeline_seconds']={arm:statistics.median(x['timed_pipeline_seconds'] for x in results if x['arm']==arm) for arm in ('A','B')}
+    result['marginal_b_minus_a_pipeline_seconds']=result['median_pipeline_seconds']['B']-result['median_pipeline_seconds']['A']
+    result['median_unique_positions_per_pipeline_second']={arm:n/result['median_pipeline_seconds'][arm] for arm in ('A','B')}
+    deadline_guard()
+    result['full_benchmark_wall_seconds_including_setup_ipc_storage_final_verification']=time.perf_counter()-benchmark_start
+    result['output_bytes']=sum(f.stat().st_size for f in output.rglob('*') if f.is_file());need(result['output_bytes']<OUTPUT_CAP,'proposed output bound')
+    if not all(array_parity.values()):result['status']='INCONCLUSIVE_ABBA_STORED_LABEL_DRIFT_NO_THRESHOLD_WIDENING'
+    write(output/'RESULT.json',result);return {'path':str(output/'RESULT.json'),'sha256':sha(output/'RESULT.json'),'status':result['status']}
+def main():
+    global DEADLINE
+    q=argparse.ArgumentParser();q.add_argument('--plan',type=P,required=True);q.add_argument('--plan-sha256');q.add_argument('--prepare',action='store_true');q.add_argument('--rows',type=int,default=1024);q.add_argument('--cpu-test',action='store_true');q.add_argument('--test-output',default=str(ROOT/'cpu-abba'));q.add_argument('--execute',action='store_true');q.add_argument('--teacher',choices=['bt4','ceres']);q.add_argument('--worker-output');q.add_argument('--fake',action='store_true');q.add_argument('--gpu-fd',type=int,default=-1);a=q.parse_args()
+    if a.execute:
+        if a.teacher:
+            DEADLINE=float(os.environ['DEEPFIN_COMPARE_DEADLINE']);need(0<DEADLINE-time.monotonic()<=600,'inherited comparison deadline')
+        else:DEADLINE=time.monotonic()+600
+    if a.prepare:
+        need(not a.execute,'CPU prepare only');emit(prepare(a));return
+    need(a.plan_sha256 and sha(a.plan)==a.plan_sha256,'exact plan hash required')
+    p=json.loads(a.plan.read_text());need(p['models']==MODELS and p['pythons']==PYTHONS,'fixed model/interpreter bindings');need(p['rows'] in (1024,2048) and p['batch']==32 and p['order']==['A','B','B','A'] and p['teachers']=={'A':['bt4'],'B':['bt4','ceres']} and p['proposed_diagnostic_bounds']['whole_wall_seconds']==600 and p['proposed_diagnostic_bounds']['output_bytes']==OUTPUT_CAP,'fixed reviewed diagnostic plan contract');checkpins(p)
+    if a.fake or a.cpu_test:need(not a.execute and os.environ.get('CUDA_VISIBLE_DEVICES')=='-1','fake mode is CPU-only')
+    if a.teacher:
+        need(a.fake or a.execute,'worker requires explicit execution');worker(a,p)
+    elif a.cpu_test:emit(run_arms(a,p,True))
+    elif a.execute:emit(run_arms(a,p))
+    else:emit({'state':'VALIDATED_NOT_EXECUTED','plan_sha256':a.plan_sha256})
+if __name__=='__main__':main()

@@ -399,9 +399,23 @@ def main() -> None:
     comparison = source("shared_retained_comparison", config["v9_source"], "comparison")
     comparison.DEADLINE = deadline
     plan = config["qualified_plan"]
+    cpu_paths = plan.get("cpu_fixture_paths")
+    if cpu_paths is not None:
+        if (not args.fake_cpu or set(cpu_paths) != {"runtime", "tpg", "adapter"}
+                or Path(cpu_paths["runtime"]) != Path(__file__).resolve().parents[1]
+                or Path(cpu_paths["adapter"]).name != "c3_backend.py"):
+            raise ValueError("CPU reference relocation requires the isolated fake runtime")
+        for key, expected in (("tpg", "ea0bc14c31eedd18abe67b9b90287b2d1b20245ec42aed4faa0d69d21df229b0"),
+                              ("adapter", "a62fb45047ae8e20128a559b7346f76b43d198515bd64c1f6e3b1ef5d7949c2c")):
+            if plan["source_pins"].get(cpu_paths[key]) != expected:
+                raise ValueError("exact retained CPU encoder/backend source required")
     for path, digest in plan["source_pins"].items():
         if comparison.sha(path) != digest:
             raise ValueError("qualified Ceres source closure changed")
+    if cpu_paths is not None:
+        comparison.BT = comparison.C3 = Path(cpu_paths["runtime"])
+        comparison.FROZEN = Path(cpu_paths["tpg"])
+        comparison.AD = Path(cpu_paths["adapter"]).parent
     units = {row["unit_id"]: Path(row["raw_root"]) for row in shared["units"]}
     if len(units) != len(shared["units"]) or any(set(row) not in (
             {"unit_id", "raw_root"}, {"unit_id", "raw_root", "prior_roots"}) for row in shared["units"]):

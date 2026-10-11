@@ -1,0 +1,114 @@
+"""Crash-safe game checkpoint/novelty records beneath the existing queue owner.
+
+No subprocess, GPU owner, scheduling daemon or execution approval is created here.
+The caller must retain the canonical owner and immutable reviewed campaign pins.
+"""
+import hashlib,json,os,sqlite3,stat
+from pathlib import Path
+
+def need(ok,message):
+ if not ok:raise ValueError(message)
+
+def canonical(value):return json.dumps(value,sort_keys=True,separators=(',',':')).encode()
+def digest(value):return hashlib.sha256(canonical(value)).hexdigest()
+
+class Checkpoint:
+ def __init__(self,path,bindings,limits,guard):
+  self.path=Path(path);self.binding=digest(bindings);self.limits=limits;self.guard=guard
+  need(set(limits)=={'max_attempts','unit_seconds','unit_io_bytes','unit_output_bytes','total_seconds','total_io_bytes','total_output_bytes'},'closed checkpoint budget')
+  need(all(type(x)is int and x>0 for x in limits.values()),'positive finite budgets')
+  for total,unit in [('total_seconds','unit_seconds'),('total_io_bytes','unit_io_bytes'),('total_output_bytes','unit_output_bytes')]:need(limits[total]>=limits['max_attempts']*limits[unit],'full retained attempt reservations fit')
+  guard();need(not self.path.is_symlink(),'checkpoint symlink')
+  self.db=sqlite3.connect(self.path,timeout=1,isolation_level=None)
+  self.db.execute('PRAGMA synchronous=FULL');self.db.execute('PRAGMA journal_mode=WAL')
+  self.db.executescript('CREATE TABLE IF NOT EXISTS binding(id INTEGER PRIMARY KEY CHECK(id=1),sha TEXT,limits TEXT); CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY,unit INTEGER,owner TEXT,raw_root TEXT,state TEXT); CREATE TABLE IF NOT EXISTS games(unit INTEGER,game INTEGER,receipt TEXT,sha TEXT,PRIMARY KEY(unit,game)); CREATE TABLE IF NOT EXISTS novelty(hash BLOB PRIMARY KEY,game TEXT,qualified INTEGER CHECK(qualified=0));')
+  with self.transaction():
+   row=self.db.execute('SELECT sha,limits FROM binding WHERE id=1').fetchone();bound=canonical(limits).decode()
+   if row is None:self.db.execute('INSERT INTO binding VALUES(1,?,?)',(self.binding,bound))
+   else:need(row==(self.binding,bound),'resume source/model/config/budget binding changed')
+  fd=os.open(self.path.parent,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+  try:os.fsync(fd)
+  finally:os.close(fd)
+ def transaction(self):
+  checkpoint=self
+  class Transaction:
+   def __enter__(self):checkpoint.guard();checkpoint.db.execute('BEGIN IMMEDIATE')
+   def __exit__(self,typ,value,trace):
+    if typ is None:
+     try:checkpoint.guard();checkpoint.db.execute('COMMIT')
+     except BaseException:checkpoint.db.execute('ROLLBACK');raise
+    else:checkpoint.db.execute('ROLLBACK')
+  return Transaction()
+ def begin(self,unit,owner,raw_root):
+  need(type(unit)is int and unit>=0,'unit ordinal')
+  need(set(owner)>={'pid','start_ticks','boot_id'},'actual process birth')
+  need(Path(raw_root).is_absolute() and not os.path.lexists(raw_root),'fresh raw attempt output')
+  with self.transaction():
+   need(not self.db.execute("SELECT id FROM attempts WHERE state='RUNNING'").fetchone(),'unresolved attempt custody')
+   count=self.db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0];need(count<self.limits['max_attempts'],'finite attempt budget exhausted')
+   self.db.execute('INSERT INTO attempts VALUES(?,?,?,?,?)',(count,unit,canonical(owner).decode(),raw_root,'RUNNING'))
+  return count
+ def recover(self,alive):
+  with self.transaction():
+   rows=self.db.execute("SELECT id,owner FROM attempts WHERE state='RUNNING'").fetchall()
+   for ident,owner in rows:need(alive(json.loads(owner)) is False,'old exact owner still live or unknown; no handoff')
+   for ident,_ in rows:self.db.execute("UPDATE attempts SET state='INTERRUPTED_RETAINED_ZERO_CREDIT' WHERE id=?",(ident,))
+  return len(rows)
+ def record_game(self,attempt,game_id,receipt):
+  need(type(game_id)is int and 0<=game_id<128,'game ID')
+  need(receipt['status'] in ('completed','discarded') and receipt['binding_sha256']==self.binding,'completed atomic game binding')
+  need(type(receipt['rows'])is int and receipt['rows']>=0 and receipt['rows']<=400,'bounded game rows')
+  need(receipt['status']!='discarded' or receipt['rows']==0,'discarded rows cannot earn coverage')
+  need(len(receipt['sha256'])==64 and Path(receipt['path']).is_absolute(),'exact raw payload reference')
+  sha=digest(receipt)
+  with self.transaction():
+   row=self.db.execute('SELECT unit,state FROM attempts WHERE id=?',(attempt,)).fetchone();need(row and row[1]=='RUNNING','active owned attempt')
+   old=self.db.execute('SELECT sha FROM games WHERE unit=? AND game=?',(row[0],game_id)).fetchone()
+   if old:need(old[0]==sha,'conflicting completed game cannot overwrite');return False
+   self.db.execute('INSERT INTO games VALUES(?,?,?,?)',(row[0],game_id,canonical(receipt).decode(),sha))
+  return True
+ def completed(self,unit,verify):
+  result=[]
+  for game,raw in self.db.execute('SELECT game,receipt FROM games WHERE unit=? ORDER BY game',(unit,)):
+   receipt=json.loads(raw);verify(receipt);result.append(game)
+  return tuple(result)
+ def finish(self,attempt,success):
+  with self.transaction():
+   row=self.db.execute('SELECT unit,state FROM attempts WHERE id=?',(attempt,)).fetchone();need(row and row[1]=='RUNNING','active attempt finish')
+   if success:need(self.db.execute('SELECT COUNT(*) FROM games WHERE unit=?',(row[0],)).fetchone()[0]==128,'full unit coverage before scheduler completion')
+   self.db.execute('UPDATE attempts SET state=? WHERE id=?',('RAW_COMPLETE_PENDING_ADMISSION' if success else 'FAILED_RETAINED_ZERO_CREDIT',attempt))
+ def observe_novel(self,game_id,hashes,frozen,later):
+  need(all(type(x)is bytes and len(x)==32 for x in hashes),'TPG SHA256 records')
+  new=0
+  with self.transaction():
+   for value in hashes:
+    if value in frozen or value in later:continue
+    cursor=self.db.execute('INSERT OR IGNORE INTO novelty VALUES(?,?,0)',(value,game_id));new+=cursor.rowcount
+  return {'raw_rows':len(hashes),'novel_candidate_rows':new,'duplicates':len(hashes)-new,'training_credit':0,'qualification':False}
+ def accounting(self):
+  count=self.db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
+  return {'started_attempts':count,'retained_reserved_seconds':count*self.limits['unit_seconds'],'retained_reserved_io_bytes':count*self.limits['unit_io_bytes'],'retained_reserved_output_bytes':count*self.limits['unit_output_bytes'],'actual_consumption':'not inferred from reservation','training_credit':0,'refund':False}
+ def close(self):self.db.close()
+
+class SortedHashMembership:
+ """Read-only bounded binary search; activation first seals/hashes the catalog."""
+ def __init__(self,path,records,expected_stamp,charge):
+  need(type(records)is int and records>=0,'record count');self.path=Path(path);self.fd=os.open(self.path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK);self.charge=charge;self.records=records
+  s=os.fstat(self.fd);self.stamp=(s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
+  try:need(stat.S_ISREG(s.st_mode) and s.st_size==records*32 and self.stamp==tuple(expected_stamp),'sealed hash catalog identity')
+  except BaseException:os.close(self.fd);raise
+ def __contains__(self,value):
+  need(type(value)is bytes and len(value)==32,'TPG SHA256 lookup');lo=0;hi=self.records
+  while lo<hi:
+   mid=(lo+hi)//2;row=os.pread(self.fd,32,mid*32);self.charge(len(row));need(len(row)==32,'catalog truncated')
+   if row<value:lo=mid+1
+   else:hi=mid
+  found=False
+  if lo<self.records:
+   row=os.pread(self.fd,32,lo*32);self.charge(len(row));found=row==value
+  s=os.fstat(self.fd);named=self.path.lstat();need(self.stamp==(s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)==(named.st_dev,named.st_ino,named.st_size,named.st_mtime_ns,named.st_ctime_ns),'catalog changed')
+  return found
+ def close(self):os.close(self.fd)
+
+
+

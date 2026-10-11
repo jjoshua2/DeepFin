@@ -1,0 +1,172 @@
+"""One finite reviewed diagnostic through a natural canonical lease gap.
+
+Never writes a queue/training control marker and never opens the IO lease.
+"""
+import argparse,fcntl,hashlib,json,os,signal,stat,subprocess,time
+from pathlib import Path
+
+def need(v,m):
+    if not v:raise RuntimeError(m)
+def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+def checked(r):
+    p=Path(r['path']);need(p.resolve(strict=True)==p and stat.S_ISREG(p.lstat().st_mode) and sha(p)==r['sha256'],'source pin differs');return p
+def birth(pid,include_zombie=False):
+    try:
+        s=Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()
+        if s[0]=='Z' and not include_zombie:return None
+        return {'pid':pid,'start_ticks':int(s[19]),'boot_id':Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
+    except FileNotFoundError:return None
+def members(group):
+    found=[]
+    for p in Path('/proc').iterdir():
+        if not p.name.isdigit():continue
+        try:
+            s=(p/'stat').read_text().rsplit(')',1)[1].split()
+            if int(s[2])==group and (i:=birth(int(p.name))) is not None:found.append(i)
+        except FileNotFoundError:pass
+    return found
+def active(ids):return [i for i in ids if birth(i['pid'])==i]
+def descendants(pid):
+    parents={}
+    for p in Path('/proc').iterdir():
+        if not p.name.isdigit():continue
+        try:parents[int(p.name)]=int((p/'stat').read_text().rsplit(')',1)[1].split()[1])
+        except FileNotFoundError:pass
+    found=set();wave={pid}
+    while wave:wave={p for p,v in parents.items() if v in wave}-found;found|=wave
+    return [i for p in found if (i:=birth(p)) is not None]
+def request(d):
+    for key,i in d['preserved_identities'].items():need(birth(i['pid'])==i,key+' identity changed; defer')
+    return any(os.path.lexists(p) for p in d['priority_stop_paths'])
+def acquire(r):
+    p=Path(r['path']);s=p.lstat();need(stat.S_ISREG(s.st_mode) and [s.st_dev,s.st_ino]==r['inode'],'canonical lease name changed')
+    fd=os.open(p,os.O_RDWR|os.O_NOFOLLOW)
+    try:
+        s=os.fstat(fd);need([s.st_dev,s.st_ino]==r['inode'],'canonical lease inode changed');fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB);return fd
+    except BaseException:os.close(fd);raise
+class LeaseDefer(Exception):pass
+def wait_pair(gpu,supervisor,priority,budget):
+    """Kernel-queued GPU then SUP; raising alarm defeats EINTR retry."""
+    previous=signal.getsignal(signal.SIGALRM);timer=signal.getitimer(signal.ITIMER_REAL)
+    need(timer==(0.0,0.0) and previous in (signal.SIG_DFL,signal.SIG_IGN),'preexisting alarm owner; defer without changing it')
+    original_mask=signal.pthread_sigmask(signal.SIG_BLOCK,set())
+    need(signal.SIGALRM not in original_mask,'preexisting blocked alarm; defer unchanged')
+    fds=[];success=False;armed=False;deadline=time.monotonic()+budget
+    def check(*_):
+        try:
+            if priority():raise LeaseDefer('DEFER_ACTUAL_TRAINING_OR_STOP_PRIORITY')
+            if time.monotonic()>=deadline:raise LeaseDefer('DEFER_NO_NATURAL_CANONICAL_PAIR_GAP')
+            if _:signal.setitimer(signal.ITIMER_REAL,.2)
+        except BaseException:
+            # Stop recurring callbacks before unwinding into cleanup.
+            signal.setitimer(signal.ITIMER_REAL,0)
+            signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGALRM})
+            raise
+    try:
+        # Open/register both FDs before arming any callback, so no returned FD
+        # can be lost to a signal between function return and list append.
+        for r in (gpu,supervisor):
+            p=Path(r['path']);s=p.lstat();need(stat.S_ISREG(s.st_mode) and [s.st_dev,s.st_ino]==r['inode'],'canonical lease name changed')
+            fd=os.open(p,os.O_RDWR|os.O_NOFOLLOW);fds.append(fd);s=os.fstat(fd);need([s.st_dev,s.st_ino]==r['inode'],'canonical lease inode changed')
+        check();signal.signal(signal.SIGALRM,check);armed=True;signal.setitimer(signal.ITIMER_REAL,.2)
+        fcntl.flock(fds[0],fcntl.LOCK_EX)
+        check();fcntl.flock(fds[1],fcntl.LOCK_EX);check();success=True
+    except BaseException:
+        success=False
+        raise
+    finally:
+        signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGALRM})
+        try:
+            if armed:
+                signal.setitimer(signal.ITIMER_REAL,0)
+                if signal.SIGALRM in signal.sigpending():signal.sigtimedwait({signal.SIGALRM},0)
+            signal.signal(signal.SIGALRM,previous)
+            if not success:
+                for fd in reversed(fds):os.close(fd)
+        finally:signal.pthread_sigmask(signal.SIG_SETMASK,original_mask)
+    return fds
+def stop_group(child,identity,seen):
+    """Only the new-session diagnostic group; keep leases until all captured exit."""
+    seen.extend(i for i in members(identity['pid'])+descendants(child.pid) if i not in seen)
+    if child.poll() is None:
+        current=birth(child.pid)
+        if current!=identity:need(child.poll() is not None,'diagnostic live group identity changed')
+        else:
+            try:need(os.getpgid(child.pid)==child.pid,'diagnostic group identity changed')
+            except ProcessLookupError:need(child.poll() is not None,'diagnostic leader disappearance differs')
+    for i in members(identity['pid']):
+        current=birth(i['pid'])
+        if current is None:continue
+        need(current==i,'diagnostic new-session member identity changed')
+        try:need(os.getsid(i['pid'])==child.pid,'diagnostic new-session group changed')
+        except ProcessLookupError:pass
+    if members(identity['pid']):
+        try:os.killpg(identity['pid'],signal.SIGTERM)
+        except ProcessLookupError:pass
+    end=time.monotonic()+10
+    while (members(identity['pid']) or active(seen)) and time.monotonic()<end:
+        seen.extend(i for i in members(identity['pid']) if i not in seen);time.sleep(.05)
+    if members(identity['pid']):
+        try:os.killpg(identity['pid'],signal.SIGKILL)
+        except ProcessLookupError:pass
+    end=time.monotonic()+10
+    while (members(identity['pid']) or active(seen)) and time.monotonic()<end:time.sleep(.05)
+    while members(identity['pid']) or active(seen):time.sleep(.1)
+    child.wait(timeout=1)
+def run_child(command,cwd,env,fds,log,priority,budget):
+    child=None;identity=None;seen=[];reason=None
+    try:
+        need(not priority(),'priority before diagnostic launch; defer')
+        child=subprocess.Popen(command,cwd=cwd,env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,pass_fds=tuple(fds),start_new_session=True)
+        # Capture even a zombie before poll/wait can reap this direct child.
+        # Its PID/session cannot recycle while our unreaped child exists.
+        identity=birth(child.pid,include_zombie=True)
+        if identity is None:
+            child.wait(timeout=1)
+            # start_new_session established this private PGID before exec.
+            # While members remain, that PGID cannot be reused. Verify their
+            # births and session before bounded cleanup; no leader birth claim.
+            identity={'pid':child.pid,'start_ticks':None,'boot_id':None}
+            seen.extend(members(child.pid));reason='EXIT_BEFORE_VERIFIED_BIRTH_CAPTURE'
+            return {'identity':None,'returncode':child.returncode,'cancel_reason':reason,'captured_descendants':seen}
+        else:need(os.getsid(child.pid)==child.pid,'diagnostic session capture failed')
+        deadline=time.monotonic()+budget
+        while child.poll() is None:
+            seen.extend(i for i in members(child.pid)+descendants(child.pid) if i not in seen)
+            if priority():reason='TRAINING_OR_STOP_PRIORITY';break
+            if time.monotonic()>=deadline:reason='FINITE_DIAGNOSTIC_TIMEOUT';break
+            time.sleep(.1)
+        return {'identity':identity,'returncode':child.poll(),'cancel_reason':reason,'captured_descendants':seen}
+    finally:
+        if child is not None and identity is not None:
+            try:stop_group(child,identity,seen)
+            except BaseException:
+                # Never let an identity/cleanup error close canonical custody
+                # while an exact captured diagnostic process is still alive.
+                while child.poll() is None or members(child.pid) or active(seen):time.sleep(.1)
+                raise
+def main():
+    p=argparse.ArgumentParser();p.add_argument('--packet',required=True);p.add_argument('--execute',action='store_true');a=p.parse_args();packet=Path(a.packet)
+    d=json.loads(packet.read_text());need(d['bridge_sha256']==sha(__file__),'bridge source changed')
+    need(d['timeout_seconds']<=620 and d['wait_for_gap_seconds']<=120,'finite bound exceeded')
+    for r in d['source_refs']:checked(r)
+    ready=json.loads(checked(d['science_ready']).read_text());science=json.loads(checked(d['science_review']).read_text())
+    need(ready['status']=='INDEPENDENT_SOL_REVIEWED_READY_FOR_GPU_OWNER_WINDOW_NO_IO_CUSTODY_REQUIRED' and science['verdict']=='APPROVE_CPU_PREPARATION_ONLY' and science['findings']==[],'science source review not approved')
+    accepted=list(ready['proposed_argv']);accepted.insert(accepted.index('/usr/bin/timeout')+1,'--foreground')
+    need(d['science_review']==ready['bindings']['independent_sol_review'] and d['command']==accepted and science['candidate_source_sha256']==ready['bindings']['source']['sha256'] and science['plan_sha256']==ready['bindings']['plan']['sha256'],'exact science command/source/plan plus sole reviewed foreground flag binding differs')
+    need('--foreground' in d['command'] and d['command'].count('GPU_CANONICAL_EX_INHERITED_FD_REQUIRED')==1,'foreground diagnostic and sole GPU FD placeholder required')
+    if not a.execute:print(json.dumps({'status':'SOURCE_ONLY_MARKER_FREE_GPU_GAP_BRIDGE','priority_present':request(d),'launch_performed':False}));return
+    r=json.loads(packet.with_name('INDEPENDENT-REVIEW.json').read_text());need(r['status'].startswith('PASS') and r['bridge_sha256']==sha(__file__) and r['prepared_sha256']==sha(packet),'exact bridge review required')
+    fds=[];child_result=None
+    try:
+        try:fds=wait_pair(d['gpu_lease'],d['supervisor_lease'],lambda:request(d),d['wait_for_gap_seconds'])
+        except LeaseDefer as e:print(json.dumps({'status':str(e),'launch_performed':False}));return
+        need(not request(d),'priority arrived after pair acquisition; defer')
+        env=dict(os.environ,**d['environment'])
+        command=[str(fds[0]) if v=='GPU_CANONICAL_EX_INHERITED_FD_REQUIRED' else v for v in d['command']]
+        logpath=Path(d['log_path']);need(not os.path.lexists(logpath),'diagnostic log already exists')
+        with logpath.open('xb',buffering=0) as log:child_result=run_child(command,d['cwd'],env,fds,log,lambda:request(d),d['timeout_seconds'])
+        print(json.dumps({'status':'FINITE_MARKER_FREE_DIAGNOSTIC_EXITED','result':child_result,'no_io_lease_touched':True,'no_markers_written':True}))
+    finally:
+        for fd in reversed(fds):os.close(fd)
+if __name__=='__main__':main()

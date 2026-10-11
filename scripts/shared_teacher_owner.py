@@ -137,7 +137,7 @@ def bind_owner_checkpoints(
 
 def run_owned_roster(
     descriptors: Mapping[str, dict[str, Any]], *, entry: Any, consumer: Any, recovery: Any,
-    guard: Any, parent: dict[str, Any], leases: dict[str, Any], out: Path,
+    guard: Any, parent: dict[str, Any], leases: dict[str, Any], out: Path, priority_module: Any,
     authorize: Callable[[Mapping[str, dict[str, Any]], Path], None],
     max_units: int, max_live_games: int, target_rows: int, max_rows: int,
     batch_wait_ms: float, max_writes: int, deadline_seconds: float,
@@ -173,7 +173,8 @@ def run_owned_roster(
     source_root = Path(entry.__file__).resolve().parents[1]
     required_shared = ("scripts/shared_teacher_owner.py", "scripts/shared_teacher_generation.py",
                        "chess_anti_engine/teacher_dispatch.py", "scripts/bt4_root_policy_worker.py",
-                       "scripts/bt4_runtime_closure_v1.json")
+                       "scripts/bt4_runtime_closure_v1.json", "scripts/comparison_priority.py",
+                       "scripts/phase_consumption.py")
     if companion_module is not None:
         required_shared += ("scripts/ceres_pipelined_client.py", "scripts/ceres_shared_game_service.py",
                             "scripts/ceres_raw_backend.py", "scripts/ceres_game_companion_client.py",
@@ -209,7 +210,7 @@ def run_owned_roster(
     stops = {Path(path) for value in frozen.values() for path in value["stop_paths"]}
     if guard.output_root != campaign or not out.is_relative_to(campaign) or not stops.issubset(set(guard.stop_paths)):
         raise ValueError("aggregate owner output/STOP coverage differs")
-    for module in (entry, consumer, recovery, *((companion_module,) if companion_module is not None else ())):
+    for module in (entry, consumer, recovery, priority_module, *((companion_module,) if companion_module is not None else ())):
         path = Path(module.__file__).resolve()
         relative = path.relative_to(source_root).as_posix()
         if any(value["source_pins"].get(relative) != hashlib.sha256(path.read_bytes()).hexdigest()
@@ -217,6 +218,10 @@ def run_owned_roster(
             raise ValueError("loaded retained owner source closure differs")
     if hashlib.sha256(Path(worker.__file__).read_bytes()).hexdigest() != next(iter(frozen.values()))["source_pins"]["scripts/bt4_root_policy_worker.py"]:
         raise ValueError("loaded shared worker source differs")
+    phase_pin = next(iter(frozen.values()))["source_pins"]["scripts/phase_consumption.py"]
+    if any(hashlib.sha256(Path(function.__code__.co_filename).read_bytes()).hexdigest() != phase_pin
+           for function in (priority_module._phase_requested, priority_module._checked, priority_module._ready_refs)):
+        raise ValueError("loaded priority phase helper source differs")
     loaded_shared = (("scripts/shared_teacher_owner.py", Path(__file__)),
                      ("scripts/shared_teacher_generation.py", Path(generation_module.__file__)),
                      ("chess_anti_engine/teacher_dispatch.py", Path(dispatcher_module.__file__)))
@@ -249,7 +254,8 @@ def run_owned_roster(
         if not fake_cpu and shared["physical_batch"] != 32:
             raise ValueError("real256/512 owner remains unarmed pending qualification")
     entry.verify_runtime_closure()  # actual native/interpreter/source checker, before startup
-    if any(os.path.lexists(path) for value in frozen.values() for path in value["yield_paths"]):
+    yield_paths = tuple(dict.fromkeys(path for value in frozen.values() for path in value["yield_paths"]))
+    if priority_module.requested(yield_paths):
         return {"status": "PRIORITY_DEFERRED_BEFORE_CUDA", "native_admission": False}
     authorize(json.loads(json.dumps(frozen)), out)  # callback cannot mutate validated internal contracts
     owner_thread = threading.get_ident()
@@ -261,15 +267,22 @@ def run_owned_roster(
     client = None
     pipeline = None
     finished: set[str] = set()
-    try:
+    def control(*, poll: bool = True) -> None:
         guard.check()
+        if priority_module.requested(yield_paths):
+            raise RuntimeError("owner priority yield/drain")
+        # Backend/writer guards never poll or mutate the SQLite controller.
+        if poll and pipeline is not None and threading.get_ident() == owner_thread and pipeline.pending:
+            pipeline.poll()
+    try:
+        control()
         for name, descriptor in frozen.items():
             checkpoint = entry.Checkpoint(prepared[name][1], descriptor["bindings"],
                                           descriptor["checkpoint_limits"], guard.check)
             checkpoints[name] = checkpoint
             checkpoint.recover(entry.alive)
             attempts[name] = checkpoint.begin(descriptor["unit"], entry.birth(os.getpid()), str(specs[name].out))
-        evaluator, session, schema = consumer.fixed_bt4_startup(worker, out.parent, guard.check)
+        evaluator, session, schema = consumer.fixed_bt4_startup(worker, out.parent, control)
         worker.verify_cuda_model_schema(session, **schema)
         providers, options = worker.verify_cuda_session(session, gpu_mem_gb=2,
             cudnn_conv_algo_search="DEFAULT", cudnn_conv_use_max_workspace=0)
@@ -297,7 +310,7 @@ def run_owned_roster(
                 json.dumps(config, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
             try:
                 client = companion_module.Companion(companion_config, fd, guard.check, guard.charge,
-                    priority=lambda: any(os.path.lexists(path) for value in frozen.values() for path in value["yield_paths"]),
+                    priority=lambda: priority_module.requested(yield_paths),
                     fake_cpu=fake_cpu)
             finally:
                 if previous is None:
@@ -315,8 +328,10 @@ def run_owned_roster(
                 frozen[name]["bindings"]["model_sha256"], guard.check, guard.charge)
 
         def verify_completed(name: str, receipt: dict[str, Any]) -> None:
+            control(poll=False)  # Future callbacks must not recursively poll their wire owner.
             if verify_companion is not None:
                 verify_companion(name, receipt)
+            control(poll=False)
 
         # Reuse the retained bounded128-name scanner. Prior raw/C3 publication
         # without checkpoint acknowledgment is reconciled before new actors.
@@ -348,7 +363,7 @@ def run_owned_roster(
                 if pipeline is not None:
                     pending = pipeline.submit(unit, raw, game)
                     while not pending.done():
-                        guard.check()
+                        control()
                         pipeline.poll()
                     raw = pending.result()
                 receipt = {**raw, "canonical_raw": canonical}
@@ -362,11 +377,6 @@ def run_owned_roster(
             authorized_raw_roots={name: (*tuple(Path(path) for path in frozen[name]["prior_roots"]), spec.out) for name, (spec, _) in units.items()},
             verify_raw=verify_raw, verify_completed=verify_completed, companion=pipeline)
 
-        def control() -> None:
-            guard.check()
-            # Backend/writer guards never poll or mutate the SQLite controller.
-            if pipeline is not None and threading.get_ident() == owner_thread and pipeline.pending:
-                pipeline.poll()
         result = worker.run_pooled_units(units, actor, out, max_units=max_units, max_live_games=max_live_games,
             target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms, max_writes=max_writes,
             deadline_seconds=deadline_seconds, owner_completed=completed, acknowledge=acknowledge, control=control)

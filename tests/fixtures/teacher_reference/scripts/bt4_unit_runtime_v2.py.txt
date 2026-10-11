@@ -1,0 +1,45 @@
+"""Single-process checkpoint integration. Execution authority stays with queue owner.
+
+This is not a CLI and never opens a GPU session or acquires a lock itself.
+"""
+import os
+from pathlib import Path
+from scripts.bt4_raw_recovery_v2 import verified_game,reconcile
+
+def retained_receipt(receipt,verify):
+ actual=verify(receipt['path'],int(Path(receipt['path']).stem.split('_')[-1]))
+ if actual!=receipt:raise ValueError('retained raw payload differs from immutable checkpoint receipt')
+
+def run_unit(worker,spec,evaluator,tablebase,checkpoint,attempt,unit,prior_roots,guard,charge,companion=None):
+ if spec.games!=128:raise ValueError('fixed128-game rolling unit')
+ guard()
+ active=checkpoint.db.execute('SELECT unit,state FROM attempts WHERE id=?',(attempt,)).fetchone()
+ if active!=(unit,'RUNNING'):raise ValueError('exact active attempt/unit binding required')
+ verify=lambda path,game:verified_game(path,game,checkpoint.binding,spec.model_sha256,guard,charge)
+ if companion is not None:
+  raw_verify=verify
+  def verify(path,game):
+   raw=raw_verify(path,game)
+   combined=companion(lambda p,g:dict(raw),path,game)
+   if not isinstance(combined,dict) or any(combined.get(k)!=v for k,v in raw.items()):
+    raise ValueError('companion changed immutable raw BT4 receipt')
+   return combined
+ reconcile(checkpoint,attempt,prior_roots,verify)
+ completed=checkpoint.completed(unit,lambda receipt:retained_receipt(receipt,verify))
+ if len(completed)==128:
+  checkpoint.finish(attempt,True);return dict(state='RAW_COMPLETE_PENDING_ADMISSION',new_games=0,training_credit=0)
+ def published(path,game):
+  guard();fd=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+  try:os.fsync(fd)
+  finally:os.close(fd)
+  checkpoint.record_game(attempt,game,verify(path,game))
+ try:
+  summary=worker.run_worker(spec,evaluator,tablebase,completed_game_ids=completed,on_game_published=published)
+  guard();checkpoint.finish(attempt,True)
+ except BaseException:
+  # Crash/power loss leaves RUNNING for exact-owner recovery; normal errors retain all artifacts.
+  checkpoint.finish(attempt,False);raise
+ return dict(state='RAW_COMPLETE_PENDING_ADMISSION',new_games=summary['games'],summary=summary,training_credit=0)
+
+
+

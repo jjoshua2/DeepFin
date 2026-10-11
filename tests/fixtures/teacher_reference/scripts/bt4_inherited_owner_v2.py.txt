@@ -1,0 +1,68 @@
+"""Same-owner inherited lease validation; never acquires a new flock."""
+import os,stat
+from pathlib import Path
+
+def birth(pid):
+ raw=Path(f'/proc/{pid}/stat').read_text();tail=raw[raw.rfind(')')+2:].split()
+ return dict(pid=pid,start_ticks=int(tail[19]),boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip())
+def flock_line(pid,fd):
+ lines=Path(f'/proc/{pid}/fdinfo/{fd}').read_text().splitlines()
+ locks=[x.split('lock:',1)[1].strip() for x in lines if x.startswith('lock:') and ' FLOCK ' in x and ' WRITE ' in x]
+ if len(locks)!=1:raise ValueError('inherited exclusive flock evidence missing')
+ return locks[0]
+def inherited(parent,leases):
+ if os.getppid()!=parent['pid'] or birth(parent['pid'])!=parent:raise ValueError('exact live parent changed')
+ result={}
+ for name,descriptor in leases.items():
+  path=Path(descriptor['path']);s=path.lstat()
+  if not stat.S_ISREG(s.st_mode) or (s.st_dev,s.st_ino)!=tuple(descriptor['identity']):raise ValueError('canonical lease named identity changed')
+  matches=[]
+  for p in Path('/proc/self/fd').iterdir():
+   try:
+    t=os.fstat(int(p.name))
+    if (t.st_dev,t.st_ino)==(s.st_dev,s.st_ino):matches.append(int(p.name))
+   except OSError:pass
+  if not matches:raise ValueError('exact inherited lease descriptor missing')
+  expected=flock_line(parent['pid'],descriptor['parent_fd'])
+  # The worker intentionally duplicates the GPU OFD for its closeable lock seam.
+  # Every alias must prove the same locked OFD; reopened descriptors still fail.
+  if any(flock_line(os.getpid(),fd)!=expected for fd in matches):raise ValueError('not the parent locked open file description')
+  result[name]=matches[0]
+ if os.getppid()!=parent['pid'] or birth(parent['pid'])!=parent:raise ValueError('parent changed during validation')
+ for descriptor in leases.values():
+  current=Path(descriptor['path']).lstat()
+  if not stat.S_ISREG(current.st_mode) or (current.st_dev,current.st_ino)!=tuple(descriptor['identity']):raise ValueError('canonical lease changed after validation')
+ return result
+
+
+CANONICAL_LEASES={'gpu':('/home/josh/projects/chess/scratchpad/gpu0_experiment.lock',(2096,81348917)),
+                 'io':('/tmp/chess-physical-heavy-io-exclusive.lock',(2096,18503149)),
+                 'supervisor':('/home/josh/chess-artifacts/operations/deepfin-ceres-reserve38-recovery-queue-20261004-v5/supervisor.lock',(2096,18835410))}
+
+def canonical_profile(profile='all_three'):
+ """Closed custody profiles; choosing one grants no execution authority."""
+ if profile=='all_three':names=('gpu','io','supervisor')
+ elif profile=='model_only_gpu_supervisor':names=('gpu','supervisor')
+ else:raise ValueError('unknown canonical custody profile')
+ return {name:CANONICAL_LEASES[name] for name in names}
+
+def canonical_gpu_lock_consumer(worker,parent,leases,custody_profile='all_three'):
+ """Bind the reviewed worker lock seam to its owner's existing GPU OFD.
+ The caller must bind an explicit custody profile in its reviewed request before
+ using the model-only profile. This API does not acquire/release I/O or authorize
+ payload scans. The all-three default retains its original contract.
+ """
+ fixed=canonical_profile(custody_profile)
+ if set(leases)!=set(fixed):raise ValueError('exact canonical custody profile required')
+ for name,(path,identity) in fixed.items():
+  if leases[name]['path']!=path or tuple(leases[name]['identity'])!=identity:raise ValueError('canonical identity override forbidden')
+ def lock():
+  if custody_profile=='model_only_gpu_supervisor':
+   io_identity=CANONICAL_LEASES['io'][1]
+   for descriptor in Path('/proc/self/fd').iterdir():
+    try:info=os.fstat(int(descriptor.name))
+    except OSError:continue
+    if (info.st_dev,info.st_ino)==io_identity:raise ValueError('model-only consumer must not inherit canonical I/O descriptor')
+  validated=inherited(parent,leases)
+  return os.dup(validated['gpu'])
+ return lock

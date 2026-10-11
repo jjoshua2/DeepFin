@@ -853,7 +853,9 @@ def run_pooled_units(
 
     def evaluate(rows: Sequence[tuple[chess.Board, np.ndarray]]) -> Sequence[bt4_generation_evaluator.BT4RootOutput]:
         control()
-        return _evaluate_shared_roots(evaluator, rows, specs)
+        result = _evaluate_shared_roots(evaluator, rows, specs)
+        control()
+        return result
 
     dispatcher = TeacherDispatcher(evaluate, target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms)
     try:

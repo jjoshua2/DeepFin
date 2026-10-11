@@ -1,0 +1,116 @@
+"""Held diagnostic service: append C3 labels to actual BT4 game roots.
+
+No actor, lease acquisition, checkpoint, training or admission authority.
+The qualified V9 inference/encoding implementation is imported by exact pin.
+"""
+import argparse,hashlib,importlib.util,json,os,sys,time
+from pathlib import Path
+
+def need(v,m):
+    if not v:raise ValueError(m)
+def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+def load(name,p):
+    s=importlib.util.spec_from_file_location(name,p);m=importlib.util.module_from_spec(s);sys.modules[name]=m;s.loader.exec_module(m);return m
+from ceres_atomic_publication_v1 import durable_json, durable_npz
+def emit(d):print(json.dumps(d),flush=True)
+
+def game_roots(v,api,p,game,raw_sha):
+    np,chess,_,_,compact,leela,_,tpg,c=api
+    need(p.resolve()==p and not p.is_symlink() and sha(p)==raw_sha,'exact immutable raw game')
+    with np.load(p,allow_pickle=False) as z:
+        need(set(z.files)=={'metadata','x','policy_t1','wdl_raw'},'BT4 closed payload')
+        meta=json.loads(z['metadata'].tobytes().decode());x=z['x'].copy()
+    rows=meta['rows'];need(meta['game_id']==game and len(rows)<=400,'exact game/row bound')
+    need(x.dtype==np.float32 and (x.shape==(len(rows),175,8,8) or (not rows and x.shape==(0,0,8,8))) and np.isfinite(x).all(),'saved BT4 input layout')
+    b=chess.Board(meta['initial_fen']);roots=[];ids=[];feeds=[]
+    stored=tpg.stored_x_to_ceres_tpg_bytes(x.astype(np.float16),input_history_encoding=v.HISTORY,history_rep_fix=True) if rows else []
+    for index,row in enumerate(rows):
+        need(row['index']==index and row['ply_index']==index and b.fen()==row['fen'],'complete original history/FEN sequence')
+        need(bool(b.turn)==row['pov_white'],'same side-to-move value orientation')
+        feed=tpg.encode_ceres_tpg_bytes(b);need(np.array_equal(feed,stored[index]),'saved x/full-history frozen TPG parity')
+        need(hashlib.blake2b(np.ascontiguousarray(x[index]).tobytes(),digest_size=16).hexdigest()==row['input_key'],'original input identity')
+        board=b.copy(stack=True);legal=tuple(board.legal_moves);root_id=game*1024+index
+        roots.append(c.Root(root_id,board,board.fen(),tuple(board.move_stack),legal,tuple(compact(board,m) for m in legal),tuple(leela(board,m) for m in legal),feed))
+        ids.append([game,index]);feeds.append(v.digest(feed))
+        move=chess.Move.from_uci(row['move_uci']);need(move in b.legal_moves,'original BT4 move legal');b.push(move)
+    return tuple(roots),ids,feeds
+
+def verify_companion(np,receipt,expected):
+    for k,value in expected.items():need(receipt[k]==value,'companion identity changed: '+k)
+    p=Path(receipt['labels']['path']);need(p.resolve()==p and not p.is_symlink() and sha(p)==receipt['labels']['sha256'],'immutable labels SHA')
+    with np.load(p,allow_pickle=False) as z:
+        need(set(z.files)=={'policy_logits','value_logits','value2_logits','feed_sha256','root_id','companion_metadata'},'C3 closed label payload')
+        n=expected['real_rows'];need(z['policy_logits'].shape==(n,1858) and z['value_logits'].shape==z['value2_logits'].shape==(n,3),'C3 raw shapes')
+        for k in ('policy_logits','value_logits','value2_logits'):need(z[k].dtype==np.float16 and np.isfinite(z[k]).all(),'C3 raw FP16 finite logits')
+        need(z['root_id'].tolist()==expected['root_ids'] and z['feed_sha256'].tolist()==expected['feed_sha256'],'actual root identity coverage')
+        embedded=json.loads(z['companion_metadata'].tobytes().decode())
+        need(embedded=={k:v for k,v in receipt.items() if k!='labels'},'durable embedded companion identity')
+    proof=receipt.get('provider')
+    if not expected['fake_cpu'] and n:need(proof and sha(proof['path'])==proof['sha256'],'actual persistent provider proof retained')
+    return receipt
+
+def main():
+    a=argparse.ArgumentParser();a.add_argument('--config',required=True);a.add_argument('--gpu-fd',type=int,default=-1);a.add_argument('--service-output');a.add_argument('--fake-cpu',action='store_true');args=a.parse_args()
+    config=json.loads(Path(args.config).read_text());need(sha(config['v9_source']['path'])==config['v9_source']['sha256'],'qualified V9 source pin')
+    v=load('qualified_v9_dynamic',config['v9_source']['path']);p=config['qualified_plan']
+    for source,digest in p['source_pins'].items():need(sha(source)==digest,'qualified source closure drift')
+    out=Path(args.service_output or config['service_output']);need(out.resolve(strict=False)==out and not out.exists(),'fresh private service output')
+    if not args.fake_cpu:
+        bank=Path(config['approved_bank']);need(out.is_relative_to(bank) and out.name=='ceres_service','exact reviewed service bank')
+    out.mkdir(mode=0o700,parents=False);v.private_caches(out)
+    if not args.fake_cpu:
+        need(os.environ.get('CUDA_VISIBLE_DEVICES')=='0','inherited owner visibility');v.guard(args,p);need(sha(p['models']['ceres']['path'])==p['models']['ceres']['sha256'],'actual C3 model pin')
+    api=v.imports('ceres');np=api[0];session=None;provider=None;setup_seconds=warmup_seconds=0.;totals={'real_rows':0,'physical_rows':0,'padding_rows':0,'session_calls':0,'games':0}
+    emit({'state':'READY_FOR_GAME','fake_cpu':args.fake_cpu,'gpu_session_opened':False})
+    for line in sys.stdin:
+        msg=json.loads(line)
+        if msg['op']=='stop':break
+        need(msg['op']=='game' and 0<=msg['game_id']<128,'finite exact game request')
+        if not args.fake_cpu:v.guard(args,p)
+        tick=time.perf_counter();raw=Path(msg['raw_path'])
+        if not args.fake_cpu:need(raw.is_relative_to(bank) and raw.parent.name=='games' and raw.name==f'game_{msg["game_id"]:08d}.npz','reviewed raw game bank')
+        roots,ids,feeds=game_roots(v,api,raw,msg['game_id'],msg['raw_sha256'])
+        companion_dir=raw.parent.parent/'ceres_companions'
+        companion_dir.mkdir(mode=0o700,exist_ok=True)
+        need(companion_dir.resolve()==companion_dir and not companion_dir.is_symlink(),'canonical separate companion directory')
+        receipt_path=companion_dir/(raw.stem+'.json');label_path=companion_dir/raw.name
+        expected={'schema':'BT4_GENERATED_ROOT_C3_COMPANION_V1','raw_path':str(raw),'raw_sha256':msg['raw_sha256'],'game_id':msg['game_id'],'root_ids':ids,'feed_sha256':feeds,'real_rows':len(roots),'model':p['models']['ceres'],'fake_cpu':args.fake_cpu}
+        if receipt_path.exists():receipt=verify_companion(np,json.loads(receipt_path.read_text()),expected)
+        elif label_path.exists():
+            # NPZ is the atomic orphan recovery record: identity/provider/counts
+            # are embedded before fsync, not reconstructed from guessed work.
+            with np.load(label_path,allow_pickle=False) as back:
+                receipt=json.loads(back['companion_metadata'].tobytes().decode())
+            receipt['labels']={'path':str(label_path),'sha256':sha(label_path)}
+            verify_companion(np,receipt,expected);durable_json(receipt_path,receipt)
+        else:
+            if roots and session is None:
+                start=time.perf_counter()
+                if args.fake_cpu:session=v.TimedSession(v.Fake(np,'ceres'));proof_fn=None
+                else:session,_,proof_fn=v.real_eval('ceres',p,out,api)
+                setup_seconds=time.perf_counter()-start;start=time.perf_counter()
+                warm=roots[:32]
+                for _ in range(3):v.c3_call(session,api,warm)
+                warmup_seconds=time.perf_counter()-start
+                if not args.fake_cpu:
+                    profile=Path(session.end_profiling());proof=proof_fn(json.loads(profile.read_text()))
+                    pp=out/'PROVIDER.json';durable_json(pp,{'proof':proof,'profile_sha256':sha(profile),'providers':session.get_providers(),'options':session.get_provider_options(),'scope':'three warmups on actual generated roots; same persistent session labels','warmup_calls':3})
+                    provider={'path':str(pp),'sha256':sha(pp)}
+                session.seconds=0.;session.calls=[]
+            before=len(session.calls) if session else 0;infer_before=session.seconds if session else 0
+            values=v.c3_call(session,api,roots) if roots else []
+            arr=v.pack('ceres',values,np) if roots else {'policy_logits':np.empty((0,1858),np.float16),'value_logits':np.empty((0,3),np.float16),'value2_logits':np.empty((0,3),np.float16),'feed_sha256':np.array([],dtype='<U64')}
+            arr['root_id']=np.array(ids,dtype=np.int64).reshape((-1,2))
+            physical=sum(session.calls[before:]) if session else 0;calls=len(session.calls)-before if session else 0
+            need(physical==32*((len(roots)+31)//32),'fixed32 real/padding accounting')
+            receipt={**expected,'provider':provider,'physical_rows':physical,'padding_rows':physical-len(roots),'session_calls':calls,'session_wall_seconds':session.seconds-infer_before if session else 0.,'label_contract':v.label_contract('ceres',values) if values else None,'setup_seconds':setup_seconds,'warmup_seconds':warmup_seconds,'whole_game_label_wall_seconds':time.perf_counter()-tick,'admission_credit':0}
+            arr['companion_metadata']=np.frombuffer(json.dumps(receipt,sort_keys=True).encode(),dtype=np.uint8).copy()
+            durable_npz(np,label_path,arr)
+            with np.load(label_path,allow_pickle=False) as back:need(set(back.files)==set(arr) and all(np.array_equal(back[k],x) for k,x in arr.items()),'durable raw C3 exact readback')
+            receipt['labels']={'path':str(label_path),'sha256':sha(label_path)}
+            durable_json(receipt_path,receipt);verify_companion(np,receipt,expected)
+        for key in ('real_rows','physical_rows','padding_rows','session_calls'):totals[key]+=receipt[key]
+        totals['games']+=1
+        emit({'state':'GAME_DURABLE','game_id':msg['game_id'],'companion':{'path':str(receipt_path),'sha256':sha(receipt_path)},'real_rows':len(roots),'physical_rows':receipt['physical_rows'],'padding_rows':receipt['padding_rows']})
+    durable_json(out/'RESULT.json',{'status':'CPU_FAKE_ONLY' if args.fake_cpu else 'C3_GAME_LABEL_SERVICE_COMPLETE_NOT_ADMISSION','totals':totals,'setup_seconds':setup_seconds,'warmup_seconds':warmup_seconds,'global_input_dedup':'unmeasured','admission_credit':0})
+if __name__=='__main__':main()

@@ -1,0 +1,97 @@
+"""Conservative, bounded readiness observation; no launches or marker mutation."""
+import hashlib,json,os,stat
+from pathlib import Path
+ADMISSION=Path('/home/josh/chess-artifacts/operations/100m-mixed-storage-row-index-admission-20261008-v1/RESULT.json')
+PLAN=Path('/home/josh/chess-artifacts/operations/100m-sampler-preflight-owner-20261008-v1/PLAN.json')
+PREFLIGHT=Path('/home/josh/chess-artifacts/operations/100m-exact-bootstrap-seed131-20261008-v1.preflight-01/PREFLIGHT.json')
+
+def read(path):
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    try:
+        s=os.fstat(fd)
+        if not stat.S_ISREG(s.st_mode) or s.st_size>2**20:raise ValueError('bounded readiness file required')
+        raw=os.read(fd,s.st_size+1);a=os.fstat(fd);n=path.lstat()
+        stable=lambda x:(x.st_dev,x.st_ino,x.st_size,x.st_mtime_ns,x.st_ctime_ns)
+        if len(raw)!=s.st_size or stable(s)!=stable(a) or stable(s)!=stable(n):raise ValueError('readiness changed during observation')
+        return json.loads(raw),{'path':str(path),'sha256':hashlib.sha256(raw).hexdigest()}
+    finally:os.close(fd)
+
+def old_training_ready():
+    # Absence is ordinary while science runs. Access/malformed/replaced metadata
+    # raises: the controller then conservatively yields comparison, never skips.
+    try:a,ar=read(ADMISSION);p,pr=read(PLAN);f,fr=read(PREFLIGHT)
+    except FileNotFoundError:return False
+    return (a.get('status')=='PASS_EXACT100M_MIXED_STORAGE_AND_PHYSICAL_ROW_INDEX_ADMISSION'
+            and a.get('rows')==100000000 and a.get('gpu_access') is False and a.get('optimizer_updates')==0
+            and p.get('status')=='REVIEWED_EXACT_BOOTSTRAP_EXECUTION_PLAN' and p.get('rows')==100000000
+            and p.get('seed')==131 and p.get('batch_size')==512 and p.get('epochs')==1 and p.get('admission')==ar
+        and p.get('window_steps')==88 and p.get('recipe')=={'sf_wdl_frac':0.0,'search_wdl_frac':1.0,'sf_wdl_frac_floor':0.0,'policy_target_temp':1.0,'rebuild_categorical_target':False}
+            and f.get('status')=='PASS_ACTUAL_EXACT_BOOTSTRAP_PREFLIGHT_NO_CUDA'
+            and f.get('gpu_access') is False and f.get('optimizer_updates')==0
+            and f.get('run_identity',{}).get('plan')==pr
+            and f.get('run_identity',{}).get('qualification')==a.get('qualification')
+            and f.get('run_identity',{}).get('row_index')==a.get('row_index'))
+
+def requested(paths):
+    if any(os.path.lexists(p) for p in paths):return True
+    return training_ready()
+
+CURRENT_PLAN=Path('/home/josh/chess-artifacts/operations/100m-sampler-preflight-rootbucket-owner-20261008-v1/PLAN.json')
+CURRENT_PREFLIGHT=Path('/home/josh/chess-artifacts/operations/100m-exact-bootstrap-rootbucket-seed131-20261008-v1.preflight-01/PREFLIGHT.json')
+def training_ready():
+    if old_training_ready():return True
+    try:a,ar=read(ADMISSION);p,pr=read(CURRENT_PLAN);f,fr=read(CURRENT_PREFLIGHT)
+    except FileNotFoundError:return False
+    return (a.get('status')=='PASS_EXACT100M_MIXED_STORAGE_AND_PHYSICAL_ROW_INDEX_ADMISSION'
+        and a.get('rows')==100000000 and a.get('gpu_access') is False and a.get('optimizer_updates')==0
+        and p.get('status')=='REVIEWED_EXACT_BOOTSTRAP_EXECUTION_PLAN' and p.get('rows')==100000000
+        and p.get('seed')==131 and p.get('batch_size')==512 and p.get('epochs')==1 and p.get('admission')==ar
+        and p.get('window_steps')==88 and p.get('recipe')=={'sf_wdl_frac':0.0,'search_wdl_frac':1.0,'sf_wdl_frac_floor':0.0,'policy_target_temp':1.0,'rebuild_categorical_target':False}
+        and f.get('status')=='PASS_ACTUAL_EXACT_BOOTSTRAP_PREFLIGHT_NO_CUDA'
+        and f.get('gpu_access') is False and f.get('optimizer_updates')==0
+        and f.get('run_identity',{}).get('plan')==pr
+        and f.get('run_identity',{}).get('qualification')==a.get('qualification')
+        and f.get('run_identity',{}).get('row_index')=={**a['row_index'], 'arm':'exact'})
+
+rootbucket_training_ready=training_ready
+STARTUP_PLAN=Path('/home/josh/chess-artifacts/operations/100m-sampler-preflight-startup-guard-owner-20261008-v1/PLAN.json')
+STARTUP_PREFLIGHT=Path('/home/josh/chess-artifacts/operations/100m-exact-bootstrap-startup-guard-seed131-20261008-v1.preflight-01/PREFLIGHT.json')
+def training_ready():
+    if rootbucket_training_ready():return True
+    try:a,ar=read(ADMISSION);p,pr=read(STARTUP_PLAN);f,fr=read(STARTUP_PREFLIGHT)
+    except FileNotFoundError:return False
+    return (a.get('status')=='PASS_EXACT100M_MIXED_STORAGE_AND_PHYSICAL_ROW_INDEX_ADMISSION'
+        and a.get('rows')==100000000 and a.get('gpu_access') is False and a.get('optimizer_updates')==0
+        and p.get('status')=='REVIEWED_EXACT_BOOTSTRAP_EXECUTION_PLAN' and p.get('rows')==100000000
+        and p.get('seed')==131 and p.get('batch_size')==512 and p.get('epochs')==1 and p.get('admission')==ar
+        and p.get('window_steps')==88 and p.get('recipe')=={'sf_wdl_frac':0.0,'search_wdl_frac':1.0,'sf_wdl_frac_floor':0.0,'policy_target_temp':1.0,'rebuild_categorical_target':False}
+        and f.get('status')=='PASS_ACTUAL_EXACT_BOOTSTRAP_PREFLIGHT_NO_CUDA'
+        and f.get('gpu_access') is False and f.get('optimizer_updates')==0
+        and f.get('run_identity',{}).get('plan')==pr
+        and f.get('run_identity',{}).get('qualification')==a.get('qualification')
+        and f.get('run_identity',{}).get('row_index')=={**a['row_index'], 'arm':'exact'})
+
+startup_training_ready=training_ready
+PHASE_PLAN=Path('/home/josh/chess-artifacts/operations/100m-sampler-preflight-phase-guard-owner-20261008-v1/PLAN.json')
+PHASE_PREFLIGHT=Path('/home/josh/chess-artifacts/operations/100m-exact-bootstrap-phase-guard-seed131-20261008-v1.preflight-01/PREFLIGHT.json')
+def training_ready():
+    if startup_training_ready():return True
+    try:a,ar=read(ADMISSION);p,pr=read(PHASE_PLAN);f,fr=read(PHASE_PREFLIGHT)
+    except FileNotFoundError:return False
+    return (a.get('status')=='PASS_EXACT100M_MIXED_STORAGE_AND_PHYSICAL_ROW_INDEX_ADMISSION'
+        and a.get('rows')==100000000 and a.get('gpu_access') is False and a.get('optimizer_updates')==0
+        and p.get('status')=='REVIEWED_EXACT_BOOTSTRAP_EXECUTION_PLAN' and p.get('rows')==100000000
+        and p.get('seed')==131 and p.get('batch_size')==512 and p.get('epochs')==1 and p.get('admission')==ar
+        and p.get('window_steps')==88 and p.get('recipe')=={'sf_wdl_frac':0.0,'search_wdl_frac':1.0,'sf_wdl_frac_floor':0.0,'policy_target_temp':1.0,'rebuild_categorical_target':False}
+        and f.get('status')=='PASS_ACTUAL_EXACT_BOOTSTRAP_PREFLIGHT_NO_CUDA'
+        and f.get('gpu_access') is False and f.get('optimizer_updates')==0
+        and f.get('run_identity',{}).get('plan')==pr
+        and f.get('run_identity',{}).get('qualification')==a.get('qualification')
+        and f.get('run_identity',{}).get('row_index')=={**a['row_index'], 'arm':'exact'})
+
+# Consume only exact current plan; distinct ready namespaces remain priority.
+from scripts.phase_consumption import requested as _phase_requested, checked as _checked, ready_refs as _ready_refs
+_PHASE_CONFIG={'path': '/tmp/bt4-local-continuous-adoption-runtime-20261008-v2/scripts/phase_consumption_config.json', 'sha256': 'bb87456eff16c4ddad2690452f4c72601c60948a5c6fdb5167be1337bf797ebd'}
+def training_ready():
+    namespaces=[(PLAN,PREFLIGHT,False),(CURRENT_PLAN,CURRENT_PREFLIGHT,True),(STARTUP_PLAN,STARTUP_PREFLIGHT,True),(PHASE_PLAN,PHASE_PREFLIGHT,True)]
+    return _phase_requested([],lambda:_ready_refs(namespaces,ADMISSION,read),_checked(_PHASE_CONFIG),read)

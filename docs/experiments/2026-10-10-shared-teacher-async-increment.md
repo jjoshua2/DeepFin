@@ -153,8 +153,11 @@ and the new pinned teacher sources; loading the old entry from its old directory
 does not satisfy that closure. No live runtime overlay or queue is modified here.
 
 The caller supplies an explicit whole-roster authorizer and aggregate retained
-OwnerGuard. Each descriptor's STOP paths must be covered by that guard; yield is
-checked before custody/startup. The authorizer receives a separate deep copy.
+OwnerGuard. Each descriptor's STOP paths must be covered by that guard. The
+original pinned `comparison_priority.requested` checks descriptor yield markers
+and original readiness helpers before custody/startup and on subsequent control
+checks in both BT4-only and dual mode. Its loaded phase-helper callables must match
+the admitted phase source bytes. The authorizer receives a separate deep copy.
 The existing `canonical_gpu_lock_consumer(..., custody_profile="all_three")`
 validates inherited GPU/IO/supervisor custody and duplicates its GPU descriptor;
 no new flock is acquired. Per-unit SQLite attempts begin before startup/raw
@@ -208,3 +211,51 @@ geometry/authority negatives are exercised. Live authorization, actual inherited
 canonical leases, Ceres CUDA runtime origin/provider proof and real GPU numerical,
 headroom/fit/throughput qualification remain independent deployment gates. No
 authorization artifact is armed and no queue insertion/admission is performed.
+
+## Repository reference fixtures and post-startup priority
+
+The original retained scripts are not repository runtime entrypoints. Exact
+source bytes now live under `tests/fixtures/teacher_reference`, with original
+paths, SHA256 and sizes in its manifest. Tests validate and materialize these
+bytes into their own temporary directories. The original Companion starts its
+actual fake-CPU child and uses its original private-process cleanup; no replacement
+cleanup mock is introduced. The derivative CPU config explicitly relocates the
+comparison, TPG and backend to these fixtures and the installed checkout runtime.
+Real mode rejects this relocation. These sources and metadata do not authorize a
+production runtime, descriptor, model, queue or custody change.
+
+All original readiness namespaces and phase configuration in owner fixtures are
+relocated to generated temporary metadata. The default fixture executes the
+original readiness functions with no ready admission. A separate explicit seam
+requests readiness during inference. Tests also reject differently loaded phase
+callables before authorization or startup.
+
+Priority is checked before and after shared inference, before and after companion
+verification, and on controller turns. A request arriving during inference rejects
+the result before move application or RNG consumption. A request after a durable
+game acknowledgment stops subsequent acknowledgment at the next control check;
+already committed games keep their immutable raw bytes and recover through the
+retained next-attempt reconciler without duplicate local IDs. This is a fail-closed
+restart boundary, not an atomic cancellation of arbitrary instructions. Priority
+failure records `FAILED_RETAINED_ZERO_CREDIT`; descriptor STOP can leave `RUNNING`
+when its stopped guard rejects finalization. The original owner game-boundary
+`GameCheckpointYield`/`CHECKPOINT_YIELDED` state transition is unchanged and is not
+claimed for this new controller.
+
+The prior local111 result depended on retained host sources: on a source-clean
+checkout its18 owned-roster cases and5 retained pipeline cases could skip. It
+therefore did not establish portable111-case coverage. The new fixtures remove
+those retained-source skips. CPU execution still requires the checkout's built
+native extensions and declared Python dependencies. CI's ordinary suite uses
+`scripts/validate.py cpu`, selecting all tests with `-m 'not slow'`; its capped and
+PEXT suites select different fixed subsets. A focused teacher regression is not a
+claim that the complete ordinary CI suite passed.
+
+The corrected selected regression ran120 cases with zero failures, errors or skips
+under Python3.10/NumPy1.26.2, CPU28/nice19/Torch1. Its initial CUDA visibility was
+empty, matching ordinary CI; fake-child fixtures explicitly set visibility to-1.
+An inherited review audit was armed in pytest and its five Python children and
+rejected legacy source-prefix or operational-readiness Python open/import reads.
+No blocked reads were recorded. This audits Python filesystem access, not arbitrary
+native filesystem reads, and does not qualify CI's Python/native build or whole
+repository test suite. The scoped static gate also passed.

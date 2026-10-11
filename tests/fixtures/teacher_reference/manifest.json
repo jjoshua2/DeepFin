@@ -1,0 +1,125 @@
+{
+  "schema": 1,
+  "scope": "Exact retained source bytes for CPU tests and repository review; never production admission or runtime closure authorization.",
+  "files": [
+    {
+      "relative": "scripts/bt4_inherited_owner_v2.py",
+      "fixture": "scripts/bt4_inherited_owner_v2.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/bt4_inherited_owner_v2.py",
+      "sha256": "cfcae5b3d75e7926e5ce1a39e7d17c0d6ad2c468aa2057bbea7b894ebf0b9c59",
+      "bytes": 3896
+    },
+    {
+      "relative": "scripts/bt4_longblock_checkpoint_v2.py",
+      "fixture": "scripts/bt4_longblock_checkpoint_v2.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/bt4_longblock_checkpoint_v2.py",
+      "sha256": "3e340183934fc06437979898b968d2555cf4931254daafa05c317680b75b9ae9",
+      "bytes": 7788
+    },
+    {
+      "relative": "scripts/bt4_queue_consumer_v2.py",
+      "fixture": "scripts/bt4_queue_consumer_v2.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/bt4_queue_consumer_v2.py",
+      "sha256": "ad8c585093399a76b25d355bae46b5a0e432d733da955f87ea61c42744d12e41",
+      "bytes": 9624
+    },
+    {
+      "relative": "scripts/bt4_raw_recovery_v2.py",
+      "fixture": "scripts/bt4_raw_recovery_v2.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/bt4_raw_recovery_v2.py",
+      "sha256": "78845b83d4c4de4f244305332df1ccddda7430eb0f1baaf10d6072ea037037b0",
+      "bytes": 3841
+    },
+    {
+      "relative": "scripts/bt4_tpg_bridge_v2.py",
+      "fixture": "scripts/bt4_tpg_bridge_v2.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/bt4_tpg_bridge_v2.py",
+      "sha256": "ad289a07479f7116b55ce40d90162aa36aea1260beb30ece4ff9f4a94ef5c990",
+      "bytes": 3870
+    },
+    {
+      "relative": "scripts/bt4_unit_runtime_v2.py",
+      "fixture": "scripts/bt4_unit_runtime_v2.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/bt4_unit_runtime_v2.py",
+      "sha256": "18aaed7e9a9faa5738ca5c96b2e756bae9c47a455fe45997e3ab1d954a66410a",
+      "bytes": 2209
+    },
+    {
+      "relative": "scripts/bt4_queue_worker_entry_v3.py",
+      "fixture": "scripts/bt4_queue_worker_entry_v3.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/bt4_queue_worker_entry_v3.py",
+      "sha256": "4f406e01d64d46132a4b5f201f961aa70c6d4815253d3fc22910751d3cbc7c8e",
+      "bytes": 28219
+    },
+    {
+      "relative": "scripts/ceres_game_companion_client.py",
+      "fixture": "scripts/ceres_game_companion_client.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/ceres_game_companion_client.py",
+      "sha256": "7fd9145499a6f8503efc21e3c902cc0089445a3ffc114de808056246d885b05d",
+      "bytes": 5318
+    },
+    {
+      "relative": "scripts/ceres_dynamic_game_service.py",
+      "fixture": "scripts/ceres_dynamic_game_service.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/ceres_dynamic_game_service.py",
+      "sha256": "ea1cb8da49f0b8f44a2000aae4276a5abaf922f4b25d866e6cd05628638027a3",
+      "bytes": 10262
+    },
+    {
+      "relative": "scripts/ceres_atomic_publication_v1.py",
+      "fixture": "scripts/ceres_atomic_publication_v1.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/ceres_atomic_publication_v1.py",
+      "sha256": "4e34271ddacdb13a5e3a13f55eee24479ffa3a9bc049763ef8f16e789374ff47",
+      "bytes": 1211
+    },
+    {
+      "relative": "scripts/dual_companion_config.json",
+      "fixture": "scripts/dual_companion_config.json.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/dual_companion_config.json",
+      "sha256": "3d36d0fac2896b098b3ff913c4ceddab3d78ed1876d463a8636dfbebcce848bd",
+      "bytes": 156955
+    },
+    {
+      "relative": "scripts/comparison_priority.py",
+      "fixture": "scripts/comparison_priority.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/comparison_priority.py",
+      "sha256": "d88d357c59944f408e45d16933dcecc960c6c6e718db7a20d2d16e98b0cc30ea",
+      "bytes": 7518
+    },
+    {
+      "relative": "scripts/phase_consumption.py",
+      "fixture": "scripts/phase_consumption.py.txt",
+      "source": "/tmp/bt4-opt10-v9-D/scripts/phase_consumption.py",
+      "sha256": "74059f1c88311cb24dd1f525aa9d4e0c9595181a985f52f59482d59e197522d1",
+      "bytes": 6824
+    },
+    {
+      "relative": "reference/compare.py",
+      "fixture": "reference/compare.py.txt",
+      "source": "/tmp/deepfin-bt4-ceres-same-position-compare-20261008-v9/compare.py",
+      "sha256": "f2462476262a9cc2b06a00bca3a64f989075ea85335326c4b131d6ec0689ca2a",
+      "bytes": 35387
+    },
+    {
+      "relative": "encoding/ceres_tpg.py",
+      "fixture": "encoding/ceres_tpg.py.txt",
+      "source": "/tmp/ceres-phase-runtime-py313-20260923/chess_anti_engine/encoding/ceres_tpg.py",
+      "sha256": "ea0bc14c31eedd18abe67b9b90287b2d1b20245ec42aed4faa0d69d21df229b0",
+      "bytes": 20169
+    },
+    {
+      "relative": "ad/c3_backend.py",
+      "fixture": "ad/c3_backend.py.txt",
+      "source": "/tmp/ceres-own-source-adapter-20260923/c3_backend.py",
+      "sha256": "a62fb45047ae8e20128a559b7346f76b43d198515bd64c1f6e3b1ef5d7949c2c",
+      "bytes": 8072
+    },
+    {
+      "relative": "cleanup/finite_natural_gpu_gap_bridge_v2.py",
+      "fixture": "cleanup/finite_natural_gpu_gap_bridge_v2.py.txt",
+      "source": "/mnt/c/Users/jjosh/Documents/Codex/2026-10-08/task/finite_natural_gpu_gap_bridge_v2.py",
+      "sha256": "e44e42ee984d00084a1820da0ebb4b13965d169769f8dcd6a536770ecfc76b9b",
+      "bytes": 10971
+    }
+  ]
+}

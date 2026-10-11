@@ -24,12 +24,12 @@ from scripts.ceres_shared_game_service import bind_ceres_raw_backend, bind_retai
 from scripts.shared_teacher_owner import bind_owner_checkpoints
 from scripts import ceres_shared_game_service as shared_service
 from tests.test_cross_unit_teacher_generation import fixture_module
+from tests.teacher_reference_fixture import reference_sources, cpu_config
 
 
-def retained_modules(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any, Any, Any]:
-    root = Path("/tmp/bt4-opt10-v9-D/scripts")
-    if not root.is_dir():
-        pytest.skip("retained operational source closure is not available")
+def retained_modules(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Any, Any, Any, Any]:
+    reference = reference_sources(tmp_path)
+    root = reference / "scripts"
     def load(name: str, path: Path) -> Any:
         spec = importlib.util.spec_from_file_location(name, path)
         assert spec is not None
@@ -40,7 +40,10 @@ def retained_modules(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any, Any, An
         return module
     publisher = load("ceres_atomic_publication_v1", root / "ceres_atomic_publication_v1.py")
     retained = load("retained_ceres_service", root / "ceres_dynamic_game_service.py")
-    comparison = load("retained_comparison", Path("/tmp/deepfin-bt4-ceres-same-position-compare-20261008-v9/compare.py"))
+    comparison = load("retained_comparison", reference / "reference/compare.py")
+    comparison.BT = comparison.C3 = Path(__file__).resolve().parents[1]
+    comparison.FROZEN = reference / "encoding/ceres_tpg.py"
+    comparison.AD = reference / "ad"
     # Imports the exact native history encoder/oracle, never opens an ORT session.
     before = list(sys.path)
     try:
@@ -66,10 +69,42 @@ def test_child_setup_rejects_before_retained_imports_or_session(
     assert list(tmp_path.iterdir()) == [config]
 
 
+@pytest.mark.parametrize("failure", ["real_mode", "encoder_pin"])
+def test_cpu_reference_relocation_rejects_real_mode_or_unreviewed_encoder_before_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    reference = reference_sources(tmp_path)
+    root = Path(__file__).resolve().parents[1]
+    config = cpu_config(reference, root)
+    def digest(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    config["shared_service"] = {"units": [], "max_games": 1, "target_rows": 1, "max_rows": 1,
+        "batch_wait_ms": 1, "poll_seconds": 0.001, "deadline_seconds": 10, "physical_batch": 32,
+        "source_pins": {relative: digest(root / relative) for relative in (
+            "chess_anti_engine/teacher_dispatch.py", "scripts/ceres_shared_game_service.py",
+            "scripts/ceres_raw_backend.py", "scripts/shared_teacher_generation.py")},
+        "retained_service_source": {"path": str(reference / "scripts/ceres_dynamic_game_service.py"),
+            "sha256": digest(reference / "scripts/ceres_dynamic_game_service.py")},
+        "publisher_source": {"path": str(reference / "scripts/ceres_atomic_publication_v1.py"),
+            "sha256": digest(reference / "scripts/ceres_atomic_publication_v1.py")}}
+    if failure == "encoder_pin":
+        config["qualified_plan"]["source_pins"][config["qualified_plan"]["cpu_fixture_paths"]["tpg"]] = "0" * 64
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(config))
+    argv = ["service", "--config", str(path)]
+    if failure != "real_mode":
+        argv += ["--fake-cpu"]
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "-1")
+    monkeypatch.delenv("DEEPFIN_COMPARE_DEADLINE", raising=False)
+    with pytest.raises(ValueError, match=r"CPU reference relocation|exact retained CPU encoder"):
+        shared_service.main()
+
+
 def test_actual_pipelined_local_ids_retained_history_three_heads_and_orphan_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    retained, comparison, publisher, api = retained_modules(monkeypatch)
+    retained, comparison, publisher, api = retained_modules(monkeypatch, tmp_path)
     fixture = fixture_module()
     worker.rep_fix.apply(True, boards_discarded=True)
     units = {}
@@ -195,9 +230,10 @@ def test_pipeline_backpressure_and_duplicate_fail_closed(tmp_path: Path) -> None
 def test_retained_sqlite_ack_waits_for_ceres_and_preserves_completed_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    retained, _comparison, _publisher, _api = retained_modules(monkeypatch)
-    checkpoint_module = retained.load("owner_checkpoint_fixture", "/tmp/bt4-opt10-v9-D/scripts/bt4_longblock_checkpoint_v2.py")
-    recovery = retained.load("owner_recovery_fixture", "/tmp/bt4-opt10-v9-D/scripts/bt4_raw_recovery_v2.py")
+    retained, _comparison, _publisher, _api = retained_modules(monkeypatch, tmp_path)
+    reference = reference_sources(tmp_path)
+    checkpoint_module = retained.load("owner_checkpoint_fixture", str(reference / "scripts/bt4_longblock_checkpoint_v2.py"))
+    recovery = retained.load("owner_recovery_fixture", str(reference / "scripts/bt4_raw_recovery_v2.py"))
     fixture = fixture_module()
     worker.rep_fix.apply(True, boards_discarded=True)
     owner = threading.get_ident()
@@ -276,8 +312,10 @@ def test_retained_sqlite_ack_waits_for_ceres_and_preserves_completed_receipt(
 def test_retained_companion_starts_actual_fake_child_and_pipelines_units(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, physical: int,
 ) -> None:
-    retained, comparison, _publisher, _api = retained_modules(monkeypatch)
-    client_module = retained.load("retained_child_client", "/tmp/bt4-opt10-v9-D/scripts/ceres_game_companion_client.py")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "-1")
+    retained, comparison, _publisher, _api = retained_modules(monkeypatch, tmp_path)
+    reference = reference_sources(tmp_path)
+    client_module = retained.load("retained_child_client", str(reference / "scripts/ceres_game_companion_client.py"))
     fixture = fixture_module()
     worker.rep_fix.apply(True, boards_discarded=True)
     units, receipts = {}, {}
@@ -287,11 +325,11 @@ def test_retained_companion_starts_actual_fake_child_and_pipelines_units(
         units[name] = spec.out.resolve()
         receipts[name] = {**raw, "path": str(spec.out.resolve() / "games" / raw["path"])}
     root = Path(__file__).resolve().parents[1]
-    config = json.loads(Path("/tmp/bt4-opt10-v9-D/scripts/dual_companion_config.json").read_text())
+    config = cpu_config(reference, root)
     service = root / "scripts/ceres_shared_game_service.py"
     def digest(path):
         return hashlib.sha256(path.read_bytes()).hexdigest()
-    config.update(python="/usr/bin/python3.10", service_source={"path": str(service), "sha256": digest(service)},
+    config.update(service_source={"path": str(service), "sha256": digest(service)},
                   service_output=str(tmp_path / "ceres_service"))
     config["shared_service"] = {"units": [{"unit_id": name, "raw_root": str(path)} for name, path in units.items()],
         "max_games": 2, "target_rows": 2, "max_rows": 8, "batch_wait_ms": 100, "poll_seconds": 0.001,
