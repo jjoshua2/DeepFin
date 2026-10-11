@@ -43,7 +43,7 @@ shape, and serialized file reads are capped at 256 MiB. This format uses no pick
 This increment starts from main `cba7beafaa882359aef293d3533948e2e56a5781`.
 Main supports qualified overlays but lacks the selected-row census and exact
 recovery cursor methods of the pinned fresh mixed runtime
-`/home/josh/chess-artifacts/operations/deepfin-fresh-mixed-count-runtime-20261010-v1`
+`deepfin-fresh-mixed-count-runtime-20261010-v1`
 whose sampler SHA256 is
 `5d6d53876f1bccef8095fdaab425ddb46322187154098aa5a64e8a874d86b543`.
 This artifact rejects that different source version. It does not implement indexed
