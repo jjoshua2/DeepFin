@@ -563,12 +563,8 @@ static int tt_donor_actions_match(const TreeData *t, int32_t donor,
  * not an encoder or terminal-search input; requiring it would throw away valid
  * reuse without buying correctness.
  */
-static int tt_donor_context_match(const TreeData *t, int32_t donor,
-                                  const CBoard *own) {
-    if (donor < 0 || donor >= t->cb_cache_cap || !t->cb_valid[donor])
-        return 0;
-
-    const CBoard *d = &t->cb_cache[donor];
+static int cboard_context_match(const CBoard *d, const CBoard *own,
+                                int root_reuse) {
     if (d->hash_stack_len < 0 || d->hash_stack_len > CBOARD_HASH_STACK_MAX ||
         own->hash_stack_len < 0 || own->hash_stack_len > CBOARD_HASH_STACK_MAX ||
         d->hist_len < 0 || d->hist_len > CBOARD_HISTORY_MAX ||
@@ -584,13 +580,23 @@ static int tt_donor_context_match(const TreeData *t, int32_t donor,
         d->ep_square != own->ep_square ||
         d->halfmove_clock != own->halfmove_clock ||
         d->hash != own->hash ||
-        d->hash_stack_len != own->hash_stack_len ||
         d->hist_len != own->hist_len)
         return 0;
 
-    if (d->hash_stack_len > 0 &&
-        memcmp(d->hash_stack, own->hash_stack,
-               (size_t)d->hash_stack_len * sizeof(uint64_t)) != 0)
+    int dn = d->hash_stack_len, on = own->hash_stack_len;
+    if (root_reuse) {
+        /* from_board keeps one pre-zeroing key beyond halfmove_clock, while
+         * cboard_push discards it. That position cannot recur after the pawn
+         * move/capture, so ignore only this unreachable prefix at root carry.
+         * Keep the stricter existing TT identity unchanged. */
+        if (dn > d->halfmove_clock) dn = d->halfmove_clock;
+        if (on > own->halfmove_clock) on = own->halfmove_clock;
+    }
+    if (dn != on ||
+        (dn > 0 &&
+         memcmp(d->hash_stack + d->hash_stack_len - dn,
+                own->hash_stack + own->hash_stack_len - on,
+                (size_t)dn * sizeof(uint64_t)) != 0))
         return 0;
 
     /* Ring-buffer storage layout is not semantic. Compare the same recency
@@ -608,6 +614,41 @@ static int tt_donor_context_match(const TreeData *t, int32_t donor,
             return 0;
     }
     return 1;
+}
+
+static int tt_donor_context_match(const TreeData *t, int32_t donor,
+                                  const CBoard *own) {
+    if (donor < 0 || donor >= t->cb_cache_cap || !t->cb_valid[donor])
+        return 0;
+    return cboard_context_match(&t->cb_cache[donor], own, 0);
+}
+
+/* Newly built/manual roots are unbound until their first Gumbel search.
+ * Bound nodes (including an advanced descendant) retain evaluation and solved
+ * state, not just replay caches, so replacing their context is unsafe. */
+static int tree_root_context_match(const TreeData *t, int32_t root,
+                                   const CBoard *own) {
+    if (root < 0 || root >= t->node_count) return 0;
+    if (root < t->cb_cache_cap && t->cb_valid[root])
+        return cboard_context_match(&t->cb_cache[root], own, 1);
+    if (t->parent[root] < 0) return 1;  /* new/manual unbound top-level root */
+
+    /* Forced collapse can expand or solve intermediate nodes without caching
+     * their board. Such a descendant is still bound to the ancestor's history.
+     * Derive that identity instead of treating missing cache as permission to
+     * replace evaluated/solved state on an advanced root. */
+    int32_t actions[MCTS_MAX_PATH], n = 0, ancestor = root;
+    while (ancestor >= 0 && ancestor < t->node_count &&
+           !(ancestor < t->cb_cache_cap && t->cb_valid[ancestor])) {
+        if (n >= MCTS_MAX_PATH || t->action_from_parent[ancestor] < 0) return 0;
+        actions[n++] = t->action_from_parent[ancestor];
+        ancestor = t->parent[ancestor];
+    }
+    if (ancestor < 0 || ancestor >= t->node_count) return 0;
+    CBoard cb = t->cb_cache[ancestor];
+    for (int32_t i = n - 1; i >= 0; i--)
+        cboard_push_index(&cb, actions[i]);
+    return cboard_context_match(&cb, own, 1);
 }
 
 /* Hash table: probe for existing node with given Zobrist hash. Returns node_id or -1.
@@ -689,6 +730,8 @@ static int32_t tree_add_node(TreeData *t, int32_t parent_id, int32_t action, dou
     int32_t id = t->node_count++;
     __atomic_store_n(&t->N[id], 0, __ATOMIC_RELAXED);
     atomic_store_double(&t->W[id], 0.0);
+    /* A reset or failed expansion can reuse an already allocated slot. */
+    __atomic_store_n(&t->virtual_loss[id], 0, __ATOMIC_RELAXED);
     t->prior[id] = prior_val;
     t->expanded[id] = 0;
     t->parent[id] = parent_id;
@@ -2212,12 +2255,24 @@ static int MCTSTree_init(MCTSTreeObject *self, PyObject *args, PyObject *kwds) {
 }
 
 
-/* add_root(N, W) -> int (root node id) */
+/* add_root(N, W[, CBoard]) -> int (root node id) */
 static PyObject *MCTSTree_add_root(MCTSTreeObject *self, PyObject *args) {
     int N;
     double W;
-    if (!PyArg_ParseTuple(args, "id", &N, &W))
+    PyObject *board_obj = Py_None;
+    if (!PyArg_ParseTuple(args, "id|O", &N, &W, &board_obj))
         return NULL;
+    const CBoard *cb = NULL;
+    if (board_obj != Py_None) {
+        if (ensure_cboard_type() < 0) return NULL;
+        if (Py_TYPE(board_obj) != _cached_cboard_type) {
+            PyErr_SetString(PyExc_TypeError, "board must be a CBoard");
+            return NULL;
+        }
+        cb = &((PyCBoard *)board_obj)->board;
+        if (tree_ensure_cb_cache(&self->tree, self->tree.node_count + 1) < 0)
+            return PyErr_NoMemory();
+    }
 
     int32_t id = tree_add_node(&self->tree, -1, -1, 1.0);
     if (id < 0) {
@@ -2226,6 +2281,10 @@ static PyObject *MCTSTree_add_root(MCTSTreeObject *self, PyObject *args) {
     }
     __atomic_store_n(&self->tree.N[id], N, __ATOMIC_RELAXED);
     atomic_store_double(&self->tree.W[id], W);
+    if (cb) {
+        self->tree.cb_cache[id] = *cb;
+        self->tree.cb_valid[id] = 1;
+    }
     return PyLong_FromLong(id);
 }
 
@@ -3482,6 +3541,22 @@ static PyObject *MCTSTree_get_solved_status(MCTSTreeObject *self, PyObject *args
 }
 
 
+/* root_context_matches(node_id, CBoard) -> bool */
+static PyObject *MCTSTree_root_context_matches(MCTSTreeObject *self, PyObject *args) {
+    int node_id;
+    PyObject *board_obj;
+    if (!PyArg_ParseTuple(args, "iO", &node_id, &board_obj)) return NULL;
+    PyObject *boards = PyList_New(1);
+    if (!boards) return NULL;
+    Py_INCREF(board_obj);
+    PyList_SET_ITEM(boards, 0, board_obj);
+    CBoard cb;
+    int rc = extract_cboards(boards, 1, &cb, NULL);
+    Py_DECREF(boards);
+    if (rc < 0) return NULL;
+    return PyBool_FromLong(tree_root_context_match(&self->tree, node_id, &cb));
+}
+
 /* is_expanded(node_id) -> bool */
 static PyObject *MCTSTree_is_expanded(MCTSTreeObject *self, PyObject *args) {
     int node_id;
@@ -3545,6 +3620,10 @@ static PyObject *MCTSTree_memory_bytes(MCTSTreeObject *self, PyObject *Py_UNUSED
 
 /* reset() -> None  (clear tree for reuse) */
 static PyObject *MCTSTree_reset(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
+    /* Pending batches contain node ids from the discarded tree. Reject
+     * their continuation before those ids can be allocated again. */
+    gss_free(&self->gsim);
+    stored_free(&self->stored);
     self->tree.node_count = 0;
     self->tree.child_count = 0;
     /* Invalidate CBoard cache */
@@ -4022,6 +4101,56 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
         return NULL;
     }
     int n_extra_planes = (int)PyArray_DIM(enc_arr, 1) - 112;
+
+    /* Preflight identity while the previous pending batch is still intact.
+     * Refusing a changed context must not discard its continuation or strand
+     * its virtual loss. Check the whole batch before any tree/state mutation. */
+    if (ensure_cboard_type() < 0) {
+        Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+        Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+        return NULL;
+    }
+    const int32_t *incoming_ids = (const int32_t *)PyArray_DATA(root_ids_arr);
+    for (int32_t i = 0; i < n_boards; i++) {
+        int32_t rid = incoming_ids[i];
+        PyObject *cb_obj = PyList_GET_ITEM(root_cbs_list, i);
+        if (Py_TYPE(cb_obj) != _cached_cboard_type) {
+            PyErr_SetString(PyExc_TypeError, "all list elements must be CBoard objects");
+        } else if (rid != -1 && (rid < 0 || rid >= self->tree.node_count)) {
+            PyErr_Format(PyExc_ValueError, "root_id[%d]=%d out of range [-1, %d)",
+                         i, rid, self->tree.node_count);
+        } else if (rid >= 0 &&
+                   !tree_root_context_match(&self->tree, rid,
+                                            &((PyCBoard *)cb_obj)->board)) {
+            PyErr_Format(PyExc_ValueError,
+                         "root_id[%d]=%d has a different board/history context; "
+                         "create a fresh root", i, rid);
+        }
+        if (PyErr_Occurred()) {
+            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+            return NULL;
+        }
+        if (rid >= 0 && self->tree.parent[rid] < 0 &&
+            (rid >= self->tree.cb_cache_cap || !self->tree.cb_valid[rid])) {
+            /* An unbound root may appear twice in a raw batch, but can bind to
+             * only one context. Normal Python roots are already bound, so this
+             * duplicate check costs no pairwise work on the production path. */
+            for (int32_t j = 0; j < i; j++) {
+                if (incoming_ids[j] != rid) continue;
+                const CBoard *previous =
+                    &((PyCBoard *)PyList_GET_ITEM(root_cbs_list, j))->board;
+                if (!cboard_context_match(previous, &((PyCBoard *)cb_obj)->board, 1)) {
+                    PyErr_Format(PyExc_ValueError,
+                                 "root_id[%d]=%d has a different board/history context "
+                                 "from root_id[%d]; create a fresh root", i, rid, j);
+                    Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+                    Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+                    return NULL;
+                }
+            }
+        }
+    }
 
     /* Free previous sim state */
     GumbelSimState *g = &self->gsim;
@@ -4977,7 +5106,7 @@ static PyMethodDef MCTSTree_methods[] = {
     {"find_child", (PyCFunction)MCTSTree_find_child, METH_VARARGS,
      "find_child(node_id, action) -> child_node_id or -1"},
     {"add_root", (PyCFunction)MCTSTree_add_root, METH_VARARGS,
-     "add_root(N, W) -> int node_id"},
+     "add_root(N, W[, CBoard]) -> int node_id; bind context before search shortcuts"},
     {"expand", (PyCFunction)MCTSTree_expand, METH_VARARGS,
      "expand(node_id, actions_int32, priors_float64) -> None"},
     {"expand_from_logits", (PyCFunction)MCTSTree_expand_from_logits, METH_VARARGS,
@@ -5024,6 +5153,8 @@ static PyMethodDef MCTSTree_methods[] = {
      "get_solved_status(node_id) -> int (0=unknown, 1=win, -1=loss, 2=draw, STM perspective)"},
     {"mark_solved_path", (PyCFunction)MCTSTree_mark_solved_path, METH_VARARGS,
      "mark_solved_path(node_path: NDArray[np.int32], status: int) -> None. Mark leaf solved with status (1/-1/2 = WIN/LOSS/DRAW from STM, 0=skip) and propagate upward."},
+    {"root_context_matches", (PyCFunction)MCTSTree_root_context_matches, METH_VARARGS,
+     "root_context_matches(node_id, CBoard) -> bool; unbound roots may bind on first search"},
     {"is_expanded", (PyCFunction)MCTSTree_is_expanded, METH_VARARGS,
      "is_expanded(node_id) -> bool"},
     {"memory_bytes", (PyCFunction)MCTSTree_memory_bytes, METH_NOARGS,
@@ -6269,8 +6400,10 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
      * structural transposition and silently copy one history's network priors
      * and W/N into another history-sensitive lc0_root_legacy_meta state. No
      * signature changed, but the failure is silent/data-affecting, so stale
-     * binaries must fail fast rather than keep the old semantic. */
-    if (PyModule_AddIntConstant(m, "ABI_VERSION", 5) < 0) {
+     * binaries must fail fast rather than keep the old semantic.
+     * 6 = bound root context at allocation + root_context_matches: Python must
+     * detect a stale extension before using the new root lifecycle API. */
+    if (PyModule_AddIntConstant(m, "ABI_VERSION", 6) < 0) {
         Py_DECREF(m);
         return NULL;
     }
