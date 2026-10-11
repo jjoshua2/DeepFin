@@ -1430,11 +1430,10 @@ def _finalize_iteration(
   # Persist PID state AFTER observe() so checkpoints carry the
   # post-iteration difficulty.
     if pid is not None:
-        with contextlib.suppress(Exception):
-            atomic_write_text(
-                ckpt_dir / "pid_state.json",
-                json.dumps(pid.state_dict(), sort_keys=True, indent=2),
-            )
+        atomic_write_text(
+            ckpt_dir / "pid_state.json",
+            json.dumps(pid.state_dict(), sort_keys=True, indent=2),
+        )
 
   # Save top-3 checkpoints by lowest regret (best-effort). Write to a
   # persistent cross-trial location so Ray's --tune-keep-last-experiments
