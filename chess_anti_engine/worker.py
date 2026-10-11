@@ -446,11 +446,12 @@ _OR_FALLBACK_FIELDS: tuple[str, ...] = (
     "trial_id", "username", "stockfish_path", "shared_cache_dir",
 )
 
-# Args whose YAML value should override the CLI default whenever the YAML key
-# is present. Each entry is (cli_field, yaml_key, cast).
-_TYPED_OVERRIDE_FIELDS: tuple[tuple[str, str, type], ...] = (
-    ("upload_target_positions", "upload_target_positions", int),
-    ("upload_flush_seconds", "upload_flush_seconds", float),
+# Persisted worker YAML fills absent CLI values. Each tuple is
+# (cli_field, yaml_key, cast, hardcoded_default). The parser uses None to
+# distinguish an omitted flag from an explicit CLI value.
+_TYPED_OVERRIDE_FIELDS: tuple[tuple[str, str, type, int | float], ...] = (
+    ("upload_target_positions", "upload_target_positions", int, 500),
+    ("upload_flush_seconds", "upload_flush_seconds", float, 60.0),
 )
 
 
@@ -569,9 +570,9 @@ def _merge_cli_with_yaml_defaults(args, cfg: dict) -> None:
     if args.games_per_batch is None and "games_per_batch" in cfg:
         args.games_per_batch = int(cfg["games_per_batch"])
 
-    for cli_field, yaml_key, caster in _TYPED_OVERRIDE_FIELDS:
-        if yaml_key in cfg:
-            setattr(args, cli_field, caster(cfg[yaml_key]))
+    for cli_field, yaml_key, caster, default in _TYPED_OVERRIDE_FIELDS:
+        if getattr(args, cli_field) is None:
+            setattr(args, cli_field, caster(cfg.get(yaml_key, default)))
 
 
 def _resolve_worker_password(args, cfg: dict) -> str:
@@ -776,13 +777,13 @@ def main() -> None:
     ap.add_argument(
         "--upload-target-positions",
         type=int,
-        default=500,
+        default=None,
         help="Flush a completed-game upload batch once at least this many positions are buffered locally.",
     )
     ap.add_argument(
         "--upload-flush-seconds",
         type=float,
-        default=60.0,
+        default=None,
         help="Flush/upload at the next completed game boundary once this many seconds have elapsed since the last successful send.",
     )
     ap.add_argument(
