@@ -27,11 +27,11 @@
     "roster_sha256": "c8d440a9ddb31b3eb5b5fc751ea3ee0efb15016d6237a818a67f185abb604be2",
     "models": {
       "bt4": {
-        "path": "/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx",
+        "path": "/home/<user>/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx",
         "sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0"
       },
       "ceres": {
-        "path": "/home/josh/projects/chess/data/ceres/C3-768-30-pre8-I8/C3-768-30-pre8-I8.onnx",
+        "path": "/home/<user>/projects/chess/data/ceres/C3-768-30-pre8-I8/C3-768-30-pre8-I8.onnx",
         "sha256": "44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3"
       }
     },
@@ -1024,7 +1024,7 @@
         "ort": "1.29.0"
       }
     },
-    "output": "/home/josh/chess-artifacts/operations/bt4-ceres-same-position-compare-20261008-v9",
+    "output": "/home/<user>/chess-artifacts/operations/bt4-ceres-same-position-compare-20261008-v9",
     "semantics": "A BT4-only residency; B both independent sessions resident, sequential BT4 then C3 per same replay batch. No overlap claim; labels not used to choose moves.",
     "warmup_calls_per_session": 3,
     "teacher_env": {
@@ -1054,7 +1054,7 @@
       "sha256": "dfd76b297fc70b8c2945f671736c726783a947f6cb0facc895e541c12a8b2e80"
     }
   },
-  "approved_bank": "/home/josh/chess-artifacts/operations/bt4-opt10-v9-D",
+  "approved_bank": "/home/<user>/chess-artifacts/operations/bt4-opt10-v9-D",
   "service_output": null,
   "python": "/tmp/deepfin-ceres-collector-ort129/bin/python",
   "service_source": {
@@ -1062,7 +1062,7 @@
     "sha256": "ea1cb8da49f0b8f44a2000aae4276a5abaf922f4b25d866e6cd05628638027a3"
   },
   "cleanup_source": {
-    "path": "/mnt/c/Users/jjosh/Documents/Codex/2026-10-08/task/finite_natural_gpu_gap_bridge_v2.py",
+    "path": "<workspace>/finite_natural_gpu_gap_bridge_v2.py",
     "sha256": "e44e42ee984d00084a1820da0ebb4b13965d169769f8dcd6a536770ecfc76b9b"
   },
   "arm": "B",

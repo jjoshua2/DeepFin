@@ -201,8 +201,9 @@ Physical IO delta is measurement only and its disk check rejects exhaustion at0;
 reuse does not enforce every proposed limit key or a compute quota. No memory,
 VRAM, sustained concurrency or cleanup timing qualification is inferred.
 
-CPU fixtures use copied exact retained entry/checkpoint modules in an isolated
-overlay, actual runtime closure verification, native histories and durable SQLite.
+CPU fixtures use pinned retained modules in an isolated overlay. The entry has
+declared neutral path substitutions; the checkpoint remains an exact original.
+Tests exercise actual runtime closure verification, native histories and durable SQLite.
 Output allowlist, aggregate guard, tablebase, custody and CUDA session/profile
 boundaries are explicit CPU seams. Complete two-unit128-game execution, all-three custody call,
 begin-before-startup, full dual256-game child publication/ACK, committed restart
@@ -214,14 +215,16 @@ authorization artifact is armed and no queue insertion/admission is performed.
 
 ## Repository reference fixtures and post-startup priority
 
-The original retained scripts are not repository runtime entrypoints. Exact
-source bytes now live under `tests/fixtures/teacher_reference`, with original
-paths, SHA256 and sizes in its manifest. Tests validate and materialize these
+The original retained scripts are not repository runtime entrypoints. Pinned
+CPU source fixtures live under `tests/fixtures/teacher_reference`. Eleven bodies
+remain exact originals; six have only declared neutral home/workspace path
+substitutions. The manifest separately records original and derivative hashes
+and sizes. Tests validate and materialize these
 bytes into their own temporary directories. The original Companion starts its
 actual fake-CPU child and uses its original private-process cleanup; no replacement
 cleanup mock is introduced. The derivative CPU config explicitly relocates the
 comparison, TPG and backend to these fixtures and the installed checkout runtime.
-Real mode rejects this relocation. These sources and metadata do not authorize a
+Real mode rejects this relocation and retains exact original source pins. These sources and metadata do not authorize a
 production runtime, descriptor, model, queue or custody change.
 
 All original readiness namespaces and phase configuration in owner fixtures are
@@ -259,3 +262,12 @@ rejected legacy source-prefix or operational-readiness Python open/import reads.
 No blocked reads were recorded. This audits Python filesystem access, not arbitrary
 native filesystem reads, and does not qualify CI's Python/native build or whole
 repository test suite. The scoped static gate also passed.
+
+The first published portability increment subsequently failed ordinary CI:
+six embedded reference bodies violated the public path guard, and venv aliases
+failed the retained canonical interpreter check before the intended owner tests.
+The fixture correction declares neutral path derivatives without guard exemptions,
+and projects only the entry fixture's interpreter view onto its actual resolved
+binary. The retained checker still rejects changed binary hashes and native
+aliases. A selected regression under a symlinked venv is separate from a complete
+fresh CI result; the earlier120-case local run did not establish full CI success.

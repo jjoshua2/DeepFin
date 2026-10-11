@@ -1,4 +1,4 @@
-"""Materialize exact reviewed source bytes; relocate CPU metadata only."""
+"""Materialize pinned CPU references with declared neutral path derivatives."""
 from __future__ import annotations
 
 import hashlib
@@ -11,12 +11,17 @@ from typing import Any
 def reference_sources(tmp_path: Path) -> Path:
     fixtures = Path(__file__).with_name("fixtures") / "teacher_reference"
     manifest = json.loads((fixtures / "manifest.json").read_text())
+    if manifest["schema"] != 2:
+        raise ValueError("explicit original and CPU fixture identities required")
     root = tmp_path / "retained_reference"
     root.mkdir(exist_ok=True)
     for record in manifest["files"]:
         raw = (fixtures / record["fixture"]).read_bytes()
         if len(raw) != record["bytes"] or hashlib.sha256(raw).hexdigest() != record["sha256"]:
             raise ValueError("retained reference fixture bytes changed")
+        changed = any(record["path_relocations"].values())
+        if changed != (record["sha256"] != record["original_sha256"]):
+            raise ValueError("declared reference path transformation differs")
         target = root / record["relative"]
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():

@@ -129,7 +129,7 @@ def consume_rolling(worker,units,checkpoint,tablebase,guard,startup,parent,lease
 def fixed_bt4_startup(worker,profile_root,guard):
  """Established BT4 session; callable only after reviewed owner activation."""
  from scripts.bt4_tpg_bridge_v2 import MODEL_SHA
- model='/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx'
+ model='/home/<user>/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx'
  guard();before=Path(model).stat()
  if worker.file_sha256(Path(model))!=MODEL_SHA:raise ValueError('fixed distinct BT4 model SHA')
  after=Path(model).stat()

@@ -1,9 +1,9 @@
 """Conservative, bounded readiness observation; no launches or marker mutation."""
 import hashlib,json,os,stat
 from pathlib import Path
-ADMISSION=Path('/home/josh/chess-artifacts/operations/100m-mixed-storage-row-index-admission-20261008-v1/RESULT.json')
-PLAN=Path('/home/josh/chess-artifacts/operations/100m-sampler-preflight-owner-20261008-v1/PLAN.json')
-PREFLIGHT=Path('/home/josh/chess-artifacts/operations/100m-exact-bootstrap-seed131-20261008-v1.preflight-01/PREFLIGHT.json')
+ADMISSION=Path('/home/<user>/chess-artifacts/operations/100m-mixed-storage-row-index-admission-20261008-v1/RESULT.json')
+PLAN=Path('/home/<user>/chess-artifacts/operations/100m-sampler-preflight-owner-20261008-v1/PLAN.json')
+PREFLIGHT=Path('/home/<user>/chess-artifacts/operations/100m-exact-bootstrap-seed131-20261008-v1.preflight-01/PREFLIGHT.json')
 
 def read(path):
     fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
@@ -36,8 +36,8 @@ def requested(paths):
     if any(os.path.lexists(p) for p in paths):return True
     return training_ready()
 
-CURRENT_PLAN=Path('/home/josh/chess-artifacts/operations/100m-sampler-preflight-rootbucket-owner-20261008-v1/PLAN.json')
-CURRENT_PREFLIGHT=Path('/home/josh/chess-artifacts/operations/100m-exact-bootstrap-rootbucket-seed131-20261008-v1.preflight-01/PREFLIGHT.json')
+CURRENT_PLAN=Path('/home/<user>/chess-artifacts/operations/100m-sampler-preflight-rootbucket-owner-20261008-v1/PLAN.json')
+CURRENT_PREFLIGHT=Path('/home/<user>/chess-artifacts/operations/100m-exact-bootstrap-rootbucket-seed131-20261008-v1.preflight-01/PREFLIGHT.json')
 def training_ready():
     if old_training_ready():return True
     try:a,ar=read(ADMISSION);p,pr=read(CURRENT_PLAN);f,fr=read(CURRENT_PREFLIGHT)
@@ -54,8 +54,8 @@ def training_ready():
         and f.get('run_identity',{}).get('row_index')=={**a['row_index'], 'arm':'exact'})
 
 rootbucket_training_ready=training_ready
-STARTUP_PLAN=Path('/home/josh/chess-artifacts/operations/100m-sampler-preflight-startup-guard-owner-20261008-v1/PLAN.json')
-STARTUP_PREFLIGHT=Path('/home/josh/chess-artifacts/operations/100m-exact-bootstrap-startup-guard-seed131-20261008-v1.preflight-01/PREFLIGHT.json')
+STARTUP_PLAN=Path('/home/<user>/chess-artifacts/operations/100m-sampler-preflight-startup-guard-owner-20261008-v1/PLAN.json')
+STARTUP_PREFLIGHT=Path('/home/<user>/chess-artifacts/operations/100m-exact-bootstrap-startup-guard-seed131-20261008-v1.preflight-01/PREFLIGHT.json')
 def training_ready():
     if rootbucket_training_ready():return True
     try:a,ar=read(ADMISSION);p,pr=read(STARTUP_PLAN);f,fr=read(STARTUP_PREFLIGHT)
@@ -72,8 +72,8 @@ def training_ready():
         and f.get('run_identity',{}).get('row_index')=={**a['row_index'], 'arm':'exact'})
 
 startup_training_ready=training_ready
-PHASE_PLAN=Path('/home/josh/chess-artifacts/operations/100m-sampler-preflight-phase-guard-owner-20261008-v1/PLAN.json')
-PHASE_PREFLIGHT=Path('/home/josh/chess-artifacts/operations/100m-exact-bootstrap-phase-guard-seed131-20261008-v1.preflight-01/PREFLIGHT.json')
+PHASE_PLAN=Path('/home/<user>/chess-artifacts/operations/100m-sampler-preflight-phase-guard-owner-20261008-v1/PLAN.json')
+PHASE_PREFLIGHT=Path('/home/<user>/chess-artifacts/operations/100m-exact-bootstrap-phase-guard-seed131-20261008-v1.preflight-01/PREFLIGHT.json')
 def training_ready():
     if startup_training_ready():return True
     try:a,ar=read(ADMISSION);p,pr=read(PHASE_PLAN);f,fr=read(PHASE_PREFLIGHT)

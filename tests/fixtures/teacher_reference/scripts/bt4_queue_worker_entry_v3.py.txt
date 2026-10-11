@@ -20,8 +20,8 @@ from scripts.bt4_inherited_owner_v2 import birth, canonical_profile, inherited
 from scripts.bt4_longblock_checkpoint_v2 import Checkpoint
 from scripts.bt4_queue_consumer_v2 import OwnerGuard, consume_rolling, fixed_bt4_startup
 
-MODEL = "/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx"
-OPERATIONS = Path("/home/josh/chess-artifacts/operations")
+MODEL = "/home/<user>/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx"
+OPERATIONS = Path("/home/<user>/chess-artifacts/operations")
 REQUIRED_SOURCES = (
     "scripts/bt4_queue_worker_entry_v3.py",
     "scripts/bt4_queue_consumer_v2.py",
@@ -67,7 +67,7 @@ def external(path):
 
 def validate_control_paths(d):
     # This single global control is a marker only, never an output/data path.
-    global_stop = Path("/home/josh/projects/chess/chess_anti_engine/operations/DEEPFIN_STOP")
+    global_stop = Path("/home/<user>/projects/chess/chess_anti_engine/operations/DEEPFIN_STOP")
     for p in d["prior_roots"] + d["yield_paths"]:
         external(p)
     for p in d["stop_paths"]:

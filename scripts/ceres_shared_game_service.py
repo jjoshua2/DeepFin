@@ -34,6 +34,9 @@ RETAINED_SHA = {
     "comparison": "f2462476262a9cc2b06a00bca3a64f989075ea85335326c4b131d6ec0689ca2a",
     "publisher": "4e34271ddacdb13a5e3a13f55eee24479ffa3a9bc049763ef8f16e789374ff47",
 }
+# Repository CPU fixture derivative: only seven neutral home-path prefixes
+# differ from the original comparison source. Never admitted in real mode.
+CPU_REFERENCE_COMPARISON_SHA = "cde393fced54bdea5b030f9e8566c876cca3bcd64aab7700c23f37d4f8255f65"
 
 
 def bind_retained_ceres_history(
@@ -50,7 +53,10 @@ def bind_retained_ceres_history(
     Old receipts without the explicit unit namespace are rejected unchanged.
     """
     for module, key in ((retained, "retained"), (comparison, "comparison"), (publisher, "publisher")):
-        if hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest() != RETAINED_SHA[key]:
+        accepted = {RETAINED_SHA[key]}
+        if fake_cpu and key == "comparison":
+            accepted.add(CPU_REFERENCE_COMPARISON_SHA)
+        if hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest() not in accepted:
             raise ValueError("retained Ceres source binding changed")
     units = dict(units)
     if (not 1 <= len(units) <= 4096 or physical_batch not in (32, 256, 512)
@@ -383,9 +389,22 @@ def main() -> None:
         path = Path(__file__).resolve().parents[1] / relative
         if shared["source_pins"].get(relative) != hashlib.sha256(path.read_bytes()).hexdigest():
             raise ValueError("shared service consequential source closure changed")
+    plan = config["qualified_plan"]
+    cpu_paths = plan.get("cpu_fixture_paths")
+    if cpu_paths is not None:
+        if (not args.fake_cpu or set(cpu_paths) != {"runtime", "tpg", "adapter"}
+                or Path(cpu_paths["runtime"]) != Path(__file__).resolve().parents[1]
+                or Path(cpu_paths["adapter"]).name != "c3_backend.py"):
+            raise ValueError("CPU reference relocation requires the isolated fake runtime")
+        for key, expected in (("tpg", "ea0bc14c31eedd18abe67b9b90287b2d1b20245ec42aed4faa0d69d21df229b0"),
+                              ("adapter", "a62fb45047ae8e20128a559b7346f76b43d198515bd64c1f6e3b1ef5d7949c2c")):
+            if plan["source_pins"].get(cpu_paths[key]) != expected:
+                raise ValueError("exact retained CPU encoder/backend source required")
     def source(name: str, reference: dict[str, str], key: str) -> Any:
         path = Path(reference["path"])
-        if reference["sha256"] != RETAINED_SHA[key] or hashlib.sha256(path.read_bytes()).hexdigest() != reference["sha256"]:
+        expected = (CPU_REFERENCE_COMPARISON_SHA if cpu_paths is not None and key == "comparison"
+                    else RETAINED_SHA[key])
+        if reference["sha256"] != expected or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
             raise ValueError("retained service source pin changed")
         spec = importlib.util.spec_from_file_location(name, path)
         assert spec is not None
@@ -398,17 +417,6 @@ def main() -> None:
     retained = source("shared_retained_ceres_service", shared["retained_service_source"], "retained")
     comparison = source("shared_retained_comparison", config["v9_source"], "comparison")
     comparison.DEADLINE = deadline
-    plan = config["qualified_plan"]
-    cpu_paths = plan.get("cpu_fixture_paths")
-    if cpu_paths is not None:
-        if (not args.fake_cpu or set(cpu_paths) != {"runtime", "tpg", "adapter"}
-                or Path(cpu_paths["runtime"]) != Path(__file__).resolve().parents[1]
-                or Path(cpu_paths["adapter"]).name != "c3_backend.py"):
-            raise ValueError("CPU reference relocation requires the isolated fake runtime")
-        for key, expected in (("tpg", "ea0bc14c31eedd18abe67b9b90287b2d1b20245ec42aed4faa0d69d21df229b0"),
-                              ("adapter", "a62fb45047ae8e20128a559b7346f76b43d198515bd64c1f6e3b1ef5d7949c2c")):
-            if plan["source_pins"].get(cpu_paths[key]) != expected:
-                raise ValueError("exact retained CPU encoder/backend source required")
     for path, digest in plan["source_pins"].items():
         if comparison.sha(path) != digest:
             raise ValueError("qualified Ceres source closure changed")

@@ -76,8 +76,13 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, ...]:
     monkeypatch.setattr(entry, "OPERATIONS", campaign)
     def digest(path):
         return hashlib.sha256(path.read_bytes()).hexdigest()
-    closure = {"schema": "bt4_runtime_closure_v1", "python": {"path": sys.executable,
-        "prefix": sys.prefix, "base_prefix": sys.base_prefix, "sha256": digest(Path(sys.executable))}, "modules": {},
+    # The retained owner requires a canonical interpreter path. CI invokes a
+    # venv symlink; project only this fixture module's view onto its actual
+    # canonical binary, leaving pytest and subprocess interpreter selection intact.
+    interpreter = Path(sys.executable).resolve(strict=True)
+    monkeypatch.setattr(entry, "sys", SimpleNamespace(**{**vars(sys), "executable": str(interpreter)}))
+    closure = {"schema": "bt4_runtime_closure_v1", "python": {"path": str(interpreter),
+        "prefix": sys.prefix, "base_prefix": sys.base_prefix, "sha256": digest(interpreter)}, "modules": {},
         "runtime_files": {str(Path(worker._lc0_ext.__file__).resolve()): digest(Path(worker._lc0_ext.__file__))},
         "repo_sources": {relative: digest(overlay / relative) for relative in relative_paths}, "native_source_pins": {}}
     closure_path = overlay / "scripts/bt4_runtime_closure_v1.json"
@@ -392,6 +397,54 @@ def test_materialized_reference_drift_is_rejected_without_overwrite(tmp_path: Pa
     with pytest.raises(ValueError, match="materialized retained reference changed"):
         reference_sources(tmp_path)
     assert path.read_bytes() == changed
+
+
+@pytest.mark.parametrize("fault", [None, "interpreter_hash", "native_alias"])
+def test_retained_canonical_closure_with_fixture_interpreter_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str | None,
+) -> None:
+    actual = Path(sys.executable).resolve(strict=True)
+    alias = tmp_path / "python-alias"
+    alias.symlink_to(actual)
+    monkeypatch.setattr(sys, "executable", str(alias))
+    _descriptors, _options, seen, _evaluator, loaded, closure_path = setup(tmp_path, monkeypatch)
+    entry = loaded["bt4_queue_worker_entry_v3"]
+    assert sys.executable == str(alias)
+    assert entry.sys.executable == str(actual)
+    closure = json.loads(closure_path.read_text())
+    assert closure["python"]["path"] == str(actual)
+    if fault == "interpreter_hash":
+        closure["python"]["sha256"] = "0" * 64
+    elif fault == "native_alias":
+        path, digest = next(iter(closure["runtime_files"].items()))
+        native_alias = tmp_path / "native-alias"
+        native_alias.symlink_to(path)
+        closure["runtime_files"] = {str(native_alias): digest}
+    closure_path.write_text(json.dumps(closure))
+    if fault is None:
+        entry.verify_runtime_closure()
+    else:
+        with pytest.raises(ValueError, match=r"runtime file pin differs|runtime canonical file differs"):
+            entry.verify_runtime_closure()
+    assert seen == []
+
+
+def test_reference_manifest_distinguishes_original_and_neutral_path_bytes(tmp_path: Path) -> None:
+    fixtures = Path(__file__).with_name("fixtures") / "teacher_reference"
+    manifest = json.loads((fixtures / "manifest.json").read_text())
+    assert manifest["schema"] == 2
+    changed = [row for row in manifest["files"] if row["sha256"] != row["original_sha256"]]
+    assert len(changed) == 6
+    assert sum(row["path_relocations"]["home"] for row in changed) == 26
+    assert sum(row["path_relocations"]["workspace"] for row in changed) == 1
+    reference = reference_sources(tmp_path)
+    for row in manifest["files"]:
+        raw = (reference / row["relative"]).read_bytes()
+        assert hashlib.sha256(raw).hexdigest() == row["sha256"]
+        assert len(raw) == row["bytes"]
+        if row not in changed:
+            assert row["sha256"] == row["original_sha256"]
+            assert row["bytes"] == row["original_bytes"]
 
 
 @pytest.mark.parametrize("alias", ["_phase_requested", "_checked", "_ready_refs"])

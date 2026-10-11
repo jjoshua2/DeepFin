@@ -8,7 +8,7 @@ AD=P('/tmp/ceres-own-source-adapter-20260923')
 FROZEN=C3/'chess_anti_engine/encoding/ceres_tpg.py'
 ROOT=P('/tmp/deepfin-bt4-ceres-same-position-compare-20261008-v9')
 HISTORY='lc0_root_legacy_meta'
-MODELS={'bt4':{'path':'/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx','sha256':'1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0'},'ceres':{'path':'/home/josh/projects/chess/data/ceres/C3-768-30-pre8-I8/C3-768-30-pre8-I8.onnx','sha256':'44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3'}}
+MODELS={'bt4':{'path':'/home/<user>/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx','sha256':'1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0'},'ceres':{'path':'/home/<user>/projects/chess/data/ceres/C3-768-30-pre8-I8/C3-768-30-pre8-I8.onnx','sha256':'44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3'}}
 PYTHONS={'bt4':'/usr/bin/python3.10','ceres':'/tmp/deepfin-ceres-collector-ort129/bin/python'}
 DEADLINE=None
 OUTPUT_CAP=4*2**30
@@ -78,15 +78,15 @@ def lease(fd,path,identity):
     need(any(len(x)>5 and x[1]=='FLOCK' and x[3]=='WRITE' and x[5]==dev and int(x[4]) in ancestors for x in entries),'inherited same-open-description EX lock must already be held by ancestor')
 def guard(a,p):
     deadline_guard()
-    lease(a.gpu_fd,'/home/josh/projects/chess/scratchpad/gpu0_experiment.lock',[2096,81348917])
+    lease(a.gpu_fd,'/home/<user>/projects/chess/scratchpad/gpu0_experiment.lock',[2096,81348917])
 def private_output(path,fake=False):
-    base=ROOT if fake else P('/home/josh/chess-artifacts/operations')
+    base=ROOT if fake else P('/home/<user>/chess-artifacts/operations')
     need(path.is_absolute() and path.parent.resolve()==base.resolve(),'exact private output parent')
-    need(path.resolve(strict=False)==path and base.stat().st_dev==P('/home/josh').stat().st_dev,'resolved WSL-local output')
+    need(path.resolve(strict=False)==path and base.stat().st_dev==P('/home/<user>').stat().st_dev,'resolved WSL-local output')
     need(not path.exists() and not path.is_symlink(),'fresh output required')
 def private_worker_output(out,p,teacher,fake=False):
     root=out.parent.parent
-    approved=ROOT if fake else P('/home/josh/chess-artifacts/operations')
+    approved=ROOT if fake else P('/home/<user>/chess-artifacts/operations')
     need(out.is_absolute() and out.resolve(strict=False)==out,'resolved private worker output')
     need(root.parent.resolve()==approved.resolve(),'private worker root parent')
     need(fake or root==P(p['output']),'exact planned worker output')
@@ -103,7 +103,7 @@ def private_caches(out):
 def prepare(a):
     need(a.rows in (1024,2048),'1024/2048 fixed roster');r=a.plan.with_name(a.plan.stem+'-ROSTER.json')
     write(r,make_roster(a.rows))
-    p={'schema':1,'status':'PREPARED_NOT_AUTHORIZATION','rows':a.rows,'batch':32,'order':['A','B','B','A'],'teachers':{'A':['bt4'],'B':['bt4','ceres']},'roster':str(r),'roster_sha256':sha(r),'models':MODELS,'pythons':PYTHONS,'source_pins':pins(),'backends':{'bt4':{'numpy':'1.26.2','ort':'1.23.2'},'ceres':{'numpy':'2.2.6','ort':'1.29.0'}},'output':'/home/josh/chess-artifacts/operations/bt4-ceres-same-position-compare-20261008-v9','semantics':'A BT4-only residency; B both independent sessions resident, sequential BT4 then C3 per same replay batch. No overlap claim; labels not used to choose moves.','warmup_calls_per_session':3,'teacher_env':{'bt4':{'LD_LIBRARY_PATH':''},'ceres':{'LD_LIBRARY_PATH':'/tmp/deepfin-ceres-collector-ort129/lib/python3.13/site-packages/nvidia/cu13/lib:/tmp/deepfin-ceres-collector-ort129/lib/python3.13/site-packages/nvidia/cudnn/lib'}},'gpu_telemetry_interval_seconds':1.,'proposed_diagnostic_rpc_timeout_seconds':180,'proposed_diagnostic_bounds':{'whole_wall_seconds':600,'deadline_semantics':'Checked at RPC/file-hash/batch/final-validation/publication boundaries; blocking native IO needs owner external process-group timeout with cleanup grace. Not an absolute uninterruptible-IO guarantee.','output_bytes':4*2**30,'authority':'Proposed finite diagnostic bounds for independent review; not inherited production quotas or GPU launch authorization'},'note':'BT4 inherits verified owner emptyLD behavior; CUDA12 libraries are also loaded by existing torch2.11+cu128 adapter imports. C3 exactqualified cu13/cudnn path. No newbackend qualification asserted until actual providerproof.'}
+    p={'schema':1,'status':'PREPARED_NOT_AUTHORIZATION','rows':a.rows,'batch':32,'order':['A','B','B','A'],'teachers':{'A':['bt4'],'B':['bt4','ceres']},'roster':str(r),'roster_sha256':sha(r),'models':MODELS,'pythons':PYTHONS,'source_pins':pins(),'backends':{'bt4':{'numpy':'1.26.2','ort':'1.23.2'},'ceres':{'numpy':'2.2.6','ort':'1.29.0'}},'output':'/home/<user>/chess-artifacts/operations/bt4-ceres-same-position-compare-20261008-v9','semantics':'A BT4-only residency; B both independent sessions resident, sequential BT4 then C3 per same replay batch. No overlap claim; labels not used to choose moves.','warmup_calls_per_session':3,'teacher_env':{'bt4':{'LD_LIBRARY_PATH':''},'ceres':{'LD_LIBRARY_PATH':'/tmp/deepfin-ceres-collector-ort129/lib/python3.13/site-packages/nvidia/cu13/lib:/tmp/deepfin-ceres-collector-ort129/lib/python3.13/site-packages/nvidia/cudnn/lib'}},'gpu_telemetry_interval_seconds':1.,'proposed_diagnostic_rpc_timeout_seconds':180,'proposed_diagnostic_bounds':{'whole_wall_seconds':600,'deadline_semantics':'Checked at RPC/file-hash/batch/final-validation/publication boundaries; blocking native IO needs owner external process-group timeout with cleanup grace. Not an absolute uninterruptible-IO guarantee.','output_bytes':4*2**30,'authority':'Proposed finite diagnostic bounds for independent review; not inherited production quotas or GPU launch authorization'},'note':'BT4 inherits verified owner emptyLD behavior; CUDA12 libraries are also loaded by existing torch2.11+cu128 adapter imports. C3 exactqualified cu13/cudnn path. No newbackend qualification asserted until actual providerproof.'}
     write(a.plan,p);return {'plan':str(a.plan),'sha256':sha(a.plan),'rows':a.rows,'source_files':len(p['source_pins'])}
 class Fake:
     def __init__(self,np,t):self.np=np;self.t=t;self.calls=[]

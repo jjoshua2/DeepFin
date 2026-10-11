@@ -35,9 +35,9 @@ def inherited(parent,leases):
  return result
 
 
-CANONICAL_LEASES={'gpu':('/home/josh/projects/chess/scratchpad/gpu0_experiment.lock',(2096,81348917)),
+CANONICAL_LEASES={'gpu':('/home/<user>/projects/chess/scratchpad/gpu0_experiment.lock',(2096,81348917)),
                  'io':('/tmp/chess-physical-heavy-io-exclusive.lock',(2096,18503149)),
-                 'supervisor':('/home/josh/chess-artifacts/operations/deepfin-ceres-reserve38-recovery-queue-20261004-v5/supervisor.lock',(2096,18835410))}
+                 'supervisor':('/home/<user>/chess-artifacts/operations/deepfin-ceres-reserve38-recovery-queue-20261004-v5/supervisor.lock',(2096,18835410))}
 
 def canonical_profile(profile='all_three'):
  """Closed custody profiles; choosing one grants no execution authority."""

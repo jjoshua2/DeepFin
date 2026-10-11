@@ -69,7 +69,7 @@ def test_child_setup_rejects_before_retained_imports_or_session(
     assert list(tmp_path.iterdir()) == [config]
 
 
-@pytest.mark.parametrize("failure", ["real_mode", "encoder_pin"])
+@pytest.mark.parametrize("failure", ["real_mode", "encoder_pin", "comparison_pin"])
 def test_cpu_reference_relocation_rejects_real_mode_or_unreviewed_encoder_before_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
 ) -> None:
@@ -89,6 +89,8 @@ def test_cpu_reference_relocation_rejects_real_mode_or_unreviewed_encoder_before
             "sha256": digest(reference / "scripts/ceres_atomic_publication_v1.py")}}
     if failure == "encoder_pin":
         config["qualified_plan"]["source_pins"][config["qualified_plan"]["cpu_fixture_paths"]["tpg"]] = "0" * 64
+    elif failure == "comparison_pin":
+        config["v9_source"]["sha256"] = "0" * 64
     path = tmp_path / "config.json"
     path.write_text(json.dumps(config))
     argv = ["service", "--config", str(path)]
@@ -97,8 +99,22 @@ def test_cpu_reference_relocation_rejects_real_mode_or_unreviewed_encoder_before
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "-1")
     monkeypatch.delenv("DEEPFIN_COMPARE_DEADLINE", raising=False)
-    with pytest.raises(ValueError, match=r"CPU reference relocation|exact retained CPU encoder"):
+    with pytest.raises(ValueError, match=r"CPU reference relocation|exact retained CPU encoder|retained service source pin changed"):
         shared_service.main()
+
+
+@pytest.mark.parametrize("failure", ["real_mode", "changed_derivative"])
+def test_neutral_comparison_binding_is_exact_and_fake_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    retained, comparison, publisher, api = retained_modules(monkeypatch, tmp_path)
+    if failure == "changed_derivative":
+        path = Path(comparison.__file__)
+        path.write_bytes(path.read_bytes() + b"\n# rejected source drift\n")
+    with pytest.raises(ValueError, match="retained Ceres source binding changed"):
+        bind_retained_ceres_history(retained=retained, comparison=comparison, publisher=publisher,
+            api=api, units={"u0": tmp_path / "raw"}, model=comparison.MODELS["ceres"],
+            fake_cpu=failure != "real_mode", physical_batch=32, provider=None)
 
 
 def test_actual_pipelined_local_ids_retained_history_three_heads_and_orphan_recovery(
