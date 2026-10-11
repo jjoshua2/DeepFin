@@ -695,7 +695,7 @@ print(_trial_replay_shard_dir(config=cfg, trial_dir=Path(sys.argv[2])))
 PY
 }
 
-best_save() {
+best_save() (
     if [ $# -lt 1 ]; then
         echo "Usage: $0 best-save LABEL [--iter N]"
         return 1
@@ -741,11 +741,17 @@ best_save() {
     local replay_src
     replay_src="$(_trial_replay_dir "$trial_dir")"
 
-    local pool="$BEST_POOLS_DIR/$label"
-    if [ -d "$pool" ]; then
-        echo "Pool already exists: $pool (choose a different LABEL or rm it first)"
+    local final_pool="$BEST_POOLS_DIR/$label"
+    if [ -e "$final_pool" ]; then
+        echo "Pool already exists: $final_pool (choose a different LABEL or rm it first)"
         return 1
     fi
+    mkdir -p "$BEST_POOLS_DIR"
+    local pool
+    pool="$(mktemp -d "$BEST_POOLS_DIR/.best-save.XXXXXX")"
+    # Keep construction hidden until complete, and remove only this invocation's
+    # staging directory on copy, metadata, or manifest failure.
+    trap 'rm -rf -- "$pool"' EXIT
     mkdir -p "$pool/seeds/slot_000"
     cp "$best_src/trainer.pt" "$pool/seeds/slot_000/trainer.pt"
     [ -f "$best_src/pid_state.json" ] && cp "$best_src/pid_state.json" "$pool/seeds/slot_000/pid_state.json"
@@ -793,10 +799,19 @@ p.write_text(json.dumps({
     }]
 }, indent=2, sort_keys=True))
 PY
-    echo "Saved best pool: $pool"
+    if ! mv -nT -- "$pool" "$final_pool"; then
+        echo "Could not publish best pool: $final_pool" >&2
+        return 1
+    fi
+    if [ -e "$pool" ]; then
+        echo "Pool already exists: $final_pool (choose a different LABEL or rm it first)" >&2
+        return 1
+    fi
+    trap - EXIT
+    echo "Saved best pool: $final_pool"
     echo "  regret=$regret iter=$iter_v winrate=$winrate shards=$shards_copied"
-    echo "Restore with: ./scripts/train.sh salvage-restart $pool"
-}
+    echo "Restore with: ./scripts/train.sh salvage-restart $final_pool"
+)
 
 best_list() {
     local any=0
