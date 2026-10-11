@@ -148,6 +148,7 @@ def test_parse_opening_line_accepts_four_field_epd() -> None:
 def test_score_ci_and_elo_helpers() -> None:
     module = _load_match_vs_uci_module()
 
+    assert module._score_ci([1.0, 0.0, 1.0, 0.0]) is None
     ci = module._score_ci([1.0, 0.5, 0.0, 0.5])
 
     assert ci is not None

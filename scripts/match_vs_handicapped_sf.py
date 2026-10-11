@@ -934,11 +934,16 @@ def summarize(outcomes: Sequence[GameOutcome], *, regret: float) -> dict[str, An
 
     if pair_scores:
         summary = summarize_pentanomial(pentanomial_counts(pair_scores))
-        lo = summary.score - 1.96 * summary.score_se
-        hi = summary.score + 1.96 * summary.score_se
+        if summary.interval_status != "available_normal_approximation":
+            lo = hi = None
+        else:
+            assert summary.score_se is not None
+            lo = summary.score - 1.96 * summary.score_se
+            hi = summary.score + 1.96 * summary.score_se
         out["ci_unit"] = "pair (pentanomial)"
         out["score"] = summary.score
         out["score_se"] = summary.score_se
+        out["interval_status"] = summary.interval_status
         out["score_ci95"] = [lo, hi]
         out["pentanomial"] = {
             "WW": summary.counts[0], "WD_DW": summary.counts[1],
@@ -957,6 +962,7 @@ def summarize(outcomes: Sequence[GameOutcome], *, regret: float) -> dict[str, An
         out["score"] = mean_g
         out["score_se"] = se_g
         out["score_ci95"] = [mean_g - 1.96 * se_g, mean_g + 1.96 * se_g]
+        out["interval_status"] = "unavailable_insufficient_pairs"
         out["elo"] = None
         out["elo_ci95"] = [None, None]
 
@@ -1607,9 +1613,11 @@ def main() -> None:
     args.out.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
     h = record["handicap"]
+    def _fmt_ci(value: float | None) -> str:
+        return "n/a" if value is None else f"{value:.4f}"
     print(
         f"[idharness] score {record['score']:.4f} "
-        f"[{record['score_ci95'][0]:.4f}, {record['score_ci95'][1]:.4f}] "
+        f"[{_fmt_ci(record['score_ci95'][0])}, {_fmt_ci(record['score_ci95'][1])}] "
         f"({record['ci_unit']}), elo {record['elo']} {record['elo_ci95']}\n"
         f"[idharness] realized handicap over {h['measured_moves']} SF moves: "
         f"admitted_by_regret {h['admitted_by_regret_mean']} "
