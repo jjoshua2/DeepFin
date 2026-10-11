@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
+import pytest
 
 from chess_anti_engine.tune.trainable_phases import _finalize_iteration
 from chess_anti_engine.tune.trainable_report import _write_rng_state_sidecar
@@ -117,3 +118,58 @@ def test_finalize_updates_checkpoint_rng_after_puzzle_eval(
     status_cols = (tmp_path / "status.csv").read_text(encoding="utf-8").strip().split(",")
     assert status_cols[0] == "1"
     assert status_cols[1] == "1"
+
+
+def test_failed_pid_state_write_prevents_reporting_checkpoint(tmp_path: Path, monkeypatch) -> None:
+    from chess_anti_engine.tune import trainable_phases
+
+    def fail_pid_state(path, _text):
+        if Path(path).name == "pid_state.json":
+            raise OSError("simulated PID storage failure")
+        raise AssertionError(f"unexpected state write: {path}")
+
+    monkeypatch.setattr(trainable_phases, "atomic_write_text", fail_pid_state)
+    reported = []
+
+    class _Pid:
+        wdl_regret = -1.0
+
+        def state_dict(self):
+            return {"integral": 3.0}
+
+    with pytest.raises(OSError, match="simulated PID storage failure"):
+        _finalize_iteration(
+            tc=TrialConfig.from_dict({"device": "cpu", "puzzle_interval": 0}),
+            trainer=_Trainer(),
+            pid=_Pid(),
+            sp=SelfplayResult(),
+            tr=TrainingResult(),
+            drift=DriftMetrics(),
+            pid_result=PidResult(),
+            eval_dict={"eval_win": 0, "eval_draw": 0, "eval_loss": 0, "eval_winrate": 0.0},
+            checkpoint=object(),
+            best_loss=999.0,
+            ckpt_dir=tmp_path / "ckpt",
+            durable_dir=tmp_path,
+            status_csv_path=tmp_path / "status.csv",
+            tune_report_fn=lambda *_args, **_kwargs: reported.append(True),
+            puzzle_suite=None,
+            era_probes={},
+            ds=DifficultyState(wdl_regret=-1.0, sf_nodes=500),
+            distributed_pause_started_at=None,
+            distributed_pause_active=False,
+            restore=RestoreResult(),
+            holdout_frozen=False,
+            holdout_generation=0,
+            buf_size=0,
+            holdout_buf_size=0,
+            iter_t0=0.0,
+            iteration_idx=1,
+            iteration_zero_based=0,
+            global_iter=0,
+            completed_iterations=0,
+            device="cpu",
+            rng=np.random.default_rng(123),
+        )
+
+    assert reported == []
