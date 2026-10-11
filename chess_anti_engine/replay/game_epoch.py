@@ -33,6 +33,7 @@ import hashlib
 from contextlib import contextmanager
 import math
 import struct
+import sys
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -1157,7 +1158,17 @@ class GameAwareEpochBuffer:
         host_batch_overlap: bool = False,
         overlay_storage_qualification: dict[str, str] | None = None,
         allow_packed_zarr: bool = False,
+        startup_cache_read: dict[str, str] | None = None,
+        startup_cache_write: Path | None = None,
+        startup_cache_recipe: dict[str, Any] | None = None,
     ) -> None:
+        import chess_anti_engine.replay.startup_cache as startup_cache
+        if startup_cache_read is not None and startup_cache_write is not None:
+            raise ValueError("choose construction cache read or write")
+        using_cache = startup_cache_read is not None or startup_cache_write is not None
+        if using_cache and not startup_cache_recipe:
+            raise ValueError("construction cache requires an explicit target/counter recipe")
+        self.startup_cache_sha256: str | None = None
         if allow_packed_zarr and overlay_storage_qualification is not None:
             raise ValueError("packed ordinary shards do not support overlay qualification")
         self.allow_packed_zarr = bool(allow_packed_zarr)
@@ -1176,8 +1187,41 @@ class GameAwareEpochBuffer:
             from .target_overlay import qualified_paths
             qualified, self._overlay_seal = qualified_paths(overlay_storage_qualification, paths)
         self._allow_target_overlay = allow_target_overlay
-        records = (_scan_shards(paths, int(plan_workers), allow_target_overlay=True, overlay_seal=self._overlay_seal)
+        config = {
+            "shard_dir": str(Path(shard_dir).resolve(strict=True)),
+            "batch_size": int(batch_size), "seed": int(seed),
+            "input_planes": None if input_planes is None else int(input_planes),
+            "input_history_encoding": normalize_lc0_history_encoding(input_history_encoding),
+            "history_rep_fix": bool(history_rep_fix), "mirror_augmentation": bool(mirror_augmentation),
+            "plan_workers": max(1, int(plan_workers)), "load_workers": max(1, int(load_workers)),
+            "max_working_set_bytes": int(max_working_set_bytes),
+            "host_batch_overlap": bool(host_batch_overlap), "allow_packed_zarr": bool(allow_packed_zarr),
+            "overlay_storage_qualification": overlay_storage_qualification,
+            "recipe": startup_cache_recipe,
+        }
+        bindings: dict[str, Any] = {}
+        cached: dict[str, Any] | None = None
+        if using_cache:
+            # No immutable authority is inferred from timestamps or a cache.
+            # Verify every mutable shard's bytes, including zero-row reservations.
+            bindings = {"config": config, "source": startup_cache.source_binding(objective_mask_counter),
+                        "roster": [[str(path), str(path.resolve(strict=True)),
+                                    _storage_hash(path.resolve(strict=True), allow_target_overlay, self._overlay_seal)]
+                                   for path in paths]}
+            if startup_cache_read is not None:
+                if set(startup_cache_read) != {"path", "sha256"}:
+                    raise ValueError("construction cache reference schema")
+                cached = startup_cache.load(Path(startup_cache_read["path"]), startup_cache_read["sha256"], bindings,
+                                            {"_ShardGames": _ShardGames, "GameEpochPlan": GameEpochPlan})
+                startup_cache.validate(cached, list(paths), config, sys.modules[__name__])
+                self.startup_cache_sha256 = startup_cache_read["sha256"]
+        records = cached["census"] if cached is not None else (
+                   _scan_shards(paths, int(plan_workers), allow_target_overlay=True, overlay_seal=self._overlay_seal)
                    if allow_target_overlay else _scan_shards(paths, int(plan_workers)))
+        if using_cache:
+            content_for_path = {Path(row[1]): row[2] for row in bindings["roster"]}
+            if any(record.content_sha256 != content_for_path[record.path] for record in records):
+                raise ValueError("construction census differs from verified source bytes")
         if qualified is not None and any(
             record.content_sha256 != qualified[record.path] for record in records
         ):
@@ -1218,14 +1262,14 @@ class GameAwareEpochBuffer:
                 "exact-epoch corpus mixes policy widths "
                 f"{policy_sizes}; normalize the corpus before training",
             )
-        records = (
+        records = records if cached is not None else (
             _attach_objective_mask_weights(records, objective_mask_counter, int(plan_workers),
                                           allow_target_overlay=True, overlay_seal=self._overlay_seal)
             if allow_target_overlay else
             _attach_objective_mask_weights(records, objective_mask_counter, int(plan_workers))
         )
         effective_load_workers = max(1, int(load_workers))
-        self.plan, self._records = _plan_epoch(
+        self.plan, self._records = (cached["plan"], cached["shuffled_records"]) if cached is not None else _plan_epoch(
             records,
             batch_size=int(batch_size),
             seed=int(seed),
@@ -1260,6 +1304,12 @@ class GameAwareEpochBuffer:
         # off the schedule streams makes augmentation probability unable to
         # change which rows the epoch contains or how games are batched.
         self.rng = _seeded_rng(seed, 3)
+        if startup_cache_write is not None:
+            state = {"census": records, "plan": self.plan, "shuffled_records": self._records,
+                     "rng": {name: getattr(self, name).bit_generator.state
+                             for name in ("_choice_rng", "_row_rng", "rng")}}
+            startup_cache.validate(state, list(paths), config, sys.modules[__name__])
+            self.startup_cache_sha256 = startup_cache.publish(startup_cache_write, state, bindings)
 
         self._next_shard = 0
         self._next_chunk_id = 0
