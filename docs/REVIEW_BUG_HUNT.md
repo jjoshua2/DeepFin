@@ -492,6 +492,17 @@ Current notes:
   now seeds terminal root values from `CBoard.terminal_value()`.
 - Focused MCTS/UCI parity validation after F047 passed:
   `python3 -m pytest tests/test_mcts_uci_parity_gates.py tests/test_gumbel_root_many_edge_cases.py tests/test_mcts_c_tree.py tests/test_uci_searchmoves.py -q`.
+- Finding F048 opened/fixed in this cycle: `flatten_run_config_defaults()` silently skipped recognized nested configuration sections when their YAML value was not a mapping (for example `selfplay: false`). The loader now rejects non-mapping values for `stockfish`, `selfplay`, `train`, `model`, and `tune` before flattening. Regression coverage exercises five malformed value classes across all five sections and accepts empty mappings.
+- Finding F049 opened/fixed in this cycle: worker YAML `upload_target_positions` and `upload_flush_seconds` overrode explicit CLI values because argparse populated hardcoded defaults indistinguishable from user input. These CLI defaults now use sentinels; merge precedence is explicit CLI, then YAML, then documented hardcoded defaults. Regression coverage checks both CLI-over-YAML and YAML/default fallback.
+- Finding F050 opened/fixed in this cycle: quoted YAML boolean values (for example
+  model.use_smolgen: "false") were converted with Python bool() or assigned to
+  argparse store_true defaults, so strings such as "false" behaved as true and could
+  silently change model/training/search configuration. The loader now rejects
+  non-boolean values for every enumerated run.py store_true and BooleanOptionalAction destination; tests pin
+  root/train/model/tune examples and both valid boolean inversion outcomes.
+
+- Focused config and worker validation after F048-F050 passed: 95 passed across tests/test_config_yaml.py, tests/test_trial_config.py, tests/test_yaml_failure_modes.py, and tests/test_worker_config_yaml.py; Python compilation and Ruff checks passed. UCI and server --help smoke checks passed. Local Linux x86_64/Python 3.10 wheel build succeeded from final revision (no dependencies installed).
+- Entrypoints/config/packaging pass coverage: run/train/tune CLI and wrapper wiring; YAML parsing/default flattening and validation; worker/server CLI/YAML precedence and persisted/runtime overrides; Tune typed configuration handoff; packaging metadata, extras, native extensions, and runtime dependency declarations. Clean cross-platform wheel installation was not exercised because this pass avoided dependency installation.
 - Follow-up S007 gate expansion added an independent persistent-root reuse
   contract: after `advance_root`, the same tree/root child must remain active,
   the new root's children must match the new board's legal mask, and the next
@@ -640,6 +651,9 @@ Context:
 | F054 | Medium | Evaluation correctness | Pentanomial summary | `scripts/arena_standard.py`, `scripts/match_vs_handicapped_sf.py`, `scripts/bt4_joint_readout.py`, `scripts/bt4_recipe_readout.py`, `scripts/match_vs_uci.py` and summary tests | Both one-pair fallback and repeated identical pair outcomes could publish point-width normal CIs despite no empirical between-pair variance. | Preserve the pair-level estimator and SE=0 for repeated outcomes, but mark score/Elo intervals unavailable with explicit status. Use the status in arena receipts/console, handicapped and BT4 readouts, and the calibration gate. Paired UCI output also reports unavailable when pair variance is zero. | Bernoulli counterexample, zero-variance and one-pair cases, nondegenerate golden intervals, all summary consumers, and a resumed-index ordering counterexample. | fixed |
 
 | F064 | Medium | Reliability / Artifact Publication | Operational scripts | `scripts/train.sh`, `tests/test_train_sh_best_save_atomic.py` | `best-save` created the final named pool before copying its checkpoint/replay and writing the manifest. A copy or write failure left a partial pool at the destination; a retry with the same label then refused because the directory already existed. | Temporary-directory injection failed the second `cp`: base returned 23 with `pools/candidate/seeds/slot_000/trainer.pt` left published; a retry returned 1 (`Pool already exists`). | Build in a hidden same-filesystem staging directory, clean it on failure, and rename only after the restore-compatible manifest is complete. Regression verifies failed publication leaves neither destination nor stage, then same-label retry publishes checkpoint, replay and manifest. Focused slice: `19 passed`. | fixed |
+| F048 | Medium | Reliability / Config | Nested YAML section types | `chess_anti_engine/utils/config_yaml.py`, `tests/test_config_yaml.py` | Recognized nested config sections with scalar, sequence, null, or boolean values were silently skipped during flattening, making malformed configuration appear accepted and potentially falling back to unrelated defaults. | `flatten_run_config_defaults()` only merged section values when `isinstance(value, dict)` and ignored every other shape. | Validate all recognized section values as mappings before flattening. Added negative tests for five malformed value classes across five sections and positive tests for empty mappings. | fixed |
+| F049 | Medium | Config precedence | Worker upload CLI overrides | `chess_anti_engine/worker.py`, `tests/test_worker_config_yaml.py` | Explicit `--upload-target-positions` and `--upload-flush-seconds` values could be overwritten by persisted worker YAML values. | argparse hardcoded defaults were always merged as though explicitly supplied, and YAML unconditionally overwrote them. | Use `None` parser sentinels and merge explicit CLI over YAML over hardcoded defaults. Added precedence and fallback tests. | fixed |
+| F050 | Medium | Config correctness | Truthy YAML booleans | chess_anti_engine/utils/config_yaml.py, tests/test_config_yaml.py | Quoted values such as model.use_smolgen: "false" (and boolean argparse defaults such as no_amp: "false") were truthy strings, silently inverting or enabling settings the config meant to disable. | _apply_model_section() applied bool() before inversion, while argparse store_true defaults preserved strings. | Validate YAML types for all enumerated run.py store_true and BooleanOptionalAction destinations after flattening; preserve None as absent. Tests cover invalid strings/numbers/null plus valid bools across root/train/model/tune. | fixed |
 ## Review Passes
 
 | Pass | Status | Goal | Main Outputs |
@@ -803,6 +817,7 @@ Efficiency/scalability:
 
 Tests:
 
+- [x] `tests/test_config_yaml.py`
 - [x] `tests/test_trial_config.py`
 - [x] `tests/test_worker_config_yaml.py`
 - [x] `tests/test_train_import_lazy.py`
@@ -1949,3 +1964,44 @@ selfplay route; fix commit 17547ae9534c53e321f0e4ed251faa38d40ca4d3):
 - Final recovery refinement: receipt age is recovered from the server-generated pending filename, not uploaded Zarr mtime (mtime is only a legacy/malformed-name fallback). The regression uses an eight-hour-old source mtime and proves simulated receipt-write failure plus restart still dedupes a retry. See the bounded rerun evidence above.
 - Worker identity is the SHA-256 of the exact packed tar sent in the request; the API has no separate upload UUID. Byte-identical payloads are intentionally retries, matching the pre-existing in-memory SHA key. Changed bytes with a stale digest are rejected; a distinct packed shard with identical sample rows remains valid.
 - Scope limits: local single-process POSIX restart/recovery; no concurrent server processes, network filesystem guarantees, arbitrary power-loss matrix, or retry behavior after the six-hour TTL is claimed. No exact-once delivery claim.
+
+
+## Historical PR993 config and packaging pass (2026-10-03)
+
+The following original focus/checklist and hosted follow-up are dated audit evidence; later records above remain current.
+
+Component: Entrypoints, Config, Packaging (additive verification pass)
+
+Goal: verify production entrypoints, configuration precedence and validation, and package/runtime dependency flow; record confirmed findings with regression coverage.
+
+Last updated: 2026-10-03
+
+#### Entrypoints/config/packaging first-pass checklist
+
+- [x] run.py two-pass CLI: pre-parse --config, YAML load/root shape, recognized nested sections, unknown keys, section mappings, flat-vs-nested override precedence, and YAML-to-argparse defaults.
+- [x] Runtime config guards: sparse Stockfish policy fields, target-only/temperature constraints, and documented realized defaults are checked before execution; every run.py store_true and BooleanOptionalAction destination rejects non-boolean YAML values instead of applying truthiness.
+- [x] Worker entrypoint: parser sentinels and explicit CLI > persisted worker.yaml > hardcoded defaults; credentials/password-file and cleartext transport guard; effective upload thresholds flow into persisted runtime config and shard buffer flush consumer.
+- [x] Worker pool entrypoint: pool-owned work/cache directories cannot be overridden through forwarded child arguments; child command uses current interpreter/module invocation.
+- [x] UCI packaged console and module entrypoints: deepfin resolves to chess_anti_engine.uci.__main__:main; help parsing and parser-to-engine startup wiring checked.
+- [x] HTTP server entrypoint: run_server argparse defaults/options flow into create_app and uvicorn; the server launcher is CLI-configured and does not read a YAML file.
+- [x] Script launcher: scripts/train.sh resolves its config path, exports required CUDA probe env and launches run.py with --config; help/status paths inspected without starting training.
+- [x] Tune config handoff: run.py argument values flow through _build_tune_config_dict into Tune typed config construction; relevant existing TrialConfig tests included.
+- [x] Packaging metadata: Python floor, core and optional dependencies, deepfin console entry, package discovery, NumPy-backed native extension declarations, compiler portability flags, and uv lock environment reviewed against import/install docs.
+- [x] Negative/contract tests: malformed recognized YAML sections, quoted/non-boolean model bools, explicit worker CLI vs YAML, YAML fallback/casters, parser failures; focused suites rerun.
+- [x] Linux x86_64/Python 3.10 wheel built locally without dependency installation; wheel contains all five declared native extensions and the deepfin console entrypoint. [ ] Cross-platform wheel/install matrix and clean isolated install were not run; no claim is made for Windows/macOS/ARM behavior.
+
+
+
+
+### Hosted CI follow-up for #993
+
+Run 37082604309 failed only two parameterized cases for sf_pid_enabled in
+tests/test_construction_only_config_keys.py: the helper wrote numeric 4321,
+which the newer Boolean YAML validator correctly rejects before the reload
+contract is reached. The fixture now chooses a validator-accepted boolean for
+boolean keys, returns the parsed fixture value, and asserts startup reload
+against that value. Reproduction on the candidate passed with
+tests/test_construction_only_config_keys.py and tests/test_no_absolute_home_paths.py
+(115 passed). The Python 3.13 test run reused only native binaries whose tracked
+sources matched byte-for-byte across isolated worktrees. No product validator
+behavior was weakened.
