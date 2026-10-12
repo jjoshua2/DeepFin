@@ -36,8 +36,8 @@ def _bootstrap_delta(
     vals = np.array([np.mean(v) for v in by_root.values()], dtype=np.float64)
     rng = np.random.default_rng(seed)
     if vals.size == 1:
-        return {"n_roots": 1, "mean_cp": float(vals[0]), "ci_low": float("nan"),
-                "ci_high": float("nan")}
+        return {"n_roots": 1, "mean_cp": float(vals[0]), "ci_low": None,
+                "ci_high": None}
     take = rng.integers(0, vals.size, size=(n_boot, vals.size))
     boot = vals[take].mean(axis=1)
     return {
@@ -225,7 +225,8 @@ def run_screen(
     )
     fidelity_excluded = skipped.get("native_parity", 0)
     status = (
-        "unqualified_native_fidelity" if (
+        "unqualified_no_valid_roots" if not accepted
+        else "unqualified_native_fidelity" if (
             seen and fidelity_excluded / seen > 0.05
         ) else "quality_unread_no_direct_labels" if not all_quality
         else "diagnostic_only_no_training_or_arena_claim"
@@ -278,7 +279,7 @@ def main() -> None:
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     tmp = args.out.with_suffix(args.out.suffix + ".tmp")
-    tmp.write_text(json.dumps(report, indent=2, allow_nan=True) + "\n", encoding="utf-8")
+    tmp.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     tmp.replace(args.out)
     print(json.dumps({
         "status": report["status"],
