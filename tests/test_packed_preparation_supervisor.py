@@ -42,7 +42,11 @@ def test_exited_leader_descendant_is_terminated(tmp_path):
     from pathlib import Path
     for _ in range(20):
         stat = Path(f'/proc/{pid}/stat')
-        if not stat.exists() or stat.read_text().split()[2] == 'Z':
+        try:
+            state = stat.read_text().split()[2]
+        except FileNotFoundError:
+            break  # the owned descendant disappeared during this observation
+        if state == 'Z':
             break
         time.sleep(0.05)
     else:
