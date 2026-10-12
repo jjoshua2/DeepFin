@@ -177,6 +177,22 @@ _STARTUP_ONLY_READER_FILES: dict[str, set[str]] = {
         "chess_anti_engine/train/trainer.py",
         "chess_anti_engine/tune/trial_config.py",
     },
+    # Optimizer group values. The Trainer constructor is the only config read.
+    # `aurora.py`'s `group.get("aurora_uw_floor")` matches the config-read
+    # pattern and is the per-step consumer of the GROUP field written at
+    # construction, not a second read of the yaml key.
+    **{
+        key: {"chess_anti_engine/train/trainer.py"}
+        for key in (
+            "matrix_lr_multiplier",
+            "matrix_weight_decay",
+            "aux_weight_decay",
+        )
+    },
+    "aurora_uw_floor": {
+        "chess_anti_engine/train/trainer.py",
+        "chess_anti_engine/train/aurora.py",
+    },
 }
 
 # A config READ, as opposed to a mention: `tc.key`, `config["key"]`,
@@ -204,15 +220,18 @@ def _config_read_offenders(
     )
 
 
-def _write_one_key_yaml(path: Path, key: str, value: object) -> None:
-    """Write a yaml the live validator ACCEPTS, carrying only ``key``.
+def _write_one_key_yaml(path: Path, key: str, value: object) -> object:
+    """Write validator-accepted YAML carrying ``key``, then return its value.
 
-    The section is discovered rather than hard-coded: the validator is
-    all-or-nothing, so a key written into the wrong section rejects the whole
-    file, every value stays put, and a test asserting "the value did not move"
-    passes for exactly the wrong reason.
+    Boolean config fields need a boolean fixture value: numeric sentinels are
+    rejected by schema validation before the live-reload contract is exercised.
+    The section is discovered because validation is all-or-nothing.
     """
     import yaml as _yaml
+    from chess_anti_engine.utils.config_yaml import _RUN_BOOLEAN_KEYS
+
+    if key in _RUN_BOOLEAN_KEYS:
+        value = not bool(value)
 
     for doc in (
         {key: value},
@@ -225,7 +244,7 @@ def _write_one_key_yaml(path: Path, key: str, value: object) -> None:
         except (ValueError, KeyError):
             continue
         if key in flat:
-            return
+            return flat[key]
     raise AssertionError(f"no yaml placement of {key!r} survives the validator")
 
 
@@ -468,10 +487,10 @@ def test_startup_reload_still_applies_each_construction_only_key(
     that keeps the fix from eating the feature.
     """
     yaml_path = tmp_path / "live.yaml"
-    _write_one_key_yaml(yaml_path, key, 4321)
+    expected_value = _write_one_key_yaml(yaml_path, key, 4321)
     config: dict[str, object] = {key: 1234}
     _reload_yaml_into_config(config, str(yaml_path), live_reload=False)
-    assert config[key] == 4321, (
+    assert config[key] == expected_value, (
         f"{key} must still be applied at startup/resume; a restart is the only "
         "way it can ever change"
     )

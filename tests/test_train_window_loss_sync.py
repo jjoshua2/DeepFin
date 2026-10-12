@@ -601,3 +601,19 @@ def test_the_pipeline_timing_values_round_trip_into_the_ray_report_row() -> None
 
     wrong = {key: (row.get(key), spans[key]) for key in keys if row.get(key) != spans[key]}
     assert not wrong, f"Ray row does not carry the TrainMetrics span: {wrong}"
+
+
+def test_skipped_nonfinite_update_is_not_counted_as_an_swa_sample(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(tmp_path, swa_start=0, swa_freq=1)
+    _install_stepped_losses(trainer, monkeypatch, [1.0])
+    _neutralize_cuda_retry_calls(monkeypatch)
+    monkeypatch.setattr(trainer, "_matrix_grad_norm", lambda: float("nan"))
+
+    assert trainer._swa_model is not None
+    assert int(trainer._swa_model.n_averaged) == 0
+    metrics = trainer.train_steps(cast(Any, None), batch_size=1, steps=1)
+
+    assert metrics.grad_nonfinite_skip_rate == pytest.approx(1.0)
+    assert int(trainer._swa_model.n_averaged) == 0

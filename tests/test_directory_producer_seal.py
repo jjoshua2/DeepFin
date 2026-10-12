@@ -1247,3 +1247,57 @@ def test_overlay_branch_does_not_treat_a_copied_attribute_as_this_seal(
     monkeypatch.setattr(target_overlay, "overlay_proxies", proxies)
     loaded, _meta = load_shard_arrays(path, allow_target_overlay=True)
     assert np.all(np.asarray(loaded["wdl_target"])[TAIL:] == 0)
+
+
+
+@pytest.mark.parametrize("actual_inventory", ["valid", "missing", "extra", "dangling", "directory"])
+def test_window_inventory_is_verified_before_honest_eviction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, actual_inventory: str,
+) -> None:
+    from chess_anti_engine.replay import disk_buffer
+    directory = tmp_path / "replay"
+    honest = _write(directory, n=8, name="shard_000000.zarr")
+    newer = _write(directory, n=8, name="shard_000001.zarr")
+    chunk_key = _seal(newer)["arrays"]["x"]["stored"][0]
+    chunk = newer / chunk_key
+    assert chunk.is_relative_to(newer)
+    assert chunk.is_file()
+    if actual_inventory == "missing":
+        chunk.unlink()
+    elif actual_inventory == "extra":
+        (newer / "x/999.0.0.0").write_bytes(b"unlisted synthetic chunk")
+    elif actual_inventory == "dangling":
+        chunk.unlink()
+        chunk.symlink_to("missing-synthetic-target")
+    elif actual_inventory == "directory":
+        chunk.unlink()
+        chunk.mkdir()
+    honest_before = _snapshot(honest)
+    newer_before = _snapshot(newer)
+    attempts = []
+    monkeypatch.setattr(disk_buffer, "delete_shard_path", lambda path: attempts.append(Path(path)))
+    # Keep the actual resume scan/capacity enforcement; disable only subsequent
+    # hot-pool payload seeding so this regression exercises inventory alone.
+    monkeypatch.setattr(DiskReplayBuffer, "_seed_shuffle_pool", lambda *_args: None)
+    decode = _forbid_fill_decode(monkeypatch)
+    real_getitem = DirectoryStore.__getitem__
+    payload_reads = []
+    def metadata_only(store, key):
+        if key != SEAL_FILENAME and Path(key).name not in (".zarray", ".zattrs", ".zgroup", ".zmetadata"):
+            payload_reads.append(key)
+            raise AssertionError("window count read a chunk payload")
+        return real_getitem(store, key)
+    monkeypatch.setattr(DirectoryStore, "__getitem__", metadata_only)
+    observed_rows = shard_positions(newer)
+    buf = _window(directory, 8)
+    try:
+        assert (observed_rows, attempts) == (
+            (8, [honest]) if actual_inventory == "valid" else (0, [])
+        )
+        assert buf._tracked_shard_positions() == 8
+    finally:
+        buf.close()
+    assert decode == {"getitem": 0, "decode": 0}
+    assert payload_reads == []
+    assert _snapshot(honest) == honest_before
+    assert _snapshot(newer) == newer_before

@@ -1,0 +1,11 @@
+--- a/native/bend_engine/standalone/proofs/bitboard_membership/PrefixDecomposition.bend
++++ b/native/bend_engine/standalone/proofs/bitboard_membership/PrefixDecomposition.bend
+@@ -79,7 +79,7 @@
+   match xs:
+     case Nil{}: 0n
+     case Con{head,tail}:
+-      Nat.add(Bool.pick(Nat,U32.is_eq(head,query),1n,0n),occurrences(tail,query))
++      Nat.add(Bool.pick(Nat,U32.is_eq(head,query),1n,0n),0n)
+ 
+ def nat_add_assoc(+a: Nat,+b: Nat,+c: Nat) ->
+   {Nat.add(Nat.add(a,b),c) == Nat.add(a,Nat.add(b,c)) : Nat}:

@@ -132,7 +132,9 @@ def test_actual_audit_feed_and_full_policy_match_declared_graph(
     np.testing.assert_array_equal(policy, expected_policy)
     probs = torch.softmax(torch.from_numpy(logits), dim=1).numpy()
     np.testing.assert_allclose(wdl, probs, rtol=1e-6, atol=1e-7)
-    assert heads == {"policy_output": "policy", "wdl_output": "value"}
+    assert heads["policy_output"] == "policy"
+    assert heads["wdl_output"] == "value"
+    assert heads["wdl_output_kind"] == "logits"
 
 
 @pytest.mark.parametrize("mode", ["extra", "int8", "wrong_name", "byte_lc0"])

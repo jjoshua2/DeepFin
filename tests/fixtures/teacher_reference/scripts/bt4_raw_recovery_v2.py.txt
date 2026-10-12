@@ -1,0 +1,65 @@
+"""Bounded raw-game verification and orphan reconciliation under owner guard."""
+import hashlib,io,json,os,stat,zipfile
+from pathlib import Path
+import numpy as np
+
+def verified_game(path,game_id,binding,model_sha,guard,charge):
+ path=Path(path);guard();s=path.lstat()
+ if not stat.S_ISREG(s.st_mode) or s.st_size>64*1024**2:raise ValueError('bounded regular raw game')
+ fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+ try:
+  before=os.fstat(fd)
+  stamp=lambda x:(x.st_dev,x.st_ino,x.st_size,x.st_mtime_ns,x.st_ctime_ns)
+  if stamp(s)!=stamp(before):raise ValueError('raw identity changed')
+  pieces=[];count=0
+  while True:
+   guard();part=os.read(fd,1024**2)
+   if not part:break
+   charge(len(part));count+=len(part)
+   if count>64*1024**2:raise ValueError('raw game grew')
+   pieces.append(part)
+  if stamp(before)!=stamp(os.fstat(fd)) or stamp(before)!=stamp(path.lstat()):raise ValueError('raw game changed')
+ finally:os.close(fd)
+ raw=b''.join(pieces)
+ with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+  infos=archive.infolist()
+  if sorted(x.filename for x in infos)!=['metadata.npy','policy_t1.npy','wdl_raw.npy','x.npy'] or sum(x.file_size for x in infos)>32*1024**2 or any(x.flag_bits&1 for x in infos):raise ValueError('closed bounded NPZ members')
+  for item in infos:
+   with archive.open(item) as member:
+    version=np.lib.format.read_magic(member)
+    if version==(1,0):shape,fortran,dtype=np.lib.format.read_array_header_1_0(member)
+    elif version==(2,0):shape,fortran,dtype=np.lib.format.read_array_header_2_0(member)
+    else:raise ValueError('unsupported NPY version')
+    if dtype.hasobject or fortran or any(type(i)is not int or i<0 for i in shape):raise ValueError('closed NPY shape/type')
+    name=item.filename
+    if name=='metadata.npy':valid=dtype==np.uint8 and len(shape)==1 and shape[0]<=2*1024**2
+    elif name=='x.npy':valid=dtype==np.float32 and len(shape)==4 and shape[0]<=400 and shape[1:] in ((175,8,8),(0,8,8))
+    else:valid=dtype in (np.float32,np.float64) and len(shape)==2 and shape[0]<=400 and shape[1]==(1858 if name=='policy_t1.npy' else 3)
+    if not valid:raise ValueError('bounded NPY header before allocation')
+    elements=1
+    for i in shape:elements*=i
+    if member.tell()+elements*dtype.itemsize!=item.file_size:raise ValueError('NPY declared data size differs from bounded member')
+ with np.load(io.BytesIO(raw),allow_pickle=False) as data:
+  metadata=data['metadata']
+  if metadata.dtype!=np.uint8 or metadata.ndim!=1 or metadata.size>2*1024**2:raise ValueError('bounded JSON metadata')
+  meta=json.loads(metadata.tobytes());n=len(meta['rows'])
+  if meta['schema']!='bt4_root_policy_games_v1' or meta['game_id']!=game_id or meta['status'] not in ('completed','discarded') or n>400:raise ValueError('exact atomic game identity')
+  if meta['status']=='discarded' and n:raise ValueError('discarded game has rows')
+  for key,width in [('x',(175,8,8)),('policy_t1',(1858,)),('wdl_raw',(3,))]:
+   array=data[key]
+   if (array.dtype not in (np.float32,np.float64) if key=='wdl_raw' else array.dtype!=np.float32) or (array.shape!=(n,*width) and not (key=='x' and n==0 and array.shape==(0,0,8,8))) or not np.isfinite(array).all():raise ValueError('bounded exact teacher arrays')
+  for row in meta['rows']:
+   if row['teacher']['model_sha256']!=model_sha:raise ValueError('model binding mismatch')
+ guard()
+ return dict(path=str(path.absolute()),sha256=hashlib.sha256(raw).hexdigest(),status=meta['status'],rows=n,binding_sha256=binding)
+
+def reconcile(checkpoint,attempt,roots,verify):
+ """Only the128 exact game names; originals retained, conflicts fail closed."""
+ count=0
+ for root in roots:
+  for game in range(128):
+   path=Path(root)/'games'/f'game_{game:08d}.npz'
+   if os.path.lexists(path):count+=checkpoint.record_game(attempt,game,verify(path,game))
+ return count
+
+

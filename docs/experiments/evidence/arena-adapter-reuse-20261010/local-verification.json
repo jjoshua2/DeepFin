@@ -1,0 +1,38 @@
+{
+  "status": "PASS_FINAL_CPU_TESTS_AND_INDEPENDENT_REVIEW_NO_ADOPTION",
+  "baseline_revision": "968d66b26e95e90f34cecd6c0b38ca61d0f11aaa",
+  "candidate_revision": "870d9aa84d58e48a90e44fafac24bf263fb65167",
+  "command": "CUDA_VISIBLE_DEVICES=-1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 taskset -c 28 nice -n 19 /usr/bin/python3.10 -B -m unittest -v test_adapter_reuse",
+  "tests": 11,
+  "seconds": 0.421,
+  "returncode": 0,
+  "production_net_lines_removed": 484,
+  "live_files_modified": false,
+  "GPU_jobs": false,
+  "model_payload_reads": false,
+  "canonical_lock_probes": false,
+  "corpus_scans": false,
+  "original_source_hashes": {
+    "fresh_epoch1_arena_phase_adapter_20261010.py": "2f01463b53e5c7ba8e71677ff3a470680f86ec6e7decbe28360184a8086c216a",
+    "short-e-evaluation-owner-v4\\arena_phase_adapter_pair_bound_v4.py": "70777653e0a6579b138e5b69cb4139cad09bbaecdda710242f7c0ce8b08a19fa"
+  },
+  "candidate_source_hashes": {
+    "fresh_epoch1_arena_phase_adapter_20261010.py": "a9e8d1c6174c90612a6191914d27e38a5ff3e5e3418e8d87bd34fbd44e527a02",
+    "short-e-evaluation-owner-v4\\arena_phase_adapter_pair_bound_v4.py": "5e7133d525db7854ded59af42a309f58316082e8410e6d1d92755f1e967fb497"
+  },
+  "whitespace_check": "PASS_git_diff_check_baseline_to_final",
+  "independent_initial_review": {
+    "nonblocking_items": "Both fixed in final commit: wrapper CRLF and unsupported CLI flag test",
+    "independent_test_seconds": 0.395,
+    "independent_tests": 11,
+    "blocking_findings": 0,
+    "revision": "963535d8173f9200f1ff1c5a52035c53f233d7b5"
+  },
+  "independent_final_review": {
+    "revision": "870d9aa84d58e48a90e44fafac24bf263fb65167",
+    "remaining_findings": 0,
+    "reviewer": "/root/adapter_independent_review",
+    "review": "Initial behavioral review and independently repeated 11 tests at 963535d; cleanup delta reviewed at final revision. Prior review applies to final candidate. Both nits resolved. Core bytes and embedded pin unchanged. Final delta reviewer did not rerun tests.",
+    "limits": "Mocked subprocess and canonical descriptor tests establish adapter contracts, not an end-to-end arena result. No operational controller execution, GPU/model/corpus access or live adoption."
+  }
+}

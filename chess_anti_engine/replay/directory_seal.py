@@ -204,7 +204,7 @@ def sealed_row_count(group: Any, name: str) -> int | None:
     matches the sealed inventory. ``priority`` may be absent. Any other
     declared array that is absent refuses the count. A ``.zattrs`` left
     behind by a removed declaration refuses the count. A declaration,
-    digest, grid, or length mismatch raises.
+    digest, grid, actual stored-key inventory, or length mismatch raises.
     """
     loaded = _manifest(group)
     if loaded is None:
@@ -237,6 +237,7 @@ def sealed_row_count(group: Any, name: str) -> int | None:
                 f"directory producer seal array {missing!r} is missing; "
                 "refusing fill decode"
             )
+    listed = _store_keys(group.store)
     rows: int | None = None
     for found in present:
         spec = arrays.get(found)
@@ -245,12 +246,15 @@ def sealed_row_count(group: Any, name: str) -> int | None:
                 f"directory producer seal entry for {found!r} has unexpected "
                 "fields; refusing fill decode"
             )
-        raw = _declaration_bytes(found, group[found], spec, digest)
-        if _grid_keys(found, raw) != _stored_keys(found, spec["stored"]):
+        arr = group[found]
+        raw = _declaration_bytes(found, arr, spec, digest)
+        stored = _stored_keys(found, spec["stored"])
+        if _grid_keys(found, raw) != stored:
             raise ValueError(
                 f"directory producer seal chunk grid for {found!r} does not "
                 "match the declared coordinates; refusing fill decode"
             )
+        _verify_stored_inventory(found, arr, stored, listed)
         count = _rows_in_zarray(found, raw)
         if rows is None:
             rows = count
@@ -467,6 +471,14 @@ def _verify_array(
             f"directory producer seal chunk grid for {name!r} does not match "
             "the declared coordinates; refusing fill decode"
         )
+    _verify_stored_inventory(name, arr, stored, listed)
+    return _rows_in_zarray(name, raw)
+
+
+def _verify_stored_inventory(
+    name: str, arr: Any, stored: list[str], listed: list[str],
+) -> None:
+    """Same bounded decoder-openable inventory check for load and row count."""
     present = _present_chunks(arr, listed)
     extra = sorted(present.difference(stored))
     if extra:
@@ -480,7 +492,6 @@ def _verify_array(
             f"directory producer seal stored chunk {missing[0]!r} for "
             f"{name!r} is missing; refusing fill decode"
         )
-    return _rows_in_zarray(name, raw)
 
 
 class _ApprovedBytes:

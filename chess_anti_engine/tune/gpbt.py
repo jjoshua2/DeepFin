@@ -239,10 +239,21 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
         )
 
         if trial in upper_quantile:
-  # Always use the most recent committed checkpoint from train.report().
-  # Avoids creating a new async _FutureTrainingResult that may not resolve
-  # before a lower-quantile trial tries to exploit this donor.
-            state.last_checkpoint = trial.checkpoint
+            if trial.status == Trial.PAUSED:
+                saving = trial.temporary_state.saving_to
+                if isinstance(saving, _FutureTrainingResult):
+                    state.last_checkpoint = saving
+                else:
+                    committed = trial.latest_checkpoint_result
+                    state.last_checkpoint = committed.checkpoint if committed else None
+                    if committed:
+                        state.last_result = committed.metrics
+            else:
+                # The current function report is saved after this callback.
+                # Resolve its checkpoint and metrics together before exploiting.
+                state.last_checkpoint = tune_controller._schedule_trial_save(
+                    trial, result=state.last_result
+                )
             self._num_checkpoints += 1
         else:
             state.last_checkpoint = None
@@ -280,17 +291,14 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
             else:
                 last_checkpoint = None
 
-        if not last_checkpoint:
-  # Async race: the donor hasn't hit its own perturbation window yet so
-  # _schedule_trial_save was never called for it.  Fall back to the
-  # donor's most recent checkpoint committed via train.report() — this
-  # is always available after the first reported iteration and is
-  # current enough for copying model weights.
-            last_checkpoint = donor.checkpoint
-            if last_checkpoint:
+        elif not last_checkpoint:
+            # A donor may have no scheduled boundary save yet. Use the
+            # committed checkpoint's metrics, not a newer uncommitted report.
+            committed = donor.latest_checkpoint_result
+            if committed:
+                last_checkpoint = committed.checkpoint
                 donor_state.last_checkpoint = last_checkpoint
-                if donor.last_result:
-                    donor_state.last_result = donor.last_result
+                donor_state.last_result = committed.metrics
 
         if not last_checkpoint:
             logger.info(

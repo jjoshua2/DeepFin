@@ -127,6 +127,12 @@ Distributed server:
   destructive work.
 - [x] Identify server simplification candidates only after correctness review.
 
+- 2026-10-02 additive distributed-server pass at base `269105298285b6098ffbf80405cb18ec33186b38`: traced `run_server.py` startup and lease pruning, `create_app()` lifespan and route registration, worker lease negotiation/upload retry ownership, lease assignment locking, auth/stats persistence, upload staging/compaction/recovery, and worker-process stop/revive paths. No new defect confirmed.
+- Concrete route coverage: GET manifest, model/best-model, opening books/FEN list, Stockfish, update info, worker/trial throughput, and worker wheel; POST seed-dole claims, lease assignment, normal/trial shard uploads, bad-shard reports, and arena-result uploads. Root and trial-scoped variants were followed where implemented; route authentication, ID checks, compatibility/lease gates, worker response ownership, and durable state were traced where applicable. Authentication can invoke TOFU registration when enabled; there is no separate registration route.
+- No-finding contracts exercised: auth/cache/revocation, lease assignment and renewal, shard validation/dedup/retry/quarantine, arena-result idempotence/caps/retention, upload compaction and crash recovery, telemetry counters, best-effort shutdown forced flush, and tune worker restart/revive boundaries. Open issues #410 and #418 remain known registration/account-cap and seed-dole key-scope items; neither was changed.
+- Focused bounded CPU validation: `tests/test_server_*.py`, worker upload digest/response/small-upload tests, distributed selfplay backpressure, `tests/test_worker_pool.py`, and `tests/test_tune_distributed_worker_cmd.py`: `267 passed` in 49.69s across two bounded runs, 2 Torch threads, one environment warning (`pynvml` deprecation). Initial collection required a local portable C-extension build from repository source; no dependencies were installed.
+- Deployment boundary: the supported `run_server.py` launcher passes a single app instance to Uvicorn with its default single process. Multi-process Uvicorn sharing is not qualified by this pass; process-local upload accumulators/caches are outside the supported topology. Multipart body bytes are spooled by Starlette before route-level size and lease checks, as already documented; network-level request-body limiting remains outside this audit's change scope.
+
 Current notes:
 
 - WDL class convention in finalization is `0=sample POV win`, `1=draw`,
@@ -486,6 +492,17 @@ Current notes:
   now seeds terminal root values from `CBoard.terminal_value()`.
 - Focused MCTS/UCI parity validation after F047 passed:
   `python3 -m pytest tests/test_mcts_uci_parity_gates.py tests/test_gumbel_root_many_edge_cases.py tests/test_mcts_c_tree.py tests/test_uci_searchmoves.py -q`.
+- Finding F048 opened/fixed in this cycle: `flatten_run_config_defaults()` silently skipped recognized nested configuration sections when their YAML value was not a mapping (for example `selfplay: false`). The loader now rejects non-mapping values for `stockfish`, `selfplay`, `train`, `model`, and `tune` before flattening. Regression coverage exercises five malformed value classes across all five sections and accepts empty mappings.
+- Finding F049 opened/fixed in this cycle: worker YAML `upload_target_positions` and `upload_flush_seconds` overrode explicit CLI values because argparse populated hardcoded defaults indistinguishable from user input. These CLI defaults now use sentinels; merge precedence is explicit CLI, then YAML, then documented hardcoded defaults. Regression coverage checks both CLI-over-YAML and YAML/default fallback.
+- Finding F050 opened/fixed in this cycle: quoted YAML boolean values (for example
+  model.use_smolgen: "false") were converted with Python bool() or assigned to
+  argparse store_true defaults, so strings such as "false" behaved as true and could
+  silently change model/training/search configuration. The loader now rejects
+  non-boolean values for every enumerated run.py store_true and BooleanOptionalAction destination; tests pin
+  root/train/model/tune examples and both valid boolean inversion outcomes.
+
+- Focused config and worker validation after F048-F050 passed: 95 passed across tests/test_config_yaml.py, tests/test_trial_config.py, tests/test_yaml_failure_modes.py, and tests/test_worker_config_yaml.py; Python compilation and Ruff checks passed. UCI and server --help smoke checks passed. Local Linux x86_64/Python 3.10 wheel build succeeded from final revision (no dependencies installed).
+- Entrypoints/config/packaging pass coverage: run/train/tune CLI and wrapper wiring; YAML parsing/default flattening and validation; worker/server CLI/YAML precedence and persisted/runtime overrides; Tune typed configuration handoff; packaging metadata, extras, native extensions, and runtime dependency declarations. Clean cross-platform wheel installation was not exercised because this pass avoided dependency installation.
 - Follow-up S007 gate expansion added an independent persistent-root reuse
   contract: after `advance_root`, the same tree/root child must remain active,
   the new root's children must match the new board's legal mask, and the next
@@ -621,8 +638,26 @@ Context:
 | F014 | Medium | Reliability / Config | Tune worker lifecycle | `chess_anti_engine/tune/distributed_runtime.py`, `tests/test_tune_distributed_worker_cmd.py` | Live YAML reload could silently accept worker process-level settings without applying them to already-running workers. `_ensure_distributed_workers()` only restarted dead workers or count changes, so changes to SF worker count, threading, compile mode, upload cadence, auth/cache paths, or inference slot layout stayed stale until an external restart. | `trainable_config_ops.py` removed worker-level keys from `_TOPOLOGY_KEYS` because `_ensure_distributed_workers` supposedly spawned updated workers each iteration, but `distributed_runtime.py` returned immediately for any live process at the requested index. | Added a launch signature for CLI/auth/cache process settings and restart workers whose signature no longer matches the desired config; regression test covers a live `distributed_worker_sf_workers` change. Verified distributed runtime slice: `18 passed`. | fixed |
 | F015 | Medium | Training Quality / Reliability | Tune prefetch ingest | `chess_anti_engine/tune/distributed_runtime.py`, `tests/test_distributed_selfplay_backpressure.py` | A background prefetch load that finished just after `drain()` could queue a preloaded item for an inbox path the trainer fallback already processed and moved. The next drain would ingest the stale arrays again even though the original inbox shard no longer existed. | `_process_shard(..., preloaded=...)` trusted preloaded arrays without checking whether `sp` was still present in the inbox; the prefetch thread loads outside the consumer lock, so a path can become stale between load and queue. | Skip preloaded items whose inbox path no longer exists before adding arrays or metrics; regression test feeds a missing preloaded path and verifies zero matching games and zero replay positions. Verified distributed ingest/prefetch slice: `29 passed`. | fixed |
 | F016 | Low | Reliability / Observability | Tune reporting | `chess_anti_engine/tune/trainable_phases.py`, `tests/test_trainable_rng_checkpoint.py` | Compact `status.csv` rows reported `global_iter` one behind the completed iteration. Fresh iteration 1 wrote `iter=1, global_iter=0`, and resumed runs inherited the same off-by-one in the status file used for quick progress checks. | `trainable.py` increments `global_iter` only after `_finalize_iteration()`, but `_finalize_iteration()` passed the pre-increment `global_iter` into `_write_status_csv_row`; `_build_report_dict()` separately uses `iteration_idx`. | Write `iteration_idx` into the status row's `global_iter` column and cover it in the finalization regression. | fixed |
+| F055 | Medium | Corpus CLI reliability | `scripts/derive_corpus_targets.py`, `tests/test_derive_corpus_targets.py` | Negative `--limit` values were clamped to zero, which means the whole corpus, so a malformed bounded request could launch full derivation. | `main()` used `max(0, int(args.limit))`; `--limit 0` is explicitly documented as the whole corpus. | Reject negative values before corpus access; regression asserts no output is created. Pytest is locally blocked during import by missing `chess_anti_engine.encoding._lc0_ext`; py_compile and Ruff pass. | fixed, local dynamic test blocked |
 | F047 | Medium | Search Correctness | Gumbel C root handling | `chess_anti_engine/mcts/gumbel_c.py`, `tests/test_mcts_uci_parity_gates.py` | Gumbel C returned the raw NN WDL-derived value for an already-terminal checkmate root instead of the terminal root value. UCI/selfplay callers using the C path could report/search with a neutral value on a root where STM is already checkmated. | Root `values_out` was initialized from `root_qs = _wdl_to_q(...)` before the `root_cb.is_game_over()` branch, and that branch did not replace it with `CBoard.terminal_value()`. | Added root-contract tests that check both PUCT/Gumbel implementations against independent masks/terminal values across normal, ep, single-legal, checkmate, and draw-terminal roots, plus UCI TB shortcut/searchmoves/root-reuse behavior. Verified MCTS/UCI slice: `33 passed`. | fixed |
+| F058 | High | Reliability / Training Data | Replay disk-buffer ownership | `chess_anti_engine/replay/disk_buffer.py`, `tests/test_replay_disk_buffer.py` | A second writable buffer targeting an active shard directory only logged the lock collision and continued writing. Independent shard counters let it persist duplicate rows, changing replay weighting and potentially placing equivalent samples into different train/holdout draws. | Bounded reproduction opened two writers on one directory; each persisted the same two rows, yielding two two-row shards (4 disk rows total). The second writable constructor now fails before resume-time capacity eviction or ingest. | Added refusal regression with capacity zero, proving failure happens before shard eviction or duplicate write; existing restart tests now close the previous owner before replacement. Focused disk-buffer suite: `32 passed`; wider replay/upload and holdout slices also passed. | fixed |
+| NNUE-001 | Medium | Model Correctness / Reliability | NNUE pack loader | `chess_anti_engine/nnue/_nnue_impl.h`, `tests/test_nnue_native_eval.py` | The loader bounded each tensor independently but did not enforce pack v1's 64-byte offset alignment or reject overlapping tensor regions. A corrupted but in-bounds offset could alias one tensor onto another, letting evaluation silently use plausible bytes from the wrong weights. | On a valid sparse pack fixture, changing `off[1]` (ft_weight) to `off[0]` or `off[0] + 1` was accepted before the fix. The loader now rejects overlap and misalignment after overflow-safe range checks. | Added synthetic negative tests for both forms. | fixed |
+| F059 | High | Reliability / State Continuity | Tune checkpoint publication | `chess_anti_engine/tune/trainable_report.py`, `chess_anti_engine/tune/trainable_phases.py`, `tests/test_tune_restart_state_carryover.py`, `tests/test_trainable_rng_checkpoint.py` | A `trial_meta.json` write failure after `trainer.pt` or a PID state write failure was swallowed, and the trainable could still report a checkpoint that lacked ownership/controller state. An exploited donor could then be misclassified as same-trial, and an enabled PID controller could resume without its integral/history. | Injected `OSError` at each sidecar write: base `_save_trial_checkpoint` still returned `Checkpoint.from_directory`, and `_finalize_iteration` still reached `tune.report`. | Required trial metadata and enabled PID state writes now propagate failure before checkpoint/report publication. New regressions assert neither returns/reports on injected sidecar failure. Focused checkpoint/restore suite passed. | fixed |
+| F060 | High | Training Correctness | Cross-trial model publication | `chess_anti_engine/tune/trainable.py`, `chess_anti_engine/tune/distributed_runtime.py`, `tests/test_distributed_selfplay_backpressure.py` | After cross-trial donor restore, the recipient's prior published model was reused whenever its manifest trainer step equaled the donor step, even if donor weights differed. | Synthetic recipient and donor trainers with distinct exported bytes at the same step reproduced the base behavior: the publish helper kept `recipient-weights` and never exported `donor-weights`. Both production callsites treated any checkpoint as eligible for same-step reuse. | Reuse is now allowed only for same-trial checkpoint resume. Cross-trial restore forces export. Regression checks distinct donor bytes at equal step and retains same-trial reuse / different-step export controls. | fixed |
 
+
+
+| F061 | Medium | Search Correctness | PUCT virtual-mean accounting | chess_anti_engine/mcts/_mcts_tree.c, tests/test_batch_descend_puct.py | Nested in-flight PUCT descents in virtual-mean mode were counted once in the internal node virtual-loss total and again in its children total, inflating parent N and changing a low-budget child choice. | With parent N=3, one pending path through child A, priors 0.9/0.1, and controlled Q values, current native search chose A; the one-pending-visit formula chooses B. Regression failed before the fix and passes after counting max(parent pending, child pending). | Synthetic native tree on CPU; scoped MCTS/search suite and independent review. | fixed |
+| F053 | Medium | Evaluation correctness | External UCI matches | `scripts/match_vs_uci.py`, `tests/test_match_resume.py` | The driver schedules two color-swapped games per opening but computed its score CI as if individual games were independent. Mirrored outcomes such as A winning as White and losing as Black therefore produced a wide interval despite zero between-opening variation; resume ordering also put all stored scores before newly played scores, breaking pair adjacency. Odd game counts additionally left a final half-pair. | Aggregate per-opening means using scores indexed by global game number; reject odd `--games` before opening engines. | Tests distinguish mirrored-pair variance, require no CI for one pair, reject odd games pre-engine, and check resumed summaries. | fixed |
+| F054 | Medium | Evaluation correctness | Pentanomial summary | `scripts/arena_standard.py`, `scripts/match_vs_handicapped_sf.py`, `scripts/bt4_joint_readout.py`, `scripts/bt4_recipe_readout.py`, `scripts/match_vs_uci.py` and summary tests | Both one-pair fallback and repeated identical pair outcomes could publish point-width normal CIs despite no empirical between-pair variance. | Preserve the pair-level estimator and SE=0 for repeated outcomes, but mark score/Elo intervals unavailable with explicit status. Use the status in arena receipts/console, handicapped and BT4 readouts, and the calibration gate. Paired UCI output also reports unavailable when pair variance is zero. | Bernoulli counterexample, zero-variance and one-pair cases, nondegenerate golden intervals, all summary consumers, and a resumed-index ordering counterexample. | fixed |
+
+| F064 | Medium | Reliability / Artifact Publication | Operational scripts | `scripts/train.sh`, `tests/test_train_sh_best_save_atomic.py` | `best-save` created the final named pool before copying its checkpoint/replay and writing the manifest. A copy or write failure left a partial pool at the destination; a retry with the same label then refused because the directory already existed. | Temporary-directory injection failed the second `cp`: base returned 23 with `pools/candidate/seeds/slot_000/trainer.pt` left published; a retry returned 1 (`Pool already exists`). | Build in a hidden same-filesystem staging directory, clean it on failure, and rename only after the restore-compatible manifest is complete. Regression verifies failed publication leaves neither destination nor stage, then same-label retry publishes checkpoint, replay and manifest. Focused slice: `19 passed`. | fixed |
+| F048 | Medium | Reliability / Config | Nested YAML section types | `chess_anti_engine/utils/config_yaml.py`, `tests/test_config_yaml.py` | Recognized nested config sections with scalar, sequence, null, or boolean values were silently skipped during flattening, making malformed configuration appear accepted and potentially falling back to unrelated defaults. | `flatten_run_config_defaults()` only merged section values when `isinstance(value, dict)` and ignored every other shape. | Validate all recognized section values as mappings before flattening. Added negative tests for five malformed value classes across five sections and positive tests for empty mappings. | fixed |
+| F049 | Medium | Config precedence | Worker upload CLI overrides | `chess_anti_engine/worker.py`, `tests/test_worker_config_yaml.py` | Explicit `--upload-target-positions` and `--upload-flush-seconds` values could be overwritten by persisted worker YAML values. | argparse hardcoded defaults were always merged as though explicitly supplied, and YAML unconditionally overwrote them. | Use `None` parser sentinels and merge explicit CLI over YAML over hardcoded defaults. Added precedence and fallback tests. | fixed |
+| F050 | Medium | Config correctness | Truthy YAML booleans | chess_anti_engine/utils/config_yaml.py, tests/test_config_yaml.py | Quoted values such as model.use_smolgen: "false" (and boolean argparse defaults such as no_amp: "false") were truthy strings, silently inverting or enabling settings the config meant to disable. | _apply_model_section() applied bool() before inversion, while argparse store_true defaults preserved strings. | Validate YAML types for all enumerated run.py store_true and BooleanOptionalAction destinations after flattening; preserve None as absent. Tests cover invalid strings/numbers/null plus valid bools across root/train/model/tune. | fixed |
+| WLA-001 | Medium | Reliability | Worker pool startup | `chess_anti_engine/worker_pool.py`, `tests/test_worker_pool.py` | If a later worker Popen failed during initial startup, previously started children were outside the pool's cleanup try/finally and continued running without a supervisor. | Simulated the second spawn raising OSError after the first child launched; before the fix the child received no terminate call. Startup and the existing supervisor loop now share the same finally cleanup. | Regression verifies the earlier child is terminated after partial startup failure; worker-pool and shutdown slice passes. | fixed |
+| WLA-002 | Medium | Reliability | Worker asset cache | `chess_anti_engine/worker_assets.py`, `tests/test_worker_cached_assets.py` | Concurrent downloads targeting one cache path shared a fixed .tmp name. One downloader could rename that temp file while another was still writing, yielding FileNotFoundError or exposing incomplete/unverified content; the SHA check happened after publishing. | Deterministic two-thread mocked download reproduced the collision on the unhashed legacy opening-book path. Downloads now use unique temp files in the destination directory and verify expected SHA before atomic replace. | Concurrency regression verifies complete final bytes; checksum-negative regression verifies bad content never replaces the existing cache entry and temp files are cleaned. | fixed |
+| WLA-003 | Medium | Reliability | Stockfish worker cache | chess_anti_engine/worker.py, chess_anti_engine/worker_assets.py, tests/test_worker_stockfish_executable_cache.py | Worker-pulled Stockfish was SHA-verified and atomically published before _ensure_executable() ran. A concurrent cache consumer could observe the valid but non-executable file and call Popen, while a persistent old 0600 cache hit skipped the chmod permanently. | Real WorkerSession._sync_stockfish with valid 0600 SHA-correct fixtures and a fake Stockfish constructor asserting execute bits failed for a fresh session and matching last_sf_sha; a barrier at post-publish/pre-chmod reproduced the same race. Downloaded Stockfish now gets execute mode on the verified temp file before atomic replace; verified cache hits repair mode strictly before engine construction. | Tests cover both last-SHA states and a two-session publisher/consumer interleaving; the consumer never sees a non-executable published binary. | fixed |
 ## Review Passes
 
 | Pass | Status | Goal | Main Outputs |
@@ -786,6 +821,7 @@ Efficiency/scalability:
 
 Tests:
 
+- [x] `tests/test_config_yaml.py`
 - [x] `tests/test_trial_config.py`
 - [x] `tests/test_worker_config_yaml.py`
 - [x] `tests/test_train_import_lazy.py`
@@ -880,6 +916,45 @@ Tests:
 - [x] `tests/test_onnx_export_smoke.py`
 - [x] `tests/test_onnx_export_int8_smoke.py`
 
+Model/inference first-pass addendum (2026-10-02; base 269105298285b6098ffbf80405cb18ec33186b38):
+
+- [x] Trace checkpoint architecture schema 20, manifest parsing/serialization,
+  resume reconstruction, strict unknown/new-schema rejection, model identity,
+  and state-dict loading through the UCI loader.
+- [x] Trace model head families and consumers: training/full forward, inference
+  forward, legal-move forward, compact 1858 policy expansion, WDL semantics,
+  auxiliary heads, and export output ordering/shapes.
+- [x] Trace eager CPU inference input/output shapes and dtypes, no-grad/eval
+  boundaries, wrapper dispatch, batching, cache key identity, and UCI evaluator
+  rebuild behavior for MaxBatch/cache/thread-path changes.
+- [x] Trace ONNX FP32/INT8 export and LC0/Ceres adapters, declared input dtype,
+  Ceres byte input, policy reorder/expansion, WDL interpretation, and optional
+  moves-left fallback.
+- [x] Review runtime/package dependencies and Python entrypoint wiring for
+  model loading and inference; no model weights, GPU, datagen, or external
+  dependency installs were used.
+- [x] Search current issues/PRs before triage. No model/export issue or PR
+  overlapped this pass. AOT broker/shared-memory protocol work in issue #420
+  is explicitly excluded to avoid duplicate scope.
+- [x] No actionable defect found in the reviewed CPU/eager or ONNX paths.
+  Negative coverage passed: tests/test_transformer_forward.py,
+  tests/test_aux_policy_head_dim.py, tests/test_categorical_head_coupled.py,
+  tests/test_model_config_identity_key.py,
+  tests/test_resume_model_config_from_arch.py,
+  tests/test_uci_model_loader.py, tests/test_worker_checkpoint_load_safety.py,
+  tests/test_worker_model_update.py, tests/test_onnx_export_smoke.py,
+  tests/test_onnx_export_int8_smoke.py, tests/test_onnx_chessnet_remap.py,
+  tests/test_ceres_onnx_byte_input.py (257 passed); also
+  tests/test_inference_cache.py, tests/test_inference_cache_empty_relations.py,
+  tests/test_uci_evaluator_factory.py, tests/test_gpu_dispatcher.py,
+  tests/test_threaded_dispatcher.py, tests/test_uci_walker_pool.py
+  (66 passed). Both runs used two threads and completed well under 600 seconds;
+  peak RSS was 1.21 GiB and 1.13 GiB respectively.
+- [x] Gaps: CUDA/FP8/compile/cudagraph execution and accelerator backend parity
+  were not exercised. A 4 GiB address-space limit prevented libtorch_cpu.so
+  mapping, so successful reruns used a 600-second timeout and direct RSS
+  measurement.
+
 ### MCTS and Search
 
 Status: `deep` for Python Gumbel/PUCT, C-backed Gumbel/PUCT interfaces,
@@ -942,6 +1017,13 @@ Evidence:
 - After fix, `pytest tests/test_play_batch_helpers.py` passed: `16 passed`.
 - After fix, `pytest tests/test_selfplay_result_labeling.py tests/test_selfplay_sf_wdl_pov.py tests/test_selfplay_timeout_adjudication.py tests/test_selfplay_fraction.py tests/test_threaded_selfplay.py tests/test_play_batch_continuous.py tests/test_temperature_schedule.py tests/test_opening_start_positions.py tests/test_arena_match_smoke.py tests/test_match_result_labeling.py tests/test_bench_result_labeling.py` passed: `38 passed`.
 
+Fresh scoped pass (2026-10-03, current-main base `269105298285b6098ffbf80405cb18ec33186b38`):
+
+- Checklist traced: game lifecycle, terminal/finalization and labels; timeout adjudication and Stockfish WDL POV; sampled pre-move record/policy target and replay finalization; resume and slot recycle; opening/FEN history and tablebase outcomes; arena matched-time/chunked/rolling modes, paired color scheduling, final-ply/result/PGN agreement, durable log resume/orphan repair, deadlines and SPRT prefix.
+- Selfplay command: `python3.10 -m pytest -o addopts= -q tests/test_selfplay_state.py tests/test_selfplay_timeout_adjudication.py tests/test_finalize_helpers.py tests/test_native_sf_finalize.py tests/test_selfplay_result_labeling.py tests/test_selfplay_resume.py tests/test_selfplay_label_overlap.py tests/test_selfplay_policy_temp_plumbing.py tests/test_selfplay_fraction.py tests/test_opening_start_positions.py tests/test_opening_fenlist.py tests/test_match_tablebase_plumbing.py tests/test_rule50_match_tablebase.py` -> `247 passed, 1 warning` (pynvml deprecation), 12.32 s, peak RSS 1,155,660 KiB.
+- Arena command: `python3.10 -m pytest -o addopts= -q tests/test_arena.py tests/test_arena_standard.py tests/test_arena_sprt.py tests/test_arena_durable.py tests/test_arena_fen_openings.py tests/test_arena_pgn.py tests/test_arena_pgn_integration.py tests/test_arena_match_smoke.py tests/test_match_resume.py tests/test_matched_recipe_pair.py tests/test_match_vs_uci_script.py tests/test_match_result_labeling.py tests/test_match_checkpoints_script.py` -> `296 passed, 1 warning` (same deprecation), 24.33 s, peak RSS 1,092,920 KiB. Both used two-core affinity and `CAE_TEST_THREADS=2`; commands capped at 600 seconds.
+- No product code changed in that selfplay/arena pass, so no independent code review was requested or claimed. Source-level qualification retained: Python MCTS child history can omit the seed opening prefix when replay begins from a CBoard root; no new fix was attempted.
+
 Files:
 
 - [x] `chess_anti_engine/selfplay/__init__.py`
@@ -985,6 +1067,21 @@ Tests:
 - [x] `tests/test_bench_result_labeling.py`
 
 ### Replay and Training Data
+
+Replay/data first-pass extension (2026-10-03): traced writer ownership and shard
+admission/sealing, persisted schema validation, array/disk buffer paths,
+capacity/window eviction, refresh/prefetch lifecycle, game-boundary handling,
+worker upload and server compaction durability, and evaluation holdout
+contracts. F058 records a reproduced concurrent-writer duplication defect and
+its fail-closed fix. Bounded CPU evidence includes the disk-buffer suite (32
+passed), replay/prefetch/window/shard/NPZ slices, upload durability and worker
+response slices, and heldout/evaluation split tests. Existing tests explicitly
+exercise a per-row training diagnostic split; game-disjoint holdout evaluation
+is separately tested. No production corpus or live training run was used.
+Filesystem advisory-lock behavior on Windows/macOS/network filesystems,
+production corpus contents, and long-duration interrupted production runs
+remain unqualified; this is a source-and-synthetic-test first pass for those
+surfaces, not an artifact-backed runtime qualification.
 
 Status: `deep` for replay sample schema, sparse/dense policy and mask storage,
 array collation, augmentation, shard validation, disk replay sampling, and
@@ -1089,6 +1186,9 @@ Evidence:
 
 - `pytest tests/test_server_upload_security.py tests/test_server_upload_compaction.py tests/test_server_trial_lease.py tests/test_distributed_selfplay_backpressure.py tests/test_worker_pool.py tests/test_worker_cached_assets.py tests/test_worker_config_yaml.py tests/test_worker_small_uploads.py tests/test_e2e_smoke.py tests/test_tune_distributed_worker_cmd.py tests/test_trial_config.py` passed: `70 passed`.
 - `pytest tests/test_worker_model_update.py tests/test_worker_small_uploads.py tests/test_worker_upload_response.py` passed: `20 passed`.
+Process-level qualification added 2026-10-03: `tests/test_worker_server_process_lifecycle.py` runs the real FastAPI/Uvicorn server in a separate local process and calls `WorkerSession._poll_manifest`, `_sync_assets`, and `_upload_pending_shards_locked` against fixture-only model/book/FEN assets and a temporary account/cache/spool. It verifies cold-cache SHA-checked publication, then SIGKILL/restart/retry controls around upload commits. When the upload is durably pending, recovery backfills the source digest and the worker retry is deduplicated. If the upload has already been compacted but its ACK is lost, the source digest is no longer durable; after restart the worker retry is accepted again and duplicate rows are observed. The supported contract is therefore durable **at-least-once** delivery across this ambiguous post-compaction ACK loss, with possible duplicate training rows; exactly-once is not guaranteed. Existing server in-flight transaction tests cover compaction crash recovery separately. This qualification does not load a production checkpoint, start a real inference broker/selfplay or Stockfish, exercise concurrent server replicas/network filesystems, or qualify other operating systems. Final local check: 1 process integration passed (3.74 s, 706 MiB peak RSS, 2 CPU affinity); Ruff, basedpyright (0 errors), and py_compile passed. Independent review found no actionable issue; its runtime rerun was blocked because the review sandbox denies socket creation. Draft PR #995 includes this test and contract.
+Integration follow-up 2026-10-11: the dated post-compaction duplicate observation above was fixed by PR #1014. The combined process fixture now verifies byte-identical retries return stored:false within the existing six-hour receipt window, leave exactly three compacted rows and zero pending rows, and delete the worker pending shard. Two subsequent byte-distinct packed uploads containing the same sample row are accepted, leaving three compacted plus two pending rows. This bounded retry guarantee is not an exactly-once claim beyond the receipt lifetime or supported single-server topology.
+
 
 Files:
 
@@ -1107,7 +1207,7 @@ Files:
 Correctness/reliability/security:
 
 - [x] Upload endpoints authenticate correctly and validate shard size, path, archive, and schema.
-- [x] Downloads and asset cache writes are atomic under concurrent workers.
+- [x] Downloads and asset cache writes are atomic under concurrent workers; Stockfish execute bits are set before publication and repaired on cache hits.
 - [x] Leases are sticky enough for load balance but do not strand workers forever.
 - [x] Worker retry/backoff handles transient server/network/model errors without corrupting local state.
 - [x] Worker pool startup/shutdown handles child failures and signal propagation.
@@ -1127,11 +1227,63 @@ Tests:
 - [x] `tests/test_distributed_selfplay_backpressure.py`
 - [x] `tests/test_worker_pool.py`
 - [x] `tests/test_worker_cached_assets.py`
+- [x] `tests/test_worker_stockfish_executable_cache.py`
 - [x] `tests/test_worker_config_yaml.py`
 - [x] `tests/test_worker_small_uploads.py`
 - [x] `tests/test_e2e_smoke.py`
 - [x] `tests/test_profile_distributed.py`
 
+Worker delivery/process ownership first-pass addendum (2026-10-02; base 269105298285b6098ffbf80405cb18ec33186b38):
+
+- [x] Trace model/best-checkpoint and asset identity through manifest SHA,
+  cache path, cache hit verification, retry-on-failure, worker model replacement,
+  and pruning; verify the active evaluator and shard tags move together.
+- [x] Trace shared-cache download serialization and publication for model,
+  Stockfish, worker wheel, opening books, and unhashed legacy book fallback.
+  Regression reproduced concurrent fixed-temp collision; downloads now use
+  unique same-directory temporary files, verify declared SHA before publish,
+  and atomically replace only complete verified content.
+- [x] Trace worker-pool startup, respawn, signal shutdown, stockfish subprocess
+  pool cleanup, Tune worker launch signature replacement, stale child recovery,
+  upload retry/quarantine, and worker local pending/resume cleanup.
+- [x] Verify partial worker-pool startup failure was production-reachable:
+  a later child Popen error bypassed the old finally block and left already
+  started children unsupervised. Startup now runs under the cleanup guard.
+- [x] Existing server-side upload durability, lease, path, and backpressure
+  observations are reused from the completed distributed-server pass; this
+  addendum does not duplicate them or alter the server.
+- [x] Focused regressions passed: tests/test_worker_cached_assets.py,
+  tests/test_worker_pool.py, tests/test_worker_shutdown_signal.py,
+  tests/test_worker_model_update.py, tests/test_worker_upload_response.py,
+  tests/test_worker_small_uploads.py, tests/test_tune_distributed_worker_cmd.py,
+  tests/test_stockfish_pool.py, tests/test_worker_boot_hang_watchdog.py
+  (165 passed). Run used two threads, a 24-hour timeout, and a process-tree RSS
+  monitor; measured peak RSS was 1.43 GiB.
+- [x] No live worker/server, credential, network service, checkpoint, or GPU was
+  used. Download tests use mocked responses. Residual coverage gap: real
+  cross-host shared filesystems and production Stockfish binary startup are
+  not exercised; shared-cache configuration is documented as per-machine.
+
+- [x] Worker-pulled Stockfish cache mode follow-up: before the fix, the
+  fake constructor observed mode 0600 and raised for both a fresh session and
+  a session whose last SHA matched; a barrier after atomic publication also let
+  the consumer observe that non-executable inode before the publisher chmod.
+  After the fix, execute bits are present at the publication boundary and
+  cache-hit sessions repair older entries before Stockfish construction.
+  tests/test_worker_stockfish_executable_cache.py,
+  tests/test_worker_cached_assets.py, and
+  tests/test_worker_model_update.py::test_sync_stockfish_reinits_on_binary_or_hash_change
+  passed (11 passed; two-thread cap; peak process-tree RSS 593 MiB).
+- [x] Broader worker lifecycle/cache validation after WLA-003 passed:
+  tests/test_worker_stockfish_executable_cache.py, tests/test_worker_cached_assets.py,
+  tests/test_worker_pool.py, tests/test_worker_shutdown_signal.py,
+  tests/test_worker_model_update.py, tests/test_worker_upload_response.py,
+  tests/test_worker_small_uploads.py, tests/test_tune_distributed_worker_cmd.py,
+  tests/test_stockfish_pool.py, and tests/test_worker_boot_hang_watchdog.py
+  (170 passed; two-thread cap; 24-hour timeout; peak process-tree RSS 1.47 GiB).
+- [x] Local Codex review of the uncommitted WLA-003 diff found no actionable
+  regressions; its focused 11-test slice passed. No real Stockfish binary,
+  live worker, credentials, network service, or GPU was used.
 ### Stockfish Integration
 
 Status: `deep`. PID direction/state tests, worker-pool overlap, UCI timeout
@@ -1168,6 +1320,33 @@ Tests:
 - [x] `tests/test_worker_pool.py`
 
 ### Tune and PBT Runtime
+
+Lifecycle pass extension (2026-10-03, source/synthetic CPU scope):
+
+- Same-trial checkpoint path: model topology peek/build, Trainer and optimizer
+  construction, Trainer restore, active-LR synchronization (covered separately
+  by open PR #987), RNG/iteration/window metadata restoration, replay opening
+  (covered separately by open PR #989), YAML key baseline, holdout/PID/gate
+  state, and live reload ordering.
+- Cross-trial exploit path: checkpoint owner detection, optimizer mismatch
+  model-only fallback, recipient config retention, donor RNG fork, donor EMA,
+  replay exchange selection, best-record reset, and resumed versus local
+  iteration counters.
+- Persistence/publication: Ray staging versus durable trial directories,
+  checkpoint index guard/retention, trainer and JSON sidecars, report timing,
+  and published model cache behavior keyed by trial and trainer step.
+- Lifecycle: process cleanup in `finally`, child worker/broker stop/reap,
+  async evaluation snapshot/source-iteration handling, prefetch stop/join, and
+  Tune actor reuse disabled for the function-style trainable.
+
+F059 reproduces incomplete checkpoint publication on required metadata/PID
+sidecar errors and makes those writes fail closed. F060 reproduces a cross-trial
+equal-step stale model publication and restricts same-step reuse to same-trial
+resume. CPU coverage used synthetic directories and distinct model bytes; no
+Ray cluster, production checkpoint, or live training was used. Real Ray
+scheduler callback ordering and remote-filesystem sync behavior remain
+unqualified; Ray's pinned source was inspected but not exercised. Cross-platform
+actor/process behavior and long-running crash/restart are also unqualified.
 
 Files:
 
@@ -1331,6 +1510,59 @@ Tests:
 - [x] `tests/test_reinit_value_heads_script.py`
 - [x] `tests/test_status_script.py`
 
+#### 2026-10-03 evaluation and benchmark refresh (base `269105298285b6098ffbf80405cb18ec33186b38`)
+
+Scoped first pass traced contracts and call sites in `docs/eval_protocol.md`,
+`docs/toolchains.md`, `scripts/arena_standard.py`,
+`chess_anti_engine/eval/sprt.py`, `chess_anti_engine/eval/arena_pgn.py`,
+`chess_anti_engine/utils/game_log.py`, `scripts/match_vs_uci.py`,
+`scripts/match_checkpoints.py`, the Elo-vs-sims CLI, and
+`pyproject.toml`. Coverage included paired opening/color schedule, game-count
+validation, result/score handling, confidence-unit selection, SPRT pair-prefix
+accounting, log fingerprints and resume/deduplication, partial-run truncation,
+checkpoint/command identity limits, ladder option forwarding, CLI defaults,
+the `deepfin` console entry point and core/extra runtime dependencies.
+
+Confirmed and fixed F053 and F054 above. `match_vs_uci` estimates uncertainty
+over opening-pair means in global game-index order; it refuses an odd game count
+before opening engines. The interval remains a normal approximation over
+independent opening-pair means. Its empirical SE is retained, but an interval
+is unavailable when fewer than two pairs or zero empirical variance provides no
+between-pair uncertainty estimate. Arena JSONL records serialize
+`interval_status`, and score/Elo limits are null when unavailable. Console,
+handicapped-match, BT4 recipe, and BT4 calibration consumers use that status;
+a zero-variance calibration is refused instead of producing a point-width
+verdict. The pair estimator and nondegenerate interval values are unchanged.
+The package metadata was read for contract coverage; no package metadata or
+dependency changes were needed. Local native extensions were built from
+repository sources only to run the handicapped-match tests; no package
+installation or artifact download was performed.
+
+Bounded negative and regression checks:
+
+- `tests/test_match_resume.py -k "match_score_ci or resumed_match_ci or odd_game_count or resumed_match_equals or resumed_match_replays or match_schedule"` — 6 selected tests passed. The production-path fixture resumes only indices 0 and 2, plays indices 1, 3, 4, 5, 6 and 7, captures the score sequence passed from `main` into `_score_ci`, and proves it is in global index order; append order would invent variance.
+- `tests/test_arena_standard.py -k "pentanomial or print_summary"` — targeted run passed; includes the 10-neutral-pair sample from an iid population with (P(X=.5)=.9, P(X=1)=.1): the 0.348678 probability of observing all neutral yields the former false zero-width interval, now explicitly unavailable. Existing symmetric/asymmetric nondegenerate goldens are unchanged.
+- `tests/test_match_vs_uci_script.py -k score_ci` — 1 passed, including the degenerate mirrored case.
+- `tests/test_bt4_recipe_readout.py -k terminal_interval_status_mismatch` — 1 passed; contradictory pinned summary status is rejected.
+- `tests/test_identity_harness.py -k "summary"` — 3 passed; after asserting the single-complete-pair case, `-k "summary_drops_an_orphan"` — 1 passed.
+- All pytest invocations used a 600-second timeout and two-thread caps. Existing `pynvml` deprecation warning only.
+- Independent read-only `codex review --uncommitted`: the first review identified an inadequate resume-order test and a missing pinned-status integrity check. Both were addressed; the final review found no actionable regressions and its seven focused tests passed. The separate test module run passed 66 tests but three CLI tests were blocked by the fixture rejecting matplotlib's attempt to create `~/.config/matplotlib`; targeted receipt validation passed separately. Earlier broader aggregate review was inconclusive because the shared Python 3.10 venv has NumPy 2.2.6 while its native extension was built against NumPy 1.x.
+
+Known qualification gaps: no real engine, Stockfish, checkpoint, GPU, or tablebase
+arena was launched; no long ladder or SPRT stop was executed. The documented
+in-place checkpoint/binary replacement identity limitation remains. This pass
+covered the production paired arena and external UCI match paths deeply, and
+reviewed the ladder/checkpoint wrappers and packaging metadata statically; other
+one-off puzzle, profile and benchmark scripts were not exhaustively executed.
+
+Fresh ops/build/runtime first pass (2026-10-03; isolated current-main base `269105298285b6098ffbf80405cb18ec33186b38`; excludes the separately owned durable queue and temporary Ceres/V6 packets):
+
++- Traced production `scripts/train.sh` start/stop/status, worker drain and orphan cleanup, watchdog observer launch, graceful restart preflight/ack/timeout/retry, salvage/best-save admission and output; extension compiler selection/environment scrub/forced rebuild; the C-extension source/header freshness and GCC/native/LTO gates; pyproject extras and the `deepfin` console script; shell and WSL wrappers. Read `CLAUDE.md`, `docs/branch_lifecycle.md`, `docs/toolchains.md`, and `docs/operations.md`.
++- Focused lifecycle command: `python3.10 -m pytest -o addopts= -q tests/test_build_production_extensions.py tests/test_c_extension_freshness.py tests/test_graceful_restart.py tests/test_train_sh_worker_drain.py tests/test_worker_boot_hang_watchdog.py tests/test_status_script.py tests/test_recover_stall_guard.py tests/test_watchdog_alert_transitions.py` -> `145 passed, 1 warning` (pynvml deprecation), 59.07 s, peak RSS 1,452,912 KiB. Extensions were built from the repository source first with `python3.10 setup.py build_ext --inplace --force` (10.06 s, peak RSS 185,012 KiB); no dependency installation.
++- Package check: `python3.10 -m pip wheel --no-deps --no-build-isolation --no-index . -w /tmp/deepfin-wheel-audit-check` succeeded; wheel `chess_anti_engine-0.0.3-cp310-cp310-linux_x86_64.whl`, console entry `deepfin = chess_anti_engine.uci.__main__:main`, five bundled `.so` modules. Wheel was not installed.
++- Failure evidence/fix F064: a second-copy failure left a trainer-only destination and prevented a same-label retry. `best-save` now builds in a hidden same-filesystem staging directory, traps failures to clean that stage, and publishes via GNU `mv -nT` only after manifest creation. Exact candidate commit `82d2d942bd39ccbd708727b44f9a9949b369dd55`; independent internal Codex review of this commit reported no actionable defects and its focused regression passed. Regression plus neighboring salvage tests: `19 passed, 1 warning`; Ruff on the new test, `bash -n scripts/train.sh`, and `git diff --check` passed.
++- Limits: no production service/training launch; no GPU runtime; Windows/ARM wheels were not built; native source build was portable GCC on Linux/Python 3.10 rather than the production GCC15/LTO host recipe. Watchdog/shell lifecycle was exercised only through bounded fake-process tests.
+
 ### Documentation and Specs
 
 Files:
@@ -1451,6 +1683,31 @@ Review:
 - [x] Identify tests that are flaky, time-dependent, network-dependent, or too slow for regular use.
 - [x] Map each high/critical finding to a regression test before fixing.
 
+### NNUE Backend: Incrementality and Model Contract
+
+Status: first pass complete for the scoped backend and its search/provider seams.
+
+Base revision: `269105298285b6098ffbf80405cb18ec33186b38`.
+Isolated branch: `audit/nnue-backend-20261002`.
+
+Production paths and contracts reviewed:
+
+- [x] Source-model parsing: `scripts/nnue_parse.py` validates NNUE version, feature-transformer/network/layer hashes, exact LEB128 cardinality, layer stacks, and EOF; `scripts/nnue_pack.py` maps the big-net tensors to the v1 little-endian, 64-byte-aligned pack schema.
+- [x] Native schema/load boundary: `chess_anti_engine/nnue/_nnue_impl.h` checks pack/version, supported dimensions, relational layer widths, mapped-file length, tensor ranges, threat-table dimensions, and cache identity on file replacement. First pass found the missing alignment/non-overlap invariant (NNUE-001); it now rejects both before binding tensor pointers.
+- [x] Position and model feature contract: `cae_nnue_pos_from_cboard()` converts the production CBoard adapter to the Stockfish feature color/piece indexing and rejects malformed masks/kings/pawns; active HalfKA and FullThreats indexes were compared to the NumPy reference for both perspectives across the fixed position set.
+- [x] Refresh/update contract: `_nnue_state.h` root refresh, changed-square HalfKA deltas, sorted FullThreats multiset deltas, sibling copy ownership, cache invalidation, and per-perspective king-square refresh were traced. A targeted synthetic Kxe2 qsearch case crosses the five-to-four-piece bucket boundary and compares the production incremental provider to full refresh.
+- [x] Bucket and arithmetic contract: current position piece count selects the layer stack on each evaluation; transform clipping/product division, PSQT division, int16 wrapping, int8 widening, layer clamps, and output scales were reviewed against the Python reference and synthetic sensitivity gates.
+- [x] Evaluator/search integration: `_nnue_ext.c` direct and arm surfaces, provider registry in `_arm_providers.h`, capsule installation in `_mcts_tree.c`, and check resolution were followed. Incremental/refresh, DAG parity, FastQ, provider, malformed-position, and check-resolver test paths were reviewed.
+
+Coverage evidence (Linux x86_64 WSL, CPython 3.10.12, GCC 11.4; all test jobs capped at 2 threads, 600 seconds, and 4 GiB process-tree RSS):
+
+- [x] On a portable build with `HAVE_AVX2=0`, incremental, native evaluator/loader, DAG, and resolver tests passed: 192 passed, 29 skipped; peak process-tree RSS 852 MiB.
+- [x] On this AVX2-capable host, a forced `-mavx2` build enabled `HAVE_AVX2=1`; the same CPU suite plus FastQ and qsearch-DAG parity passed with both scalar and SIMD kernels: 276 passed, 57 skipped; peak process-tree RSS 986 MiB.
+- [x] The two new offset regressions failed on unmodified main because the loader accepted both malformed files, then passed after the fix. Ruff and `git diff --check` are clean for the changed Python/test diff.
+- [x] Internal `codex review --uncommitted` found no actionable issues; its focused native evaluator/loader suite passed.
+
+Limits: no real Stockfish NNUE pack was available, so the optional real-network incremental parity and external Stockfish parity gate were not run. The portable scalar and AVX2/scalar runtime-selection paths were exercised on this host; Windows, ARM, big-endian, and other compiler/CPU builds remain unqualified. The 128-relation overflow fallback was inspected but not forced by the legal-position suite. The lone warning is an existing torch pynvml deprecation warning. No GPU, model download, corpus, or live system was used.
+
 ## Review Procedure
 
 Use this procedure for each component.
@@ -1567,3 +1824,294 @@ Use this section after findings are recorded.
 - [x] What minimum hardware baseline should efficiency findings use: CPU-only, single CUDA GPU, or current production host?
 - [x] Which Stockfish version/path should be treated as the review baseline?
 - [x] Are benchmark regressions findings only after measurement, or should obvious hot-path issues be recorded from static review?
+
+### 2026-10-03 training, loss, optimizer and checkpoint pass (base `269105298285b6098ffbf80405cb18ec33186b38`)
+
+Fresh source-to-consumer coverage for the requested training invariants:
+
+- Update scaling: traced `TuneConfig.accum_steps` through `trainable_phases`, `Trainer.__init__`, `_run_optimizer_step`, and `train_steps`. Ordinary replay divides each microbatch objective by `accum_steps`; the exact without-replacement path additionally uses realized row count and preflighted per-head corpus masks to preserve the global masked objective for ragged batches. The synthetic accumulation/E2E and exact-epoch paths were included in the scoped regression slice.
+- Masked-head normalization: traced `compute_loss` masks, the 14 ordered objective terms, exact-epoch sum/count normalization, empty-mask behavior, and zero-weight non-finite disarming. Existing loss, target, phase-bucket, and zero-weight negative tests passed.
+- Parameter grouping: traced trainable-only decay buckets, matrix optimizer selection, tied-name deduplication through `named_parameters`, the shared matrix predicate used by gradient clipping, and constructor cross-checks against optimizer groups. Aurora, Muon and SODA grouping/state tests passed.
+- Optimizer and checkpoint state: traced save/load of model, optimizer, scheduler, step, ZClip and SWA state; exact resume is strict while ordinary warm start uses parameter names, shape checks and bounded cold-start fallbacks. Optimizer-state decrease, warmup, checkpoint-resume, SWA and ZClip state tests passed.
+- Numerical guard and step identity: the matrix and clipped-group gradient norms are checked on every optimizer step; rejected gradients restore ZClip statistics and exact epochs fail closed after consumed rows. Tune construction/load/report connects `trainer.step` with persisted state and reports `global_iter` from the completed iteration. Existing guard and reporting tests passed.
+
+Finding F056: after the per-step non-finite gradient guard rejected an optimizer update, `train_steps` still called `AveragedModel.update_parameters` for that step. SWA therefore counted unchanged model weights as a new sample and biased the exported average toward states whose updates had been rejected. The SWA update now also requires that the step was not marked `nonfinite_grad`. A deterministic CPU regression first failed on the original behavior (`n_averaged` became 1) and passes with the guard. Successful-step cadence, the existing per-step guard, training E2E, and SWA export tests passed.
+
+Validation used the already built source-identical Python 3.13 CPU environment, local native extensions, two CPU threads, a 4 GiB RSS ceiling, no CUDA devices, and per-job timeout below 600 seconds. The scoped loss/target, accumulation, optimizer, warmup, checkpoint, ZClip and SWA test slice passed. `ruff`, `py_compile`, and `git diff --check` passed. The independent internal review is tied to the final fix commit.
+
+Qualification gaps: no GPU, mixed-precision CUDA, production-sized model/corpus, or live multi-process Tune run was performed. The exact-corpus tests are synthetic; Windows/macOS/ARM and long-duration optimizer-state behavior remain outside this pass. No additional defect was confirmed in the audited normalization, parameter grouping, restore or metric-identity paths.
+
+
+Finding F057 follow-up on the same #1003 branch: AveragedModel starts as an
+initial-weight copy, while export_swa previously selected its module whenever
+SWA was configured, independent of n_averaged. With warmup_steps=0 and
+swa_start=1, a finite step 0 changes the raw model, then a rejected first
+eligible step 1 leaves the average count at zero; publication emitted the
+initial copy instead of current raw weights. The new end-to-end regression
+failed before the fix by digest mismatch and now checks the real save, exact
+resume, and export path with n_averaged=0. Empty-SWA export falls back to raw
+weights; optional BN recalibration also targets the model actually being
+published. The warning now describes only a non-empty average.
+
+The positive control records model weights at successful eligible update
+boundaries, interleaves a rejected eligible update, verifies the rejected step
+does not change the count, checks the exact expected mean of the two successful
+samples, and checks published tensors equal the SWA model. The empty checkpoint
+resume retains n_averaged=0. Focused SWA export/checkpoint, train-window sync,
+and training E2E tests pass (38 total); Ruff, py_compile, and diff checks pass.
+This behavior is conditional: the current production template disables SWA, so
+no live training incident is claimed.
+
+
+## 2026-10-03 bootstrap / corpus / BT4 / Ceres source-to-training pass
+
+Base: `269105298285b6098ffbf80405cb18ec33186b38` (`origin/main`). Worktree:
+`~/projects/chess-worktrees/bootstrap-corpus-bt4-audit-20261003`, branch
+`audit/bootstrap-corpus-bt4-20261003`. This is an isolated source-only review;
+no corpus, teacher artifact, generator, trainer, or live checkout was opened for
+bulk processing. The known history-FEN proof gap remains explicitly unqualified.
+
+### Scoped contract checklist
+
+| Boundary | Production paths traced | Pass questions and result |
+|---|---|---|
+| Rooted source CLI / resume | `scripts/gen_sf_rooted_corpus.py` (`build_parser`, `config_stamp`, `resume_worker_state`, `ShardWriter`, `build_summary`, `main`) | Defaults/config identity, worker/game seed identity, per-worker append-only progress, torn-tail repair, complete-game rotation, dedup cache events, unlisted shard cleanup and incomplete-run stamps were traced against the adjacent resume contract and existing tests. No new defect confirmed. |
+| Target derivation / objective | `scripts/derive_corpus_targets.py` (`parse_value_scheme`, `wdl_target_from_result`, `game_value_targets`, `write_value_target`, `apply_value_scheme`, `enforce_value_scheme_take_effect`, `build_summary`, parser) | Row POV, raw outcome versus `search_wdl`, target blend construction, tail/drop semantics, CLI-to-options propagation, emitted-byte take-effect checks and per-shard schema/summary stamps were traced. No new defect confirmed. |
+| Raw BT4 adapter / admission | `scripts/adapt_raw_bt4_sidecars.py`, `scripts/bt4_policy_mix.py`, `scripts/bt4_derived_wdl_sidecar.py`, `chess_anti_engine/source/bt4_npz_unit_v1.py` | Manifest pins, row-key joins, corpus/shard coverage, summary/model/provider identity, legal support, source/history regimes and unit-only versus training-credit boundary were inspected. BT4 NPZ archive and adapter tests passed under the locked CPU environment with `zstandard` and project extensions built. |
+| Ceres input / saved source | `chess_anti_engine/encoding/ceres_tpg.py`, `ceres_stored_feed.py`; `chess_anti_engine/source/ceres_root_input.py`, `ceres_saved_game.py`, `ceres_owner_target.py` | Stored-f16 conversion and feed hashes, TPG canonicalization/history/repetition/EP/rule50 handling, row/legal map alignment and independent full-game validation boundaries were traced and exercised with synthetic saved-game tests. The existing history-FEN limitation is not promoted into a claim. |
+| Teacher sidecars / row binding | `scripts/ceres_derived_sidecar.py`, `scripts/bt4_derived_wdl_sidecar.py`, `chess_anti_engine/encoding/ceres_tpg.py` | Complete chunks, source array hashes, row/game/ply identity, legal offsets/maps, provider/model/output contracts, source storage identities, feed digests, final input rechecks and atomic publication were inspected and synthetic fake-session tests passed. |
+| Policy target mix | `scripts/ceres_target_mix.py`, `scripts/bt4_policy_mix.py`, `scripts/sf_policy_rewrite.py` | Separately normalized legal-support distributions and temperature/weight semantics; exact mutation of `policy_target`; preservation of all other stored arrays; complete manifest membership and producer/input pins were traced. Synthetic mix and recovery tests passed. |
+| Value target mix | `scripts/ceres_value_mix.py`, `scripts/bt4_value_rewrite.py` | WDL order/POV and probability normalization; fixed SF/BT4/Ceres primary-secondary dose; exact mutation of `search_wdl`; preservation of all other arrays; and trainer-consumer effects were traced. Synthetic rewrite and fake-teacher tests passed. |
+| Publication / qualification / admission | `scripts/ceres_materialize.py`, `scripts/ceres_corpus_qualification.py`, `scripts/audited_source_admission.py`, `scripts/common_input_batch.py`, `scripts/combined_corpus_train.py`, BT4/Ceres admission helpers | Fresh-output and STOP/deadline/disk guards, profile-specific pins, corpus inventory and storage identities, prospective-vs-completed qualification, selected-source flags, ordered cohort/role mapping, actual training argument construction, and distinct source/policy/value roots were inspected. Synthetic qualification, admission, and combined-trainer contract tests passed. No corpus was executed or inventoried. |
+| Package/runtime dependencies | `pyproject.toml` | Confirmed Python floor, core replay/runtime dependencies, Zarr v2 pin, `deepfin` entrypoint, and test/dev extras (`zstandard`, native extension build/import requirements, ONNX stack). Reused the documented setup in an isolated Python 3.13 `.venv` via `uv sync --locked --extra dev --extra cpu`; CPU-only Torch, `zstandard`, and all five local native extensions were available. The isolated build used two CPU threads; no global install or CUDA package was used. |
+
+### Validation and disposition
+
+The documented CPU development environment was created in the isolated worktree with
+`uv sync --locked --extra dev --extra cpu` (Python 3.13.15, Torch 2.14.0+cpu).
+`zstandard` and all five project native extensions imported from this worktree.
+CUDA was hidden; two-CPU affinity/thread caps, a 4 GiB RSS limit, an 86400-second
+job timeout, and temporary `MPLCONFIGDIR`/`XDG_CACHE_HOME` under
+`/tmp/deepfin-bootstrap-audit-20261003` were used.
+
+F055 was reproduced through the real CLI on both exact base
+`269105298285b6098ffbf80405cb18ec33186b38` and candidate
+`509fe8b9a09a1b2e1e743c2ee652a59d62d19eb9`, using `--limit -1`, a nonexistent
+corpus, and separate temporary output paths. Base exited at corpus access with
+`CorpusIntegrityError`; candidate rejected the limit first with the intended
+`ValueError`. Neither created its output path. The disposable base worktree
+used temporary symlinks to the candidate-built native binaries; all native source
+and setup files are identical between the two revisions.
+
+The scoped production-path test selection passed **887 tests** across corpus
+derivation/rooted-corpus resume, raw BT4 adapter/NPZ admission, BT4 sidecars and
+target mixers, Ceres TPG/root/saved-game/feed/sidecar/mix/materialize/qualification,
+source admission and combined-corpus argument wiring. Four harmless Python 3.13
+multiprocessing-fork deprecation warnings were emitted. Ruff, py_compile,
+and `git diff --check` pass.
+
+Independent read-only INTERNAL Codex review of the F055 commit is recorded below.
+No other distinct, reachable defect survived review of the declared main-pipeline
+boundaries. The named table is the completed first pass for rooted corpus →
+derived targets → BT4/Ceres target construction → source admission and trainer
+wiring, supported by synthetic end-to-end fixtures. It is not a claim of
+exhaustive coverage of every historical one-off script or every branch inside
+each large module. Remaining qualifications are real corpus/teacher artifact
+content, full generator-scale resume/dedup workloads, every downstream TPG
+consumer, real trainer/GPU operation, and the known history-FEN proof limitation.
+Those were out of scope for CPU-only non-production validation and no large corpus,
+teacher artifact, training run, or GPU was touched.
+
+Finding F055 and its test passed at the candidate revision. Earlier fixes #986/#989
+and PR #1001's separate terminal-only paired-estimator work were checked for
+overlap and left outside this scope. No merge occurred; the candidate remains in
+draft PR #1002.
+
+Hosted CI follow-up for #1002: run 37093048940 passed 14,394 tests and failed only the no-absolute-home ratchet because this tracker recorded the private isolated worktree path. Replaced that documentation-only path with a home-relative notation the focused ratchet now passes (11 tests). This was not a bootstrap implementation or missing-extension failure.
+
+
+NNUE test-gap follow-up at 25e6ab7ee50cbccd856a6773d69e7fe6046e112d: replaced the permissive combined malformed-offset test with an aligned same-offset overlap negative and a reverse-order overlap negative. Alignment negatives now use tensor 9 (`fc2_bias`): offset 111261440 + deltas 1, 4, and 32; its size is 32 bytes and the next slot starts at 111261504, so all three remain in-bounds and disjoint. Header offset field is byte 160. Each case asserts the exact `not 64-byte aligned` error. Positive cases accept reverse-order disjoint adjacent tensors, an adjacent tensor endpoint, and a tensor ending exactly at EOF. Intentional alignment-guard deletion made all three disjoint unaligned cases fail; restored-source focused run passed 7 tests. Independent Codex found no actionable defects; its Python 3.10 rerun was blocked at collection by NumPy 2 versus NumPy-1-built native extension ABI mismatch. The Python 3.13 restored-source run passed. 32-bit remains unqualified and outside the CI/package platform matrix (Linux x86-64); no speculative runtime change was made.
+
+
+## MCTS/Search Deep Pass - 2026-10-03
+
+Base revision: 269105298285b6098ffbf80405cb18ec33186b38. The prior #988 PR (branch codex/fix-search-state-lifecycle, head d01f45950bae003d59a51a90b660b3ea9c583799) was open and not merged on this base. Its root history/identity and reset fixes were treated as already-reviewed context and were not duplicated here.
+
+Coverage checklist:
+
+- [x] Native MCTSTree Python entrypoints: root/expand/select/backprop, walker single/batch descend/integrate, child Q/visit results, output-array C-contiguous dtype/rank checks, input coercion, legal-policy bounds, buffer lengths, terminal row sentinels.
+- [x] PUCT child scoring and FPU: child W/N is converted to the parent frame; WDL logits become STM-relative Q; alternating backup; solved win/loss/draw propagation and solved-child selection.
+- [x] Terminal propagation: checkmate STM loss; stalemate/automatic game-over draw; CBoard search repetition draw path; walker/batch/Gumbel terminal backprop versus Python reference behavior.
+- [x] Gumbel root selection and sequential halving: top-m support, candidate order/retention, per-candidate budgets, configured halving divisor, candidate caps, final legal-action mapping and temperature sample.
+- [x] Completed-Q target transform: visited child Q sign, prior-weighted mixed value for unvisited children, root value anchor, max-visit sigma, play versus stored policy target, C/Python parity.
+- [x] Virtual-loss contracts: legacy pessimistic Q and virtual-mean Q; application/removal across paths; root exclusion; UCI walker exception cleanup; PUCV ping-pong batch outstanding rows and cache hit/miss identity.
+- [x] Transposition reuse: structural key, exact child-action set, donor history/repetition/halfmove/raw-EP context, priors/value reuse, context-reject fallback to evaluation.
+- [x] Result identity: ordered evaluator rows remain paired with paths/legal actions in UCI and PUCV; compacted cache misses are restored to original rows; Gumbel async group outputs stay with their own tree.
+- [x] Native-tree ownership/concurrency: reserves before concurrent expansion in UCI walker pool; tree/hash/expanded publication locks and acquire/release paths inspected.
+- [x] Candidate boundary tests and negative controls: undersized buffers reject; terminal rows skip integration; before-fix nested virtual-mean fixture selected the wrong child.
+
+Finding F061 was fixed by treating pending counts from parent and child as overlapping views: the effective pending-visit estimate uses max(parent_vl, sum(child_vl)). This accounts for root pending work because the root is deliberately omitted from virtual-loss paths, and avoids double-counting the ordinary nested case. The maximum is an approximate snapshot reconciliation, not an exact union of reservations under concurrent updates. For example, a removal on [R,P,A] paused after decrementing P, interleaved with an addition on [R,P,B] paused after incrementing P, can expose P=1 and A=1 even though two partially installed reservations are in flight. The selector may therefore undercount that interleaving; it is not a new persistent leak or counter corruption. The removal-before-backup gap predates this patch. Virtual-loss counters are atomically changed, while the selector's plain reads are snapshots; this patch does not claim race-free exact accounting or rewrite that existing concurrency model.
+
+Validation on the isolated Linux x86_64 / Python 3.13 current-main worktree:
+
+- Existing same-main native extension artifacts were reused to establish the failing baseline; native extensions were rebuilt after the C edit with the existing venv, 2 threads and 4 GiB RSS limit.
+- Scoped CPU/native tests: 313 passed, 2 skipped, 3 xfailed. New focused regression passed after the fix; before the fix it failed (selected node 2 instead of expected node 3).
+- Follow-up controls were run in the existing Python 3.10 native-extension environment: the focused nine-file MCTS/search slice passed (94 passed, 2 skipped, 1 warning) in 13.7 s at two Torch/BLAS threads; /usr/bin/time -v recorded peak RSS 1,185,824 KiB under the 600 s timeout. ./scripts/lint.sh tests/test_batch_descend_puct.py passed (ruff, basedpyright, vulture). The controls exercise root child-only pending, L+D, multiple sibling D paths, weight 16, zero/legacy behavior, and integration cleanup. No C runtime source changed in this follow-up.
+- No GPU, real model, production selfplay/arena, live network, or production tree was used.
+- Remaining unqualified areas: GPU evaluator/runtime ordering, sanitizer/race-detector builds, cross-platform native compilers, forced allocation failures, pathological 512-ply paths, and long-running live search. The C/Python reference repetition policy is not asserted as a shared contract beyond the tested call paths.
+
+
+### Board Encoding and Policy Mapping: Fresh System Pass (2026-10-03)
+
+Base: current origin/main 269105298285b6098ffbf80405cb18ec33186b38.
+Fix commit: bca557f7497041f37870c659aae733b13d855164.
+
+Coverage checklist derived from current source and configuration (not assumed
+from historical 146/1858 defaults):
+
+- [x] Enumerate EXTRA_FEATURE_VERSIONS, normalization aliases, registered
+  extra-plane counts, and total tensor shapes from features.py / encode.py:
+  v1 146, v2_threats 175, v3_checks 179, v3_xray 181, v3_see
+  177, and v3_passers 183; all retain the 112-plane LC0 block.
+- [x] Trace model/config identity through model construction and checkpoint
+  metadata, encoding/model_inputs.py, scalar/batch Python encoders,
+  CBoard scalar/batch encoders, and native extension entrypoints. Production
+  template explicitly selects v2_threats; experimental configs select the
+  separate v3 variants. policy_encoding remains compact 1858 at model/training
+  boundaries; search/CBoard action IDs are full 4672.
+- [x] Trace all three history layouts: legacy per-frame side-to-move POV,
+  lc0_root stable root POV with interleaved repetition slots/root metadata,
+  and lc0_root_legacy_meta; check short history, repetition, castling, EP and
+  rule50 consumers against layout-aware readers. Ceres TPG is separately typed.
+- [x] Trace compact-1858 to AZ-4672 and Leela-1858 paths, including side-to-move
+  orientation, ambiguous promotion/back-rank slots, castling king-takes-rook
+  spelling, legal masks, mirroring and promotion legality. Search actions and
+  model outputs are distinct index spaces.
+- [x] Exercise Python/C encoder and move-generator parity, output shape/dtype,
+  native output-buffer validation, scalar/batch/fallback paths, and invalid
+  shape/context rejection. Full CBoard support for all registered widths is
+  now pinned by scalar and batch tests.
+- [x] Identify reachable crash: native CBoard.encode_full and
+  encode_full_batch parameter validation admitted only the first three
+  registered extra-plane widths, while model configs and Python/C feature
+  computation registered six. Before the fix, encode_cboard raised
+  ValueError for v3_xray (69), v3_see (65), and v3_passers (71), making
+  those selected model input paths fail before inference.
+- [x] Minimal fix: allow the three additional declared widths in the shared
+  _lc0_ext.c validator and update its diagnostic and CBoard feature contract
+  comment. Added batch/single parity, native buffer acceptance, empty-batch
+  shape, and extension-fallback tests for all six versions. Existing feature
+  semantics remain selected by their exact n_extra width; no plane values or
+  ordering were changed.
+
+Validation on isolated Linux x86_64 / Python 3.10.12 with native extensions
+built locally from this checkout:
+
+- Before-fix scalar reproduction: v1, v2_threats, v3_checks succeed;
+  all three registered v3 widths above fail at native validation with the
+  corresponding n_extra error.
+- After-fix focused suite: tests/test_encode_full_batch.py,
+  test_encode_optimization.py, test_threat_planes.py,
+  test_cboard_terminal.py, test_cboard_move_parity.py,
+  test_history_rep_fix.py, test_leela_index.py,
+  test_move_encoding_lc0_4672.py, test_mirror_augmentation.py, and
+  test_encode_buffer_plane_guard.py: 217 passed in 8.77s; peak RSS 844216 KiB.
+- Separate current-main pre-fix encoding/history/policy slice: 299 passed;
+  this included all three history profiles, LC0/Ceres mapping, C/Python feature
+  semantics, history transform fixtures, policy round trips, and native type/
+  shape negative tests. The final fix-only run above covers the changed paths.
+- All pytest runs used the project fixture's realized two Torch threads and
+  ulimit -t 600; no GPU, model weights, external network, or data corpus.
+- Independent Codex review of fix commit bca557f found no actionable regressions; its focused encoding/threat-plane rerun passed 70 tests.
+- Static source audit found all dynamic producer callers derive plane count
+  from the model's declared feature version. In-place/pinned-buffer callers
+  invoke check_encode_buffer_planes at production entry boundaries.
+
+Not qualified: GPU or trained-model inference parity; production arena/training
+workloads for experimental v3 configs; Windows/ARM/big-endian builds; alternate
+Python/NumPy ABIs; max-depth game-history extremes. This is a first source plus
+bounded native/Python CPU pass for the board encoder and policy-mapping subsystem,
+not a deployment qualification.
+
+
+Board/policy follow-up (same F062, discovered while tracing the production
+selfplay route; fix commit 17547ae9534c53e321f0e4ed251faa38d40ca4d3):
+
+- Expanded the reachable path audit from CBoard's _lc0_ext into
+  selfplay/network_turn.py -> _mcts_tree.batch_encode_146* and
+  _mcts_tree.batch_process_ply. These APIs independently hard-coded 146/175
+  plane validation, and batch_process_ply rejected every registered v3 width.
+  Thus the first validator fix alone left all experimental v3 selfplay root
+  evaluation and sample processing paths failing before network evaluation/
+  target encoding.
+- _mcts_tree.c also used a 175-float-plane bf16 stack scratch buffer. Once
+  the width validators admit v3_passers, the required maximum is 183 planes;
+  the scratch capacity now follows the widest registered extra-feature width.
+- The common C validator contract now covers every registered width; all six
+  batch_encode_146* variants (legacy/root/root-legacy-meta, float32/bf16)
+  and batch_process_ply are parameterized over the registry. The regressions
+  compare encoded values and shapes to CBoard references and feature semantics.
+- Direct negative-control on pre-fix native code: v3_xray, v3_see, and
+  v3_passers fail width validation through production CBoard and selfplay
+  APIs. Post-fix, the 12 all-width selfplay batch regressions pass. Broader
+  scoped suite (threat planes, full batch, batch parity, buffer guards, audit
+  history encoding, policy target reshape/index LUT, and Stockfish policy
+  boundary) also passes on Linux x86_64/Python 3.10.12 with native extensions
+  rebuilt from source, two Torch threads and the 600-second CPU limit.
+- F062's scoped change is a validator/capacity expansion only. It does not
+  change the registered plane values/order, policy index mapping, history
+  semantics, or default production feature version.
+
+
+## Upload retry receipt follow-up — 2026-10-03
+
+- Base: `269105298285b6098ffbf80405cb18ec33186b38`. Finding F065; F064 remains the best-save publication issue in PR #1011.
+- F065 confirmed by `tests/test_server_upload_receipt_idempotency.py`: after upload compaction and process restart, the exact same packed payload was accepted a second time (two source uploads can become four replay positions). Distinct payloads with the same sample arrays remain valid separate uploads.
+- Fix: persist SHA receipts after a committed compaction and before removing its in-flight source witness; load and expire receipts on restart using the existing six-hour dedupe window. Recovery checks both `inbox/_compacted` and the trainer's `processed/_compacted`, and can rebuild receipts from retained in-flight source names. If receipt persistence fails, keep the in-flight recovery witness.
+- Regression injects receipt write failures, relocates committed output to `processed/_compacted`, restarts the app, retries the original payload (must return `stored: false`, positions remain 2), then submits a byte-distinct payload containing the same rows (must return `stored: true`, positions become 4). It also rejects changed bytes paired with the old digest, verifies the fixed six-hour `time.time()` window does not renew on retry, and verifies rollback/forward-jump expiry directly on the upload path, without requiring a manifest poll or restart.
+- Validation on current code: focused durability/receipt/compaction/security/worker-digest suite: 58 passed (2 CPU affinity, 600-second cap, peak RSS 728 MiB, 13.63 s). Ruff and diff checks pass; earlier scoped basedpyright, py_compile, and 41-test receipt slice passed before the fixture-only correction. Existing Python 3.10 native extensions were reused only after source/header hashes matched; no installs. Independent Codex review found no actionable defects. Its repo-local pytest command failed immediately because pytest was absent; the shared Python 3.10 attempt ended exit 130 after about 85 s. The later reviewer command pytest -q tests/test_server_upload_durability.py::test_recovery_drops_in_flight_when_compacted_token_match_exists started but did not complete; a subsequent process snapshot showed no reviewer/pytest process active. Our bounded rerun of the exact failing test plus five related modules passed all 58 tests. Prior targeted recovery/expiry log: /tmp/f065-independent-targeted-rerun.log.
+- Hosted CI follow-up: run 37121467556 on 72c130aed56fa5bce6ace043be099678b443dcfd failed one token-match recovery test. Local reproduction showed the synthetic in-flight filename hard-coded Unix timestamp 123, expired under the six-hour contract. Updated the fixture to reuse the server timestamp from the compacted filename; no production-code change. The exact test and 58-test related suite pass locally; pushing this fixture repair starts a fresh CI run.
+- Final recovery refinement: receipt age is recovered from the server-generated pending filename, not uploaded Zarr mtime (mtime is only a legacy/malformed-name fallback). The regression uses an eight-hour-old source mtime and proves simulated receipt-write failure plus restart still dedupes a retry. See the bounded rerun evidence above.
+- Worker identity is the SHA-256 of the exact packed tar sent in the request; the API has no separate upload UUID. Byte-identical payloads are intentionally retries, matching the pre-existing in-memory SHA key. Changed bytes with a stale digest are rejected; a distinct packed shard with identical sample rows remains valid.
+- Scope limits: local single-process POSIX restart/recovery; no concurrent server processes, network filesystem guarantees, arbitrary power-loss matrix, or retry behavior after the six-hour TTL is claimed. No exact-once delivery claim.
+
+
+## Historical PR993 config and packaging pass (2026-10-03)
+
+The following original focus/checklist and hosted follow-up are dated audit evidence; later records above remain current.
+
+Component: Entrypoints, Config, Packaging (additive verification pass)
+
+Goal: verify production entrypoints, configuration precedence and validation, and package/runtime dependency flow; record confirmed findings with regression coverage.
+
+Last updated: 2026-10-03
+
+#### Entrypoints/config/packaging first-pass checklist
+
+- [x] run.py two-pass CLI: pre-parse --config, YAML load/root shape, recognized nested sections, unknown keys, section mappings, flat-vs-nested override precedence, and YAML-to-argparse defaults.
+- [x] Runtime config guards: sparse Stockfish policy fields, target-only/temperature constraints, and documented realized defaults are checked before execution; every run.py store_true and BooleanOptionalAction destination rejects non-boolean YAML values instead of applying truthiness.
+- [x] Worker entrypoint: parser sentinels and explicit CLI > persisted worker.yaml > hardcoded defaults; credentials/password-file and cleartext transport guard; effective upload thresholds flow into persisted runtime config and shard buffer flush consumer.
+- [x] Worker pool entrypoint: pool-owned work/cache directories cannot be overridden through forwarded child arguments; child command uses current interpreter/module invocation.
+- [x] UCI packaged console and module entrypoints: deepfin resolves to chess_anti_engine.uci.__main__:main; help parsing and parser-to-engine startup wiring checked.
+- [x] HTTP server entrypoint: run_server argparse defaults/options flow into create_app and uvicorn; the server launcher is CLI-configured and does not read a YAML file.
+- [x] Script launcher: scripts/train.sh resolves its config path, exports required CUDA probe env and launches run.py with --config; help/status paths inspected without starting training.
+- [x] Tune config handoff: run.py argument values flow through _build_tune_config_dict into Tune typed config construction; relevant existing TrialConfig tests included.
+- [x] Packaging metadata: Python floor, core and optional dependencies, deepfin console entry, package discovery, NumPy-backed native extension declarations, compiler portability flags, and uv lock environment reviewed against import/install docs.
+- [x] Negative/contract tests: malformed recognized YAML sections, quoted/non-boolean model bools, explicit worker CLI vs YAML, YAML fallback/casters, parser failures; focused suites rerun.
+- [x] Linux x86_64/Python 3.10 wheel built locally without dependency installation; wheel contains all five declared native extensions and the deepfin console entrypoint. [ ] Cross-platform wheel/install matrix and clean isolated install were not run; no claim is made for Windows/macOS/ARM behavior.
+
+
+
+
+### Hosted CI follow-up for #993
+
+Run 37082604309 failed only two parameterized cases for sf_pid_enabled in
+tests/test_construction_only_config_keys.py: the helper wrote numeric 4321,
+which the newer Boolean YAML validator correctly rejects before the reload
+contract is reached. The fixture now chooses a validator-accepted boolean for
+boolean keys, returns the parsed fixture value, and asserts startup reload
+against that value. Reproduction on the candidate passed with
+tests/test_construction_only_config_keys.py and tests/test_no_absolute_home_paths.py
+(115 passed). The Python 3.13 test run reused only native binaries whose tracked
+sources matched byte-for-byte across isolated worktrees. No product validator
+behavior was weakened.

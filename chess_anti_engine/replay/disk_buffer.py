@@ -7,6 +7,7 @@ thousands of ``ReplaySample`` Python objects.
 """
 from __future__ import annotations
 
+import copy
 import fcntl
 import logging
 import os
@@ -413,6 +414,31 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
     return out
 
 
+def resume_open_capacity(
+    *,
+    current_window: int,
+    replay_window_max: int,
+    restored_window: int,
+    durable_resume: bool,
+) -> int:
+    """Capacity to pass into ``DiskReplayBuffer`` before ``__init__`` trims.
+
+    ``__init__`` calls ``_enforce_window`` before the caller can raise
+    ``capacity``. A same-trial resume or salvage whose checkpoint has no
+    ``current_window`` used to construct at the configured start capacity and delete
+    the durable window; the later bump cannot put those shards back. Open at
+    exactly the configured maximum in that case, even if a transient pre-bump
+    computed a larger window. A saved window and a fresh start return
+    ``current_window`` unchanged. The caller applies a positive
+    ``restored_window``, including the live ``replay_window_max`` cap, before
+    this function sees it.
+    """
+    window = int(current_window)
+    if int(restored_window) > 0 or not durable_resume:
+        return window
+    return int(replay_window_max)
+
+
 class DiskReplayBuffer:
     """Disk-backed replay buffer with array-backed hot shuffle storage.
 
@@ -457,6 +483,7 @@ class DiskReplayBuffer:
         diff_focus_pol_scale: float = 0.0,
         diff_focus_q_weight: float = 0.0,
         deterministic_refresh: bool = False,
+        preserve_sampling_rng: bool = False,
     ):
         self.capacity = int(capacity)
         self.rng = rng
@@ -480,11 +507,10 @@ class DiskReplayBuffer:
   # mistyped --replay-dir should read as "empty window", not quietly appear
   # to exist.
             self._shard_dir.mkdir(parents=True, exist_ok=True)
-  # Taken lazily on the first shard write, not here: a read-only or
-  # short-lived buffer should not claim the dir, and `clear()` routes
-  # through `close()` and then keeps writing.
+  # Writable buffers hold exclusive ownership for their lifetime. Claim before
+  # the resume scan because that scan can evict shards to enforce capacity.
+  # Read-only buffers never create or claim the lock.
         self._writer_lock_fd: int | None = None
-        self._writer_lock_reported = False
 
         self._shuffle_cap = int(shuffle_cap)
         self._shard_size = int(shard_size)
@@ -498,7 +524,21 @@ class DiskReplayBuffer:
         self._shard_recency_exponent = validate_shard_recency_exponent(
             shard_recency_exponent,
         )
-        self._prefetch_rng = np.random.default_rng(int(rng.integers(0, 2**32 - 1)))
+  # The prefetch seed is one integers() draw from the sampling generator.
+  # A fresh trial draws it once, before any checkpoint, so the sidecar
+  # already excludes it. Resume installs that sidecar first; drawing again
+  # here shifts every later mirror decision and sample index by one
+  # variate. When the caller has just installed a checkpointed generator,
+  # take the seed and roll the parent back. The prefetch stream still
+  # starts from that integer. Fresh starts and cross-trial forks leave
+  # the flag false and keep today's one-draw advance.
+        if preserve_sampling_rng:
+            saved_state = copy.deepcopy(rng.bit_generator.state)
+            prefetch_seed = int(rng.integers(0, 2**32 - 1))
+            rng.bit_generator.state = saved_state
+        else:
+            prefetch_seed = int(rng.integers(0, 2**32 - 1))
+        self._prefetch_rng = np.random.default_rng(prefetch_seed)
   # OFF in production; ON makes the draw sequence a pure function of the seed.
   #
   # The shuffle-pool refresh has TWO implementations and picks between them by
@@ -627,7 +667,13 @@ class DiskReplayBuffer:
         self.wl_max_ratio = float(wl_max_ratio)
 
   # Scan existing shards on disk (for resume).
-        self._scan_existing_shards()
+        if not self._read_only:
+            self._claim_writer()
+        try:
+            self._scan_existing_shards()
+        except BaseException:
+            self._release_writer()
+            raise
   # After the scan, so a resume describes the draw over its ACTUAL window
   # rather than the continuum limit. On a resume this lands just below the
   # `[disk_buf] shuffle seed` line the scan emits, and the two are meant to be
@@ -1728,6 +1774,7 @@ class DiskReplayBuffer:
         self._reject_if_read_only("add_many")
         if not samples:
             return
+        self._claim_writer()
         arrs = prune_storage_arrays(samples_to_arrays(samples))
 
   # Keep newest data available for training immediately in the hot buffer.
@@ -1750,6 +1797,7 @@ class DiskReplayBuffer:
         n = int(sparse["x"].shape[0])
         if n <= 0:
             return
+        self._claim_writer()
 
         self._append_shuffle_arrays(sparse)
         self._trim_shuffle_buf()
@@ -1764,23 +1812,23 @@ class DiskReplayBuffer:
         """Force-write any remaining samples in write buffer to disk."""
         self._reject_if_read_only("flush")
         if self._write_buf_rows > 0:
+            self._claim_writer()
             self._flush_shard_arrays(self._take_write_prefix(self._write_buf_rows))
             self._enforce_window()
 
     def enforce_window(self) -> None:
         """Apply the current capacity limit immediately."""
         self._reject_if_read_only("enforce_window")
+        self._claim_writer()
         self._enforce_window()
 
     def _claim_writer(self) -> None:
-        """Take the shard dir's advisory writer lock, or say who already has it.
+        """Claim exclusive ownership of this shard directory or fail closed.
 
-        Detection only: a second writer keeps writing. What it produces is
-        silent duplication rather than a crash -- two buffers allocate shard
-        indices from their own counters, so the streams interleave instead of
-        colliding, and every row written while both are live lands in the
-        window twice. The lock is released when the process exits (or in
-        ``close()``), so a crash cannot leave a stale one behind.
+        Multiple writers used to log and continue, allowing replay rows to be
+        persisted twice and independently split between train and holdout.
+        The lock is held from construction through close so resume-time
+        capacity enforcement is protected too.
         """
         if self._writer_lock_fd is not None:
             return
@@ -1788,27 +1836,20 @@ class DiskReplayBuffer:
         try:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
         except OSError as exc:
-            log.warning("[disk_buf] cannot open writer lock %s: %s", lock_path, exc)
-            self._writer_lock_reported = True
-            return
+            raise RuntimeError(
+                f"cannot claim replay writer lock {lock_path}: {exc}"
+            ) from exc
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            if not self._writer_lock_reported:
-                holder = ""
-                with contextlib.suppress(Exception):
-                    holder = os.pread(fd, 64, 0).decode("utf-8", "replace").strip()
-                log.error(
-                    "[disk_buf] CONCURRENT WRITER: %s is already being written by pid %s; "
-                    "this process (pid %d) is writing into it too. Every row ingested from "
-                    "here on lands in the window TWICE, and each writer draws its own "
-                    "holdout split, so a duplicated row can sit in one holdout and the "
-                    "other's training set (audit G7).",
-                    self._shard_dir, holder or "unknown", os.getpid(),
-                )
-                self._writer_lock_reported = True
+        except OSError as exc:
+            holder = ""
+            with contextlib.suppress(Exception):
+                holder = os.pread(fd, 64, 0).decode("utf-8", "replace").strip()
             os.close(fd)
-            return
+            raise RuntimeError(
+                f"replay shard directory {self._shard_dir} already has an active "
+                f"writer (pid {holder or 'unknown'}); refusing concurrent write"
+            ) from exc
         with contextlib.suppress(Exception):
             os.ftruncate(fd, 0)
             os.pwrite(fd, f"{os.getpid()}\n".encode(), 0)
@@ -2136,6 +2177,7 @@ class DiskReplayBuffer:
         """Remove all data (disk and memory)."""
         self._reject_if_read_only("clear")
         self.close()
+        self._claim_writer()
         self._shuffle_buf = deque()
         self._shuffle_sizes = deque()
         self._shuffle_offsets = deque()
@@ -2152,7 +2194,6 @@ class DiskReplayBuffer:
 
     def close(self) -> None:
         self._release_writer()
-        self._writer_lock_reported = False
         t = self._prefetch_thread
         stop_event = self._prefetch_stop
         request_event = self._prefetch_request
