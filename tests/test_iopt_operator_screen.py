@@ -88,9 +88,13 @@ def test_match_kl_is_a_shape_control_and_unscaled_only_differs_by_temperature() 
         kl_from_prior(root.policies["iopt_matched_kl"], root.prior),
         abs=1e-8,
     )
-    # The unscaled vector has exactly the same action ordering: per-root
-    # KL-matching would simply reproduce current and is NOT a useful contrast.
-    assert np.argmax(root.policies["current"]) == np.argmax(root.policies["unscaled"])
+    # The Q ordering is unchanged; differences in policy argmax are due to
+    # a single global multiplier. Matching that per root is a tautology.
+    rematched, reachable = match_kl(
+        root.prior, root.completed_q, root.policies["current"]
+    )
+    assert reachable
+    assert rematched == pytest.approx(root.policies["current"], abs=1e-10)
 
 
 def test_reconstruction_rejects_wrong_q_or_native_policy() -> None:
