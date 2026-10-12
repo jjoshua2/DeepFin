@@ -110,11 +110,12 @@ def reconstruct(
     The JSON capture contains legal moves in ONE canonical order; unknown
     Stockfish labels and unvisited child-Q entries are null, never invented.
     """
-    if not (
+    params = (beta, tau2, variance_scale, unvisited_multiplier, parity_tolerance)
+    if not all(np.isfinite(v) for v in params) or not (
         beta > 0.0 and tau2 > 0.0 and variance_scale > 0.0
-        and unvisited_multiplier >= 1.0
+        and unvisited_multiplier >= 1.0 and parity_tolerance >= 0.0
     ):
-        raise ValueError("beta/tau2/variance_scale must be positive; unvisited_multiplier >= 1")
+        raise ValueError("operator parameters must be finite, positive and valid")
     prior = np.asarray(trace["prior"], dtype=np.float64)
     visits = np.asarray(trace["visits"], dtype=np.int64)
     q_raw = trace["visited_q"]
@@ -149,8 +150,8 @@ def reconstruct(
     cp = np.array(
         [float(c) if c is not None else np.nan for c in ref_raw], dtype=np.float64
     )
-    if not np.all(np.isfinite(cp[np.isfinite(cp)])):
-        raise ValueError("invalid reference")
+    if any(c is not None and not np.isfinite(float(c)) for c in ref_raw):
+        raise ValueError("nonfinite directly observed reference label")
     completed = completed_q_values(prior, visits, visited_q, root_q)
     spread = float(np.ptp(completed))
     logp = np.log(prior)
