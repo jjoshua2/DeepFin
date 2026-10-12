@@ -10,6 +10,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-10-12: Frozen I-opt and completed-Q mechanism screen](2026-10-12-frozen-iopt-diagnostic.md) — opt-in native-root trace, counterfactual policy reconstruction, observed-label coverage and preregistration; no GPU readout or training.
+
 - [2026-10-10: Shared teacher async plumbing and bounded first increment](2026-10-10-shared-teacher-async-increment.md)
 
 - [2026-10-04: Generic arena resume result validation](2026-10-04-arena-resume-result-validation.md)
