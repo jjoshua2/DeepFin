@@ -26,7 +26,7 @@ def _bootstrap_delta(
     *,
     seed: int,
     n_boot: int = 2000,
-) -> dict[str, float | int] | None:
+) -> dict[str, float | int | None] | None:
     """Root-cluster bootstrap. One root may recur across simulation rungs."""
     by_root: dict[str, list[float]] = defaultdict(list)
     for key, delta in samples:
