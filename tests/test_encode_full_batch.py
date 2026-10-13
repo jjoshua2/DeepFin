@@ -199,3 +199,46 @@ def test_encode_full_batch_error_paths() -> None:
 
     with pytest.raises(ValueError, match="n_extra"):
         encode_full_batch([cb], good, 0, 99)
+
+
+@pytest.mark.parametrize("history", ["old", "root_pov", "  ROOT_META  "])
+@pytest.mark.parametrize("batch_symbol", [True, False])
+def test_history_selection_matches_python_planes(
+    monkeypatch: pytest.MonkeyPatch, history: str, batch_symbol: bool,
+) -> None:
+    """Both native entry points must select the named layout, even on old builds."""
+    import chess_anti_engine.encoding.cboard_encode as ce
+    from chess_anti_engine.encoding.lc0 import encode_lc0_full
+
+    board = chess.Board("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 37 1")
+    cb = CBoard.from_board(board)
+    expected = encode_lc0_full(board, input_history_encoding=history)
+    # Ensure this fixture can distinguish all three modes rather than pass
+    # when every call silently selects the same default.
+    layouts = [encode_lc0_full(board, input_history_encoding=name)
+               for name in ("legacy", "lc0_root", "lc0_root_legacy_meta")]
+    assert all(not np.array_equal(layouts[i], layouts[j])
+               for i, j in ((0, 1), (0, 2), (1, 2)))
+    if not batch_symbol:
+        monkeypatch.delattr(ce._lc0_ext, "encode_full_batch")
+    single = encode_cboard(cb, input_history_encoding=history)
+    batch = encode_cboard_batch([cb], input_history_encoding=history)
+    assert single.dtype == batch.dtype == np.float32
+    np.testing.assert_array_equal(single[:112], expected)
+    np.testing.assert_array_equal(batch[0, :112], expected)
+
+
+@pytest.mark.parametrize("history", ["unknown", " ", "root-met", "3"])
+def test_native_encoders_reject_unknown_history(history: str) -> None:
+    cb = CBoard.from_board(chess.Board())
+    with pytest.raises(ValueError, match="Unsupported input_history_encoding"):
+        encode_cboard(cb, input_history_encoding=history)
+    with pytest.raises(ValueError, match="Unsupported input_history_encoding"):
+        encode_cboard_batch([cb], input_history_encoding=history)
+
+
+def test_empty_batch_preserves_history_short_circuit() -> None:
+    # Empty batches have historically resolved only the extra-feature layout.
+    empty = encode_cboard_batch([], input_history_encoding="unknown")
+    assert empty.shape == (0, 146, 8, 8)
+    assert empty.dtype == np.float32
