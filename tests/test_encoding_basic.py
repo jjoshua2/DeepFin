@@ -1,5 +1,6 @@
 import chess
 import numpy as np
+import pytest
 
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.encoding.lc0 import (
@@ -96,11 +97,31 @@ def test_lc0_root_legacy_meta_patches_rule50_and_ep():
     assert np.all(meta[111] == 1.0)
 
 
-def test_c_input_history_mode_ids_are_stable():
-    assert c_input_history_mode(None) == LC0_HISTORY_MODE_LEGACY
-    assert c_input_history_mode("legacy") == LC0_HISTORY_MODE_LEGACY
-    assert c_input_history_mode("lc0_root") == LC0_HISTORY_MODE_ROOT
-    assert c_input_history_mode("root_meta") == LC0_HISTORY_MODE_ROOT_LEGACY_META
+@pytest.mark.parametrize(("encoding", "mode"), [
+    (None, 0), ("", 0), ("legacy", 0), ("current", 0), ("old", 0),
+    ("lc0_root", 1), ("lc0", 1), ("root", 1), ("root_pov", 1), ("lc0_13", 1),
+    ("lc0_root_legacy_meta", 2), ("root_legacy_meta", 2),
+    ("lc0_root_meta", 2), ("root_meta", 2), ("  ROOT_META  ", 2),
+])
+def test_c_input_history_mode_ids_are_stable(encoding: str | None, mode: int) -> None:
+    from chess_anti_engine.encoding.cboard_encode import lc0_root_history_mode
+
+    assert c_input_history_mode(encoding) == mode
+    assert lc0_root_history_mode(encoding) == mode
+    assert (
+        LC0_HISTORY_MODE_LEGACY,
+        LC0_HISTORY_MODE_ROOT,
+        LC0_HISTORY_MODE_ROOT_LEGACY_META,
+    ) == (0, 1, 2)
+
+
+@pytest.mark.parametrize("encoding", ["unknown", " ", "root-met", "3"])
+def test_c_input_history_modes_reject_unknown_encoding(encoding: str) -> None:
+    from chess_anti_engine.encoding.cboard_encode import lc0_root_history_mode
+
+    for resolve in (c_input_history_mode, lc0_root_history_mode):
+        with pytest.raises(ValueError, match="Unsupported input_history_encoding"):
+            resolve(encoding)
 
 
 def test_orientation_side_to_move_flips_ranks_for_black():
@@ -130,14 +151,14 @@ def test_pin_planes_non_empty():
 def test_batch_encoder_selection_matches_python_per_mode():
     """Pin the name -> C-encoder selection against the Python encoders.
 
-    The mode mapping has one home (lc0.c_input_history_mode) consumed by both
-    gumbel_c._batch_encoders and the C state machine; this test catches a
-    silent drift where a mode id starts selecting the wrong plane layout —
-    the failure would otherwise be plausible-looking play on wrong inputs.
+    Check Gumbel's named native batch encoders against the Python LC0
+    implementation, independently of CBoard's numeric mode dispatch. A
+    wrong selection would otherwise produce plausible-looking wrong inputs.
     """
     import random
 
-    from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
+    from chess_anti_engine.encoding.cboard_encode import CBoard
+    from chess_anti_engine.encoding.lc0 import encode_lc0_full
     from chess_anti_engine.mcts.gumbel_c import _batch_encoders
 
     rng = random.Random(5)
@@ -156,11 +177,9 @@ def test_batch_encoder_selection_matches_python_per_mode():
         cbs = [CBoard.from_board(b) for b in boards]
         out = np.zeros((len(cbs), 146, 8, 8), dtype=np.float32)
         enc_f32(cbs, out)
-        for i, cb in enumerate(cbs):
-            expect = encode_cboard(
-                cb, input_history_encoding=name, input_extra_features="v1",
-            )
+        for i, board in enumerate(boards):
+            expect = encode_lc0_full(board, input_history_encoding=name)
             np.testing.assert_array_equal(
-                out[i], expect,
-                err_msg=f"encoder for {name!r} diverged from encode_cboard",
+                out[i, :112], expect,
+                err_msg=f"encoder for {name!r} diverged from Python history planes",
             )

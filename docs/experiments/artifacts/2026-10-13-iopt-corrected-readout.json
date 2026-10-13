@@ -1,0 +1,258 @@
+{
+  "raw_bank_sha256": "b9a23bbcd6423fc34dfd7be3f4221d33ea9455af290c17756f7e4523ef7d0926",
+  "raw_bank_name": "pr1089-frozen-three-operator-rungs-20261012-v1/roots.jsonl",
+  "rows": {
+    "rows_seen": 4000,
+    "rows_qualified": 3992,
+    "skipped": {
+      "native_parity": 8
+    }
+  },
+  "parameters": {
+    "beta": 0.1,
+    "tau2": 0.08,
+    "variance_scale": 0.04,
+    "unvisited_multiplier": 4.0,
+    "parity_tolerance": 0.0003,
+    "seed": 42,
+    "small_q_threshold": 0.03,
+    "bad_regret_cp": 50.0,
+    "per_action_regret_cap_cp": 1000.0
+  },
+  "checkpoint_sha256": "42d2c053822660cb61fa92709ea34e35bbb58fd06964f3a99eae2136299bfac5",
+  "config_sha256": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624",
+  "audit_sha256": "d8e26efa0b010450abf9374693afc45027db6d146571785ab897af5061144df2",
+  "capture_plan_sha256": "7f9fda31a8a7de40912c9a7b728fd1bbd19e1553313ff55904099fcf76590eac",
+  "source_PR_head": "b5974f622f2c771d7c7a70597fd3e9130a74bd11",
+  "prior_analysis_sha256": "3024172161a97117c0885fb1aa26128aa4835d9bdda3653aa113d9f2283f4dff",
+  "corrected_report_sha256": "db28f6b9acdf58bf99e1630effa1b0c62adce89a743bb4ce68b1e9c87a49e060",
+  "same_observations_as_prior_analysis": true,
+  "rungs": {
+    "32": {
+      "qualified_roots": 998,
+      "unreachable": 0,
+      "paired": {
+        "unscaled": {
+          "n_eligible_rows": 998,
+          "n_excluded_KL_unreachable": 0,
+          "top1_regret_gain_cp": {
+            "n_roots": 957,
+            "mean_cp": 0.006269592476489028,
+            "ci_low": -2.133228840125392,
+            "ci_high": 2.370036572622779
+          },
+          "FULL_reference_expected_regret_gain_cp": {
+            "n_roots": 117,
+            "mean_cp": -21.937114773387464,
+            "ci_low": -36.926825161385615,
+            "ci_high": -7.924906007396927
+          }
+        },
+        "iopt_proxy": {
+          "n_eligible_rows": 998,
+          "n_excluded_KL_unreachable": 0,
+          "top1_regret_gain_cp": {
+            "n_roots": 963,
+            "mean_cp": 0.818276220145379,
+            "ci_low": -1.3253634475597091,
+            "ci_high": 3.1261682242990627
+          },
+          "FULL_reference_expected_regret_gain_cp": {
+            "n_roots": 117,
+            "mean_cp": -17.707350147717765,
+            "ci_low": -32.11493843753856,
+            "ci_high": -4.729399374270731
+          }
+        },
+        "iopt_matched_kl": {
+          "n_eligible_rows": 998,
+          "n_excluded_KL_unreachable": 0,
+          "top1_regret_gain_cp": {
+            "n_roots": 971,
+            "mean_cp": 0.017507723995880537,
+            "ci_low": -0.10813594232749743,
+            "ci_high": 0.18949536560247168
+          },
+          "FULL_reference_expected_regret_gain_cp": {
+            "n_roots": 117,
+            "mean_cp": -0.014153264138425417,
+            "ci_low": -0.14657395743980986,
+            "ci_high": 0.10841071913448778
+          }
+        }
+      }
+    },
+    "64": {
+      "qualified_roots": 998,
+      "unreachable": 0,
+      "paired": {
+        "unscaled": {
+          "n_eligible_rows": 998,
+          "n_excluded_KL_unreachable": 0,
+          "top1_regret_gain_cp": {
+            "n_roots": 959,
+            "mean_cp": 2.6402502606882168,
+            "ci_low": 0.07051616266944737,
+            "ci_high": 5.545359749739312
+          },
+          "FULL_reference_expected_regret_gain_cp": {
+            "n_roots": 117,
+            "mean_cp": -19.264186723897573,
+            "ci_low": -31.970647501182697,
+            "ci_high": -8.133707432141636
+          }
+        },
+        "iopt_proxy": {
+          "n_eligible_rows": 998,
+          "n_excluded_KL_unreachable": 0,
+          "top1_regret_gain_cp": {
+            "n_roots": 961,
+            "mean_cp": 2.582726326742976,
+            "ci_low": 0.170525494276795,
+            "ci_high": 5.349817898022892
+          },
+          "FULL_reference_expected_regret_gain_cp": {
+            "n_roots": 117,
+            "mean_cp": -16.637626657522425,
+            "ci_low": -28.987058971618865,
+            "ci_high": -5.860735479815344
+          }
+        },
+        "iopt_matched_kl": {
+          "n_eligible_rows": 998,
+          "n_excluded_KL_unreachable": 0,
+          "top1_regret_gain_cp": {
+            "n_roots": 968,
+            "mean_cp": 0.02066115702479339,
+            "ci_low": -0.3243801652892562,
+            "ci_high": 0.3266528925619824
+          },
+          "FULL_reference_expected_regret_gain_cp": {
+            "n_roots": 117,
+            "mean_cp": 0.19566756770735114,
+            "ci_low": -0.04486314199113052,
+            "ci_high": 0.624882357331782
+          }
+        }
+      }
+    },
+    "128": {
+      "qualified_roots": 998,
+      "unreachable": 0,
+      "paired": {
+        "unscaled": {
+          "n_eligible_rows": 998,
+          "n_excluded_KL_unreachable": 0,
+          "top1_regret_gain_cp": {
+            "n_roots": 955,
+            "mean_cp": 4.016753926701571,
+            "ci_low": -0.5136387434554973,
+            "ci_high": 8.665471204188478
+          },
+          "FULL_reference_expected_regret_gain_cp": {
+            "n_roots": 117,
+            "mean_cp": -1.6159542707847594,
+            "ci_low": -22.973728835505,
+            "ci_high": 24.27388823073915
+          }
+        },
+        "iopt_proxy": {
+          "n_eligible_rows": 998,
+          "n_excluded_KL_unreachable": 0,
+          "top1_regret_gain_cp": {
+            "n_roots": 957,
+            "mean_cp": 4.456635318704285,
+            "ci_low": -0.03239289446185998,
+            "ci_high": 9.406530825496343
+          },
+          "FULL_reference_expected_regret_gain_cp": {
+            "n_roots": 117,
+            "mean_cp": -1.433473196114997,
+            "ci_low": -22.788231699884008,
+            "ci_high": 24.477335390981438
+          }
+        },
+        "iopt_matched_kl": {
+          "n_eligible_rows": 998,
+          "n_excluded_KL_unreachable": 0,
+          "top1_regret_gain_cp": {
+            "n_roots": 962,
+            "mean_cp": -0.12058212058212059,
+            "ci_low": -0.4075363825363826,
+            "ci_high": 0.12476611226611213
+          },
+          "FULL_reference_expected_regret_gain_cp": {
+            "n_roots": 117,
+            "mean_cp": 0.019516861706726528,
+            "ci_low": -0.022359933094622097,
+            "ci_high": 0.08226136875366165
+          }
+        }
+      }
+    },
+    "256": {
+      "qualified_roots": 998,
+      "unreachable": 0,
+      "paired": {
+        "unscaled": {
+          "n_eligible_rows": 998,
+          "n_excluded_KL_unreachable": 0,
+          "top1_regret_gain_cp": {
+            "n_roots": 960,
+            "mean_cp": 1.915625,
+            "ci_low": -0.9232552083333334,
+            "ci_high": 5.360781249999998
+          },
+          "FULL_reference_expected_regret_gain_cp": {
+            "n_roots": 117,
+            "mean_cp": -16.57095470105608,
+            "ci_low": -31.20416876849369,
+            "ci_high": -4.460349184930783
+          }
+        },
+        "iopt_proxy": {
+          "n_eligible_rows": 998,
+          "n_excluded_KL_unreachable": 0,
+          "top1_regret_gain_cp": {
+            "n_roots": 959,
+            "mean_cp": 1.045881126173097,
+            "ci_low": -2.7416319082377476,
+            "ci_high": 4.716605839416057
+          },
+          "FULL_reference_expected_regret_gain_cp": {
+            "n_roots": 117,
+            "mean_cp": -17.99751968076387,
+            "ci_low": -33.75393132986966,
+            "ci_high": -4.124485992522202
+          }
+        },
+        "iopt_matched_kl": {
+          "n_eligible_rows": 998,
+          "n_excluded_KL_unreachable": 0,
+          "top1_regret_gain_cp": {
+            "n_roots": 968,
+            "mean_cp": 0.03512396694214876,
+            "ci_low": 0.0,
+            "ci_high": 0.10537190082644628
+          },
+          "FULL_reference_expected_regret_gain_cp": {
+            "n_roots": 117,
+            "mean_cp": -0.059462547207182824,
+            "ci_low": -0.19071274128284132,
+            "ci_high": 0.008574346245567755
+          }
+        }
+      }
+    }
+  },
+  "verdict": "NO_GO at registered 256-sim horizon: no arm reaches 5cp top-one gain with a positive lower bound and nonworsening full-label regret.",
+  "limits": [
+    "I-opt uses an uncalibrated visit-based independent-Q-variance proxy.",
+    "A tree held fixed cannot establish the strength of changed halving.",
+    "Unknown MultiPV tail is NOT assigned a centipawn value.",
+    "Current probe rebuilds root positions from FEN; full training history may differ.",
+    "Same-checkpoint target quality does not establish retrained policy Elo.",
+    "All source traces were collected previously by the science owner; this correction reruns only the CPU scorer.",
+    "Mate-valued cp conventions are bounded by the audit cap and remain a conditional reference limitation."
+  ]
+}

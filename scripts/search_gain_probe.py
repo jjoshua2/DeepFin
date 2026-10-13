@@ -564,6 +564,8 @@ class RowResult:
     stored_entropy: float = float("nan")
     ply_index: int = -1
     priority_policy_kl: float = float("nan")
+    # Optional, opt-in root vectors for a frozen-policy counterfactual screen.
+    operator_trace: dict[str, object] | None = None
 
 
 def _spearman(a: np.ndarray, b: np.ndarray) -> float:
@@ -614,7 +616,10 @@ class _RowSink:
         self.n = 0
 
     def write(self, row: RowResult) -> None:
-        self._f.write(json.dumps(asdict(row)) + "\n")
+        payload = asdict(row)
+        if payload["operator_trace"] is None:
+            del payload["operator_trace"]  # default JSONL remains unchanged
+        self._f.write(json.dumps(payload) + "\n")
         self.n += 1
 
     def flush(self) -> None:
@@ -691,12 +696,14 @@ def run_probe(
     gumbel_scale: float,
     syzygy_path: str | None,
     sink: _RowSink | None = None,
+    record_operator_trace: bool = False,
 ) -> list[RowResult]:
     import torch
 
     from chess_anti_engine.inference import LocalModelEvaluator
     from chess_anti_engine.mcts.gumbel import GumbelConfig
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+    from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
     model = load_model_from_checkpoint(checkpoint, device=device)
@@ -782,6 +789,10 @@ def run_probe(
                     search_action=int(actions_b[j]),
                     tree=tree, root_id=int(root_ids[j]),
                     ctrl_rng=ctrl_rng,
+                    operator_root_q=(
+                        _value_scalar_from_wdl_logits(np.asarray(_wdl[j]))
+                        if record_operator_trace else None
+                    ),
                 )
                 rows.append(row)
                 if sink is not None:
@@ -820,6 +831,7 @@ def _score_one(
     tree: object,
     root_id: int,
     ctrl_rng: np.random.Generator,
+    operator_root_q: float | None = None,
 ) -> RowResult:
     ucis, idxs = legal_full_indices(board)
     coverage_known = pos.audit is not None
@@ -1002,6 +1014,34 @@ def _score_one(
             stored_kl = float((st[m] * (np.log(st[m]) - np.log(np.maximum(imp[m], 1e-12)))).sum())
             stored_entropy = float(-(st[m] * np.log(st[m])).sum())
 
+    operator_trace: dict[str, object] | None = None
+    if operator_root_q is not None:
+        # Audit move_regrets() replaces missing MultiPV moves with a floor;
+        # stored SF regret replaces them with a synthetic midpoint. Neither
+        # is an observed label, so only retain actual native MultiPV scores.
+        direct_cp = pos.audit.move_cp if pos.audit is not None else {}
+        operator_trace = {
+            "legal_uci": ucis,
+            "legal_actions": [int(i) for i in idxs.tolist()],
+            "prior": [float(v) for v in prior.tolist()],
+            "visits": [int(v) for v in visits.tolist()],
+            "visited_q": [
+                float(qvals[i]) if visits[i] > 0 else None
+                for i in range(visits.size)
+            ],
+            "reference_cp": [
+                float(direct_cp[u]) if u in direct_cp else None for u in ucis
+            ],
+            "root_q": float(operator_root_q),
+            "root_q_scale": float(shape.root_q_scale(float(max_visit))),
+            "observed_policy": [float(p) for p in imp.tolist()],
+            "label_kind": (
+                "native_deep_sf_multipv_partial"
+                if pos.audit is not None else "unavailable"
+            ),
+            "n_reference_moves": sum(u in direct_cp for u in ucis),
+        }
+
     return RowResult(
         fen=pos.fen,
         phase=int(pos.phase),
@@ -1044,6 +1084,7 @@ def _score_one(
         stored_entropy=stored_entropy,
         ply_index=int(pos.ply_index),
         priority_policy_kl=float(pos.priority_policy_kl),
+        operator_trace=operator_trace,
     )
 
 
@@ -1508,7 +1549,20 @@ def main() -> None:
     ap.add_argument("--override", default=None,
                     help="comma-separated SearchShape field overrides, e.g. c_scale_root=3.0")
     ap.add_argument("--out", type=Path, default=None, help="JSONL dump of every row")
+    ap.add_argument(
+        "--operator-trace", action="store_true",
+        help="opt-in: bank all root legal priors/visits/Q plus ONLY measured SF moves; "
+             "does not alter search or training",
+    )
     args = ap.parse_args()
+
+    if args.operator_trace and args.out is None:
+        raise SystemExit("--operator-trace requires --out to preserve the root traces")
+    if args.operator_trace and args.syzygy_path:
+        raise SystemExit(
+            "--operator-trace refuses --syzygy-path until root TB override "
+            "identity is supported by the diagnostic"
+        )
 
     if args.batch_size >= 64:
         raise SystemExit(
@@ -1577,6 +1631,8 @@ def main() -> None:
             "gumbel_scale": float(args.gumbel_scale), "seed": int(args.seed),
             "position_source": args.position_source, "source": src,
             "n_positions": len(positions),
+            "operator_trace": bool(args.operator_trace),
+            "operator_trace_format": 1 if args.operator_trace else None,
             # Tablebase probing changes root and leaf values and therefore the
             # selected moves, so a production-equivalent run and a smoke-set run
             # are DIFFERENT measurements. Recorded explicitly, with the enabled
@@ -1598,6 +1654,7 @@ def main() -> None:
             gumbel_scale=float(args.gumbel_scale),
             syzygy_path=args.syzygy_path,
             sink=sink,
+            record_operator_trace=bool(args.operator_trace),
         )
     finally:
         if sink is not None:

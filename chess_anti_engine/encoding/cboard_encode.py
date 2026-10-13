@@ -12,6 +12,7 @@ from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.features import extra_feature_plane_count
 from chess_anti_engine.encoding.lc0 import (
     LC0_HISTORY_ROOT_LEGACY_META,
+    c_input_history_mode as lc0_root_history_mode,
     normalize_lc0_history_encoding,
     uses_lc0_root_history,
 )
@@ -63,14 +64,6 @@ if TYPE_CHECKING:
     from chess_anti_engine.encoding._features_ext import (
         compute_extra_features as _c_compute,
     )
-
-
-def lc0_root_history_mode(input_history_encoding: str | None) -> int:
-    """Map a history encoding to the C hist_mode int (0/1/2)."""
-    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
-    if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
-        return 2
-    return 1 if uses_lc0_root_history(hist_enc) else 0
 
 
 def encode_cboard(
