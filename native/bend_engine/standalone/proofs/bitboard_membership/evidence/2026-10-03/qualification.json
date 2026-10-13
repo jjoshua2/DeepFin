@@ -1,0 +1,523 @@
+{
+  "qualification_time_utc": "2026-10-03T02:20:16.218444+00:00",
+  "repository": "jjoshua2/DeepFin",
+  "pull_request": 1000,
+  "pr_state": "open",
+  "pr_draft": true,
+  "target_head_ref": "proof/bend-bitboard-multibit-membership-20261003",
+  "target_head_sha": "033774f6fecacbb079180705c16667ee609322b3",
+  "base_pr": 992,
+  "base_sha": "0908d932a0fa9c7d2690c9d33dacaea8cc8ff774",
+  "source_snapshot": {
+    "method": "codeload tar.gz at immutable published head commit; isolated extraction",
+    "archive_sha256": "0014c96625bd471b66a9660841b3cf71d7fa9d8eead6d1c5cefca886beb61d25",
+    "archive_bytes": 47542300,
+    "extracted_tree_entries": 6085,
+    "snapshot_sha": "033774f6fecacbb079180705c16667ee609322b3",
+    "git_fetch": "bounded GitHub fetch stalled; codeload archive succeeded"
+  },
+  "toolchain": {
+    "repository": "https://github.com/jjoshua2/bend.git",
+    "revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+    "upstream_revision": "6018e28ecc67cf1fffc0c20c64b11023474c2df8",
+    "version": "Bend 2.0.21 + U64",
+    "bun_version": "1.4.2",
+    "toolchain_json_sha256": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "verify_compiler_js_sha256": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141",
+    "verification_output": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+    "checker_cli_version_output": "bend 2.0.21",
+    "tree_manifest": "checker-tree.json",
+    "checker_tree_manifest_sha256": "384b5c91ffe52ca500d178b1be356bf2aef2e387c0e95ba7199b943820b40df1"
+  },
+  "source_closure": {
+    "definition": "All nine proof entry modules and recursively resolved repository-relative Bend imports. Base is bound by the pinned checker tree.",
+    "files": [
+      {
+        "path": "native/bend_engine/bitboard_probe/Sliders.bend",
+        "sha256": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+        "git_blob_sha1": "bd34b2c9e4d87e1ca5dab7c7eabf60efad017298",
+        "bytes": 588
+      },
+      {
+        "path": "native/bend_engine/legal_probe/Chess.bend",
+        "sha256": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+        "git_blob_sha1": "c51e21cc682ab80eaf1a5104200c65c6dc2fc136",
+        "bytes": 18065
+      },
+      {
+        "path": "native/bend_engine/standalone/Subsets.bend",
+        "sha256": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+        "git_blob_sha1": "7ed52ce5b91058ec63681ad1317942afde0bacb5",
+        "bytes": 386
+      },
+      {
+        "path": "native/bend_engine/standalone/Tables.bend",
+        "sha256": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+        "git_blob_sha1": "1bf430a4e998e05181fa6612c17527825c3123c3",
+        "bytes": 3655
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_ctz_structural/EqZeroProbe.bend",
+        "sha256": "d1198810990e5da997b32e845a640e82303b04d527d2c7b9f7bc3478dd870d81",
+        "git_blob_sha1": "040c6092c86f6f331508945f63db16f26e68c4c4",
+        "bytes": 1711
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_ctz_structural/TestBitBridge.bend",
+        "sha256": "482c428f54ceae8f0804f7687d43390e5fff4759771af5526dca495895514cd6",
+        "git_blob_sha1": "dbf53ca4adc60f092b4392d1ed05e3429160e227",
+        "bytes": 5515
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_ctz_structural/U64BitProbe.bend",
+        "sha256": "aa89c0c2e53e7ba153a4f5667e7ba9185c51a64054f63e00fe7f25224d5c6c67",
+        "git_blob_sha1": "1ff973bad92e56dca09d4a9cd8361d66671f1d6b",
+        "bytes": 1721
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_ctz_structural/WordCtzCore.bend",
+        "sha256": "b85ea1379a4c16c34279716466d97d1dfd5f904c2fce21600d37a3219fb4a341",
+        "git_blob_sha1": "fbe218ef1aac866962e9940852ceb69ca791c8bb",
+        "bytes": 12613
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_inventory/ClearStep.bend",
+        "sha256": "c6228e39b7d3c2a3059f1d61c7ad96e4e2fff885e6123623d76bcc05fa23dc8a",
+        "git_blob_sha1": "460125b555cb3fed416863e089eb21dbee1f46c7",
+        "bytes": 6491
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_membership/ActualClearBit.bend",
+        "sha256": "29be18e2cc0a0d5e14f283ead79e1676d872f5ca57acda7a441d940eb4780707",
+        "git_blob_sha1": "fa94773b556b8734a44152cf7dde5be33eda7c75",
+        "bytes": 2536
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_membership/BitSquaresStep.bend",
+        "sha256": "a68f6760b1205a3015d2e9d86fbfe6696ca292cbeae7908de3b0fbcbe900cc54",
+        "git_blob_sha1": "2f657cd42c6040927cd2242b647997efb28e72fd",
+        "bytes": 2154
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_membership/Cardinality.bend",
+        "sha256": "ab68a000fbbd6d09822576d52d96f5fcd741df7b8a286421f387d8af3e05c71a",
+        "git_blob_sha1": "3485e38b792ca9d538affa8ab8628394feb1ee58",
+        "bytes": 9698
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_membership/ClearModelBit.bend",
+        "sha256": "dd6302364361b6d1c3952c229a5ffc0ddf9cddf4769df31bd818c0286fc957f8",
+        "git_blob_sha1": "c64830edebe16005695c5d6667995a061cd1c615",
+        "bytes": 1683
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_membership/FrequencyIteration.bend",
+        "sha256": "f91c00b9a9298517ed0d5b1a4927e04670547fdfe30f9968ff378b0cbed7e7b8",
+        "git_blob_sha1": "730fe955a64602f618f9442a9331c5edfdd2ce03",
+        "bytes": 10349
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_membership/IndexEquality.bend",
+        "sha256": "888aec0806f6c3ecf5aa07b67aab30b8a8745813b2b8cbc8c9b0fca82957e293",
+        "git_blob_sha1": "80c49c6c7aa2c2ce4e8d01ec1fe7d21fc1fe98cf",
+        "bytes": 5733
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_membership/MembershipIteration.bend",
+        "sha256": "9a6a4f9b91f4a4fc362f8305f79174be222825770de7efb4e66cbb9d96c27088",
+        "git_blob_sha1": "0320febd9d6c6ad7fdc7c4727caabd17da59395d",
+        "bytes": 4172
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_membership/PrefixDecomposition.bend",
+        "sha256": "c6bedfa4ef8877eb4176cdaafe7fdb1075977d0ae679fd9048162c4ee54a108f",
+        "git_blob_sha1": "a037713a521c981a50c2c48c06ed23d515e11a72",
+        "bytes": 7205
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_membership/RemainingBudget.bend",
+        "sha256": "a3aa031ced3003deda917fa343e151b3c29596c99f1a75e7305c98c9854182bf",
+        "git_blob_sha1": "8c385bbc23ab53ecf8f69a73ad907b26a25a51eb",
+        "bytes": 2393
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/bitboard_zero_bridge/Bridge.bend",
+        "sha256": "37f09e7e3adbeeef1f09f499b0d7e874e05cd2ffcea6ae295f51bdd7d58bb819",
+        "git_blob_sha1": "247e8ceeaa23240d76352895db1f81e29dc9d198",
+        "bytes": 2875
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/fill_interval/Arithmetic.bend",
+        "sha256": "839ef51d958fc77bb440d91e3059aa498788839eff0e41fdab2988f6d0b16036",
+        "git_blob_sha1": "89ffb669d43c808db8ddc7a93dcac8ec9723beee",
+        "bytes": 2435
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/fill_interval/Naturals.bend",
+        "sha256": "a53fc1c2234fef886eac2a253c710cb67a5b7e7c8d37daea0e8de1570551f0e4",
+        "git_blob_sha1": "3845f577aced23b5bc2f3475bf1ad11ff77384d5",
+        "bytes": 3053
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/index/Bits.bend",
+        "sha256": "1fe9e204243efe2e651e14ec3db15f2ea2141ee7febf639fb0a7a8e4b5bc8afb",
+        "git_blob_sha1": "750f40c5c46c250773655739353c3a0c723bbb69",
+        "bytes": 810
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/index/Nats.bend",
+        "sha256": "71da4b9b978f47cebf57b79352ee614f1aa6257c13c7dfc624b839c95ed38c5c",
+        "git_blob_sha1": "0cae29b4792c71902e7ebaccab02a529294fa8cb",
+        "bytes": 3426
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/index/Words.bend",
+        "sha256": "6d08fbbc9e16d3194e2d1a7e224f17676eb81adea1ead37523e0c24cc0cccd81",
+        "git_blob_sha1": "9335830a2ea3ab8451322a773431e3bb66a97563",
+        "bytes": 6177
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/layout/Domain.bend",
+        "sha256": "5acad280e9df6975f63fa0fe51c18c08cb4f5ae9296c89a7e10673d5fa2e87b6",
+        "git_blob_sha1": "075c5daf9ea49c8692454c49d893d009e4a459c2",
+        "bytes": 3376
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/layout/Low.bend",
+        "sha256": "edcaee366557d916ab2c331f671989891d45249d9dae72a93bd763a5d1a24c5c",
+        "git_blob_sha1": "e9f444068a802cc9c43f758485095def6d438f63",
+        "bytes": 1897
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/normalization/Compare.bend",
+        "sha256": "620a62659f35af28a0490d45dfd0dd65f1b4b0ee9209b3c9d0469936c9790ea3",
+        "git_blob_sha1": "762dbc0b40030d814c43875dfe8384bda55be371",
+        "bytes": 3347
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/prefix/Nats.bend",
+        "sha256": "dba0b1922e8b2d7ecd32cedea0e2a56cbbe8d7aea514f329bd414a97ce70469f",
+        "git_blob_sha1": "332476774882908111af159b3d9dd6661111812d",
+        "bytes": 2300
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/prefix/Order.bend",
+        "sha256": "5fb5770518543636c19eb599a202793e6bbbfd25dfe7b122b86c85d2d194c46a",
+        "git_blob_sha1": "a2c58f971d2da689c30aa180af3ed8b55486ea27",
+        "bytes": 4340
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/ray/Algebra.bend",
+        "sha256": "9b654dc68a5bb5c1d47232e2be23200eebcbd1bfa6b071a5bee60d7c7077ab69",
+        "git_blob_sha1": "d892e73bc65ff5d5a78d0cbc2daf55b9296cbf70",
+        "bytes": 11909
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/ray/Frame.bend",
+        "sha256": "eacd6b86d18f3ead0dd56f4843f36b134b5c61630ae16fc6147dae7be8f8ccc9",
+        "git_blob_sha1": "b9f82a76e58ec5e04718c07555d586f0cff18049",
+        "bytes": 2520
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/ray/Grid.bend",
+        "sha256": "c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a",
+        "git_blob_sha1": "df9c0dd3f54827c33b5b862ed396d704036f8f8d",
+        "bytes": 931
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/ray/Path.bend",
+        "sha256": "92595303f046ac947264f179a3489b40cd7822b674807511d846955eda6269ad",
+        "git_blob_sha1": "b7f908daefa5e51ebb06e495c1dbc8d7d3d8069a",
+        "bytes": 753
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/ray/Rays.bend",
+        "sha256": "f90217fa004d1c221ecf5a83c69167cb7cf3044055ab97d7cf612a5e12400054",
+        "git_blob_sha1": "82ba7cd79f8f44a891995c6ce4f4250c6fb8672d",
+        "bytes": 987
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/ray/Spec.bend",
+        "sha256": "20ca498daf83c00c21f846145c170759d143b1513459307d6b704d0d3a7831ba",
+        "git_blob_sha1": "7af5548620957db43709a6355dc7de39022d8aa2",
+        "bytes": 1632
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/ray/Traversal.bend",
+        "sha256": "cb1a1e37323cce61bcca319fbc7f0021d449f1e7fc49efbd950845c5bbf61626",
+        "git_blob_sha1": "8e10eefba2c429c0671d829cf4e128f583bd0851",
+        "bytes": 4431
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/relative/Add.bend",
+        "sha256": "b5e7f37a125544e771e85f54f224c26d878db3fce74dcac9065ec0a971717ee8",
+        "git_blob_sha1": "51358374e4c923e6ea0488567d00ec48e3818324",
+        "bytes": 24164
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/relative/Order.bend",
+        "sha256": "23e25537703c789312c334acbeb7f8096be575b4d517e67ffc39735f2b175646",
+        "git_blob_sha1": "6e19f6adcce7e032a2db35db2ff83da72b25b48c",
+        "bytes": 22596
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/successor/Borrow.bend",
+        "sha256": "55527289635c5191bb7857d123c67e6ccc4438d75bc16337e5318b2513302180",
+        "git_blob_sha1": "5b9e6a5ed162d5ef72fccad8120cfa6b3a41df30",
+        "bytes": 9672
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/successor/Spec.bend",
+        "sha256": "6179c0d02f97bdf6bf8d4ebea9b14dc0b48eba098a1af8c3c78ec977888e17c6",
+        "git_blob_sha1": "53aab8e8859516842698a6cf8ff726ae877c031a",
+        "bytes": 666
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/successor/Step.bend",
+        "sha256": "f41fd3776480069d9ef0e2b96a867254c71270c4100d048d664739fd040a2a6e",
+        "git_blob_sha1": "2186c8757b5fa6b47a19214493abd64fb84fa9e4",
+        "bytes": 10585
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/successor/Value.bend",
+        "sha256": "8e97a14a3659bda32dc061ae458338827d66b60dbb5749c71e2f3300140ceccf",
+        "git_blob_sha1": "32fdccb735896a673693f329c8b35540f29ad11a",
+        "bytes": 3891
+      },
+      {
+        "path": "native/bend_engine/standalone/proofs/u64/Words.bend",
+        "sha256": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+        "git_blob_sha1": "503f1e5f49c4ef01ca45a1a3a010d5b52551a3df",
+        "bytes": 9726
+      }
+    ]
+  },
+  "positive": {
+    "snapshot_commit": "033774f6fecacbb079180705c16667ee609322b3",
+    "checker_pin": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+    "checker_source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+    "checks": [
+      {
+        "module": "ActualClearBit.bend",
+        "source_sha256": "29be18e2cc0a0d5e14f283ead79e1676d872f5ca57acda7a441d940eb4780707",
+        "started_at_utc": "2026-10-03T02:10:54.693964+00:00",
+        "command": "/usr/bin/time -v -o <session-scratch>/pr1000-qualification-033774f6fecacbb079180705c16667ee609322b3/snapshot/native/bend_engine/standalone/proofs/bitboard_membership/evidence/2026-10-03/ActualClearBit.time.txt timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/ActualClearBit.bend --check-only",
+        "elapsed_wall_seconds": 3.59,
+        "finished_at_utc": "2026-10-03T02:10:58.283627+00:00",
+        "exit_code": 0,
+        "max_rss_kib": 321636,
+        "stdout_bytes": 17,
+        "stderr_bytes": 0,
+        "time_log_bytes": 968,
+        "result": "PASS",
+        "stdout_raw": "All terms check.\n",
+        "stderr_raw": "",
+        "time_log_raw": "\tCommand being timed: \"timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/ActualClearBit.bend --check-only\"\n\tUser time (seconds): 4.46\n\tSystem time (seconds): 0.21\n\tPercent of CPU this job got: 130%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:03.58\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 321636\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 79897\n\tVoluntary context switches: 1473\n\tInvoluntary context switches: 397\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+      },
+      {
+        "module": "BitSquaresStep.bend",
+        "source_sha256": "a68f6760b1205a3015d2e9d86fbfe6696ca292cbeae7908de3b0fbcbe900cc54",
+        "started_at_utc": "2026-10-03T02:10:58.284148+00:00",
+        "command": "/usr/bin/time -v -o <session-scratch>/pr1000-qualification-033774f6fecacbb079180705c16667ee609322b3/snapshot/native/bend_engine/standalone/proofs/bitboard_membership/evidence/2026-10-03/BitSquaresStep.time.txt timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/BitSquaresStep.bend --check-only",
+        "elapsed_wall_seconds": 3.781,
+        "finished_at_utc": "2026-10-03T02:11:02.064716+00:00",
+        "exit_code": 0,
+        "max_rss_kib": 533724,
+        "stdout_bytes": 17,
+        "stderr_bytes": 0,
+        "time_log_bytes": 969,
+        "result": "PASS",
+        "stdout_raw": "All terms check.\n",
+        "stderr_raw": "",
+        "time_log_raw": "\tCommand being timed: \"timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/BitSquaresStep.bend --check-only\"\n\tUser time (seconds): 4.73\n\tSystem time (seconds): 0.40\n\tPercent of CPU this job got: 135%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:03.77\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 533724\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 137021\n\tVoluntary context switches: 1386\n\tInvoluntary context switches: 780\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+      },
+      {
+        "module": "Cardinality.bend",
+        "source_sha256": "ab68a000fbbd6d09822576d52d96f5fcd741df7b8a286421f387d8af3e05c71a",
+        "started_at_utc": "2026-10-03T02:11:02.065250+00:00",
+        "command": "/usr/bin/time -v -o <session-scratch>/pr1000-qualification-033774f6fecacbb079180705c16667ee609322b3/snapshot/native/bend_engine/standalone/proofs/bitboard_membership/evidence/2026-10-03/Cardinality.time.txt timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/Cardinality.bend --check-only",
+        "elapsed_wall_seconds": 3.816,
+        "finished_at_utc": "2026-10-03T02:11:05.880857+00:00",
+        "exit_code": 0,
+        "max_rss_kib": 562484,
+        "stdout_bytes": 17,
+        "stderr_bytes": 0,
+        "time_log_bytes": 966,
+        "result": "PASS",
+        "stdout_raw": "All terms check.\n",
+        "stderr_raw": "",
+        "time_log_raw": "\tCommand being timed: \"timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/Cardinality.bend --check-only\"\n\tUser time (seconds): 4.68\n\tSystem time (seconds): 0.43\n\tPercent of CPU this job got: 134%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:03.81\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 562484\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 149435\n\tVoluntary context switches: 1310\n\tInvoluntary context switches: 725\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+      },
+      {
+        "module": "ClearModelBit.bend",
+        "source_sha256": "dd6302364361b6d1c3952c229a5ffc0ddf9cddf4769df31bd818c0286fc957f8",
+        "started_at_utc": "2026-10-03T02:11:05.881329+00:00",
+        "command": "/usr/bin/time -v -o <session-scratch>/pr1000-qualification-033774f6fecacbb079180705c16667ee609322b3/snapshot/native/bend_engine/standalone/proofs/bitboard_membership/evidence/2026-10-03/ClearModelBit.time.txt timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/ClearModelBit.bend --check-only",
+        "elapsed_wall_seconds": 0.56,
+        "finished_at_utc": "2026-10-03T02:11:06.441476+00:00",
+        "exit_code": 0,
+        "max_rss_kib": 154772,
+        "stdout_bytes": 17,
+        "stderr_bytes": 0,
+        "time_log_bytes": 966,
+        "result": "PASS",
+        "stdout_raw": "All terms check.\n",
+        "stderr_raw": "",
+        "time_log_raw": "\tCommand being timed: \"timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/ClearModelBit.bend --check-only\"\n\tUser time (seconds): 0.86\n\tSystem time (seconds): 0.09\n\tPercent of CPU this job got: 171%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.55\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 154772\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 38611\n\tVoluntary context switches: 420\n\tInvoluntary context switches: 223\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+      },
+      {
+        "module": "FrequencyIteration.bend",
+        "source_sha256": "f91c00b9a9298517ed0d5b1a4927e04670547fdfe30f9968ff378b0cbed7e7b8",
+        "started_at_utc": "2026-10-03T02:11:06.442054+00:00",
+        "command": "/usr/bin/time -v -o <session-scratch>/pr1000-qualification-033774f6fecacbb079180705c16667ee609322b3/snapshot/native/bend_engine/standalone/proofs/bitboard_membership/evidence/2026-10-03/FrequencyIteration.time.txt timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/FrequencyIteration.bend --check-only",
+        "elapsed_wall_seconds": 4.007,
+        "finished_at_utc": "2026-10-03T02:11:10.448791+00:00",
+        "exit_code": 0,
+        "max_rss_kib": 802852,
+        "stdout_bytes": 17,
+        "stderr_bytes": 0,
+        "time_log_bytes": 973,
+        "result": "PASS",
+        "stdout_raw": "All terms check.\n",
+        "stderr_raw": "",
+        "time_log_raw": "\tCommand being timed: \"timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/FrequencyIteration.bend --check-only\"\n\tUser time (seconds): 4.85\n\tSystem time (seconds): 0.60\n\tPercent of CPU this job got: 136%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:04.00\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 802852\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 215474\n\tVoluntary context switches: 1303\n\tInvoluntary context switches: 832\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+      },
+      {
+        "module": "IndexEquality.bend",
+        "source_sha256": "888aec0806f6c3ecf5aa07b67aab30b8a8745813b2b8cbc8c9b0fca82957e293",
+        "started_at_utc": "2026-10-03T02:11:10.449409+00:00",
+        "command": "/usr/bin/time -v -o <session-scratch>/pr1000-qualification-033774f6fecacbb079180705c16667ee609322b3/snapshot/native/bend_engine/standalone/proofs/bitboard_membership/evidence/2026-10-03/IndexEquality.time.txt timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/IndexEquality.bend --check-only",
+        "elapsed_wall_seconds": 0.783,
+        "finished_at_utc": "2026-10-03T02:11:11.232822+00:00",
+        "exit_code": 0,
+        "max_rss_kib": 239640,
+        "stdout_bytes": 17,
+        "stderr_bytes": 0,
+        "time_log_bytes": 966,
+        "result": "PASS",
+        "stdout_raw": "All terms check.\n",
+        "stderr_raw": "",
+        "time_log_raw": "\tCommand being timed: \"timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/IndexEquality.bend --check-only\"\n\tUser time (seconds): 1.22\n\tSystem time (seconds): 0.16\n\tPercent of CPU this job got: 177%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.78\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 239640\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 61478\n\tVoluntary context switches: 603\n\tInvoluntary context switches: 721\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+      },
+      {
+        "module": "MembershipIteration.bend",
+        "source_sha256": "9a6a4f9b91f4a4fc362f8305f79174be222825770de7efb4e66cbb9d96c27088",
+        "started_at_utc": "2026-10-03T02:11:11.233346+00:00",
+        "command": "/usr/bin/time -v -o <session-scratch>/pr1000-qualification-033774f6fecacbb079180705c16667ee609322b3/snapshot/native/bend_engine/standalone/proofs/bitboard_membership/evidence/2026-10-03/MembershipIteration.time.txt timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/MembershipIteration.bend --check-only",
+        "elapsed_wall_seconds": 3.861,
+        "finished_at_utc": "2026-10-03T02:11:15.094186+00:00",
+        "exit_code": 0,
+        "max_rss_kib": 773136,
+        "stdout_bytes": 17,
+        "stderr_bytes": 0,
+        "time_log_bytes": 974,
+        "result": "PASS",
+        "stdout_raw": "All terms check.\n",
+        "stderr_raw": "",
+        "time_log_raw": "\tCommand being timed: \"timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/MembershipIteration.bend --check-only\"\n\tUser time (seconds): 4.69\n\tSystem time (seconds): 0.47\n\tPercent of CPU this job got: 133%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:03.85\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 773136\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 201706\n\tVoluntary context switches: 1290\n\tInvoluntary context switches: 989\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+      },
+      {
+        "module": "PrefixDecomposition.bend",
+        "source_sha256": "c6bedfa4ef8877eb4176cdaafe7fdb1075977d0ae679fd9048162c4ee54a108f",
+        "started_at_utc": "2026-10-03T02:11:15.094727+00:00",
+        "command": "/usr/bin/time -v -o <session-scratch>/pr1000-qualification-033774f6fecacbb079180705c16667ee609322b3/snapshot/native/bend_engine/standalone/proofs/bitboard_membership/evidence/2026-10-03/PrefixDecomposition.time.txt timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/PrefixDecomposition.bend --check-only",
+        "elapsed_wall_seconds": 3.812,
+        "finished_at_utc": "2026-10-03T02:11:18.907065+00:00",
+        "exit_code": 0,
+        "max_rss_kib": 549408,
+        "stdout_bytes": 17,
+        "stderr_bytes": 0,
+        "time_log_bytes": 974,
+        "result": "PASS",
+        "stdout_raw": "All terms check.\n",
+        "stderr_raw": "",
+        "time_log_raw": "\tCommand being timed: \"timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/PrefixDecomposition.bend --check-only\"\n\tUser time (seconds): 4.79\n\tSystem time (seconds): 0.38\n\tPercent of CPU this job got: 135%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:03.81\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 549408\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 142308\n\tVoluntary context switches: 1424\n\tInvoluntary context switches: 756\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+      },
+      {
+        "module": "RemainingBudget.bend",
+        "source_sha256": "a3aa031ced3003deda917fa343e151b3c29596c99f1a75e7305c98c9854182bf",
+        "started_at_utc": "2026-10-03T02:11:18.907612+00:00",
+        "command": "/usr/bin/time -v -o <session-scratch>/pr1000-qualification-033774f6fecacbb079180705c16667ee609322b3/snapshot/native/bend_engine/standalone/proofs/bitboard_membership/evidence/2026-10-03/RemainingBudget.time.txt timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/RemainingBudget.bend --check-only",
+        "elapsed_wall_seconds": 0.367,
+        "finished_at_utc": "2026-10-03T02:11:19.274550+00:00",
+        "exit_code": 0,
+        "max_rss_kib": 114416,
+        "stdout_bytes": 17,
+        "stderr_bytes": 0,
+        "time_log_bytes": 968,
+        "result": "PASS",
+        "stdout_raw": "All terms check.\n",
+        "stderr_raw": "",
+        "time_log_raw": "\tCommand being timed: \"timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/RemainingBudget.bend --check-only\"\n\tUser time (seconds): 0.53\n\tSystem time (seconds): 0.10\n\tPercent of CPU this job got: 174%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.36\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 114416\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 24419\n\tVoluntary context switches: 297\n\tInvoluntary context switches: 259\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+      }
+    ]
+  },
+  "negative_controls": {
+    "snapshot_commit": "033774f6fecacbb079180705c16667ee609322b3",
+    "checker_pin": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+    "checks": [
+      {
+        "control": "occurrences-recursion",
+        "mutation": "Replace the recursive occurrences tail contribution with 0n in the occurrences definition.",
+        "mutated_file": "native/bend_engine/standalone/proofs/bitboard_membership/PrefixDecomposition.bend",
+        "baseline_sha256": "c6bedfa4ef8877eb4176cdaafe7fdb1075977d0ae679fd9048162c4ee54a108f",
+        "mutated_sha256": "f6915b011d8ddfec37d7f172cac3d465ca273748fa431cd651d63267470a1504",
+        "patch_file": "occurrences-recursion.patch",
+        "patch_sha256": "c84c4b1f5df74245394b74d9c3552510de73eb9750201cfc1f8a2f04c0232b4e",
+        "started_at_utc": "2026-10-03T02:15:00.746417+00:00",
+        "command": "/usr/bin/time -v -o <session-scratch>/pr1000-qualification-033774f6fecacbb079180705c16667ee609322b3/snapshot/native/bend_engine/standalone/proofs/bitboard_membership/evidence/2026-10-03/occurrences-recursion.time.txt timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/PrefixDecomposition.bend --check-only",
+        "elapsed_wall_seconds": 3.657,
+        "finished_at_utc": "2026-10-03T02:15:04.402970+00:00",
+        "exit_code": 1,
+        "max_rss_kib": 542168,
+        "stdout_bytes": 0,
+        "stderr_bytes": 438,
+        "expected_failure_obligation": "occurrences_append",
+        "expected_obligation_observed": true,
+        "result": "PASS",
+        "stdout_raw": "",
+        "stderr_raw": "Error:\n- expected : Nat.add(Bool.pick(Nat, Cmp.is_eq(U32.cmp(head, query)), 1n, 0n), 0n)\n- observed : Nat.add(Bool.pick(Nat, Cmp.is_eq(U32.cmp(head, query)), 1n, 0n), occurrences(append(tail, ys), query))\nContext:\n- head  : U32\n- tail  : List<&2, U32>\n- ys    : List<&2, U32>\n- query : U32\nLocation: occurrences_append\n107 |         Nat.add(occurrences(xs,query),occurrences(ys,query)),\n108>|         {==},\n109 |         Equal.trans(Nat,\n",
+        "time_log_raw": "Command exited with non-zero status 1\n\tCommand being timed: \"timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/PrefixDecomposition.bend --check-only\"\n\tUser time (seconds): 4.46\n\tSystem time (seconds): 0.52\n\tPercent of CPU this job got: 136%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:03.65\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 542168\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 142562\n\tVoluntary context switches: 1408\n\tInvoluntary context switches: 654\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 1\n"
+      },
+      {
+        "control": "consumer-statement",
+        "mutation": "Replace the actual Chess.bit_squares consumer in the actual_bit_squares_frequency return statement with Nil{}.",
+        "mutated_file": "native/bend_engine/standalone/proofs/bitboard_membership/FrequencyIteration.bend",
+        "baseline_sha256": "f91c00b9a9298517ed0d5b1a4927e04670547fdfe30f9968ff378b0cbed7e7b8",
+        "mutated_sha256": "0371f2ae42478c38d3b6c0f799760dddd146f3dafaf8575637a962e0daddcbd3",
+        "patch_file": "consumer-statement.patch",
+        "patch_sha256": "3ed329a6b39957c76d2d68edf6ff4558ddb882ecd85d9849c588b5738e67622b",
+        "started_at_utc": "2026-10-03T02:15:05.498134+00:00",
+        "command": "/usr/bin/time -v -o <session-scratch>/pr1000-qualification-033774f6fecacbb079180705c16667ee609322b3/snapshot/native/bend_engine/standalone/proofs/bitboard_membership/evidence/2026-10-03/consumer-statement.time.txt timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/FrequencyIteration.bend --check-only",
+        "elapsed_wall_seconds": 3.731,
+        "finished_at_utc": "2026-10-03T02:15:09.229583+00:00",
+        "exit_code": 1,
+        "max_rss_kib": 799684,
+        "stdout_bytes": 0,
+        "stderr_bytes": 767,
+        "expected_failure_obligation": "actual_bit_squares_frequency",
+        "expected_obligation_observed": true,
+        "result": "PASS",
+        "stdout_raw": "",
+        "stderr_raw": "Error:\n- expected : {0n == Bool.pick(Nat, Bool.not(Cmp.is_eq(U64.cmp(U64.and(bb, U64.shln.go(Nat.min(U32.to_nat(query), 64n), U64{1, 0})), U64{0, 0}))), 1n, 0n) : Nat}\n- observed : {PrefixDecomposition.occurrences(../../../legal_probe/Chess.bit_squares(64n, U64.is_zero(bb), bb, []), query) == Bool.pick(Nat, Bool.not(Cmp.is_eq(U64.cmp(U64.and(bb, U64.shln.go(Nat.min(U32.to_nat(query), 64n), U64{1, 0})), U64{0, 0}))), 1n, 0n) : Nat}\nContext:\n- bb    : U64\n- query : U32\n- bound : {Cmp.is_lt(Nat.cmp(U32.to_nat(query), 64n)) == True{} : Bool}\nLocation: actual_bit_squares_frequency\n169 |     Bool.pick(Nat,U64.test_bit(bb,U32.to_nat(query)),1n,0n) : Nat}:\n170>|   Equal.trans(Nat,\n171 |     Prefix.occurrences(Chess.bit_squares(64n,U64.is_zero(bb),bb,Nil{}),query),\n",
+        "time_log_raw": "Command exited with non-zero status 1\n\tCommand being timed: \"timeout 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 BEND_NO_TELEMETRY=1 ~/.bun/bin/bun --smol <session-scratch>/pinned-checker-aaeb9bc/bend2/main.ts native/bend_engine/standalone/proofs/bitboard_membership/FrequencyIteration.bend --check-only\"\n\tUser time (seconds): 4.41\n\tSystem time (seconds): 0.63\n\tPercent of CPU this job got: 135%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:03.73\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 799684\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 202768\n\tVoluntary context switches: 1174\n\tInvoluntary context switches: 847\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 0\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 1\n"
+      }
+    ]
+  },
+  "cardinality_scratch_diff": {
+    "receipt": "Cardinality.scratch-to-portable.json",
+    "receipt_sha256": "75c01f5a2fdf1f302c9c543de5a5a66585573bd284f37af0e62adddb786f915c",
+    "patch": "Cardinality.scratch-to-portable.patch",
+    "patch_sha256": "908f65e7d5f84744f633192ce1bf113b2792bddbc38a66c97e20db06d9d23bf3",
+    "local_scratch_sha256": "41422a1d4148f8bcbea9ada9917038e0a0ea5096f441e722a7da288ff372d654",
+    "prior_summary_scratch_sha256": "41422a1d4148f8bcbe9ada9917038e0a0ea5096f441e722a7da288ff372d654",
+    "non_import_bodies_identical": true,
+    "summary_hash_match": false
+  },
+  "publication_redactions": {
+    "reason": "The repository's tracked-file privacy validation rejects maintainer home-directory and local scratch paths in public evidence.",
+    "transformation": "Serialized command/time-log paths were normalized: the maintainer-home prefix was represented as ~; task scratch roots were represented as <session-scratch>/... stdout and stderr checker output, timestamps, exit codes, resource measurements, and source hashes are unchanged.",
+    "original_patch_sha256": "908f65e7d5f84744f633192ce1bf113b2792bddbc38a66c97e20db06d9d23bf3",
+    "patch_note": "The companion Cardinality diff has the same seven import-only substitutions and identical non-import body; local path prefixes are privacy-redacted. Exact original diff digest is retained above."
+  }
+}

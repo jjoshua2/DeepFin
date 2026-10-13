@@ -1,0 +1,120 @@
+{
+  "checks": [
+    {
+      "name": "wrapper-normal",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "native.bend_engine.standalone.proofs.destination_factorization.test_qualify"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "limit_seconds": 180,
+      "wall_seconds": 0.1060333899804391,
+      "cpu_seconds": 0.105679,
+      "sha256": "edb4e2159c923ea45a32656078835cdf531c3d7b414c670dd786978875cb0678",
+      "raw_text": "...\n----------------------------------------------------------------------\nRan 3 tests in 0.003s\n\nOK\n"
+    },
+    {
+      "name": "wrapper--O",
+      "command": [
+        "python3",
+        "-O",
+        "-m",
+        "unittest",
+        "native.bend_engine.standalone.proofs.destination_factorization.test_qualify"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "limit_seconds": 180,
+      "wall_seconds": 0.2517674039991107,
+      "cpu_seconds": 0.251122,
+      "sha256": "edb4e2159c923ea45a32656078835cdf531c3d7b414c670dd786978875cb0678",
+      "raw_text": "...\n----------------------------------------------------------------------\nRan 3 tests in 0.003s\n\nOK\n"
+    },
+    {
+      "name": "wrapper--OO",
+      "command": [
+        "python3",
+        "-OO",
+        "-m",
+        "unittest",
+        "native.bend_engine.standalone.proofs.destination_factorization.test_qualify"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "limit_seconds": 180,
+      "wall_seconds": 0.4404095840000082,
+      "cpu_seconds": 0.433238,
+      "sha256": "5279d1fc9a1ced44f9c96da1414ef59e4676f963fbad52e7a1a2903538819b0d",
+      "raw_text": "...\n----------------------------------------------------------------------\nRan 3 tests in 0.005s\n\nOK\n"
+    },
+    {
+      "name": "compiler-pin-tests",
+      "command": [
+        "/home/josh/.bun/bin/bun",
+        "test",
+        "native/bend_engine/standalone/verify_compiler.test.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "limit_seconds": 180,
+      "wall_seconds": 0.04821908599114977,
+      "cpu_seconds": 0.05055299999999996,
+      "sha256": "b696b1ff956409e289637efa1ce1e0fce6eb3feaaf7351005b75394171efddbc",
+      "raw_text": "bun test v1.4.2 (744846f84)\n\nnative/bend_engine/standalone/verify_compiler.test.js:\n(pass) fetch and source verifier share the exact documented U64 pin [0.08ms]\n(pass) fingerprint is independent of checkout location [5.57ms]\n(pass) nested effects and core inputs all count [2.27ms]\n(pass) core mutation changes fingerprint [2.78ms]\n(pass) effect mutation changes fingerprint [2.49ms]\n(pass) extra effects are not silently ignored [2.71ms]\n(pass) renaming unchanged effect bytes changes the fingerprint [2.43ms]\n(pass) missing core input is rejected [2.20ms]\n(pass) core symlinks are rejected [2.34ms]\n(pass) effect directory symlinks are rejected [2.23ms]\n(pass) mismatched source fails without mutating the checkout [2.56ms]\n(pass) build derives revision and revision-keyed cache from the pin reader [0.08ms]\n\n 12 pass\n 0 fail\n 19 expect() calls\nRan 12 tests across 1 file. [46.00ms]\n"
+    },
+    {
+      "name": "focused-lint",
+      "command": [
+        "bash",
+        "scripts/lint.sh",
+        "native/bend_engine/standalone/proofs/destination_factorization/qualify.py",
+        "native/bend_engine/standalone/proofs/destination_factorization/test_qualify.py"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "limit_seconds": 180,
+      "wall_seconds": 1.3847305679810233,
+      "cpu_seconds": 1.8296130000000006,
+      "sha256": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc",
+      "raw_text": "\n::: running lint tools in parallel\n\n::: ruff check\nAll checks passed!\n\n::: basedpyright\n0 errors, 0 warnings, 0 notes\n\n::: vulture (dead code, min confidence 80)\n\nlint: OK\n"
+    },
+    {
+      "name": "whole-lint-candidate",
+      "command": [
+        "bash",
+        "scripts/lint.sh"
+      ],
+      "exit_code": 1,
+      "timed_out": false,
+      "limit_seconds": 180,
+      "wall_seconds": 106.9131062090164,
+      "cpu_seconds": 135.01100600000004,
+      "sha256": "5c80ec7002a67c16947081b136abd62b0761fb0f2e4c025d360f2c9193abc751",
+      "raw_text_tail": "actorization-20261002/tests/test_vloss_release_on_eval_error.py:31:6 - error: Import \"chess_anti_engine.encoding._lc0_ext\" could not be resolved from source (reportMissingModuleSource)\n  /home/josh/projects/chess-worktrees/bend-destination-factorization-20261002/tests/test_vloss_release_on_eval_error.py:32:6 - error: Import \"chess_anti_engine.mcts._mcts_tree\" could not be resolved from source (reportMissingModuleSource)\n277 errors, 0 warnings, 0 notes\n\n::: vulture (dead code, min confidence 80)\n",
+      "raw_log_file": "whole-lint-candidate.log"
+    },
+    {
+      "name": "whole-lint-base",
+      "command": [
+        "bash",
+        "scripts/lint.sh"
+      ],
+      "exit_code": 1,
+      "timed_out": false,
+      "limit_seconds": 180,
+      "wall_seconds": 101.95363893700414,
+      "cpu_seconds": 134.943491,
+      "sha256": "4182e9e6ed8f1fcc6b6001622a03b20adc38693a1b43e9187e50c70f67ec230b",
+      "raw_text_tail": "eval_error.py\n  /tmp/bend-destination-lint-base-23pkwixh/tests/test_vloss_release_on_eval_error.py:31:6 - error: Import \"chess_anti_engine.encoding._lc0_ext\" could not be resolved from source (reportMissingModuleSource)\n  /tmp/bend-destination-lint-base-23pkwixh/tests/test_vloss_release_on_eval_error.py:32:6 - error: Import \"chess_anti_engine.mcts._mcts_tree\" could not be resolved from source (reportMissingModuleSource)\n277 errors, 0 warnings, 0 notes\n\n::: vulture (dead code, min confidence 80)\n",
+      "raw_log_file": "whole-lint-base.log"
+    }
+  ],
+  "whole_lint_baseline_match": true,
+  "normalized_lint_sha256": "ae73bcb4598825963dbc9af5e758afe512b6d0dc69205ca2751a7d32b093cf9a",
+  "cpu_seconds": 272.62470200000007,
+  "status": "PASS_FOCUSED; inherited whole-repository diagnostics separately recorded",
+  "full_raw_receipt_sha256": "a1701ffdd43e9ec0b3ce428f84ee073610a933ba3cfcd344466cd449d6dd48ed"
+}

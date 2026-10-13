@@ -243,6 +243,11 @@ def read_arm(
     if calibration_contract is not None:
         same(list(next(iter(modes))), calibration_contract["expected_execution"], "calibration execution")
     summary = summarize_pentanomial(pentanomial_counts([2 * s for s in scores]))
+    if summary.interval_status != "available_normal_approximation":
+        raise ValueError(
+            f"calibration requires an estimable interval: {summary.interval_status}"
+        )
+    assert summary.score_se is not None
     lo = summary.score - 1.96 * summary.score_se
     hi = summary.score + 1.96 * summary.score_se
     verdict = "SUCCESS" if lo > 0.5 else "KILL" if hi < 0.5 else "INCONCLUSIVE"
@@ -256,8 +261,8 @@ def read_arm(
         "openings": openings, "scores": np.asarray(scores, dtype=np.float64),
         "result": {
             "games": 2 * expected_pairs, "pairs": expected_pairs, "score": summary.score,
-            "score_ci95": [lo, hi], "elo": summary.elo,
-            "elo_ci95": list(summary.elo_ci95), "verdict": verdict,
+            "score_ci95": [lo, hi], "interval_status": summary.interval_status,
+            "elo": summary.elo, "elo_ci95": list(summary.elo_ci95), "verdict": verdict,
             "pentanomial": dict(zip(("WW", "WD_DW", "DD_WL", "LD_DL", "LL"), summary.counts)),
         },
     }

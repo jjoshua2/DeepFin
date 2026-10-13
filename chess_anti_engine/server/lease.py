@@ -310,6 +310,7 @@ def _choose_trial_for_lease(
     current_trial_id: str | None,
     available_trials: list[str],
     active_leases: list[dict[str, Any]],
+    balancing_leases: list[dict[str, Any]],
     manifest_loader,
     trial_throughput_loader,
     min_workers_per_trial: int,
@@ -327,7 +328,7 @@ def _choose_trial_for_lease(
     if available_trials:
         return pick_trial_for_lease(
             available_trials=available_trials,
-            active_leases=active_leases,
+            active_leases=balancing_leases,
             manifest_loader=manifest_loader,
             trial_throughput_loader=trial_throughput_loader,
             min_workers_per_trial=min_workers_per_trial,
@@ -391,6 +392,8 @@ def assign_trial_lease(
         current_trial_id=current_trial_id,
         available_trials=available_trials,
         active_leases=active_leases,
+        # Floor protection uses current counts; allocation counts the worker once.
+        balancing_leases=[lease for lease in active_leases if lease not in same_worker_leases],
         manifest_loader=manifest_loader,
         trial_throughput_loader=trial_throughput_loader,
         min_workers_per_trial=min_workers_per_trial,

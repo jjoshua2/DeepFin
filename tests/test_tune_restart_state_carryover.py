@@ -97,6 +97,54 @@ def test_the_checkpoint_carries_the_ema_and_the_restore_reads_it(
     assert rr.opp_strength_ema == 327.1906
 
 
+def test_failed_trial_meta_sidecar_prevents_checkpoint_publication(tmp_path: Path, monkeypatch) -> None:
+    from chess_anti_engine.tune import trainable_report as report
+
+    monkeypatch.setattr(report, "save_holdout_rows", lambda **_kw: None)
+    original_atomic = report.atomic_write_text
+
+    def fail_trial_meta(path, text):
+        if Path(path).name == SIDECAR_TRIAL_META:
+            raise OSError("simulated metadata storage failure")
+        return original_atomic(path, text)
+
+    monkeypatch.setattr(report, "atomic_write_text", fail_trial_meta)
+    published = []
+    ckpt_dir = tmp_path / "checkpoint_000001"
+    ckpt_dir.mkdir()
+    stale_meta = {"owner_trial_id": "old-owner", "global_iter": 10}
+    (ckpt_dir / SIDECAR_TRIAL_META).write_text(
+        json.dumps(stale_meta), encoding="utf-8",
+    )
+
+    def from_directory(directory):
+        published.append(directory)
+        return directory
+
+    with pytest.raises(OSError, match="simulated metadata storage failure"):
+        report._save_trial_checkpoint(
+            trainer=SimpleNamespace(save=lambda p: Path(p).write_bytes(b"weights")),
+            buf=SimpleNamespace(flush=lambda: None),
+            ckpt_dir=ckpt_dir,
+            rng=np.random.default_rng(0),
+            trial_id="recipient",
+            trial_dir=tmp_path,
+            config={"optimizer": "aurora"},
+            base_seed=7,
+            restore=RestoreResult(),
+            iteration_idx=1,
+            current_window=100,
+            holdout_buf=None,
+            holdout_frozen=False,
+            holdout_generation=0,
+            holdout_ruler="",
+            opp_strength_ema=0.0,
+            yaml_keys=[],
+            Checkpoint=SimpleNamespace(from_directory=from_directory),
+        )
+
+    assert published == []
+
 def test_a_resume_continues_the_ema_instead_of_re_seeding_it() -> None:
     """The line that discarded it. ``_run_pid_and_eval`` re-seeds the series
     from this iteration's raw opponent_strength when it is handed 0.0, so

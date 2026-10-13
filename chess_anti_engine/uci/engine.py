@@ -387,9 +387,9 @@ class Engine:
   # ``_handle_isready`` re-warms the configured path before ``readyok``
   # so the first real ``go`` never pays cold capture on the clock.
         self._warmup_dirty = False
-  # Times this process answered a `go` from the bestmove fallback instead of a
-  # searched tree. Surfaced as an `info string` on every increment so a match
-  # log carries the evidence; see the `bestmove_fallback_used` property.
+  # Search-phase exceptions that selected a bestmove fallback. A ponder
+  # fallback may be replaced after ponderhit; its fault still counts. Every
+  # increment emits its phase; see the `bestmove_fallback_used` property.
         self._bestmove_fallback_used = 0
   # Times the C search DECLINED the root and the move came from the raw prior
   # with no simulation. Deliberately separate from the fault counter above —
@@ -399,6 +399,10 @@ class Engine:
         self._search_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
+  # Set only by a GUI command that ends ponder (stop, ponderhit, quit,
+  # or a command that waits out the search). A pool fault sets
+  # ``_stop_event`` and then raises; that is not one of those commands.
+        self._ponder_release = threading.Event()
   # While the current search is a `go ponder`, hold the "real" limits
   # here so ponderhit can swap them in.
         self._pending_real_limits: SearchLimits | None = None
@@ -645,6 +649,7 @@ class Engine:
         )
         self._stop_event = threading.Event()
         self._ponderhit_event = threading.Event()
+        self._ponder_release = threading.Event()
   # For `go ponder`, the ponder phase runs open-ended; ponderhit
   # converts to a real-deadline phase using the SAME underlying clock
   # args. We re-derive the "real" limits here by synthesizing a
@@ -681,6 +686,7 @@ class Engine:
     def _handle_stop(self) -> None:
         if self._search_thread is not None:
             self._stop_event.set()
+            self._ponder_release.set()
             self._search_thread.join(timeout=_JOIN_TIMEOUT_S)
             if self._search_thread.is_alive():
   # Don't clear the handle: the thread may still be running a
@@ -701,6 +707,7 @@ class Engine:
   # for real-deadline.
         self._ponderhit_event.set()
         self._stop_event.set()
+        self._ponder_release.set()
 
     def _handle_setoption(self, cmd: CmdSetOption) -> None:
   # Same barrier as _handle_position / _handle_newgame / _handle_isready:
@@ -1526,6 +1533,15 @@ class Engine:
     def _run_search(self, limits: SearchLimits, gen: int, board: chess.Board) -> None:
   # Ponder search: no deadline yet; runs until ponderhit or stop.
         result = self._run_one_phase(limits, is_ponder=limits.ponder, board=board)
+  # The worker can return before the GUI does. A mated root, a tablebase
+  # hit, a declined draw, a full hash, or a search exception is not a
+  # ponder release: this phase is still the position *before* the predicted
+  # reply, and its bestmove belongs to the opponent. UCI stays in ponder
+  # until ``stop`` or ``ponderhit``. Those commands set ``_ponder_release``.
+  # ``_stop_event`` does not: a pool fault sets it and then raises, and
+  # treating that as a release publishes the pre-reply fallback.
+        if limits.ponder and not self._ponder_release.is_set():
+            self._ponder_release.wait()
         if self._ponderhit_event.is_set() and self._pending_real_limits is not None:
   # Ponderhit: opponent played our predicted move. Advance root by
   # one ply (the popped move) so the real phase searches at the
@@ -1609,7 +1625,6 @@ class Engine:
                 include_ponder=self._options.ponder,
                 allow_terminal_shortcuts=not is_ponder and not limits.is_open_ended(),
             )
-            self._report_declined_root(result)
             if not is_ponder and last_emitted_nodes[0] != result.nodes:
                 self._emit_info(
                     nodes=result.nodes,
@@ -1638,14 +1653,15 @@ class Engine:
             self._bestmove_fallback_used += 1
             _println(
                 f"info string bestmove_fallback_used={self._bestmove_fallback_used} "
-                f"source={source} move={fallback} exception={type(exc).__name__}"
+                f"source={source} move={fallback} exception={type(exc).__name__} "
+                f"phase={'ponder' if is_ponder else 'main'}"
             )
             return SearchResult(
                 bestmove_uci=fallback, ponder_uci=None, nodes=0, pv=(), score_cp=0, tbhits=0,
             )
 
     def _report_declined_root(self, result: SearchResult) -> None:
-        """Announce and count a bestmove the search REFUSED to produce.
+        """Announce and count a published bestmove the search REFUSED to produce.
 
         Distinct from `bestmove_fallback_used` on purpose. A raise is a *fault*
         — evaluator, walker, CUDA, OOM — and `bestmove_fallback_used` is a
@@ -1707,11 +1723,13 @@ class Engine:
 
     @property
     def bestmove_fallback_used(self) -> int:
-        """How many times this process answered a `go` from the fallback path.
+        """How many search-phase exceptions selected a bestmove fallback.
 
         Monotonic for the life of the engine (a GUI plays many games in one
         process), so it is a session total, not a per-game one. Zero is the only
-        healthy value; every increment is one move the search did not produce.
+        healthy value. Each diagnostic identifies the phase: a ponder fallback
+        may be replaced by a successful main phase after ponderhit, but that
+        earlier search fault still counts.
         """
         return self._bestmove_fallback_used
 
@@ -1759,6 +1777,7 @@ class Engine:
         )))
 
     def _emit_bestmove(self, result: SearchResult) -> None:
+        self._report_declined_root(result)
         ponder = result.ponder_uci if self._options.ponder else None
         _println(format_bestmove(result.bestmove_uci, ponder=ponder))
 
@@ -1777,6 +1796,7 @@ class Engine:
     def _wait_for_search(self) -> None:
         if self._search_thread is not None and self._search_thread.is_alive():
             self._stop_event.set()
+            self._ponder_release.set()
             self._search_thread.join(timeout=_JOIN_TIMEOUT_S)
             if self._search_thread.is_alive():
                 _println("info string search stop timed out; thread still running")

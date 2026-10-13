@@ -1,0 +1,900 @@
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..0966a35
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,44 @@
++# Isolated local arena adapter simplification
++
++This candidate replaces the fresh arena adapter's duplicate implementation with a
++pinned call to the existing short-E adapter. It is an isolated source copy, not a
++deployment or a new scheduler. The original armed controller, science packets,
++reviews, runtime dependencies and training were not edited.
++
++Baseline commit `968d66b` records the two original local adapters. Original raw
++SHA-256 identities (before Git newline normalization):
++
++- Fresh: `2f01463b53e5c7ba8e71677ff3a470680f86ec6e7decbe28360184a8086c216a`
++- Short-E: `70777653e0a6579b138e5b69cb4139cad09bbaecdda710242f7c0ce8b08a19fa`
++
++Only `main`, `verify_authority`, `arena_argv` and `mode_attempt` change in the shared
++adapter. Their parameters express the three existing differences (two PGN names
++and pair-bound shim path), plus the executing wrapper identity. There are no new
++CLI options or classes. The fresh caller hashes and executes the same captured
++shared bytes, avoiding source rereads and module search-path substitution.
++
++Preserved behavior includes existing protocol/search/count/time bounds, authority
++and manifest identities, source seals and overlay origin checks, strict inference
++relations, process parent/start-ticks/boot identity, canonical GPU/IO identities,
++inherited file descriptors, create-only attempt/log admission, finalizer refusal
++of code 3, and propagation of attempt code 3 as valid incomplete work. Existing
++receipt publication code and external process lifecycle controls are unchanged.
++
++Validation is stdlib-only, with private temporary inputs and mocked subprocesses
++and canonical lease descriptors. The 11 tests include differential comparisons
++against both baseline adapters and an AST guard proving the rest of the shared
++implementation unchanged. Run from this directory in WSL:
++
++```sh
++CUDA_VISIBLE_DEVICES=-1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 taskset -c 28 nice -n 19 /usr/bin/python3.10 -B -m unittest -v test_adapter_reuse
++```
++
++No GPU job, model payload, corpus, live output or canonical lock is accessed by
++these tests. They establish adapter contracts, not an end-to-end arena result.
++
++The snapshot has no upstream repository remote. These two adapters are local
++operational sources absent from the inspected public main snapshot, so a public
++PR placement is not yet justified. Deliver the local Git diff and review first.
++Any future adoption needs a separately reviewed source-pin update including the
++shared adapter. Original science data identities and frozen protocol stay intact;
++the existing armed packet must not be repinned or hot-swapped.
+diff --git a/fresh_epoch1_arena_phase_adapter_20261010.py b/fresh_epoch1_arena_phase_adapter_20261010.py
+index af73964..73bc06f 100644
+--- a/fresh_epoch1_arena_phase_adapter_20261010.py
++++ b/fresh_epoch1_arena_phase_adapter_20261010.py
+@@ -1,519 +1,28 @@
+-#!/usr/bin/env python3
+-"""Pinned phase adapter for the versioned 2606-pair arena.
+-
+-This module is intentionally stdlib-only at import time. The `prepare` and
+-`attempt` modes import the versioned durable helper / runner only after the
+-caller has entered the reviewed whole-owner environment.
+-"""
+-from __future__ import annotations
+-
+-import argparse
+-import fcntl
++"""Fresh endpoint bindings for the existing pinned short-E phase adapter."""
+ import hashlib
+-import importlib.util
+-import json
+-import os
+ from pathlib import Path
+-import runpy
+-import subprocess
+-import sys
+-import tempfile
+-from typing import Any
+-
+-PACKET = Path("/tmp/deepfin-sf-three-pass-runtime-20261005-v1/arena")
+-QUALIFIED_ROOT = Path("/home/josh/projects/chess-worktrees/deepfin-arena-cuda-runtime-20261003")
+-QUALIFIED_HEAD = "5a3446377906e2cd9cf587c36d572e948f216c02"
+-OVERLAY_FILES = {
+-    "versioned_runner": PACKET / "scripts/arena_standard_three_pass.py",
+-    "versioned_durable": PACKET / "scripts/arena_durable_three_pass.py",
+-    "versioned_durable_package_copy": PACKET / "chess_anti_engine/eval/arena_durable_three_pass.py",
+-    "versioned_panel_loader": PACKET / "three_pass_history_panel.py",
+-    "versioned_pair_contract": PACKET / "three_pass_arena_contract.py",
+-    "versioned_readback": PACKET / "three_pass_arena_readback.py",
+-    "versioned_finalizer": PACKET / "three_pass_arena_finalizer.py",
+-}
+-FROZEN_RUNNER_SHA = "27ebfda8518a7bbad2120648cdad7557f802ecff60db660c1f95a8a20a208a62"
+-FROZEN_DURABLE_SHA = "82ace7e85ace6c61e26f4864313d5fe7fe5a475e15f66182a4045cab63847512"
+-FROZEN_CONFIG = Path("/tmp/deepfin-continuation-review-20261002T0044Z/ARENA-PANEL-V1/SCREEN05-SUCCESSOR-EXTENSION-20261003/pbt2_small.yaml")
+-FROZEN_SYZYGY = "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6"
+-
+-
+-class AdapterError(RuntimeError):
+-    pass
+-
+-
+-def sha(raw: bytes) -> str:
+-    return hashlib.sha256(raw).hexdigest()
+ 
++SHARED_SOURCE = Path(__file__).with_name("short-e-evaluation-owner-v4") / "arena_phase_adapter_pair_bound_v4.py"
++SHARED_SHA256 = "5e7133d525db7854ded59af42a309f58316082e8410e6d1d92755f1e967fb497"
+ 
+-def file_sha(path: Path) -> str:
+-    return sha(path.read_bytes())
+ 
+-
+-def verify_ref(path_text: str, expected: str, label: str) -> Path:
+-    path = Path(path_text).resolve(strict=True)
+-    if len(expected) != 64 or file_sha(path) != expected:
+-        raise AdapterError(f"{label} SHA256 mismatch")
+-    return path
+-
+-
+-def atomic_json(path: Path, value: dict[str, Any]) -> None:
+-    path.parent.mkdir(parents=True, exist_ok=True)
+-    raw = (json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode()
+-    temp = path.with_name(path.name + f".tmp.{os.getpid()}")
+-    with temp.open("xb") as stream:
+-        stream.write(raw)
+-        stream.flush()
+-        os.fsync(stream.fileno())
+-    os.replace(temp, path)
+-    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
++def main():
++    # Execute the bytes that were checked, not a second read or a sys.path import.
++    raw = SHARED_SOURCE.read_bytes()
++    if hashlib.sha256(raw).hexdigest() != SHARED_SHA256:
++        raise SystemExit("arena phase adapter refused: shared adapter source changed")
++    shared = {"__name__": "_pinned_short_e_phase_adapter", "__file__": str(SHARED_SOURCE)}
++    exec(compile(raw, str(SHARED_SOURCE), "exec"), shared)
+     try:
+-        os.fsync(fd)
+-    finally:
+-        os.close(fd)
+-
+-
+-def checked_overlay() -> dict[str, dict[str, Any]]:
+-    result: dict[str, dict[str, Any]] = {}
+-    for role, path in OVERLAY_FILES.items():
+-        if path.is_symlink() or not path.is_file():
+-            raise AdapterError(f"overlay source missing or symlinked: {role}")
+-        result[role] = {"path": str(path.resolve()), "sha256": file_sha(path), "bytes": path.stat().st_size}
+-    if file_sha(OVERLAY_FILES["versioned_durable"]) != file_sha(OVERLAY_FILES["versioned_durable_package_copy"]):
+-        raise AdapterError("durable module copies differ")
+-    return result
+-
+-
+-def verify_qualified_source() -> None:
+-    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=QUALIFIED_ROOT,
+-                          check=True, capture_output=True, text=True).stdout.strip()
+-    dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=QUALIFIED_ROOT,
+-                           check=True, capture_output=True, text=True).stdout
+-    if head != QUALIFIED_HEAD or dirty:
+-        raise AdapterError("qualified arena source head or tracked cleanliness differs")
+-    source_runner = QUALIFIED_ROOT / "scripts/arena_standard.py"
+-    source_durable = QUALIFIED_ROOT / "chess_anti_engine/eval/arena_durable.py"
+-    if file_sha(source_runner) != FROZEN_RUNNER_SHA or file_sha(source_durable) != FROZEN_DURABLE_SHA:
+-        raise AdapterError("qualified frozen arena source hashes differ")
+-
+-
+-def _ref_object(value: Any, label: str) -> tuple[str, str]:
+-    if not isinstance(value, dict) or set(value) != {"path", "sha256"}:
+-        raise AdapterError(f"{label} ref must contain exactly path and sha256")
+-    return str(Path(value["path"]).resolve()), value["sha256"]
+-
+-
+-def _linux_start_ticks(pid: int) -> str:
+-    stat = Path(f"/proc/{pid}/stat").read_text()
+-    tail = stat[stat.rfind(")") + 2:].split()
+-    return tail[19]
+-
+-
+-def verify_authority(args: argparse.Namespace, refs: dict[str, Path]) -> None:
+-    max_bytes = 8 * 1024 * 1024
+-    docs = {}
+-    for role in ("operation", "authorization", "budget", "lane_release", "operation_baseline"):
+-        path = refs[role]
+-        if path.stat().st_size > max_bytes:
+-            raise AdapterError(f"{role} metadata exceeds 8 MiB")
+-        docs[role] = json.loads(path.read_bytes())
+-    operation = docs["operation"]
+-    authorization = docs["authorization"]
+-    lane = docs["lane_release"]
+-    arena = operation.get("arena")
+-    if not isinstance(arena, dict):
+-        raise AdapterError("operation arena contract missing")
+-    adapter_ref = _ref_object(arena.get("adapter_ref"), "adapter source")
+-    if adapter_ref != (str(Path(__file__).resolve()), file_sha(Path(__file__))):
+-        raise AdapterError("operation adapter source path/SHA differs")
+-    catalog_ref = _ref_object(arena.get("tablebase_catalog_ref"), "tablebase catalog")
+-    if catalog_ref != (str(Path(args.tablebase_catalog).resolve()), file_sha(Path(args.tablebase_catalog).resolve(strict=True))):
+-        raise AdapterError("operation tablebase catalog path/SHA differs")
+-    config_ref = _ref_object(arena.get("live_config_ref"), "live config")
+-    if config_ref != (str(FROZEN_CONFIG.resolve()), file_sha(FROZEN_CONFIG)):
+-        raise AdapterError("operation live config path/SHA differs")
+-    expected_caps = {"verification_seconds": 60, "max_sessions": 25,
+-                     "whole_attempt_seconds": 1650, "phase_wall_seconds": 43200,
+-                     "pairs": 2606, "games": 5212}
+-    if any(arena.get(key) != value for key, value in expected_caps.items()):
+-        raise AdapterError("operation arena phase/count caps differ")
+-    baseline = docs["operation_baseline"]
+-    if lane.get("schema") != "deepfin_three_pass_runtime_lane_release_v1" or lane.get("status") != "PASS_PARENT_REVIEWED_THREE_PASS_LANE_RELEASE":
+-        raise AdapterError("normalized lane release schema/status invalid")
+-    if lane.get("owner_stop_confirmed") is not True or not isinstance(lane.get("nonce"), str) or not lane["nonce"]:
+-        raise AdapterError("lane release lacks confirmed owner stop or nonce")
+-    for field, role, digest in (("operation_ref", "operation", args.operation_sha256),
+-                                ("whole_operation_authorization_ref", "authorization", args.authorization_sha256)):
+-        if _ref_object(lane.get(field), field) != (str(refs[role]), digest):
+-            raise AdapterError(f"lane release {field} does not bind supplied ref")
+-    operation_budget = _ref_object(operation.get("budget_ref"), "operation budget")
+-    if operation_budget != (str(refs["budget"]), args.budget_sha256):
+-        raise AdapterError("operation budget ref differs from supplied budget")
+-    if authorization.get("budget_sha256") != args.budget_sha256:
+-        raise AdapterError("whole-operation authorization budget pin differs")
+-    if authorization.get("operation_sha256") != args.operation_sha256:
+-        raise AdapterError("whole-operation authorization operation pin differs")
+-    if baseline.get("schema") != "deepfin_three_pass_science_slot_baseline_v1":
+-        raise AdapterError("whole-operation baseline schema invalid")
+-    if (baseline.get("operation_sha256") != args.operation_sha256
+-            or baseline.get("authorization_sha256") != args.authorization_sha256):
+-        raise AdapterError("whole-operation baseline pins differ")
+-    lane_ref = baseline.get("lane_release_ref")
+-    if _ref_object(lane_ref, "baseline lane release") != (str(refs["lane_release"]), args.lane_release_sha256):
+-        raise AdapterError("baseline lane release ref differs")
+-    owner = lane.get("science_owner_identity")
+-    baseline_owner = baseline.get("owner_identity")
+-    if not isinstance(owner, dict) or not isinstance(baseline_owner, dict):
+-        raise AdapterError("lane/baseline owner identity missing")
+-    identity = {key: str(owner.get(key)) for key in ("pid", "start_ticks", "boot_id")}
+-    baseline_identity = {key: str(baseline_owner.get(key)) for key in ("pid", "start_ticks", "boot_id")}
+-    if identity != baseline_identity:
+-        raise AdapterError("lane owner differs from operation baseline owner")
+-    pid = int(identity["pid"])
+-    if os.getppid() != pid:
+-        raise AdapterError("current adapter parent is not the reviewed science owner")
+-    if _linux_start_ticks(pid) != identity["start_ticks"]:
+-        raise AdapterError("owner PID start ticks changed")
+-    if Path("/proc/sys/kernel/random/boot_id").read_text().strip() != identity["boot_id"]:
+-        raise AdapterError("owner boot ID changed")
+-    now = __import__("time").monotonic()
+-    if not (float(baseline.get("scope_started_monotonic", now + 1)) <= now
+-            < float(baseline.get("scope_deadline_monotonic", now))):
+-        raise AdapterError("whole-operation scope deadline is invalid or expired")
+-    lease_identities = lane.get("canonical_lease_identities")
+-    expected = {
+-        "GPU": (2096, 81348917, os.environ.get("DEEPFIN_INHERITED_GPU_LOCK_FD")),
+-        "IO": (2096, 18503149, os.environ.get("DEEPFIN_INHERITED_IO_LOCK_FD")),
+-    }
+-    if not isinstance(lease_identities, dict):
+-        raise AdapterError("lane release canonical lease identities missing")
+-    for role, (dev, ino, fd_raw) in expected.items():
+-        matching = [(Path(k), v) for k, v in lease_identities.items()
+-                    if v == [dev, ino]]
+-        if len(matching) != 1:
+-            raise AdapterError(f"lane release {role} lease identity differs")
+-        path, identity_record = matching[0]
+-        if fd_raw is None or not fd_raw.isdecimal():
+-            raise AdapterError(f"inherited {role} lock fd missing")
+-        fd = int(fd_raw)
+-        st = os.fstat(fd)
+-        if (st.st_dev, st.st_ino) != (dev, ino):
+-            raise AdapterError(f"inherited {role} fd does not refer to canonical lease")
+-        if fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE != os.O_RDONLY:
+-            raise AdapterError(f"inherited {role} fd is not read-only")
+-        path_stat = path.stat()
+-        if (path_stat.st_dev, path_stat.st_ino) != (dev, ino):
+-            raise AdapterError(f"canonical {role} lease path identity changed")
+-
+-
+-def validate_request_files(args: argparse.Namespace) -> dict[str, Path]:
+-    refs = {
+-        "operation": verify_ref(args.operation, args.operation_sha256, "operation"),
+-        "authorization": verify_ref(args.authorization, args.authorization_sha256, "authorization"),
+-        "budget": verify_ref(args.budget, args.budget_sha256, "budget"),
+-        "lane_release": verify_ref(args.lane_release, args.lane_release_sha256, "lane release"),
+-        "operation_baseline": verify_ref(args.operation_baseline, args.operation_baseline_sha256, "operation baseline"),
+-    }
+-    verify_authority(args, refs)
+-    # Only after owner identity and inherited canonical FDs are verified do we
+-    # read/hash the panel or checkpoint payloads.
+-    refs.update({
+-        "panel": verify_ref(args.panel_path, args.panel_sha256, "panel"),
+-        "control": verify_ref(args.control_path, args.control_sha256, "control checkpoint"),
+-        "candidate": verify_ref(args.candidate_path, args.candidate_sha256, "candidate checkpoint"),
+-    })
+-    return refs
+-
+-
+-def arena_argv(args: argparse.Namespace, refs: dict[str, Path], output_root: Path,
+-               seal_path: Path, seal_sha: str) -> list[str]:
+-    cache = output_root / "cache" / "compile_cache" / "torchinductor"
+-    outputs = output_root / "durable"
+-    receipts = outputs / "pair-receipts"
+-    return [
+-        "--candidate", str(refs["candidate"]), "--reference", str(refs["control"]),
+-        "--opening-history-json", str(refs["panel"]), "--expected-panel-sha256", args.panel_sha256,
+-        "--durable-pairs", "2606", "--games", "5212", "--mode", "matched_sims",
+-        "--sims", "400", "--seed", "2026092101", "--max-plies", "1000",
+-        "--temperature", "0.1", "--search-shape", "training",
+-        "--cand-gumbel", "policy_temp=1.0", "--ref-gumbel", "policy_temp=1.0",
+-        "--compile", "on", "--compile-cache-dir", str(cache), "--device", "cuda",
+-        "--max-concurrent-games", "128", "--eval-max-batch", "4096",
+-        "--syzygy", FROZEN_SYZYGY, "--syzygy-max-pieces", "6", "--resume",
+-        "--max-seconds", "1540", "--games-out", str(outputs / "games.jsonl"),
+-        "--pgn-out", str(outputs / "games.pgn"),
+-        "--pgn-candidate-name", "fresh104363327_epoch1",
+-        "--pgn-reference-name", "THREE_frozen206922", "--pair-receipts-dir", str(receipts),
+-        "--out", str(outputs / "summary.jsonl"), "--durable-seal", str(seal_path),
+-        "--durable-seal-sha256", seal_sha,
+-    ]
+-
+-
+-def load_versioned_durable():
+-    verify_qualified_source()
+-    overlay = str(PACKET)
+-    scripts = str(PACKET / "scripts")
+-    qualified = str(QUALIFIED_ROOT)
+-    usersite = "/home/josh/.local/lib/python3.10/site-packages"
+-    for item in (usersite, qualified, overlay, scripts):
+-        if item not in sys.path:
+-            sys.path.insert(0, item)
+-    spec = importlib.util.spec_from_file_location("arena_durable_three_pass", OVERLAY_FILES["versioned_durable"])
+-    if spec is None or spec.loader is None:
+-        raise AdapterError("could not load pinned durable module")
+-    module = importlib.util.module_from_spec(spec)
+-    sys.modules[spec.name] = module
+-    spec.loader.exec_module(module)
+-    if Path(module.__file__).resolve() != OVERLAY_FILES["versioned_durable"].resolve():
+-        raise AdapterError("durable module origin mismatch")
+-    return module
+-
+-
+-def mode_prepare(args: argparse.Namespace) -> int:
+-    refs = validate_request_files(args)
+-    overlay = checked_overlay()
+-    verify_qualified_source()
+-    output_root = Path(args.output_root).resolve(strict=True)
+-    seal_path = output_root / "source-seal-runtime-v3.json"
+-    manifest_path = Path(args.manifest_path).resolve()
+-    if output_root not in manifest_path.parents:
+-        raise AdapterError("prepared manifest must be under the owned arena output root")
+-    if seal_path.exists() or manifest_path.exists():
+-        raise AdapterError("prepare outputs already exist; no overwrite")
+-    # Semantic operation admission is checked by the separately pinned parent
+-    # resolver before this mode is called. This checks complete byte refs here.
+-    os.environ.update(set_runtime_env(args, output_root))
+-    inherited_fds()
+-    module = load_versioned_durable()
+-    argv = arena_argv(args, refs, output_root, seal_path, "0" * 64)
+-    argv = argv[:-4]  # source seal argv excludes both seal-option pairs.
+-    seal_sha = module.prepare_source_seal(
+-        seal_path, argv=argv, candidate=refs["candidate"], reference=refs["control"],
+-        openings=refs["panel"], config=FROZEN_CONFIG,
+-        catalog_path=Path(args.tablebase_catalog).resolve(strict=True),
+-        syzygy_path=FROZEN_SYZYGY, expected_pairs=2606, overlay_root=PACKET,
+-    )
+-    manifest = {
+-        "schema": "deepfin_three_pass_arena_prepared_v1", "status": "PASS_PREPARED_THREE_PASS_ARENA",
+-        "operation": str(refs["operation"]), "operation_sha256": args.operation_sha256,
+-        "authorization": str(refs["authorization"]), "authorization_sha256": args.authorization_sha256,
+-        "budget": str(refs["budget"]), "budget_sha256": args.budget_sha256,
+-        "lane_release": str(refs["lane_release"]), "lane_release_sha256": args.lane_release_sha256,
+-        "operation_baseline": str(refs["operation_baseline"]), "operation_baseline_sha256": args.operation_baseline_sha256,
+-        "panel_path": str(refs["panel"]), "panel_sha256": args.panel_sha256,
+-        "control_path": str(refs["control"]), "control_sha256": args.control_sha256,
+-        "candidate_path": str(refs["candidate"]), "candidate_sha256": args.candidate_sha256,
+-        "source_seal_path": str(seal_path), "source_seal_sha256": seal_sha,
+-        "attempt_argv": arena_argv(args, refs, output_root, seal_path, seal_sha),
+-        "overlay_files": overlay, "qualified_arena_head": QUALIFIED_HEAD,
+-        "profile": {"pairs": 2606, "games": 5212, "sprt": False, "sims": 400,
+-                    "seed": 2026092101, "max_plies": 1000, "temperature": 0.1,
+-                    "candidate_gumbel": "policy_temp=1.0", "reference_gumbel": "policy_temp=1.0",
+-                    "max_concurrent_games": 128, "eval_max_batch": 4096,
+-                    "compile": True, "device": "cuda", "inner_max_seconds": 1540},
+-    }
+-    relation_path=output_root/'inference/RESULT.json'
+-    relation=json.loads(relation_path.read_bytes())
+-    if relation.get('status')!='PASS_EXACT_READBACK_MODEL_ARCH_INFERENCE_EXPORT' or relation.get('cuda_initialized') is not False:
+-        raise AdapterError('missing exact CPU inference relation')
+-    for arm in ('control','candidate'):
+-        if relation['arms'][arm]['export_ref']!={'path':manifest[arm+'_path'],'sha256':manifest[arm+'_sha256']}:
+-            raise AdapterError('prepared inference endpoint relation differs')
+-    manifest['inference_relation_ref']={'path':str(relation_path),'sha256':file_sha(relation_path)}
+-    manifest['original_checkpoint_refs']={arm:relation['arms'][arm]['source_ref'] for arm in ('control','candidate')}
+-    atomic_json(manifest_path, manifest)
+-    print(json.dumps({"status": "PASS_PREPARED_THREE_PASS_ARENA", "manifest_ref": str(manifest_path),
+-                      "manifest_sha256": file_sha(manifest_path), "source_seal_ref": str(seal_path),
+-                      "source_seal_sha256": seal_sha}, sort_keys=True))
+-    return 0
+-
+-
+-def verify_manifest(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Path]]:
+-    refs = validate_request_files(args)
+-    manifest_path = verify_ref(args.manifest_path, args.manifest_sha256, "prepared manifest")
+-    manifest = json.loads(manifest_path.read_bytes())
+-    if manifest.get("schema") != "deepfin_three_pass_arena_prepared_v1" or manifest.get("status") != "PASS_PREPARED_THREE_PASS_ARENA":
+-        raise AdapterError("prepared manifest status/schema invalid")
+-    for k, path_key, digest_key in (("panel", "panel_path", "panel_sha256"),
+-                                    ("control", "control_path", "control_sha256"),
+-                                    ("candidate", "candidate_path", "candidate_sha256"),
+-                                    ("operation", "operation", "operation_sha256"),
+-                                    ("authorization", "authorization", "authorization_sha256"),
+-                                    ("budget", "budget", "budget_sha256"),
+-                                    ("lane_release", "lane_release", "lane_release_sha256"),
+-                                    ("operation_baseline", "operation_baseline", "operation_baseline_sha256")):
+-        if manifest.get(path_key) != str(refs[k]) or manifest.get(digest_key) != getattr(args, digest_key):
+-            raise AdapterError(f"prepared manifest {k} binding differs")
+-    seal = verify_ref(manifest["source_seal_path"], manifest["source_seal_sha256"], "source seal")
+-    relation_ref=manifest['inference_relation_ref']
+-    relation=json.loads(verify_ref(relation_ref['path'],relation_ref['sha256'],'inference relation').read_bytes())
+-    for arm in ('control','candidate'):
+-        if relation['arms'][arm]['source_ref']!=manifest['original_checkpoint_refs'][arm] or relation['arms'][arm]['export_ref']!={'path':manifest[arm+'_path'],'sha256':manifest[arm+'_sha256']}:
+-            raise AdapterError('sealed inference relation changed')
+-    return manifest, refs | {"manifest": manifest_path, "seal": seal}
+-
+-
+-def set_runtime_env(args: argparse.Namespace, output_root: Path) -> dict[str, str]:
+-    env = os.environ.copy()
+-    env["CHESS_ANTI_ENGINE_LIVE_CONFIG"] = str(FROZEN_CONFIG)
+-    cache = str(output_root / "cache" / "compile_cache" / "torchinductor")
+-    env["HOME"] = str(output_root / "home")
+-    env["TMPDIR"] = env["TMP"] = env["TEMP"] = str(output_root / "tmp")
+-    env["XDG_CACHE_HOME"] = str(output_root / "cache" / "xdg")
+-    env["PYTHONUSERBASE"] = "/home/josh/.local"
+-    env["PYTHONPATH"] = "/usr/lib/python3.10:/usr/lib/python3.10/lib-dynload:/home/josh/.local/lib/python3.10/site-packages"
+-    env["PYTHONNOUSERSITE"] = "1"
+-    env["TORCHINDUCTOR_CACHE_DIR"] = cache
+-    env["TRITON_CACHE_DIR"] = str(output_root / "cache" / "compile_cache" / "triton")
+-    env["CUDA_VISIBLE_DEVICES"] = "0"
+-    for path in (env["HOME"], env["TMPDIR"], env["XDG_CACHE_HOME"], cache, env["TRITON_CACHE_DIR"]):
+-        Path(path).mkdir(parents=True, exist_ok=True)
+-    return env
+-
+-
+-def inherited_fds() -> tuple[int, ...]:
+-    names = ("DEEPFIN_INHERITED_GPU_LOCK_FD", "DEEPFIN_INHERITED_IO_LOCK_FD")
+-    values = []
+-    for name in names:
+-        raw = os.environ.get(name)
+-        if raw is None or not raw.isdecimal():
+-            raise AdapterError(f"whole-owner inherited lease fd missing: {name}")
+-        values.append(int(raw))
+-    return tuple(values)
+-
+-
+-def run_child(command: list[str], *, args: argparse.Namespace, output_root: Path,
+-              result_path: Path, mode: str) -> int:
+-    fds = inherited_fds()
+-    env = set_runtime_env(args, output_root)
+-    log_dir = output_root / "adapter-logs"
+-    log_dir.mkdir(parents=True, exist_ok=True)
+-    label = f"attempt-{args.attempt_number:02d}" if mode == "attempt" else mode
+-    stdout_path, stderr_path = log_dir / f"{label}.stdout", log_dir / f"{label}.stderr"
+-    if result_path.exists() or stdout_path.exists() or stderr_path.exists():
+-        raise AdapterError(f"immutable child output already exists: {label}")
+-    with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr:
+-        child = subprocess.run(command, cwd=QUALIFIED_ROOT, env=env,
+-                               pass_fds=fds, stdout=stdout, stderr=stderr,
+-                               check=False)
+-    manifest = json.loads(Path(args.manifest_path).read_bytes())
+-    result = {"schema": "deepfin_three_pass_arena_child_result_v1",
+-              "status": ("PASS_ATTEMPT_EXIT_0" if child.returncode == 0
+-                         else "VALID_INCOMPLETE_ATTEMPT_EXIT_3" if child.returncode == 3
+-                         else "HOLD_ATTEMPT_EXIT"),
+-              "mode": mode, "returncode": child.returncode,
+-              "manifest_ref": str(Path(args.manifest_path).resolve()),
+-              "manifest_sha256": args.manifest_sha256,
+-              "source_seal_ref": manifest["source_seal_path"],
+-              "source_seal_sha256": manifest["source_seal_sha256"],
+-              "panel_sha256": manifest["panel_sha256"],
+-              "control_sha256": manifest["control_sha256"],
+-              "candidate_sha256": manifest["candidate_sha256"],
+-              "stdout_path": str(stdout_path), "stderr_path": str(stderr_path)}
+-    atomic_json(result_path, result)
+-    print(json.dumps(result, sort_keys=True))
+-    return child.returncode
+-
+-
+-def mode_attempt(args: argparse.Namespace) -> int:
+-    manifest, refs = verify_manifest(args)
+-    output_root = Path(args.output_root).resolve(strict=True)
+-    if checked_overlay() != manifest.get("overlay_files"):
+-        raise AdapterError("overlay files changed after prepare")
+-    verify_qualified_source()
+-    command = [sys.executable, "-B", "/mnt/c/Users/jjosh/Documents/Codex/2026-10-08/task/fresh_epoch1_pair_bound_20261010.py", *manifest["attempt_argv"]]
+-    # Runner has an explicit pinned sys.path bootstrap at top-level. Child inherits
+-    # both canonical lock descriptors; whole-owner controls its process group/deadline.
+-    if args.attempt_number is None or args.attempt_number < 1 or args.attempt_number > 25:
+-        raise AdapterError("attempt mode requires an attempt number in 1..25")
+-    return run_child(command, args=args, output_root=output_root,
+-                     result_path=output_root / f"attempt-{args.attempt_number:02d}-result.json",
+-                     mode="attempt")
+-
+-
+-def mode_finalize(args: argparse.Namespace, mode: str) -> int:
+-    manifest, refs = verify_manifest(args)
+-    output_root = Path(args.output_root).resolve(strict=True)
+-    if checked_overlay() != manifest.get("overlay_files"):
+-        raise AdapterError("overlay files changed after prepare")
+-    output = output_root / "durable"
+-    command = [sys.executable, "-B", str(OVERLAY_FILES["versioned_finalizer"]),
+-        "--mode", mode, "--panel", str(refs["panel"]), "--panel-sha256", args.panel_sha256,
+-        "--seal", str(refs["seal"]), "--seal-sha256", manifest["source_seal_sha256"],
+-        "--games-out", str(output / "games.jsonl"), "--pgn-out", str(output / "games.pgn"),
+-        "--pair-receipts-dir", str(output / "pair-receipts"), "--control-path", str(refs["control"]),
+-        "--control-sha256", args.control_sha256, "--candidate-path", str(refs["candidate"]),
+-        "--candidate-sha256", args.candidate_sha256, "--output-root", str(output)]
+-    return run_finalizer(command, args=args, output_root=output_root, mode=mode,
+-                         manifest=manifest, refs=refs)
+-
+-
+-def run_finalizer(command: list[str], *, args: argparse.Namespace, output_root: Path,
+-                  mode: str, manifest: dict[str, Any], refs: dict[str, Path]) -> int:
+-    fds = inherited_fds()
+-    env = set_runtime_env(args, output_root)
+-    child = subprocess.run(command, cwd=QUALIFIED_ROOT, env=env, pass_fds=fds,
+-                           capture_output=True, text=True, check=False)
+-    if child.returncode != 0:
+-        raise AdapterError(f"{mode} readback refused; returncode={child.returncode}; stderr={child.stderr[-4000:]}")
+-    try:
+-        result = json.loads(child.stdout)
+-    except json.JSONDecodeError as exc:
+-        raise AdapterError(f"{mode} readback did not emit one JSON object") from exc
+-    expected_status = "VALID_INCOMPLETE" if mode == "progress" else "PASS_THREE_PASS_2606_COMPLETE"
+-    if result.get("status") != expected_status:
+-        raise AdapterError(f"{mode} readback returned unexpected status")
+-    if result.get("source_seal_sha256") != manifest["source_seal_sha256"]:
+-        raise AdapterError(f"{mode} readback source seal binding mismatch")
+-    result["seal_sha256"] = result["source_seal_sha256"]
+-    result["control_sha256"] = args.control_sha256
+-    result["candidate_sha256"] = args.candidate_sha256
+-    pairs, games = result.get("pairs"), result.get("games")
+-    if type(pairs) is not int or type(games) is not int or games != 2 * pairs:
+-        raise AdapterError(f"{mode} readback count consistency failed")
+-    for key, expected in (("panel_sha256", args.panel_sha256),
+-                          ("seal_sha256", manifest["source_seal_sha256"]),
+-                          ("control_sha256", args.control_sha256),
+-                          ("candidate_sha256", args.candidate_sha256)):
+-        if result.get(key) != expected:
+-            raise AdapterError(f"{mode} readback binding mismatch: {key}")
+-    if mode == "final" and (pairs != 2606 or games != 5212
+-                            or result.get("all_color_halves_verified") is not True):
+-        raise AdapterError("final readback incomplete")
+-    print(json.dumps(result, sort_keys=True))
+-    return 0
+-
+-
+-def parser() -> argparse.ArgumentParser:
+-    p = argparse.ArgumentParser()
+-    p.add_argument("--mode", choices=("prepare", "attempt", "progress", "final"), required=True)
+-    for name in ("operation", "authorization", "budget", "lane-release", "operation-baseline"):
+-        p.add_argument("--" + name, required=True)
+-        p.add_argument("--" + name + "-sha256", required=True)
+-    p.add_argument("--control-path", required=True); p.add_argument("--control-sha256", required=True)
+-    p.add_argument("--candidate-path", required=True); p.add_argument("--candidate-sha256", required=True)
+-    p.add_argument("--panel-path", required=True); p.add_argument("--panel-sha256", required=True)
+-    p.add_argument("--tablebase-catalog", required=True)
+-    p.add_argument("--output-root", required=True)
+-    p.add_argument("--manifest-path", required=True)
+-    p.add_argument("--manifest-sha256")
+-    p.add_argument("--attempt-number", type=int)
+-    return p
+-
+-
+-def main() -> int:
+-    args = parser().parse_args()
+-    if args.mode != "prepare" and not args.manifest_sha256:
+-        raise SystemExit("attempt/progress/final require --manifest-sha256")
+-    if args.mode == "prepare": return mode_prepare(args)
+-    if args.mode == "attempt": return mode_attempt(args)
+-    if args.mode == "progress": return mode_finalize(args, "progress")
+-    return mode_finalize(args, "final")
++        return shared["main"](
++            adapter_source=Path(__file__),
++            candidate_name="fresh104363327_epoch1",
++            reference_name="THREE_frozen206922",
++            pair_bound_wrapper=Path("/mnt/c/Users/jjosh/Documents/Codex/2026-10-08/task/fresh_epoch1_pair_bound_20261010.py"),
++        )
++    except shared["AdapterError"] as exc:
++        raise SystemExit(f"arena phase adapter refused: {exc}") from exc
+ 
+ 
+ if __name__ == "__main__":
+-    try:
+-        raise SystemExit(main())
+-    except AdapterError as exc:
+-        raise SystemExit(f"arena phase adapter refused: {exc}") from exc
+-
++    raise SystemExit(main())
+diff --git a/short-e-evaluation-owner-v4/arena_phase_adapter_pair_bound_v4.py b/short-e-evaluation-owner-v4/arena_phase_adapter_pair_bound_v4.py
+index 8a107c7..7382ff1 100644
+--- a/short-e-evaluation-owner-v4/arena_phase_adapter_pair_bound_v4.py
++++ b/short-e-evaluation-owner-v4/arena_phase_adapter_pair_bound_v4.py
+@@ -124,7 +124,7 @@ def verify_authority(args: argparse.Namespace, refs: dict[str, Path]) -> None:
+     if not isinstance(arena, dict):
+         raise AdapterError("operation arena contract missing")
+     adapter_ref = _ref_object(arena.get("adapter_ref"), "adapter source")
+-    if adapter_ref != (str(Path(__file__).resolve()), file_sha(Path(__file__))):
++    if adapter_ref != (str(args.adapter_source.resolve()), file_sha(args.adapter_source)):
+         raise AdapterError("operation adapter source path/SHA differs")
+     catalog_ref = _ref_object(arena.get("tablebase_catalog_ref"), "tablebase catalog")
+     if catalog_ref != (str(Path(args.tablebase_catalog).resolve()), file_sha(Path(args.tablebase_catalog).resolve(strict=True))):
+@@ -242,8 +242,8 @@ def arena_argv(args: argparse.Namespace, refs: dict[str, Path], output_root: Pat
+         "--syzygy", FROZEN_SYZYGY, "--syzygy-max-pieces", "6", "--resume",
+         "--max-seconds", "1540", "--games-out", str(outputs / "games.jsonl"),
+         "--pgn-out", str(outputs / "games.pgn"),
+-        "--pgn-candidate-name", "selected_e_three_pass_candidate",
+-        "--pgn-reference-name", "selected_e_three_pass_control", "--pair-receipts-dir", str(receipts),
++        "--pgn-candidate-name", args.candidate_name,
++        "--pgn-reference-name", args.reference_name, "--pair-receipts-dir", str(receipts),
+         "--out", str(outputs / "summary.jsonl"), "--durable-seal", str(seal_path),
+         "--durable-seal-sha256", seal_sha,
+     ]
+@@ -421,7 +421,7 @@ def mode_attempt(args: argparse.Namespace) -> int:
+     if checked_overlay() != manifest.get("overlay_files"):
+         raise AdapterError("overlay files changed after prepare")
+     verify_qualified_source()
+-    command = [sys.executable, "-B", "/mnt/c/Users/jjosh/Documents/Codex/2026-10-08/task/short_e_pair_bound_recovery_v1.py", *manifest["attempt_argv"]]
++    command = [sys.executable, "-B", str(args.pair_bound_wrapper), *manifest["attempt_argv"]]
+     # Runner has an explicit pinned sys.path bootstrap at top-level. Child inherits
+     # both canonical lock descriptors; whole-owner controls its process group/deadline.
+     if args.attempt_number is None or args.attempt_number < 1 or args.attempt_number > 25:
+@@ -501,8 +501,15 @@ def parser() -> argparse.ArgumentParser:
+     return p
+ 
+ 
+-def main() -> int:
++def main(*, adapter_source: Path = Path(__file__),
++         candidate_name: str = "selected_e_three_pass_candidate",
++         reference_name: str = "selected_e_three_pass_control",
++         pair_bound_wrapper: Path = Path("/mnt/c/Users/jjosh/Documents/Codex/2026-10-08/task/short_e_pair_bound_recovery_v1.py")) -> int:
+     args = parser().parse_args()
++    args.adapter_source = adapter_source
++    args.candidate_name = candidate_name
++    args.reference_name = reference_name
++    args.pair_bound_wrapper = pair_bound_wrapper
+     if args.mode != "prepare" and not args.manifest_sha256:
+         raise SystemExit("attempt/progress/final require --manifest-sha256")
+     if args.mode == "prepare": return mode_prepare(args)
+diff --git a/test_adapter_reuse.py b/test_adapter_reuse.py
+new file mode 100644
+index 0000000..aba28c6
+--- /dev/null
++++ b/test_adapter_reuse.py
+@@ -0,0 +1,251 @@
++"""Stdlib-only differential contracts; no live source imports or canonical leases."""
++import argparse
++import ast
++import builtins
++from contextlib import ExitStack, redirect_stderr, redirect_stdout
++import copy
++import hashlib
++import io
++import json
++import os
++from pathlib import Path
++import subprocess
++import tempfile
++import time
++import types
++import unittest
++from unittest.mock import patch
++
++ROOT = Path(__file__).resolve().parent
++CORE = ROOT / "short-e-evaluation-owner-v4/arena_phase_adapter_pair_bound_v4.py"
++FRESH = ROOT / "fresh_epoch1_arena_phase_adapter_20261010.py"
++BASE = "968d66b"
++
++
++def load(path, raw=None):
++    module = types.ModuleType("isolated_adapter_" + path.stem)
++    module.__file__ = str(path)
++    exec(compile(path.read_bytes() if raw is None else raw, str(path), "exec"), module.__dict__)
++    return module
++
++
++def original(name):
++    return subprocess.run(["git", "show", BASE + ":" + name], cwd=ROOT,
++                          capture_output=True, check=True).stdout
++
++
++def arguments(**changes):
++    args = argparse.Namespace(
++        mode="prepare", manifest_sha256="m" * 64, manifest_path="manifest.json",
++        output_root=".", panel_sha256="p" * 64, candidate_sha256="c" * 64,
++        control_sha256="r" * 64, attempt_number=1, adapter_source=CORE,
++        candidate_name="selected_e_three_pass_candidate",
++        reference_name="selected_e_three_pass_control",
++        pair_bound_wrapper=Path("/mnt/c/Users/jjosh/Documents/Codex/2026-10-08/task/short_e_pair_bound_recovery_v1.py"),
++    )
++    vars(args).update(changes)
++    return args
++
++
++class AdapterTests(unittest.TestCase):
++    def setUp(self):
++        self.core = load(CORE)
++        self.fresh = load(FRESH)
++
++    def test_only_four_shared_functions_change(self):
++        before = ast.parse(original("short-e-evaluation-owner-v4/arena_phase_adapter_pair_bound_v4.py"))
++        after = ast.parse(CORE.read_bytes())
++        bodies = lambda tree: {n.name: ast.dump(n, include_attributes=False) for n in tree.body
++                               if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
++        old, new = bodies(before), bodies(after)
++        self.assertEqual(old.keys(), new.keys())
++        self.assertEqual({k for k in old if old[k] != new[k]},
++                         {"main", "verify_authority", "arena_argv", "mode_attempt"})
++
++    def test_both_variants_generate_byte_identical_legacy_commands(self):
++        refs = {k: Path("/private-fixture") / k for k in ("control", "candidate", "panel")}
++        for name, candidate, reference in [
++            ("short-e-evaluation-owner-v4/arena_phase_adapter_pair_bound_v4.py", "selected_e_three_pass_candidate", "selected_e_three_pass_control"),
++            ("fresh_epoch1_arena_phase_adapter_20261010.py", "fresh104363327_epoch1", "THREE_frozen206922"),
++        ]:
++            legacy = load(ROOT / name, original(name))
++            args = arguments(candidate_name=candidate, reference_name=reference)
++            actual = self.core.arena_argv(args, refs, Path("/private-output"), Path("/private-seal"), "s" * 64)
++            expected = legacy.arena_argv(args, refs, Path("/private-output"), Path("/private-seal"), "s" * 64)
++            self.assertEqual(actual, expected)
++
++    def test_main_routes_defaults_and_explicit_bindings_without_new_cli_flags(self):
++        for changes in ({}, dict(adapter_source=FRESH, candidate_name="fresh104363327_epoch1",
++                                reference_name="THREE_frozen206922", pair_bound_wrapper=Path("/private-shim"))):
++            args = arguments()
++            with patch.object(self.core.argparse.ArgumentParser, "parse_args", return_value=args), \
++                 patch.object(self.core, "mode_prepare", return_value=7) as prepare:
++                self.assertEqual(self.core.main(**changes), 7)
++                realized = prepare.call_args.args[0]
++                self.assertEqual(realized.adapter_source, changes.get("adapter_source", CORE))
++                self.assertEqual(realized.candidate_name, changes.get("candidate_name", "selected_e_three_pass_candidate"))
++                self.assertEqual(realized.pair_bound_wrapper, changes.get("pair_bound_wrapper", arguments().pair_bound_wrapper))
++        argv = ["adapter"]
++        for action in self.core.parser()._actions:
++            if action.required:
++                argv.extend([action.option_strings[0], "prepare" if action.dest == "mode" else "private-fixture"])
++        error = io.StringIO()
++        with patch("sys.argv", argv + ["--adapter-source", "elsewhere"]), redirect_stderr(error), \
++             patch.object(self.core, "mode_prepare", side_effect=AssertionError("workload")):
++            with self.assertRaises(SystemExit) as refused:
++                self.core.main()
++        self.assertEqual(refused.exception.code, 2)
++        self.assertIn("unrecognized arguments: --adapter-source elsewhere", error.getvalue())
++
++    def test_fresh_wrapper_executes_pinned_bytes_and_routes_fresh_identity(self):
++        observed = {}
++        def execute(code, namespace):
++            builtins.exec(code, namespace)
++            def prepare(args):
++                observed.update(vars(args))
++                return 9
++            namespace["mode_prepare"] = prepare
++        with patch.object(self.core.argparse.ArgumentParser, "parse_args", return_value=arguments()), \
++             patch.object(self.fresh, "exec", execute, create=True):
++            self.assertEqual(self.fresh.main(), 9)
++        self.assertEqual(observed["adapter_source"], FRESH)
++        self.assertEqual(observed["reference_name"], "THREE_frozen206922")
++        self.assertEqual(observed["candidate_name"], "fresh104363327_epoch1")
++        self.assertEqual(str(observed["pair_bound_wrapper"]), "/mnt/c/Users/jjosh/Documents/Codex/2026-10-08/task/fresh_epoch1_pair_bound_20261010.py")
++
++    def test_changed_shared_source_refused_before_execution(self):
++        with tempfile.TemporaryDirectory() as td:
++            source = Path(td) / "untrusted.py"
++            source.write_text('raise AssertionError("executed changed source")')
++            with patch.object(self.fresh, "SHARED_SOURCE", source):
++                with self.assertRaisesRegex(SystemExit, "shared adapter source changed"):
++                    self.fresh.main()
++
++    def test_attempt_uses_bound_shim_and_keeps_attempt_limit(self):
++        with tempfile.TemporaryDirectory() as td:
++            args = arguments(output_root=td, pair_bound_wrapper=Path("/private-fresh-shim"))
++            manifest = {"attempt_argv": ["--fixture"], "overlay_files": {}}
++            with patch.object(self.core, "verify_manifest", return_value=(manifest, {})), \
++                 patch.object(self.core, "checked_overlay", return_value={}), \
++                 patch.object(self.core, "verify_qualified_source"), \
++                 patch.object(self.core, "run_child", return_value=3) as child:
++                self.assertEqual(self.core.mode_attempt(args), 3)
++                self.assertEqual(child.call_args.args[0], [self.core.sys.executable, "-B", "/private-fresh-shim", "--fixture"])
++                for n in (None, 0, 26):
++                    args.attempt_number = n
++                    with self.assertRaises(self.core.AdapterError):
++                        self.core.mode_attempt(args)
++                self.assertEqual(child.call_count, 1)
++
++    def test_incomplete_attempt_keeps_descriptors_and_create_only_outputs(self):
++        with tempfile.TemporaryDirectory() as td:
++            root = Path(td)
++            manifest = root / "manifest.json"
++            manifest.write_text(json.dumps(dict(source_seal_path="seal", source_seal_sha256="s",
++                                               panel_sha256="p", control_sha256="r", candidate_sha256="c")))
++            args = arguments(output_root=td, manifest_path=str(manifest))
++            result = root / "attempt-result.json"
++            with patch.object(self.core, "inherited_fds", return_value=(81, 82)), \
++                 patch.object(self.core, "set_runtime_env", return_value={}), \
++                 patch.object(self.core.subprocess, "run", return_value=types.SimpleNamespace(returncode=3)) as launch, \
++                 redirect_stdout(io.StringIO()):
++                self.assertEqual(self.core.run_child(["inert"], args=args, output_root=root,
++                                                    result_path=result, mode="attempt"), 3)
++                self.assertEqual(launch.call_args.kwargs["pass_fds"], (81, 82))
++                self.assertEqual(json.loads(result.read_text())["status"], "VALID_INCOMPLETE_ATTEMPT_EXIT_3")
++                saved = result.read_bytes()
++                with self.assertRaises(self.core.AdapterError):
++                    self.core.run_child(["inert"], args=args, output_root=root, result_path=result, mode="attempt")
++                self.assertEqual(launch.call_count, 1)
++                self.assertEqual(result.read_bytes(), saved)
++
++    def test_finalizer_does_not_accept_incomplete_attempt_code(self):
++        with patch.object(self.core, "inherited_fds", return_value=(81, 82)), \
++             patch.object(self.core, "set_runtime_env", return_value={}), \
++             patch.object(self.core.subprocess, "run", return_value=types.SimpleNamespace(returncode=3, stderr="incomplete")):
++            for mode in ("progress", "final"):
++                with self.assertRaises(self.core.AdapterError):
++                    self.core.run_finalizer(["inert"], args=arguments(), output_root=Path("."), mode=mode, manifest={}, refs={})
++
++    def test_missing_inherited_lease_descriptor_refused(self):
++        with patch.dict(os.environ, {}, clear=True):
++            with self.assertRaises(self.core.AdapterError):
++                self.core.inherited_fds()
++
++    def test_authority_binds_executing_wrapper_and_preserves_owner_leases(self):
++        core = self.core
++        with tempfile.TemporaryDirectory() as td, ExitStack() as stack:
++            root = Path(td)
++            config, catalog = root / "config", root / "catalog"
++            config.write_text("fixture-config"); catalog.write_text("fixture-catalog")
++            stack.enter_context(patch.object(core, "FROZEN_CONFIG", config))
++            gpu, disk = root / "private-gpu", root / "private-io"
++            gpu.touch(); disk.touch()
++            owner = dict(pid=42, start_ticks="100", boot_id="boot")
++            args = arguments(adapter_source=FRESH, tablebase_catalog=str(catalog))
++            docs = {
++                "operation": {"arena": {"adapter_ref": {"path": str(FRESH), "sha256": core.file_sha(FRESH)},
++                    "tablebase_catalog_ref": {"path": str(catalog), "sha256": core.file_sha(catalog)},
++                    "live_config_ref": {"path": str(config), "sha256": core.file_sha(config)},
++                    "verification_seconds": 60, "max_sessions": 25, "whole_attempt_seconds": 1650,
++                    "phase_wall_seconds": 43200, "pairs": 2606, "games": 5212}},
++                "authorization": {}, "budget": {},
++                "lane_release": {"schema": "deepfin_three_pass_runtime_lane_release_v1", "status": "PASS_PARENT_REVIEWED_THREE_PASS_LANE_RELEASE",
++                    "owner_stop_confirmed": True, "nonce": "private", "science_owner_identity": owner,
++                    "canonical_lease_identities": {str(gpu): [2096, 81348917], str(disk): [2096, 18503149]}},
++                "operation_baseline": {"schema": "deepfin_three_pass_science_slot_baseline_v1", "owner_identity": owner,
++                    "scope_started_monotonic": time.monotonic() - 1, "scope_deadline_monotonic": time.monotonic() + 100},
++            }
++            refs = {k: root / (k + ".json") for k in docs}
++            # Authority digests are compared with supplied values; actual byte refs
++            # are independently enforced by validate_request_files/verify_manifest.
++            digests = {k: hashlib.sha256(k.encode()).hexdigest() for k in docs}
++            for k, digest in digests.items():
++                setattr(args, k + "_sha256", digest)
++            ref = lambda k: dict(path=str(refs[k]), sha256=digests[k])
++            docs["operation"]["budget_ref"] = ref("budget")
++            docs["authorization"].update(operation_sha256=digests["operation"], budget_sha256=digests["budget"])
++            docs["lane_release"].update(operation_ref=ref("operation"), whole_operation_authorization_ref=ref("authorization"))
++            docs["operation_baseline"].update(operation_sha256=digests["operation"], authorization_sha256=digests["authorization"], lane_release_ref=ref("lane_release"))
++            def publish():
++                for k, value in docs.items(): refs[k].write_text(json.dumps(value))
++            publish()
++            real_stat, real_read = Path.stat, Path.read_text
++            def private_stat(p, *a, **kw):
++                if p == gpu: return types.SimpleNamespace(st_dev=2096, st_ino=81348917)
++                if p == disk: return types.SimpleNamespace(st_dev=2096, st_ino=18503149)
++                return real_stat(p, *a, **kw)
++            stack.enter_context(patch.object(Path, "stat", private_stat))
++            stack.enter_context(patch.object(Path, "read_text", lambda p, *a, **kw: "boot" if str(p) == "/proc/sys/kernel/random/boot_id" else real_read(p, *a, **kw)))
++            stack.enter_context(patch.object(core.os, "getppid", return_value=42))
++            stack.enter_context(patch.object(core, "_linux_start_ticks", return_value="100"))
++            stack.enter_context(patch.dict(os.environ, DEEPFIN_INHERITED_GPU_LOCK_FD="81", DEEPFIN_INHERITED_IO_LOCK_FD="82"))
++            stat_fd = stack.enter_context(patch.object(core.os, "fstat", side_effect=lambda fd: types.SimpleNamespace(st_dev=2096, st_ino=81348917 if fd == 81 else 18503149)))
++            stack.enter_context(patch.object(core.fcntl, "fcntl", return_value=os.O_RDONLY))
++            core.verify_authority(args, refs)
++            args.adapter_source = CORE
++            with self.assertRaisesRegex(core.AdapterError, "adapter source"):
++                core.verify_authority(args, refs)
++            args.adapter_source = FRESH
++            with patch.object(core.os, "getppid", return_value=43):
++                with self.assertRaisesRegex(core.AdapterError, "parent"):
++                    core.verify_authority(args, refs)
++            with patch.object(core, "_linux_start_ticks", return_value="101"):
++                with self.assertRaisesRegex(core.AdapterError, "start ticks"):
++                    core.verify_authority(args, refs)
++            stat_fd.side_effect = lambda fd: types.SimpleNamespace(st_dev=0, st_ino=0)
++            with self.assertRaisesRegex(core.AdapterError, "canonical lease"):
++                core.verify_authority(args, refs)
++
++    def test_manifest_byte_change_refused(self):
++        with tempfile.TemporaryDirectory() as td:
++            p = Path(td) / "manifest.json"
++            p.write_bytes(b"original")
++            digest = hashlib.sha256(p.read_bytes()).hexdigest()
++            p.write_bytes(b"changed")
++            with self.assertRaises(self.core.AdapterError):
++                self.core.verify_ref(str(p), digest, "prepared manifest")
++
++
++if __name__ == "__main__":
++    unittest.main()

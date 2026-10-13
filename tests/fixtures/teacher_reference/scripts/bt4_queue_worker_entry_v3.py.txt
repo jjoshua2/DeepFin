@@ -1,0 +1,769 @@
+"""One bounded BT4 block beneath the existing queue; no scheduling loop."""
+
+from typing import Any
+
+
+import argparse
+import importlib
+import hashlib
+import json
+import os
+import stat
+import sys
+import time
+import math
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.bt4_inherited_owner_v2 import birth, canonical_profile, inherited
+from scripts.bt4_longblock_checkpoint_v2 import Checkpoint
+from scripts.bt4_queue_consumer_v2 import OwnerGuard, consume_rolling, fixed_bt4_startup
+
+MODEL = "/home/<user>/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx"
+OPERATIONS = Path("/home/<user>/chess-artifacts/operations")
+REQUIRED_SOURCES = (
+    "scripts/bt4_queue_worker_entry_v3.py",
+    "scripts/bt4_queue_consumer_v2.py",
+    "scripts/bt4_inherited_owner_v2.py",
+    "scripts/bt4_longblock_checkpoint_v2.py",
+    "scripts/bt4_unit_runtime_v2.py",
+    "scripts/bt4_raw_recovery_v2.py",
+    "scripts/bt4_root_policy_worker.py",
+    "scripts/bt4_generation_evaluator.py",
+    "scripts/bt4_tpg_bridge_v2.py",
+)
+
+
+def read_json(path, expected_sha=None):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        size = os.fstat(fd).st_size
+        if not stat.S_ISREG(os.fstat(fd).st_mode) or size > 2 * 1024**2:
+            raise ValueError("bounded regular metadata required")
+        raw = os.read(fd, size + 1)
+        if len(raw) != size:
+            raise ValueError("metadata changed")
+        if expected_sha is not None and hashlib.sha256(raw).hexdigest() != expected_sha:
+            raise ValueError("queue descriptor hash differs")
+        return json.loads(raw)
+    finally:
+        os.close(fd)
+
+
+def external(path):
+    p = Path(path)
+    if (
+        not p.is_absolute()
+        or p.resolve() != p
+        or not (
+            p.is_relative_to(OPERATIONS)
+            or (p.is_relative_to(Path("/mnt/e")) and p != Path("/mnt/e"))
+        )
+    ):
+        raise ValueError("canonical external operations path required")
+    return p
+
+
+def validate_control_paths(d):
+    # This single global control is a marker only, never an output/data path.
+    global_stop = Path("/home/<user>/projects/chess/chess_anti_engine/operations/DEEPFIN_STOP")
+    for p in d["prior_roots"] + d["yield_paths"]:
+        external(p)
+    for p in d["stop_paths"]:
+        if Path(p) == global_stop:
+            if Path(p).resolve() != global_stop:
+                raise ValueError("global STOP canonical path differs")
+        else:
+            external(p)
+
+
+def validate_descriptor(d, out):
+    required = {
+        "schema_version",
+        "boot_id",
+        "unit",
+        "seed_base",
+        "output_root",
+        "checkpoint_path",
+        "bindings",
+        "checkpoint_limits",
+        "owner_limits",
+        "source_pins",
+        "stop_paths",
+        "yield_paths",
+        "prior_roots",
+        "generation",
+        "external_root",
+        "attempt",
+        "scope_sha256",
+        "block_seconds",
+    }
+    if set(d) != required or d["schema_version"] != 3:
+        raise ValueError("closed descriptor schema")
+    if (
+        not isinstance(d["scope_sha256"], str)
+        or len(d["scope_sha256"]) != 64
+        or any(c not in "0123456789abcdef" for c in d["scope_sha256"])
+    ):
+        raise ValueError("bound queue scope digest")
+    if d["boot_id"] != birth(os.getpid())["boot_id"]:
+        raise ValueError("descriptor boot differs")
+    if (
+        type(d["unit"]) is not int
+        or d["unit"] < 0
+        or type(d["seed_base"]) is not int
+        or d["seed_base"] < 0
+    ):
+        raise ValueError("nonnegative unit and seed")
+    root = external(d["output_root"])
+    checkpoint = external(d["checkpoint_path"])
+    campaign = external(d["external_root"])
+    external(out)
+    if type(d["attempt"]) is not int or not 0 <= d["attempt"] < 8:
+        raise ValueError("bounded attempt ordinal")
+    unit_root = campaign / f"unit-{d['unit']:012d}"
+    if (
+        root != unit_root / f"attempt-{d['attempt']:02d}"
+        or checkpoint != unit_root / "checkpoint.sqlite"
+    ):
+        raise ValueError("exact unit attempt/checkpoint paths")
+    if d["prior_roots"] != [
+        str(unit_root / f"attempt-{n:02d}" / "raw") for n in range(d["attempt"])
+    ]:
+        raise ValueError("exact retained prior roots")
+    if os.path.lexists(root / "raw"):
+        raise ValueError("fresh exact attempt output")
+    if not root.is_dir() or not checkpoint.parent.is_dir():
+        raise ValueError("prepared output/checkpoint directories")
+    validate_control_paths(d)
+    if len(d["prior_roots"]) > 8:
+        raise ValueError("bounded retained attempt roots")
+    pins = d["source_pins"]
+    repo = Path(__file__).resolve().parents[1]
+    if not isinstance(pins, dict) or not set(REQUIRED_SOURCES).issubset(pins):
+        raise ValueError("consequential source pins required")
+    for rel, sha in pins.items():
+        p = repo / rel
+        if (
+            p.resolve() != p
+            or not p.is_relative_to(repo)
+            or not p.is_file()
+            or hashlib.sha256(p.read_bytes()).hexdigest() != sha
+        ):
+            raise ValueError("exact source pin differs")
+    generation = d["generation"]
+    if set(generation) != {
+        "parallel_games",
+        "temperature",
+        "initial_fen",
+        "syzygy_path",
+    }:
+        raise ValueError("closed generation settings")
+    from scripts.bt4_tpg_bridge_v2 import MODEL_SHA
+
+    expected = {
+        "model_sha256": MODEL_SHA,
+        "source_pins": pins,
+        "generation": generation,
+        "seed_base": d["seed_base"],
+    }
+    if d["bindings"] != expected:
+        raise ValueError("stable campaign binding differs")
+    return root, checkpoint
+
+
+def owner_limits(d, receipt, parent):
+    limits = dict(d["owner_limits"])
+    if limits.get("deadline_unix") != "QUEUE_ACTUAL_START_PLUS_BLOCK_SECONDS":
+        raise ValueError("actual queue start deadline required")
+    seconds = d["block_seconds"]
+    if type(seconds) is not int or seconds <= 0:
+        raise ValueError("finite accepted block seconds")
+    phase = read_json(receipt / "phase.json")
+    started = phase.get("child_started_unix")
+    if phase.get("owner") != parent:
+        raise ValueError("actual queue start owner differs")
+    if (
+        type(started) not in (int, float)
+        or not math.isfinite(started)
+        or started <= 0
+        or started > time.time()
+    ):
+        raise ValueError("actual queue start receipt")
+    if birth(os.getppid()) != parent:
+        raise ValueError("deadline parent custody changed")
+    limits["deadline_unix"] = started + seconds
+    return limits
+
+
+def custody(out):
+    claim = read_json(out / "canonical-actor-custody.json")
+    parent = claim["owner"]
+    if parent != birth(os.getppid()):
+        raise ValueError("claim is not actual queue worker birth")
+    fixed = canonical_profile("model_only_gpu_supervisor")
+    leases = {}
+    for record in claim["canonical_leases"]:
+        name = record["name"]
+        if name not in fixed or name in leases:
+            raise ValueError("exact two canonical leases required")
+        path, identity = fixed[name]
+        if record["path"] != path or tuple(record["identity"]) != identity:
+            raise ValueError("canonical claim identity differs")
+        leases[name] = {
+            "path": path,
+            "identity": list(identity),
+            "parent_fd": record["fd"],
+        }
+    if set(leases) != set(fixed):
+        raise ValueError("missing canonical custody")
+    inherited(parent, leases)
+    return parent, leases
+
+
+def physical_io():
+    root = Path("/sys/fs/cgroup")
+    relative = next(
+        x.split(":", 2)[2]
+        for x in Path("/proc/self/cgroup").read_text().splitlines()
+        if x.startswith("0::")
+    )
+    p = (root / relative.lstrip("/")).resolve()
+    if not p.is_relative_to(root):
+        raise ValueError("cgroup escape")
+    while not (p / "io.stat").exists() and p != root:
+        p = p.parent
+    total = 0
+    for line in (p / "io.stat").read_text().splitlines():
+        fields = dict(x.split("=", 1) for x in line.split()[1:])
+        total += int(fields.get("rbytes", 0)) + int(fields.get("wbytes", 0))
+    return total
+
+
+class EffectiveYieldPaths:
+    """An already-consumed ready phase cannot repeatedly interrupt reserve games."""
+
+    def __init__(self, receipt, paths):
+        self.receipt = Path(receipt)
+        self.paths = paths
+
+    def __iter__(self):
+        handled_path = self.receipt.parent / "priority-handled.json"
+        handled = read_json(handled_path) if handled_path.exists() else {}
+        for path in self.paths:
+            if path == handled.get("ready_path") and Path(path).exists():
+                with Path(path).open("rb") as stream:
+                    raw = stream.read(65537)
+                if len(raw) > 65536:
+                    raise ValueError("bounded priority readiness receipt")
+                if hashlib.sha256(raw).hexdigest() == handled.get("ready_sha256"):
+                    continue
+            yield path
+
+
+class GameCheckpointYield(Exception):
+    pass
+
+
+def execute_block(
+    worker,
+    units,
+    checkpoint,
+    tablebase,
+    guard,
+    startup,
+    parent,
+    leases,
+    yield_paths,
+    progress_root=None,
+) -> dict[str, Any]:
+    """Yield after the real atomic receipt has committed; never invent coverage."""
+    original = checkpoint.record_game
+    yielded_attempt = None
+    progress_started = time.monotonic()
+    initial_completed = checkpoint.db.execute(
+        "SELECT COUNT(*) FROM games WHERE unit=?", (units[0]["ordinal"],)
+    ).fetchone()[0]
+
+    def record(attempt, game_id, receipt):
+        nonlocal yielded_attempt
+        result = original(attempt, game_id, receipt)
+        if result and progress_root is not None:
+            completed = checkpoint.db.execute(
+                "SELECT COUNT(*) FROM games WHERE unit=?", (units[0]["ordinal"],)
+            ).fetchone()[0]
+            elapsed = time.monotonic() - progress_started
+            newly_completed = completed - initial_completed
+            worker._atomic_json(
+                Path(progress_root) / "progress.json",
+                {
+                    "committed_games": completed,
+                    "requested_games": 128,
+                    "newly_committed_games": newly_completed,
+                    "elapsed_seconds": elapsed,
+                    "eta_seconds": (
+                        (128 - completed) * elapsed / newly_completed
+                        if newly_completed > 0
+                        else None
+                    ),
+                    "estimate_source": "measured committed-game throughput including startup",
+                    "scientific_credit": 0,
+                },
+            )
+        # Reconciliation may commit an orphan before run_unit's guarded game loop.
+        # Only a newly published game in this fresh attempt can request a yield.
+        if (
+            result
+            and Path(receipt["path"]).is_relative_to(units[0]["spec"].out)
+            and (any(os.path.lexists(p) for p in yield_paths)
+                 or __import__("scripts.comparison_priority", fromlist=["training_ready"]).training_ready())
+        ):
+            yielded_attempt = attempt
+            raise GameCheckpointYield()
+        return result
+
+    checkpoint.record_game = record
+    try:
+        try:
+            result = consume_rolling(
+                worker,
+                units,
+                checkpoint,
+                tablebase,
+                guard,
+                startup,
+                parent,
+                leases,
+                custody_profile="model_only_gpu_supervisor",
+            )
+            result["state"] = "RAW_COMPLETE_PENDING_ADMISSION"
+        except GameCheckpointYield:
+            with checkpoint.transaction():
+                rows = checkpoint.db.execute(
+                    "SELECT id FROM attempts WHERE id=? AND unit=? AND state='FAILED_RETAINED_ZERO_CREDIT'",
+                    (yielded_attempt, units[0]["ordinal"]),
+                ).fetchall()
+                if len(rows) != 1:
+                    raise RuntimeError("yield has no retained owned attempt") from None
+                checkpoint.db.execute(
+                    "UPDATE attempts SET state='CHECKPOINT_YIELDED' WHERE id=?",
+                    (rows[0][0],),
+                )
+            result = {"state": "CHECKPOINT_YIELDED", "training_credit": 0}
+        result.update(
+            completed_games=checkpoint.db.execute(
+                "SELECT COUNT(*) FROM games WHERE unit=?", (units[0]["ordinal"],)
+            ).fetchone()[0],
+            native_admission=False,
+            training_credit=0,
+            accounting=checkpoint.accounting(),
+        )
+        return result
+    finally:
+        checkpoint.record_game = original
+
+
+def alive(owner):
+    try:
+        return birth(owner["pid"]) == owner
+    except FileNotFoundError:
+        return False
+
+
+def publish_queue(root, result, io_bytes):
+    """Scheduler completion is explicitly separate from scientific admission."""
+    from scripts.bt4_root_policy_worker import _atomic_json
+
+    _atomic_json(root / "result.json", dict(result, status="COMPLETE"))
+    _atomic_json(
+        root / "usage.json",
+        {
+            "io_bytes": max(0, io_bytes),
+            "io_guard": "MEASURED_NO_BYTE_CAP",
+            "io_scope": "shared observable cgroup counter, not worker attribution",
+            "io_quota_enforced": False,
+            "counter_reset": io_bytes < 0,
+            "enforced": "source identity, canonical custody, STOP, finite deadline, output limit and actual platform headroom",
+        },
+    )
+
+
+def queue_cpu_fixture(d, out):
+    """Actual queue custody/checkpoint path with a model-free evaluator."""
+    from unittest.mock import patch
+    from dataclasses import replace
+    from scripts import bt4_inherited_owner_v2 as ownership
+
+    receipt = Path(out)
+    parts = receipt.parts
+    if (
+        receipt.resolve() != receipt
+        or len(parts) < 3
+        or parts[1] != "tmp"
+        or not parts[2].startswith("deepfin-custody-cpu-")
+    ):
+        raise ValueError("private queue CPU anchor required")
+    if os.environ.get("CUDA_VISIBLE_DEVICES") != "-1":
+        raise ValueError("CPU CUDA visibility")
+    anchor = Path("/tmp") / parts[2]
+    fixed = {}
+    for name in ("gpu", "supervisor", "io"):
+        p = anchor / (name + ".lock")
+        s = p.lstat()
+        if not stat.S_ISREG(s.st_mode) or s.st_uid != os.getuid():
+            raise ValueError("private owned regular lease")
+        fixed[name] = (str(p), (s.st_dev, s.st_ino))
+    root = Path(d["output_root"])
+    path = Path(d["checkpoint_path"])
+    for p in [
+        root,
+        path,
+        *map(Path, d["prior_roots"]),
+        *map(Path, d["yield_paths"]),
+        *map(Path, d["stop_paths"]),
+    ]:
+        if p.resolve() != p or not p.is_relative_to(anchor):
+            raise ValueError("CPU fixture path escapes private anchor")
+    if os.path.lexists(root / "raw"):
+        raise ValueError("fresh CPU attempt raw root")
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
+    from tests.test_bt4_root_policy_worker import (
+        FakeEvaluator,
+        fake_tablebase,
+        spec,
+        worker,
+    )
+
+    profile = root / "synthetic-profile.json"
+    profile.write_text(
+        json.dumps([{"args": {"provider": "CUDAExecutionProvider", "op_name": "Conv"}}])
+    )
+
+    class Session:
+        def end_profiling(self):
+            return str(profile)
+
+        def get_providers(self):
+            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    config = replace(
+        spec(root),
+        out=root / "raw",
+        games=128,
+        seed=d["seed_base"] + d["unit"],
+        parallel_games=16,
+        max_plies=400,
+        research_capacity_128x400=True,
+        requested_provider="cuda",
+        gpu_mem_gb=2,
+        providers=("CUDAExecutionProvider", "CPUExecutionProvider"),
+        provider_options={"device_id": "0", "gpu_mem_limit": str(2 * 1024**3)},
+    )
+
+    with (
+        patch.object(ownership, "CANONICAL_LEASES", fixed),
+        patch.object(worker.rep_fix, "current", return_value=True),
+        patch.object(worker, "verify_cuda_model_schema"),
+        patch.object(
+            worker,
+            "verify_cuda_session",
+            return_value=(config.providers, config.provider_options),
+        ),
+    ):
+        parent, leases = custody(receipt)
+        guard = OwnerGuard(
+            parent,
+            leases,
+            owner_limits(d, receipt, parent),
+            physical_io(),
+            physical_io,
+            lambda: sum(p.stat().st_size for p in root.rglob("*") if p.is_file()),
+            d["stop_paths"],
+            root,
+        )
+        cp = Checkpoint(path, d["bindings"], d["checkpoint_limits"], guard.check)
+        try:
+            cp.recover(alive)
+            original = cp.record_game
+
+            def record(attempt, game_id, receipt):
+                value = original(attempt, game_id, receipt)
+                if (
+                    value
+                    and Path(receipt["path"]).is_relative_to(config.out)
+                    and game_id == d.get("cpu_yield_after_game")
+                ):
+                    if not d["yield_paths"]:
+                        raise ValueError("CPU yield marker required")
+                    Path(d["yield_paths"][0]).touch()
+                return value
+
+            cp.record_game = record
+            result = execute_block(
+                worker,
+                [
+                    {
+                        "ordinal": d["unit"],
+                        "spec": config,
+                        "prior_roots": d["prior_roots"],
+                    }
+                ],
+                cp,
+                fake_tablebase(),
+                guard,
+                lambda check: (FakeEvaluator(), Session(), {}),
+                parent,
+                leases,
+                EffectiveYieldPaths(receipt, d["yield_paths"]),
+            )
+            worker._atomic_json(root / "BT4-BLOCK-RESULT.json", result)
+            publish_queue(receipt, result, physical_io() - guard.baseline)
+        finally:
+            cp.close()
+
+
+def cpu_fixture(out):
+    """Private validation only: fake evaluator, real consume/game journal seams."""
+    import sys
+
+    anchor = Path(out)
+    parts = anchor.parts
+    if (
+        not anchor.is_absolute()
+        or anchor.resolve() != anchor
+        or len(parts) < 3
+        or parts[1] != "tmp"
+        or not parts[2].startswith(("deepfin-bt4-entry-cpu-", "deepfin-custody-cpu-"))
+    ):
+        raise ValueError("strict private CPU fixture anchor")
+    if os.environ.get("CUDA_VISIBLE_DEVICES") != "-1":
+        raise ValueError("CPU fixture CUDA must be hidden")
+    anchor.mkdir(parents=True, exist_ok=True)
+    root = anchor / "bt4-private-fixture"
+    root.mkdir()
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
+    import pytest
+
+    run_private = importlib.import_module(
+        "tests.test_bt4_queue_worker_entry_v3"
+    ).run_private
+
+    for mode in (False, True):
+        child = root / ("yield" if mode else "complete")
+        child.mkdir()
+        monkey = pytest.MonkeyPatch()
+        try:
+            run_private(child, monkey, mode)
+        finally:
+            monkey.undo()
+    (root / "BT4-BLOCK-RESULT.json").write_text(
+        json.dumps(
+            {
+                "state": "CPU_FIXTURE_COMPLETE",
+                "training_credit": 0,
+                "native_admission": False,
+            }
+        )
+    )
+
+
+def verify_runtime_closure():
+    """Recheck the independently pinned existing interpreter/module closure."""
+    repo = Path(__file__).resolve().parents[1]
+    record = read_json(repo / "scripts/bt4_runtime_closure_v1.json")
+    if record["schema"] != "bt4_runtime_closure_v1":
+        raise ValueError("runtime closure schema differs")
+    interpreter = record["python"]
+    if (
+        sys.executable != interpreter["path"]
+        or sys.prefix != interpreter["prefix"]
+        or sys.base_prefix != interpreter["base_prefix"]
+    ):
+        raise ValueError("actual interpreter closure differs")
+    pins = [interpreter, *record["modules"].values()]
+    pins.extend(
+        {"path": path, "sha256": sha} for path, sha in record["runtime_files"].items()
+    )
+    pins.extend(
+        {"path": str(repo / rel), "sha256": sha}
+        for rel, sha in record["repo_sources"].items()
+    )
+    pins.extend(
+        {"path": str(repo / rel), "sha256": sha}
+        for rel, sha in record["native_source_pins"].items()
+    )
+    for pin in pins:
+        path = Path(pin["path"])
+        if path.resolve() != path or not path.is_file():
+            raise ValueError("runtime canonical file differs")
+        before = path.stat()
+        hasher = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                hasher.update(block)
+        after = path.stat()
+        stable = lambda info: (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        if stable(before) != stable(after) or hasher.hexdigest() != pin["sha256"]:
+            raise ValueError("runtime file pin differs")
+    for name, pin in record["modules"].items():
+        module = importlib.import_module(name)
+        if (
+            str(Path(module.__file__).resolve()) != pin["path"]
+            or getattr(module, "__version__", None) != pin["version"]
+        ):
+            raise ValueError("actual imported runtime origin/version differs")
+    return {
+        "status": "CPU_RUNTIME_CLOSURE_RECHECKED",
+        "python": sys.executable,
+        "cuda_qualification": False,
+    }
+
+
+def retained_generation_bindings(d):
+    """Keep old generation/receipt identity while descriptor binds actual new code.
+
+    The reviewed runtime closure explicitly records the predecessor binding.
+    Only accounting/entry/closure metadata may differ; native generation, model,
+    seed, game IDs, configuration and checkpoint limits are unchanged.
+    """
+    record = read_json(Path(__file__).resolve().parents[1] / "scripts/bt4_runtime_closure_v1.json")
+    lineage = record.get("checkpoint_lineage")
+    if lineage is None:
+        return d["bindings"]
+    old = lineage["legacy_bindings"]
+    from scripts.bt4_longblock_checkpoint_v2 import digest
+    if digest(old) != lineage["legacy_binding_sha256"]:
+        raise ValueError("retained generation lineage digest differs")
+    for key in ("model_sha256", "generation", "seed_base"):
+        if old[key] != d["bindings"][key]:
+            raise ValueError("retained generation model/config/RNG changed")
+    current = d["bindings"]["source_pins"]
+    if set(current) != set(old["source_pins"]):
+        raise ValueError("retained generation source roster changed")
+    operational = {"scripts/durable_gpu_queue.py", "scripts/bt4_queue_worker_entry_v3.py", "scripts/bt4_runtime_closure_v1.json"}
+    if any(current[key] != value for key, value in old["source_pins"].items() if key not in operational):
+        raise ValueError("retained scientific producer source changed")
+    return old
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--descriptor")
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--cpu-fixture", action="store_true")
+    args = parser.parse_args()
+    if args.cpu_fixture:
+        if args.descriptor:
+            raise ValueError("CPU fixture cannot accept production descriptor")
+        return cpu_fixture(args.out)
+    if os.environ.get("DEEPFIN_BT4_DESCRIPTOR") != args.descriptor:
+        raise ValueError("queue descriptor environment differs")
+    descriptor = Path(args.descriptor)
+    sha = os.environ.get("DEEPFIN_BT4_DESCRIPTOR_SHA256")
+    if not sha or len(sha) != 64:
+        raise ValueError("queue descriptor hash required")
+    d = read_json(descriptor, sha)
+    if d.get("cpu_fixture") is True:
+        return queue_cpu_fixture(d, args.out)
+    root, path = validate_descriptor(d, args.out)
+    companion_pin=d["source_pins"].get("scripts/dual_companion_config.json")
+    if companion_pin is None:
+        raise ValueError("exact prepared A/B source config binding required")
+    companion_path=Path(__file__).resolve().parent/"dual_companion_config.json"
+    config=read_json(companion_path,companion_pin)
+    if config["arm"] not in ("A","B") or config["approved_bank"]!=d["external_root"]:
+        raise ValueError("exact companion arm/bank differs")
+    if config["arm"]=="B":
+        from functools import partial
+        from scripts.comparison_priority import requested as dual_priority
+        global consume_rolling
+        consume_rolling=partial(consume_rolling,companion_config=str(companion_path),companion_priority=lambda:dual_priority(d["yield_paths"]))
+    parent, leases = custody(Path(args.out))
+    runtime_proof = verify_runtime_closure()
+    from scripts.bt4_stage_profile_v1 import install
+    install(sys.modules[__name__])
+    from scripts import durable_gpu_queue as runtime_queue
+
+    runtime_queue.durable_write(
+        Path(args.out) / "runtime-closure-proof.json", runtime_proof
+    )
+    from scripts import bt4_root_policy_worker as worker
+    from scripts.bt4_tpg_bridge_v2 import MODEL_SHA
+    from chess_anti_engine.encoding import rep_fix
+    from chess_anti_engine import tablebase
+
+    from scripts import durable_gpu_queue as queue
+    from scripts.comparison_priority import requested
+    if requested(d["yield_paths"]):
+        # Finite queues do not use continuous.priority(): prevent a second
+        # CUDA unit after a genuine training request or boundary yield.
+        publish_queue(Path(args.out), dict(state="PRIORITY_DEFERRED_BEFORE_CUDA",
+                      completed_games=0, native_admission=False, training_credit=0), 0)
+        return
+
+    # The queue persists this baseline before spawning us. The exact source pin
+    # is bound by the already checked descriptor hash and inherited queue scope.
+    storage_spec = {
+        "argv": ["", __file__, "--descriptor", str(descriptor)],
+        "pins": [{"path": str(descriptor), "sha256": sha}],
+    }
+
+    def output_bytes():
+        return queue.output_size(Path(args.out), storage_spec)
+
+    guard = OwnerGuard(
+        parent,
+        leases,
+        owner_limits(d, Path(args.out), parent),
+        physical_io(),
+        physical_io,
+        output_bytes,
+        d["stop_paths"],
+        root,
+    )
+    checkpoint = Checkpoint(path, d["bindings"], d["checkpoint_limits"], guard.check)
+    try:
+        checkpoint.recover(alive)
+        spec = worker.WorkerSpec(
+            out=root / "raw",
+            games=128,
+            seed=d["seed_base"] + d["unit"],
+            max_plies=400,
+            model_path=MODEL,
+            model_sha256=MODEL_SHA,
+            outcome_mode=worker.OUTCOME_MODE,
+            providers=("pending",),
+            requested_provider="cuda",
+            gpu_mem_gb=2,
+            cudnn_conv_algo_search="DEFAULT",
+            cudnn_conv_use_max_workspace=0,
+            research_capacity_128x400=True,
+            **d["generation"],
+        )
+        spec.validate(check_realized_provider=False)
+        rep_fix.apply(True, boards_discarded=True)
+        tb = tablebase.open_strict_match_tablebase(spec.syzygy_path, max_pieces=6)
+        try:
+            result = execute_block(
+                worker,
+                [{"ordinal": d["unit"], "spec": spec, "prior_roots": d["prior_roots"]}],
+                checkpoint,
+                tb,
+                guard,
+                lambda check: fixed_bt4_startup(worker, root, check),
+                parent,
+                leases,
+                EffectiveYieldPaths(Path(args.out), d["yield_paths"]),
+                progress_root=Path(args.out),
+            )
+            worker._atomic_json(root / "BT4-BLOCK-RESULT.json", result)
+            publish_queue(Path(args.out), result, physical_io() - guard.baseline)
+        finally:
+            tb.close()
+    finally:
+        checkpoint.close()
+
+
+if __name__ == "__main__":
+    main()

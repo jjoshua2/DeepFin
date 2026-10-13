@@ -148,6 +148,7 @@ def test_search_exception_falls_back_to_root_policy_argmax(width: int, capsys) -
     assert "info string search error: RuntimeError" in out
     assert "bestmove_fallback_used=1 source=root_policy move=e2e4" in out
     assert "exception=RuntimeError" in out
+    assert "phase=main" in out
     assert engine.bestmove_fallback_used == 1
 
 
@@ -329,8 +330,10 @@ def test_engine_announces_and_counts_a_declined_root(capsys) -> None:
     engine = Engine(worker=worker)
     limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
 
-    for _ in range(2):
-        engine._run_one_phase(limits, is_ponder=False, board=chess.Board())
+    for count in range(2):
+        result = engine._run_one_phase(limits, is_ponder=False, board=chess.Board())
+        assert engine.prior_only_roots == count
+        engine._emit_bestmove(result)
 
     out = capsys.readouterr().out
     assert "info string prior_only_root=1 reason=threefold repetition" in out

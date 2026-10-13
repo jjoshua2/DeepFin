@@ -35,6 +35,11 @@
 #include "../encoding/_cboard_impl.h"
 /* Feature planes for fused encode_146 */
 #include "../encoding/_features_impl.h"
+
+#define IS_SUPPORTED_EXTRA_FEATURES(n) \
+    ((n) == FEAT_EXTRA_V1 || (n) == FEAT_EXTRA_V2 || \
+     (n) == FEAT_EXTRA_V3_CHECKS || (n) == FEAT_EXTRA_V3_XRAY || \
+     (n) == FEAT_EXTRA_V3_SEE || (n) == FEAT_EXTRA_V3_PASSERS)
 /* Eval-plugin seam: the tree holds a POINTER to a value provider, never a
  * hard-wired evaluator call. The NNUE provider is the first one; a leaf qsearch
  * composes by holding an inner {provider, ctx} pair and recursing through
@@ -563,12 +568,8 @@ static int tt_donor_actions_match(const TreeData *t, int32_t donor,
  * not an encoder or terminal-search input; requiring it would throw away valid
  * reuse without buying correctness.
  */
-static int tt_donor_context_match(const TreeData *t, int32_t donor,
-                                  const CBoard *own) {
-    if (donor < 0 || donor >= t->cb_cache_cap || !t->cb_valid[donor])
-        return 0;
-
-    const CBoard *d = &t->cb_cache[donor];
+static int cboard_context_match(const CBoard *d, const CBoard *own,
+                                int root_reuse) {
     if (d->hash_stack_len < 0 || d->hash_stack_len > CBOARD_HASH_STACK_MAX ||
         own->hash_stack_len < 0 || own->hash_stack_len > CBOARD_HASH_STACK_MAX ||
         d->hist_len < 0 || d->hist_len > CBOARD_HISTORY_MAX ||
@@ -584,13 +585,23 @@ static int tt_donor_context_match(const TreeData *t, int32_t donor,
         d->ep_square != own->ep_square ||
         d->halfmove_clock != own->halfmove_clock ||
         d->hash != own->hash ||
-        d->hash_stack_len != own->hash_stack_len ||
         d->hist_len != own->hist_len)
         return 0;
 
-    if (d->hash_stack_len > 0 &&
-        memcmp(d->hash_stack, own->hash_stack,
-               (size_t)d->hash_stack_len * sizeof(uint64_t)) != 0)
+    int dn = d->hash_stack_len, on = own->hash_stack_len;
+    if (root_reuse) {
+        /* from_board keeps one pre-zeroing key beyond halfmove_clock, while
+         * cboard_push discards it. That position cannot recur after the pawn
+         * move/capture, so ignore only this unreachable prefix at root carry.
+         * Keep the stricter existing TT identity unchanged. */
+        if (dn > d->halfmove_clock) dn = d->halfmove_clock;
+        if (on > own->halfmove_clock) on = own->halfmove_clock;
+    }
+    if (dn != on ||
+        (dn > 0 &&
+         memcmp(d->hash_stack + d->hash_stack_len - dn,
+                own->hash_stack + own->hash_stack_len - on,
+                (size_t)dn * sizeof(uint64_t)) != 0))
         return 0;
 
     /* Ring-buffer storage layout is not semantic. Compare the same recency
@@ -608,6 +619,41 @@ static int tt_donor_context_match(const TreeData *t, int32_t donor,
             return 0;
     }
     return 1;
+}
+
+static int tt_donor_context_match(const TreeData *t, int32_t donor,
+                                  const CBoard *own) {
+    if (donor < 0 || donor >= t->cb_cache_cap || !t->cb_valid[donor])
+        return 0;
+    return cboard_context_match(&t->cb_cache[donor], own, 0);
+}
+
+/* Newly built/manual roots are unbound until their first Gumbel search.
+ * Bound nodes (including an advanced descendant) retain evaluation and solved
+ * state, not just replay caches, so replacing their context is unsafe. */
+static int tree_root_context_match(const TreeData *t, int32_t root,
+                                   const CBoard *own) {
+    if (root < 0 || root >= t->node_count) return 0;
+    if (root < t->cb_cache_cap && t->cb_valid[root])
+        return cboard_context_match(&t->cb_cache[root], own, 1);
+    if (t->parent[root] < 0) return 1;  /* new/manual unbound top-level root */
+
+    /* Forced collapse can expand or solve intermediate nodes without caching
+     * their board. Such a descendant is still bound to the ancestor's history.
+     * Derive that identity instead of treating missing cache as permission to
+     * replace evaluated/solved state on an advanced root. */
+    int32_t actions[MCTS_MAX_PATH], n = 0, ancestor = root;
+    while (ancestor >= 0 && ancestor < t->node_count &&
+           !(ancestor < t->cb_cache_cap && t->cb_valid[ancestor])) {
+        if (n >= MCTS_MAX_PATH || t->action_from_parent[ancestor] < 0) return 0;
+        actions[n++] = t->action_from_parent[ancestor];
+        ancestor = t->parent[ancestor];
+    }
+    if (ancestor < 0 || ancestor >= t->node_count) return 0;
+    CBoard cb = t->cb_cache[ancestor];
+    for (int32_t i = n - 1; i >= 0; i--)
+        cboard_push_index(&cb, actions[i]);
+    return cboard_context_match(&cb, own, 1);
 }
 
 /* Hash table: probe for existing node with given Zobrist hash. Returns node_id or -1.
@@ -689,6 +735,8 @@ static int32_t tree_add_node(TreeData *t, int32_t parent_id, int32_t action, dou
     int32_t id = t->node_count++;
     __atomic_store_n(&t->N[id], 0, __ATOMIC_RELAXED);
     atomic_store_double(&t->W[id], 0.0);
+    /* A reset or failed expansion can reuse an already allocated slot. */
+    __atomic_store_n(&t->virtual_loss[id], 0, __ATOMIC_RELAXED);
     t->prior[id] = prior_val;
     t->expanded[id] = 0;
     t->parent[id] = parent_id;
@@ -810,7 +858,17 @@ static int32_t tree_select_child(const TreeData *t, int32_t node_id,
             child_pending += t->virtual_loss[t->child_node[off + i]];
         }
         int32_t parent_visits = atomic_load_i32(&t->N[node_id]);
-        parent_N = (double)(parent_visits + vloss_weight * (parent_vl + child_pending));
+        /* For an internal node, each pending descent below it is already
+         * included in parent_vl and again in exactly one child counter. At
+         * the search root, however, apply_vloss_path deliberately skips the
+         * root, so only child_pending is visible. Use the maximum as an
+         * approximate reconciliation of these independently sampled counts,
+         * not an exact union. For example, a removal on [R,P,A] paused after
+         * decrementing P interleaved with an addition on [R,P,B] paused after
+         * incrementing P can expose P=1 and child sum=1 while two partially
+         * installed reservations overlap. */
+        int32_t pending = parent_vl > child_pending ? parent_vl : child_pending;
+        parent_N = (double)(parent_visits + vloss_weight * pending);
         parent_W = atomic_load_double(&t->W[node_id]);
         parent_Q = (parent_visits > 0) ? (parent_W / (double)parent_visits) : 0.0;
     } else {
@@ -1395,7 +1453,7 @@ typedef struct {
     void *enc_data;
     int enc_is_bf16;
     int input_history_lc0_root;
-    int n_extra_planes;          /* 34 (v1) or 63 (v2_threats); from enc buffer dim 1 */
+    int n_extra_planes;          /* registered extra width from enc buffer dim 1 */
     int32_t enc_capacity;
     PyObject *enc_arr_ref;       /* Strong ref to keep enc buffer alive */
     uint8_t *rel_data;           /* Optional (cap,5,64,64) u8 relations buffer */
@@ -2212,12 +2270,24 @@ static int MCTSTree_init(MCTSTreeObject *self, PyObject *args, PyObject *kwds) {
 }
 
 
-/* add_root(N, W) -> int (root node id) */
+/* add_root(N, W[, CBoard]) -> int (root node id) */
 static PyObject *MCTSTree_add_root(MCTSTreeObject *self, PyObject *args) {
     int N;
     double W;
-    if (!PyArg_ParseTuple(args, "id", &N, &W))
+    PyObject *board_obj = Py_None;
+    if (!PyArg_ParseTuple(args, "id|O", &N, &W, &board_obj))
         return NULL;
+    const CBoard *cb = NULL;
+    if (board_obj != Py_None) {
+        if (ensure_cboard_type() < 0) return NULL;
+        if (Py_TYPE(board_obj) != _cached_cboard_type) {
+            PyErr_SetString(PyExc_TypeError, "board must be a CBoard");
+            return NULL;
+        }
+        cb = &((PyCBoard *)board_obj)->board;
+        if (tree_ensure_cb_cache(&self->tree, self->tree.node_count + 1) < 0)
+            return PyErr_NoMemory();
+    }
 
     int32_t id = tree_add_node(&self->tree, -1, -1, 1.0);
     if (id < 0) {
@@ -2226,6 +2296,10 @@ static PyObject *MCTSTree_add_root(MCTSTreeObject *self, PyObject *args) {
     }
     __atomic_store_n(&self->tree.N[id], N, __ATOMIC_RELAXED);
     atomic_store_double(&self->tree.W[id], W);
+    if (cb) {
+        self->tree.cb_cache[id] = *cb;
+        self->tree.cb_valid[id] = 1;
+    }
     return PyLong_FromLong(id);
 }
 
@@ -2413,7 +2487,7 @@ static PyObject *MCTSTree_backprop(MCTSTreeObject *self, PyObject *args) {
  *   - applies vloss along path[1:], encodes the leaf into enc_out[0], and
  *     returns terminal_q = None plus the legal-move indices at the leaf.
  *
- * enc_out must be a writable float32 array of shape (>=1, 146, 8, 8). Only
+ * enc_out must be writable float32 (>=1, registered_planes, 8, 8). Only
  * enc_out[0] is written. */
 static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *args) {
     int root_id;
@@ -2445,12 +2519,11 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
     PyArrayObject *enc_arr = FROMANY_4D_RW(enc_obj, NPY_FLOAT32);
     if (!enc_arr) return NULL;
     if (PyArray_DIM(enc_arr, 0) < 1 ||
-        (PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(enc_arr, 1) - 112) ||
         PyArray_DIM(enc_arr, 2) != 8 ||
         PyArray_DIM(enc_arr, 3) != 8) {
         Py_DECREF(enc_arr);
-        PyErr_SetString(PyExc_ValueError, "enc_out must be shape (>=1, 146 or 175, 8, 8) float32");
+        PyErr_SetString(PyExc_ValueError, "enc_out must have a registered plane count (>=1, planes, 8, 8) float32");
         return NULL;
     }
     int enc_n_extra = (int)PyArray_DIM(enc_arr, 1) - 112;
@@ -2661,7 +2734,7 @@ static PyObject *MCTSTree_walker_integrate_leaf(MCTSTreeObject *self, PyObject *
  * walker pool / pure-Python single-thread loop at ~30k nps on this workload.
  *
  * Caller pre-allocates fixed-stride buffers:
- *   enc_buf    : (>=N, 146, 8, 8) float32, written.  Contiguous.
+ *   enc_buf    : (>=N, registered_planes, 8, 8) float32, written. Contiguous.
  *   leaf_ids   : (>=N,) int32,            written.
  *   path_buf   : (>=N*MCTS_MAX_PATH,) int32,   written. path[i] occupies
  *                rows [i*MAX, i*MAX + path_lens[i]).
@@ -2743,8 +2816,7 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
         return NULL;
     }
     if (PyArray_DIM(enc_arr, 0) < n_leaves ||
-        (PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(enc_arr, 1) - 112) ||
         PyArray_DIM(enc_arr, 2) != 8 ||
         PyArray_DIM(enc_arr, 3) != 8 ||
         PyArray_DIM(leaf_ids_arr, 0) < n_leaves ||
@@ -3482,6 +3554,22 @@ static PyObject *MCTSTree_get_solved_status(MCTSTreeObject *self, PyObject *args
 }
 
 
+/* root_context_matches(node_id, CBoard) -> bool */
+static PyObject *MCTSTree_root_context_matches(MCTSTreeObject *self, PyObject *args) {
+    int node_id;
+    PyObject *board_obj;
+    if (!PyArg_ParseTuple(args, "iO", &node_id, &board_obj)) return NULL;
+    PyObject *boards = PyList_New(1);
+    if (!boards) return NULL;
+    Py_INCREF(board_obj);
+    PyList_SET_ITEM(boards, 0, board_obj);
+    CBoard cb;
+    int rc = extract_cboards(boards, 1, &cb, NULL);
+    Py_DECREF(boards);
+    if (rc < 0) return NULL;
+    return PyBool_FromLong(tree_root_context_match(&self->tree, node_id, &cb));
+}
+
 /* is_expanded(node_id) -> bool */
 static PyObject *MCTSTree_is_expanded(MCTSTreeObject *self, PyObject *args) {
     int node_id;
@@ -3545,6 +3633,10 @@ static PyObject *MCTSTree_memory_bytes(MCTSTreeObject *self, PyObject *Py_UNUSED
 
 /* reset() -> None  (clear tree for reuse) */
 static PyObject *MCTSTree_reset(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
+    /* Pending batches contain node ids from the discarded tree. Reject
+     * their continuation before those ids can be allocated again. */
+    gss_free(&self->gsim);
+    stored_free(&self->stored);
     self->tree.node_count = 0;
     self->tree.child_count = 0;
     /* Invalidate CBoard cache */
@@ -3815,10 +3907,10 @@ static PyObject *MCTSTree_batch_wdl_to_q(MCTSTreeObject *self, PyObject *args) {
 
 /*
  * Encode a CBoard into (112 + n_extra) float32 planes (112 LC0 + extra
- * features; n_extra = 34 for v1 or 63 for v2_threats).
+ * features; n_extra is a registered feature width).
  * Writes into a pre-allocated buffer — no Python/numpy allocation.
  */
-#define ENC_PLANES_MAX (112 + FEAT_EXTRA_V2)
+#define ENC_PLANES_MAX (112 + FEAT_EXTRA_V3_PASSERS)
 
 static void cboard_encode_planes_into_ex(const CBoard *b, float * restrict out, int n_extra, int feat_prezeroed) {
     /* Targeted zeroing instead of a full memset.
@@ -4011,17 +4103,66 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
             "root_ids/budget/root_qs must have at least n_boards elements");
         return NULL;
     }
-    if ((PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(enc_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+    if (!IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(enc_arr, 1) - 112) ||
         PyArray_DIM(enc_arr, 2) != 8 ||
         PyArray_DIM(enc_arr, 3) != 8) {
         Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
         Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
         PyErr_SetString(PyExc_ValueError,
-            "enc_buf must have shape (>=N, 146 or 175, 8, 8)");
+            "enc_buf must have shape (>=N, registered planes, 8, 8)");
         return NULL;
     }
     int n_extra_planes = (int)PyArray_DIM(enc_arr, 1) - 112;
+
+    /* Preflight identity while the previous pending batch is still intact.
+     * Refusing a changed context must not discard its continuation or strand
+     * its virtual loss. Check the whole batch before any tree/state mutation. */
+    if (ensure_cboard_type() < 0) {
+        Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+        Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+        return NULL;
+    }
+    const int32_t *incoming_ids = (const int32_t *)PyArray_DATA(root_ids_arr);
+    for (int32_t i = 0; i < n_boards; i++) {
+        int32_t rid = incoming_ids[i];
+        PyObject *cb_obj = PyList_GET_ITEM(root_cbs_list, i);
+        if (Py_TYPE(cb_obj) != _cached_cboard_type) {
+            PyErr_SetString(PyExc_TypeError, "all list elements must be CBoard objects");
+        } else if (rid != -1 && (rid < 0 || rid >= self->tree.node_count)) {
+            PyErr_Format(PyExc_ValueError, "root_id[%d]=%d out of range [-1, %d)",
+                         i, rid, self->tree.node_count);
+        } else if (rid >= 0 &&
+                   !tree_root_context_match(&self->tree, rid,
+                                            &((PyCBoard *)cb_obj)->board)) {
+            PyErr_Format(PyExc_ValueError,
+                         "root_id[%d]=%d has a different board/history context; "
+                         "create a fresh root", i, rid);
+        }
+        if (PyErr_Occurred()) {
+            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+            return NULL;
+        }
+        if (rid >= 0 && self->tree.parent[rid] < 0 &&
+            (rid >= self->tree.cb_cache_cap || !self->tree.cb_valid[rid])) {
+            /* An unbound root may appear twice in a raw batch, but can bind to
+             * only one context. Normal Python roots are already bound, so this
+             * duplicate check costs no pairwise work on the production path. */
+            for (int32_t j = 0; j < i; j++) {
+                if (incoming_ids[j] != rid) continue;
+                const CBoard *previous =
+                    &((PyCBoard *)PyList_GET_ITEM(root_cbs_list, j))->board;
+                if (!cboard_context_match(previous, &((PyCBoard *)cb_obj)->board, 1)) {
+                    PyErr_Format(PyExc_ValueError,
+                                 "root_id[%d]=%d has a different board/history context "
+                                 "from root_id[%d]; create a fresh root", i, rid, j);
+                    Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+                    Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+                    return NULL;
+                }
+            }
+        }
+    }
 
     /* Free previous sim state */
     GumbelSimState *g = &self->gsim;
@@ -4977,7 +5118,7 @@ static PyMethodDef MCTSTree_methods[] = {
     {"find_child", (PyCFunction)MCTSTree_find_child, METH_VARARGS,
      "find_child(node_id, action) -> child_node_id or -1"},
     {"add_root", (PyCFunction)MCTSTree_add_root, METH_VARARGS,
-     "add_root(N, W) -> int node_id"},
+     "add_root(N, W[, CBoard]) -> int node_id; bind context before search shortcuts"},
     {"expand", (PyCFunction)MCTSTree_expand, METH_VARARGS,
      "expand(node_id, actions_int32, priors_float64) -> None"},
     {"expand_from_logits", (PyCFunction)MCTSTree_expand_from_logits, METH_VARARGS,
@@ -5024,6 +5165,8 @@ static PyMethodDef MCTSTree_methods[] = {
      "get_solved_status(node_id) -> int (0=unknown, 1=win, -1=loss, 2=draw, STM perspective)"},
     {"mark_solved_path", (PyCFunction)MCTSTree_mark_solved_path, METH_VARARGS,
      "mark_solved_path(node_path: NDArray[np.int32], status: int) -> None. Mark leaf solved with status (1/-1/2 = WIN/LOSS/DRAW from STM, 0=skip) and propagate upward."},
+    {"root_context_matches", (PyCFunction)MCTSTree_root_context_matches, METH_VARARGS,
+     "root_context_matches(node_id, CBoard) -> bool; unbound roots may bind on first search"},
     {"is_expanded", (PyCFunction)MCTSTree_is_expanded, METH_VARARGS,
      "is_expanded(node_id) -> bool"},
     {"memory_bytes", (PyCFunction)MCTSTree_memory_bytes, METH_NOARGS,
@@ -5165,10 +5308,10 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
                         "df_norm_scale > 0 requires df_norm_slope > 0");
         return NULL;
     }
-    if (n_extra != FEAT_EXTRA_V1 && n_extra != FEAT_EXTRA_V2) {
+    if (!IS_SUPPORTED_EXTRA_FEATURES(n_extra)) {
         PyErr_Format(PyExc_ValueError,
-                     "n_extra must be %d (v1) or %d (v2_threats), got %d",
-                     FEAT_EXTRA_V1, FEAT_EXTRA_V2, n_extra);
+                     "n_extra must be a registered feature width (34, 63, 65, 67, 69, or 71), got %d",
+                     n_extra);
         return NULL;
     }
 
@@ -5548,7 +5691,7 @@ static PyObject *py_batch_compute_relations(PyObject *self, PyObject *args) {
 }
 
 /* batch_encode_146(cboards_list, out_array)
- * Encode N CBoards into a pre-allocated (N, 146, 8, 8) float32 array.
+ * Encode N CBoards into a pre-allocated (N, registered_planes, 8, 8) float32 array.
  * GIL released during encoding for thread parallelism. */
 static PyObject *py_batch_encode_146(PyObject *self, PyObject *args) {
     PyObject *cboards_list;
@@ -5570,12 +5713,11 @@ static PyObject *py_batch_encode_146(PyObject *self, PyObject *args) {
 
     /* Verify output array is large enough */
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, registered planes, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -5625,12 +5767,11 @@ static PyObject *py_batch_encode_146_lc0_root(PyObject *self, PyObject *args) {
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, registered planes, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -5677,12 +5818,11 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta(PyObject *self, PyObje
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, registered planes, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -5711,7 +5851,7 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta(PyObject *self, PyObje
 }
 
 /* batch_encode_146_bf16(cboards_list, out_array)
- * Encode N CBoards into a pre-allocated (N, 146, 8, 8) uint16 array holding
+ * Encode N CBoards into a pre-allocated (N, registered_planes, 8, 8) uint16 array holding
  * bfloat16 bit patterns. GIL released during encoding. */
 static PyObject *py_batch_encode_146_bf16(PyObject *self, PyObject *args) {
     PyObject *cboards_list;
@@ -5732,12 +5872,11 @@ static PyObject *py_batch_encode_146_bf16(PyObject *self, PyObject *args) {
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, registered planes, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -5784,12 +5923,11 @@ static PyObject *py_batch_encode_146_lc0_root_bf16(PyObject *self, PyObject *arg
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, registered planes, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -5836,12 +5974,11 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta_bf16(PyObject *self, P
     if (n <= 0) { Py_DECREF(out_arr); Py_RETURN_NONE; }
 
     if (PyArray_DIM(out_arr, 0) < n ||
-        (PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V1 &&
-         PyArray_DIM(out_arr, 1) != 112 + FEAT_EXTRA_V2) ||
+        !IS_SUPPORTED_EXTRA_FEATURES(PyArray_DIM(out_arr, 1) - 112) ||
         PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
         Py_DECREF(out_arr);
         PyErr_SetString(PyExc_ValueError,
-            "out_array must have shape (>=N, 146 or 175, 8, 8)");
+            "out_array must have shape (>=N, registered planes, 8, 8)");
         return NULL;
     }
     int n_extra = (int)PyArray_DIM(out_arr, 1) - 112;
@@ -6201,7 +6338,7 @@ static PyMethodDef module_methods[] = {
      "Dynamic board-relation matrices; GIL released."},
     {"batch_encode_146", py_batch_encode_146, METH_VARARGS,
      "batch_encode_146(cboards_list, out_array) -> None. "
-     "Encode CBoards into pre-allocated (N,146,8,8) float32 array. GIL released."},
+     "Encode CBoards into registered plane count float32 array. GIL released."},
     {"batch_encode_146_lc0_root", py_batch_encode_146_lc0_root, METH_VARARGS,
      "batch_encode_146_lc0_root(cboards_list, out_array) -> None. "
      "Encode CBoards with LC0 root-history layout into pre-allocated float32 array."},
@@ -6210,7 +6347,7 @@ static PyMethodDef module_methods[] = {
      "Encode CBoards with LC0 root-history and legacy EP/rule50 metadata into float32 array."},
     {"batch_encode_146_bf16", py_batch_encode_146_bf16, METH_VARARGS,
      "batch_encode_146_bf16(cboards_list, out_array) -> None. "
-     "Encode CBoards into pre-allocated (N,146,8,8) uint16 bfloat16-bit array. GIL released."},
+     "Encode CBoards into registered plane count uint16 bf16 array. GIL released."},
     {"batch_encode_146_lc0_root_bf16", py_batch_encode_146_lc0_root_bf16, METH_VARARGS,
      "batch_encode_146_lc0_root_bf16(cboards_list, out_array) -> None. "
      "Encode CBoards with LC0 root-history layout into pre-allocated bf16-bit array."},
@@ -6269,8 +6406,10 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
      * structural transposition and silently copy one history's network priors
      * and W/N into another history-sensitive lc0_root_legacy_meta state. No
      * signature changed, but the failure is silent/data-affecting, so stale
-     * binaries must fail fast rather than keep the old semantic. */
-    if (PyModule_AddIntConstant(m, "ABI_VERSION", 5) < 0) {
+     * binaries must fail fast rather than keep the old semantic.
+     * 6 = bound root context at allocation + root_context_matches: Python must
+     * detect a stale extension before using the new root lifecycle API. */
+    if (PyModule_AddIntConstant(m, "ABI_VERSION", 6) < 0) {
         Py_DECREF(m);
         return NULL;
     }
