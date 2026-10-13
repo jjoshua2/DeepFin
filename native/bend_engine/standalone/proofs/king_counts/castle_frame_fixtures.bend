@@ -30,7 +30,7 @@ def raw_turn_king_counts() -> K.preserved(board(2),E.move(board(2),True{})): ({=
 def raw_turn_queen_counts() -> K.preserved(board(2),E.move(board(2),False{})): ({==},{==})
 
 # Valid rows, but an enemy king on the rook landing square blocks the guard.
-# Unconditionally executing flag2 recolors this surviving king.
+# Unconditionally executing flag2 adds mover ownership to this surviving king.
 def blocked() -> Chess.Board:
   Chess.Board{U64.zero(),U64.zero(),U64.zero(),U64.from_parts(128,0),U64.zero(),
     U64.from_parts(48,268435456),U64.from_parts(144,0),U64.from_parts(32,268435456),1,1,64}
@@ -39,4 +39,4 @@ def blocked_guard() -> {E.guard(blocked(),True{}) == False{} : Bool}: {==}
 def blocked_parent_counts() -> {K.white(blocked()) == 1n : Nat} & {K.black(blocked()) == 2n : Nat}: ({==},{==})
 def blocked_child_counts() ->
   {K.white(Chess.make_move(blocked(),E.move(blocked(),True{}))) == 2n : Nat} &
-  {K.black(Chess.make_move(blocked(),E.move(blocked(),True{}))) == 1n : Nat}: ({==},{==})
+  {K.black(Chess.make_move(blocked(),E.move(blocked(),True{}))) == 2n : Nat}: ({==},{==})
