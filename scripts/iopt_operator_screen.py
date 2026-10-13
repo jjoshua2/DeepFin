@@ -52,8 +52,11 @@ def _aggregate(
     rows: list[dict[str, Any]], *, seed: int
 ) -> dict[str, Any]:
     arms: dict[str, dict[str, Any]] = {}
-    for name in ARMS:
-        metrics = [r["policies"][name] for r in rows]
+    eligible = [r for r in rows if r["matched_kl_reachable"]]
+    for name in (*ARMS, "current_matched_kl_subset"):
+        subset = eligible if name in ("iopt_matched_kl", "current_matched_kl_subset") else rows
+        policy_name = "current" if name == "current_matched_kl_subset" else name
+        metrics = [r["policies"][policy_name] for r in subset]
         top = [float(m["top1_regret_cp"]) for m in metrics if m["top1_regret_cp"] is not None]
         exp = [float(m["expected_regret_cp"]) for m in metrics if m["expected_regret_cp"] is not None]
         arms[name] = {
@@ -61,16 +64,17 @@ def _aggregate(
             "n_top1_covered": len(top),
             "expected_regret_cp_mean_FULL_labels": float(np.mean(exp)) if exp else None,
             "n_FULL_legal_reference": len(exp),
-            "mean_unknown_reference_mass": float(np.mean([m["unknown_mass"] for m in metrics])),
-            "mean_kl_prior": float(np.mean([m["kl_prior"] for m in metrics])),
-            "mean_entropy": float(np.mean([m["entropy"] for m in metrics])),
+            "mean_unknown_reference_mass": float(np.mean([m["unknown_mass"] for m in metrics])) if metrics else None,
+            "mean_kl_prior": float(np.mean([m["kl_prior"] for m in metrics])) if metrics else None,
+            "mean_entropy": float(np.mean([m["entropy"] for m in metrics])) if metrics else None,
         }
 
     paired: dict[str, Any] = {}
     for name in ARMS[1:]:
         top_pairs: list[tuple[str, float]] = []
         exp_pairs: list[tuple[str, float]] = []
-        for row in rows:
+        subset = eligible if name == "iopt_matched_kl" else rows
+        for row in subset:
             cur = row["policies"]["current"]
             alt = row["policies"][name]
             if cur["top1_regret_cp"] is not None and alt["top1_regret_cp"] is not None:
@@ -84,6 +88,8 @@ def _aggregate(
                     float(cur["expected_regret_cp"]) - float(alt["expected_regret_cp"]),
                 ))
         paired[name] = {
+            "n_eligible_rows": len(subset),
+            "n_excluded_KL_unreachable": len(rows) - len(subset),
             "top1_regret_gain_cp": _bootstrap_delta(top_pairs, seed=seed),
             "FULL_reference_expected_regret_gain_cp": _bootstrap_delta(
                 exp_pairs, seed=seed + 11
@@ -181,6 +187,8 @@ def run_screen(
                 for name, p in result.policies.items()
             }
             cur = measured["current"]
+            cur_kl = cur["kl_prior"]
+            cur_regret = cur["top1_regret_cp"]
             flags = {
                 "best_known_SF_move_unvisited": (
                     best_known is not None and not bool(vis[best_known])
@@ -188,9 +196,9 @@ def run_screen(
                 "visited_Q_misranks_known_moves_by_threshold": bool(value_misrank),
                 "small_Q_range_high_KL_bad_current_top1": (
                     result.q_range <= small_q_threshold
-                    and cur["kl_prior"] >= 0.3
-                    and cur["top1_regret_cp"] is not None
-                    and float(cur["top1_regret_cp"]) >= bad_regret_cp
+                    and cur_kl is not None and cur_kl >= 0.3
+                    and cur_regret is not None
+                    and cur_regret >= bad_regret_cp
                 ),
                 "missing_ANY_reference_move": n_known < result.prior.size,
             }
@@ -208,8 +216,8 @@ def run_screen(
                 "flags": flags,
                 "policies": measured,
                 "top1_uci": {
-                    name: trace["legal_uci"][int(m["top1"])]
-                    for name, m in measured.items()
+                    name: trace["legal_uci"][int(np.argmax(result.policies[name]))]
+                    for name in measured
                 },
             })
     if metadata is None:
@@ -241,6 +249,7 @@ def run_screen(
             "parity_tolerance": parity_tolerance, "seed": seed,
             "small_q_threshold": small_q_threshold,
             "bad_regret_cp": bad_regret_cp,
+            "per_action_regret_cap_cp": 1000.0,
         },
         "counts": {
             "rows_seen": seen,

@@ -78,22 +78,51 @@ def match_kl(
     target = kl_from_prior(reference_policy, prior)
     if target <= 1e-12:
         return prior.copy(), True
-    if np.ptp(advantage) <= 1e-12:
+
+    # Center BEFORE multiplication, then remove the arbitrary score scale.
+    # Otherwise large offsets lose the prior and tiny spreads exhaust a fixed
+    # doubling budget even though the same policy family is reachable.
+    values = np.asarray(advantage, dtype=np.float64)
+    with np.errstate(over="ignore"):
+        centered = values - values.max()
+    if not np.all(np.isfinite(centered)):
+        # Finite opposite-sign scores can overflow during subtraction.
+        values = values / np.max(np.abs(values))
+        centered = values - values.max()
+    spread = float(np.max(np.abs(centered)))
+    if spread == 0.0:
         return prior.copy(), False
+    score = centered / spread
+    winners = score == 0.0
+    winner_mass = float(prior[winners].sum())
+    limit = np.where(winners, prior / winner_mass, 0.0)
+    limit_kl = kl_from_prior(limit, prior)
+    if target > limit_kl + 1e-10:
+        return limit, False
+    if abs(target - limit_kl) <= 1e-10:
+        return limit, True
+
+    def tilted(multiplier: float) -> np.ndarray:
+        # Nonpositive centered scores may become -inf at the float limit;
+        # their zero probability is well-defined and the maxima stay finite.
+        with np.errstate(over="ignore"):
+            return _softmax(logp, multiplier * score)
+
     lo, hi = 0.0, 1.0
-    for _ in range(40):
-        if kl_from_prior(_softmax(logp, hi * advantage), prior) >= target:
-            break
+    while kl_from_prior(tilted(hi), prior) < target:
+        lo = hi
+        if hi > np.finfo(np.float64).max / 2.0:
+            return tilted(hi), False
         hi *= 2.0
-    else:
-        return _softmax(logp, hi * advantage), False
-    for _ in range(54):
-        mid = (lo + hi) * 0.5
-        if kl_from_prior(_softmax(logp, mid * advantage), prior) < target:
+    for _ in range(64):
+        mid = lo + (hi - lo) * 0.5
+        if kl_from_prior(tilted(mid), prior) < target:
             lo = mid
         else:
             hi = mid
-    return _softmax(logp, hi * advantage), True
+    matched = tilted(hi)
+    return matched, abs(kl_from_prior(matched, prior) - target) <= 1e-8
+
 
 
 def reconstruct(
@@ -117,15 +146,36 @@ def reconstruct(
     ):
         raise ValueError("operator parameters must be finite, positive and valid")
     prior = np.asarray(trace["prior"], dtype=np.float64)
-    visits = np.asarray(trace["visits"], dtype=np.int64)
+    visit_values = trace["visits"]
+    if not isinstance(visit_values, list) or not all(
+        type(v) is int and 0 <= v <= np.iinfo(np.int64).max for v in visit_values
+    ):
+        raise ValueError("child visits must be nonnegative integer counts")
+    visits_raw = np.asarray(visit_values)
+    if visits_raw.ndim != 1 or not np.issubdtype(visits_raw.dtype, np.integer):
+        raise ValueError("child visits must be a vector of integers")
+    visits = visits_raw.astype(np.int64)
     q_raw = trace["visited_q"]
     ref_raw = trace["reference_cp"]
     observed = np.asarray(trace["observed_policy"], dtype=np.float64)
     if not isinstance(q_raw, list) or not isinstance(ref_raw, list):
         raise ValueError("visited_q and reference_cp must be lists")
+    if prior.ndim != 1 or observed.ndim != 1:
+        raise ValueError("policies must be one-dimensional vectors")
     n = prior.size
     if n < 2 or any(v.size != n for v in (visits, observed)) or len(q_raw) != n or len(ref_raw) != n:
         raise ValueError("illegal trace vector lengths")
+    legal_uci = trace["legal_uci"]
+    legal_actions = trace["legal_actions"]
+    if not (
+        isinstance(legal_uci, list) and len(legal_uci) == n
+        and all(isinstance(move, str) and bool(move) for move in legal_uci)
+        and len(set(legal_uci)) == n
+        and isinstance(legal_actions, list) and len(legal_actions) == n
+        and all(type(action) is int and action >= 0 for action in legal_actions)
+        and len(set(legal_actions)) == n
+    ):
+        raise ValueError("legal move/action identities must align with trace vectors")
     if not (
         np.all(np.isfinite(prior)) and np.all(prior > 0)
         and np.isclose(prior.sum(), 1.0, atol=1e-5)
@@ -143,8 +193,15 @@ def reconstruct(
     )
     if not np.all(np.isfinite(visited_q[visits > 0])):
         raise ValueError("nonfinite visited Q")
-    root_q = float(trace["root_q"])
-    q_scale = float(trace["root_q_scale"])
+    root_raw = trace["root_q"]
+    scale_raw = trace["root_q_scale"]
+    if (
+        not isinstance(root_raw, int | float) or isinstance(root_raw, bool)
+        or not isinstance(scale_raw, int | float) or isinstance(scale_raw, bool)
+    ):
+        raise ValueError("root value and q scale must be numeric")
+    root_q = float(root_raw)
+    q_scale = float(scale_raw)
     if not np.isfinite(root_q) or not np.isfinite(q_scale) or q_scale < 0:
         raise ValueError("invalid root value or q scale")
     cp = np.array(
@@ -154,6 +211,8 @@ def reconstruct(
         raise ValueError("nonfinite directly observed reference label")
     completed = completed_q_values(prior, visits, visited_q, root_q)
     spread = float(np.ptp(completed))
+    if not np.all(np.isfinite(completed)) or not np.isfinite(spread):
+        raise ValueError("nonfinite completed Q")
     logp = np.log(prior)
 
     # DeepFin's C and Python root implementation use min-max COMPLETED Q.
@@ -161,6 +220,8 @@ def reconstruct(
         logp, q_scale * (completed - completed.min()) / max(spread, 1e-8)
     )
     parity = float(np.max(np.abs(baseline - observed)))
+    if not np.isfinite(parity):
+        raise ValueError("nonfinite root-policy reconstruction")
     if parity > parity_tolerance:
         raise ValueError(
             f"native root-policy reconstruction mismatch {parity:.5g} > {parity_tolerance}"
@@ -183,14 +244,18 @@ def reconstruct(
     iopt = _softmax(logp, iopt_score / beta)
     iopt_matched, reachable = match_kl(prior, iopt_score, baseline)
 
+    policies = {
+        "current": baseline,
+        "unscaled": unscaled,
+        "iopt_proxy": iopt,
+        "iopt_matched_kl": iopt_matched,
+    }
+    if not all(np.all(np.isfinite(p)) for p in policies.values()):
+        raise ValueError("nonfinite counterfactual policy")
+
     return RootCounterfactual(
         prior=prior, visits=visits, completed_q=completed, reference_cp=cp,
-        policies={
-            "current": baseline,
-            "unscaled": unscaled,
-            "iopt_proxy": iopt,
-            "iopt_matched_kl": iopt_matched,
-        },
+        policies=policies,
         q_range=spread,
         parity_max_abs=parity,
         matched_kl_reachable=reachable,
@@ -205,14 +270,16 @@ def policy_metrics(
     known = np.isfinite(cp)
     j = int(np.argmax(p))
     ref_best = float(np.max(cp[known])) if np.any(known) else None
+    # Same per-action cap as audit.AUDIT_REGRET_CAP_CP; raw labels stay intact.
+    regrets = np.clip(ref_best - cp, 0.0, 1000.0) if ref_best is not None else None
     return {
         "top1": j,
         "top1_regret_cp": (
-            float(ref_best - cp[j]) if known[j] and ref_best is not None else None
+            float(regrets[j]) if known[j] and regrets is not None else None
         ),
         "expected_regret_cp": (
-            float(np.dot(p, ref_best - cp))
-            if np.all(known) and ref_best is not None else None
+            float(np.dot(p, regrets))
+            if np.all(known) and regrets is not None else None
         ),
         "unknown_mass": float(p[~known].sum()),
         "kl_prior": kl_from_prior(p, prior),

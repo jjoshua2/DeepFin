@@ -1,7 +1,6 @@
 # October 12, 2026 — Frozen-root I-opt mechanism screen
 
-**Status: implementation and preregistration only. No GPU collection, SF relabeling,
-training, arena, value-head experiment or playing-strength readout has run in this PR.**
+**Status: bounded frozen-root diagnostic completed by the science owner; corrected CPU readout verified October 13. No operator adoption, training, arena or playing-strength claim.**
 
 Paper: [arXiv:2610.01566](https://arxiv.org/html/2610.01566).
 Parent source: main at 265adece34a6dbe8d4a32122fff4e5c65a5d84c0.
@@ -43,7 +42,12 @@ assumption is particularly poor there.
 4. **iopt_matched_kl:** same action-specific I-opt advantages, but scale
    its score per position to match the current target's KL to the prior
    whenever reachable. This checks whether action-specific weights help
-   beyond merely softening the target. Records unreachable matches.
+   beyond merely softening the target. Unreachable roots are excluded from
+   this arm's aggregate and paired comparisons; `current_matched_kl_subset`
+   reports the baseline on exactly the same eligible rows. The scorer records
+   exclusion counts. Centered, normalized score bracketing preserves this
+   control under tiny score scales and large offsets; tied maxima retain
+   their prior probability ratios at the limiting KL.
    There is deliberately **no** per-position KL-matched unscaled arm:
    unscaled and normalized completed-Q differ by only a positive scalar,
    so per-position KL-matching would return the same distribution.
@@ -76,7 +80,10 @@ move unvisited**. Direct cp is partial, often only top MultiPV moves.
 Expected cp regret is reported only on roots with *all legal moves directly
 scored*. Other roots retain reference-unknown target probability mass,
 plus paired top-one regret only where BOTH selected actions are scored
-by the independent reference. Do not rank policies using a synthetic cp
+by the independent reference. Each directly labelled action's regret is
+clipped to [0, 1000] cp before either metric, matching the existing audit cap;
+raw cp labels are preserved. This bounds mate-valued cp conventions without
+turning mate distance into ordinary centipawns. Do not rank policies using a synthetic cp
 tail. This also precludes claiming full expected-regret strength for
 the entire population unless labels become complete.
 
@@ -154,7 +161,37 @@ separately measured**.
 - Offline evaluator: chess_anti_engine/eval/iopt_operator.py and
   scripts/iopt_operator_screen.py.
 - CPU guards: tests/test_iopt_operator_screen.py.
-- Bulk traces/reports remain outside git with SHA256 provenance; no actual
-  trace or report has yet been produced for this experiment.
-- Independent review: pending. A passing synthetic CPU suite will not
-  establish native C parity on the user's RTX 5090.
+- Bulk traces remain outside git with SHA256 provenance. The compact corrected
+  [CPU readout](artifacts/2026-10-13-iopt-corrected-readout.json) records the raw
+  bank identity, capture plan, checkpoint/config/audit identities and parameters.
+- Independent code review is performed separately from the author. Synthetic CPU
+  tests do not establish native C parity; the prior bank retains its actual parity
+  checks and excludes mismatches.
+
+
+## October 13 corrected readout of the existing bank
+
+The science owner previously captured 1,000 fixed roots at 32/64/128/256 simulations
+using `runtime-fixed-v1`. Its final diagnostic receipt retained the completed
+collection and reported no adoption. This PR completion collected no new roots,
+queried no teacher, and ran no GPU work. It reused exactly the existing 4,000-row
+bank (SHA256 `b9a23bbcd6423fc34dfd7be3f4221d33ea9455af290c17756f7e4523ef7d0926`).
+The corrected scorer accepts 998 roots per rung and retains eight total native
+parity exclusions, unchanged from the original CPU report. All accepted roots in
+this bank have reachable KL matches; the unreachable-subset controls are exercised
+by separate CPU regression fixtures. Full legal labels cover only 117 roots.
+
+At the preregistered 256-simulation horizon, positive gain means lower capped regret:
+
+| Arm | Paired top-one gain cp (95% interval) | Full-label expected gain cp (95% interval) |
+| --- | --- | --- |
+| Unscaled | 1.916 (-0.923, 5.361) | -16.571 (-31.204, -4.460) |
+| I-opt proxy | 1.046 (-2.742, 4.717) | -17.998 (-33.754, -4.124) |
+| I-opt matched KL | 0.035 (0.000, 0.105) | -0.059 (-0.191, 0.009) |
+
+**No-go under the registered rule:** no arm reaches a 5 cp paired top-one gain with
+a positive lower bound and nonworsening full-label expected regret. This preserves
+the science owner's previous verdict. It is conditional on the frozen checkpoint,
+heuristic variance proxy, FEN-only history, partial MultiPV reference and capped
+mate-valued cp conventions. It does not establish an Elo effect or reject I-opt
+generally. Production target/search behavior remains unchanged.
