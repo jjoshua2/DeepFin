@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -19,6 +20,11 @@ from zarr.storage import ZipStore
 
 SUFFIX = ".zarr.zip"
 _NAME = re.compile(r"shard_(\d+)\.zarr(?:\.zip)?\Z")
+# One ordinary shard is a few dozen arrays of at most a few hundred chunks.
+# The cap only stops a hostile `.zarray` from turning admission into a loop.
+_MAX_DECLARED_CHUNKS = 100_000
+_MAX_ZARRAY_BYTES = 65_536
+_MAX_ZARRAY_DIMS = 8
 
 
 def is_packed(path: Path) -> bool:
@@ -87,6 +93,95 @@ def _validate_members(archive: zipfile.ZipFile) -> None:
         raise ValueError("packed Zarr member is also a directory prefix")
     if not {".zgroup", ".zattrs"} <= names:
         raise ValueError("packed Zarr root metadata missing")
+    _require_declared_chunks(archive, names)
+
+
+def _json_int(value: object) -> int | None:
+    # JSON ``true`` is a bool, and bool is an int subclass. Reject it before
+    # the int check so a length cannot be 1 by accident.
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _require_declared_chunks(archive: zipfile.ZipFile, names: set[str]) -> None:
+    """Reject a chunk grid Zarr would otherwise read back as the fill value.
+
+    The project writer stores every chunk. The archive hash only covers bytes
+    that are present, so a dropped or renamed ``x``, ``wdl_target`` or
+    ``legal_mask`` chunk stays byte-consistent while those row indices
+    materialize as fill (zero boards, class-0 outcomes, or empty masks) and
+    the epoch still reports a complete pass.
+    """
+    for name in sorted(names):
+        if PurePosixPath(name).name != ".zarray":
+            continue
+        if "/" not in name:
+            raise ValueError(f"packed Zarr array metadata is not an array member: {name!r}")
+        info = archive.getinfo(name)
+        if info.file_size > _MAX_ZARRAY_BYTES:
+            raise ValueError(f"packed Zarr array metadata is too large: {name!r}")
+        try:
+            meta = json.loads(archive.read(name).decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
+            raise ValueError(f"packed Zarr array metadata is unreadable: {name!r}") from exc
+        shape = meta.get("shape") if isinstance(meta, dict) else None
+        chunks = meta.get("chunks") if isinstance(meta, dict) else None
+        if (
+            not isinstance(meta, dict)
+            or meta.get("zarr_format", 2) != 2
+            or not isinstance(shape, list)
+            or not isinstance(chunks, list)
+            or not 1 <= len(shape) <= _MAX_ZARRAY_DIMS
+            or len(shape) != len(chunks)
+        ):
+            raise ValueError(f"packed Zarr array metadata is malformed: {name!r}")
+        sep = meta.get("dimension_separator", ".")
+        if sep not in (".", "/"):
+            raise ValueError(f"packed Zarr array metadata is malformed: {name!r}")
+        declared = 1
+        counts: list[int] = []
+        for size_raw, chunk_raw in zip(shape, chunks, strict=True):
+            size = _json_int(size_raw)
+            chunk = _json_int(chunk_raw)
+            if size is None or chunk is None or chunk <= 0:
+                raise ValueError(f"packed Zarr array metadata is malformed: {name!r}")
+            count = 0 if size == 0 else (size + chunk - 1) // chunk
+            if count > _MAX_DECLARED_CHUNKS or (
+                count > 0 and declared > _MAX_DECLARED_CHUNKS // count
+            ):
+                raise ValueError(f"packed Zarr array declares too many chunks: {name!r}")
+            declared *= count
+            counts.append(count)
+        array_name = name[: -len(".zarray")].rstrip("/")
+        joiner = "." if sep == "." else "/"
+        if sep == ".":
+            pattern = re.compile(
+                rf"{re.escape(array_name)}/\d+(?:\.\d+){{{len(shape) - 1}}}\Z"
+            )
+        else:
+            pattern = re.compile(
+                rf"{re.escape(array_name)}/\d+(?:/\d+){{{len(shape) - 1}}}\Z"
+            )
+        present = {member for member in names if pattern.fullmatch(member)}
+        expected: set[str] = set()
+        if declared:
+            grid: list[tuple[int, ...]] = [()]
+            for count in counts:
+                grid = [
+                    (*prefix, index)
+                    for prefix in grid
+                    for index in range(count)
+                ]
+            expected = {
+                f"{array_name}/{joiner.join(str(index) for index in coord)}"
+                for coord in grid
+            }
+        if present != expected:
+            raise ValueError(
+                f"packed Zarr array {array_name!r} stored {len(present)} chunks but "
+                f"declares {declared}; a partial archive is not a readable shard"
+            )
 
 
 def content_sha256(path: Path) -> str:
