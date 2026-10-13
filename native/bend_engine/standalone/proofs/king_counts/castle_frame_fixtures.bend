@@ -6,8 +6,8 @@ import ../castle_emission/Spec.bend as E
 import ../board/Spec.bend as B
 import ../../../legal_probe/Chess.bend as Chess
 def board(turn: U32) -> Chess.Board:
-  Chess.Board{U64.zero(),U64.zero(),U64.zero(),U64.from_parts(129,2164260864),U64.zero(),
-    U64.from_parts(1048592,268435712),U64.from_parts(1048721,0),U64.from_parts(0,2432696576),turn,15,64}
+  Chess.Board{U64.zero(),U64.zero(),U64.zero(),U64.from_parts(2164260864,129),U64.zero(),
+    U64.from_parts(268435712,1048592),U64.from_parts(0,1048721),U64.from_parts(2432696576,0),turn,15,64}
 def rows(+turn: U32) -> {B.valid(board(turn)) == True{} : Bool}: {==}
 def parent_counts(+turn: U32) -> {K.white(board(turn)) == 2n : Nat} & {K.black(board(turn)) == 2n : Nat}: ({==},{==})
 def white_king() -> C.both(board(1),E.move(board(1),True{})):
@@ -32,8 +32,8 @@ def raw_turn_queen_counts() -> K.preserved(board(2),E.move(board(2),False{})): (
 # Valid rows, but an enemy king on the rook landing square blocks the guard.
 # Unconditionally executing flag2 adds mover ownership to this surviving king.
 def blocked() -> Chess.Board:
-  Chess.Board{U64.zero(),U64.zero(),U64.zero(),U64.from_parts(128,0),U64.zero(),
-    U64.from_parts(48,268435456),U64.from_parts(144,0),U64.from_parts(32,268435456),1,1,64}
+  Chess.Board{U64.zero(),U64.zero(),U64.zero(),U64.from_parts(0,128),U64.zero(),
+    U64.from_parts(268435456,48),U64.from_parts(0,144),U64.from_parts(268435456,32),1,1,64}
 def blocked_rows() -> {B.valid(blocked()) == True{} : Bool}: {==}
 def blocked_guard() -> {E.guard(blocked(),True{}) == False{} : Bool}: {==}
 def blocked_parent_counts() -> {K.white(blocked()) == 1n : Nat} & {K.black(blocked()) == 2n : Nat}: ({==},{==})
