@@ -146,46 +146,31 @@ def right(+n: Nat,+k: Word(n),+c: Word(n),+m: Word(n),+t: Word(n),+put: Bool,sid
 def word(+n: Nat,+k: Word(n),+c: Word(n),+m: Word(n),+t: Word(n),+r: Word(n),+put: Bool,+side: Bool,
   +empty: {Word.and(n,k,r) == Word.zero(n) : Word(n)}) ->
   {left(n,k,c,m,t,r,put,side) == right(n,k,c,m,t,put,side) : Word(n)}:
-  match put side:
-    case False{} False{}:
-      match n:
-        case 0n: {==}
-        case 1n+j:
-          match k c m t r:
-            case WCon{+kh,+kt} WCon{+ch,+ct} WCon{+mh,+mt} WCon{+th,+tt} WCon{+rh,+rt}:
+  match n:
+    case 0n: {==}
+    case 1n+j:
+      match k c m t r:
+        case WCon{+kh,+kt} WCon{+ch,+ct} WCon{+mh,+mt} WCon{+th,+tt} WCon{+rh,+rt}:
+          match put side:
+            case False{} False{}:
               Equal.trans(Word(1n+j),WCon{Bool.and(F.update_bool(kh,mh,th,False{}),F.update_bool(ch,mh,Bool.or(th,rh),False{})),left(j,kt,ct,mt,tt,rt,False{},False{})},WCon{Bool.and(F.update_bool(kh,mh,th,False{}),F.update_bool(ch,mh,th,False{})),left(j,kt,ct,mt,tt,rt,False{},False{})},WCon{Bool.and(F.update_bool(kh,mh,th,False{}),F.update_bool(ch,mh,th,False{})),right(j,kt,ct,mt,tt,False{},False{})},
                 Equal.cong(Bool,Word(1n+j),h => WCon{h,left(j,kt,ct,mt,tt,rt,False{},False{})},Bool.and(F.update_bool(kh,mh,th,False{}),F.update_bool(ch,mh,Bool.or(th,rh),False{})),Bool.and(F.update_bool(kh,mh,th,False{}),F.update_bool(ch,mh,th,False{})),
                   extra_bool(kh,ch,mh,th,rh,False{},False{},Equal.cong(Word(1n+j),Bool,x => Parts.head(j,x),Word.and(1n+j,WCon{kh,kt},WCon{rh,rt}),Word.zero(1n+j),empty))),
                 Equal.cong(Word(j),Word(1n+j),v => WCon{Bool.and(F.update_bool(kh,mh,th,False{}),F.update_bool(ch,mh,th,False{})),v},left(j,kt,ct,mt,tt,rt,False{},False{}),right(j,kt,ct,mt,tt,False{},False{}),
                   word(j,kt,ct,mt,tt,rt,False{},False{},Equal.cong(Word(1n+j),Word(j),x => Parts.tail(j,x),Word.and(1n+j,WCon{kh,kt},WCon{rh,rt}),Word.zero(1n+j),empty))))
-    case False{} True{}:
-      match n:
-        case 0n: {==}
-        case 1n+j:
-          match k c m t r:
-            case WCon{+kh,+kt} WCon{+ch,+ct} WCon{+mh,+mt} WCon{+th,+tt} WCon{+rh,+rt}:
+            case False{} True{}:
               Equal.trans(Word(1n+j),WCon{Bool.and(F.update_bool(kh,mh,th,False{}),F.update_bool(ch,mh,Bool.or(th,rh),True{})),left(j,kt,ct,mt,tt,rt,False{},True{})},WCon{Bool.and(F.update_bool(kh,mh,th,False{}),F.update_bool(ch,mh,th,True{})),left(j,kt,ct,mt,tt,rt,False{},True{})},WCon{Bool.and(F.update_bool(kh,mh,th,False{}),F.update_bool(ch,mh,th,True{})),right(j,kt,ct,mt,tt,False{},True{})},
                 Equal.cong(Bool,Word(1n+j),h => WCon{h,left(j,kt,ct,mt,tt,rt,False{},True{})},Bool.and(F.update_bool(kh,mh,th,False{}),F.update_bool(ch,mh,Bool.or(th,rh),True{})),Bool.and(F.update_bool(kh,mh,th,False{}),F.update_bool(ch,mh,th,True{})),
                   extra_bool(kh,ch,mh,th,rh,False{},True{},Equal.cong(Word(1n+j),Bool,x => Parts.head(j,x),Word.and(1n+j,WCon{kh,kt},WCon{rh,rt}),Word.zero(1n+j),empty))),
                 Equal.cong(Word(j),Word(1n+j),v => WCon{Bool.and(F.update_bool(kh,mh,th,False{}),F.update_bool(ch,mh,th,True{})),v},left(j,kt,ct,mt,tt,rt,False{},True{}),right(j,kt,ct,mt,tt,False{},True{}),
                   word(j,kt,ct,mt,tt,rt,False{},True{},Equal.cong(Word(1n+j),Word(j),x => Parts.tail(j,x),Word.and(1n+j,WCon{kh,kt},WCon{rh,rt}),Word.zero(1n+j),empty))))
-    case True{} False{}:
-      match n:
-        case 0n: {==}
-        case 1n+j:
-          match k c m t r:
-            case WCon{+kh,+kt} WCon{+ch,+ct} WCon{+mh,+mt} WCon{+th,+tt} WCon{+rh,+rt}:
+            case True{} False{}:
               Equal.trans(Word(1n+j),WCon{Bool.and(F.update_bool(kh,mh,th,True{}),F.update_bool(ch,mh,Bool.or(th,rh),False{})),left(j,kt,ct,mt,tt,rt,True{},False{})},WCon{Bool.and(F.update_bool(kh,mh,th,True{}),F.update_bool(ch,mh,th,False{})),left(j,kt,ct,mt,tt,rt,True{},False{})},WCon{Bool.and(F.update_bool(kh,mh,th,True{}),F.update_bool(ch,mh,th,False{})),right(j,kt,ct,mt,tt,True{},False{})},
                 Equal.cong(Bool,Word(1n+j),h => WCon{h,left(j,kt,ct,mt,tt,rt,True{},False{})},Bool.and(F.update_bool(kh,mh,th,True{}),F.update_bool(ch,mh,Bool.or(th,rh),False{})),Bool.and(F.update_bool(kh,mh,th,True{}),F.update_bool(ch,mh,th,False{})),
                   extra_bool(kh,ch,mh,th,rh,True{},False{},Equal.cong(Word(1n+j),Bool,x => Parts.head(j,x),Word.and(1n+j,WCon{kh,kt},WCon{rh,rt}),Word.zero(1n+j),empty))),
                 Equal.cong(Word(j),Word(1n+j),v => WCon{Bool.and(F.update_bool(kh,mh,th,True{}),F.update_bool(ch,mh,th,False{})),v},left(j,kt,ct,mt,tt,rt,True{},False{}),right(j,kt,ct,mt,tt,True{},False{}),
                   word(j,kt,ct,mt,tt,rt,True{},False{},Equal.cong(Word(1n+j),Word(j),x => Parts.tail(j,x),Word.and(1n+j,WCon{kh,kt},WCon{rh,rt}),Word.zero(1n+j),empty))))
-    case True{} True{}:
-      match n:
-        case 0n: {==}
-        case 1n+j:
-          match k c m t r:
-            case WCon{+kh,+kt} WCon{+ch,+ct} WCon{+mh,+mt} WCon{+th,+tt} WCon{+rh,+rt}:
+            case True{} True{}:
               Equal.trans(Word(1n+j),WCon{Bool.and(F.update_bool(kh,mh,th,True{}),F.update_bool(ch,mh,Bool.or(th,rh),True{})),left(j,kt,ct,mt,tt,rt,True{},True{})},WCon{Bool.and(F.update_bool(kh,mh,th,True{}),F.update_bool(ch,mh,th,True{})),left(j,kt,ct,mt,tt,rt,True{},True{})},WCon{Bool.and(F.update_bool(kh,mh,th,True{}),F.update_bool(ch,mh,th,True{})),right(j,kt,ct,mt,tt,True{},True{})},
                 Equal.cong(Bool,Word(1n+j),h => WCon{h,left(j,kt,ct,mt,tt,rt,True{},True{})},Bool.and(F.update_bool(kh,mh,th,True{}),F.update_bool(ch,mh,Bool.or(th,rh),True{})),Bool.and(F.update_bool(kh,mh,th,True{}),F.update_bool(ch,mh,th,True{})),
                   extra_bool(kh,ch,mh,th,rh,True{},True{},Equal.cong(Word(1n+j),Bool,x => Parts.head(j,x),Word.and(1n+j,WCon{kh,kt},WCon{rh,rt}),Word.zero(1n+j),empty))),
