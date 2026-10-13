@@ -10,10 +10,19 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-10-10: Shared teacher async plumbing and bounded first increment](2026-10-10-shared-teacher-async-increment.md)
+
 - [2026-10-04: Generic arena resume result validation](2026-10-04-arena-resume-result-validation.md)
 
 | Record | Scope |
 | --- | --- |
+| [Local arena adapter reuse source packet](2026-10-10-local-arena-adapter-reuse.md) | Reviewed operational adapter reuse, 11 isolated CPU contracts and future-launch preparation; no live adoption |
+| [Actual multi-bit scan_after full-Ply count](2026-10-03-bend-scan-after-count.md) | Actual arbitrary-mask scan_after full-Ply occurrence count with duplicate-tail preservation; legal target geometry and full-generator correctness remain open
+| [Closed actual multi-bit scan_after count](2026-10-03-bend-scan-after-closed-count.md) | Exact per-query in-range bit contribution plus arbitrary full-Ply tail count, checked through actual Chess.destinations and scan_after; legal geometry remains separate
+| [Actual destination factorization](2026-10-02-bend-destination-factorization.md) | Local checked ordinary-emission structure, full-Ply multiplicity and arbitrary-array scan pair; independent bitboard inventory and whole generator remain open |
+| [Actual U64 zero-predicate bridge](2026-10-02-bend-bitboard-zero-bridge.md) | Unconditional actual zero-to-structural-Word predicate bridge with two semantic controls; ctz range/selection remain open |
+| [Actual U64 ctz structural selector](2026-10-02-bend-bitboard-ctz-structural.md) | Universal Word lowbit/popcount index theorem, actual U64 ctz equality, and nonzero range/selected-bit bridges; depends on the zero bridge in PR #991 |
+| [Actual bitboard inventory at zero and singleton masks](2026-10-02-bend-bitboard-inventory.md) | Exact actual `bit_squares` zero/singleton outputs and one-hot `scan_after`/`scan`/`legal_moves` caller composition; arbitrary multi-bit inventory and whole-generator correctness remain open |
 | [Off-home king castling exclusion](2026-10-02-bend-king-away.md) | Qualified arbitrary-array actual optimized generator empty flag-2 projection under bounded off-home moving-king singleton; public-builder/history/full-generator obligations remain |
 | [Forward attack composition](2026-10-01-bend-forward-attacks.md) | Qualified source-forward witness bridge, complete initialized query pairs and direct castling composition; actual public-builder/history/ordinary/skip/full-generator obligations remain |
 | [Complete generator contract and builder blocker](2026-10-01-bend-generator-contract.md) | Actual public-builder equality exceeded the 600-second hosted bound; zero accepted laws and zero executed controls; explicit end-to-end target and residual obligations |

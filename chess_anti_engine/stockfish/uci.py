@@ -277,6 +277,12 @@ class _SearchInfoAccumulator:
             self.nodes_seen = nodes
         if depth is not None:
             self.depth_seen = max(self.depth_seen or 0, depth)
+        # `score cp|mate N lowerbound|upperbound` is the aspiration window
+        # edge, not an exact value. A node-limited search can end on that
+        # line; keeping it would replace the last exact snapshot the logistic
+        # value and policy targets read. Nodes and depth still advance.
+        if "lowerbound" in parts or "upperbound" in parts:
+            return
         if mpv == 1:
             if wdl_counts is not None:
                 self.wdl_pv1_counts = wdl_counts

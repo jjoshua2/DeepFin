@@ -1,0 +1,107 @@
+{
+  "host_validation": "PASS",
+  "repository_root": "/home/josh/projects/chess-worktrees/bend-bitboard-inventory-20261002",
+  "cpu_affinity_limit": 2,
+  "wall_seconds": 1.6557597370119765,
+  "checks": [
+    {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "native.bend_engine.standalone.proofs.bitboard_inventory.test_qualify"
+      ],
+      "exit_code": 0,
+      "output": "...\n----------------------------------------------------------------------\nRan 3 tests in 0.003s\n\nOK\n",
+      "output_sha256": "edb4e2159c923ea45a32656078835cdf531c3d7b414c670dd786978875cb0678"
+    },
+    {
+      "command": [
+        "python3",
+        "-O",
+        "-m",
+        "unittest",
+        "native.bend_engine.standalone.proofs.bitboard_inventory.test_qualify"
+      ],
+      "exit_code": 0,
+      "output": "...\n----------------------------------------------------------------------\nRan 3 tests in 0.003s\n\nOK\n",
+      "output_sha256": "edb4e2159c923ea45a32656078835cdf531c3d7b414c670dd786978875cb0678"
+    },
+    {
+      "command": [
+        "python3",
+        "-OO",
+        "-m",
+        "unittest",
+        "native.bend_engine.standalone.proofs.bitboard_inventory.test_qualify"
+      ],
+      "exit_code": 0,
+      "output": "...\n----------------------------------------------------------------------\nRan 3 tests in 0.003s\n\nOK\n",
+      "output_sha256": "edb4e2159c923ea45a32656078835cdf531c3d7b414c670dd786978875cb0678"
+    },
+    {
+      "command": [
+        "python3",
+        "-m",
+        "py_compile",
+        "native/bend_engine/standalone/proofs/bitboard_inventory/qualify.py",
+        "native/bend_engine/standalone/proofs/bitboard_inventory/test_qualify.py"
+      ],
+      "exit_code": 0,
+      "output": "",
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "/home/josh/.local/bin/ruff",
+        "check",
+        "native/bend_engine/standalone/proofs/bitboard_inventory/qualify.py",
+        "native/bend_engine/standalone/proofs/bitboard_inventory/test_qualify.py"
+      ],
+      "exit_code": 0,
+      "output": "All checks passed!\n",
+      "output_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    {
+      "command": [
+        "/home/josh/.local/bin/basedpyright",
+        "native/bend_engine/standalone/proofs/bitboard_inventory/qualify.py",
+        "native/bend_engine/standalone/proofs/bitboard_inventory/test_qualify.py"
+      ],
+      "exit_code": 0,
+      "output": "0 errors, 0 warnings, 0 notes\n",
+      "output_sha256": "56882e01cb80173ef053c4096e4ee43e3123a15f5c0a06715f96988d48fbd91c"
+    },
+    {
+      "command": [
+        "/home/josh/.local/bin/vulture",
+        "native/bend_engine/standalone/proofs/bitboard_inventory/qualify.py",
+        "native/bend_engine/standalone/proofs/bitboard_inventory/test_qualify.py"
+      ],
+      "exit_code": 0,
+      "output": "",
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "output": "",
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--cached",
+        "--check"
+      ],
+      "exit_code": 0,
+      "output": "",
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

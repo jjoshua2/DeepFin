@@ -44,7 +44,54 @@ class OnnxQuantizeConfig:
     weight_type: str = "qint8"  # qint8 | quint8
 
 
+def _relation_parameters(model: nn.Module) -> list[str]:
+    """Parameter names that make ``forward(x, relations=...)`` differ from ``forward(x)``.
+
+    The ONNX wrapper traces ``model(x)`` and publishes a single ``input_planes``
+    input. A relation-enabled trunk or policy head then exports as the
+    no-relation function: the weights are accepted and never read. Zero-init
+    hides that, because the bias is zero either way. The weights may sit on
+    the module passed in, on any registered child, or on ``_orig_mod``.
+    """
+    pending = [model]
+    seen: set[int] = set()
+    found: list[str] = []
+    while pending:
+        module = pending.pop()
+        ident = id(module)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        for name in ("dynamic_relation_weight", "policy_relation_weight"):
+            if getattr(module, name, None) is not None and name not in found:
+                found.append(name)
+        # Every registered child. A whitelist of `.module` misses the
+        # `.model` attribute `_OnnxWrapper` itself uses, and that wrapper
+        # then traces the no-relation forward.
+        pending.extend(module.children())
+        # torch.compile's eager module is not always a registered child.
+        inner = getattr(module, "_orig_mod", None)
+        if isinstance(inner, nn.Module):
+            pending.append(inner)
+    return found
+
+
 def export_onnx(model: nn.Module, *, out_path: Path, device: str = "cpu", cfg: OnnxExportConfig | None = None) -> None:
+    """Export the planes-only eager forward to ONNX.
+
+    Relation-enabled models are refused. Nothing in the import path
+    (``OnnxChessNet``) feeds a relation tensor, and the traced wrapper calls
+    ``model(x)``, so a successful export would serve the no-relation network.
+    """
+    relation_params = _relation_parameters(model)
+    if relation_params:
+        raise ValueError(
+            "ONNX export only traces input_planes; "
+            f"{', '.join(relation_params)} would be omitted and the graph would "
+            "implement the no-relation forward. Relation-enabled models are served "
+            "by the torch evaluator, which passes relations. Refusing to write a "
+            "graph that silently drops them."
+        )
     cfg = cfg or OnnxExportConfig()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 

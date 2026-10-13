@@ -301,32 +301,28 @@ def _save_trial_checkpoint(
     trainer.save(ckpt_dir / "trainer.pt")
     _write_rng_state_sidecar(ckpt_dir=ckpt_dir, rng=rng)
     save_holdout_rows(ckpt_dir=ckpt_dir, holdout_buf=holdout_buf)
-    try:
-        atomic_write_text(
-            ckpt_dir / SIDECAR_TRIAL_META,
-            json.dumps({
-                "owner_trial_id": str(trial_id),
-                "owner_trial_dir": str(trial_dir.resolve()),
-                "optimizer": str(config.get("optimizer", "nadamw")).lower(),
-                "base_seed": int(base_seed),
-                "active_seed": int(restore.active_seed),
-                "startup_source": str(restore.startup_source),
-                "salvage_origin_used": bool(restore.salvage_origin_used),
-                "salvage_origin_slot": int(restore.salvage_origin_slot),
-                "salvage_origin_slots_total": int(restore.salvage_origin_slots_total),
-                "salvage_origin_dir": str(restore.salvage_origin_dir),
-                "global_iter": int(iteration_idx),
-                "current_window": int(current_window),
-                "holdout_frozen": bool(holdout_frozen),
-                "holdout_generation": int(holdout_generation),
-                "holdout_ruler": str(holdout_ruler),
-                "opp_strength_ema": float(opp_strength_ema),
-                "yaml_keys": sorted(yaml_keys),
-            }, sort_keys=True, indent=2),
-        )
-    except (OSError, TypeError, ValueError) as exc:
-        # trial_meta drives exploit-clone owner tracking; loud failure is the right call.
-        log.warning("[trial] failed to write trial_meta.json: %s", exc)
+    atomic_write_text(
+        ckpt_dir / SIDECAR_TRIAL_META,
+        json.dumps({
+            "owner_trial_id": str(trial_id),
+            "owner_trial_dir": str(trial_dir.resolve()),
+            "optimizer": str(config.get("optimizer", "nadamw")).lower(),
+            "base_seed": int(base_seed),
+            "active_seed": int(restore.active_seed),
+            "startup_source": str(restore.startup_source),
+            "salvage_origin_used": bool(restore.salvage_origin_used),
+            "salvage_origin_slot": int(restore.salvage_origin_slot),
+            "salvage_origin_slots_total": int(restore.salvage_origin_slots_total),
+            "salvage_origin_dir": str(restore.salvage_origin_dir),
+            "global_iter": int(iteration_idx),
+            "current_window": int(current_window),
+            "holdout_frozen": bool(holdout_frozen),
+            "holdout_generation": int(holdout_generation),
+            "holdout_ruler": str(holdout_ruler),
+            "opp_strength_ema": float(opp_strength_ema),
+            "yaml_keys": sorted(yaml_keys),
+        }, sort_keys=True, indent=2),
+    )
     return Checkpoint.from_directory(str(ckpt_dir))
 
 

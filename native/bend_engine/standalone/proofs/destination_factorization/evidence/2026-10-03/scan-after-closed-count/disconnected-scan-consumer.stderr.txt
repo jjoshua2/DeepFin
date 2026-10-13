@@ -1,0 +1,15 @@
+Error:
+- expected : Spec.count(../../../legal_probe/Chess.destinations(64n, U64.is_zero(targets), targets, src, pawn, ep, tail), query)
+- observed : Nat.add(Bool.pick(Nat, Bool.and(Cmp.is_lt(Nat.cmp(U32.to_nat(QueryCount.ply_destination(query)), 64n)), Bool.not(Cmp.is_eq(U64.cmp(U64.and(targets, U64.shln.go(Nat.min(U32.to_nat(QueryCount.ply_destination(query)), 64n), U64{1, 0})), U64{0, 0})))), QueryCount.fields_emission_count(Bool.and(pawn, Bool.or(Cmp.is_eq(U32.cmp(U32.div(QueryCount.ply_destination(query), 8), 0)), Cmp.is_eq(U32.cmp(U32.div(QueryCount.ply_destination(query), 8), 7)))), src, QueryCount.ply_destination(query), Bool.to_u32(Bool.and(pawn, Cmp.is_eq(U32.cmp(QueryCount.ply_destination(query), ep)))), query), 0n), Spec.count(tail, query))
+Context:
+- table   : Array<U64>
+- targets : U64
+- src     : U32
+- pawn    : Bool
+- ep      : U32
+- query   : ../../../legal_probe/Chess.Ply
+- tail    : List<&2, ../../../legal_probe/Chess.Ply>
+Location: use_scan_after_closed_count
+70 |       QFactor.query_emission_count(src,pawn,ep,query),0n),S.count(tail,query)) : Nat}:
+71>|   {==}
+72 | 

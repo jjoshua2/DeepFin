@@ -267,7 +267,9 @@ def test_batch_descend_virtual_mean_pending_does_not_turn_pending_into_loss():
         tree.apply_vloss_path(np.array([rid, good], dtype=np.int32))
         return tree, rid, good, ok
 
-    tree_legacy, rid_legacy, _good_legacy, ok_legacy = make_tree()
+    tree_legacy, rid_legacy, good_legacy, ok_legacy = make_tree()
+    assert tree_legacy.get_virtual_loss(good_legacy) == 1
+    assert tree_legacy.get_virtual_loss(rid_legacy) == 0  # root is omitted
     enc, leaf_ids, path_buf, path_lens, legal_buf, legal_lens, term_qs, is_term = (
         _descend_buffers(1)
     )
@@ -279,10 +281,24 @@ def test_batch_descend_virtual_mean_pending_does_not_turn_pending_into_loss():
     )
     assert int(leaf_ids[0]) == ok_legacy
 
+    tree_zero, rid_zero, good_zero, _ok_zero = make_tree()
+    enc, leaf_ids, path_buf, path_lens, legal_buf, legal_lens, term_qs, is_term = (
+        _descend_buffers(1)
+    )
+    tree_zero.batch_descend_puct(
+        rid_zero, cb, 1, 0.0, 0.0, 0.2, 0,
+        enc, leaf_ids, path_buf, path_lens,
+        legal_buf, legal_lens, term_qs, is_term,
+        1,
+    )
+    assert int(leaf_ids[0]) == good_zero
+    assert tree_zero.get_virtual_loss(good_zero) == 1  # weight zero ignores it
+
     tree_vm, rid_vm, good_vm, _ok_vm = make_tree()
     enc, leaf_ids, path_buf, path_lens, legal_buf, legal_lens, term_qs, is_term = (
         _descend_buffers(1)
     )
+    # Weight 16 covers non-unit virtual-visit weighting in virtual-mean mode.
     tree_vm.batch_descend_puct(
         rid_vm, cb, 1, 0.0, 0.0, 0.2, 16,
         enc, leaf_ids, path_buf, path_lens,
@@ -290,3 +306,91 @@ def test_batch_descend_virtual_mean_pending_does_not_turn_pending_into_loss():
         1,
     )
     assert int(leaf_ids[0]) == good_vm
+
+
+def test_virtual_mean_counts_nested_pending_descents_once():
+    """Simultaneous L and D work contributes two visits, not three."""
+    board = chess.Board()
+    cb = CBoard.from_board(board)
+    root_action = int(cb.legal_move_indices()[0])
+    child_cb = cb.copy()
+    child_cb.push_index(root_action)
+    actions = child_cb.legal_move_indices().astype(np.int32)[:2]
+    tree = MCTSTree()
+    root = tree.add_root(0, 0.0)
+    tree.expand(root, np.array([root_action], dtype=np.int32), np.array([1.0]))
+    parent = tree.find_child(root, root_action)
+    tree.expand(parent, actions, np.array([0.9, 0.1]))
+    a = tree.find_child(parent, int(actions[0]))
+    expected = tree.find_child(parent, int(actions[1]))
+    for _ in range(2):
+        tree.backprop(np.array([parent, a], np.int32), 0.0)
+    tree.backprop(np.array([parent, expected], np.int32), -0.585)
+    tree.apply_vloss_path(np.array([root, parent], np.int32))  # L ends at parent
+    tree.apply_vloss_path(np.array([root, parent, a], np.int32))  # D below parent
+    assert tree.get_virtual_loss(parent) == 2
+    assert tree.get_virtual_loss(a) == 1
+    enc, leaf_ids, path_buf, path_lens, legal_buf, legal_lens, term_qs, is_term = _descend_buffers(1)
+    tree.batch_descend_puct(
+        root, cb, 1, 1.0, 0.0, 0.0, 1,
+        enc, leaf_ids, path_buf, path_lens,
+        legal_buf, legal_lens, term_qs, is_term, 1,
+    )
+    assert int(leaf_ids[0]) == expected
+
+
+def test_virtual_mean_counts_parent_leaf_and_sibling_descents_once_each():
+    """L plus two sibling D paths count as three pending visits, not five."""
+    board = chess.Board()
+    cb = CBoard.from_board(board)
+    root_action = int(cb.legal_move_indices()[0])
+    child_cb = cb.copy()
+    child_cb.push_index(root_action)
+    actions = child_cb.legal_move_indices().astype(np.int32)[:2]
+    tree = MCTSTree()
+    root = tree.add_root(0, 0.0)
+    tree.expand(root, np.array([root_action], dtype=np.int32), np.array([1.0]))
+    parent = tree.find_child(root, root_action)
+    tree.expand(parent, actions, np.array([0.9, 0.1]))
+    a, b = (tree.find_child(parent, int(action)) for action in actions)
+    for _ in range(2):
+        tree.backprop(np.array([parent, a], dtype=np.int32), 0.0)
+    tree.backprop(np.array([parent, b], dtype=np.int32), -0.65)
+
+    tree.apply_vloss_path(np.array([root, parent], dtype=np.int32))  # L
+    tree.apply_vloss_path(np.array([root, parent, a], dtype=np.int32))  # D
+    tree.apply_vloss_path(np.array([root, parent, b], dtype=np.int32))  # sibling D
+
+    assert tree.get_virtual_loss(root) == 0
+    assert tree.get_virtual_loss(parent) == 3  # L + two descendants
+    assert tree.get_virtual_loss(a) == 1
+    assert tree.get_virtual_loss(b) == 1
+    enc, leaf_ids, path_buf, path_lens, legal_buf, legal_lens, term_qs, is_term = (
+        _descend_buffers(1)
+    )
+    tree.batch_descend_puct(
+        root, cb, 1, 1.0, 0.0, 0.0, 1,
+        enc, leaf_ids, path_buf, path_lens,
+        legal_buf, legal_lens, term_qs, is_term,
+        1,
+    )
+    # max(parent_vl=3, child_sum=2) picks b; double-counting to 5 picks a.
+    assert int(leaf_ids[0]) == b
+
+
+def test_walker_integration_replaces_pending_with_real_visit():
+    """Removal before backup leaves no pending residue and adds one visit."""
+    tree, rid, _cb, legal = _root(chess.Board())
+    path = np.array([rid, tree.find_child(rid, int(legal[0]))], dtype=np.int32)
+    tree.apply_vloss_path(path)
+    assert tree.get_virtual_loss(int(path[1])) == 1
+
+    tree.walker_integrate_leaf(
+        path, legal.astype(np.int32), np.zeros(_POL_SIZE, dtype=np.float32),
+        np.array([0.0, 1.0, 0.0], dtype=np.float32), 1,
+    )
+
+    assert tree.get_virtual_loss(int(path[1])) == 0
+    actions, visits = tree.get_children_visits(rid)
+    idx = int(np.flatnonzero(actions == int(legal[0]))[0])
+    assert int(visits[idx]) == 1

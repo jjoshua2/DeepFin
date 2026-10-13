@@ -1,0 +1,71 @@
+{
+  "artifact_type": "sanitized qualification summary",
+  "qualification": "PASS",
+  "proof_scope": "Actual Chess.piece_targets pawn branch and Chess.scan_step pawn branch; exact source target formula paired with arbitrary target mask; full-Ply occurrence count after Chess.scan_after; arbitrary duplicate-containing tail multiplicity preserved. Pseudo-attack emission/counting only; no board-validity, legal-move, or king-safety claim.",
+  "pinned_checker": {
+    "repository": "jjoshua2/bend",
+    "version": "2.0.21+U64",
+    "revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+    "files": 84,
+    "fingerprint_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+    "manifest_sha256": "384b5c91ffe52ca500d178b1be356bf2aef2e387c0e95ba7199b943820b40df1"
+  },
+  "source_identity": {
+    "files": 123,
+    "sha256": "b65424730a6b3841d62385b74b9f6bfd2b91dd19befa25e56fcfd102fdfccdd8"
+  },
+  "full_local_qualification_receipt_sha256": "e79dfeb53e5c2043675d3842ba911d0704519e5f1db291eca479fd7254d8069b",
+  "command_template": "python3 qualify_pawn_scan_count.py \"$COMPILER_ROOT\" --checker-manifest \"$CHECKER_MANIFEST\" --report \"$REPORT_JSON\" --evidence-dir \"$EVIDENCE_DIR\"",
+  "limits": {
+    "positive_timeout_seconds": 86400,
+    "cpu_affinity": "2 CPUs",
+    "address_space_cap_bytes": 6442450944,
+    "stdout_stderr_cap_bytes": 65536
+  },
+  "positive_check": {
+    "name": "consumer",
+    "passed": true,
+    "elapsed_seconds": 24.39027370599797,
+    "max_rss_kib": 1300228,
+    "stdout_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "negative_controls": [
+    {
+      "name": "single-push-occupancy",
+      "rejected_at_expected_obligation": true,
+      "stderr_sha256": "fc84079b475a8a6a07a164f843128806ce9fccfe8c2226740ca3bdfc48404e49"
+    },
+    {
+      "name": "wrong-double-push-rank",
+      "rejected_at_expected_obligation": true,
+      "stderr_sha256": "8be8cc273cd150d7c3faa563d956b51584ad768305e5a6a61256b2a665556931"
+    },
+    {
+      "name": "missing-ep-target-validation",
+      "rejected_at_expected_obligation": true,
+      "stderr_sha256": "628930eaedd3f73af1d9b88fb8df3024bfd8935ee4a229f2dcce8855c3eb88f0"
+    },
+    {
+      "name": "wrong-promotion-fields",
+      "rejected_at_expected_obligation": true,
+      "stderr_sha256": "58bc18e8170d045dd69334a4613b10f657288230a2bac606d496f509a6186a0e"
+    },
+    {
+      "name": "wrong-en-passant-flag",
+      "rejected_at_expected_obligation": true,
+      "stderr_sha256": "a837ec59d3283eca317b2690387519723af867e7bab3d11243de8857b018598e"
+    },
+    {
+      "name": "dropped-duplicate-tail",
+      "rejected_at_expected_obligation": true,
+      "stderr_sha256": "172905d68f132522c8f0c7b9f6a07cd1ec1e7a954be799f4576a8579e71d2583"
+    },
+    {
+      "name": "disconnected-scan-consumer",
+      "rejected_at_expected_obligation": true,
+      "stderr_sha256": "9f802ecb7cfcb058a7599d87670eb4cf66380263a2111ccc0e22ee3671560c88"
+    }
+  ],
+  "notes": "Raw checker streams and local absolute paths are intentionally omitted; stdout/stderr byte counts and SHA-256 digests are retained in the local evidence set."
+}

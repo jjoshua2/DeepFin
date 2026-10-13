@@ -998,6 +998,26 @@ static int cae_nnue_bind(CaeNnueWeights *w, char *err, size_t errlen) {
             cae_nnue_err(err, errlen, "pack tensor %d runs outside the file", i);
             return -1;
         }
+        if (h->off[i] % 64u != 0u) {
+            cae_nnue_err(err, errlen,
+                         "pack tensor %d offset %llu is not 64-byte aligned", i,
+                         (unsigned long long)h->off[i]);
+            return -1;
+        }
+        for (int j = 0; j < i; j++) {
+            /* The bounds checks above make both subtractions safe, including
+             * for hostile uint64 offsets. Distinct tensor regions are part of
+             * pack v1's schema; aliasing an in-bounds tensor would load
+             * plausible but unrelated weights and silently change evaluation. */
+            if ((h->off[j] <= h->off[i]
+                 && sizes[j] > h->off[i] - h->off[j])
+                || (h->off[i] < h->off[j]
+                    && sizes[i] > h->off[j] - h->off[i])) {
+                cae_nnue_err(err, errlen,
+                             "pack tensors %d and %d overlap", j, i);
+                return -1;
+            }
+        }
     }
 
     const uint8_t *base = (const uint8_t *)w->map;

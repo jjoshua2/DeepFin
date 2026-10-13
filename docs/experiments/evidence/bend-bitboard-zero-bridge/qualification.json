@@ -1,0 +1,99 @@
+{
+  "gate": "PASS",
+  "compiler_identity": {
+    "command": [
+      "/home/josh/.bun/bin/bun",
+      "/home/josh/projects/chess-worktrees/bend-bitboard-zero-bridge-20261002/native/bend_engine/standalone/verify_compiler.js",
+      "/tmp/deepfin-king-away-checker-aaeb9bc"
+    ],
+    "exit_code": 0,
+    "timed_out": false,
+    "seconds": 0.0987606180133298,
+    "output": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\n",
+    "output_sha256": "5d6d5f2cbe9e1dc09eff86539ca70ea17ac829cba622a107cb4373e33d88de5f"
+  },
+  "source_sha256s": {
+    "/home/josh/projects/chess-worktrees/bend-bitboard-zero-bridge-20261002/native/bend_engine/standalone/proofs/bitboard_zero_bridge/Bridge.bend": "37f09e7e3adbeeef1f09f499b0d7e874e05cd2ffcea6ae295f51bdd7d58bb819",
+    "/home/josh/projects/chess-worktrees/bend-bitboard-zero-bridge-20261002/native/bend_engine/standalone/proofs/bitboard_zero_bridge/consumer.bend": "4ae536ed772f73f0a880195bc43e4fb439b2ff21736f591d846b6e1dd1d96595",
+    "/home/josh/projects/chess-worktrees/bend-bitboard-zero-bridge-20261002/native/bend_engine/standalone/proofs/bitboard_inventory/ClearStep.bend": "c6228e39b7d3c2a3059f1d61c7ad96e4e2fff885e6123623d76bcc05fa23dc8a",
+    "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/base.bend": "86747736186e77ed9cb02555385026ef2eebe4e84efbcd29773e3b51b5f571a1"
+  },
+  "positive_checks": [
+    {
+      "entry": "Bridge.bend",
+      "passed": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/home/josh/projects/chess-worktrees/bend-bitboard-zero-bridge-20261002/native/bend_engine/standalone/proofs/bitboard_zero_bridge/Bridge.bend",
+          "--check-only"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "seconds": 0.5300150869879872,
+        "output": "All terms check.\n",
+        "output_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+      }
+    },
+    {
+      "entry": "consumer.bend",
+      "passed": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/home/josh/projects/chess-worktrees/bend-bitboard-zero-bridge-20261002/native/bend_engine/standalone/proofs/bitboard_zero_bridge/consumer.bend",
+          "--check-only"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "seconds": 0.39660468700458296,
+        "output": "All terms check.\n",
+        "output_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+      }
+    }
+  ],
+  "controls": [
+    {
+      "name": "consumer-proof-call-disconnected",
+      "rejected": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/deepfin-king-away-checker-aaeb9bc/bend2/main.ts",
+          "/tmp/bend-zero-bridge-controls-h12pe6_h/engine/standalone/proofs/bitboard_zero_bridge/consumer.bend",
+          "--check-only"
+        ],
+        "exit_code": 1,
+        "timed_out": false,
+        "seconds": 0.45268143102293834,
+        "output": "Error:\n- expected : U64.is_zero(a)\n- observed : ../bitboard_inventory/ClearStep.is_zero_word(64n, U64.to_word(a))\nContext:\n- a : U64\nLocation: use_actual_u64_zero_word\n6 |   {U64.is_zero(a) == ClearStep.is_zero_word(64n,U64.to_word(a)) : Bool}:\n7>|   {==}\n8 | \n",
+        "output_sha256": "408cfb8c8aa4e31601344c7433f016ae58fd370610ebb6698ef8776e12f60cd8"
+      }
+    },
+    {
+      "name": "actual-u64-is-zero-definition-mutated",
+      "rejected": true,
+      "result": {
+        "command": [
+          "/home/josh/.bun/bin/bun",
+          "--smol",
+          "/tmp/bend-zero-bridge-base-control-c1ym7rmq/compiler/bend2/main.ts",
+          "/home/josh/projects/chess-worktrees/bend-bitboard-zero-bridge-20261002/native/bend_engine/standalone/proofs/bitboard_zero_bridge/consumer.bend",
+          "--check-only"
+        ],
+        "exit_code": 1,
+        "timed_out": false,
+        "seconds": 0.35201836298801936,
+        "output": "Error:\n- expected : {True{} == Bool.and(../bitboard_inventory/ClearStep.is_zero_word(32n, lo), ../bitboard_inventory/ClearStep.is_zero_word(32n, hi)) : Bool}\n- observed : {Bool.and(Cmp.is_eq(Word.cmp(32n, lo, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WNil{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}})), Cmp.is_eq(Word.cmp(32n, hi, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WNil{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}))) == Bool.and(../bitboard_inventory/ClearStep.is_zero_word(32n, lo), ../bitboard_inventory/ClearStep.is_zero_word(32n, hi)) : Bool}\nContext:\n- lo : Word.Con<31n>\n- hi : Word.Con<31n>\nLocation: Bridge.u64_is_zero_word\n62 |         ClearStep.is_zero_word(64n,Word.join(32n,32n,lo,hi)),\n63>|         Equal.trans(Bool,\n64 |           Bool.and(U32.is_zero(U32{lo}),U32.is_zero(U32{hi})),\n",
+        "output_sha256": "1e089461ef281b1dcc8eced69a10235b96fd5e710cd3683380edee98f2193dce"
+      }
+    }
+  ],
+  "control_timeout_seconds": 120,
+  "source_unchanged": true
+}

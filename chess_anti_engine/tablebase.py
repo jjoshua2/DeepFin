@@ -242,57 +242,141 @@ def probe_wdl(board: chess.Board, syzygy_path: str) -> int | None:
     return 1
 
 
-def probe_best_move(board: chess.Board, syzygy_path: str) -> chess.Move | None:
-    """DTZ-optimal move that preserves the current WDL category.
+# DTZ of the move that just zeroed the counter, from the mover's point of
+# view. Tables do not store a DTZ for the zeroing move itself; the next
+# phase's DTZ is a different counter. Stockfish recovers it from the child
+# WDL the same way (`dtz_before_zeroing`).
+_DTZ_BEFORE_ZEROING = {2: 1, 1: 101, 0: 0, -1: -101, -2: -1}
+_TB_PROBE_ERRORS = (KeyError, chess.syzygy.MissingTableError, IndexError)
 
-    Returns ``None`` if the position isn't eligible, the probe fails, or
-    no move preserves the WDL class (which shouldn't happen for a solved
-    position but we defend against anyway).
+
+def _dtz_of_played_move(child: chess.Board, tablebase: chess.syzygy.Tablebase) -> int:
+    """DTZ of the move that produced ``child``, from the mover's perspective.
+
+    ``child`` is the position after the move. A zeroing move (counter already
+    0) is distance 1 or 101, not the length of the following phase.
+    Non-zeroing moves negate the child's DTZ and add the ply just played.
+    Checkmate outranks a 50-move claim on the same position; a claimable
+    draw is distance 0 because the tables assume a fresh counter and do not
+    know this game's history.
     """
+    if child.is_checkmate():
+        return 1
+    # A claim the side to move could reach by playing on is not a draw yet:
+    # can_claim_draw() is true at halfmove 99 whenever a quiet move exists.
+    # Stockfish zeros DTZ only for a draw that has already happened
+    # (is_draw / is_repetition at one ply).
+    if (
+        child.is_stalemate()
+        or child.is_insufficient_material()
+        or child.is_fifty_moves()
+        or child.is_repetition(3)
+    ):
+        return 0
+    if child.halfmove_clock == 0:
+        our_wdl = -int(tablebase.probe_wdl(child))
+        try:
+            return _DTZ_BEFORE_ZEROING[our_wdl]
+        except KeyError as exc:
+            raise KeyError(f"invalid syzygy wdl {our_wdl}") from exc
+    child_dtz = int(tablebase.probe_dtz(child))
+    if child_dtz > 0:
+        return -child_dtz - 1
+    if child_dtz < 0:
+        return -child_dtz + 1
+    return 0
+
+
+def _rule50_dtz_key(dtz: int, halfmove_clock: int) -> tuple[int, int]:
+    """Higher is better. ``halfmove_clock`` is the counter before the move.
+
+    These classes are Stockfish ``root_probe``'s rank buckets, not the
+    score. A win with ``dtz + counter <= 99`` outranks every later win,
+    including one that still wins at ``== 100``. A loss in the
+    ``-dtz * 2 + counter < 100`` bucket outranks no softer loss; inside a
+    losing bucket the longer distance is better. The score of the chosen
+    move is :func:`_wdl_adjusted_for_rule50`.
+    """
+    if dtz > 0:
+        strict = dtz + halfmove_clock <= 99
+        return (2 if strict else 1, -dtz)
+    if dtz < 0:
+        hard_loss = (-dtz * 2 + halfmove_clock) < 100
+        return (-2 if hard_loss else -1, -dtz)
+    return (0, 0)
+
+
+def _wdl_adjusted_for_rule50(dtz: int, halfmove_clock: int) -> int:
+    """±2 when that result still holds at this counter.
+
+    A win survives through ``dtz + counter == 100`` (the move that lands
+    on the boundary still zeroed in time, or the opponent is not yet able
+    to claim). A loss is certain through ``|dtz| + counter == 100``. The
+    stricter ``<= 99`` and ``* 2`` tests are rank buckets only; using them
+    here reports a real win or loss as a draw.
+    """
+    if dtz > 0:
+        return 2 if dtz + halfmove_clock <= 100 else 1
+    if dtz < 0:
+        return -2 if -dtz + halfmove_clock <= 100 else -1
+    return 0
+
+
+def _select_dtz_move(
+    board: chess.Board, syzygy_path: str,
+) -> tuple[chess.Move, int] | None:
+    """Best legal move and its DTZ from the mover's perspective."""
     if not is_tb_eligible(board):
         return None
-    tb = get_tablebase(syzygy_path)
-    if tb is None:
+    # Automatic draws have already ended the game. A claimable draw may
+    # still be declined in favor of a zeroing move or immediate mate.
+    if board.is_game_over(claim_draw=False):
         return None
-    try:
-        root_wdl = tb.probe_wdl(board)
-    except (KeyError, chess.syzygy.MissingTableError):
+    tablebase = get_tablebase(syzygy_path)
+    if tablebase is None:
         return None
-
+    halfmove = board.halfmove_clock
     best_move: chess.Move | None = None
-    best_dtz: int | None = None
-
+    best_key: tuple[int, int] | None = None
+    best_dtz = 0
     for move in board.legal_moves:
         board.push(move)
         try:
-            child_dtz = tb.probe_dtz(board)
-        except (KeyError, chess.syzygy.MissingTableError):
+            try:
+                dtz = _dtz_of_played_move(board, tablebase)
+            except _TB_PROBE_ERRORS:
+                # Incomplete children cannot prove this root shortcut optimal.
+                return None
+            except Exception as exc:
+                _log.debug(
+                    "syzygy move probe failed %s %s: %r", board.fen(), move, exc,
+                )
+                return None
+        finally:
             board.pop()
-            continue
-        board.pop()
-
-  # After our move, it's opponent's turn. ``child_dtz`` is DTZ from
-  # their perspective: negative if they're losing (we're winning),
-  # positive if they're winning (we're losing), 0 on draw.
-  #
-  # We always MAXIMIZE child_dtz, regardless of WDL class:
-  #   * winning: child_dtz ∈ (-∞, 0). Largest = least negative =
-  #     smallest |dtz| = opponent converts fastest = we win fastest.
-  #   * drawing: child_dtz == 0 (filter), trivially max.
-  #   * losing: child_dtz ∈ (0, +∞). Largest = most plies before
-  #     opponent can zero = we survive longest.
-        if root_wdl > 0 and child_dtz >= 0:
-            continue  # winning move must leave opponent in a lost position
-        if root_wdl == 0 and child_dtz != 0:
-            continue  # drawing move must leave opponent at dtz=0
-        if root_wdl < 0 and child_dtz <= 0:
-            continue  # from a loss, only care about longer-survival options
-
-        if best_dtz is None or child_dtz > best_dtz:
-            best_dtz = child_dtz
+        key = _rule50_dtz_key(dtz, halfmove)
+        if best_key is None or key > best_key:
+            best_key = key
             best_move = move
+            best_dtz = dtz
+    if best_move is None:
+        return None
+    return best_move, best_dtz
 
-    return best_move
+
+def probe_best_move(board: chess.Board, syzygy_path: str) -> chess.Move | None:
+    """DTZ-optimal move that preserves a 50-move result when one is available.
+
+    A capture or pawn move is ranked by the fact that it zeroed the counter,
+    not by the next phase's DTZ. Non-zeroing moves add the root halfmove
+    clock, so a short table distance that crosses the 50-move boundary loses
+    to a zeroing move that keeps the win. Returns ``None`` if the position
+    is ineligible, already finished, or any legal child probe fails.
+    """
+    picked = _select_dtz_move(board, syzygy_path)
+    if picked is None:
+        return None
+    return picked[0]
 
 
 def rescore_game_samples(
@@ -342,31 +426,27 @@ def tb_adjudicate_result(
 def try_tb_root_move(
     board: chess.Board, syzygy_path: str,
 ) -> tuple[chess.Move, int] | None:
-    """Return the DTZ-optimal move and raw ``probe_wdl`` value (-2..2 from
-    STM's perspective) for ``board``, or None if the root isn't TB-eligible
-    or the probe fails.
+    """Return the DTZ-optimal move and the rule50-adjusted WDL of that move.
 
-    Used by UCI's root shortcut to bypass MCTS entirely when the root is
-    in TB range, and by selfplay to play TB-optimal moves in endgame
-    sequences. Caller decides how to interpret the WDL value (UCI uses
-    saturated cp, selfplay uses the training-label mapping).
+    The WDL is from the side to move. +2 means the chosen line still wins
+    with this counter (``dtz + halfmove_clock <= 100``); -2 means it still
+    loses (``|dtz| + halfmove_clock <= 100``). +1 and -1 are results the
+    50-move rule draws, which UCI's root shortcut already maps to score 0.
+    Zeroing moves reset the counter; immediate mate takes precedence over
+    a draw reached by that move. Already finished roots return ``None``.
+    Raw ``probe_wdl`` assumes the counter is zero and is not what this returns.
+
+    Used by UCI's root shortcut to bypass MCTS when the root is in TB range.
     """
-    if not is_tb_eligible(board):
+    picked = _select_dtz_move(board, syzygy_path)
+    if picked is None:
         return None
-    best = probe_best_move(board, syzygy_path)
-    if best is None:
-        return None
-    tb = get_tablebase(syzygy_path)
-    if tb is None:
-        return None
-    try:
-        wdl_val = tb.probe_wdl(board)
-    except (KeyError, chess.syzygy.MissingTableError, IndexError):
-        return None
-    except Exception as exc:
-        _log.debug("syzygy probe_wdl failed at root %s: %r", board.fen(), exc)
-        return None
-    return best, int(wdl_val)
+    move, dtz = picked
+    child = board.copy(stack=False)
+    child.push(move)
+    # A zeroing move resets the counter; mate ends the game before a claim.
+    counter = 0 if child.halfmove_clock == 0 or child.is_checkmate() else board.halfmove_clock
+    return move, _wdl_adjusted_for_rule50(dtz, counter)
 
 
 # ---- In-search WDL overrides ------------------------------------------------
