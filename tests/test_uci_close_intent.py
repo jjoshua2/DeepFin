@@ -138,7 +138,9 @@ def test_prelaunch_warmup_error_releases_custody(monkeypatch):
     worker = _worker()
     worker._chunk_sims = "invalid"
     engine = Engine(worker=worker)
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match=r"invalid literal for int\(\) with base 10: 'invalid'",
+    ):
         engine.warmup_search()
     worker.run.assert_not_called()
     engine.close()
@@ -193,7 +195,8 @@ def test_cli_eof_suppresses_late_result_without_retiring_live_worker(monkeypatch
     try:
         assert uci_main.main() == 1, "non-quiescent EOF must report shutdown failure"
         thread = engine._search_thread
-        assert thread is not None and thread.is_alive()
+        assert thread is not None
+        assert thread.is_alive()
         worker.close.assert_not_called()
     finally:
         release.set()
