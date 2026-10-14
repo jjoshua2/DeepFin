@@ -679,7 +679,7 @@ def test_async_sf_labels_cap_preserves_existing_failure_policy(
     health: list[dict] = []
     monkeypatch.setattr(stockfish_turn, "_report_sf_label_health", lambda **kw: health.append(kw))
 
-    def fail_processing(*args, **kwargs) -> None:
+    def fail_processing(*_args, **_kwargs) -> None:
         raise RuntimeError("injected label processing failure")
 
     if failure_stage == "engine":
