@@ -108,19 +108,22 @@ def test_walker_pool_accumulates_visits() -> None:
                          fpu_reduction=0.33, vloss_weight=3),
         dispatcher,
     )
-    stop = threading.Event()
-    pool.run(tree=tree, root_id=rid, root_cboard=root_cb,
-             target_sims=64, stop_event=stop)
+    try:
+        stop = threading.Event()
+        pool.run(tree=tree, root_id=rid, root_cboard=root_cb,
+                 target_sims=64, stop_event=stop)
 
-    # Every sim backprops one visit to root, so N(root) must equal claims.
-    actions, visits = tree.get_children_visits(rid)
-    assert actions.size > 0
-    total_child_visits = int(visits.sum())
-    # Walkers cap at 64 claims; backprops accumulate at root.
-    assert 32 <= total_child_visits <= 64
-    # All virtual loss unwound.
-    for nid in range(tree.node_count()):
-        assert tree.get_virtual_loss(nid) == 0, f"vl leaked on node {nid}"
+        # Every sim backprops one visit to root, so N(root) must equal claims.
+        actions, visits = tree.get_children_visits(rid)
+        assert actions.size > 0
+        total_child_visits = int(visits.sum())
+        # Walkers cap at 64 claims; backprops accumulate at root.
+        assert 32 <= total_child_visits <= 64
+        # All virtual loss unwound.
+        for nid in range(tree.node_count()):
+            assert tree.get_virtual_loss(nid) == 0, f"vl leaked on node {nid}"
+    finally:
+        pool.close()
 
 
 def test_walker_pool_gather_amplifies_batch() -> None:
@@ -160,21 +163,24 @@ def test_walker_pool_gather_amplifies_batch() -> None:
                          fpu_reduction=0.33, vloss_weight=3, gather=4),
         rec,
     )
-    stop = threading.Event()
-    # 16 sims / gather=4 → expect ~4 submits, each of size ≤4.
-    pool.run(tree=tree, root_id=rid, root_cboard=root_cb,
-             target_sims=16, stop_event=stop)
+    try:
+        stop = threading.Event()
+        # 16 sims / gather=4 → expect ~4 submits, each of size ≤4.
+        pool.run(tree=tree, root_id=rid, root_cboard=root_cb,
+                 target_sims=16, stop_event=stop)
 
-    assert rec.submit_sizes, "no NN calls recorded"
-    assert max(rec.submit_sizes) > 1, (
-        f"gather=4 should yield batch>1; got {rec.submit_sizes}"
-    )
-    # Sum of submitted leaves equals non-terminal descents (≤ target).
-    total = sum(rec.submit_sizes)
-    assert 1 <= total <= 16, f"submitted {total} leaves for target=16"
-    # No virtual loss leaked.
-    for nid in range(tree.node_count()):
-        assert tree.get_virtual_loss(nid) == 0, f"vl leaked on node {nid}"
+        assert rec.submit_sizes, "no NN calls recorded"
+        assert max(rec.submit_sizes) > 1, (
+            f"gather=4 should yield batch>1; got {rec.submit_sizes}"
+        )
+        # Sum of submitted leaves equals non-terminal descents (≤ target).
+        total = sum(rec.submit_sizes)
+        assert 1 <= total <= 16, f"submitted {total} leaves for target=16"
+        # No virtual loss leaked.
+        for nid in range(tree.node_count()):
+            assert tree.get_virtual_loss(nid) == 0, f"vl leaked on node {nid}"
+    finally:
+        pool.close()
 
 
 def test_walker_pool_gather_default_is_one() -> None:
@@ -213,14 +219,17 @@ def test_walker_pool_gather_default_is_one() -> None:
                          fpu_reduction=0.33, vloss_weight=3),  # gather default=1
         rec,
     )
-    stop = threading.Event()
-    pool.run(tree=tree, root_id=rid, root_cboard=root_cb,
-             target_sims=8, stop_event=stop)
-    # Every submit is single-leaf when gather=1 and walker=1.
-    assert rec.submit_sizes
-    assert all(n == 1 for n in rec.submit_sizes), (
-        f"gather=1 should give only batch=1 submits; got {rec.submit_sizes}"
-    )
+    try:
+        stop = threading.Event()
+        pool.run(tree=tree, root_id=rid, root_cboard=root_cb,
+                 target_sims=8, stop_event=stop)
+        # Every submit is single-leaf when gather=1 and walker=1.
+        assert rec.submit_sizes
+        assert all(n == 1 for n in rec.submit_sizes), (
+            f"gather=1 should give only batch=1 submits; got {rec.submit_sizes}"
+        )
+    finally:
+        pool.close()
 
 
 def test_walker_pool_stop_event_shortens_run() -> None:

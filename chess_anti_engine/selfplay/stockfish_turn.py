@@ -21,7 +21,7 @@ import logging
 import math
 import threading
 from collections.abc import Sequence
-from concurrent.futures import FIRST_COMPLETED, wait
+from concurrent.futures import FIRST_COMPLETED, Future, wait
 from dataclasses import dataclass
 from typing import Any
 
@@ -384,6 +384,10 @@ class _PendingSfLabel:
     # (shallow) StockfishResult, attached later as ``rec.sf_wdl_original``
     # (and the airbag fallback if the deep re-query itself fails).
     escalated_from_res: Any = None
+    # A resumed descriptor has no future until a bounded pool slot is free.
+    query_nodes: int | None = None
+    resumed: bool = False
+    resumed_escalation: bool = False
 
 
 def flip_wdl_pov(wdl: np.ndarray) -> np.ndarray:
@@ -600,7 +604,9 @@ def _eff_sf_nodes(
     return eff_nodes
 
 
-def _sf_syzygy_path_for_slot(state: SelfplayState, idx: int) -> str | None:
+def _sf_syzygy_path_for_slot(
+    state: SelfplayState, idx: int, *, cboard: Any = None,
+) -> str | None:
     """Pick the low-IO or DTZ-capable Stockfish tablebase path for one root.
 
     Most SF calls are high-volume curriculum labeling where SSD-only WDL/DTZ is
@@ -612,7 +618,7 @@ def _sf_syzygy_path_for_slot(state: SelfplayState, idx: int) -> str | None:
     full_path = state.game.syzygy_path
     if not full_path or str(normal_path or "") == str(full_path):
         return normal_path
-    cb = state.cboards[idx]
+    cb = state.cboards[idx] if cboard is None else cboard
     occ = int(cb.occ_white) | int(cb.occ_black)
     if occ.bit_count() > 6 or int(cb.castling) != 0:
         return normal_path
@@ -637,6 +643,17 @@ def _search_stockfish_sync(
         return stockfish.search(fen, nodes=nodes)
 
 
+def _record_matches_sf_position(rec: _NetRecord, cb: Any) -> bool:
+    """Match the record's SF position without rebuilding its board history.
+
+    NET rows describe P0 and receive SF reply data at P1. SF-refute opponent
+    rows describe the SF-to-move position itself. A forced NET turn creates
+    no row, so the latest record may belong to an earlier SF position.
+    """
+    offset = 0 if bool(getattr(rec, "is_sf_refute_opp", False)) else 1
+    return int(rec.ply_index) + offset == int(cb.ply)
+
+
 def _slot_latest_record_needs_sf_label(state: SelfplayState, idx: int) -> bool:
     if not state.samples_per_game[idx]:
         return False
@@ -648,7 +665,81 @@ def _slot_latest_record_needs_sf_label(state: SelfplayState, idx: int) -> bool:
     # label. Skip them so a stray label query can't mis-attach.
     if bool(getattr(rec, "is_sf_refute_opp", False)):
         return False
-    return rec.sf_policy_target is None and rec.sf_move_index is None
+    return (
+        rec.sf_policy_target is None and rec.sf_move_index is None
+        and _record_matches_sf_position(rec, state.cboards[idx])
+        and not any(p.record is rec for p in getattr(state, "pending_sf_labels", ()))
+    )
+
+
+def queue_resumed_sf_labels(
+    state: SelfplayState, idx: int, label_boards: list[tuple[_NetRecord, Any]],
+    *, originals: dict[int, Any],
+) -> None:
+    """Queue validated P1 snapshots without blocking resume or duplicating work.
+
+    Poll dispatches under the normal pool cap. Submission/result failure drops
+    the descriptor once; no retry loop or scan of historical gaps is introduced.
+    """
+    nodes = int(state.base_nodes)
+    cap = int(state.game.sf_label_nodes_cap)
+    floor = int(state.game.sf_label_nodes_floor)
+    if nodes > 0 and cap > 0:
+        nodes = min(nodes, cap)
+    nodes = max(nodes, floor)
+    for rec, cb in label_boards:
+        if any(p.record is rec for p in state.pending_sf_labels):
+            continue
+        pending = _PendingSfLabel(
+            future=None, record=rec, turn=bool(cb.turn),
+            legal_indices=np.asarray(cb.legal_move_indices(), dtype=np.int64).copy(),
+            query_fen=cb.fen(), slot=idx,
+            syzygy_path=_sf_syzygy_path_for_slot(state, idx, cboard=cb),
+            query_nodes=(
+                max(1, int(state.game.sf_label_escalate_nodes))
+                if rec.move_offset in originals else nodes if nodes > 0 else None
+            ),
+            escalated_from_res=originals.get(rec.move_offset), resumed=True,
+            resumed_escalation=rec.move_offset in originals,
+        )
+        state.pending_sf_labels.append(pending)
+
+
+def _submit_resumed_sf_label(state: SelfplayState, pending: _PendingSfLabel) -> None:
+    try:
+        if isinstance(state.stockfish, StockfishPool):
+            pending.future = state.stockfish.submit(
+                pending.query_fen, nodes=pending.query_nodes,
+                syzygy_path=pending.syzygy_path, fresh=pending.resumed_escalation,
+            )
+        else:
+            pending.future = Future()
+            if pending.resumed_escalation:
+                res = state.stockfish.search(
+                    pending.query_fen, nodes=pending.query_nodes,
+                    syzygy_path=pending.syzygy_path, fresh=True,
+                )
+            else:
+                res = _search_stockfish_sync(
+                    state.stockfish, pending.query_fen, nodes=pending.query_nodes,
+                    syzygy_path=pending.syzygy_path,
+                )
+            pending.future.set_result(res)
+    except Exception as exc:
+        if pending.escalated_from_res is None:
+            raise
+        # Route submission failure through the same shallow-result airbag as
+        # result failure. The recovered deep query was charged before suspend.
+        pending.future = Future()
+        pending.future.set_exception(exc)
+
+
+def _pending_label_is_current(state: SelfplayState, pending: _PendingSfLabel) -> bool:
+    slot = int(getattr(pending, "slot", -1))
+    return slot < 0 or (
+        slot < len(state.samples_per_game)
+        and pending.record in state.samples_per_game[slot]
+    )
 
 
 def submit_sf_queries(
@@ -714,8 +805,6 @@ def submit_async_sf_labels_from_curriculum_moves(state: SelfplayState, idxs: lis
     submitted = 0
     max_pending = max(1, int(state.batch_size) * 8)
     for idx in idxs:
-        if len(state.pending_sf_labels) >= max_pending:
-            break
         fut = state.pending_sf_moves.get(idx)
         if fut is None or not _slot_latest_record_needs_sf_label(state, idx):
             continue
@@ -727,10 +816,11 @@ def submit_async_sf_labels_from_curriculum_moves(state: SelfplayState, idxs: lis
         # the reply), so capturing the escalation context from the board here
         # matches the query — the same assumption the turn/legal_indices
         # snapshot above already makes.
+        record = state.samples_per_game[idx][-1]
         state.pending_sf_labels.append(
             _PendingSfLabel(
                 future=fut,
-                record=state.samples_per_game[idx][-1],
+                record=record,
                 turn=bool(state.cboards[idx].turn),
                 legal_indices=np.asarray(legal_indices, dtype=np.int64).copy(),
                 query_fen=state.cboards[idx].fen(),
@@ -738,6 +828,13 @@ def submit_async_sf_labels_from_curriculum_moves(state: SelfplayState, idxs: lis
                 syzygy_path=_sf_syzygy_path_for_slot(state, idx),
             ),
         )
+        if len(state.pending_sf_labels) > max_pending:
+            # The cap is shared with selfplay label admission. Breaking here
+            # drops this net row's teacher target: move completion applies
+            # the reply with attach_labels=False, and finalize only waits
+            # for labels already queued. Spill this record now. The move
+            # future stays in pending_sf_moves for the board update.
+            flush_async_sf_labels_for_records(state, [record])
         submitted += 1
     return submitted
 
@@ -1198,7 +1295,8 @@ def _maybe_submit_label_escalation(
     q_gap = float(getattr(state.game, "sf_label_escalate_q_gap", 0.0) or 0.0)
     if q_gap <= 0.0:
         return False  # flag off: provable no-op — nothing below runs
-    if pending.escalated_from_res is not None or not pending.query_fen:
+    if (getattr(pending, "resumed_escalation", False) or pending.escalated_from_res is not None
+            or not pending.query_fen):
         return False
     rec = pending.record
     if rec.sf_policy_target is not None or rec.sf_move_index is not None:
@@ -1253,7 +1351,7 @@ def _resolve_pending_label_result(pending: _PendingSfLabel) -> Any:
 
 
 def submit_async_sf_label_queries(state: SelfplayState, idxs: list[int]) -> int:
-    """Submit selfplay SF label queries without blocking.
+    """Submit selfplay SF labels, applying backpressure at the queue cap.
 
     The pending task captures the exact record and legal move set from query
     time, so later game advancement or slot recycling cannot stamp the result
@@ -1265,8 +1363,6 @@ def submit_async_sf_label_queries(state: SelfplayState, idxs: list[int]) -> int:
     max_pending = max(1, int(state.batch_size) * 8)
     submitted = 0
     for idx in idxs:
-        if len(state.pending_sf_labels) >= max_pending:
-            break
         if not _slot_latest_record_needs_sf_label(state, idx):
             continue
         legal_indices = state.cboards[idx].legal_move_indices()
@@ -1279,17 +1375,20 @@ def submit_async_sf_label_queries(state: SelfplayState, idxs: list[int]) -> int:
             nodes=_eff_sf_nodes(state, idx, for_move=False, for_label=True),
             syzygy_path=syzygy_path,
         )
-        state.pending_sf_labels.append(
-            _PendingSfLabel(
-                future=fut,
-                record=state.samples_per_game[idx][-1],
-                turn=bool(state.cboards[idx].turn),
-                legal_indices=np.asarray(legal_indices, dtype=np.int64).copy(),
-                query_fen=fen,
-                slot=int(idx),
-                syzygy_path=syzygy_path,
-            ),
+        pending = _PendingSfLabel(
+            future=fut,
+            record=state.samples_per_game[idx][-1],
+            turn=bool(state.cboards[idx].turn),
+            legal_indices=np.asarray(legal_indices, dtype=np.int64).copy(),
+            query_fen=fen,
+            slot=int(idx),
+            syzygy_path=syzygy_path,
         )
+        state.pending_sf_labels.append(pending)
+        if len(state.pending_sf_labels) > max_pending:
+            # Admit every eligible row. Spill only this new query through the
+            # normal finalize path; older pending labels retain their custody.
+            flush_async_sf_labels_for_records(state, [pending.record])
         submitted += 1
     return submitted
 
@@ -1308,13 +1407,38 @@ def poll_async_sf_labels(state: SelfplayState) -> tuple[int, int]:
     still_pending: list[_PendingSfLabel] = []
     attached = 0
     failed = 0
+    active = sum(
+        p.future is not None and _pending_label_is_current(state, p)
+        for p in state.pending_sf_labels
+    )
+    max_pending = (
+        max(1, int(state.batch_size) * 8)
+        if any(p.future is None for p in state.pending_sf_labels) else 0
+    )
     for pending in state.pending_sf_labels:
+        if not _pending_label_is_current(state, pending):
+            continue
+        if pending.future is None:
+            if active >= max_pending:
+                still_pending.append(pending)
+                continue
+            try:
+                _submit_resumed_sf_label(state, pending)
+                active += 1
+            except Exception as exc:
+                failed += 1
+                _report_sf_label_health(failed=1)
+                _LOG.debug("resumed SF label submit failed: %s", exc, exc_info=True)
+                continue
+        assert pending.future is not None
         if not pending.future.done():
             still_pending.append(pending)
             continue
+        active -= 1
         try:
             res = _resolve_pending_label_result(pending)
             if _maybe_submit_label_escalation(state, pending, res):
+                active += 1
                 still_pending.append(pending)
                 continue
             _process_sf_label_result_for_record(
@@ -1345,10 +1469,24 @@ def flush_async_sf_labels_for_records(
     attached = 0
     failed = 0
     for pending in state.pending_sf_labels:
+        if not _pending_label_is_current(state, pending):
+            continue
         if pending.record not in target_records:
             still_pending.append(pending)
             continue
         try:
+            if pending.future is None:
+                # A finite/teardown flush can bypass the normal poll admission.
+                # Wait for capacity instead of adding a query above the cap.
+                active = [
+                    p.future for p in state.pending_sf_labels
+                    if p.future is not None and not p.future.done()
+                    and _pending_label_is_current(state, p)
+                ]
+                while len(active) >= max(1, int(state.batch_size) * 8):
+                    wait(active, return_when=FIRST_COMPLETED)
+                    active = [f for f in active if not f.done()]
+                _submit_resumed_sf_label(state, pending)
             res = _resolve_pending_label_result(pending)
             if _maybe_submit_label_escalation(state, pending, res):
                 # Finalize path: the record is about to be emitted to replay,
@@ -1514,6 +1652,7 @@ def _emit_sf_refute_opp_record(
         sample_weight=1.0,
         keep_prob=1.0,
         legal_mask=legal_mask,
+        relations=cb.compute_relations() if state.game.record_relations else None,
         sf_wdl=sf_wdl_stm,
         # SF's move is pushed AFTER this record is appended, so every move
         # played so far precedes the recorded position (contrast the net turn,
@@ -1543,11 +1682,12 @@ def _push_curriculum_opponent_move(
         regret_limit=regret_limit,
     )
     if state.samples_per_game[idx]:
-        rank, regret = _sf_played_move_diagnostics(opp_move_idx, cand_idxs, cand_scores)
         rec = state.samples_per_game[idx][-1]
-        rec.sf_played_move_index = int(opp_move_idx)
-        rec.sf_played_rank = rank
-        rec.sf_played_regret = regret
+        if _record_matches_sf_position(rec, state.cboards[idx]):
+            rank, regret = _sf_played_move_diagnostics(opp_move_idx, cand_idxs, cand_scores)
+            rec.sf_played_move_index = int(opp_move_idx)
+            rec.sf_played_rank = rank
+            rec.sf_played_regret = regret
     python_move: chess.Move | None = None
     if not state.has_c_ply:
         python_move = index_to_move(int(opp_move_idx), state.boards[idx])

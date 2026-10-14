@@ -57,7 +57,8 @@ Overlay loads do not run this check. ``begin_policy_shard`` copies policy
 ``.zattrs``, so an overlay tree can carry the attribute without this manifest.
 That copy is not a seal of the overlay, and a missing overlay chunk can still
 fill-decode. Packed ZIP admission allowlists the root name as one opaque
-member. It does not apply a dense chunk-grid rule.
+member. Packed admission independently enforces the chunk grid declared by
+each array; the loader then applies this producer seal before decoding.
 
 Verification re-reads the manifest and each ``.zarray`` on every load,
 including ``validate=False``. It does not read chunk payloads. Caps: 100_000

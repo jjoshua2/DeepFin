@@ -21,6 +21,7 @@ are different enough that unifying them would muddy both.
 """
 from __future__ import annotations
 
+import sys
 import logging
 import threading
 import time
@@ -34,8 +35,9 @@ import numpy as np
 from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
 from chess_anti_engine.inference_cache import PucvEvalCache, PucvEvalCacheStats
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
-from chess_anti_engine.mcts.puct_vl import _PLANES, _alloc_buffers
-from chess_anti_engine.mcts.vloss import release_batch_rows
+from chess_anti_engine.mcts.puct_history import puct_history_args
+from chess_anti_engine.async_safety import drain_failed_receipts, ensure_usable, note_cleanup, pending_receipt, submit_async
+from chess_anti_engine.mcts.puct_vl import _PLANES, _alloc_buffers, _release_outstanding
 
 _log = logging.getLogger(__name__)
 
@@ -57,6 +59,7 @@ class MultiGpuPucvConfig:
     input_planes: int = _PLANES
   # Transport dynamic board-relation matrices per leaf (model.use_dynamic_relations).
     compute_relations: bool = False
+    input_history_encoding: str = "legacy"
 
 
 @dataclass(frozen=True)
@@ -154,6 +157,7 @@ class MultiGpuPucvPool:
           use cudagraphs (e.g. CPU/eager paths in tests). Validated for
           the test path; production runs with compile=on must use factories.
         """
+        self._input_history_args = puct_history_args(cfg.input_history_encoding)
         if cfg.n_gpus < 1:
             raise ValueError(f"n_gpus must be >= 1, got {cfg.n_gpus}")
         if (evaluator_factories is None) == (evaluators is None):
@@ -285,6 +289,9 @@ class MultiGpuPucvPool:
         use the return for node/nps accounting, so returning the target on
         an early stop would inflate the nps estimate that sizes the next
         time-capped chunk."""
+        ensure_usable(self)
+        for evaluator in self._evals:
+            ensure_usable(evaluator)
         if target_sims <= 0:
             return 0
         if self._shutdown.is_set():
@@ -343,9 +350,13 @@ class MultiGpuPucvPool:
 
     def _worker_loop(self, idx: int) -> None:
         cfg = self._cfg
-        gather = max(1, int(cfg.gather))
+        gather = 1
+        my_wake = self._wakes[idx]
 
+        evaluator: Any = None
+        bufs: list[dict[str, np.ndarray]] = []
         try:
+            gather = max(1, int(cfg.gather))
             if self._factories is not None:
   # Build evaluator on THIS thread so torch.compile + cudagraph
   # state lives where it'll be replayed. Crucial: compile builds
@@ -365,25 +376,33 @@ class MultiGpuPucvPool:
                 self._evals[idx] = evaluator
             else:
                 evaluator = self._evals[idx]
+      # Per-worker buffer ping-pong (one set per slot). Encoding lands
+      # directly in the evaluator's pinned input via get_input_buffer.
+            bufs = [
+                _alloc_buffers(
+                    gather, int(cfg.input_planes),
+                    with_relations=bool(cfg.compute_relations),
+                ),
+                _alloc_buffers(
+                    gather, int(cfg.input_planes),
+                    with_relations=bool(cfg.compute_relations),
+                ),
+            ]
         except BaseException as exc:
             self._init_errors.append(exc)
-            self._init_done.wait()
-            return
         self._init_done.wait()
-
-  # Per-worker buffer ping-pong (one set per slot). Encoding lands
-  # directly in the evaluator's pinned input via get_input_buffer.
-        bufs = [
-            _alloc_buffers(
-                gather, int(cfg.input_planes),
-                with_relations=bool(cfg.compute_relations),
-            ),
-            _alloc_buffers(
-                gather, int(cfg.input_planes),
-                with_relations=bool(cfg.compute_relations),
-            ),
-        ]
-        my_wake = self._wakes[idx]
+        if self._init_errors:
+            if self._factories is not None:
+                self._evals[idx] = None
+                close = getattr(evaluator, "close", None)
+                if close is not None:
+                    try:
+                        close()
+                    except BaseException as cleanup:
+                        note_cleanup(self._init_errors[0], f"startup evaluator cleanup failed: {cleanup!r}")
+                evaluator = None
+            bufs.clear()
+            return
 
         while True:
             my_wake.wait()
@@ -395,7 +414,7 @@ class MultiGpuPucvPool:
                 continue
             try:
                 self._pipeline_until_done(idx, job, evaluator, bufs, gather)
-            except Exception as exc:
+            except BaseException as exc:
                 _log.exception("pucv-gpu-%d raised; requesting pool stop", idx)
                 self._errors.append(exc)
                 job.stop_event.set()
@@ -409,6 +428,8 @@ class MultiGpuPucvPool:
         bufs: list[dict[str, np.ndarray]],
         gather: int,
     ) -> None:
+        ensure_usable(self)
+        ensure_usable(evaluator)
         cfg = self._cfg
         c_puct = cfg.c_puct
         fpu_root = cfg.fpu_at_root
@@ -435,6 +456,10 @@ class MultiGpuPucvPool:
   # this call, so an unguarded escape biases it permanently
   # (SHARED_BROKER_AUDIT B7 -- reproduced on the WalkerPool twin).
         outstanding: dict[int, int] = {}
+        receipts: dict[int, Any] = {}
+        # Own the exact async result before pending metadata or registration can fail.
+        unregistered_receipt: list[Any] = [None]
+        next_local = -1
         try:
             while not stop_event.is_set() or pending is not None:
       # Greedy budget grab: take up to ``gather`` tokens. Faster GPUs
@@ -446,6 +471,7 @@ class MultiGpuPucvPool:
                 if n == 0 and pending is None:
                     break
 
+                next_local = -1
                 if n > 0:
                     next_local = 0 if pending is None else 1 - int(pending[1])
                     next_slot = next_local  # slot 0/1 on this worker's evaluator
@@ -462,6 +488,7 @@ class MultiGpuPucvPool:
                         b["term_qs"], b["is_term"], vloss_mode,
                         b["cache_keys"] if self._cache is not None else None,
                         rel,
+                        *self._input_history_args,
                     )
                     outstanding[next_local] = n
                     batches += 1
@@ -471,15 +498,20 @@ class MultiGpuPucvPool:
                     terminal_leaves += n_term
                     next_handle = self._prepare_submit(
                         evaluator, next_slot, next_local, n, enc_view, b, rel,
-                        n_term=n_term,
+                        n_term=n_term, receipt_cell=unregistered_receipt,
                     )
                 else:
                     next_handle = None
+
+                if next_handle is not None and next_handle[0] != "cache_only":
+                    receipts[next_local] = pending_receipt(next_handle)
+                    unregistered_receipt[0] = None
 
                 if pending is not None:
                     b_cur, p_n, pol, wdl, submit_t = self._finish_pending(
                         pending, bufs,
                     )
+                    receipts.pop(int(pending[1]), None)
                     if submit_t > 0.0:
                         wait_seconds += time.perf_counter() - submit_t
                     tree.batch_integrate_leaves(
@@ -491,11 +523,13 @@ class MultiGpuPucvPool:
                     outstanding.pop(int(pending[1]), None)
 
                 pending = next_handle
+        except BaseException as error:
+            if unregistered_receipt[0] is not None and receipts.get(next_local) is not unregistered_receipt[0]:
+                drain_failed_receipts(evaluator, self, unregistered_receipt, error)
+            drain_failed_receipts(evaluator, self, receipts.values(), error)
+            raise
         finally:
-            for buf_idx, n_rows in outstanding.items():
-                release_batch_rows(
-                    tree, bufs[buf_idx], n_rows, vloss_weight=vloss,
-                )
+            _release_outstanding(tree, bufs, outstanding, vloss, sys.exc_info()[1])
 
         self._worker_stats[idx] = MultiGpuPucvWorkerStats(
             worker_index=idx,
@@ -518,6 +552,7 @@ class MultiGpuPucvPool:
         rel: np.ndarray | None,
         *,
         n_term: int,
+        receipt_cell: list[Any] | None = None,
     ) -> tuple[Any, ...]:
   # All-terminal batches have nothing to evaluate: descend already
   # backpropped the terminal leaves inline, so submitting would run the
@@ -530,11 +565,13 @@ class MultiGpuPucvPool:
         cache = self._cache
         if cache is None:
             if rel is None:
-                handle = evaluator.evaluate_inplace_async(n, slot=slot)
+                handle = submit_async(evaluator, n, slot=slot)
             else:
-                handle = evaluator.evaluate_inplace_async(
+                handle = submit_async(evaluator,
                     n, slot=slot, relations=rel[:n],
                 )
+            if receipt_cell is not None:
+                receipt_cell[0] = handle
             return ("gpu_full", buf_idx, n, handle, time.perf_counter())
 
         hit_values: dict[int, tuple[np.ndarray, np.ndarray]] = {}
@@ -556,15 +593,17 @@ class MultiGpuPucvPool:
         b["enc_rows"][:n] = enc_view[:n]
         enc_view[:miss_n] = enc_view[miss_idx]
         if rel is None:
-            handle = evaluator.evaluate_inplace_async(miss_n, slot=slot)
+            handle = submit_async(evaluator, miss_n, slot=slot)
         else:
             # Compact relation rows alongside the encoding rows. Cache hits
             # stay valid: relations are a pure function of the position, so
             # position-keyed cached outputs already include the bias effect.
             rel[:miss_n] = rel[miss_idx]
-            handle = evaluator.evaluate_inplace_async(
+            handle = submit_async(evaluator,
                 miss_n, slot=slot, relations=rel[:miss_n],
             )
+        if receipt_cell is not None:
+            receipt_cell[0] = handle
         return (
             "gpu_miss", buf_idx, n, miss_idx, hit_values,
             handle,

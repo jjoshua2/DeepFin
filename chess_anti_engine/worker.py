@@ -4179,8 +4179,8 @@ class WorkerSession:
 
     def _suspend_inflight_games(self, state: Any) -> None:
         """play_batch on_suspend hook: persist this session's in-flight games."""
-        # _PendingSfLabel.slot; a label still in flight here dies with the
-        # session, so its ply resumes UNLABELLED. Counted, not hidden.
+        # Count games whose unfinished label descriptors must be re-fetched.
+        # Resume reconstructs their original reply positions before play continues.
         pending = [int(getattr(p, "slot", -1)) for p in state.pending_sf_labels]
         try:
             report = suspend_inflight_games(
@@ -4678,10 +4678,9 @@ class WorkerSession:
             try:
                 return _play_one_thread(tid)
             except BaseException:
-                # Futures are joined only at session end, which in continuous
-                # mode never arrives — so without this, a thread's death is
-                # invisible for the life of the session and the batch quietly
-                # runs short-handed. Log at the point of failure instead.
+                # Stop cooperative peers so the executor can finish joining
+                # and propagate this failure to the existing recovery path.
+                self._stop_selfplay = True
                 self.log.exception("selfplay thread %d died", tid)
                 raise
 

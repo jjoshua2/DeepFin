@@ -310,7 +310,7 @@ def test_quit_during_held_ponder_does_not_hang(monkeypatch: pytest.MonkeyPatch) 
     thread = engine._search_thread
     assert engine.quit_requested
     assert thread is None or not thread.is_alive()
-    assert len(_bestmoves(lines)) == 1
+    assert _bestmoves(lines) == []
 
 
 def test_blocking_ponder_still_hands_off_on_ponderhit(

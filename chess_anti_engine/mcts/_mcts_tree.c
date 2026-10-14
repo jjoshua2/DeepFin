@@ -223,6 +223,10 @@ static int extract_cboards(PyObject *list, int32_t n,
  * Backup is min/max-style and respects the side-flip across plies.
  * SOLVED_UNKNOWN/WIN/LOSS/DRAW are defined in _search_terminal.h. */
 
+static double solved_value(int8_t status) {
+    return status == SOLVED_DRAW ? 0.0 : (double)status;
+}
+
 #define VLOSS_MODE_LEGACY        0
 #define VLOSS_MODE_VIRTUAL_MEAN  1
 
@@ -314,6 +318,18 @@ typedef struct {
     pthread_mutex_t tree_lock;
     int tree_lock_initialized;
 } TreeData;
+
+/* One parent-perspective Q contract for public queries and root halving.
+ * A proven parent loss applies to every child, even when a tablebase solved
+ * the parent before its children were probed. Otherwise prefer child proofs
+ * over earlier estimates, retaining the accumulated visits and W unchanged. */
+static double tree_child_q(const TreeData *t, int32_t parent, int32_t child,
+                           int32_t visits, double default_q) {
+    if (t->solved[parent] == SOLVED_LOSS) return -1.0;
+    if (t->solved[child] != SOLVED_UNKNOWN)
+        return -solved_value(t->solved[child]);
+    return visits > 0 ? -atomic_load_double(&t->W[child]) / (double)visits : default_q;
+}
 
 static int validate_node_id(const TreeData *t, int32_t node_id, const char *name) {
     if (node_id < 0 || node_id >= t->node_count) {
@@ -1343,6 +1359,16 @@ static void cboard_encode_planes_into(const CBoard *b, float * restrict out, int
 static void cboard_encode_planes_into_ex(const CBoard *b, float * restrict out, int n_extra, int feat_prezeroed);
 static void cboard_encode_planes_lc0_root_into(const CBoard *b, float * restrict out, int n_extra);
 static void cboard_encode_planes_lc0_root_legacy_meta_into(const CBoard *b, float * restrict out, int n_extra);
+/* Shared float32 mode dispatch: PUCT and Gumbel must encode the same leaf. */
+static void cboard_encode_history_planes_into(const CBoard *b,
+    float * restrict out, int n_extra, int input_history_mode) {
+    if (input_history_mode == 2)
+        cboard_encode_planes_lc0_root_legacy_meta_into(b, out, n_extra);
+    else if (input_history_mode)
+        cboard_encode_planes_lc0_root_into(b, out, n_extra);
+    else
+        cboard_encode_planes_into(b, out, n_extra);
+}
 static void cboard_encode_planes_bf16_into(const CBoard *b, uint16_t * restrict out, int n_extra);
 static void cboard_encode_planes_lc0_root_bf16_into(const CBoard *b, uint16_t * restrict out, int n_extra);
 static void cboard_encode_planes_lc0_root_legacy_meta_bf16_into(const CBoard *b, uint16_t * restrict out, int n_extra);
@@ -1511,18 +1537,59 @@ static int32_t gss_begin_round(GumbelSimState *g, const TreeData *t) {
     g->n_active = 0;
     g->max_reps = 0;
     for (int32_t i = 0; i < g->n_boards; i++) {
-        /* Early-exit when the root is already solved: the result of search is
-         * known, every additional sim is wasted GPU work. Zero the budget so
-         * it stays out of subsequent rounds too. */
+        /* A solved win/draw still needs a child witness before we can stop.
+         * Tablebase-marked leaves can be expanded with unknown children. */
         int32_t rid = g->root_ids[i];
+        int needs_witness = 0;
         if (rid >= 0 && rid < t->node_count && t->solved[rid] != SOLVED_UNKNOWN) {
-            g->budget_remaining[i] = 0;
+            /* A fresh prior shortlist (or the last halving) may have dropped
+             * the child that proves this result. Recover it from the full
+             * root before returning the survivor. Priors only break ties
+             * between children preserving the same proven outcome. */
+            int8_t proof = t->solved[rid] == SOLVED_WIN ? SOLVED_LOSS
+                         : t->solved[rid] == SOLVED_DRAW ? SOLVED_DRAW
+                         : SOLVED_UNKNOWN;
+            int32_t best_slot = -1;
+            double best_prior = -1.0;
+            int32_t unknown_slot = -1;
+            double unknown_prior = -1.0;
+            int32_t off = t->children_offset[rid];
+            if (t->solved[rid] == SOLVED_LOSS) g->budget_remaining[i] = 0;
+            if (proof != SOLVED_UNKNOWN && g->cands_count[i] > 0) {
+                for (int32_t j = 0; j < t->num_children[rid]; j++) {
+                    int32_t cid = t->child_node[off + j];
+                    if (t->solved[cid] == proof && t->prior[cid] > best_prior) {
+                        best_slot = j;
+                        best_prior = t->prior[cid];
+                    }
+                    if (t->solved[cid] == SOLVED_UNKNOWN && t->prior[cid] > unknown_prior) {
+                        unknown_slot = j;
+                        unknown_prior = t->prior[cid];
+                    }
+                }
+                if (best_slot >= 0) {
+                    g->cands_flat[g->cands_offset[i]] = t->child_action[off + best_slot];
+                    g->cands_count[i] = 1;
+                    g->budget_remaining[i] = 0;
+                } else if (unknown_slot >= 0) {
+                    /* Probe unknown children one at a time, including those
+                     * outside the fresh shortlist. This fits its existing
+                     * storage and retains the caller's simulation budget. */
+                    g->cands_flat[g->cands_offset[i]] = t->child_action[off + unknown_slot];
+                    g->cands_count[i] = 1;
+                    needs_witness = 1;
+                } else {
+                    g->budget_remaining[i] = 0;
+                }
+            }
         }
         if (g->budget_remaining[i] <= 0 || g->cands_count[i] == 0)
             continue;
         g->active[g->n_active++] = i;
         int32_t rem_count = g->cands_count[i];
-        if (rem_count <= 1) {
+        if (needs_witness) {
+            g->visits_per_action[i] = 1;
+        } else if (rem_count <= 1) {
             g->visits_per_action[i] = g->budget_remaining[i];
         } else {
             int32_t div = g->halving_div;
@@ -1593,7 +1660,7 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
             total_visits += n;
             if (n > 0) {
                 double pr = t->prior[cid] > DBL_MIN ? t->prior[cid] : DBL_MIN;
-                double q = -atomic_load_double(&t->W[cid]) / (double)n;
+                double q = tree_child_q(t, rid, cid, n, root_Q);
                 sum_probs += pr;
                 weighted_q_num += pr * q;
             }
@@ -1609,7 +1676,7 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
         for (int32_t j = 0; j < n_ch; j++) {
             int32_t cid = t->child_node[off + j];
             int32_t n = atomic_load_i32(&t->N[cid]);
-            double q = (n > 0) ? (-atomic_load_double(&t->W[cid]) / (double)n) : mixed_value;
+            double q = (n > 0) ? tree_child_q(t, rid, cid, n, mixed_value) : mixed_value;
             if (q < min_q) min_q = q;
             if (q > max_q) max_q = q;
         }
@@ -1646,7 +1713,7 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
             if (slot >= 0) {
                 int32_t cid = t->child_node[off + slot];
                 int32_t child_n = atomic_load_i32(&t->N[cid]);
-                if (child_n > 0) q_hat = -atomic_load_double(&t->W[cid]) / (double)child_n;
+                if (child_n > 0) q_hat = tree_child_q(t, rid, cid, child_n, mixed_value);
                 else q_hat = mixed_value;
             }
             double q_transformed = q_scale * ((q_hat - min_q) / q_denom);
@@ -1721,6 +1788,11 @@ static int32_t gss_build_queries(GumbelSimState *g) {
                 g->q_cap = new_cap;
             }
             for (int32_t ci = 0; ci < ccount; ci++) {
+                /* The last round can have fewer tokens than survivors. Keep
+                 * all candidates for scoring, but dispatch only its remaining
+                 * budget, including across accumulated reps/duplicate flushes. */
+                if ((int64_t)g->current_rep * ccount + ci >= g->budget_remaining[bi])
+                    break;
                 g->q_board_idx[n + rep_n] = bi;
                 g->q_root_ids[n + rep_n] = rid;
                 g->q_forced[n + rep_n] = g->cands_flat[coff + ci];
@@ -1941,12 +2013,8 @@ static int32_t gss_prepare_batch(
                     cboard_encode_planes_bf16_into(&s->leaf_cboards[li], out + row, n_extra);
             } else {
                 float *out = (float *)enc_data;
-                if (g->input_history_lc0_root == 2)
-                    cboard_encode_planes_lc0_root_legacy_meta_into(&s->leaf_cboards[li], out + row, n_extra);
-                else if (g->input_history_lc0_root)
-                    cboard_encode_planes_lc0_root_into(&s->leaf_cboards[li], out + row, n_extra);
-                else
-                    cboard_encode_planes_into(&s->leaf_cboards[li], out + row, n_extra);
+                cboard_encode_history_planes_into(&s->leaf_cboards[li],
+                    out + row, n_extra, g->input_history_lc0_root);
             }
             if (g->rel_data)
                 cboard_compute_relations(&s->leaf_cboards[li],
@@ -2477,7 +2545,7 @@ static PyObject *MCTSTree_backprop(MCTSTreeObject *self, PyObject *args) {
  * ================================================================ */
 
 /* walker_descend_puct(root_id, root_cboard, c_puct, fpu_root, fpu_reduction,
- *                     vloss_weight, enc_out)
+ *                     vloss_weight, enc_out[, rel_out, input_history_mode])
  *   -> (leaf_id, node_path: int32[], legal: int32[], terminal_q: float | None)
  *
  * Descends from root using PUCT with virtual loss, replays moves on a fresh
@@ -2495,11 +2563,16 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
     PyObject *rel_obj = Py_None;
     double c_puct, fpu_root, fpu_reduction;
     int vloss_weight;
-    if (!PyArg_ParseTuple(args, "iOdddiO|O",
+    int input_history_mode = 0;
+    if (!PyArg_ParseTuple(args, "iOdddiO|Oi",
                           &root_id, &root_cb_obj,
                           &c_puct, &fpu_root, &fpu_reduction,
-                          &vloss_weight, &enc_obj, &rel_obj))
+                          &vloss_weight, &enc_obj, &rel_obj, &input_history_mode))
         return NULL;
+    if (input_history_mode < 0 || input_history_mode > 2) {
+        PyErr_SetString(PyExc_ValueError, "input_history_mode must be 0, 1 or 2");
+        return NULL;
+    }
 
     TreeData *t = &self->tree;
     if (root_id < 0 || root_id >= t->node_count) {
@@ -2621,7 +2694,7 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
     }
 
     /* Encode into enc_out[0]. */
-    cboard_encode_planes_into(&cb, enc_data, enc_n_extra);
+    cboard_encode_history_planes_into(&cb, enc_data, enc_n_extra, input_history_mode);
     if (rel_data)
         cboard_compute_relations(&cb, rel_data);
     Py_XDECREF(rel_arr);
@@ -2766,13 +2839,18 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
     PyObject *cache_keys_obj = Py_None;
     PyObject *rel_obj = Py_None;
     double c_puct, fpu_root, fpu_reduction;
-    if (!PyArg_ParseTuple(args, "iOidddiOOOOOOOO|iOO",
+    int input_history_mode = 0;
+    if (!PyArg_ParseTuple(args, "iOidddiOOOOOOOO|iOOi",
                           &root_id, &root_cb_obj, &n_leaves,
                           &c_puct, &fpu_root, &fpu_reduction, &vloss_weight,
                           &enc_obj, &leaf_ids_obj, &path_obj, &path_lens_obj,
                           &legal_obj, &legal_lens_obj, &term_qs_obj, &is_term_obj,
-                          &vloss_mode, &cache_keys_obj, &rel_obj))
+                          &vloss_mode, &cache_keys_obj, &rel_obj, &input_history_mode))
         return NULL;
+    if (input_history_mode < 0 || input_history_mode > 2) {
+        PyErr_SetString(PyExc_ValueError, "input_history_mode must be 0, 1 or 2");
+        return NULL;
+    }
     if (vloss_mode != VLOSS_MODE_LEGACY && vloss_mode != VLOSS_MODE_VIRTUAL_MEAN) {
         PyErr_SetString(PyExc_ValueError, "vloss_mode must be 0 (legacy) or 1 (virtual_mean)");
         return NULL;
@@ -2909,7 +2987,7 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
         if (vloss_weight > 0) {
             tree_apply_vloss_path(t, path_i, path_len);
         }
-        cboard_encode_planes_into(&cb, enc_data + (size_t)i * enc_row, enc_n_extra);
+        cboard_encode_history_planes_into(&cb, enc_data + (size_t)i * enc_row, enc_n_extra, input_history_mode);
         if (rel_data)
             cboard_compute_relations(&cb, rel_data + (size_t)i * REL_ROW_BYTES);
         if (cache_keys) {
@@ -3455,8 +3533,8 @@ static PyObject *MCTSTree_get_children_visits(MCTSTreeObject *self, PyObject *ar
 
 
 /* get_children_q(node_id, default_q) -> (actions: int32[], visits: int32[], q: float64[])
- * q[i] = -child_W[i]/child_N[i] (parent-perspective) for visited children,
- * or default_q for unvisited. */
+ * Parent-perspective Q: exact for proven outcomes, otherwise -child_W/child_N
+ * for visited children or default_q for unvisited. Visits remain unchanged. */
 static PyObject *MCTSTree_get_children_q(MCTSTreeObject *self, PyObject *args) {
     int node_id;
     double default_q;
@@ -3486,11 +3564,7 @@ static PyObject *MCTSTree_get_children_q(MCTSTreeObject *self, PyObject *args) {
         a_data[i] = t->child_action[off + i];
         int32_t child_n = atomic_load_i32(&t->N[cid]);
         v_data[i] = child_n;
-        if (child_n > 0) {
-            q_data[i] = -atomic_load_double(&t->W[cid]) / (double)child_n;
-        } else {
-            q_data[i] = default_q;
-        }
+        q_data[i] = tree_child_q(t, node_id, cid, child_n, default_q);
     }
 
     PyObject *result = PyTuple_Pack(3, actions, visits, q_out);
@@ -3501,7 +3575,7 @@ static PyObject *MCTSTree_get_children_q(MCTSTreeObject *self, PyObject *args) {
 }
 
 
-/* node_q(node_id) -> float */
+/* node_q(node_id) -> exact solved value, otherwise the accumulated mean. */
 static PyObject *MCTSTree_node_q(MCTSTreeObject *self, PyObject *args) {
     int node_id;
     if (!PyArg_ParseTuple(args, "i", &node_id))
@@ -3509,6 +3583,8 @@ static PyObject *MCTSTree_node_q(MCTSTreeObject *self, PyObject *args) {
 
     TreeData *t = &self->tree;
     if (!validate_node_id(t, node_id, "node_id")) return NULL;
+    if (t->solved[node_id] != SOLVED_UNKNOWN)
+        return PyFloat_FromDouble(solved_value(t->solved[node_id]));
     int32_t node_n = atomic_load_i32(&t->N[node_id]);
     double q = (node_n > 0) ? (atomic_load_double(&t->W[node_id]) / (double)node_n) : 0.0;
     return PyFloat_FromDouble(q);
@@ -4812,20 +4888,72 @@ static PyObject *MCTSTree_mark_tb_solved(MCTSTreeObject *self, PyObject *args) {
 
 
 /*
- * get_gumbel_remaining() -> list[list[int]]
+     * get_gumbel_remaining(allow_incomplete=False) -> list[list[int]]
  *
  * After simulation completes, get the remaining candidates per board.
  */
-static PyObject *MCTSTree_get_gumbel_remaining(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
+static PyObject *MCTSTree_get_gumbel_remaining(MCTSTreeObject *self, PyObject *args) {
+    int allow_incomplete = 0;
+    if (!PyArg_ParseTuple(args, "|p", &allow_incomplete)) return NULL;
     GumbelSimState *g = &self->gsim;
     if (!g->allocated) {
         PyErr_SetString(PyExc_RuntimeError, "No gumbel simulation state");
         return NULL;
     }
+    if (g->phase == 2) {
+        TreeData *t = &self->tree;
+        for (int32_t i = 0; i < g->n_boards; i++) {
+            int32_t rid = g->root_ids[i];
+            if (rid < 0 || g->cands_count[i] == 0) continue;
+            int8_t proof = t->solved[rid] == SOLVED_WIN ? SOLVED_LOSS
+                         : t->solved[rid] == SOLVED_DRAW ? SOLVED_DRAW : SOLVED_UNKNOWN;
+            if (proof == SOLVED_UNKNOWN) continue;
+            int32_t action = g->cands_flat[g->cands_offset[i]];
+            int32_t off = t->children_offset[rid];
+            int witnessed = 0;
+            for (int32_t j = 0; j < t->num_children[rid]; j++) {
+                if (t->child_action[off + j] == action &&
+                    t->solved[t->child_node[off + j]] == proof) {
+                    witnessed = 1;
+                    break;
+                }
+            }
+            /* An out-of-budget tablebase lookup may have supplied a witness.
+             * Recover it without running another simulation. */
+            if (!witnessed) {
+                int32_t best = -1;
+                double prior = -1.0;
+                for (int32_t j = 0; j < t->num_children[rid]; j++) {
+                    int32_t cid = t->child_node[off + j];
+                    if (t->solved[cid] == proof && t->prior[cid] > prior) {
+                        best = j;
+                        prior = t->prior[cid];
+                    }
+                }
+                if (best >= 0) {
+                    g->cands_flat[g->cands_offset[i]] = t->child_action[off + best];
+                    g->cands_count[i] = 1;
+                    witnessed = 1;
+                }
+            }
+            if (!witnessed && allow_incomplete) {
+                /* Empty support is an explicit incomplete result, never the
+                 * unproven candidate. Retain storage for a later search. */
+                g->cands_flat[g->cands_offset[i]] = -1;
+                continue;
+            }
+            if (!witnessed) {
+                PyErr_Format(PyExc_RuntimeError,
+                    "solved root %d has no outcome-preserving child witness within simulation budget", rid);
+                return NULL;
+            }
+        }
+    }
     PyObject *result = PyList_New(g->n_boards);
     for (int32_t i = 0; i < g->n_boards; i++) {
         int32_t off = g->cands_offset[i];
         int32_t cnt = g->cands_count[i];
+        if (allow_incomplete && cnt > 0 && g->cands_flat[off] < 0) cnt = 0;
         PyObject *lst = PyList_New(cnt);
         for (int32_t j = 0; j < cnt; j++) {
             PyList_SET_ITEM(lst, j, PyLong_FromLong(g->cands_flat[off + j]));
@@ -5153,7 +5281,7 @@ static PyMethodDef MCTSTree_methods[] = {
      "get_pending_tb_leaves(max_pieces) -> (np.int32 indices, list[CBoard]). Syzygy-eligible subset of the current pending batch."},
     {"mark_tb_solved", (PyCFunction)MCTSTree_mark_tb_solved, METH_VARARGS,
      "mark_tb_solved(indices: np.int32, statuses: np.int8) -> int. Mark each indexed leaf with its TB-derived solved status (1=WIN, -1=LOSS, 2=DRAW; 0=skip) and propagate upward."},
-    {"get_gumbel_remaining", (PyCFunction)MCTSTree_get_gumbel_remaining, METH_NOARGS,
+    {"get_gumbel_remaining", (PyCFunction)MCTSTree_get_gumbel_remaining, METH_VARARGS,
      "get_gumbel_remaining() -> list[list[int]]. Get remaining candidates after sim."},
     {"get_children_visits", (PyCFunction)MCTSTree_get_children_visits, METH_VARARGS,
      "get_children_visits(node_id) -> (actions_int32, visits_int32)"},
@@ -5192,11 +5320,11 @@ static PyMethodDef MCTSTree_methods[] = {
     {"remove_vloss_path", (PyCFunction)MCTSTree_remove_vloss_path, METH_VARARGS,
      "remove_vloss_path(path: int32[]) -> None (floors at 0; pair with apply_vloss_path)"},
     {"walker_descend_puct", (PyCFunction)MCTSTree_walker_descend_puct, METH_VARARGS,
-     "walker_descend_puct(root_id, root_cboard, c_puct, fpu_root, fpu_reduction, vloss_weight, enc_out) -> (leaf_id, node_path, legal, terminal_q_or_None)"},
+     "walker_descend_puct(root_id, root_cboard, c_puct, fpu_root, fpu_reduction, vloss_weight, enc_out, rel_out=None, input_history_mode=0) -> (leaf_id, node_path, legal, terminal_q_or_None)"},
     {"walker_integrate_leaf", (PyCFunction)MCTSTree_walker_integrate_leaf, METH_VARARGS,
      "walker_integrate_leaf(node_path, legal, pol_logits, wdl_logits, vloss_weight) -> None"},
     {"batch_descend_puct", (PyCFunction)MCTSTree_batch_descend_puct, METH_VARARGS,
-     "batch_descend_puct(root_id, root_cboard, n, c_puct, fpu_root, fpu_red, vloss, enc_buf, leaf_ids, path_buf, path_lens, legal_buf, legal_lens, term_qs, is_term, vloss_mode=0, cache_keys=None) -> int. Single-call N-leaf descent with vloss; GIL released. Optional cache_keys is uint64[N,2] encoded-row fingerprint output."},
+     "batch_descend_puct(root_id, root_cboard, n, c_puct, fpu_root, fpu_red, vloss, enc_buf, leaf_ids, path_buf, path_lens, legal_buf, legal_lens, term_qs, is_term, vloss_mode=0, cache_keys=None, rel_buf=None, input_history_mode=0) -> int. Single-call N-leaf descent with vloss; GIL released. Optional cache_keys is uint64[N,2] encoded-row fingerprint output."},
     {"batch_integrate_leaves", (PyCFunction)MCTSTree_batch_integrate_leaves, METH_VARARGS,
      "batch_integrate_leaves(n, path_buf, path_lens, legal_buf, legal_lens, is_term, pol, wdl, vloss) -> None. Companion to batch_descend_puct: integrates GPU results for non-terminal leaves; GIL released."},
     {NULL}
@@ -6408,8 +6536,12 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
      * signature changed, but the failure is silent/data-affecting, so stale
      * binaries must fail fast rather than keep the old semantic.
      * 6 = bound root context at allocation + root_context_matches: Python must
-     * detect a stale extension before using the new root lifecycle API. */
-    if (PyModule_AddIntConstant(m, "ABI_VERSION", 6) < 0) {
+     * detect a stale extension before using the new root lifecycle API.
+     * 7 = solved-root child witnesses + exact solved-value queries. Stale
+     * binaries can discard a tablebase win or report an averaged proven loss.
+     * 8 = explicit incomplete survivors for bounded caller witness recovery.
+     * 9 = optional PUCT leaf input-history mode (legacy/root/root-legacy-meta). */
+    if (PyModule_AddIntConstant(m, "ABI_VERSION", 9) < 0) {
         Py_DECREF(m);
         return NULL;
     }

@@ -143,7 +143,7 @@ def test_reset_after_terminal_search_does_not_preserve_solved_state(reset_method
     assert tree.get_solved_status(child) == -1
     assert tree.get_solved_status(root) == 1
     assert tree.node_q(child) == -1.0
-    assert tree.node_q(root) == pytest.approx(0.625)
+    assert tree.node_q(root) == 1.0
     assert all(tree.get_virtual_loss(i) == 0 for i in range(tree.node_count()))
 
     getattr(tree, reset_method)()

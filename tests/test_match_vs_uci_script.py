@@ -520,6 +520,9 @@ def test_main_quits_engine_a_if_engine_b_open_fails(
         def quit(self) -> None:
             self.quit_called = True
 
+        def close(self) -> None:
+            return None
+
     def fake_open_engine(spec: str, cwd: str | None = None, *, timeout_s: float = 0.0):
         del cwd, timeout_s
         if spec == "engine-b":
@@ -668,6 +671,9 @@ def test_warmup_timeout_raises_the_deadline_that_actually_binds(
         def quit(self) -> None:
             return None
 
+        def close(self) -> None:
+            return None
+
     def fake_open_engine(spec: str, cwd: str | None = None, *, timeout_s: float = 0.0):
         del cwd
         timeouts[spec] = timeout_s
@@ -722,6 +728,9 @@ def test_engine_command_timeout_stays_at_the_backstop_without_a_warmup(
         options: ClassVar[dict[str, object]] = {}
 
         def quit(self) -> None:
+            return None
+
+        def close(self) -> None:
             return None
 
     def fake_open_engine(spec: str, cwd: str | None = None, *, timeout_s: float = 0.0):

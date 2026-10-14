@@ -78,7 +78,8 @@ def run_stage(command, *, cwd, env, log, guard, lease_fd):
             guard()
     finally:
         if child is not None:
-            # Deliver pending stop signals only after TERM/KILL and reap finish.
+            # This mask blocks only the current thread. Shared stop_owned also
+            # defers Python callbacks received through another unblocked thread.
             previous_mask = signal.pthread_sigmask(
                 signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGALRM})
             try:

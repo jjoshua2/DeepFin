@@ -490,35 +490,38 @@ def test_uci_searchmoves_uses_filtered_gumbel_path_with_walkers(
         gumbel_cfg=GumbelConfig(simulations=4, topk=4, temperature=1.0, add_noise=True),
     )
 
-    def fake_gumbel(*args: Any, **kwargs: Any) -> float:
-        calls.append(("gumbel", args, kwargs))
-        return 0.25
+    try:
+        def fake_gumbel(*args: Any, **kwargs: Any) -> float:
+            calls.append(("gumbel", args, kwargs))
+            return 0.25
 
-    def fake_walker(*args: Any, **kwargs: Any) -> float:
-        calls.append(("walker", args, kwargs))
-        return -0.25
+        def fake_walker(*args: Any, **kwargs: Any) -> float:
+            calls.append(("walker", args, kwargs))
+            return -0.25
 
-    monkeypatch.setattr(worker, "_run_gumbel_chunk", fake_gumbel)
-    monkeypatch.setattr(worker, "_run_walker_chunk", fake_walker)
+        monkeypatch.setattr(worker, "_run_gumbel_chunk", fake_gumbel)
+        monkeypatch.setattr(worker, "_run_walker_chunk", fake_walker)
 
-    value, completed = worker._run_one_chunk(
-        4,
-        board,
-        threading.Event(),
-        None,
-        allowed,
-        True,
-    )
+        value, completed = worker._run_one_chunk(
+            4,
+            board,
+            threading.Event(),
+            None,
+            allowed,
+            True,
+        )
 
-    assert value == 0.25
-    assert completed == 4  # non-pool paths always run the full chunk
-    assert calls == [
-        (
-            "gumbel",
-            (4, board, None, allowed),
-            {"allow_terminal_shortcuts": True},
-        ),
-    ]
+        assert value == 0.25
+        assert completed == 4  # non-pool paths always run the full chunk
+        assert calls == [
+            (
+                "gumbel",
+                (4, board, None, allowed),
+                {"allow_terminal_shortcuts": True, "witness_stop_fn": None},
+            ),
+        ]
+    finally:
+        worker.close()
 
 
 def test_uci_build_engine_threads_policy_encoding_into_gumbel_config() -> None:

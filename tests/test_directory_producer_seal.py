@@ -1212,8 +1212,35 @@ def test_packed_root_seal_is_opaque_and_a_missing_member_fails_before_decode(
         packed_loaded["wdl_target"], _expected_wdl(520, tail_fill=False),
     )
     calls = _forbid_fill_decode(monkeypatch)
-    with pytest.raises(ValueError, match="stored chunk 'wdl_target/1'"):
+    # Packed admission rejects the missing declared chunk before seal checking.
+    with pytest.raises(ValueError, match="array 'wdl_target' stored 1 chunks but declares 2"):
         load_shard_arrays(damaged)
+    assert calls == {"getitem": 0, "decode": 0}
+
+
+@pytest.mark.parametrize("validate", [False, True])
+def test_packed_complete_inventory_still_checks_sealed_declaration_before_decode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, validate: bool,
+) -> None:
+    """A complete packed grid cannot authorize a changed decode declaration."""
+    path = _write(tmp_path / "replay", n=8)
+    damaged = tmp_path / "damaged.zarr.zip"
+    with zipfile.ZipFile(damaged, "w", compression=zipfile.ZIP_STORED) as archive:
+        for file in sorted(path.rglob("*")):
+            if not file.is_file():
+                continue
+            name = file.relative_to(path).as_posix()
+            payload = file.read_bytes()
+            if name == "x/.zarray":
+                assert b'"order": "C"' in payload
+                payload = payload.replace(b'"order": "C"', b'"order": "F"', 1)
+            archive.writestr(name, payload)
+    # Admission accepts the unchanged chunk inventory; only the seal can
+    # reject the modified order before Zarr interprets the payload bytes.
+    assert packed.content_sha256(damaged)
+    calls = _forbid_fill_decode(monkeypatch)
+    with pytest.raises(ValueError, match="declaration for 'x'"):
+        load_shard_arrays(damaged, validate=validate)
     assert calls == {"getitem": 0, "decode": 0}
 
 

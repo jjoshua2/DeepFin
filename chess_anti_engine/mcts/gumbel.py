@@ -1413,6 +1413,7 @@ class _BoardSearchState:
     """Per-board state for sequential halving. ``finished`` short-circuits halving."""
     root: Node
     priors: np.ndarray
+    search_legal: np.ndarray
     candidates: list[int] | None
     remaining: list[int] | None
     gumbels: dict[int, float] | None
@@ -1432,17 +1433,17 @@ def _init_board_search_state(
 ) -> _BoardSearchState:
     """Phase 2 per-board: init root, early-exit trivial cases, else select top-m."""
     root, pri, mask = _init_root_from_logits(board, pol_logits=pol_logits, root_q=root_q)
+    legal = np.nonzero(mask)[0].astype(int)
 
     def _finish(probs: np.ndarray, action: int, value: float) -> _BoardSearchState:
         return _BoardSearchState(
-            root=root, priors=pri, candidates=None, remaining=None, gumbels=None,
+            root=root, priors=pri, search_legal=legal, candidates=None, remaining=None, gumbels=None,
             finished_probs=probs, finished_action=action, finished_value=value,
         )
 
     if root.board.is_game_over():
         return _finish(np.zeros((POLICY_SIZE,), dtype=np.float32), 0, float(root.Q))
 
-    legal = np.nonzero(mask)[0]
     if legal.size == 0:
         return _finish(np.zeros((POLICY_SIZE,), dtype=np.float32), 0, root_q)
 
@@ -1471,7 +1472,7 @@ def _init_board_search_state(
         gumbel_scale=float(cfg.gumbel_scale), rng=rng,
     )
     return _BoardSearchState(
-        root=root, priors=pri,
+        root=root, priors=pri, search_legal=legal,
         candidates=cands, remaining=list(cands), gumbels=gumbels,
         finished_probs=None, finished_action=None, finished_value=None,
     )
@@ -1482,6 +1483,7 @@ def _collect_forced_leaves_round(
     active: list[int],
     states: list[_BoardSearchState],
     visits_per_action: dict[int, int],
+    budget_remaining: list[int],
     rep: int,
     cfg: GumbelConfig,
 ) -> tuple[list[Node], list[list[Node]]]:
@@ -1496,7 +1498,11 @@ def _collect_forced_leaves_round(
         rem = st.remaining
         if rem is None or rep >= visits_per_action[bi]:
             continue
-        for action in rem:
+        for ci, action in enumerate(rem):
+            # A partial final round still scores every survivor, but cannot
+            # dispatch a forced line after this board's tokens are exhausted.
+            if rep * len(rem) + ci >= budget_remaining[bi]:
+                break
             leaf, path, terminal_value = _collect_forced_leaf(
                 root=st.root, forced_action=int(action), cfg=cfg,
             )
@@ -1565,7 +1571,7 @@ def _halve_remaining_for_board(
     pri = st.priors
     gmap = st.gumbels
     root = st.root
-    legal = np.nonzero(pri > 0)[0].astype(int)
+    legal = st.search_legal
     visits = np.empty(legal.size, dtype=np.float64)
     qvalues = np.empty(legal.size, dtype=np.float64)
     for i, a in enumerate(legal):
@@ -1610,7 +1616,7 @@ def _build_improved_policy_for_board(
     if remaining is None or st.candidates is None:
         return np.zeros((POLICY_SIZE,), dtype=np.float32), 0, root_q
 
-    legal = np.nonzero(pri > 0)[0].astype(int)
+    legal = st.search_legal
     visits = np.empty(legal.size, dtype=np.float64)
     qvalues = np.empty(legal.size, dtype=np.float64)
     for i, a in enumerate(legal):
@@ -1829,7 +1835,8 @@ def run_gumbel_root_many(
         for rep in range(max_reps):
             leaf_nodes, leaf_paths = _collect_forced_leaves_round(
                 active=active, states=states,
-                visits_per_action=visits_per_action, rep=rep, cfg=cfg,
+                visits_per_action=visits_per_action, budget_remaining=budget_remaining,
+                rep=rep, cfg=cfg,
             )
             _evaluate_and_backprop_leaves(leaf_nodes, leaf_paths, leaf_eval, cfg)
 
@@ -1862,7 +1869,7 @@ def run_gumbel_root_many(
             probs_out.append(probs)
             actions_out.append(action)
             values_out.append(value)
-            legal = np.nonzero(st.priors > 0)[0].astype(int)
+            legal = st.search_legal
             diagnostics_out.append(gumbel_policy_diagnostics(
                 probs=probs, action=int(action), legal=legal, candidates=st.candidates,
             ))

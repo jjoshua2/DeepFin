@@ -18,7 +18,7 @@ import logging as _logging
 import os
 import sys as _sys
 import time as _time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Literal, NamedTuple, cast, overload
 
 import chess
@@ -28,6 +28,7 @@ from numpy.typing import NDArray
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding import check_encode_buffer_planes, input_plane_count
+from chess_anti_engine.async_safety import drain_failed_receipts
 from chess_anti_engine.inference_dispatcher import supports_inplace_api
 from chess_anti_engine.mcts._mcts_tree import batch_compute_relations
 from chess_anti_engine.encoding.lc0 import (
@@ -76,6 +77,7 @@ from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_cboard_policy_or_draws,
 )
 from chess_anti_engine.mcts.sampling import sample_action_with_temperature
+from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
 from chess_anti_engine.moves import POLICY_SIZE
 
 
@@ -283,7 +285,11 @@ def _start_gumbel_trailing_args(
 # Raised to 6 for root history identity: add_root binds context even when a
 # terminal shortcut completes before start_gumbel_sims, and reused roots expose
 # root_context_matches so changed history cannot retain solved/evaluated state.
-_REQUIRED_MCTS_ABI = 6
+# Raised to 7 for outcome-preserving solved-root witnesses and exact native Q
+# queries. Older extensions silently return an unsafe move or averaged proof.
+# Raised to 8 for explicit incomplete survivors and bounded caller recovery.
+# Raised to 9 for the shared extension's optional PUCT leaf history mode.
+_REQUIRED_MCTS_ABI = 9
 
 # Mirrors the VLOSS_MODE_* defines in _mcts_tree.c (205-206). LEGACY scores a
 # pending leaf as a loss (parallel-PUCT pessimism); VIRTUAL_MEAN scores it at
@@ -679,6 +685,51 @@ class _RootPrep(NamedTuple):
     m: int
 
 
+# This allowance is outside the NN simulation budget, never another search.
+# Each child check polls the caller's stop/deadline before one synchronous probe.
+_SOLVED_ROOT_TB_CHECK_LIMIT = 32
+
+
+def _recover_root_witness(tree, rid: int, cb, pri: np.ndarray, legal: np.ndarray, probe,
+                          stop_fn: Callable[[], bool] | None) -> tuple[int | None, int | None, int]:
+    status = tree.get_solved_status(rid)
+    proof = -1 if status == 1 else 2
+    actions, _ = tree.get_children_visits(rid)
+    allowed = {int(a) for a in legal}
+    supported = [int(a) for a in actions if int(a) in allowed]
+    supported.sort(key=lambda a: -float(pri[a]))
+    for action in supported:
+        if tree.get_solved_status(tree.find_child(rid, action)) == proof:
+            return action, None, 0
+    checks = 0
+    for action in supported:
+        cid = tree.find_child(rid, action)
+        if tree.get_solved_status(cid) != 0:
+            continue
+        if checks >= _SOLVED_ROOT_TB_CHECK_LIMIT or (stop_fn is not None and stop_fn()):
+            break
+        child = cb.copy()
+        child.push_index(action)
+        checks += 1
+        solved = 0
+        if child.is_game_over():
+            value = child.terminal_value()
+            solved = 2 if value == 0 else int(value)
+        elif probe is not None:
+            statuses = np.zeros(1, np.int8)
+            probe.apply([child], np.zeros((1, 3), np.float32), solved_out=statuses)
+            solved = int(statuses[0])
+        else:
+            break
+        if solved:
+            tree.mark_solved_path(np.array([rid, cid], np.int32), solved)
+        if solved == proof:
+            return action, None, checks
+    fallback = next((a for a in supported
+                     if tree.get_solved_status(tree.find_child(rid, a)) == 0), None)
+    return None, fallback, checks
+
+
 @torch.no_grad()
 @overload
 def run_gumbel_root_many_c(
@@ -705,6 +756,7 @@ def run_gumbel_root_many_c(
     target_batch: int = 0,
     vloss_weight: int = 0,
     vloss_mode: int = 0,
+    witness_stop_fn: Callable[[], bool] | None = None,
     return_diagnostics: Literal[False] = False,
 ) -> GumbelManyCResult: ...
 
@@ -734,6 +786,7 @@ def run_gumbel_root_many_c(
     target_batch: int = 0,
     vloss_weight: int = 0,
     vloss_mode: int = 0,
+    witness_stop_fn: Callable[[], bool] | None = None,
     return_diagnostics: Literal[True],
 ) -> GumbelManyCDiagnosticsResult: ...
 
@@ -762,12 +815,20 @@ def run_gumbel_root_many_c(
     target_batch: int = 0,
     vloss_weight: int = 0,
     vloss_mode: int = 0,
+    witness_stop_fn: Callable[[], bool] | None = None,
     return_diagnostics: bool = False,
 ) -> GumbelManyCResult | GumbelManyCDiagnosticsResult:
     """Gumbel root search with MCTSTree C tree + CBoard.
 
     Same API as ``run_gumbel_root_many`` -- drop-in replacement, plus C-path
     controls the Python reference has no equivalent for:
+
+    A solved root without a move witness receives at most 32 additional child
+    terminal/tablebase checks outside the NN node budget. ``witness_stop_fn``
+    is polled before each synchronous check; UCI supplies stop and deadline,
+    and selfplay supplies its stop callback. Exhaustion raises
+    ``SolvedRootWitnessUnavailable`` with completed batch members preserved,
+    rather than returning an unproven action as a successful search result.
 
     When ``tree`` and ``root_node_ids`` reuse an expanded root, its priors,
     visits, evaluations, and solved state are carried into this search. Reuse
@@ -1280,6 +1341,10 @@ def run_gumbel_root_many_c(
             p[a0] = 1.0
             probs_out[i] = p
             actions_out[i] = a0
+            if not _use_pipeline:
+                solved = tree.get_solved_status(root_ids[i])
+                if solved != 0:
+                    values_out[i] = tree.node_q(root_ids[i])
             continue
 
   # Defense in depth. 2b already refused the whole batch on this condition, so
@@ -1417,20 +1482,24 @@ def run_gumbel_root_many_c(
   # We overlap GPU(A) with C(B) by launching async GPU for one group,
   # then doing continue_gumbel_sims for the other.
 
+        _pending_receipt = None
+
         def _drain_sequential(g):
             """Drain remaining simulation for group g without pipelining."""
-            nonlocal _t_gpu, _t_prepare, _n_gpu_calls, _n_gpu_positions
+            nonlocal _t_gpu, _t_prepare, _n_gpu_calls, _n_gpu_positions, _pending_receipt
             while _n_leaves[g] is not None:
                 nl = int(_n_leaves[g])
                 padded = _pad_for_bucket(nl, len(_enc_bufs[g]))
                 _record_batch_dup(_enc_bufs[g], nl, padded)
                 _tg0 = _time.perf_counter()
                 if _inplace:
-                    pol_t, wdl_t, ev = eval_impl.evaluate_inplace_async(padded, slot=g)  # pyright: ignore[reportAttributeAccessIssue]
+                    _pending_receipt = eval_impl.evaluate_inplace_async(padded, slot=g)  # pyright: ignore[reportAttributeAccessIssue]
                 else:
-                    pol_t, wdl_t, ev = _async_eval.evaluate_encoded_async(_enc_bufs[g][:padded])
+                    _pending_receipt = _async_eval.evaluate_encoded_async(_enc_bufs[g][:padded])
+                pol_t, wdl_t, ev = _pending_receipt
                 if ev is not None:
                     ev.synchronize()
+                _pending_receipt = None
                 _t_gpu += _time.perf_counter() - _tg0
                 _n_gpu_calls += 1
                 _n_gpu_positions += nl
@@ -1459,131 +1528,142 @@ def run_gumbel_root_many_c(
         _pending_g1 = None  # (pol_np, wdl_np) — synced + copied numpy
 
         _max_iters = n_boards * max(*budget_remaining, 1) + 100
-        for _ in range(_max_iters):
-            if _n_leaves[0] is None and _n_leaves[1] is None:
-                break
+        try:
+            for _ in range(_max_iters):
+                if _n_leaves[0] is None and _n_leaves[1] is None:
+                    break
 
-  # Only one group active → flush pending, then drain
-            if _n_leaves[0] is None:
+      # Only one group active → flush pending, then drain
+                if _n_leaves[0] is None:
+                    if _pending_g1 is not None:
+                        _tp0 = _time.perf_counter()
+                        _tb_override(_trees[1], tb_probe, _pending_g1[1])
+                        _n_leaves[1] = _trees[1].continue_gumbel_sims(*_pending_g1)
+                        _t_prepare += _time.perf_counter() - _tp0
+                        _pending_g1 = None
+                    _drain_sequential(1)
+                    break
+                if _n_leaves[1] is None and _pending_g1 is None:
+                    _drain_sequential(0)
+                    break
+
+      # Both active — one pipelined iteration:
+
+      # 1) Submit GPU for group 0 (async — GPU starts working)
+                nl0 = int(_n_leaves[0])
+                padded0 = _pad_for_bucket(nl0, len(_enc_bufs[0]))
+                _record_batch_dup(_enc_bufs[0], nl0, padded0)
+                _tg0 = _time.perf_counter()
+                if _inplace:
+                    _pending_receipt = eval_impl.evaluate_inplace_async(padded0, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+                else:
+                    _pending_receipt = _async_eval.evaluate_encoded_async(_enc_bufs[0][:padded0])
+                pol_t0, wdl_t0, ev0 = _pending_receipt
+
+      # 2) While GPU processes group 0, do C tree walks for group 1
+      #    (continue_gumbel_sims releases GIL; CPU and GPU run in parallel)
                 if _pending_g1 is not None:
                     _tp0 = _time.perf_counter()
                     _tb_override(_trees[1], tb_probe, _pending_g1[1])
                     _n_leaves[1] = _trees[1].continue_gumbel_sims(*_pending_g1)
                     _t_prepare += _time.perf_counter() - _tp0
                     _pending_g1 = None
-                _drain_sequential(1)
-                break
-            if _n_leaves[1] is None and _pending_g1 is None:
-                _drain_sequential(0)
-                break
 
-  # Both active — one pipelined iteration:
+                    if _n_leaves[1] is None:
+      # Group 1 finished — wait for GPU(0) and drain group 0
+                        if ev0 is not None:
+                            ev0.synchronize()
+                        _pending_receipt = None
+                        _t_gpu += _time.perf_counter() - _tg0
+                        _n_gpu_calls += 1
+                        _n_gpu_positions += nl0
+                        _tp0 = _time.perf_counter()
+                        _wdl0 = wdl_t0[:nl0].numpy()
+                        _tb_override(_trees[0], tb_probe, _wdl0)
+                        _n_leaves[0] = _trees[0].continue_gumbel_sims(
+                            _policy_logits_to_full(pol_t0[:nl0].numpy(), cfg=cfg),
+                            _wdl0,
+                        )
+                        _t_prepare += _time.perf_counter() - _tp0
+                        _drain_sequential(0)
+                        break
 
-  # 1) Submit GPU for group 0 (async — GPU starts working)
-            nl0 = int(_n_leaves[0])
-            padded0 = _pad_for_bucket(nl0, len(_enc_bufs[0]))
-            _record_batch_dup(_enc_bufs[0], nl0, padded0)
-            _tg0 = _time.perf_counter()
-            if _inplace:
-                pol_t0, wdl_t0, ev0 = eval_impl.evaluate_inplace_async(padded0, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
-            else:
-                pol_t0, wdl_t0, ev0 = _async_eval.evaluate_encoded_async(_enc_bufs[0][:padded0])
-
-  # 2) While GPU processes group 0, do C tree walks for group 1
-  #    (continue_gumbel_sims releases GIL; CPU and GPU run in parallel)
-            if _pending_g1 is not None:
-                _tp0 = _time.perf_counter()
-                _tb_override(_trees[1], tb_probe, _pending_g1[1])
-                _n_leaves[1] = _trees[1].continue_gumbel_sims(*_pending_g1)
-                _t_prepare += _time.perf_counter() - _tp0
-                _pending_g1 = None
-
-                if _n_leaves[1] is None:
-  # Group 1 finished — wait for GPU(0) and drain group 0
-                    if ev0 is not None:
-                        ev0.synchronize()
-                    _t_gpu += _time.perf_counter() - _tg0
-                    _n_gpu_calls += 1
-                    _n_gpu_positions += nl0
-                    _tp0 = _time.perf_counter()
-                    _wdl0 = wdl_t0[:nl0].numpy()
-                    _tb_override(_trees[0], tb_probe, _wdl0)
-                    _n_leaves[0] = _trees[0].continue_gumbel_sims(
-                        _policy_logits_to_full(pol_t0[:nl0].numpy(), cfg=cfg),
-                        _wdl0,
-                    )
-                    _t_prepare += _time.perf_counter() - _tp0
-                    _drain_sequential(0)
-                    break
-
-  # 3) Wait for GPU(0). Slot-aware path: pinned slot 0 outputs stay live
-  # until the next submit(slot=0), which happens at the *top* of next loop
-  # iteration — well after step (5) reads them. Legacy path must copy
-  # because both submits share one output buffer.
-            if ev0 is not None:
-                ev0.synchronize()
-            _t_gpu += _time.perf_counter() - _tg0
-            _n_gpu_calls += 1
-            _n_gpu_positions += nl0
-            if _inplace:
-                pol_np0 = pol_t0[:nl0].numpy()
-                wdl_np0 = wdl_t0[:nl0].numpy()
-            else:
-                pol_np0 = pol_t0[:nl0].numpy().copy()
-                wdl_np0 = wdl_t0[:nl0].numpy().copy()
-            pol_np0 = _policy_logits_to_full(pol_np0, cfg=cfg)
-
-  # 4) Submit GPU for group 1 (async — safe: group 0 results consumed below)
-            if _n_leaves[1] is not None:
-                nl1 = int(_n_leaves[1])
-                padded1 = _pad_for_bucket(nl1, len(_enc_bufs[1]))
-                _record_batch_dup(_enc_bufs[1], nl1, padded1)
-                _tg1 = _time.perf_counter()
-                if _inplace:
-                    pol_t1, wdl_t1, ev1 = eval_impl.evaluate_inplace_async(padded1, slot=1)  # pyright: ignore[reportAttributeAccessIssue]
-                else:
-                    pol_t1, wdl_t1, ev1 = _async_eval.evaluate_encoded_async(_enc_bufs[1][:padded1])
-
-  # 5) While GPU processes group 1, do C tree walks for group 0
-  #    (uses copied numpy arrays — safe from pinned buffer reuse)
-            _tp0 = _time.perf_counter()
-            _tb_override(_trees[0], tb_probe, wdl_np0)
-            _n_leaves[0] = _trees[0].continue_gumbel_sims(pol_np0, wdl_np0)
-            _t_prepare += _time.perf_counter() - _tp0
-
-  # 6) Sync GPU(1), copy results for next iteration's step 2.
-  # Same-condition re-check — ev1/_tg1/nl1/pol_t1/wdl_t1 are all bound
-  # from step (4). Pyright can't narrow across the blocks.
-            if _n_leaves[1] is not None:
-                _ev1 = ev1  # pyright: ignore[reportPossiblyUnboundVariable]
-                _tg1_l = _tg1  # pyright: ignore[reportPossiblyUnboundVariable]
-                _nl1 = nl1  # pyright: ignore[reportPossiblyUnboundVariable]
-                _pol1 = pol_t1  # pyright: ignore[reportPossiblyUnboundVariable]
-                _wdl1 = wdl_t1  # pyright: ignore[reportPossiblyUnboundVariable]
-                if _ev1 is not None:
-                    _ev1.synchronize()
-                _t_gpu += _time.perf_counter() - _tg1_l
+      # 3) Wait for GPU(0). Slot-aware path: pinned slot 0 outputs stay live
+      # until the next submit(slot=0), which happens at the *top* of next loop
+      # iteration — well after step (5) reads them. Legacy path must copy
+      # because both submits share one output buffer.
+                if ev0 is not None:
+                    ev0.synchronize()
+                _pending_receipt = None
+                _t_gpu += _time.perf_counter() - _tg0
                 _n_gpu_calls += 1
-                _n_gpu_positions += _nl1
-  # Inplace path: slot 1's pinned outputs persist until next submit(slot=1)
-  # in step (4) of next iter — safe to alias. Legacy path shares one output
-  # buffer across both submits, so we must clone before submit(slot=0).
+                _n_gpu_positions += nl0
                 if _inplace:
-                    _pending_g1 = (
-                        _policy_logits_to_full(_pol1[:_nl1].numpy(), cfg=cfg),
-                        _wdl1[:_nl1].numpy(),
-                    )
+                    pol_np0 = pol_t0[:nl0].numpy()
+                    wdl_np0 = wdl_t0[:nl0].numpy()
                 else:
-                    _pending_g1 = (
-                        _policy_logits_to_full(_pol1[:_nl1].numpy().copy(), cfg=cfg),
-                        _wdl1[:_nl1].numpy().copy(),
-                    )
-        else:
-            raise RuntimeError(f"pipeline loop did not converge in {_max_iters} iterations")
+                    pol_np0 = pol_t0[:nl0].numpy().copy()
+                    wdl_np0 = wdl_t0[:nl0].numpy().copy()
+                pol_np0 = _policy_logits_to_full(pol_np0, cfg=cfg)
+
+      # 4) Submit GPU for group 1 (async — safe: group 0 results consumed below)
+                if _n_leaves[1] is not None:
+                    nl1 = int(_n_leaves[1])
+                    padded1 = _pad_for_bucket(nl1, len(_enc_bufs[1]))
+                    _record_batch_dup(_enc_bufs[1], nl1, padded1)
+                    _tg1 = _time.perf_counter()
+                    if _inplace:
+                        _pending_receipt = eval_impl.evaluate_inplace_async(padded1, slot=1)  # pyright: ignore[reportAttributeAccessIssue]
+                    else:
+                        _pending_receipt = _async_eval.evaluate_encoded_async(_enc_bufs[1][:padded1])
+                    pol_t1, wdl_t1, ev1 = _pending_receipt
+
+      # 5) While GPU processes group 1, do C tree walks for group 0
+      #    (uses copied numpy arrays — safe from pinned buffer reuse)
+                _tp0 = _time.perf_counter()
+                _tb_override(_trees[0], tb_probe, wdl_np0)
+                _n_leaves[0] = _trees[0].continue_gumbel_sims(pol_np0, wdl_np0)
+                _t_prepare += _time.perf_counter() - _tp0
+
+      # 6) Sync GPU(1), copy results for next iteration's step 2.
+      # Same-condition re-check — ev1/_tg1/nl1/pol_t1/wdl_t1 are all bound
+      # from step (4). Pyright can't narrow across the blocks.
+                if _n_leaves[1] is not None:
+                    _ev1 = ev1  # pyright: ignore[reportPossiblyUnboundVariable]
+                    _tg1_l = _tg1  # pyright: ignore[reportPossiblyUnboundVariable]
+                    _nl1 = nl1  # pyright: ignore[reportPossiblyUnboundVariable]
+                    _pol1 = pol_t1  # pyright: ignore[reportPossiblyUnboundVariable]
+                    _wdl1 = wdl_t1  # pyright: ignore[reportPossiblyUnboundVariable]
+                    if _ev1 is not None:
+                        _ev1.synchronize()
+                    _pending_receipt = None
+                    _t_gpu += _time.perf_counter() - _tg1_l
+                    _n_gpu_calls += 1
+                    _n_gpu_positions += _nl1
+      # Inplace path: slot 1's pinned outputs persist until next submit(slot=1)
+      # in step (4) of next iter — safe to alias. Legacy path shares one output
+      # buffer across both submits, so we must clone before submit(slot=0).
+                    if _inplace:
+                        _pending_g1 = (
+                            _policy_logits_to_full(_pol1[:_nl1].numpy(), cfg=cfg),
+                            _wdl1[:_nl1].numpy(),
+                        )
+                    else:
+                        _pending_g1 = (
+                            _policy_logits_to_full(_pol1[:_nl1].numpy().copy(), cfg=cfg),
+                            _wdl1[:_nl1].numpy().copy(),
+                        )
+            else:
+                raise RuntimeError(f"pipeline loop did not converge in {_max_iters} iterations")
+        except BaseException as error:
+            # CPU work for one group can fail while the other owns a loan.
+            if _pending_receipt is not None:
+                drain_failed_receipts(eval_impl, eval_impl, [_pending_receipt], error)
+            raise
 
   # Retrieve remaining candidates from both trees, merge back
-        _rem_a = _trees[0].get_gumbel_remaining()
-        _rem_b = _trees[1].get_gumbel_remaining()
+        _rem_a = _trees[0].get_gumbel_remaining(True)
+        _rem_b = _trees[1].get_gumbel_remaining(True)
         remaining_per_board = [None] * n_boards
         for gi, i in enumerate(_grp[0]):
             remaining_per_board[i] = _rem_a[gi] if gi < len(_rem_a) else None
@@ -1748,11 +1828,14 @@ def run_gumbel_root_many_c(
                 n_leaves = tree.continue_gumbel_sims(pol_all, wdl_all)
             _t_prepare += _time.perf_counter() - _tp0
 
-        remaining_per_board = cast("list[list[int] | None]", tree.get_gumbel_remaining())
+        remaining_per_board = cast("list[list[int] | None]", tree.get_gumbel_remaining(True))
         _tree_for_board = None  # signal to use single tree
         _rid_for_board = None
 
   # -- 4. Build improved policies from C tree ----------------------------
+    unresolved: dict[int, int] = {}
+    fallback_actions: dict[int, int] = {}
+    child_checks: dict[int, int] = {}
     _tp0 = _time.perf_counter()
     for i in range(n_boards):
         if probs_out[i] is not None:
@@ -1772,11 +1855,45 @@ def run_gumbel_root_many_c(
             actions_out[i] = 0
             continue
 
-        legal = np.nonzero(pri > 0)[0].astype(int)
+        assert _qtree is not None
+        root_status = _qtree.get_solved_status(rid)
+        if root_status in (1, 2) and not remaining:
+            proven, fallback, checked = _recover_root_witness(
+                _qtree, rid, root_cboards[i], pri, cast(np.ndarray, root_legal[i]),
+                tb_probe, witness_stop_fn,
+            )
+            child_checks[i] = checked
+            if proven is None:
+                unresolved[i] = root_status
+                if fallback is not None:
+                    fallback_actions[i] = fallback
+                probs_out[i] = np.zeros(POLICY_SIZE, np.float32)
+                actions_out[i] = -1
+                values_out[i] = _qtree.node_q(rid)
+                continue
+            remaining = [proven]
+            remaining_per_board[i] = remaining
+        solved = _qtree.get_solved_status(rid)
+        if solved in (1, 2) and len(remaining) == 1:
+            proven = int(remaining[0])
+            child = _qtree.find_child(rid, proven)
+            proof = -1 if solved == 1 else 2
+            if child >= 0 and _qtree.get_solved_status(child) == proof:
+                # The native stop recovers a proof from the full root. Neither
+                # fresh priors nor positive-temperature sampling may undo it.
+                probs = np.zeros((POLICY_SIZE,), dtype=np.float32)
+                probs[proven] = 1.0
+                probs_out[i] = probs
+                actions_out[i] = proven
+                values_out[i] = _qtree.node_q(rid)
+                continue
+
+        # Search support survives prior underflow and already includes allowed
+        # moves and deliberate terminal-draw pruning. Sort for searchsorted.
+        legal = np.sort(cast(np.ndarray, root_search_legal[i])).astype(int)
         root_q_i = float(root_qs[i])
 
   # Get children stats from C tree (completed_q already negated)
-        assert _qtree is not None
         child_actions, child_visits, child_q = _qtree.get_children_q(rid, root_q_i)
         action_to_slot = {}
         for j in range(child_actions.size):
@@ -1850,10 +1967,8 @@ def run_gumbel_root_many_c(
   # which already carried that check, so the codebase has never treated
   # `best_a in legal` as guaranteed. Unchecked, an out-of-range hit would
   # silently select a DIFFERENT legal action, or IndexError when `best_a`
-  # exceeds every entry. It is unreachable by construction (the candidate set
-  # is drawn from the same pruned `legal_idx` the priors were written on, and
-  # a prior only leaves `legal` by underflowing to exactly 0.0, i.e. a >745
-  # float64 logit gap), so this is belt-and-braces, not a live path.
+  # exceeds every entry. Candidates and output use the same explicit searched
+  # support, including legal entries whose priors underflowed to zero.
         j_best = int(np.searchsorted(legal, best_a)) if legal.size > 0 else 0
         best_in_legal = j_best < legal.size and int(legal[j_best]) == best_a
         if best_in_legal:
@@ -1873,7 +1988,9 @@ def run_gumbel_root_many_c(
 
   # Value from child
         slot = action_to_slot.get(best_a)
-        if slot is not None and int(child_visits[slot]) > 0 and best_in_legal:
+        if solved == -1:
+            values_out[i] = _qtree.node_q(rid)
+        elif slot is not None and int(child_visits[slot]) > 0 and best_in_legal:
             values_out[i] = float(completed_q[j_best])
         else:
             values_out[i] = root_q_i
@@ -1911,7 +2028,7 @@ def run_gumbel_root_many_c(
             probs = probs_out[i]
             action = actions_out[i]
             legal = root_legal[i]
-            if probs is None or action is None or legal is None:
+            if i in unresolved or probs is None or action is None or legal is None:
                 continue
             diagnostics_out[i] = gumbel_policy_diagnostics(
                 probs=probs,
@@ -1919,7 +2036,7 @@ def run_gumbel_root_many_c(
                 legal=legal.astype(int, copy=False),
                 candidates=candidates_per_board[i],
             )
-        return (
+        result = (
             cast("list[np.ndarray]", probs_out),
             cast("list[int]", actions_out),
             values_out,
@@ -1928,11 +2045,15 @@ def run_gumbel_root_many_c(
             _ret_root_ids,
             diagnostics_out,
         )
-    return (
-        cast("list[np.ndarray]", probs_out),
-        cast("list[int]", actions_out),
-        values_out,
-        legal_masks_out,
-        tree,
-        _ret_root_ids,
-    )
+    else:
+        result = (
+            cast("list[np.ndarray]", probs_out),
+            cast("list[int]", actions_out),
+            values_out,
+            legal_masks_out,
+            tree,
+            _ret_root_ids,
+        )
+    if unresolved:
+        raise SolvedRootWitnessUnavailable(unresolved, result, fallback_actions, child_checks)
+    return result

@@ -185,6 +185,11 @@ class EncodedEvalCache:
     def __getattr__(self, name: str) -> object:
         return getattr(self._inner, name)
 
+    @property
+    def async_backend(self) -> BatchEvaluator:
+        """Expose the wrapped owner for asynchronous quiescence checks."""
+        return self._inner
+
     def stats(self) -> EncodedEvalCacheStats:
         with self._lock:
             return EncodedEvalCacheStats(

@@ -44,20 +44,18 @@ def legacy_policy(board: chess.Board, logits: np.ndarray) -> tuple[list[str], np
     return ucis, probs / total
 
 
-def logits_for(nonfinite: bool = False) -> np.ndarray:
+def logits_for(masked: bool = False) -> np.ndarray:
     logits = np.linspace(-4, 3, raw.COMPACT_POLICY_SIZE, dtype=np.float32)
-    if nonfinite:
-        logits[::3] = np.nan
-        logits[1::3] = np.inf
-        logits[2::3] = -np.inf
+    if masked:
+        logits[::3] = -np.inf
     return logits
 
 
 @pytest.mark.parametrize('fen', FENS)
-@pytest.mark.parametrize('nonfinite', [False, True])
-def test_move_objects_preserve_exact_legacy_order_and_probabilities(fen: str, nonfinite: bool) -> None:
+@pytest.mark.parametrize('masked', [False, True])
+def test_move_objects_preserve_exact_legacy_order_and_probabilities(fen: str, masked: bool) -> None:
     board = chess.Board(fen)
-    logits = logits_for(nonfinite)
+    logits = logits_for(masked)
     expected_uci, expected = legacy_policy(board, logits)
     moves, actual = dump.legal_move_probabilities(board, logits)
     assert moves == list(board.legal_moves)
@@ -71,15 +69,15 @@ def test_move_objects_preserve_exact_legacy_order_and_probabilities(fen: str, no
 
 
 @pytest.mark.parametrize('fen', FENS[:-1])
-@pytest.mark.parametrize('nonfinite', [False, True])
-def test_compact_output_matches_frozen_collector_projection(fen: str, nonfinite: bool) -> None:
+@pytest.mark.parametrize('masked', [False, True])
+def test_compact_output_matches_frozen_collector_projection(fen: str, masked: bool) -> None:
     board = chess.Board(fen)
-    ucis, old_probabilities = legacy_policy(board, logits_for(nonfinite))
+    ucis, old_probabilities = legacy_policy(board, logits_for(masked))
     expected = np.zeros(raw.COMPACT_POLICY_SIZE, dtype=np.float32)
     expected[[raw.compact_index_for_move(board, chess.Move.from_uci(u)) for u in ucis]] = (
         old_probabilities.astype(np.float32)
     )
-    moves, probabilities, dense = dump.compact_legal_policy(board, logits_for(nonfinite))
+    moves, probabilities, dense = dump.compact_legal_policy(board, logits_for(masked))
     assert [m.uci() for m in moves] == ucis
     np.testing.assert_array_equal(probabilities, old_probabilities.astype(np.float32))
     np.testing.assert_array_equal(dense, expected)

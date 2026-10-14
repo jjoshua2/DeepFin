@@ -95,6 +95,7 @@ def _run_step(
     cur_opp_idxs: list[int],
     stockfish: StockfishUCI | StockfishPool,
     on_timing: Callable[[str, float], None] | None = None,
+    witness_stop_fn: Callable[[], bool] | None = None,
 ) -> tuple[float, float]:
     """Network + SF turn for one step. Returns ``(net_seconds, sf_seconds)``.
 
@@ -127,9 +128,16 @@ def _run_step(
     # Combined network turn: merge net_idxs + sp_opp_idxs into one MCTS call
     # for GPU batch-size doubling. Disjoint + independent.
     combined_net_idxs = net_idxs + sp_opp_idxs
+    previous_sp_records = {
+        i: state.samples_per_game[i][-1] if state.samples_per_game[i] else None
+        for i in combined_net_idxs if bool(state.selfplay_arr[i])
+    }
     if combined_net_idxs:
         t0 = time.perf_counter()
-        run_network_turn(state, combined_net_idxs)
+        if witness_stop_fn is None:
+            run_network_turn(state, combined_net_idxs)
+        else:
+            run_network_turn(state, combined_net_idxs, witness_stop_fn=witness_stop_fn)
         dt = time.perf_counter() - t0
         t_net += dt
         if on_timing is not None:
@@ -139,9 +147,14 @@ def _run_step(
     # games get their label from the next SF-opponent query, but selfplay slots
     # would otherwise advance another network turn before annotation and lose
     # the previous record as "latest".
+    # Forced turns advance the board without creating a record. Only a new
+    # record belongs to this post-move position, even if its predecessor is
+    # still unlabeled (pending query, failed query or a full label queue).
     sp_label_idxs = [
         i for i in combined_net_idxs
         if bool(state.selfplay_arr[i]) and not state.done_arr[i]
+        and state.samples_per_game[i]
+        and state.samples_per_game[i][-1] is not previous_sp_records[i]
     ]
     if sp_label_idxs and is_pool:
         t0 = time.perf_counter()
@@ -217,7 +230,7 @@ def _wait_for_starved_sf(
         )
     elif state.pending_sf_labels:
         wait(
-            tuple(pending.future for pending in state.pending_sf_labels),
+            tuple(p.future for p in state.pending_sf_labels if p.future is not None),
             timeout=timeout_s,
             return_when=FIRST_COMPLETED,
         )
@@ -436,6 +449,21 @@ def play_batch(
 
         t0 = time.perf_counter()
         net_idxs, sp_opp_idxs, cur_opp_idxs, all_done = state.classify_active_slots()
+        # Finish recovered requests before this game's next net/SF turn. This
+        # bounds recovery admission and keeps its backlog from crowding out a
+        # newly-created label. Other slots continue while the pool works.
+        recovering = {
+            p.slot for p in state.pending_sf_labels if getattr(p, "resumed", False)
+            and p.record in state.samples_per_game[p.slot]
+        }
+        net_idxs = [i for i in net_idxs if i not in recovering]
+        sp_opp_idxs = [i for i in sp_opp_idxs if i not in recovering]
+        cur_opp_idxs = [i for i in cur_opp_idxs if i not in recovering]
+        next_labels = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
+        if recovering and len(state.pending_sf_labels) + next_labels > state.batch_size * 8:
+            # Reserve admission for the entire next turn, including other
+            # games. Near-full recovery must not crowd out their new rows.
+            net_idxs, sp_opp_idxs, cur_opp_idxs = [], [], []
         classified_count = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
         if state.pending_sf_moves:
             # Pending moves originate in cur_opp_idxs, and their boards do not
@@ -489,7 +517,7 @@ def play_batch(
         net_dt, sf_dt = _run_step(
             state, net_idxs=net_idxs, sp_opp_idxs=sp_opp_idxs,
             cur_opp_idxs=cur_opp_idxs, stockfish=stockfish,
-            on_timing=on_timing,
+            on_timing=on_timing, witness_stop_fn=stop_fn,
         )
         t_net += net_dt
         t_sf += sf_dt

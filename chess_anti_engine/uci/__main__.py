@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import io
 from collections.abc import Mapping
 import logging
@@ -41,11 +42,10 @@ from chess_anti_engine.mcts.gumbel import (
 )
 from chess_anti_engine.mcts.search_options import SEARCH_OPTIONS, SearchOption
 
-from .engine import Engine, EngineOptions, _emit_info_string, _println, emit_handshake
+from .engine import Engine, EngineOptions, SearchNotQuiescent, _emit_info_string, _println, emit_handshake
 from .model_loader import load_model_from_checkpoint
 from .protocol import CmdQuit, CmdUci, parse_command
 from .search import SearchWorker
-import contextlib
 
 # torch.compile modes that enable Inductor CUDA graphs (cudagraph_trees).
 _CUDAGRAPH_COMPILE_MODES = frozenset({"reduce-overhead", "max-autotune"})
@@ -589,53 +589,60 @@ def _build_engine(
         pucv_vloss_mode=pucv_vloss_mode,
         eval_cache_entries=eval_cache_entries,
     )
-    worker.set_root_noise_scale(root_noise_scale)
-    # Same default Engine applies when options is None; resolved here too so
-    # the RPG install below reads concrete knobs.
-    opts = options if options is not None else EngineOptions()
-    engine = Engine(
-        worker,
-        rebuild_evaluator=rebuild_evaluator,
-        rebuild_multi_gpu_pucv_factories=rebuild_multi_gpu_pucv_factories,
-        search_devices=devices,
-        options=opts,
-        gil_profile=gil_profile,
-    )
-  # The two multi-GPU modes are mutually exclusive; the gumbel branch reuses
-  # the same per-device evaluator factories as the pucv pool (identical
-  # evaluator interface + warmup; only the search orchestration differs).
-    if use_root_parallel_gumbel and rebuild_multi_gpu_pucv_factories is not None:
-        effective_gather = min(vl_gather, max_batch)
-        factories = rebuild_multi_gpu_pucv_factories(max_batch, effective_gather)
-        if len(factories) >= 2:
-            worker.install_root_parallel_gumbel(
-                factories, gather=effective_gather, as_factories=True,
-                devices=list(devices) if devices else None,
-                info_string_cb=_emit_info_string,
-                open_vpa=int(opts.rpg_open_vpa),
-                min_vpa=int(opts.rpg_min_vpa),
-                min_keep=int(opts.rpg_min_keep),
-                open_budget_frac=float(opts.rpg_open_budget_frac),
-            )
-    elif use_multi_gpu_pucv and rebuild_multi_gpu_pucv_factories is not None:
-        effective_gather = min(vl_gather, max_batch)
-        factories = rebuild_multi_gpu_pucv_factories(max_batch, effective_gather)
-        if len(factories) >= 2:
-            worker.install_multi_gpu_pucv(
-                factories, gather=effective_gather, as_factories=True,
-            )
-  # Advertise what was BUILT, not what EngineOptions happens to default to.
-  # These knobs arrive as CLI args and land on the worker; the handshake reads
-  # EngineOptions. Copying worker -> options here makes the worker the single
-  # direction of truth, so `--c-scale 0.3` can never be advertised as 0.025.
-  #
-  # AFTER the pool installs, not before: `realized_search_values` answers the
-  # PUCT family off the installed descent object, so a copy taken before
-  # `install_root_parallel_gumbel` reads the classic-Gumbel config and then
-  # advertises it for a search that is about to run on the RPG pool's.
-    for _opt in SEARCH_OPTIONS:
-        opts.set_search_value(_opt.field, worker.realized_search_values()[_opt.field])
-    return engine
+    try:
+        worker.set_root_noise_scale(root_noise_scale)
+        # Same default Engine applies when options is None; resolved here too so
+        # the RPG install below reads concrete knobs.
+        opts = options if options is not None else EngineOptions()
+        engine = Engine(
+            worker,
+            rebuild_evaluator=rebuild_evaluator,
+            rebuild_multi_gpu_pucv_factories=rebuild_multi_gpu_pucv_factories,
+            search_devices=devices,
+            options=opts,
+            gil_profile=gil_profile,
+        )
+      # The two multi-GPU modes are mutually exclusive; the gumbel branch reuses
+      # the same per-device evaluator factories as the pucv pool (identical
+      # evaluator interface + warmup; only the search orchestration differs).
+        if use_root_parallel_gumbel and rebuild_multi_gpu_pucv_factories is not None:
+            effective_gather = min(vl_gather, max_batch)
+            factories = rebuild_multi_gpu_pucv_factories(max_batch, effective_gather)
+            if len(factories) >= 2:
+                worker.install_root_parallel_gumbel(
+                    factories, gather=effective_gather, as_factories=True,
+                    devices=list(devices) if devices else None,
+                    info_string_cb=_emit_info_string,
+                    open_vpa=int(opts.rpg_open_vpa),
+                    min_vpa=int(opts.rpg_min_vpa),
+                    min_keep=int(opts.rpg_min_keep),
+                    open_budget_frac=float(opts.rpg_open_budget_frac),
+                )
+        elif use_multi_gpu_pucv and rebuild_multi_gpu_pucv_factories is not None:
+            effective_gather = min(vl_gather, max_batch)
+            factories = rebuild_multi_gpu_pucv_factories(max_batch, effective_gather)
+            if len(factories) >= 2:
+                worker.install_multi_gpu_pucv(
+                    factories, gather=effective_gather, as_factories=True,
+                )
+      # Advertise what was BUILT, not what EngineOptions happens to default to.
+      # These knobs arrive as CLI args and land on the worker; the handshake reads
+      # EngineOptions. Copying worker -> options here makes the worker the single
+      # direction of truth, so `--c-scale 0.3` can never be advertised as 0.025.
+      #
+      # AFTER the pool installs, not before: `realized_search_values` answers the
+      # PUCT family off the installed descent object, so a copy taken before
+      # `install_root_parallel_gumbel` reads the classic-Gumbel config and then
+      # advertises it for a search that is about to run on the RPG pool's.
+        for _opt in SEARCH_OPTIONS:
+            opts.set_search_value(_opt.field, worker.realized_search_values()[_opt.field])
+        return engine
+    except BaseException:
+        # The caller retains the primary until a complete Engine is returned.
+        # No search has started; retire only the partial worker's owned helpers.
+        with contextlib.suppress(BaseException):
+            worker.close(close_evaluator=False)
+        raise
 
 
 def _pick_device(arg: str) -> str:
@@ -1193,8 +1200,12 @@ def main() -> int:
     engine_ref: list[Engine | None] = [None]
     engine_error: list[BaseException | None] = [None]
     engine_ready = threading.Event()
+    engine_owner_lock = threading.Lock()
+    shutdown_requested = threading.Event()
 
     def _build() -> None:
+        building_engine: Engine | None = None
+        building_evaluator = None
         try:
             n_walkers = max(1, int(args.walkers))
             walker_gather = max(1, int(args.walker_gather))
@@ -1277,11 +1288,11 @@ def main() -> int:
                 )
 
   # Initial build: warms the evaluator too (see factory body).
-            evaluator = rebuild_evaluator(
-                args.max_batch, startup_options.eval_cache_entries,
+            building_evaluator = rebuild_evaluator(
+                startup_options.max_batch, startup_options.eval_cache_entries,
             )
-            engine_ref[0] = _build_engine(
-                evaluator=evaluator, primary_device=devices[0],
+            building_engine = _build_engine(
+                evaluator=building_evaluator, primary_device=devices[0],
                 **_engine_search_kwargs(args),
                 n_walkers=n_walkers,
                 walker_gather=walker_gather,
@@ -1305,10 +1316,33 @@ def main() -> int:
   # the first real `go` doesn't pay cudagraph capture mid-move and forfeit on
   # the clock. readyok gates on engine_ready below, so a GUI that waits for
   # readyok (the standard handshake) never starts the clock until this returns.
-            engine_ref[0].warmup_search()
+            # Successful construction transfers the primary to this engine.
+            building_evaluator = None
+            building_engine.warmup_search()
+            # Only a drained builder can transfer worker ownership to the loop.
+            with engine_owner_lock:
+                if not shutdown_requested.is_set():
+                    engine_ref[0] = building_engine
+                    building_engine = None
         except BaseException as exc:  # pragma: no cover — surfaced via readyok
             engine_error[0] = exc
         finally:
+            if building_engine is not None:
+                try:
+                    building_engine.close()
+                except BaseException as exc:
+                    if engine_error[0] is None:
+                        engine_error[0] = exc
+                    _println(f"info string engine startup cleanup failed: {exc!r}")
+            if building_evaluator is not None:
+                try:
+                    close = getattr(building_evaluator, "close", None)
+                    if callable(close):
+                        close()
+                except BaseException as exc:
+                    if engine_error[0] is None:
+                        engine_error[0] = exc
+                    _println(f"info string evaluator startup cleanup failed: {exc!r}")
             engine_ready.set()
 
     threading.Thread(target=_build, daemon=True, name="deepfin-build").start()
@@ -1320,6 +1354,9 @@ def main() -> int:
                 emit_handshake(startup_options)
                 continue
             if isinstance(cmd, CmdQuit):
+                eng = engine_ref[0]
+                if eng is not None and engine_ready.is_set():
+                    eng.dispatch(cmd)
                 break
             if not engine_ready.is_set():
                 engine_ready.wait()
@@ -1335,13 +1372,19 @@ def main() -> int:
   # Close whatever evaluator is CURRENT at shutdown time, not a
   # one-shot snapshot — ``MaxBatch`` setoption rebuilds the evaluator
   # via ``SearchWorker.set_evaluator``, which already closes the old
-  # one; ``engine.close()`` then closes the live one. Guarantees the
-  # non-daemon submitter thread joins before Python's interpreter
-  # shutdown starts tearing down PyTorch's CUDA context.
-        eng = engine_ref[0]
+  # one; ``engine.close()`` then closes the live one. An unfinished builder
+  # retains its local engine and closes it only after its warmup drains.
+        with engine_owner_lock:
+            shutdown_requested.set()
+            eng = engine_ref[0]
         if eng is not None:
-            with contextlib.suppress(Exception):
+            try:
                 eng.close()
+            except SearchNotQuiescent as exc:
+                _println(f"info string engine shutdown failed: {exc}")
+                return 1
+            except Exception:
+                pass
     return 0
 
 

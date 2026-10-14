@@ -31,7 +31,9 @@ from chess_anti_engine.stockfish.wdl import cp_to_wdl
 
 
 class _FakeCBoard:
+    # Model P1: White to move after a Black NET record at absolute ply 1.
     turn = True
+    ply = 2
     occ_white = 0
     occ_black = 0
     castling = 0
@@ -44,7 +46,7 @@ class _FakeCBoard:
         )
 
     def fen(self) -> str:
-        return chess.STARTING_FEN
+        return chess.STARTING_FEN.rsplit(" ", 1)[0] + " 2"
 
     def legal_move_indices(self) -> np.ndarray:
         return self._legal_indices
@@ -52,6 +54,7 @@ class _FakeCBoard:
     def push_index(self, idx: int) -> None:
         self.pushed.append(int(idx))
         self.turn = not self.turn
+        self.ply += 1
 
     def is_game_over(self) -> bool:
         return False
@@ -87,8 +90,8 @@ def _record(*, has_policy: bool) -> _NetRecord:
         policy_probs=np.zeros((POLICY_SIZE,), dtype=np.float32),
         net_wdl_est=np.array([0.0, 1.0, 0.0], dtype=np.float32),
         search_wdl_est=np.array([0.0, 1.0, 0.0], dtype=np.float32),
-        pov_color=chess.WHITE,
-        ply_index=0,
+        pov_color=chess.BLACK,
+        ply_index=1,
         has_policy=has_policy,
         priority=1.0,
         sample_weight=1.0,
@@ -238,6 +241,73 @@ def test_curriculum_move_future_reused_for_label_when_nodes_are_shared() -> None
     assert (attached, failed) == (1, 0)
     assert len(state.stockfish.calls) == 1
     assert rec.sf_policy_target is not None
+
+
+def test_curriculum_label_reuse_below_cap_stays_queued() -> None:
+    """Uncongested curriculum admission must not block on the reused future.
+
+    The move future is already complete in this fake, so a synchronous flush
+    would attach the teacher target before the caller asks. Below the cap the
+    row stays unlabeled until an explicit flush, and the queue grows by one.
+    """
+    state = _state(has_policy=True, sf_move_nodes=0)
+    rec = state.samples_per_game[0][0]
+    state.pending_sf_labels = [
+        SimpleNamespace(record=_record(has_policy=True), future=Future())
+        for _ in range(7)
+    ]
+
+    submit_async_curriculum_move_queries(state, [0])
+    submitted = submit_async_sf_labels_from_curriculum_moves(state, [0])
+
+    assert submitted == 1
+    assert len(state.pending_sf_labels) == 8
+    assert rec.sf_policy_target is None
+    assert rec.sf_wdl is None
+    attached, failed = flush_async_sf_labels_for_records(state, [rec])
+    assert (attached, failed) == (1, 0)
+    assert rec.sf_policy_target is not None
+    assert rec.sf_wdl is not None
+    assert len(state.pending_sf_labels) == 7
+
+
+def test_curriculum_label_reuse_backpressures_instead_of_dropping_at_cap() -> None:
+    """Production curriculum labels reuse the move future (sf_move_nodes=0).
+
+    ``batch_size * 8`` is one shared pending list. Once it is full, breaking
+    out of this loop leaves the current net row with no teacher target, and
+    the later move completion does not attach one (``attach_labels=False``).
+    The row is still finalized. Spill the current record synchronously and
+    keep going so a later slot in the same call is not discarded either.
+    Other games' unfinished labels stay queued.
+    """
+    state = _state(has_policy=True, sf_move_nodes=0)
+    state.batch_size = 1
+    state.cboards.append(_FakeCBoard())
+    state.samples_per_game.append([_record(has_policy=True)])
+    state.last_net_full.append(True)
+    state.pending_sf_moves = {}
+    others = [_record(has_policy=True) for _ in range(8)]
+    other_futures = [Future() for _ in range(8)]
+    state.pending_sf_labels = [
+        SimpleNamespace(record=rec, future=fut)
+        for rec, fut in zip(others, other_futures, strict=True)
+    ]
+    current = [state.samples_per_game[0][0], state.samples_per_game[1][0]]
+
+    submit_async_curriculum_move_queries(state, [0, 1])
+    submitted = submit_async_sf_labels_from_curriculum_moves(state, [0, 1])
+
+    assert submitted == 2
+    assert len(state.stockfish.calls) == 2
+    assert [rec.sf_policy_target is not None for rec in current] == [True, True]
+    assert [rec.sf_move_index is not None for rec in current] == [True, True]
+    assert [rec.sf_wdl is not None for rec in current] == [True, True]
+    assert len(state.pending_sf_labels) == 8
+    assert [pending.future for pending in state.pending_sf_labels] == other_futures
+    assert all(not fut.done() for fut in other_futures)
+    # The reused move futures remain owned by the curriculum move applicator.
+    assert set(state.pending_sf_moves) == {0, 1}
 
 
 def test_curriculum_label_reuse_refused_below_the_floor() -> None:
@@ -528,3 +598,169 @@ def test_label_floor_over_cap_warns(caplog) -> None:
     with caplog.at_level(logging.WARNING, logger="chess_anti_engine.selfplay.config"):
         GameConfig(sf_label_nodes_floor=700_000)
     assert not caplog.records
+
+
+def test_async_sf_labels_apply_backpressure_instead_of_dropping_at_cap() -> None:
+    state = _state(has_policy=True)
+    rec = state.samples_per_game[0][0]
+    # Preserve the original PR1009 ninth-row failure witness.
+    state.pending_sf_labels = [
+        SimpleNamespace(record=_record(has_policy=True), future=Future())
+        for _ in range(8)
+    ]
+
+    submitted = submit_async_sf_label_queries(state, [0])
+
+    assert submitted == 1
+    assert len(state.stockfish.calls) == 1
+    assert len(state.pending_sf_labels) == 8
+    assert rec.sf_policy_target is not None
+    assert rec.sf_move_index is not None
+    assert rec.sf_wdl is not None
+
+
+def test_async_sf_labels_boundary_remains_nonblocking() -> None:
+    state = _state(has_policy=True)
+    rec = state.samples_per_game[0][0]
+    older = [
+        SimpleNamespace(record=_record(has_policy=True), future=Future())
+        for _ in range(7)
+    ]
+    state.pending_sf_labels = older.copy()
+
+    assert submit_async_sf_label_queries(state, [0]) == 1
+    assert state.pending_sf_labels[:7] == older
+    assert len(state.pending_sf_labels) == 8
+    assert rec.sf_policy_target is None
+    assert flush_async_sf_labels_for_records(state, [rec]) == (1, 0)
+    assert state.pending_sf_labels == older
+
+
+def test_async_sf_labels_cap_preserves_other_labels_and_move_futures() -> None:
+    state = _state(has_policy=True)
+    state.cboards.append(_FakeCBoard())
+    state.samples_per_game.append([_record(has_policy=True)])
+    state.last_net_full.append(True)
+    older = [
+        SimpleNamespace(record=_record(has_policy=True), future=Future())
+        for _ in range(8)
+    ]
+    state.pending_sf_labels = older.copy()
+    moves = {0: Future(), 1: Future()}
+    state.pending_sf_moves = moves.copy()
+
+    assert submit_async_sf_label_queries(state, [0, 1]) == 2
+    assert len(state.stockfish.calls) == 2
+    assert state.pending_sf_labels == older
+    assert all(not pending.future.done() for pending in older)
+    assert state.pending_sf_moves == moves
+    assert all(not future.done() for future in moves.values())
+    for records in state.samples_per_game:
+        assert records[-1].sf_policy_target is not None
+        assert records[-1].sf_move_index is not None
+        assert records[-1].sf_wdl is not None
+
+
+@pytest.mark.parametrize("failure_stage", ["engine", "processing"])
+def test_async_sf_labels_cap_preserves_existing_failure_policy(
+    monkeypatch: pytest.MonkeyPatch, failure_stage: str,
+) -> None:
+    import chess_anti_engine.selfplay.stockfish_turn as stockfish_turn
+
+    state = _state(has_policy=True)
+    rec = state.samples_per_game[0][0]
+    older = [
+        SimpleNamespace(record=_record(has_policy=True), future=Future())
+        for _ in range(8)
+    ]
+    state.pending_sf_labels = older.copy()
+    moves = {0: Future()}
+    state.pending_sf_moves = moves.copy()
+    health: list[dict] = []
+    monkeypatch.setattr(stockfish_turn, "_report_sf_label_health", lambda **kw: health.append(kw))
+
+    def fail_processing(*_args, **_kwargs) -> None:
+        raise RuntimeError("injected label processing failure")
+
+    if failure_stage == "engine":
+        failed: Future = Future()
+        failed.set_exception(RuntimeError("injected engine failure"))
+        monkeypatch.setattr(state.stockfish, "submit", lambda *args, **kwargs: failed)
+    else:
+        monkeypatch.setattr(stockfish_turn, "_process_sf_label_result_for_record", fail_processing)
+
+    # The ordinary helper reports/drops failures; the cap fix preserves it.
+    assert submit_async_sf_label_queries(state, [0]) == 1
+    assert health == [{"failed": 1}]
+    assert rec.sf_policy_target is None
+    assert state.pending_sf_labels == older
+    assert all(not pending.future.done() for pending in older)
+    assert state.pending_sf_moves == moves
+    assert not moves[0].done()
+
+
+@pytest.mark.parametrize("excluded", ["discarded", "refute", "no_legal"])
+def test_async_sf_labels_cap_still_skips_ineligible_rows(excluded: str) -> None:
+    state = _state(has_policy=excluded != "discarded")
+    if excluded == "refute":
+        state.samples_per_game[0][0].is_sf_refute_opp = True
+    if excluded == "no_legal":
+        state.cboards[0]._legal_indices = np.array([], dtype=np.int64)
+    older = [
+        SimpleNamespace(record=_record(has_policy=True), future=Future())
+        for _ in range(8)
+    ]
+    state.pending_sf_labels = older.copy()
+
+    assert submit_async_sf_label_queries(state, [0]) == 0
+    assert state.stockfish.calls == []
+    assert state.pending_sf_labels == older
+
+
+def test_async_sf_labels_cap_escalation_uses_captured_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import chess_anti_engine.selfplay.stockfish_turn as stockfish_turn
+
+    state = _state(has_policy=True, game=GameConfig(sf_label_escalate_q_gap=0.5))
+    rec = state.samples_per_game[0][0]
+    rec.search_wdl_est = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    state.sf_label_escalations = [0]
+    older = [
+        SimpleNamespace(record=_record(has_policy=True), future=Future())
+        for _ in range(8)
+    ]
+    state.pending_sf_labels = older.copy()
+    query_fen = state.cboards[0].fen()
+    original = np.array([0.9, 0.05, 0.05], dtype=np.float32)
+    deep = np.array([0.05, 0.05, 0.9], dtype=np.float32)
+    pool = state.stockfish
+    original_submit = pool.submit
+    monkeypatch.setattr(stockfish_turn, "_sf_syzygy_path_for_slot", lambda *_: "/inert/syzygy")
+
+    class AdvanceOnResult(Future[StockfishResult]):
+        def result(self, timeout: float | None = None) -> StockfishResult:
+            state.cboards[0].turn = False
+            state.cboards[0]._legal_indices[0] = 123
+            state.cboards[0].fen = lambda: "later recycled position"
+            return super().result(timeout)
+
+    def submit(fen, *, nodes=None, syzygy_path=None, fresh=False, searchmoves=None):
+        original_submit(fen, nodes=nodes, syzygy_path=syzygy_path, fresh=fresh, searchmoves=searchmoves)
+        future = Future() if fresh else AdvanceOnResult()
+        future.set_result(StockfishResult(
+            bestmove_uci="a2a3", wdl=deep if fresh else original, pvs=[],
+        ))
+        return future
+
+    monkeypatch.setattr(pool, "submit", submit)
+    assert submit_async_sf_label_queries(state, [0]) == 1
+    assert state.pending_sf_labels == older
+    assert state.sf_label_escalations == [1]
+    assert [call["fen"] for call in pool.calls] == [query_fen] * 2
+    assert [call["syzygy_path"] for call in pool.calls] == ["/inert/syzygy"] * 2
+    assert [call["fresh"] for call in pool.calls] == [False, True]
+    assert pool.calls[1]["nodes"] == state.game.sf_label_escalate_nodes
+    assert rec.sf_move_index == 0  # copied original legal set, not later 123
+    np.testing.assert_allclose(rec.sf_wdl, deep[[2, 1, 0]])
+    np.testing.assert_allclose(rec.sf_wdl_original, original[[2, 1, 0]])

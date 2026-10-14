@@ -28,6 +28,32 @@ class FakeSession:
         return [np.zeros((rows, tool.COMPACT_POLICY_SIZE), dtype=np.float32)]
 
 
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
+def test_invalid_teacher_logits_do_not_publish_sidecar(tmp_path: Path, value: float) -> None:
+    pending = pending_for(make_source(tmp_path))
+
+    class InvalidSession:
+        def run(self, _outputs, feed):
+            rows = next(iter(feed.values())).shape[0]
+            return [np.full((rows, tool.COMPACT_POLICY_SIZE), value, dtype=np.float32)]
+
+    with pytest.raises(RuntimeError, match="invalid legal policy logits"):
+        tool.label_shard(
+            pending,
+            sess=InvalidSession(),
+            input_name="input",
+            input_dtype=np.dtype(np.float32),
+            providers=["fake"],
+            policy_name="policy",
+            onnx_path=tmp_path / "fake.onnx",
+            onnx_sha256="onnx-sha",
+            remap_stamp={"commit": "c", "dirty": False, "blobs": {"x": "y"}},
+            batch_size=1,
+        )
+    assert not pending.target.exists()
+    assert not pending.target.with_name(pending.target.name + ".writing").exists()
+
+
 def test_parent_holds_lease_through_child_exit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

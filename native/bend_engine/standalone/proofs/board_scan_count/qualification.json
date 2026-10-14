@@ -1,0 +1,123 @@
+{
+  "base_source_verification": {
+    "files": 76,
+    "manifest_sha256": "c506063c7fad432bb41e8469d4e2a77680011cc9b9d766ab5ac317d5eae746de",
+    "remote_base_commit": "1690865e2fc59091d0b8947364fb2a5e64ea40b9",
+    "remote_git_blob_match_count": 76,
+    "snapshot_file_hashes_match": true
+  },
+  "commands": {
+    "negative_checker": "same checker command with a 120s timeout and one named temporary semantic mutation",
+    "positive_checker": "timeout --signal=TERM 86400s taskset -c 0,1 env OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 RAYON_NUM_THREADS=2 BEND_NO_TELEMETRY=1 <BUN_1.4.2> --smol <PINNED_CHECKER>/bend2/main.ts standalone/proofs/board_scan_count/consumer.bend --check-only",
+    "qualifier": "PYTHONPATH=<ENGINE> python3 -m standalone.proofs.board_scan_count.qualify_board_scan_count <PINNED_CHECKER> --checker-manifest <VERIFIED_84_FILE_MANIFEST> --base-source-manifest <PR1000_SOURCE_MANIFEST> --report <PRIVATE_RECEIPT> --evidence-dir <PRIVATE_EVIDENCE_DIR>"
+  },
+  "local_receipt_sha256": "cba68c8723a6bc57f7726128af672848de3674eddc2c7c617854b83d3b1e12ee",
+  "negative_controls": [
+    {
+      "elapsed_wall_seconds": 5.107,
+      "exit_code": 1,
+      "expected_locations": [
+        "Factor.structural"
+      ],
+      "max_rss_kib": 880128,
+      "name": "wrong-promotion-fields",
+      "raw_output_sha256": "290d74bcfc2288dc279e28a65a148bb0a78d4ec9586f0d11f1aff7ff35e7b2f1",
+      "rejected_at_expected_obligation": true
+    },
+    {
+      "elapsed_wall_seconds": 5.051,
+      "exit_code": 1,
+      "expected_locations": [
+        "Factor.structural"
+      ],
+      "max_rss_kib": 891768,
+      "name": "wrong-en-passant-flag",
+      "raw_output_sha256": "342cc5788b5ddad39ba7df69412f2a3fd88cf67d202d19d90f812aa61a144705",
+      "rejected_at_expected_obligation": true
+    },
+    {
+      "elapsed_wall_seconds": 5.171,
+      "exit_code": 1,
+      "expected_locations": [
+        "all_sources_any_tail"
+      ],
+      "max_rss_kib": 879416,
+      "name": "duplicate-source",
+      "raw_output_sha256": "7dd4f85660f9a483401aa6e030a530b51fce3289fe4a799704899b7732589579",
+      "rejected_at_expected_obligation": true
+    },
+    {
+      "elapsed_wall_seconds": 5.215,
+      "exit_code": 1,
+      "expected_locations": [
+        "all_sources_any_tail"
+      ],
+      "max_rss_kib": 926696,
+      "name": "omitted-source",
+      "raw_output_sha256": "c80a6509a081c39db252421edc1dc0c397623c0b9566091fc6d1411c8e4dc87f",
+      "rejected_at_expected_obligation": true
+    },
+    {
+      "elapsed_wall_seconds": 5.023,
+      "exit_code": 1,
+      "expected_locations": [
+        "all_sources_any_tail"
+      ],
+      "max_rss_kib": 827884,
+      "name": "wrong-initial-tail",
+      "raw_output_sha256": "41fd64ed9e43bb7d17dcf70cc3f4f0d2d66ad6fc5d5bc446d5196c9aff4f6891",
+      "rejected_at_expected_obligation": true
+    },
+    {
+      "elapsed_wall_seconds": 5.079,
+      "exit_code": 1,
+      "expected_locations": [
+        "legal_moves_scan_count"
+      ],
+      "max_rss_kib": 851336,
+      "name": "disconnected-production-consumer",
+      "raw_output_sha256": "c5249a0270f1db5ba36c4de82fb0a7606d13f998eb30633e2667ddd62965bd13",
+      "rejected_at_expected_obligation": true
+    }
+  ],
+  "positive": {
+    "elapsed_wall_seconds": 5.093,
+    "entry": "standalone/proofs/board_scan_count/consumer.bend",
+    "exit_code": 0,
+    "max_rss_kib": 874240,
+    "raw_output_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84",
+    "result": "All terms check.",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+  },
+  "proof_file_sha256s": {
+    "AfterCount.bend": "8199fb0001040cdf5bf1590429e5ceb0d2abb50c433955b2f23cfc00009a0b49",
+    "README.md": "e88eb420a5f220cd9c65c577d3c2420c60eff76e8d5a292a4cad89c1d525cd46",
+    "StepProbe.bend": "bbc4d81cad64db14a72359561ce7e23f842b19a4171ebde59b5fb8844f0f4c9f",
+    "Traversal.bend": "97720689781d58e7ae9ebde864a5e792d9063b70e58425df1c879834212642db",
+    "consumer.bend": "ee212ab06839924e3fb15540e63312be0117557ac3f37faee07932d2a36dc6c8",
+    "qualify_board_scan_count.py": "144702ea070b12afac3e0eeccab6a34ec0fff7360697ada16dc88dfa29b97c54"
+  },
+  "qualification_finished_utc": "2026-10-03T14:58:27.434602+00:00",
+  "raw_diagnostics": "Excluded from this public summary; complete receipt and checker streams remain local.",
+  "remote_base_commit": "1690865e2fc59091d0b8947364fb2a5e64ea40b9",
+  "resource_limits": {
+    "address_space_bytes": 6442450944,
+    "cpu_affinity": "two CPUs",
+    "negative_wall_seconds": 120,
+    "positive_wall_seconds": 86400,
+    "stdout_stderr_file_bytes": 65536
+  },
+  "schema": "deepfin-bend-qualification-summary-v1",
+  "scope": "Actual Chess.destinations and Chess.scan_after full-Ply occurrence count for arbitrary U64 targets, U32 sources, full-Ply queries, and duplicate-containing tails. Adds the generic scan_after bridge over PR1000 all-U32 bit_squares frequency/range proofs, then composes actual scan_step and every entry of arbitrary Chess.scan source lists. Counts exact (source,destination,promotion,flag) matches; the implementation uses promotions 1 through 4 with flag 0 for pawn back-rank destinations, otherwise promotion 0 and flag Bool(pawn && destination==ep). Table input is preserved. The exact legal_moves raw source list is instantiated before castle/filter preparation. No board-validity, target-geometry, legal-move, or king-safety claim.",
+  "source_identity_sha256": "7fbf64a54c596f2d59dd761fbf6c62cd11b33b8e61f6179d7a43730448b64743",
+  "status": "PASS",
+  "toolchain": {
+    "bend": "2.0.21+U64",
+    "bun_version": "1.4.2",
+    "checker_files": 84,
+    "checker_fingerprint_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+    "checker_manifest_sha256": "384b5c91ffe52ca500d178b1be356bf2aef2e387c0e95ba7199b943820b40df1",
+    "revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae"
+  }
+}

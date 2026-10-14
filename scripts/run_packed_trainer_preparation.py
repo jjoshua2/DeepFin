@@ -1,6 +1,8 @@
 """Hard-bounded CPU-only pack+full-stream qualification; never launches training."""
 from __future__ import annotations
 import argparse
+from collections.abc import Generator
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -8,6 +10,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import threading
 import time
 from typing import Any
 
@@ -38,6 +41,49 @@ def inventory(root):
     return result
 
 
+@contextmanager
+def _defer_cleanup_stops() -> Generator[None]:
+    """Defer raising stop callbacks until the owned group is killed/reaped.
+
+    pthread_sigmask protects only its caller: another existing unblocked thread
+    can receive a process-directed stop and schedule its Python callback on main.
+    No signal is rerouted. Keep original dispositions and redeliver the first
+    observed stop after cleanup, coalescing standard signals into at most3keys.
+    Python handlers only execute on main, so background cleanup needs no trap.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGALRM)}
+    pending: dict[int, Any] = {}
+    def deferred(signum, frame):
+        pending.setdefault(signum, frame)
+    try:
+        for sig, handler in handlers.items():
+            if handler != signal.SIG_IGN:
+                signal.signal(sig, deferred)
+        yield
+    finally:
+        restoration_error: BaseException | None = None
+        for sig, handler in handlers.items():
+            try:
+                signal.signal(sig, handler)
+            except BaseException as exc:
+                # A restored stop callback can raise during later restoration.
+                # Restore every disposition before propagating that cancellation.
+                if restoration_error is None:
+                    restoration_error = exc
+        if restoration_error is not None:
+            raise restoration_error
+        if pending:
+            signum, frame = next(iter(pending.items()))
+            handler = handlers[signal.Signals(signum)]
+            if callable(handler):
+                handler(signum, frame)
+            elif handler == signal.SIG_DFL:
+                os.kill(os.getpid(), signum)  # original process disposition, after cleanup
+
+
 def stop_owned(child):
     # A reaped leader can leave descendants in its owned session/process group.
     def send(sig):
@@ -45,14 +91,17 @@ def stop_owned(child):
             os.killpg(child.pid, sig)
         except ProcessLookupError:
             pass
-    send(signal.SIGTERM)
-    try:
-        child.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        pass
-    finally:
-        send(signal.SIGKILL)
-        child.wait(timeout=3)
+    with _defer_cleanup_stops():
+        try:
+            send(signal.SIGTERM)
+            child.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
+        finally:
+            try:
+                send(signal.SIGKILL)
+            finally:
+                child.wait(timeout=3)
 
 
 def run_stage(command, *, cwd, env, log, guard):

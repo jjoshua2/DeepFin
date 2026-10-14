@@ -803,7 +803,7 @@ def _init_era_probes(*, tc: TrialConfig) -> dict[str, ProbeSet]:
         loaded = load_probe_set(
             raw_path, label=label, max_rows=tc.era_probe_rows,
             expected_planes=planes, expected_policy_size=width,
-            expects_relations=bool(tc.use_dynamic_relations),
+            expects_relations=bool(tc.use_dynamic_relations or tc.policy_dynamic_relations),
         )
         if loaded is not None:
             probes[label] = loaded

@@ -19,6 +19,7 @@ from typing import Any, Protocol
 import chess
 import numpy as np
 
+from chess_anti_engine.async_safety import note_cleanup
 from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.inference import BatchEvaluator
@@ -35,6 +36,8 @@ from chess_anti_engine.mcts.gumbel_c import (
     _ROOT_SUPPORT_EQUAL,
     _ROOT_SUPPORT_MISSING_ACTION,
     _classify_expanded_root_support,
+    SolvedRootWitnessUnavailable,
+    _SOLVED_ROOT_TB_CHECK_LIMIT,
     run_gumbel_root_many_c,
 )
 from chess_anti_engine.mcts.search_options import SEARCH_OPTIONS
@@ -231,6 +234,7 @@ class SearchResult:
   # `info string` + a counter: an unsearched move that looks like a searched one
   # in a match log is exactly the class of defect this file keeps producing.
     root_declined: str | None = None
+    search_incomplete: str | None = None
 
 
 class InfoCallback(Protocol):
@@ -500,6 +504,7 @@ class SearchWorker:
                 gather=self._walker_gather,
                 input_planes=input_plane_count(self._cfg.input_extra_features),
                 compute_relations=bool(self._cfg.compute_relations),
+                input_history_encoding=self._cfg.input_history_encoding,
             ),
             self._evaluator,
         )
@@ -599,6 +604,7 @@ class SearchWorker:
             eval_cache_entries=self._eval_cache_entries,
             input_planes=input_plane_count(self._cfg.input_extra_features),
             compute_relations=bool(self._cfg.compute_relations),
+            input_history_encoding=self._cfg.input_history_encoding,
         )
         if as_factories:
             self._pucv_pool = MultiGpuPucvPool(
@@ -853,13 +859,18 @@ class SearchWorker:
         but wasteful. Leave-multi-GPU reinstall builds the chunker then.
         """
         enabled = bool(enabled)
+        previous_gather = self._pucv_gather
         if gather is not None:
             self._pucv_gather = max(1, int(gather))
         if self._rpg_pool is not None or self._pucv_pool is not None:
             self._use_pucv = enabled
             self._pucv = None
             return
-        if enabled == self._use_pucv and self._pucv is not None:
+        if (
+            enabled == self._use_pucv
+            and self._pucv is not None
+            and previous_gather == self._pucv_gather
+        ):
             return
         self._use_pucv = enabled
         self._pucv = self._build_pucv() if enabled else None
@@ -886,6 +897,7 @@ class SearchWorker:
             eval_cache_entries=self._eval_cache_entries,
             input_planes=input_plane_count(self._cfg.input_extra_features),
             compute_relations=bool(self._cfg.compute_relations),
+            input_history_encoding=self._cfg.input_history_encoding,
         )
 
   # ─── realized search configuration ─────────────────────────────────────────
@@ -1006,7 +1018,16 @@ class SearchWorker:
         `_install_multi_gpu_pucv_pool`, and walker / single-thread PucvChunker
         to `rebuild_puct_helpers` below.
         """
+        previous = getattr(self._cfg, field)
         setattr(self._cfg, field, value)
+        if (
+            field == "policy_temp"
+            and previous != value
+            and self.realized_search_path() in ("gumbel", "rpg")
+        ):
+            # Rebuild priors seeded at the preceding temperature. Plain PUCT
+            # advertises this option inert and retains its existing tree.
+            self.reset_tree()
 
     def rebuild_puct_helpers(self) -> None:
         """Re-materialize the helpers that snapshot c_puct & friends at build.
@@ -1162,12 +1183,16 @@ class SearchWorker:
             m = min(m, _MAX_BATCH_MARGIN_FRACTION * float(start_remaining_ms))
         return m
 
-    def close(self) -> None:
+    def close(self, *, close_evaluator: bool = True) -> None:
         """Close the current evaluator. Safe to call multiple times; no-op
         if the evaluator has no ``close`` method. Used at process shutdown
         to drain ``BatchCoalescingDispatcher``'s submitter thread before
         Python tears down PyTorch's CUDA context. Also tears down the
-        multi-GPU pucv pool's worker threads if active."""
+        owned search-pool threads. ``close_evaluator=False`` retires helpers
+        for a failed construction while the caller retains the primary."""
+        if self._walker_pool is not None:
+            self._walker_pool.close()
+            self._walker_pool = None
         self.clear_root_parallel_gumbel()
         if self._pucv_pool is not None:
             self._pucv_pool.close()
@@ -1180,11 +1205,12 @@ class SearchWorker:
                 with contextlib.suppress(Exception):
                     close()
         self._pucv_pool_evals = []
-        ev = self._evaluator
-        close = getattr(ev, "close", None)
-        if callable(close):
-            with contextlib.suppress(Exception):
-                close()
+        if close_evaluator:
+            ev = self._evaluator
+            close = getattr(ev, "close", None)
+            if callable(close):
+                with contextlib.suppress(Exception):
+                    close()
 
     def set_evaluator(self, evaluator: BatchEvaluator) -> None:
         """Swap in a freshly-built (and warmed-up) evaluator. Rebuilds the
@@ -1200,24 +1226,38 @@ class SearchWorker:
         """
         old = self._evaluator
         self._evaluator = evaluator
-        # Teardown only — rebuild walker/pucv against the new evaluator below.
-        # Always rebuild the fallback path here (even if a multi-GPU reinstall
-        # will close the walker next): if install fails we must not leave the
-        # worker with no search path.
-        self.clear_multi_gpu_pucv(restore_fallback=False)
-        self.clear_root_parallel_gumbel()
-        if self._walker_pool is not None:
-            self._walker_pool.close()
-        self._walker_pool = self._build_walker_pool(self._n_walkers)
-        if self._use_pucv:
-            self._pucv = self._build_pucv()
-        else:
-            self._pucv = None
-        self.reset_tree()
-        close = getattr(old, "close", None)
-        if callable(close):
-            with contextlib.suppress(Exception):
-                close()
+        error: BaseException | None = None
+        try:
+            # Teardown only — rebuild walker/pucv against the new evaluator below.
+            # Always rebuild the fallback path here (even if a multi-GPU reinstall
+            # will close the walker next): if install fails we must not leave the
+            # worker with no search path.
+            self.clear_multi_gpu_pucv(restore_fallback=False)
+            self.clear_root_parallel_gumbel()
+            if self._walker_pool is not None:
+                self._walker_pool.close()
+            self._walker_pool = self._build_walker_pool(self._n_walkers)
+            if self._use_pucv:
+                self._pucv = self._build_pucv()
+            else:
+                self._pucv = None
+            self.reset_tree()
+        except BaseException as exc:
+            error = exc
+            raise
+        finally:
+            # The replacement is already owned, even if helper construction fails.
+            # An identical replacement remains the current primary owner.
+            if old is not evaluator:
+                try:
+                    close = getattr(old, "close", None)
+                    if callable(close):
+                        close()
+                except BaseException as cleanup:
+                    if error is not None:
+                        note_cleanup(error, f"outgoing evaluator close failed: {cleanup!r}")
+                    elif not isinstance(cleanup, Exception):
+                        raise
 
     def set_num_threads(self, n: int) -> None:
         """Rebuild the walker pool at thread count ``n`` (1 = classic Gumbel
@@ -1611,6 +1651,7 @@ class SearchWorker:
         tb_probe,
         allowed_root_indices: set[int] | None,
         allow_terminal_shortcuts: bool,
+        witness_stop_fn: Callable[[], bool] | None = None,
     ) -> tuple[float, int]:
         """Returns ``(root_value, completed_sims)``.
 
@@ -1634,10 +1675,15 @@ class SearchWorker:
             # ⚑ Classic gss_score_and_halve no longer reads W[root]/N[root] (it
             # takes the fresh root_qs), so that is no longer the reason.
             if self._rpg_pool is not None:
+                # Drop the RPG tree, not this position's fresh root eval. A
+                # declined classic root still needs the cached filtered prior.
+                pol, wdl = self._root_pol_logits, self._root_wdl_logits
                 self.reset_tree()
+                self._root_pol_logits, self._root_wdl_logits = pol, wdl
             return self._run_gumbel_chunk(
                 chunk, board, tb_probe, allowed_root_indices,
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
+                witness_stop_fn=witness_stop_fn,
             ), chunk
         if self._rpg_pool is not None:
             return self._run_rpg_chunk(chunk, stop_event)
@@ -1650,6 +1696,7 @@ class SearchWorker:
         return self._run_gumbel_chunk(
             chunk, board, tb_probe, allowed_root_indices,
             allow_terminal_shortcuts=allow_terminal_shortcuts,
+            witness_stop_fn=witness_stop_fn,
         ), chunk
 
     def _maybe_emit_pv_info(
@@ -1716,25 +1763,12 @@ class SearchWorker:
                 score_mate=None,
                 root_declined=_declined_root_reason(board),
             )
-        bestmove_idx, pv_indices = _best_move_and_pv(
-            self._tree, self._root_id,
-            allowed_root_indices=allowed_root_indices,
+        actions, visits = self._filtered_root_visits(allowed_root_indices)
+        bestmove_idx = self._emitted_action(actions, visits, allowed_root_indices)
+        pv_indices = (
+            _pv_from_root_action(self._tree, self._root_id, bestmove_idx)
+            if bestmove_idx >= 0 else []
         )
-        if (
-            self._last_gumbel_action_idx is not None
-            and (
-                allowed_root_indices is None
-                or int(self._last_gumbel_action_idx) in allowed_root_indices
-            )
-        ):
-            gumbel_pv = _pv_from_root_action(
-                self._tree,
-                self._root_id,
-                int(self._last_gumbel_action_idx),
-            )
-            if gumbel_pv:
-                bestmove_idx = int(self._last_gumbel_action_idx)
-                pv_indices = gumbel_pv
         bestmove = _index_to_uci(board, bestmove_idx)
         ponder = None
         if include_ponder:
@@ -1970,9 +2004,14 @@ class SearchWorker:
         Mirrors ``_build_final_search_result``: the Gumbel path plays the
         sequential-halving survivor (``_last_gumbel_action_idx``) when it is a
         legal root child, not the visit leader; other paths (walker / pucv pool)
-        leave the survivor unset and select by visits."""
+        leave the survivor unset and select by visits. A known WIN/DRAW proof
+        takes priority over a survivor or visit leader that would discard it."""
         if actions.size == 0:
             return -1
+        proof_mask = (
+            _proof_preserving_mask(self._tree, self._root_id, actions)
+            if self._tree is not None and self._root_id is not None else None
+        )
         gi = self._last_gumbel_action_idx
         if (
             gi is not None
@@ -1980,8 +2019,11 @@ class SearchWorker:
             and self._root_id is not None
             and (allowed_root_indices is None or int(gi) in allowed_root_indices)
             and self._tree.find_child(self._root_id, int(gi)) != -1
+            and (proof_mask is None or bool(np.any(actions[proof_mask] == int(gi))))
         ):
             return int(gi)
+        if proof_mask is not None:
+            actions, visits = actions[proof_mask], visits[proof_mask]
         return int(actions[int(np.argmax(visits))])
 
     def _current_best_root_action(
@@ -2204,6 +2246,16 @@ class SearchWorker:
   # Starting budget for this move — caps the batch-time margin so a bad early
   # estimate can't reserve away the whole move (see `_MAX_BATCH_MARGIN_FRACTION`).
         start_remaining_ms = deadline.remaining_ms()
+        witness_checks_remaining = _SOLVED_ROOT_TB_CHECK_LIMIT
+        witness_checks_total = 0
+
+        def witness_stop() -> bool:
+            nonlocal witness_checks_remaining
+            if stop_event.is_set() or deadline.expired() or witness_checks_remaining <= 0:
+                return True
+            witness_checks_remaining -= 1
+            return False
+
         while True:
             chunk = self._chunk_budget(allowed_root_indices)
             if max_nodes is not None:
@@ -2235,10 +2287,41 @@ class SearchWorker:
                     break
 
             _chunk_t0 = time.monotonic()
-            last_value, completed = self._run_one_chunk(
-                chunk, board, stop_event, tb_probe, allowed_root_indices,
-                allow_terminal_shortcuts=allow_terminal_shortcuts,
-            )
+            try:
+                last_value, completed = self._run_one_chunk(
+                    chunk, board, stop_event, tb_probe, allowed_root_indices,
+                    allow_terminal_shortcuts=allow_terminal_shortcuts,
+                    witness_stop_fn=witness_stop,
+                )
+            except SolvedRootWitnessUnavailable as exc:
+                self._tree = exc.partial_result[4]
+                rid = int(exc.partial_result[5][0])
+                self._root_id = rid if rid >= 0 else None
+                self._last_gumbel_action_idx = None
+                # The completed native chunk consumed its existing budget.
+                # An incomplete chunk is not yet an exhausted whole go.
+                total_nodes += chunk
+                witness_checks_total += exc.child_checks.get(0, 0)
+                exc.child_checks[0] = witness_checks_total
+                self._record_batch_ms((time.monotonic() - _chunk_t0) * 1000.0)
+                if on_chunk is not None:
+                    on_chunk(total_nodes)
+                pv_indices, _, _ = self._maybe_emit_pv_info(
+                    board=board, deadline=deadline, last_value=0.0,
+                    total_nodes=total_nodes, info_cb=None, max_depth=max_depth,
+                    last_info_ms=last_info_ms, tb_probe=tb_probe,
+                    allowed_root_indices=allowed_root_indices,
+                )
+                if self._should_stop_search(
+                    stop_event=stop_event, deadline=deadline,
+                    max_nodes=max_nodes, max_depth=max_depth,
+                    total_nodes=total_nodes, pv_len=len(pv_indices),
+                    time_margin_ms=self._clock_time_margin_ms(optimum_ms, start_remaining_ms),
+                ) is not None:
+                    raise
+                # No preserving move exists yet to justify a visit-margin
+                # abort or a proven-value PV. Continue within the original cap.
+                continue
   # Time the (un-interruptible) chunk so the batch-time clock margin below can
   # reserve one worst-case batch before the hard deadline.
             self._record_batch_ms((time.monotonic() - _chunk_t0) * 1000.0)
@@ -2273,6 +2356,15 @@ class SearchWorker:
                 last_info_ms=last_info_ms, tb_probe=tb_probe,
                 allowed_root_indices=allowed_root_indices,
             )
+
+            if (
+                allowed_root_indices is None
+                and self._rpg_pool is not None
+                and self._rpg_pool.last_stats().root_finished
+            ):
+                # Exact root / single-action completion is independent of
+                # simulations. Do not spin until a budget or deadline expires.
+                break
 
   # Batch-time-variance clock margin: clock games only, capped so a bad early
   # estimate can't reserve away the whole move (see `_clock_time_margin_ms`).
@@ -2334,6 +2426,7 @@ class SearchWorker:
         tb_probe,
         allowed_root_indices: set[int] | None = None,
         allow_terminal_shortcuts: bool = True,
+        witness_stop_fn: Callable[[], bool] | None = None,
     ) -> float:
         gumbel_result = run_gumbel_root_many_c(
             model=None,
@@ -2362,6 +2455,7 @@ class SearchWorker:
             allow_terminal_root_shortcuts=allow_terminal_shortcuts,
             tb_probe=tb_probe,
             pre_wdl_logits_tb_probed=True,
+            witness_stop_fn=witness_stop_fn,
             target_batch=self._minibatch_size,
   # C17: without this the classic-Gumbel UCI path (`--walkers 1`) runs the
   # PRE-virtual-loss search --- a later halving rep re-walks an unchanged tree
@@ -2426,6 +2520,12 @@ class SearchWorker:
         # Completed sims come from the pool's per-phase stats (a stop_event
         # can cut the schedule short), keeping nodes/nps accounting honest.
         stats = self._rpg_pool.last_stats()
+        if stats.root_finished and action < 0:
+            # The oracle declined expansion. Keep its returned value, but
+            # select a legal cached policy move and report the existing
+            # prior-only diagnostic, as on the classic declined-root path.
+            self._root_id = None
+            self._last_gumbel_action_idx = None
         completed = sum(p.sims_completed for p in stats.phases)
         return float(value), int(completed)
 
@@ -2467,7 +2567,7 @@ class SearchWorker:
         if self._root_id is None:
             assert self._root_wdl_logits is not None
             root_q = float(_value_scalar_from_wdl_logits(self._root_wdl_logits[0]))
-            self._root_id = int(self._tree.add_root(0, root_q))
+            self._root_id = int(self._tree.add_root(1, root_q))
         if self._pucv_pool_cboard is None:
             self._pucv_pool_cboard = CBoard.from_board(board)
         if not self._tree.is_expanded(self._root_id):
@@ -2504,7 +2604,7 @@ class SearchWorker:
         if self._root_id is None:
             assert self._root_wdl_logits is not None
             root_q = float(_value_scalar_from_wdl_logits(self._root_wdl_logits[0]))
-            self._root_id = int(self._tree.add_root(0, root_q))
+            self._root_id = int(self._tree.add_root(1, root_q))
         if self._pucv_cboard is None:
             self._pucv_cboard = CBoard.from_board(board)
         if not self._tree.is_expanded(self._root_id):
@@ -2530,7 +2630,7 @@ class SearchWorker:
             assert self._root_wdl_logits is not None
             root_q = float(_value_scalar_from_wdl_logits(
                 self._root_wdl_logits[0]))
-            self._root_id = int(self._tree.add_root(0, root_q))
+            self._root_id = int(self._tree.add_root(1, root_q))
         if self._walker_cboard is None:
             self._walker_cboard = CBoard.from_board(board)
         if not self._tree.is_expanded(self._root_id):
@@ -2574,6 +2674,43 @@ def _q_to_wdl_permille(q: float, draw_rate: float) -> tuple[int, int, int]:
     )
 
 
+def _proof_preserving_mask(
+    tree: MCTSTree, node_id: int, actions: np.ndarray,
+) -> np.ndarray | None:
+    """Prefer known witnesses within the supplied support of a WIN/DRAW node."""
+    status = tree.get_solved_status(node_id)
+    if status not in (1, 2):
+        return None
+    proof = -1 if status == 1 else 2
+    keep = np.fromiter(
+        (tree.get_solved_status(tree.find_child(node_id, int(action))) == proof
+         for action in actions),
+        dtype=np.bool_, count=actions.size,
+    )
+    return keep if bool(keep.any()) else None
+
+
+def _child_visit_order(
+    tree: MCTSTree, node_id: int, actions: np.ndarray, visits: np.ndarray,
+) -> np.ndarray:
+    """Rank proof-preserving children first, retaining visit order within each group."""
+    order = np.argsort(-visits)
+    proof_mask = _proof_preserving_mask(tree, node_id, actions)
+    if proof_mask is not None:
+        order = np.concatenate((order[proof_mask[order]], order[~proof_mask[order]]))
+    return order
+
+
+def _best_child_action(
+    tree: MCTSTree, node_id: int, actions: np.ndarray, visits: np.ndarray,
+) -> int:
+    """Choose a witness by visits, keeping the original first-maximum tie rule."""
+    proof_mask = _proof_preserving_mask(tree, node_id, actions)
+    if proof_mask is not None:
+        actions, visits = actions[proof_mask], visits[proof_mask]
+    return int(actions[int(np.argmax(visits))])
+
+
 def _multipv_lines(
     tree: MCTSTree,
     root_id: int,
@@ -2581,9 +2718,9 @@ def _multipv_lines(
     root_q_default: float,
     allowed_root_indices: set[int] | None = None,
 ) -> list[tuple[int, float, list[int]]]:
-    """Return up to ``n`` (rank, q, pv_indices) triples for the top-visited
-    root children. Rank is 1-based (UCI convention: ``multipv 1`` = best).
-    Each pv_indices walks the most-visited path from that root child.
+    """Return up to ``n`` (rank, q, pv_indices) triples, ranking known WIN/DRAW
+    witnesses before visits. Rank is 1-based (UCI convention: ``multipv 1`` = best).
+    Each pv_indices preserves known WIN/DRAW proofs before following most visits.
 
     At n=1 this is equivalent to ``_best_move_and_pv`` plus a Q read,
     so callers can always route through this helper.
@@ -2598,8 +2735,7 @@ def _multipv_lines(
         qs = qs[keep]
         if actions.size == 0:
             return []
-  # Sort descending by visits; ties tolerated — argsort is stable in numpy.
-    order = np.argsort(-visits)[:max(1, int(n))]
+    order = _child_visit_order(tree, root_id, actions, visits)[:max(1, int(n))]
     out: list[tuple[int, float, list[int]]] = []
     for rank, i in enumerate(order.tolist(), start=1):
         move = int(actions[i])
@@ -2610,7 +2746,7 @@ def _multipv_lines(
             a, vs = tree.get_children_visits(cid)
             if a.size == 0:
                 break
-            nxt = int(a[int(np.argmax(vs))])
+            nxt = _best_child_action(tree, cid, a, vs)
             pv.append(nxt)
             cid = tree.find_child(cid, nxt)
         out.append((rank, q, pv))
@@ -2731,7 +2867,7 @@ def _best_move_and_pv(
     root_id: int,
     allowed_root_indices: set[int] | None = None,
 ) -> tuple[int, list[int]]:
-    """Most-visited root move and its PV. ``q`` is unused at the call sites
+    """Proof-preserving root move by visits and its PV. ``q`` is unused at the call sites
     that take this shape (so the third tuple element from ``_multipv_lines``
     is dropped here)."""
     lines = _multipv_lines(
@@ -2757,7 +2893,7 @@ def _pv_from_root_action(
     Classic UCI Gumbel returns a sequential-halving survivor from the C search
     call. That action is not guaranteed to be the most-visited root child, so
     final bestmove must preserve it instead of rebuilding from visit counts.
-    After the root action, the continuation can still follow most visits.
+    After the root action, preserve known WIN/DRAW proofs before most visits.
     """
     cid = tree.find_child(root_id, int(action_idx))
     if cid == -1:
@@ -2767,7 +2903,7 @@ def _pv_from_root_action(
         a, vs = tree.get_children_visits(cid)
         if a.size == 0:
             break
-        nxt = int(a[int(np.argmax(vs))])
+        nxt = _best_child_action(tree, cid, a, vs)
         pv.append(nxt)
         cid = tree.find_child(cid, nxt)
     return pv
@@ -2778,7 +2914,7 @@ def _reply_at_child(
     root_id: int,
     action_idx: int,
 ) -> int | None:
-    """Most-visited child at the node reached by ``action_idx`` from root.
+    """Proof-preserving child by visits at the node reached by ``action_idx``.
 
     This is the opponent's predicted reply after OUR specific move,
     not after the globally most-visited root move.
@@ -2789,7 +2925,7 @@ def _reply_at_child(
     a, vs = tree.get_children_visits(cid)
     if a.size == 0:
         return None
-    return int(a[int(np.argmax(vs))])
+    return _best_child_action(tree, cid, a, vs)
 
 
 def _uci_pv(root_board: chess.Board, pv_indices: list[int]) -> tuple[str, ...]:

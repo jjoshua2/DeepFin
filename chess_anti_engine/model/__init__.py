@@ -502,7 +502,10 @@ def _attach_runtime_model_metadata(model: torch.nn.Module, cfg: ModelConfig) -> 
     setattr(model, "input_history_encoding", normalize_lc0_history_encoding(cfg.input_history_encoding))
     setattr(model, "history_rep_fix", bool(cfg.history_rep_fix))
     setattr(model, "input_extra_features", normalize_extra_features_encoding(cfg.input_extra_features))
-    setattr(model, "use_dynamic_relations", bool(cfg.use_dynamic_relations))
+    # Runtime consumers use this flag to request relation input, which either
+    # the trunk or the independently enabled policy bias can require. Keep
+    # the architecture flags separate in ModelConfig / checkpoint metadata.
+    setattr(model, "use_dynamic_relations", bool(cfg.use_dynamic_relations or cfg.policy_dynamic_relations))
     # The repetition-plane fix is process-global in the C encoders, so apply
     # it here — the one chokepoint every loader (trainer, worker, UCI, arena,
     # inference) passes through. Selfplay re-applies per batch from
