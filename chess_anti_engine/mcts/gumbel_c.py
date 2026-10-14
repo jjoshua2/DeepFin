@@ -288,7 +288,8 @@ def _start_gumbel_trailing_args(
 # Raised to 7 for outcome-preserving solved-root witnesses and exact native Q
 # queries. Older extensions silently return an unsafe move or averaged proof.
 # Raised to 8 for explicit incomplete survivors and bounded caller recovery.
-_REQUIRED_MCTS_ABI = 8
+# Raised to 9 for the shared extension's optional PUCT leaf history mode.
+_REQUIRED_MCTS_ABI = 9
 
 # Mirrors the VLOSS_MODE_* defines in _mcts_tree.c (205-206). LEGACY scores a
 # pending leaf as a loss (parallel-PUCT pessimism); VIRTUAL_MEAN scores it at

@@ -582,6 +582,7 @@ class _StubCBoard:
     def __init__(self, board: chess.Board) -> None:
         self._idx = legal_move_indices(board)
         self.turn = bool(board.turn)
+        self.ply = board.ply()
 
     def legal_move_indices(self):
         return self._idx
@@ -591,6 +592,8 @@ def _sync_state(board: chess.Board, rec) -> Any:
     state = _fake_state()
     state.opponent = SimpleNamespace(wdl_regret_limit=None)
     state.cboards = [_StubCBoard(board)]
+    # NET row P0 receives the SF reply at this captured P1.
+    rec.ply_index = board.ply() - 1
     state.samples_per_game = [[rec]]
     state.done_arr = [0]
     state.selfplay_arr = [1]
@@ -607,7 +610,7 @@ def test_the_sync_label_path_is_counted_too():
     serves the async one, so an uncounted site is a blind spot of the same
     shape as the bug.
     """
-    board = chess.Board("8/8/8/4k3/8/8/4K3/4R3 w - - 0 1")
+    board = chess.Board("8/8/8/4k3/8/8/4K3/4R3 w - - 0 2")
     own_ucis = [m.uci() for m in board.legal_moves]
 
     rec = _blank_record()
@@ -650,7 +653,7 @@ def test_a_curriculum_move_query_is_not_counted_as_a_label():
     line named "sf label health" that is not a label, diluting exactly the rate
     the restart checklist reads.
     """
-    board = chess.Board("8/8/8/4k3/8/8/4K3/4R3 w - - 0 1")
+    board = chess.Board("8/8/8/4k3/8/8/4K3/4R3 w - - 0 2")
     rec = _blank_record()
     rec.has_policy = True
     rec.is_sf_refute_opp = False
