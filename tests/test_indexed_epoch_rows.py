@@ -436,7 +436,9 @@ def test_cross_cohort_temporaries_released_and_packed_halves_not_copied(tmp_path
 
 
 @pytest.mark.parametrize("cache_mode", ["read", "write"])
-def test_indexed_selection_refuses_construction_cache_before_any_read(tmp_path, monkeypatch, cache_mode):
+def test_indexed_selection_refuses_construction_cache_before_any_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cache_mode: str,
+) -> None:
     from chess_anti_engine.replay import game_epoch
 
     def forbidden_read(*_args, **_kwargs):
@@ -445,13 +447,17 @@ def test_indexed_selection_refuses_construction_cache_before_any_read(tmp_path, 
     monkeypatch.setattr(game_epoch, "iter_shard_paths", forbidden_read)
     monkeypatch.setattr(Path, "read_bytes", forbidden_read)
     monkeypatch.setattr(game_epoch, "RowIndexSelection", forbidden_read)
-    cache = ({"startup_cache_read": {"path": str(tmp_path / "cache"), "sha256": "0" * 64}}
-             if cache_mode == "read" else {"startup_cache_write": tmp_path / "cache"})
+    cache_read: dict[str, str] | None = (
+        {"path": str(tmp_path / "cache"), "sha256": "0" * 64}
+        if cache_mode == "read" else None
+    )
+    cache_write: Path | None = tmp_path / "cache" if cache_mode == "write" else None
     with pytest.raises(ValueError, match="indexed row selection cannot use a construction cache"):
         game_epoch.GameAwareEpochBuffer(
             shard_dir=tmp_path / "absent", batch_size=2, seed=0,
             input_planes=146, input_history_encoding="legacy",
             history_rep_fix=False, mirror_augmentation=False,
             row_index_selection={"path": str(tmp_path / "manifest"), "sha256": "0" * 64, "arm": "retained"},
-            startup_cache_recipe={"target": "test"}, **cache,
+            startup_cache_recipe={"target": "test"},
+            startup_cache_read=cache_read, startup_cache_write=cache_write,
         )
