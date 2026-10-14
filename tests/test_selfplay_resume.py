@@ -1093,14 +1093,10 @@ def test_net_color_is_not_checked_on_a_selfplay_game(tmp_path: Path) -> None:
     assert (report.resumed, report.discarded) == (1, 0)
 
 
-def test_a_resumed_refute_opp_record_gains_no_alternate_inputs(
+def test_a_resumed_refute_opp_record_matches_live_input_contract(
     tmp_path: Path,
 ) -> None:
-    """`_emit_sf_refute_opp_record` ALWAYS builds its row with x_lc0_root=None
-    and relations=None, whatever record_lc0_root_input/record_relations say. A
-    resumed refute row that re-encoded them would carry columns its non-resumed
-    twin does not — the same row shape differing by whether a restart happened.
-    """
+    """Requested relations survive resume; alternate LC0-root stays absent."""
     game = _game_config(
         input_history_encoding=LC0_HISTORY_LEGACY,
         record_lc0_root_input=True,
@@ -1125,7 +1121,7 @@ def test_a_resumed_refute_opp_record_gains_no_alternate_inputs(
         assert rec.relations is not None
     for rec in opp_rows:
         assert rec.x_lc0_root is None, "a refute-opp row must not gain x_lc0_root"
-        assert rec.relations is None, "a refute-opp row must not gain relations"
+        assert rec.relations is not None, "requested refute relations must be rebuilt"
 
 
 def test_a_failed_write_costs_exactly_that_game(tmp_path: Path) -> None:

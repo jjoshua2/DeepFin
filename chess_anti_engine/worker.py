@@ -4678,10 +4678,9 @@ class WorkerSession:
             try:
                 return _play_one_thread(tid)
             except BaseException:
-                # Futures are joined only at session end, which in continuous
-                # mode never arrives — so without this, a thread's death is
-                # invisible for the life of the session and the batch quietly
-                # runs short-handed. Log at the point of failure instead.
+                # Stop cooperative peers so the executor can finish joining
+                # and propagate this failure to the existing recovery path.
+                self._stop_selfplay = True
                 self.log.exception("selfplay thread %d died", tid)
                 raise
 

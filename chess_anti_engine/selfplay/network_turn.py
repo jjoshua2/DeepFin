@@ -15,6 +15,8 @@ explosion.
 from __future__ import annotations
 
 import math
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -45,6 +47,7 @@ from chess_anti_engine.mcts.gumbel import (
 )
 from chess_anti_engine.mcts.puct import run_mcts_many
 from chess_anti_engine.mcts.sampling import sample_action_with_temperature
+from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
 
 try:
     from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c
@@ -1051,7 +1054,8 @@ def _append_records_via_python(
         state.diff_focus_norm.observe(np.asarray(raw_difficulties, dtype=np.float64))
 
 
-def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
+def run_network_turn(state: SelfplayState, net_idxs: list[int], *,
+                     witness_stop_fn: Callable[[], bool] | None = None) -> None:
     """Run one network turn for the games in ``net_idxs``.
 
     Side effects:
@@ -1133,6 +1137,8 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
         for i in net_idxs
     ]
 
+    adjudicated_rows: set[int] = set()
+
     def _run_mcts_group(
         idxs: list[int],
         sims_per: list[int],
@@ -1143,8 +1149,8 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
         if not idxs:
             return
 
-        # All games share one MCTS call with per-game sim budgets and
-        # temperature applied after search.  Maximizes GPU batch size.
+        # Gumbel accepts per-game budgets; PUCT callers group equal budgets.
+        # Apply each game's temperature after search.
         group = idxs
         sub_cboards = [state.cboards[net_idxs[j]] for j in group]
         sub_temps = [temps[j] for j in group]
@@ -1181,25 +1187,46 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                 # Map group indices to game-level root IDs for tree reuse.
                 sub_root_ids = [state.root_ids[net_idxs[j]] for j in group] if state.mcts_tree is not None else None
                 gumbel_c_fn = cast(Any, _run_gumbel_root_many_c)
-                _gumbel_result = gumbel_c_fn(
-                    state.model,
-                    sub_cboards,
-                    device=state.device,
-                    rng=rng,
-                    evaluator=eval_impl,
-                    pre_pol_logits=sub_pol,
-                    pre_wdl_logits=sub_wdl,
-                    per_game_simulations=sub_sims,
-                    per_game_add_noise=sub_noise,
-                    per_game_gumbel_scale=sub_scale,
-                    cboards=sub_cboards,
-                    tree=state.mcts_tree,
-                    root_node_ids=sub_root_ids,
-                    tb_probe=state.tb_probe if state.game.syzygy_in_search else None,
-                    allow_terminal_root_shortcuts=True,
-                    return_diagnostics=True,
-                    **search_shape.runner_kwargs(),
-                )
+                try:
+                    _gumbel_result = gumbel_c_fn(
+                        state.model,
+                        sub_cboards,
+                        device=state.device,
+                        rng=rng,
+                        evaluator=eval_impl,
+                        pre_pol_logits=sub_pol,
+                        pre_wdl_logits=sub_wdl,
+                        per_game_simulations=sub_sims,
+                        per_game_add_noise=sub_noise,
+                        per_game_gumbel_scale=sub_scale,
+                        cboards=sub_cboards,
+                        tree=state.mcts_tree,
+                        root_node_ids=sub_root_ids,
+                        tb_probe=state.tb_probe if state.game.syzygy_in_search else None,
+                        allow_terminal_root_shortcuts=True,
+                        return_diagnostics=True,
+                        witness_stop_fn=witness_stop_fn,
+                        **search_shape.runner_kwargs(),
+                    )
+                except SolvedRootWitnessUnavailable as exc:
+                    _gumbel_result = exc.partial_result
+                    for local_j, status in exc.outcomes.items():
+                        row = group[local_j]
+                        slot = net_idxs[row]
+                        if status == 2:
+                            result = "1/2-1/2"
+                        else:
+                            white_wins = (status == 1) == bool(state.cboards[slot].turn)
+                            result = "1-0" if white_wins else "0-1"
+                        # Emergency adjudication from an existing search proof,
+                        # independent of the ordinary TB play-through roll.
+                        state.tb_result_arr[slot] = result
+                        state.done_arr[slot] = 1
+                        adjudicated_rows.add(row)
+                        logging.getLogger(__name__).warning(
+                            "search witness exhausted: adjudicating slot %d result=%s child_checks=%d",
+                            slot, result, exc.child_checks.get(local_j, 0),
+                        )
             else:
                 sub_boards = [state.replay_board(net_idxs[j]) for j in group]
                 _gumbel_result = run_gumbel_root_many(
@@ -1260,17 +1287,23 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
         # Re-select actions with per-game temperature from the returned policy.
         # For Gumbel, temperature <= 0 must preserve the sequential-halving
         # survivor returned by the search instead of taking policy argmax.
+        active = [j for j, row in enumerate(group) if row not in adjudicated_rows]
+        active_actions = [a_sub[j] for j in active]
         _resample_actions_with_temperature(
-            p_sub,
-            a_sub,
-            sub_temps,
+            [p_sub[j] for j in active],
+            active_actions,
+            [sub_temps[j] for j in active],
             rng,
             c_temp_resample=state.c_temp_resample,
             use_c_resample=bool(state.has_classify_c),
             preserve_zero_temperature_actions=bool(use_gumbel),
         )
 
+        for j, action in zip(active, active_actions, strict=True):
+            a_sub[j] = action
         for local_j, (jj, p, a, v, m) in enumerate(zip(group, p_sub, a_sub, v_sub, m_sub, strict=True)):
+            if jj in adjudicated_rows:
+                continue
             probs_list[jj] = p
             actions[jj] = a
             values_list[jj] = float(v)
@@ -1287,7 +1320,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     child = state.mcts_tree.find_child(rid, int(a))
                     state.root_ids[game_idx] = child  # -1 if not found
 
-    # Run all games in one MCTS call with per-game sim budgets and noise.
+    # Batch games together where the runner supports per-game budgets.
     # Full-sim games get configured Gumbel noise for exploration. Fast games
     # remain deterministic (KataGo playout cap convention).
     all_idxs = list(range(len(net_idxs)))
@@ -1298,12 +1331,42 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
         for j in all_idxs
     ]
     noise_py = [scale > 0.0 for scale in scale_py]
-    _run_mcts_group(
-        all_idxs,
-        combined_sims,
-        per_game_noise=noise_py,
-        per_game_gumbel_scale=scale_py,
-    )
+    groups = [all_idxs]
+    if (
+        str(search.mcts_type) != "gumbel"
+        and max(combined_sims) > max(64, int(search.fast_simulations))
+        and len(set(combined_sims)) > 1
+    ):
+        # PUCT has a scalar budget. Keep each budget in its own call so a
+        # fast row does not inherit the full-search maximum. Low-budget
+        # groups retain the existing standalone Gumbel routing.
+        groups = [
+            [j for j in all_idxs if combined_sims[j] == simulations]
+            for simulations in dict.fromkeys(combined_sims)
+        ]
+    for group in groups:
+        _run_mcts_group(
+            group,
+            combined_sims,
+            per_game_noise=noise_py,
+            per_game_gumbel_scale=scale_py,
+        )
+
+    if adjudicated_rows:
+        keep = [j for j in range(len(net_idxs)) if j not in adjudicated_rows]
+        if not keep:
+            return
+        net_idxs = [net_idxs[j] for j in keep]
+        _cb_encode_list = [_cb_encode_list[j] for j in keep]
+        pol_logits, wdl_logits_raw, wdl_est = pol_logits[keep], wdl_logits_raw[keep], wdl_est[keep]
+        xs_batch = xs_batch[keep] if xs_batch is not None else None
+        actions = [actions[j] for j in keep]
+        values_list = [values_list[j] for j in keep]
+        probs_list = [probs_list[j] for j in keep]
+        masks_list = [masks_list[j] for j in keep]
+        gumbel_diags = [gumbel_diags[j] for j in keep]
+        is_full_py, is_full = [is_full_py[j] for j in keep], is_full[keep]
+        sample_weights = [sample_weights[j] for j in keep]
 
     if state.has_c_ply and len(net_idxs) > 0:
         _append_records_via_c(

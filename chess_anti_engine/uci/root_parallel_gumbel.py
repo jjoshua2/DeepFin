@@ -97,6 +97,8 @@ from typing import Any
 import chess
 import numpy as np
 
+from chess_anti_engine.async_safety import drain_failed_receipts, ensure_usable, note_cleanup, submit_async
+
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
@@ -109,6 +111,7 @@ from chess_anti_engine.mcts.gumbel import (
     halving_visits_per_action,
 )
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits as _wdl_to_q
+from chess_anti_engine.mcts.puct_history import puct_history_args
 from chess_anti_engine.mcts.puct_vl import _PLANES, PucvChunker
 from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_cboard_policy_or_draws,
@@ -281,6 +284,9 @@ class RootParallelGumbelStats:
     # Distinct tree nodes at the end of the chunk — the quantity `nodes` is
     # routinely mistaken for.
     tree_nodes: int = 0
+    # Root oracle / single-action shortcut completed without a simulation.
+    # Separate completion from work accounting so open-ended searches stop.
+    root_finished: bool = False
 
 
 @dataclass
@@ -344,6 +350,7 @@ class RootParallelGumbelPool:
         rng: np.random.Generator | None = None,
         info_string_cb: Callable[[str], None] | None = None,
     ) -> None:
+        puct_history_args(gumbel_cfg.input_history_encoding)
         if cfg.n_groups < 1:
             raise ValueError(f"n_groups must be >= 1, got {cfg.n_groups}")
         if (evaluator_factories is None) == (evaluators is None):
@@ -423,8 +430,19 @@ class RootParallelGumbelPool:
             )
             for k in range(cfg.n_groups)
         ]
-        for th in self._threads:
-            th.start()
+        self._started_threads: list[threading.Thread] = []
+        try:
+            for th in self._threads:
+                th.start()
+                self._started_threads.append(th)
+        except BaseException as error:
+            self._init_errors.insert(0, error)
+            self._init_done.abort()
+            try:
+                self.close()
+            except BaseException as cleanup:
+                note_cleanup(error, f"partial group startup cleanup failed: {cleanup!r}")
+            raise
         self._init_done.wait()
         if self._init_errors:
             self.close()
@@ -451,7 +469,7 @@ class RootParallelGumbelPool:
         self._shutdown.set()
         for _ in self._threads:
             self._work_q.put(None)
-        for th in self._threads:
+        for th in self._started_threads:
             th.join(timeout=2.0)
         # Unblock any orchestrator stuck at a phase barrier mid-close.
         self._phase_done.set()
@@ -597,6 +615,9 @@ class RootParallelGumbelPool:
         per-candidate gather-batches; a stop finalizes from whatever budgets
         completed (decisions from partial budgets — classic-equivalent).
         """
+        ensure_usable(self)
+        for evaluator in self._evals:
+            ensure_usable(evaluator)
         st = self._state
         if st is None:
             raise RuntimeError("prepare_root() must be called before run()")
@@ -604,30 +625,17 @@ class RootParallelGumbelPool:
             raise RuntimeError("RootParallelGumbelPool is closed")
         if st.finished_action is not None:
             assert st.finished_value is not None
-            # Finished roots never enter a phase, but SearchWorker advances
-            # total_nodes from last_stats().phases. Report the full chunk as
-            # completed (classic gumbel path also counts the requested chunk
-            # on early finish) so go nodes / infinite searches terminate.
-            n = max(1, int(target_sims))
-            survivor = (
-                (int(st.finished_action),)
-                if int(st.finished_action) >= 0
-                else ()
-            )
+            # No phase or group ran. Signal completion independently of the
+            # requested budget; reporting that budget would invent nodes/nps.
             with self._stats_lock:
                 self._last_stats = RootParallelGumbelStats(
                     target_sims=int(target_sims),
                     elapsed_seconds=0.0,
-                    phases=(RootParallelPhase(
-                        index=0,
-                        candidates=1,
-                        visits_per_action=n,
-                        sims_completed=n,
-                        survivor_actions=survivor,
-                    ),),
+                    phases=(),
                     group_sims=tuple(0 for _ in range(self._cfg.n_groups)),
                     vloss_mode=self.realized_vloss_mode(),
                     tree_nodes=int(st.tree.node_count()),
+                    root_finished=True,
                 )
             return float(st.finished_value), int(st.finished_action)
 
@@ -705,17 +713,19 @@ class RootParallelGumbelPool:
         # per-candidate jobs fat; min_keep delays collapse below n_groups.
         while budget > 0 and remaining:
             n_cands = len(remaining)
-            vpa = self._phase_vpa(n_cands, budget)
+            # Exhaust a short remainder with an ordered partial phase.
+            n_dispatched = min(n_cands, budget)
+            vpa = self._phase_vpa(n_dispatched, budget)
             items = [
                 _WorkItem(self._arena_for(st, a), vpa, phase_index)
-                for a in remaining
+                for a in remaining[:n_dispatched]
             ]
             sims_done = self._dispatch_phase(items)
             if self._errors:
                 raise self._errors[0]
             stopped = stop_event.is_set()
             remaining = self._score_and_halve(st, remaining, gumbels)
-            budget = max(0, budget - vpa * n_cands)
+            budget -= vpa * n_dispatched
             phases.append(RootParallelPhase(
                 index=phase_index,
                 candidates=n_cands,
@@ -728,7 +738,8 @@ class RootParallelGumbelPool:
             # the string compact for GUI/logs under high nps.
             if self._info_cb is not None:
                 self._info_cb(
-                    f"rpg phase={phase_index} cands={n_cands} vpa={vpa} "
+                    f"rpg phase={phase_index} cands={n_cands} "
+                    f"dispatched={n_dispatched} vpa={vpa} "
                     f"sims={sims_done} survivors={len(remaining)} "
                     f"budget_left={budget} "
                     f"vloss_mode={self.realized_vloss_mode()} "
@@ -939,8 +950,9 @@ class RootParallelGumbelPool:
         return [remaining[i] for i in order[:keep]]
 
     def _final_value(self, st: _SearchState, best: int) -> float:
-        """Classic step-4 value: survivor child's root-POV Q if visited,
-        else the initial root eval."""
+        """Exact solved root value, otherwise classic survivor-child Q."""
+        if st.tree.get_solved_status(st.root_id) != 0:
+            return st.tree.node_q(st.root_id)
         actions, visits, qs = st.tree.get_children_q(st.root_id, st.root_q_init)
         mask = actions == int(best)
         if bool(mask.any()) and int(visits[mask][0]) > 0:
@@ -994,6 +1006,7 @@ class RootParallelGumbelPool:
     # --- group worker ---------------------------------------------------------------
 
     def _worker_loop(self, idx: int) -> None:
+        evaluator: Any = None
         try:
             # Ordinary threads do not inherit Inductor cudagraph TLS.
             try:
@@ -1038,12 +1051,30 @@ class RootParallelGumbelPool:
                 eval_cache_entries=int(cfg.eval_cache_entries),
                 input_planes=cfg.input_planes,
                 compute_relations=cfg.compute_relations,
+                input_history_encoding=self._gcfg.input_history_encoding,
             )
         except BaseException as exc:
             self._init_errors.append(exc)
+        try:
             self._init_done.wait()
+        except threading.BrokenBarrierError:
+            pass  # Constructor startup failure publishes _init_errors first.
+        if self._init_errors:
+            # Shutdown can follow a successful transfer to the caller; only
+            # published startup errors leave these helpers owned by the group.
+            # No constructor transfer occurred: every factory-created helper
+            # is still owned by its group, including successful startup peers.
+            self._chunkers[idx] = None
+            if self._factories is not None:
+                self._evals[idx] = None
+                try:
+                    close = getattr(evaluator, "close", None)
+                    if callable(close):
+                        close()
+                except BaseException as cleanup:
+                    note_cleanup(self._init_errors[0], f"startup evaluator cleanup failed: {cleanup!r}")
+                evaluator = None
             return
-        self._init_done.wait()
 
         chunker = self._chunkers[idx]
         assert chunker is not None
@@ -1076,6 +1107,9 @@ class RootParallelGumbelPool:
         item: _WorkItem,
         stop_event: threading.Event | None,
     ) -> int:
+        if stop_event is not None and stop_event.is_set():
+            return 0
+        ensure_usable(evaluator)
         st = self._state
         assert st is not None
         arena = item.arena
@@ -1085,6 +1119,8 @@ class RootParallelGumbelPool:
             done = 0
             # Expand exactly once even when split shards race the first touch.
             with arena.lock:
+                if stop_event is not None and stop_event.is_set():
+                    return 0
                 if not arena.expanded:
                     done += self._expand_candidate(evaluator, arena, st)
             if arena.terminal_value is not None:
@@ -1106,6 +1142,7 @@ class RootParallelGumbelPool:
                     st.tree.backprop_many([path] * n, [tv] * n)
                     done += n
                 return done
+            chunker.set_policy_temp(float(self._gcfg.policy_temp))
             gather = max(1, int(self._cfg.gather))
             while done < item.budget:
                 if stop_event is not None and stop_event.is_set():
@@ -1134,6 +1171,8 @@ class RootParallelGumbelPool:
         """First touch of a candidate: push its move, then either mark the
         terminal value or evaluate + expand the child node (this eval is the
         classic first forced sim, so it consumes 1 sim of the item budget)."""
+        ensure_usable(self)
+        ensure_usable(evaluator)
         cb = st.root_cb.copy()
         cb.push_index(int(arena.action))
         arena.cboard = cb
@@ -1149,15 +1188,21 @@ class RootParallelGumbelPool:
         buf = evaluator.get_input_buffer(1, slot=0)
         buf_np = buf.numpy() if hasattr(buf, "numpy") else np.asarray(buf)
         buf_np.reshape(1, int(self._cfg.input_planes), 8, 8)[0] = enc
-        if self._cfg.compute_relations:
-            rel = cb.compute_relations()[None, ...]
-            pol_t, wdl_t, event = evaluator.evaluate_inplace_async(
-                1, slot=0, relations=rel,
-            )
-        else:
-            pol_t, wdl_t, event = evaluator.evaluate_inplace_async(1, slot=0)
-        if event is not None:
-            event.synchronize()
+        receipt = None
+        try:
+            if self._cfg.compute_relations:
+                rel = cb.compute_relations()[None, ...]
+                receipt = submit_async(evaluator,
+                    1, slot=0, relations=rel,
+                )
+            else:
+                receipt = submit_async(evaluator, 1, slot=0)
+            pol_t, wdl_t, event = receipt
+            if event is not None:
+                event.synchronize()
+        except BaseException as error:
+            drain_failed_receipts(evaluator, self, [] if receipt is None else [receipt], error)
+            raise
         pol = pol_t.numpy() if hasattr(pol_t, "numpy") else np.asarray(pol_t)
         wdl = wdl_t.numpy() if hasattr(wdl_t, "numpy") else np.asarray(wdl_t)
         legal = cb.legal_move_indices()
@@ -1165,7 +1210,9 @@ class RootParallelGumbelPool:
             st.tree.expand_from_logits(
                 arena.cid,
                 legal.astype(np.int32),
-                np.ascontiguousarray(pol[0], dtype=np.float32),
+                np.ascontiguousarray(
+                    _policy_logits_to_full(pol, cfg=self._gcfg)[0], dtype=np.float32,
+                ),
             )
         q = float(_wdl_to_q(np.asarray(wdl, dtype=np.float32)[0].reshape(-1)))
         st.tree.backprop(np.array([arena.cid], dtype=np.int32), q)

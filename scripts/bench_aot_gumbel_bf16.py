@@ -13,6 +13,7 @@ import chess
 import numpy as np
 import torch
 
+from chess_anti_engine.async_safety import CompletionEvent
 from chess_anti_engine.inference import AOTEvaluator, model_constant_source
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
@@ -35,7 +36,7 @@ class _InputModeEvaluator:
 
     def evaluate_encoded_async(
         self, x: np.ndarray, relations: np.ndarray | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
         if relations is not None:
             raise NotImplementedError("AOT benchmark does not transport relations")
         return self._evaluator.evaluate_encoded_async(x)

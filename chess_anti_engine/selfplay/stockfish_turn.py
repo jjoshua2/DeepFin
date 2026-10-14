@@ -637,6 +637,17 @@ def _search_stockfish_sync(
         return stockfish.search(fen, nodes=nodes)
 
 
+def _record_matches_sf_position(rec: _NetRecord, cb: Any) -> bool:
+    """Match the record's SF position without rebuilding its board history.
+
+    NET rows describe P0 and receive SF reply data at P1. SF-refute opponent
+    rows describe the SF-to-move position itself. A forced NET turn creates
+    no row, so the latest record may belong to an earlier SF position.
+    """
+    offset = 0 if bool(getattr(rec, "is_sf_refute_opp", False)) else 1
+    return int(rec.ply_index) + offset == int(cb.ply)
+
+
 def _slot_latest_record_needs_sf_label(state: SelfplayState, idx: int) -> bool:
     if not state.samples_per_game[idx]:
         return False
@@ -648,7 +659,10 @@ def _slot_latest_record_needs_sf_label(state: SelfplayState, idx: int) -> bool:
     # label. Skip them so a stray label query can't mis-attach.
     if bool(getattr(rec, "is_sf_refute_opp", False)):
         return False
-    return rec.sf_policy_target is None and rec.sf_move_index is None
+    return (
+        rec.sf_policy_target is None and rec.sf_move_index is None
+        and _record_matches_sf_position(rec, state.cboards[idx])
+    )
 
 
 def submit_sf_queries(
@@ -1520,6 +1534,7 @@ def _emit_sf_refute_opp_record(
         sample_weight=1.0,
         keep_prob=1.0,
         legal_mask=legal_mask,
+        relations=cb.compute_relations() if state.game.record_relations else None,
         sf_wdl=sf_wdl_stm,
         # SF's move is pushed AFTER this record is appended, so every move
         # played so far precedes the recorded position (contrast the net turn,
@@ -1549,11 +1564,12 @@ def _push_curriculum_opponent_move(
         regret_limit=regret_limit,
     )
     if state.samples_per_game[idx]:
-        rank, regret = _sf_played_move_diagnostics(opp_move_idx, cand_idxs, cand_scores)
         rec = state.samples_per_game[idx][-1]
-        rec.sf_played_move_index = int(opp_move_idx)
-        rec.sf_played_rank = rank
-        rec.sf_played_regret = regret
+        if _record_matches_sf_position(rec, state.cboards[idx]):
+            rank, regret = _sf_played_move_diagnostics(opp_move_idx, cand_idxs, cand_scores)
+            rec.sf_played_move_index = int(opp_move_idx)
+            rec.sf_played_rank = rank
+            rec.sf_played_regret = regret
     python_move: chess.Move | None = None
     if not state.has_c_ply:
         python_move = index_to_move(int(opp_move_idx), state.boards[idx])

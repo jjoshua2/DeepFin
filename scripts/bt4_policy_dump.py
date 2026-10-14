@@ -683,8 +683,13 @@ def legal_move_probabilities(
         missing = [move.uci() for move, i in zip(moves, idx.tolist(), strict=True) if i < 0]
         raise RuntimeError(f"{board.fen()}: no LC0 policy slot for {missing}")
     logits = policy_row[idx].astype(np.float64)
-    # BT4 emits -inf-ish fills for slots it masks; keep the softmax finite.
-    logits = np.where(np.isfinite(logits), logits, -1e9)
+    # -inf is an intentional mask; NaN/+inf must not become plausible labels.
+    if (
+        np.isnan(logits).any()
+        or np.isposinf(logits).any()
+        or not np.isfinite(logits).any()
+    ):
+        raise RuntimeError(f"{board.fen()}: invalid legal policy logits")
     probs = np.exp(logits - logits.max())
     total = probs.sum()
     if not np.isfinite(total) or total <= 0.0:

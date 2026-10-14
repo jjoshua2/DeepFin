@@ -34,10 +34,12 @@ from typing import Protocol
 
 import numpy as np
 
+from chess_anti_engine.async_safety import note_cleanup
 from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
 from chess_anti_engine.encoding.features import RELATION_COUNT
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.puct_history import puct_history_args
 from chess_anti_engine.mcts.vloss import release_paths
 
 _log = logging.getLogger(__name__)
@@ -68,6 +70,7 @@ class WalkerPoolConfig:
     input_planes: int = input_plane_count()
   # Transport dynamic board-relation matrices per leaf (model.use_dynamic_relations).
     compute_relations: bool = False
+    input_history_encoding: str = "legacy"
 
 
 @dataclass
@@ -93,6 +96,7 @@ class WalkerPool:
     """
 
     def __init__(self, cfg: WalkerPoolConfig, evaluator: _Evaluator) -> None:
+        self._input_history_args = puct_history_args(cfg.input_history_encoding)
         self._cfg = cfg
         self._evaluator = evaluator
 
@@ -110,8 +114,10 @@ class WalkerPool:
         self._job: _Job | None = None
         self._wakes = [threading.Event() for _ in range(cfg.n_walkers)]
         self._done = threading.Barrier(cfg.n_walkers + 1)
+        self._init_done = threading.Barrier(cfg.n_walkers + 1)
         self._shutdown = threading.Event()
         self._errors: list[BaseException] = []
+        self._init_errors: list[BaseException] = []
         # Completed sims for the current run (tokens acquired + finished).
         # Semaphore residual is not portably readable, so walkers count leaves.
         self._completed_lock = threading.Lock()
@@ -126,8 +132,23 @@ class WalkerPool:
             )
             for i in range(cfg.n_walkers)
         ]
-        for th in self._threads:
-            th.start()
+        self._started_threads: list[threading.Thread] = []
+        try:
+            for th in self._threads:
+                th.start()
+                self._started_threads.append(th)
+        except BaseException as error:
+            self._init_errors.insert(0, error)
+            self._init_done.abort()
+            try:
+                self.close()
+            except BaseException as cleanup:
+                note_cleanup(error, f"partial walker startup cleanup failed: {cleanup!r}")
+            raise
+        self._init_done.wait()
+        if self._init_errors:
+            self.close()
+            raise self._init_errors[0]
 
     def __enter__(self) -> WalkerPool:
         return self
@@ -143,7 +164,7 @@ class WalkerPool:
         for ev in self._wakes:
             ev.set()
   # Walkers won't hit the barrier in shutdown mode, so don't wait on it.
-        for th in self._threads:
+        for th in self._started_threads:
   # daemon=True; bounded join just ensures clean teardown for tests.
             th.join(timeout=2.0)
 
@@ -192,13 +213,28 @@ class WalkerPool:
         fpu_root = cfg.fpu_at_root
         fpu_red = cfg.fpu_reduction
         vloss = cfg.vloss_weight
-        gather = max(1, int(cfg.gather))
-        enc = np.empty((gather, int(cfg.input_planes), 8, 8), dtype=np.float32)
-        rel = (
-            np.zeros((gather, RELATION_COUNT, 64, 64), dtype=np.uint8)
-            if cfg.compute_relations else None
-        )
+        gather = 1
         my_wake = self._wakes[idx]
+        enc: np.ndarray | None = None
+        rel: np.ndarray | None = None
+        try:
+            gather = max(1, int(cfg.gather))
+            enc = np.empty((gather, int(cfg.input_planes), 8, 8), dtype=np.float32)
+            rel = (
+                np.zeros((gather, RELATION_COUNT, 64, 64), dtype=np.uint8)
+                if cfg.compute_relations else None
+            )
+
+        except BaseException as exc:
+            self._init_errors.append(exc)
+        try:
+            self._init_done.wait()
+        except threading.BrokenBarrierError:
+            pass  # Constructor startup failure publishes _init_errors first.
+        if self._init_errors or self._shutdown.is_set():
+            enc = rel = None
+            return
+        assert enc is not None
 
         while True:
             my_wake.wait()
@@ -256,6 +292,7 @@ class WalkerPool:
                         root_id, root_cb, c_puct, fpu_root, fpu_red, vloss,
                         enc[i:i+1],
                         rel[i:i+1] if rel is not None else None,
+                        *self._input_history_args,
                     )
                     if term_q is not None:
                         # Terminal leaves carry no vloss (descend backprops

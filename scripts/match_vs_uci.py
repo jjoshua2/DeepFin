@@ -355,14 +355,27 @@ def _open_warm_engine(
     print(f"[match]   command timeout: {command_timeout:.0f}s during warmup, "
           f"{_ENGINE_COMMAND_TIMEOUT_S:.0f}s thereafter")
     eng = _open_engine(spec, timeout_s=command_timeout)
-    _set_options(eng, opts)
-    print(f"[match]   id={eng.id.get('name', '?')!r}")
     try:
-        _warmup_engine(eng, nodes=nodes, label=label, timeout_s=warmup_timeout_s)
-    finally:
-        # Restore even if the warmup raised: a half-open engine still gets quit().
-        eng.timeout = _ENGINE_COMMAND_TIMEOUT_S
+        try:
+            _set_options(eng, opts)
+            print(f"[match]   id={eng.id.get('name', '?')!r}")
+            _warmup_engine(eng, nodes=nodes, label=label, timeout_s=warmup_timeout_s)
+        finally:
+            eng.timeout = _ENGINE_COMMAND_TIMEOUT_S
+    except BaseException:
+        # Ownership transfers only on return; failed startup is ours to close.
+        with contextlib.suppress(Exception):
+            _quit_engine(eng)
+        raise
     return eng
+
+
+def _quit_engine(eng: chess.engine.SimpleEngine) -> None:
+    try:
+        eng.quit()
+    finally:
+        # Force transport closure even when the graceful quit timed out.
+        eng.close()
 
 
 def _set_options(eng: chess.engine.SimpleEngine, opts: dict[str, str]) -> None:
@@ -944,6 +957,19 @@ def load_match_resume(
                 f"({openings[opening_index].fen()!r}). The opening list has "
                 "changed under the log; refusing to mix two populations."
             )
+        result = row.get("result")
+        score = row.get("score_a")
+        if (
+            result not in ("1-0", "0-1", "1/2-1/2")
+            or isinstance(score, bool)
+            or not isinstance(score, (int, float))
+            or score != _score_for_a(result, a_is_white=a_is_white)
+        ):
+            raise SystemExit(
+                f"--resume: {path} game {index} has invalid result/score "
+                f"identity: result={result!r}, score_a={score!r}, "
+                f"a_is_white={a_is_white}. Refusing inconsistent finished games."
+            )
         out[index] = row
     return MatchResume(rows=out, truncated_tail=log.truncated_tail)
 
@@ -1403,12 +1429,16 @@ def main() -> None:
             if move_fh is not None:
                 move_fh.close()
     finally:
-        if tb_adjudicator is not None:
-            tb_adjudicator.close()
-        if eng_a is not None:
-            eng_a.quit()
-        if eng_b is not None:
-            eng_b.quit()
+        try:
+            if tb_adjudicator is not None:
+                tb_adjudicator.close()
+        finally:
+            try:
+                if eng_a is not None:
+                    _quit_engine(eng_a)
+            finally:
+                if eng_b is not None:
+                    _quit_engine(eng_b)
 
     total = a_wins + a_draws + a_losses
     if total == 0:

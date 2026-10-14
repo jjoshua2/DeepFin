@@ -258,6 +258,17 @@ def _prune_processed_shards(
     return deleted
 
 
+def _check_relation_recording_override(config: Mapping[str, Any], *, uses_relations: bool) -> None:
+    # Workers currently use record_relations to control both shard recording
+    # and search input. Disabling it would silently omit either learned bias.
+    if uses_relations and "record_relations" in config and not bool(config["record_relations"]):
+        raise ValueError(
+            "record_relations must be enabled when use_dynamic_relations or "
+            "policy_dynamic_relations is enabled; workers also use it to "
+            "transport relation matrices to the evaluator"
+        )
+
+
 def build_recommended_worker(
     *,
     config: dict,
@@ -282,6 +293,9 @@ def build_recommended_worker(
     Split out of ``_publish_distributed_trial_state`` so that the published
     key set is computable from a config alone, without exporting a model.
     """
+    _check_relation_recording_override(
+        config, uses_relations=bool(model_cfg.use_dynamic_relations or model_cfg.policy_dynamic_relations),
+    )
     return {
         "games_per_batch": int(config.get("selfplay_batch", 4)),
         "max_plies": int(config.get("max_plies", 240)),
@@ -409,9 +423,9 @@ def build_recommended_worker(
         "policy_encoding": str(model_cfg.policy_encoding),
         "input_history_encoding": str(config.get("input_history_encoding", "legacy")),
         "input_extra_features": str(model_cfg.input_extra_features),
-        "use_dynamic_relations": bool(model_cfg.use_dynamic_relations),
+        "use_dynamic_relations": bool(model_cfg.use_dynamic_relations or model_cfg.policy_dynamic_relations),
         "record_relations": bool(
-            config.get("record_relations", model_cfg.use_dynamic_relations)
+            config.get("record_relations", model_cfg.use_dynamic_relations or model_cfg.policy_dynamic_relations)
         ),
         "record_lc0_root_input": bool(config.get("record_lc0_root_input", False)),
         "history_rep_fix": bool(config.get("history_rep_fix", False)),
@@ -693,7 +707,7 @@ def _publish_distributed_trial_state(
             "policy_encoding": str(model_cfg.policy_encoding),
             "input_history_encoding": str(config.get("input_history_encoding", "legacy")),
             "input_extra_features": str(model_cfg.input_extra_features),
-            "use_dynamic_relations": bool(model_cfg.use_dynamic_relations),
+            "use_dynamic_relations": bool(model_cfg.use_dynamic_relations or model_cfg.policy_dynamic_relations),
         },
         "model": {
             "sha256": str(model_sha),
@@ -1217,8 +1231,14 @@ def check_dynamic_relations_transport(config: dict) -> None:
     in-process gumbel-C path. Not yet wired: the shared-memory slot broker
     and the threaded worker dispatcher.
     """
+    _check_relation_recording_override(
+        config, uses_relations=bool(
+            config.get("use_dynamic_relations", False) or config.get("policy_dynamic_relations", False)
+        ),
+    )
     if not (
         bool(config.get("use_dynamic_relations", False))
+        or bool(config.get("policy_dynamic_relations", False))
         or bool(config.get("record_relations", False))
     ):
         return

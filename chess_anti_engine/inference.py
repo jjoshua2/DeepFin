@@ -21,6 +21,7 @@ from typing import Any, Protocol, cast
 import numpy as np
 import torch
 
+from chess_anti_engine.async_safety import CompletionEvent, ensure_usable, guarded_event, launch_guard
 from chess_anti_engine.broker_hang import (
     BOOT_HANG_ABORT_ENV as _BOOT_HANG_ABORT_ENV,
     DEFAULT_BOOT_HANG_ABORT_S as _DEFAULT_BOOT_HANG_ABORT_S,
@@ -80,7 +81,7 @@ class AsyncBatchEvaluator(BatchEvaluator, Protocol):
 
     def evaluate_encoded_async(
         self, x: np.ndarray, relations: np.ndarray | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
         ...
 
 
@@ -324,6 +325,7 @@ class LocalModelEvaluator:
     def evaluate_encoded(
         self, x: np.ndarray, relations: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        ensure_usable(self)
         out = self._forward_encoded(x, relations)
         pol = _policy_output_full(out).detach().to(dtype=torch.float32, device="cpu").numpy()
         wdl = out["wdl"].detach().to(dtype=torch.float32, device="cpu").numpy()
@@ -340,6 +342,7 @@ class LocalModelEvaluator:
         is computed by every forward anyway, so this just stops discarding
         it; the default-off search path never calls this method.
         """
+        ensure_usable(self)
         out = self._forward_encoded(x, relations)
         pol = _policy_output_full(out).detach().to(dtype=torch.float32, device="cpu").numpy()
         wdl = out["wdl"].detach().to(dtype=torch.float32, device="cpu").numpy()
@@ -357,7 +360,7 @@ class LocalModelEvaluator:
         self,
         x: np.ndarray,
         relations: np.ndarray | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
         """Launch GPU forward pass and non-blocking D2H transfer.
 
         Returns (pol_cpu_tensor, wdl_cpu_tensor, event).  The tensors
@@ -368,6 +371,7 @@ class LocalModelEvaluator:
         On CPU devices falls back to synchronous evaluation and returns
         event=None.
         """
+        ensure_usable(self)
         xb = _coerce_input_batch(x)
         if not self._use_cuda:
             xt = torch.from_numpy(xb)
@@ -386,24 +390,25 @@ class LocalModelEvaluator:
         stream = self._stream
 
   # Default stream must finish any prior work before we branch
-        event_default = torch.cuda.Event()
-        event_default.record(torch.cuda.current_stream(self.device))
+        with launch_guard(self, stream):
+            event_default = torch.cuda.Event()
+            event_default.record(torch.cuda.current_stream(self.device))
 
-        with torch.cuda.stream(stream):
-            stream.wait_event(cast(Any, event_default))
-            xt = torch.from_numpy(xb).to(self.device, non_blocking=True)
-            out = _forward_no_grad(
-                self.model, xt, device=self.device,
-                use_amp=self._use_amp, amp_dtype=self._amp_dtype,
-                relations_t=_relations_to_device(relations, device=self.device),
-            )
-            policy_out = _policy_output_full(out)
-            pol = policy_out.detach().to(dtype=torch.float32, device="cpu", non_blocking=True)
-            wdl = out["wdl"].detach().to(dtype=torch.float32, device="cpu", non_blocking=True)
-            done = torch.cuda.Event()
-            done.record(stream)
+            with torch.cuda.stream(stream):
+                stream.wait_event(cast(Any, event_default))
+                xt = torch.from_numpy(xb).to(self.device, non_blocking=True)
+                out = _forward_no_grad(
+                    self.model, xt, device=self.device,
+                    use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+                    relations_t=_relations_to_device(relations, device=self.device),
+                )
+                policy_out = _policy_output_full(out)
+                pol = policy_out.detach().to(dtype=torch.float32, device="cpu", non_blocking=True)
+                wdl = out["wdl"].detach().to(dtype=torch.float32, device="cpu", non_blocking=True)
+                done = torch.cuda.Event()
+                done.record(stream)
 
-        return pol, wdl, done
+            return pol, wdl, guarded_event(self, done, stream, xb, pol, wdl)
 
 
 class DirectGPUEvaluator(LocalModelEvaluator):
@@ -503,6 +508,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         the next ``evaluate_inplace`` / ``evaluate_inplace_async`` /
         ``evaluate_encoded`` call **on the same slot**.
         """
+        ensure_usable(self)
         if bsz > self._max_batch:
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
         if not 0 <= slot < self._n_slots:
@@ -512,6 +518,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
     def get_input_buffer_bf16_bits(self, bsz: int, slot: int = 0) -> np.ndarray:
         """Return a writable uint16 view containing bfloat16 input bits."""
+        ensure_usable(self)
         if self._pinned_inputs_bf16_bits_np is None:
             raise RuntimeError("bf16 input buffer is unavailable")
         if bsz > self._max_batch:
@@ -522,6 +529,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         return self._pinned_inputs_bf16_bits_np[slot][:bsz]
 
     def _device_input(self, bsz: int, *, slot: int) -> torch.Tensor:
+        ensure_usable(self)
         pin_in = self._pinned_inputs[slot]
         if self._pinned_inputs_bf16 is not None and self._slot_input_bf16[slot]:
             return self._pinned_inputs_bf16[slot][:bsz].to(self.device, non_blocking=True)
@@ -538,6 +546,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         buffer exists, else widened to float32. Sets the per-slot bf16 flag so
         the forward path interprets the pinned bytes correctly.
         """
+        ensure_usable(self)
         if x.dtype == np.uint16:
             if self._pinned_inputs_bf16_bits_np is not None:
                 self._pinned_inputs_bf16_bits_np[slot][:bsz] = x
@@ -554,6 +563,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         relations: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Run inference on data already written to ``get_input_buffer(slot)``."""
+        ensure_usable(self)
         if bsz <= 0:
             return np.empty((0, _POLICY_SIZE), dtype=np.float32), np.empty((0, _WDL_SIZE), dtype=np.float32)
         if bsz > self._max_batch:
@@ -565,6 +575,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
     def evaluate_encoded(
         self, x: np.ndarray, relations: np.ndarray | None = None, *, copy_out: bool = True,
     ) -> tuple[np.ndarray, np.ndarray]:
+        ensure_usable(self)
         if x.ndim != 4:
             raise ValueError(f"expected 4D input, got {x.ndim}D")
         bsz = x.shape[0]
@@ -581,8 +592,8 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         pin_in = self._pinned_inputs[slot]
         pin_pol = self._pinned_pols[slot]
         pin_wdl = self._pinned_wdls[slot]
-        rel_t = _relations_to_device(relations, device=self.device, bsz=bsz)
         if not self._use_cuda:
+            rel_t = _relations_to_device(relations, device=self.device, bsz=bsz)
             xt = pin_in[:bsz]
             out = _forward_no_grad(
                 self.model, xt, device=self.device,
@@ -591,17 +602,20 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             )
             return _policy_output_full(out).detach().float().numpy(), out["wdl"].detach().float().numpy()
 
-        xt = self._device_input(bsz, slot=slot)
-        out = _forward_no_grad(
-            self.model, xt, device=self.device,
-            use_amp=self._use_amp, amp_dtype=self._amp_dtype,
-            relations_t=rel_t,
-        )
-        pin_pol[:bsz].copy_(_policy_output_full(out).detach().float(), non_blocking=True)
-        pin_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
-        done = torch.cuda.Event()
-        done.record(torch.cuda.current_stream(torch.device(self.device)))
-        done.synchronize()
+        stream = torch.cuda.current_stream(torch.device(self.device)) if str(self.device).startswith("cuda") else None
+        with launch_guard(self, stream):
+            rel_t = _relations_to_device(relations, device=self.device, bsz=bsz)
+            xt = self._device_input(bsz, slot=slot)
+            out = _forward_no_grad(
+                self.model, xt, device=self.device,
+                use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+                relations_t=rel_t,
+            )
+            pin_pol[:bsz].copy_(_policy_output_full(out).detach().float(), non_blocking=True)
+            pin_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
+            done = torch.cuda.Event()
+            done.record(stream)
+            done.synchronize()
 
         pol_np = self._pinned_pols_np[slot][:bsz]
         wdl_np = self._pinned_wdls_np[slot][:bsz]
@@ -613,8 +627,9 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         self,
         x: np.ndarray,
         relations: np.ndarray | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
         """Pinned-memory async eval: H2D via DMA, non-blocking D2H."""
+        ensure_usable(self)
         if x.ndim != 4:
             raise ValueError(f"expected 4D input, got {x.ndim}D")
         bsz = x.shape[0]
@@ -629,7 +644,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
     def evaluate_inplace_async(
         self, bsz: int, *, slot: int = 0, relations: np.ndarray | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
         """Async forward on data already written to ``get_input_buffer(slot)``.
 
         Skips the input memcpy: caller wrote the encoded batch directly into
@@ -638,6 +653,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         in-flight inplace_async calls on different slots don't clobber each
         other's pinned outputs.
         """
+        ensure_usable(self)
         if bsz > self._max_batch:
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
         if not 0 <= slot < self._n_slots:
@@ -649,7 +665,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
     def evaluate_inplace_legal_bf16_async(
         self, bsz: int, legal_flat: np.ndarray, legal_counts: np.ndarray, *, slot: int = 0,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
         """Async eval returning compact legal policy logits as BF16 bit patterns.
 
         ``legal_flat`` is the concatenated policy-index list for each real row;
@@ -658,6 +674,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         order. WDL remains float32 because tablebase override mutates it before
         C integration, and it is only three logits per row.
         """
+        ensure_usable(self)
         if bsz > self._max_batch:
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
         if not 0 <= slot < self._n_slots:
@@ -696,6 +713,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         Pad only the board/count dimension to the compiled bucket. Legal logits
         remain unpadded, so transport stays proportional to actual legal moves.
         """
+        ensure_usable(self)
         if x.ndim != 4:
             raise ValueError(f"expected 4D input, got {x.ndim}D")
         real_n = int(x.shape[0])
@@ -722,7 +740,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
     def _async_forward(
         self, bsz: int, *, slot: int, relations: np.ndarray | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
         pin_pol = self._pinned_pols[slot]
         pin_wdl = self._pinned_wdls[slot]
 
@@ -730,27 +748,28 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             self._stream = torch.cuda.Stream(device=self.device)
         stream = self._stream
 
-        event_default = torch.cuda.Event()
-        event_default.record(torch.cuda.current_stream(self.device))
+        with launch_guard(self, stream):
+            event_default = torch.cuda.Event()
+            event_default.record(torch.cuda.current_stream(self.device))
 
-        with torch.cuda.stream(stream):
-            stream.wait_event(cast(Any, event_default))
-            xt = self._device_input(bsz, slot=slot)
-            out = _forward_no_grad(
-                self.model, xt, device=self.device,
-                use_amp=self._use_amp, amp_dtype=self._amp_dtype,
-                relations_t=_relations_to_device(relations, device=self.device, bsz=bsz),
-            )
-            pin_pol[:bsz].copy_(_policy_output_full(out).detach().float(), non_blocking=True)
-            pin_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
-            done = torch.cuda.Event()
-            done.record(stream)
+            with torch.cuda.stream(stream):
+                stream.wait_event(cast(Any, event_default))
+                xt = self._device_input(bsz, slot=slot)
+                out = _forward_no_grad(
+                    self.model, xt, device=self.device,
+                    use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+                    relations_t=_relations_to_device(relations, device=self.device, bsz=bsz),
+                )
+                pin_pol[:bsz].copy_(_policy_output_full(out).detach().float(), non_blocking=True)
+                pin_wdl[:bsz].copy_(out["wdl"].detach().float(), non_blocking=True)
+                done = torch.cuda.Event()
+                done.record(stream)
 
-        return pin_pol[:bsz], pin_wdl[:bsz], done
+            return pin_pol[:bsz], pin_wdl[:bsz], guarded_event(self, done, stream, pin_pol, pin_wdl)
 
     def _async_forward_legal_bf16(
         self, bsz: int, legal_flat: np.ndarray, legal_counts: np.ndarray, n_legal: int, *, slot: int,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
         pin_pol = self._pinned_legal_pols_bf16_bits[slot]
         pin_wdl = self._pinned_wdls[slot]
 
@@ -758,37 +777,38 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             self._stream = torch.cuda.Stream(device=self.device)
         stream = self._stream
 
-        event_default = torch.cuda.Event()
-        event_default.record(torch.cuda.current_stream(self.device))
+        with launch_guard(self, stream):
+            event_default = torch.cuda.Event()
+            event_default.record(torch.cuda.current_stream(self.device))
 
-        with torch.cuda.stream(stream):
-            stream.wait_event(cast(Any, event_default))
-            xt = self._device_input(bsz, slot=slot)
-            legal_counts_gpu = torch.as_tensor(legal_counts, dtype=torch.long, device=self.device)
-            legal_flat_gpu = torch.as_tensor(legal_flat, dtype=torch.long, device=self.device)
-            if _supports_legal_policy_forward(self.model):
-                out = _forward_legal_no_grad(
-                    self.model, xt, legal_flat_gpu, legal_counts_gpu,
-                    device=self.device, use_amp=self._use_amp, amp_dtype=self._amp_dtype,
-                )
-            else:
-                out = _forward_no_grad(
-                    self.model, xt, device=self.device,
-                    use_amp=self._use_amp, amp_dtype=self._amp_dtype,
-                )
-            if n_legal > 0:
+            with torch.cuda.stream(stream):
+                stream.wait_event(cast(Any, event_default))
+                xt = self._device_input(bsz, slot=slot)
+                legal_counts_gpu = torch.as_tensor(legal_counts, dtype=torch.long, device=self.device)
+                legal_flat_gpu = torch.as_tensor(legal_flat, dtype=torch.long, device=self.device)
                 if _supports_legal_policy_forward(self.model):
-                    legal_logits = _policy_output(out).to(torch.bfloat16)
+                    out = _forward_legal_no_grad(
+                        self.model, xt, legal_flat_gpu, legal_counts_gpu,
+                        device=self.device, use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+                    )
                 else:
-                    policy = _policy_output_full(out)[:bsz]
-                    rows = torch.repeat_interleave(torch.arange(bsz, device=self.device), legal_counts_gpu)
-                    legal_logits = policy[rows, legal_flat_gpu].to(torch.bfloat16)
-                pin_pol[:n_legal].copy_(legal_logits.view(torch.uint16), non_blocking=True)
-            pin_wdl[:bsz].copy_(out["wdl"][:bsz].detach().float(), non_blocking=True)
-            done = torch.cuda.Event()
-            done.record(stream)
+                    out = _forward_no_grad(
+                        self.model, xt, device=self.device,
+                        use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+                    )
+                if n_legal > 0:
+                    if _supports_legal_policy_forward(self.model):
+                        legal_logits = _policy_output(out).to(torch.bfloat16)
+                    else:
+                        policy = _policy_output_full(out)[:bsz]
+                        rows = torch.repeat_interleave(torch.arange(bsz, device=self.device), legal_counts_gpu)
+                        legal_logits = policy[rows, legal_flat_gpu].to(torch.bfloat16)
+                    pin_pol[:n_legal].copy_(legal_logits.view(torch.uint16), non_blocking=True)
+                pin_wdl[:bsz].copy_(out["wdl"][:bsz].detach().float(), non_blocking=True)
+                done = torch.cuda.Event()
+                done.record(stream)
 
-        return pin_pol[:n_legal], pin_wdl[:bsz], done
+            return pin_pol[:n_legal], pin_wdl[:bsz], guarded_event(self, done, stream, pin_pol, pin_wdl)
 
 
 # Bucket ladder for compiled batched GPU forwards. Coarser than the per-batch
@@ -1242,11 +1262,13 @@ class AOTEvaluator:
         return self._n_slots
 
     def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
+        ensure_usable(self)
         self._validate_input_slot(bsz, slot)
         self._slot_input_bf16[slot] = False
         return self._pinned_inputs_np[slot][:bsz]
 
     def get_input_buffer_bf16_bits(self, bsz: int, slot: int = 0) -> np.ndarray:
+        ensure_usable(self)
         self._validate_input_slot(bsz, slot)
         self._slot_input_bf16[slot] = True
         return self._pinned_inputs_bf16_bits_np[slot][:bsz]
@@ -1258,6 +1280,7 @@ class AOTEvaluator:
             raise ValueError(f"slot {slot} out of range [0, {self._n_slots})")
 
     def _device_input(self, x: np.ndarray, *, bucket: int, slot: int = 0) -> torch.Tensor:
+        ensure_usable(self)
         bsz = int(x.shape[0])
         if x.dtype == np.uint16:
             self._pinned_inputs_bf16_bits_np[slot][:bsz] = x
@@ -1272,6 +1295,7 @@ class AOTEvaluator:
         )
 
     def _device_input_inplace(self, *, bucket: int, slot: int) -> torch.Tensor:
+        ensure_usable(self)
         if self._slot_input_bf16[slot]:
             return self._pinned_inputs_bf16[slot][:bucket].to(
                 device=self.device, non_blocking=True,
@@ -1283,6 +1307,7 @@ class AOTEvaluator:
     def evaluate_encoded(
         self, x: np.ndarray, relations: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        ensure_usable(self)
         if relations is not None:
             raise NotImplementedError(
                 "dynamic relations are not transported on the AOTEvaluator path; "
@@ -1299,18 +1324,21 @@ class AOTEvaluator:
 
   # Native search can supply bit-packed BF16 directly; float32 callers retain
   # the compatibility path and convert during H2D.
-        xt = self._device_input(x, bucket=bucket)
+        stream = torch.cuda.current_stream(torch.device(self.device)) if str(self.device).startswith("cuda") else None
+        with launch_guard(self, stream):
+            xt = self._device_input(x, bucket=bucket)
 
-        with torch.no_grad():
-            out = model(xt)
+            with torch.no_grad():
+                out = model(xt)
 
-        pol = _policy_output_full(out)[:bsz].detach().float().cpu().numpy()
-        wdl = out["wdl"][:bsz].detach().float().cpu().numpy()
+            pol = _policy_output_full(out)[:bsz].detach().float().cpu().numpy()
+            wdl = out["wdl"][:bsz].detach().float().cpu().numpy()
         return pol, wdl
 
     def evaluate_encoded_async(
         self, x: np.ndarray,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
+        ensure_usable(self)
         if x.ndim != 4:
             raise ValueError(f"expected 4D input, got {x.ndim}D")
         bsz = x.shape[0]
@@ -1319,20 +1347,22 @@ class AOTEvaluator:
         bucket = self._pick_bucket(bsz)
         model = self._models[bucket]
 
-        xt = self._device_input(x, bucket=bucket)
+        stream = torch.cuda.current_stream(torch.device(self.device)) if str(self.device).startswith("cuda") else None
+        with launch_guard(self, stream):
+            xt = self._device_input(x, bucket=bucket)
 
-        with torch.no_grad():
-            out = model(xt)
+            with torch.no_grad():
+                out = model(xt)
 
-        pol = _policy_output_full(out)[:bsz].detach().to(
-            dtype=torch.float32, device="cpu", non_blocking=True,
-        )
-        wdl = out["wdl"][:bsz].detach().to(
-            dtype=torch.float32, device="cpu", non_blocking=True,
-        )
-        done = torch.cuda.Event()
-        done.record(torch.cuda.current_stream(torch.device(self.device)))
-        return pol, wdl, done
+            pol = _policy_output_full(out)[:bsz].detach().to(
+                dtype=torch.float32, device="cpu", non_blocking=True,
+            )
+            wdl = out["wdl"][:bsz].detach().to(
+                dtype=torch.float32, device="cpu", non_blocking=True,
+            )
+            done = torch.cuda.Event()
+            done.record(stream)
+            return pol, wdl, guarded_event(self, done, stream, pol, wdl)
 
     def evaluate_inplace_async(
         self,
@@ -1340,7 +1370,8 @@ class AOTEvaluator:
         *,
         slot: int = 0,
         relations: np.ndarray | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
+        ensure_usable(self)
         if relations is not None:
             raise NotImplementedError(
                 "dynamic relations are not transported on the AOTEvaluator path",
@@ -1348,18 +1379,20 @@ class AOTEvaluator:
         self._validate_input_slot(bsz, slot)
         bucket = self._pick_bucket(bsz)
         model = self._models[bucket]
-        xt = self._device_input_inplace(bucket=bucket, slot=slot)
-        with torch.no_grad():
-            out = model(xt)
-        pol = _policy_output_full(out)[:bsz].detach().to(
-            dtype=torch.float32, device="cpu", non_blocking=True,
-        )
-        wdl = out["wdl"][:bsz].detach().to(
-            dtype=torch.float32, device="cpu", non_blocking=True,
-        )
-        done = torch.cuda.Event()
-        done.record(torch.cuda.current_stream(torch.device(self.device)))
-        return pol, wdl, done
+        stream = torch.cuda.current_stream(torch.device(self.device)) if str(self.device).startswith("cuda") else None
+        with launch_guard(self, stream):
+            xt = self._device_input_inplace(bucket=bucket, slot=slot)
+            with torch.no_grad():
+                out = model(xt)
+            pol = _policy_output_full(out)[:bsz].detach().to(
+                dtype=torch.float32, device="cpu", non_blocking=True,
+            )
+            wdl = out["wdl"][:bsz].detach().to(
+                dtype=torch.float32, device="cpu", non_blocking=True,
+            )
+            done = torch.cuda.Event()
+            done.record(stream)
+            return pol, wdl, guarded_event(self, done, stream, pol, wdl)
 
 
 # ---------------------------------------------------------------------------
@@ -2071,6 +2104,7 @@ class SlotBroker:
         # client would accept a mis-decoded answer as its own. The whole
         # guarantee is "the tag is read before anything it vouches for" (audit
         # I1); the comprehension below evaluates left to right, so it holds.
+        ensure_usable(self)
         snapshot = [
             (slot, int(slot.request_id), int(slot.request_mode)) for slot in ready
         ]
@@ -2116,7 +2150,15 @@ class SlotBroker:
                         self._consecutive_batch_failures,
                     )
                     raise
-            except Exception:
+            except Exception as error:
+                try:
+                    ensure_usable(self)
+                except RuntimeError:
+                    # An unresolved CUDA loan cannot enter the retry/repack path.
+                    # launch_guard retains this broker and the failed launch.
+                    self._stop = True
+                    log.error("broker batch cleanup failed; retiring poisoned broker")
+                    raise error from None
                 # Before the release, for the reason given above. A partial
                 # failure -- _process_batch_mode released some malformed slots
                 # and then raised -- loses its own return value, so counting
@@ -2204,6 +2246,7 @@ class SlotBroker:
         compact-legal metadata, which ``_process_batch`` forwards to the serve
         loop's ``positions`` total. See that method's docstring for why.
         """
+        ensure_usable(self)
         _timing = getattr(self, "_timing_metrics", None)
         _t_pack0 = time.perf_counter()
         # Under a watchdog stage (audit I3): torch.load, .to(device), the AOT
@@ -2419,7 +2462,11 @@ class SlotBroker:
         forward_ok = False
         work = getattr(self, "_neural_work", None)
         work_dispatched = work_completed = False
+        launch_stream = None
+        output_stream = None
         try:
+            if self.device.startswith("cuda"):
+                launch_stream = torch.cuda.current_stream(torch.device(self.device))
             xt = pin_input[:forward_total].to(self.device, non_blocking=True)
 
             first_inf = self._first_inference_pending
@@ -2523,6 +2570,10 @@ class SlotBroker:
             if _timing is not None:
                 _timing["forward_s"] += time.perf_counter() - _t_forward0
             _t_output0 = time.perf_counter()
+            if launch_stream is not None:
+                # Preserve completion of output/late metadata transfers even
+                # if the model changed the current stream during its forward.
+                output_stream = torch.cuda.current_stream(torch.device(self.device))
             policy_gpu = (
                 _policy_output(out).detach()
                 if compact_legal and (use_legal_rows_forward or use_legal_forward)
@@ -2569,8 +2620,10 @@ class SlotBroker:
             if _timing is not None:
                 _timing["output_s"] += time.perf_counter() - _t_output0
             _t_scatter0 = time.perf_counter()
-            if self.device.startswith("cuda"):
-                torch.cuda.current_stream(torch.device(self.device)).synchronize()
+            if launch_stream is not None:
+                launch_stream.synchronize()
+                if output_stream is not None and output_stream != launch_stream:
+                    output_stream.synchronize()
                 if work is not None:
                     work.executed_real_rows += total
                     work_completed = True
@@ -2600,10 +2653,25 @@ class SlotBroker:
             if _timing is not None:
                 _timing["scatter_s"] += time.perf_counter() - _t_scatter0
             forward_ok = True
+        except BaseException:
+            # Keep the watchdog token active during drain. If drain fails,
+            # retain custody and let _process_batch retire without releasing.
+            output_drain = (
+                launch_guard(self, output_stream)
+                if output_stream is not None and output_stream != launch_stream
+                else contextlib.nullcontext()
+            )
+            with launch_guard(self, launch_stream), output_drain:
+                raise
         finally:
             if work is not None and work_dispatched and not work_completed:
                 work.failed_forward_rows += total
-            self._hang_watchdog.mark_forward_done(success=forward_ok, token=hang_token)
+            try:
+                ensure_usable(self)
+            except RuntimeError:
+                pass  # Completion is unknown; watchdog coverage remains active.
+            else:
+                self._hang_watchdog.mark_forward_done(success=forward_ok, token=hang_token)
         return unanswered_rows
 
   # -- main loop --

@@ -31,7 +31,9 @@ from chess_anti_engine.stockfish.wdl import cp_to_wdl
 
 
 class _FakeCBoard:
+    # Model P1: White to move after a Black NET record at absolute ply 1.
     turn = True
+    ply = 2
     occ_white = 0
     occ_black = 0
     castling = 0
@@ -44,7 +46,7 @@ class _FakeCBoard:
         )
 
     def fen(self) -> str:
-        return chess.STARTING_FEN
+        return chess.STARTING_FEN.rsplit(" ", 1)[0] + " 2"
 
     def legal_move_indices(self) -> np.ndarray:
         return self._legal_indices
@@ -52,6 +54,7 @@ class _FakeCBoard:
     def push_index(self, idx: int) -> None:
         self.pushed.append(int(idx))
         self.turn = not self.turn
+        self.ply += 1
 
     def is_game_over(self) -> bool:
         return False
@@ -87,8 +90,8 @@ def _record(*, has_policy: bool) -> _NetRecord:
         policy_probs=np.zeros((POLICY_SIZE,), dtype=np.float32),
         net_wdl_est=np.array([0.0, 1.0, 0.0], dtype=np.float32),
         search_wdl_est=np.array([0.0, 1.0, 0.0], dtype=np.float32),
-        pov_color=chess.WHITE,
-        ply_index=0,
+        pov_color=chess.BLACK,
+        ply_index=1,
         has_policy=has_policy,
         priority=1.0,
         sample_weight=1.0,

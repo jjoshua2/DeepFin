@@ -20,6 +20,8 @@ from collections.abc import Callable
 
 import chess
 
+from chess_anti_engine.mcts.solved_root import SolvedRootWitnessUnavailable
+from chess_anti_engine.moves import index_to_move
 from chess_anti_engine.mcts.search_options import (
     branch_note,
     OPTIONS_BY_NAME,
@@ -171,6 +173,10 @@ def emit_handshake(options: EngineOptions) -> None:
 # stale bestmove against the next board — a cold CUDA-graph compile on
 # the first search is ~3-4s on its own.
 _JOIN_TIMEOUT_S = 30.0
+
+
+class SearchNotQuiescent(TimeoutError):
+    """The search still owns the worker; mutation and teardown must wait."""
 
 # Advertised (and now enforced) floor for the `Hash` UCI option, in MB. Keep this
 # in step with the `min` field `emit_handshake` prints — the two disagreeing is
@@ -398,6 +404,8 @@ class Engine:
         self._board = chess.Board()
         self._search_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._cancel_event = threading.Event()
+        self._ponderhit_at: float | None = None
         self._ponderhit_event = threading.Event()
   # Set only by a GUI command that ends ponder (stop, ponderhit, quit,
   # or a command that waits out the search). A pool fault sets
@@ -407,10 +415,10 @@ class Engine:
   # here so ponderhit can swap them in.
         self._pending_real_limits: SearchLimits | None = None
         self._quit_requested = False
+        self._closed = False
   # Monotonic counter bumped on every new `go`. Stored on the search
-  # thread's frame; a stale thread that outlives its join still sees
-  # its own captured value, so emit-bestmove and tree-writeback both
-  # gate on `gen == self._search_gen`. Prevents races after a slow stop.
+  # thread's frame to guard result publication. Worker writes are protected
+  # by quiescence before any command changes the worker or starts another go.
         self._search_gen = 0
         self._state_lock = threading.Lock()
   # `position` commands go here; the tree isn't advanced until `go` so
@@ -432,6 +440,15 @@ class Engine:
   # -- main-thread command dispatch -----------------------------------------
 
     def dispatch(self, cmd: Command) -> None:
+        if self._quit_requested or self._closed:
+            _println("info string command rejected: engine is shutting down")
+            return
+        try:
+            self._dispatch(cmd)
+        except SearchNotQuiescent as exc:
+            _println(f"info string command rejected ({type(cmd).__name__}): {exc}")
+
+    def _dispatch(self, cmd: Command) -> None:
         if isinstance(cmd, CmdUci):
             self._handle_uci()
         elif isinstance(cmd, CmdIsReady):
@@ -515,6 +532,8 @@ class Engine:
                     f"info string position: rejected FEN {cmd.fen!r} ({reason}); "
                     "using the start position"
                 )
+                # Discard the old root before recording empty fallback history.
+                self._worker.reset_tree()
                 self._board = chess.Board()
                 self._pending_fen = None
                 self._pending_moves = []
@@ -616,10 +635,8 @@ class Engine:
         self._applied_moves = tuple(target_moves)
 
     def _handle_go(self, cmd: CmdGo) -> None:
-        if self._search_thread is not None and self._search_thread.is_alive():
-  # UCI says you should `stop` before issuing another `go`. Be
-  # forgiving: stop the current one first.
-            self._handle_stop()
+        # A timeout cannot transfer ownership of the still-live worker.
+        self._wait_for_search()
   # Ponder mode: search at the position BEFORE opponent's predicted
   # reply. That node's root expansion creates a child for every legal
   # opponent move, so whichever one they play — predicted or not — we
@@ -648,6 +665,8 @@ class Engine:
             pieces=chess.popcount(search_board.occupied),
         )
         self._stop_event = threading.Event()
+        self._cancel_event = threading.Event()
+        self._ponderhit_at = None
         self._ponderhit_event = threading.Event()
         self._ponder_release = threading.Event()
   # For `go ponder`, the ponder phase runs open-ended; ponderhit
@@ -659,9 +678,12 @@ class Engine:
   # search_board.turn here picks the opponent's wtime/btime and
   # causes the real phase to flag or undersearch at asymmetric
   # clocks. (Codex adversarial review.)
-        if cmd.args.ponder and self._popped_ponder_move is not None:
+        if cmd.args.ponder:
             real_board = search_board.copy(stack=False)
-            real_board.push(self._popped_ponder_move)
+            if self._popped_ponder_move is not None:
+                real_board.push(self._popped_ponder_move)
+            # Bare FEN/startpos already names the real board; it still needs
+            # a clocked handoff on ponderhit without any root advancement.
             self._pending_real_limits = limits_from_go(
                 replace(cmd.args, ponder=False),
                 side_to_move_is_white=(real_board.turn == chess.WHITE),
@@ -684,29 +706,28 @@ class Engine:
         self._search_thread.start()
 
     def _handle_stop(self) -> None:
-        if self._search_thread is not None:
-            self._stop_event.set()
-            self._ponder_release.set()
-            self._search_thread.join(timeout=_JOIN_TIMEOUT_S)
-            if self._search_thread.is_alive():
-  # Don't clear the handle: the thread may still be running a
-  # C chunk that can't be interrupted. Bumping _search_gen
-  # (in _handle_go) will invalidate any late bestmove. We
-  # retry the cleanup on the next isready / go.
-                _println("info string search stop timed out; thread still running")
-            else:
-                self._search_thread = None
+        try:
+            self._wait_for_search()
+        except SearchNotQuiescent as exc:
+            # Stop remains requested. Keep the owner available for a later join.
+            _println(f"info string {exc}")
 
     def _handle_ponderhit(self) -> None:
         """Opponent played our predicted move. Convert open-ended ponder
         search into a time-bounded real search, keeping the MCTS tree.
         """
-        if self._search_thread is None or not self._search_thread.is_alive():
+        if (self._search_thread is None or not self._search_thread.is_alive()
+                or self._pending_real_limits is None):
             return
   # Signal the search loop: next iteration, swap ponder-deadline
   # for real-deadline.
-        self._ponderhit_event.set()
-        self._stop_event.set()
+        with self._state_lock:
+            if self._ponderhit_at is not None:
+                return
+            ponder_stop = self._stop_event
+            self._ponderhit_at = time.monotonic()
+            self._ponderhit_event.set()
+        ponder_stop.set()
         self._ponder_release.set()
 
     def _handle_setoption(self, cmd: CmdSetOption) -> None:
@@ -1547,36 +1568,62 @@ class Engine:
   # one ply (the popped move) so the real phase searches at the
   # actual current position, reusing sims the ponder accumulated
   # below that child.
-            self._stop_event = threading.Event()
+            # Ponderhit stops the first phase; GUI cancellation survives the
+            # phase switch through a separate event which is never cleared.
+            self._stop_event = self._cancel_event
+            started_at = self._ponderhit_at
+            if started_at is None:
+                started_at = time.monotonic()
             real_limits = self._pending_real_limits
             self._pending_real_limits = None
             self._ponderhit_event.clear()
-            real_board = board.copy(stack=False)
+            real_board = board.copy(stack=True)
             popped = self._popped_ponder_move
             self._popped_ponder_move = None
             if popped is not None:
+                real_board.push(popped)
+            transition_deadline = Deadline(real_limits.deadline_ms, now=started_at)
+            if (popped is not None and not self._cancel_event.is_set()
+                    and not transition_deadline.expired()):
                 if not self._worker.advance_root(board, [popped]):
   # Defensive: ponder-at-M root-expanded the popped child, so
   # this shouldn't fail. Reset rather than search stale tree.
                     self._worker.reset_tree()
                 self._applied_moves = (*self._applied_moves, popped)
-                real_board.push(popped)
-            result = self._run_one_phase(real_limits, is_ponder=False, board=real_board)
+            result = self._run_one_phase(
+                real_limits, is_ponder=False, board=real_board, started_at=started_at,
+            )
+            limits = real_limits
+        # A completed infinite search is still owned by the GUI until stop.
+        # Pool failures can set _stop_event without cancelling that ownership.
+        # After ponderhit, use the real phase's limits so finite searches emit.
+        if not limits.ponder and limits.is_open_ended():
+            self._cancel_event.wait()
   # Gate the emit: if a newer `go` has started, our result is stale
   # and the new search owns bestmove. Silently drop.
         with self._state_lock:
-            if gen != self._search_gen:
+            if gen != self._search_gen or self._quit_requested:
                 return
         self._emit_bestmove(result)
 
     def _run_one_phase(
         self, limits: SearchLimits, *, is_ponder: bool, board: chess.Board,
+        started_at: float | None = None,
     ) -> SearchResult:
         deadline_ms = None if is_ponder else limits.deadline_ms
         max_nodes = None if is_ponder else limits.max_nodes
         max_depth = None if is_ponder else limits.max_depth
         optimum_ms = None if is_ponder else limits.optimum_ms
-        deadline = Deadline(deadline_ms=deadline_ms)
+        deadline = Deadline(deadline_ms=deadline_ms, now=started_at)
+        if started_at is not None and (self._stop_event.is_set() or deadline.expired()):
+            reason = ("ponder_transition_cancelled" if self._stop_event.is_set()
+                      else "ponder_transition_deadline")
+            move, source = self._bestmove_fallback(board, limits.searchmoves)
+            _println(f"info string search incomplete reason={reason} move={move} source={source}")
+            return SearchResult(
+                bestmove_uci=move, ponder_uci=None, nodes=0, pv=(), score_cp=0,
+                search_incomplete=reason,
+            )
         last_emitted_nodes = [-1]
         profile_start = time.perf_counter()
         if self._gil_probe is not None:
@@ -1642,6 +1689,25 @@ class Engine:
                 is_ponder=is_ponder,
             )
             return result
+        except SolvedRootWitnessUnavailable as exc:
+            candidate = exc.fallback_actions.get(0)
+            move = index_to_move(candidate, board).uci() if candidate is not None else None
+            if move is not None and _is_playable_fallback(board, move, limits.searchmoves):
+                source = "unknown_root_child"
+            else:
+                move, source = self._bestmove_fallback(board, limits.searchmoves)
+            self._bestmove_fallback_used += 1
+            reason = "solved_root_without_move_witness"
+            _println(
+                f"info string search incomplete reason={reason} root_status={exc.outcomes.get(0)} "
+                f"child_checks={exc.child_checks.get(0, 0)} move={move} "
+                f"outcome_preserved=UNVERIFIED source={source} "
+                f"bestmove_fallback_used={self._bestmove_fallback_used}"
+            )
+            return SearchResult(
+                bestmove_uci=move, ponder_uci=None, nodes=0, pv=(), score_cp=0,
+                search_incomplete=reason,
+            )
         except Exception as exc:  # pragma: no cover — UCI crash-safety
             self._emit_gil_profile(
                 nodes=0,
@@ -1784,24 +1850,28 @@ class Engine:
     def close(self) -> None:
         """Stop any running search and release the worker's evaluator. Call
         from the UCI main loop's finally block so ``BatchCoalescingDispatcher``
-        (if active) drains its non-daemon submitter before the interpreter
-        tears down torch's CUDA context."""
+        (if active) drains its submitter before the interpreter
+        tears down torch's CUDA context. A surviving search raises
+        ``SearchNotQuiescent`` and retains worker ownership for a later join."""
+        if self._closed:
+            return
         self._wait_for_search()
         if self._gil_probe is not None:
             self._gil_probe.close()
         self._worker.close()
+        self._closed = True
 
   # -- helpers --------------------------------------------------------------
 
     def _wait_for_search(self) -> None:
         if self._search_thread is not None and self._search_thread.is_alive():
+            self._cancel_event.set()
             self._stop_event.set()
             self._ponder_release.set()
             self._search_thread.join(timeout=_JOIN_TIMEOUT_S)
             if self._search_thread.is_alive():
-                _println("info string search stop timed out; thread still running")
-            else:
-                self._search_thread = None
+                raise SearchNotQuiescent("search stop timed out; thread still running; worker unchanged")
+        self._search_thread = None
 
 
 def _is_playable_fallback(

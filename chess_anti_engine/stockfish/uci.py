@@ -11,7 +11,7 @@ import termios
 import threading
 import time
 from collections.abc import Callable, Generator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from functools import partial
 
@@ -215,6 +215,8 @@ def _parse_info_fields(
     n_parts = len(parts)
     while idx < n_parts:
         token = parts[idx]
+        if token == "string":
+            break
         try:
             if token == "multipv" and idx + 1 < n_parts:
                 mpv = int(parts[idx + 1])
@@ -271,6 +273,13 @@ class _SearchInfoAccumulator:
     ] = field(default_factory=dict)
 
     def consume(self, parts: list[str]) -> None:
+        # The string field consumes the rest of the line as opaque debug text.
+        try:
+            string_index = parts.index("string")
+        except ValueError:
+            pass
+        else:
+            parts = parts[:string_index]
         mpv_val, nodes, depth, cp, mate, wdl_counts, pv_move = _parse_info_fields(parts)
         mpv = mpv_val or 1
         if nodes is not None:
@@ -471,57 +480,55 @@ class StockfishUCI:
   # the deadlock. Disable ECHO on the slave so input commands don't get
   # echoed back into our read stream.
         master_fd, slave_fd = pty.openpty()
-        attrs = termios.tcgetattr(slave_fd)
-        attrs[3] &= ~termios.ECHO
-        termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
         self._tty_fd = master_fd
         self._read_buf = b""
-        self.proc = subprocess.Popen(  # process outlives __init__ (closed in .close())
-            [self.path],
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=subprocess.DEVNULL,
-            # ⚑ AUDIT R2: BOTH of these, and neither replaces the other.
-            #
-            # `start_new_session` puts the engine in its own process group, so
-            # `close()` can kill the GROUP -- a group of one today, but the kill
-            # is then correct by construction rather than by the assumption that
-            # Stockfish never forks.
-            #
-            # It also detaches the engine from the worker's process group, which
-            # on its own would be a REGRESSION: a supervisor doing
-            # `kill -- -<worker pgid>` used to take the engines with it. The
-            # PDEATHSIG in `_child_reap_guard` is what replaces that, and it is
-            # strictly stronger -- the kernel kills the child when the parent
-            # dies for ANY reason, including SIGKILL and the `os._exit` the hang
-            # watchdogs use, neither of which runs a `finally`.
-            start_new_session=True,
-            preexec_fn=partial(  # noqa: PLW1509 - see _child_reap_guard
-                _child_reap_guard, os.getpid(),
-            ),
-            env=_child_env(),
-        )
-        # ⚑ Recorded now, never looked up later. `start_new_session=True` makes
-        # the child a group leader, so its pgid IS its pid -- and asking
-        # `os.getpgid` at close time would be asking about a pid that may have
-        # been reaped and recycled. See `close()`.
-        #
-        # ⚑ AND THE POSITION IS LOAD-BEARING: immediately after `Popen`, before
-        # the nice block and before the UCI handshake. The handshake below ends
-        # in `except BaseException: self.close()`, and `close()` reads
-        # `self._pgid` -- so any statement that can raise between here and there
-        # would turn a handshake failure into an `AttributeError` raised from
-        # inside the failure handler, losing the original error and leaking the
-        # engine. Do not move this down.
-        self._pgid = self.proc.pid
-        if self.nice > 0:
-            current_nice = os.getpriority(os.PRIO_PROCESS, self.proc.pid)
-            target_nice = _stockfish_child_nice(current_nice, self.nice)
-            if target_nice > current_nice:
-                os.setpriority(os.PRIO_PROCESS, self.proc.pid, target_nice)
-        os.close(slave_fd)
-
         try:
+            try:
+                attrs = termios.tcgetattr(slave_fd)
+                attrs[3] &= ~termios.ECHO
+                termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
+                self.proc = subprocess.Popen(  # process outlives __init__ (closed in .close())
+                    [self.path],
+                    stdin=slave_fd,
+                    stdout=slave_fd,
+                    stderr=subprocess.DEVNULL,
+                    # ⚑ AUDIT R2: BOTH of these, and neither replaces the other.
+                    #
+                    # `start_new_session` puts the engine in its own process group, so
+                    # `close()` can kill the GROUP -- a group of one today, but the kill
+                    # is then correct by construction rather than by the assumption that
+                    # Stockfish never forks.
+                    #
+                    # It also detaches the engine from the worker's process group, which
+                    # on its own would be a REGRESSION: a supervisor doing
+                    # `kill -- -<worker pgid>` used to take the engines with it. The
+                    # PDEATHSIG in `_child_reap_guard` is what replaces that, and it is
+                    # strictly stronger -- the kernel kills the child when the parent
+                    # dies for ANY reason, including SIGKILL and the `os._exit` the hang
+                    # watchdogs use, neither of which runs a `finally`.
+                    start_new_session=True,
+                    preexec_fn=partial(  # noqa: PLW1509 - see _child_reap_guard
+                        _child_reap_guard, os.getpid(),
+                    ),
+                    env=_child_env(),
+                )
+                # ⚑ Recorded now, never looked up later. `start_new_session=True` makes
+                # the child a group leader, so its pgid IS its pid -- and asking
+                # `os.getpgid` at close time would be asking about a pid that may have
+                # been reaped and recycled. See `close()`.
+                #
+                # Record ownership before priority setup or the handshake can fail;
+                # construction cleanup uses this same spawn-time group identity.
+                self._pgid = self.proc.pid
+                if self.nice > 0:
+                    current_nice = os.getpriority(os.PRIO_PROCESS, self.proc.pid)
+                    target_nice = _stockfish_child_nice(current_nice, self.nice)
+                    if target_nice > current_nice:
+                        os.setpriority(os.PRIO_PROCESS, self.proc.pid, target_nice)
+            finally:
+                # The parent never retains the slave, including failed spawn.
+                with suppress(OSError):
+                    os.close(slave_fd)
             self._send("uci")
             self._read_uci_capabilities()
             self._send("setoption name UCI_ShowWDL value true")
@@ -545,19 +552,29 @@ class StockfishUCI:
             self._wait_for("readyok")
             self.syzygy_ready_after_requests = self.syzygy_50_move_rule is not None
         except BaseException:
-            self.close()
+            # Construction owns every acquired resource until it returns.
+            with suppress(Exception):
+                if getattr(self, "proc", None) is not None:
+                    self._pgid = self.proc.pid
+                    self.close()
+                else:
+                    os.close(master_fd)
             raise
 
     def close(self) -> None:
         with self._lock:
-            try:
-                self._send("quit")
-            except (BrokenPipeError, OSError):
-                pass  # stockfish already exited
-            try:
-                os.close(self._tty_fd)
-            except OSError:
-                pass  # already closed
+            # Retire ownership before closing: the OS may immediately reuse
+            # this descriptor, and a repeated close must leave its new owner alone.
+            tty_fd, self._tty_fd = self._tty_fd, -1
+            if tty_fd >= 0:
+                try:
+                    os.write(tty_fd, b"quit\n")
+                except (BrokenPipeError, OSError):
+                    pass  # stockfish already exited
+                try:
+                    os.close(tty_fd)
+                except OSError:
+                    pass  # already closed
             # Kill the GROUP, not just the pid: `start_new_session=True` gave
             # this engine its own group, so this cannot reach the worker or its
             # siblings, and it does reach anything the engine might have

@@ -581,7 +581,8 @@ def test_the_spawn_records_the_pgid_it_will_later_kill() -> None:
         for node in ast.walk(init)
         if isinstance(node, ast.Assign) and "self._pgid" in ast.unparse(node.targets[0])
     ]
-    assert assigns == ["self._pgid = self.proc.pid"], assigns
+    assert assigns, "construction must record the spawned process group"
+    assert set(assigns) == {"self._pgid = self.proc.pid"}, assigns
 
 
 def test_the_pgid_is_recorded_immediately_after_the_spawn() -> None:
@@ -605,8 +606,27 @@ def test_the_pgid_is_recorded_immediately_after_the_spawn() -> None:
         if isinstance(node, ast.FunctionDef) and node.name == "__init__"
         and any("subprocess.Popen" in ast.unparse(c) for c in ast.walk(node))
     )
-    body = [ast.unparse(stmt) for stmt in init.body]
-    spawn = next(i for i, stmt in enumerate(body) if "subprocess.Popen(" in stmt)
+    # Startup cleanup nests the spawn inside a try; inspect the immediate
+    # statement list that owns the actual call rather than the outer try text.
+    spawn_body = next(
+        node.body
+        for node in ast.walk(init)
+        if isinstance(node, (ast.FunctionDef, ast.Try))
+        and any(
+            isinstance(stmt, ast.Assign)
+            and isinstance(stmt.value, ast.Call)
+            and ast.unparse(stmt.value.func) == "subprocess.Popen"
+            for stmt in node.body
+        )
+    )
+    body = [ast.unparse(stmt) for stmt in spawn_body]
+    spawn = next(
+        i for i, stmt in enumerate(spawn_body)
+        if isinstance(stmt, ast.Assign)
+        and isinstance(stmt.value, ast.Call)
+        and ast.unparse(stmt.value.func) == "subprocess.Popen"
+    )
+    assert spawn + 1 < len(body), "spawn must be followed by its ownership record"
     assert body[spawn + 1] == "self._pgid = self.proc.pid", (
         "the pgid must be recorded in the statement immediately after the "
         f"spawn; found {body[spawn + 1]!r}"

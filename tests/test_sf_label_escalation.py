@@ -33,7 +33,9 @@ from chess_anti_engine.stockfish.uci import StockfishResult
 
 
 class _FakeCBoard:
+    # Model P1: White to move after a Black NET record at absolute ply 1.
     turn = True
+    ply = 2
     occ_white = 0
     occ_black = 0
     castling = 0
@@ -42,7 +44,7 @@ class _FakeCBoard:
         self._legal_indices = np.array([0], dtype=np.int64)
 
     def fen(self) -> str:
-        return chess.STARTING_FEN
+        return chess.STARTING_FEN.rsplit(" ", 1)[0] + " 2"
 
     def legal_move_indices(self) -> np.ndarray:
         return self._legal_indices
@@ -89,8 +91,8 @@ def _record(search_wdl: tuple[float, float, float] = (1.0, 0.0, 0.0)) -> _NetRec
         policy_probs=np.zeros((POLICY_SIZE,), dtype=np.float32),
         net_wdl_est=np.array(search_wdl, dtype=np.float32),
         search_wdl_est=np.array(search_wdl, dtype=np.float32),
-        pov_color=chess.WHITE,
-        ply_index=0,
+        pov_color=chess.BLACK,
+        ply_index=1,
         has_policy=True,
         priority=1.0,
         sample_weight=1.0,
@@ -150,7 +152,7 @@ def test_escalation_fires_and_records_escalated_label() -> None:
     esc_call = state.stockfish.calls[1]
     assert esc_call["nodes"] == 3_000_000  # sf_label_escalate_nodes default
     assert esc_call["fresh"] is True  # cold-TT re-search (ucinewgame)
-    assert esc_call["fen"] == chess.STARTING_FEN  # the P1 query position
+    assert esc_call["fen"] == state.cboards[0].fen()  # the P1 query position
 
     # Poll 2: escalated result attaches; the recorded label is the DEEP one,
     # the original is preserved for the harvester.
@@ -272,7 +274,7 @@ def test_curriculum_label_reuse_path_carries_escalation_context() -> None:
 
     assert submit_async_curriculum_move_queries(state, [0]) == 1
     assert submit_async_sf_labels_from_curriculum_moves(state, [0]) == 1
-    assert state.pending_sf_labels[0].query_fen == chess.STARTING_FEN
+    assert state.pending_sf_labels[0].query_fen == state.cboards[0].fen()
     attached, failed = flush_async_sf_labels_for_records(state, [rec])
 
     assert (attached, failed) == (1, 0)
