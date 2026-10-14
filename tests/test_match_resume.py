@@ -702,6 +702,9 @@ class _FakeEngine:
     def quit(self) -> None:
         return None
 
+    def close(self) -> None:
+        return None
+
 
 def _drive_match(
     monkeypatch: pytest.MonkeyPatch,

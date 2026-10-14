@@ -573,16 +573,17 @@ def test_single_legal_move_finishes_without_search() -> None:
         evals_after = sum(ev.calls for ev in pool._evals)
         assert evals_after == evals_before, "finished root must not search"
         assert action == int(move_to_index(legal[0], board))
-        # Finished roots must still report completed sims so SearchWorker
-        # advances total_nodes (go nodes / infinite would otherwise spin).
+        # Finished roots signal completion without inventing simulation work.
         stats = pool.last_stats()
-        assert sum(p.sims_completed for p in stats.phases) == 64
+        assert stats.root_finished
+        assert not stats.phases
+        assert sum(stats.group_sims) == 0
     finally:
         pool.close()
 
 
-def test_finished_root_nodes_advance_under_searchworker() -> None:
-    """SearchWorker node accounting must advance on RPG finished roots."""
+def test_finished_root_completes_without_simulations_under_searchworker() -> None:
+    """SearchWorker must terminate a finished root without inventing nodes."""
     board = chess.Board("k7/8/8/8/8/8/1Q6/K7 b - - 0 1")
     assert len(list(board.legal_moves)) == 1
     worker = _make_worker(chunk_sims=32)
@@ -596,8 +597,8 @@ def test_finished_root_nodes_advance_under_searchworker() -> None:
             deadline=Deadline(5_000), max_nodes=32,
         )
         assert result.bestmove_uci
-        assert result.nodes >= 32, (
-            f"finished-root RPG must count the chunk, got nodes={result.nodes}"
+        assert result.nodes == 0, (
+            f"finished-root RPG must not invent work, got nodes={result.nodes}"
         )
     finally:
         worker.close()

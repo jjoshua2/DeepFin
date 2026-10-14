@@ -955,11 +955,8 @@ def _rebuild_record(
     from chess_anti_engine.encoding.lc0 import LC0_HISTORY_ROOT
 
     game = state.game
-    # An SF-refute OPPONENT row is built by _emit_sf_refute_opp_record with
-    # x_lc0_root=None and relations=None ALWAYS, whatever record_lc0_root_input
-    # / record_relations say. Re-encoding them here would give a resumed refute
-    # row columns its non-resumed twin does not have — the same row shape
-    # differing by whether a restart happened. Match the live path exactly.
+    # The live SF-refute producer captures requested relations but has no
+    # alternate LC0-root input. Match both input contracts after a restart.
     is_refute_opp = bool(f["is_sf_refute_opp"])
     x = encode_cboard(
         cb,
@@ -992,7 +989,7 @@ def _rebuild_record(
         x_lc0_root=x_lc0_root,
         relations=(
             cb.compute_relations()
-            if (want_relations and not is_refute_opp) else None
+            if want_relations else None
         ),
         priority_policy_kl=f["priority_policy_kl"],
         priority_q_delta=f["priority_q_delta"],

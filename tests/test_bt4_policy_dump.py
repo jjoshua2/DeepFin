@@ -26,6 +26,7 @@ from scripts.bt4_policy_dump import (
     x_to_lc0_planes,
     batched,
     castling_probability,
+    compact_legal_policy,
     entropy_nats,
     iter_fen_rows,
     legal_move_policy,
@@ -153,6 +154,35 @@ def test_masked_slots_do_not_poison_the_softmax() -> None:
     ucis, probs = legal_move_policy(board, row)
     assert np.isfinite(probs).all()
     assert ucis[int(np.argmax(probs))] == "e2e4"
+    assert float(probs.sum()) == pytest.approx(1.0)
+    assert probs[ucis.index("e2e4")] == 1.0
+    assert np.count_nonzero(probs) == 1
+
+
+@pytest.mark.parametrize("convert", [legal_move_policy, compact_legal_policy])
+@pytest.mark.parametrize("defect", ["all_nan", "one_nan", "positive_inf", "all_masked"])
+def test_invalid_legal_logits_fail_closed(convert, defect: str) -> None:
+    board = chess.Board()
+    row = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.float32)
+    if defect == "all_nan":
+        row.fill(np.nan)
+    elif defect == "all_masked":
+        row.fill(-np.inf)
+    else:
+        row[LC0_1858_UCI_TO_IDX["e2e4"]] = (
+            np.nan if defect == "one_nan" else np.inf
+        )
+    with pytest.raises(RuntimeError, match="invalid legal policy logits"):
+        convert(board, row)
+
+
+def test_invalid_illegal_logits_do_not_poison_legal_policy() -> None:
+    board = chess.Board()
+    row = np.full((COMPACT_POLICY_SIZE,), np.nan, dtype=np.float32)
+    for move in board.legal_moves:
+        row[LC0_1858_UCI_TO_IDX[move.uci()]] = 0.0
+    _, probs = legal_move_policy(board, row)
+    assert np.isfinite(probs).all()
     assert float(probs.sum()) == pytest.approx(1.0)
 
 

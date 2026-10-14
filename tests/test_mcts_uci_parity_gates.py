@@ -516,7 +516,7 @@ def test_uci_searchmoves_uses_filtered_gumbel_path_with_walkers(
         (
             "gumbel",
             (4, board, None, allowed),
-            {"allow_terminal_shortcuts": True},
+            {"allow_terminal_shortcuts": True, "witness_stop_fn": None},
         ),
     ]
 

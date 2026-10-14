@@ -33,6 +33,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
+from chess_anti_engine.async_safety import CompletionEvent
+
 import numpy as np
 import torch
 
@@ -129,6 +131,10 @@ class ThreadSafeGPUDispatcher:
     def _max_batch(self) -> int:
         return self.max_batch
 
+    @property
+    def async_backend(self) -> Any:
+        return self._eval
+
     def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
         return self._eval.get_input_buffer(bsz, slot=slot)  # pyright: ignore[reportAttributeAccessIssue]
 
@@ -154,7 +160,7 @@ class ThreadSafeGPUDispatcher:
 
     def evaluate_inplace_async(
         self, bsz: int, *, slot: int = 0, relations: np.ndarray | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
         with self._lock:
             if relations is not None:
                 return self._eval.evaluate_inplace_async(bsz, slot=slot, relations=relations)  # pyright: ignore[reportAttributeAccessIssue]
@@ -162,7 +168,7 @@ class ThreadSafeGPUDispatcher:
 
     def evaluate_encoded_async(
         self, x: np.ndarray, relations: np.ndarray | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
         with self._lock:
             if relations is not None:
                 return self._eval.evaluate_encoded_async(x, relations=relations)  # pyright: ignore[reportAttributeAccessIssue]
@@ -282,14 +288,18 @@ class CUDAOwnerDispatcher:
 
     def evaluate_encoded_async(
         self, x: np.ndarray, relations: np.ndarray | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
         return cast(
-            "tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]",
+            "tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]",
             self._call(
                 lambda: self._inner.evaluate_encoded_async(x, relations=relations)
                 if relations is not None else self._inner.evaluate_encoded_async(x)
             ),
         )
+
+    @property
+    def async_backend(self) -> Any:
+        return self._inner
 
     def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
         return self._inner.get_input_buffer(bsz, slot=slot)
@@ -299,9 +309,9 @@ class CUDAOwnerDispatcher:
 
     def evaluate_inplace_async(
         self, bsz: int, *, slot: int = 0, relations: np.ndarray | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
         return cast(
-            "tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]",
+            "tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]",
             self._call(
                 lambda: self._inner.evaluate_inplace_async(
                     bsz, slot=slot, relations=relations,
@@ -489,8 +499,13 @@ class BatchCoalescingDispatcher:
                     rows = 0
                     cut = 0
                     first_legal = self._pending[0].legal_counts is not None
+                    first_dtype = self._pending[0].x.dtype
                     for entry in self._pending:
                         if (entry.legal_counts is not None) != first_legal:
+                            break
+                        # uint16 carries BF16 bits; promotion to float would
+                        # turn their encodings into numeric input values.
+                        if entry.x.dtype != first_dtype:
                             break
                         n = entry.x.shape[0]
                         if cut > 0 and rows + n > self._max_batch:
@@ -499,24 +514,24 @@ class BatchCoalescingDispatcher:
                         cut += 1
                     batch = self._pending[:cut]
                     self._pending = self._pending[cut:]
-                singleton = len(batch) == 1
-                xs = (
-                    batch[0].x if singleton
-                    else np.concatenate([entry.x for entry in batch], axis=0)
-                )
+                try:
+                    singleton = len(batch) == 1
+                    xs = (
+                        batch[0].x if singleton
+                        else np.concatenate([entry.x for entry in batch], axis=0)
+                    )
   # Relations coalesce exactly like x: all-or-nothing per submit.
   # Mixed submits zero-fill the missing rows (zero matrices == zero
   # bias, identical to the absent-tensor semantics).
-                rels = batch[0].relations if singleton else None
-                if not singleton and any(entry.relations is not None for entry in batch):
-                    rels = np.zeros((xs.shape[0], 5, 64, 64), dtype=np.uint8)
-                    off = 0
-                    for entry in batch:
-                        n_rows = entry.x.shape[0]
-                        if entry.relations is not None:
-                            rels[off:off + n_rows] = entry.relations
-                        off += n_rows
-                try:
+                    rels = batch[0].relations if singleton else None
+                    if not singleton and any(entry.relations is not None for entry in batch):
+                        rels = np.zeros((xs.shape[0], 5, 64, 64), dtype=np.uint8)
+                        off = 0
+                        for entry in batch:
+                            n_rows = entry.x.shape[0]
+                            if entry.relations is not None:
+                                rels[off:off + n_rows] = entry.relations
+                            off += n_rows
                     if first_legal:
                         if singleton:
                             legal_flat = batch[0].legal_flat
@@ -541,6 +556,22 @@ class BatchCoalescingDispatcher:
                             if rels is not None
                             else self._inner.evaluate_encoded(xs)
                         )
+                    row_offset = 0
+                    pol_offset = 0
+                    results = []
+                    for request in batch:
+                        n = request.x.shape[0]
+                        if request.legal_counts is not None:
+                            assert request.legal_flat is not None
+                            n_pol = int(request.legal_flat.size)
+                        else:
+                            n_pol = n
+                        results.append((
+                            pol[pol_offset:pol_offset + n_pol],
+                            wdl[row_offset:row_offset + n],
+                        ))
+                        row_offset += n
+                        pol_offset += n_pol
                 except BaseException as exc:
   # Wake every waiter with the exception so no walker
   # hangs, then drain anything that arrived during the
@@ -555,22 +586,11 @@ class BatchCoalescingDispatcher:
                         request.result[0] = exc
                         request.done.set()
                     continue
-                row_offset = 0
-                pol_offset = 0
-                for request in batch:
-                    n = request.x.shape[0]
-                    if request.legal_counts is not None:
-                        assert request.legal_flat is not None
-                        n_pol = int(request.legal_flat.size)
-                    else:
-                        n_pol = n
-                    request.result[0] = (
-                        pol[pol_offset:pol_offset + n_pol],
-                        wdl[row_offset:row_offset + n],
-                    )
+                # Publish only after every slice succeeds, so all accepted
+                # waiters receive the primary exception if packing fails.
+                for request, result in zip(batch, results, strict=True):
+                    request.result[0] = result
                     request.done.set()
-                    row_offset += n
-                    pol_offset += n_pol
   # Exit only after pending is fully drained — ``close()`` already
   # emptied pending into stranded-err waiters, so at this point
   # there's nothing the submitter can do except leave.

@@ -96,8 +96,7 @@ def limits_from_go(
     moves_horizon: int = _DEFAULT_MOVES_REMAINING,
     pieces: int = 32,
 ) -> SearchLimits:
-    if args.infinite:
-        return SearchLimits(infinite=True, searchmoves=tuple(args.searchmoves))
+    # Ponder is the current phase; infinite applies to the post-hit go args.
     if args.ponder:
   # Ponder still wants a fallback budget (for `ponderhit` latency bounds)
   # but until ponderhit flips it live, the search runs open-ended.
@@ -107,6 +106,8 @@ def limits_from_go(
             max_depth=args.depth,
             searchmoves=tuple(args.searchmoves),
         )
+    if args.infinite:
+        return SearchLimits(infinite=True, searchmoves=tuple(args.searchmoves))
 
     deadline_ms: int | None = None
     movetime_ms = args.movetime_ms

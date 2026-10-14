@@ -378,7 +378,7 @@ def _load_fen_backed_bodies(path_str: str) -> frozenset[str]:
     """
     backed: set[str] = set()
     try:
-        with open(path_str, encoding="utf-8") as fh:
+        with open(path_str, encoding="utf-8-sig") as fh:
             for raw in fh:
                 body, _, comment = raw.rstrip("\n").partition("#")
                 body = body.strip()
@@ -402,7 +402,7 @@ def _load_fen_weights(path_str: str) -> dict[str, int]:
     """
     weights: dict[str, int] = {}
     try:
-        with open(path_str, encoding="utf-8") as fh:
+        with open(path_str, encoding="utf-8-sig") as fh:
             for raw in fh:
                 body, _, comment = raw.rstrip("\n").partition("#")
                 body = body.strip()

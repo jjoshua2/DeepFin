@@ -92,9 +92,6 @@ def main() -> None:
     if pre_args.config:
         cfg = load_yaml_file(pre_args.config)
         cfg_defaults = flatten_run_config_defaults(cfg)
-    from chess_anti_engine.tune.distributed_runtime import check_dynamic_relations_transport
-    check_dynamic_relations_transport(cfg_defaults)
-
     ap = argparse.ArgumentParser(parents=[pre])
 
   # Harness: train (one trial, distributed, no PBT) is the default.
@@ -687,6 +684,10 @@ def main() -> None:
 
     ap.set_defaults(**cfg_defaults)
     args = ap.parse_args()
+
+    from chess_anti_engine.tune.distributed_runtime import check_dynamic_relations_transport
+    # Validate the realized configuration after CLI overrides of YAML defaults.
+    check_dynamic_relations_transport(vars(args))
 
     if str(args.mode) == "salvage":
         _run_salvage(args)

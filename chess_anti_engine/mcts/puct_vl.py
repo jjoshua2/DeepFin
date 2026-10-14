@@ -23,12 +23,18 @@ from __future__ import annotations
 
 from typing import Any
 
+import sys
+
 import numpy as np
+
+from chess_anti_engine.async_safety import drain_failed_receipts, ensure_usable, note_cleanup, pending_receipt, submit_async
 
 from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
 from chess_anti_engine.encoding.features import RELATION_COUNT
 from chess_anti_engine.inference_cache import PucvEvalCache, PucvEvalCacheStats
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.gumbel import GumbelConfig, _policy_logits_to_full
+from chess_anti_engine.mcts.puct_history import puct_history_args
 from chess_anti_engine.mcts.vloss import MAX_PATH, release_batch_rows
 
 # Stride constants matching the C extension's per-leaf write layout.
@@ -86,6 +92,7 @@ class PucvChunker:
         eval_cache_entries: int = 0,
         input_planes: int = _PLANES,
         compute_relations: bool = False,
+        input_history_encoding: str = "legacy",
     ) -> None:
         if not hasattr(evaluator, "evaluate_inplace_async"):
             raise TypeError(
@@ -95,7 +102,11 @@ class PucvChunker:
             raise ValueError(
                 f"evaluator needs n_slots >= 2 for pipelining, got {evaluator.n_slots}",
             )
+        self._input_history_args = puct_history_args(input_history_encoding)
         self._ev = evaluator
+        # RPG activates its policy transform per job; standalone PUCT keeps
+        # its existing untempered transport and advertised inert option.
+        self._policy_cfg: GumbelConfig | None = None
         self._gather = max(1, int(gather))
         self._c_puct = float(c_puct)
         self._fpu_root = float(fpu_at_root)
@@ -140,6 +151,18 @@ class PucvChunker:
         """
         self._vloss_mode = 1 if int(mode) == 1 else 0
 
+    def set_policy_temp(self, temperature: float) -> None:
+        """Apply the RPG policy temperature to newly integrated leaf priors.
+
+        Raw evaluator/cache outputs stay unchanged. The group worker calls
+        this per job so a live option change reaches its persistent chunker.
+        """
+        if self._policy_cfg is None:
+            self._policy_cfg = GumbelConfig(policy_temp=float(temperature))
+        else:
+            self._policy_cfg.policy_temp = float(temperature)
+
+
     def run(
         self,
         tree: MCTSTree,
@@ -152,6 +175,8 @@ class PucvChunker:
         Returns the number of sims actually run (== target_sims unless the
         tree is solved/terminal at root, in which case 0).
         """
+        ensure_usable(self)
+        ensure_usable(self._ev)
         if target_sims <= 0:
             return 0
 
@@ -170,10 +195,7 @@ class PucvChunker:
                 tree, root_id, root_cboard, target_sims, outstanding,
             )
         finally:
-            for buf_idx, n_rows in outstanding.items():
-                release_batch_rows(
-                    tree, self._bufs[buf_idx], n_rows, vloss_weight=self._vloss,
-                )
+            _release_outstanding(tree, self._bufs, outstanding, self._vloss, sys.exc_info()[1])
         return sims
 
     def _run_pipelined(
@@ -198,70 +220,93 @@ class PucvChunker:
         pending_buf_idx = -1
         pending_handle: Any = None
 
-        while sims < target_sims or pending_handle is not None:
-            n = min(gather, target_sims - sims) if sims < target_sims else 0
+        receipts: dict[int, Any] = {}
+        # Own the exact async result before pending metadata or registration can fail.
+        unregistered_receipt: list[Any] = [None]
+        next_buf_idx = -1
+        try:
+            while sims < target_sims or pending_handle is not None:
+                n = min(gather, target_sims - sims) if sims < target_sims else 0
 
-            if n > 0:
-                next_slot = 0 if pending_slot < 0 else (1 - pending_slot)
-                next_buf_idx = (
-                    0 if pending_buf_idx < 0 else (1 - pending_buf_idx)
-                )
-                inp = ev.get_input_buffer(n, slot=next_slot)
-                inp_np = inp.numpy() if hasattr(inp, "numpy") else inp
-                enc_view = np.asarray(inp_np).reshape(n, self._planes, 8, 8)
-                b = self._bufs[next_buf_idx]
-                rel = b["rel"] if self._relations else None
-                tree.batch_descend_puct(
-                    root_id, root_cboard, n,
-                    self._c_puct, self._fpu_root, self._fpu_red, self._vloss,
-                    enc_view,
-                    b["leaf_ids"], b["path_buf"], b["path_lens"],
-                    b["legal_buf"], b["legal_lens"],
-                    b["term_qs"], b["is_term"], self._vloss_mode,
-                    b["cache_keys"] if self._cache is not None else None,
-                    rel,
-                )
-                outstanding[next_buf_idx] = n
-                if self._cache is None:
-                    if rel is None:
-                        handle = ev.evaluate_inplace_async(n, slot=next_slot)
-                    else:
-                        handle = ev.evaluate_inplace_async(
-                            n, slot=next_slot, relations=rel[:n],
-                        )
-                    next_handle = ("gpu_full", next_buf_idx, n, handle)
-                else:
-                    next_handle = self._prepare_cached_submit(
-                        ev, next_slot, next_buf_idx, n, enc_view, b, rel,
+                if n > 0:
+                    next_slot = 0 if pending_slot < 0 else (1 - pending_slot)
+                    next_buf_idx = (
+                        0 if pending_buf_idx < 0 else (1 - pending_buf_idx)
                     )
-            else:
-                next_slot = -1
-                next_buf_idx = -1
-                next_handle = None
+                    inp = ev.get_input_buffer(n, slot=next_slot)
+                    inp_np = inp.numpy() if hasattr(inp, "numpy") else inp
+                    enc_view = np.asarray(inp_np).reshape(n, self._planes, 8, 8)
+                    b = self._bufs[next_buf_idx]
+                    rel = b["rel"] if self._relations else None
+                    tree.batch_descend_puct(
+                        root_id, root_cboard, n,
+                        self._c_puct, self._fpu_root, self._fpu_red, self._vloss,
+                        enc_view,
+                        b["leaf_ids"], b["path_buf"], b["path_lens"],
+                        b["legal_buf"], b["legal_lens"],
+                        b["term_qs"], b["is_term"], self._vloss_mode,
+                        b["cache_keys"] if self._cache is not None else None,
+                        rel,
+                        *self._input_history_args,
+                    )
+                    outstanding[next_buf_idx] = n
+                    if self._cache is None:
+                        if rel is None:
+                            handle = submit_async(ev, n, slot=next_slot)
+                        else:
+                            handle = submit_async(ev,
+                                n, slot=next_slot, relations=rel[:n],
+                            )
+                        unregistered_receipt[0] = handle
+                        next_handle = ("gpu_full", next_buf_idx, n, handle)
+                    else:
+                        next_handle = self._prepare_cached_submit(
+                            ev, next_slot, next_buf_idx, n, enc_view, b, rel,
+                            receipt_cell=unregistered_receipt,
+                        )
+                else:
+                    next_slot = -1
+                    next_buf_idx = -1
+                    next_handle = None
 
-            if pending_handle is not None:
-                b_cur, pending_n, pol, wdl = self._finish_pending(
-                    pending_handle,
-                )
-                tree.batch_integrate_leaves(
-                    pending_n,
-                    b_cur["path_buf"], b_cur["path_lens"],
-                    b_cur["legal_buf"], b_cur["legal_lens"],
-                    b_cur["is_term"], pol, wdl, self._vloss,
-                )
-                outstanding.pop(pending_buf_idx, None)
+                if next_handle is not None and next_handle[0] != "cache_only":
+                    receipts[next_buf_idx] = pending_receipt(next_handle)
+                    unregistered_receipt[0] = None
 
-            if next_handle is not None:
-                pending_slot = next_slot
-                pending_buf_idx = next_buf_idx
-                pending_n = n
-                pending_handle = next_handle
-                sims += n
-            else:
-                pending_slot = -1
-                pending_buf_idx = -1
-                pending_n = 0
-                pending_handle = None
+                if pending_handle is not None:
+                    b_cur, pending_n, pol, wdl = self._finish_pending(
+                        pending_handle,
+                    )
+                    receipts.pop(pending_buf_idx, None)
+                    if self._policy_cfg is not None:
+                        # Transform after cache storage/materialization so cache
+                        # hits can be reused at the next live temperature.
+                        pol = _policy_logits_to_full(pol, cfg=self._policy_cfg)
+                    tree.batch_integrate_leaves(
+                        pending_n,
+                        b_cur["path_buf"], b_cur["path_lens"],
+                        b_cur["legal_buf"], b_cur["legal_lens"],
+                        b_cur["is_term"], pol, wdl, self._vloss,
+                    )
+                    outstanding.pop(pending_buf_idx, None)
+
+                if next_handle is not None:
+                    pending_slot = next_slot
+                    pending_buf_idx = next_buf_idx
+                    pending_n = n
+                    pending_handle = next_handle
+                    sims += n
+                else:
+                    pending_slot = -1
+                    pending_buf_idx = -1
+                    pending_n = 0
+                    pending_handle = None
+
+        except BaseException as error:
+            if unregistered_receipt[0] is not None and receipts.get(next_buf_idx) is not unregistered_receipt[0]:
+                drain_failed_receipts(ev, self, unregistered_receipt, error)
+            drain_failed_receipts(ev, self, receipts.values(), error)
+            raise
 
         return sims
 
@@ -274,6 +319,8 @@ class PucvChunker:
         enc_view: np.ndarray,
         b: dict[str, np.ndarray],
         rel: np.ndarray | None,
+        *,
+        receipt_cell: list[Any] | None = None,
     ) -> tuple[Any, ...]:
         cache = self._cache
         assert cache is not None
@@ -296,15 +343,17 @@ class PucvChunker:
         b["enc_rows"][:n] = enc_view[:n]
         enc_view[:miss_n] = enc_view[miss_idx]
         if rel is None:
-            handle = ev.evaluate_inplace_async(miss_n, slot=slot)
+            handle = submit_async(ev, miss_n, slot=slot)
         else:
             # Compact relation rows alongside the encoding rows. Cache hits
             # stay valid: relations are a pure function of the position, so
             # position-keyed cached outputs already include the bias effect.
             rel[:miss_n] = rel[miss_idx]
-            handle = ev.evaluate_inplace_async(
+            handle = submit_async(ev,
                 miss_n, slot=slot, relations=rel[:miss_n],
             )
+        if receipt_cell is not None:
+            receipt_cell[0] = handle
         return ("gpu_miss", buf_idx, n, miss_idx, hit_values, handle)
 
     def _finish_pending(
@@ -371,3 +420,13 @@ class PucvChunker:
                 pol[i] = pol_m[j]
                 wdl[i] = wdl_m[j]
         return pol, wdl
+
+
+def _release_outstanding(tree: Any, bufs: list[dict[str, np.ndarray]], outstanding: dict[int, int], vloss: int, primary: BaseException | None) -> None:
+    for buf_idx, n_rows in outstanding.items():
+        try:
+            release_batch_rows(tree, bufs[buf_idx], n_rows, vloss_weight=vloss)
+        except BaseException as cleanup:
+            if primary is None:
+                raise
+            note_cleanup(primary, f"virtual-loss cleanup failed: {cleanup!r}")
