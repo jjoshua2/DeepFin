@@ -37,7 +37,6 @@ from chess_anti_engine.replay.shard import (
     local_shard_path,
     save_local_shard_arrays,
 )
-
 ROWS = 8
 N_SHARDS = 3
 
@@ -155,6 +154,8 @@ def test_corruption_is_caught_on_a_first_load(tmp_path: Path) -> None:
     """The baseline the memo must not weaken: no memo entry, so validation runs."""
     shard_dir = _write_window(tmp_path, n=1)
     shard = local_shard_path(shard_dir, 0)
+    # The seal does not hash payload bytes. This is the content check on a
+    # shard that still carries its producer seal.
     _poison_policy_rows(shard)
 
     with pytest.raises(ValueError, match="non-positive sum"):
@@ -202,6 +203,8 @@ def test_a_rewritten_chunk_is_revalidated_even_though_the_dir_mtime_did_not_move
     buf = _buffer(shard_dir)
 
     assert buf._try_load_shard(shard, context="test") is not None
+    # The seal stays. Removing it would delete a directory entry and move the
+    # directory mtime, so the poison below would no longer be only a chunk rewrite.
     dir_stat_before = os.stat(shard).st_mtime_ns
 
     _poison_policy_rows(shard)
@@ -225,6 +228,8 @@ def test_a_shard_swapped_for_different_content_is_revalidated(tmp_path: Path) ->
     assert buf._try_load_shard(shard, context="test") is not None
     buf._shard_validations_run = 0
 
+    # Valid new payload bytes. The seal does not hash them, so the fingerprint
+    # has to move and content validation still accepts the sealed shard.
     g = zarr.open_group(str(shard), mode="r+")
     g["x"][:] = np.full((ROWS, 146, 8, 8), 99.0, dtype=np.float32)
 
@@ -253,6 +258,9 @@ def _poison_on_next_load(
     def _fake(path, **kwargs):
         if Path(path) == shard and calls["n"] == 0:
             calls["n"] += 1
+            # Inside the fingerprint/decode window. The seal does not hash
+            # payload bytes, so the shard stays sealed and the post-decode
+            # re-stat is what rejects the rows.
             _poison_policy_rows(shard)
         return real(path, **kwargs)
 
@@ -288,6 +296,35 @@ def test_a_shard_rewritten_during_the_decode_cannot_ride_a_stale_memo_hit(
     assert buf._validated_shards == {}, (
         "the stale entry must be dropped, or the next read skips again"
     )
+
+
+def test_a_sealed_declaration_failure_drops_the_warm_memo(tmp_path: Path) -> None:
+    """A same-length ``.zarray`` edit keeps the fingerprint and still drops the memo.
+
+    Decode reshapes with ``order``. Replacing ``C`` with ``F`` does not change
+    the file count, total size, or restored mtime, so the warm entry would
+    skip ``validate_arrays``. The seal raises before that re-stat, and the
+    entry has to go with the failure.
+    """
+    shard_dir = _write_window(tmp_path, n=1)
+    shard = local_shard_path(shard_dir, 0)
+    buf = _buffer(shard_dir)
+
+    assert buf._try_load_shard(shard, context="test") is not None
+    assert len(buf._validated_shards) == 1
+    before = buf._shard_validation_fingerprint(shard)
+
+    meta = shard / "x" / ".zarray"
+    st = meta.stat()
+    text = meta.read_text(encoding="utf-8")
+    needle = '"order": "C"'
+    assert needle in text
+    meta.write_text(text.replace(needle, '"order": "F"', 1), encoding="utf-8")
+    os.utime(meta, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert buf._shard_validation_fingerprint(shard) == before
+
+    assert buf._try_load_shard(shard, context="test") is None
+    assert buf._validated_shards == {}
 
 
 def test_a_rewrite_during_a_validating_decode_is_not_memoized(

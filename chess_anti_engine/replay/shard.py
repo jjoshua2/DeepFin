@@ -18,6 +18,11 @@ import zarr
 
 from .target_overlay import BaseSeal
 from .codec_safety import _reject_unsafe_shard_codecs
+from .directory_seal import (
+    sealed_row_count,
+    verify_directory_producer_seal,
+    write_directory_producer_seal,
+)
 from numcodecs import Blosc
 
 from chess_anti_engine.moves import (
@@ -846,9 +851,24 @@ def shard_index(path: str | Path) -> int:
 
 
 def shard_positions(path: str | Path) -> int:
+    """Row count from ``x``.
+
+    A sealed shard whose declaration does not match counts as 0, so window
+    deletion cannot treat a forged shape as rows. The count is the shape in
+    the ``.zarray`` bytes that matched the seal, and only when that shape's
+    chunk grid equals the sealed inventory. Present arrays must agree on that
+    count and carry the manifest digest. Removing ``priority`` entirely does
+    not zero the count. Any other declared array that is gone refuses it.
+    The manifest must declare ``x``, ``policy_target``, ``wdl_target``, and
+    ``has_policy``. A leftover ``.zattrs`` refuses the count. An unsealed
+    shard still returns the shape on disk.
+    """
     p = Path(path)
     try:
         g = zarr.open_group(str(p), mode="r")
+        rows = sealed_row_count(g, "x")
+        if rows is not None:
+            return rows
         return _shape_of(g["x"])[0]
     except Exception:
         return 0
@@ -1747,6 +1767,14 @@ def save_local_shard_arrays(
     arrs: dict[str, np.ndarray],
     meta: ShardMeta | dict[str, Any] | None = None,
 ) -> Path:
+    """Write a directory Zarr shard and a dense producer seal.
+
+    The seal, including its manifest-byte cap and its final store-key cap, is
+    checked before the existing delete-then-rename. A refusal removes the
+    temporary directory and leaves an existing destination in place. See
+    ``directory_seal``. A shard with neither the manifest nor the per-array
+    attribute stays on the legacy fill path and is not claimed to be validated.
+    """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     stored = prune_storage_arrays(arrs)
@@ -1769,7 +1797,9 @@ def save_local_shard_arrays(
                 continue
             arr = np.asarray(value)
             g.create_dataset(name, data=arr, chunks=_local_chunks(arr), compressor=compressor, overwrite=True)
-  # Atomic replace: remove old, rename new.
+        write_directory_producer_seal(g)
+  # Existing replace: remove old, rename new. The seal check above has
+  # already finished; this gap is unchanged.
         if p.exists():
             shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
         tmp.rename(p)
@@ -1839,7 +1869,14 @@ def _load_shard_arrays(
     ``validate_arrays`` calls, the ``validate_array_declarations`` shape/dtype
     pass with it. It does NOT skip ``_reject_unsafe_shard_codecs``, which is
     the untrusted-deserialization guard (issue #411) and runs before any chunk
-    is decoded on every path.
+    is decoded on every path. It also does not skip the directory producer
+    seal: when the manifest or a per-array seal attribute is present, the
+    check runs before fill decoding on both the lazy and eager paths. The
+    seal compares raw ``.zarray`` bytes and the chunk-key inventory, then
+    installs those bytes onto the opened arrays before fill decoding. It does
+    not hash chunk payloads. Overlay loads skip it. A shard with neither the
+    manifest nor the attribute keeps the legacy fill behavior and is not
+    claimed to be validated.
 
     ⚑ DEFAULT True, AND THE DEFAULT IS THE POINT. Every other caller -- the
     server's upload handler, the boot-time pending-dir recovery, the inbox
@@ -1872,12 +1909,16 @@ def _load_shard_arrays(
     if is_overlay and overlay_seal is None:
         overlay_seal = seal_for_overlay(p)
     overlay_before = overlay_content_sha256(p, seal=overlay_seal) if is_overlay else None
+    # Ordinary directory and packed groups are sealed here. Overlay proxies are
+    # not: policy ``.zattrs`` are copied from the base and are not a seal of the
+    # overlay tree. ``group is None`` is that skip.
+    group: Any = None
     if is_overlay:
         proxies, meta = overlay_proxies(p, _SHARD_FIELDS, seal=overlay_seal)
     else:
-        g = zarr.open_group(_store if _store is not None else str(p), mode="r")
-        meta = dict(g.attrs.asdict())
-        proxies = {name: g[name] for name in _SHARD_FIELDS if name in g}
+        group = zarr.open_group(_store if _store is not None else str(p), mode="r")
+        meta = dict(group.attrs.asdict())
+        proxies = {name: group[name] for name in _SHARD_FIELDS if name in group}
     # Untrusted-deserialization guard (issue #411): reject object dtypes and
     # non-allowlisted codecs BEFORE any chunk is decoded. This runs on BOTH the
     # lazy and eager path so every materialization sink -- the upload handler's
@@ -1892,6 +1933,12 @@ def _load_shard_arrays(
     # path, which is the hot one: replay_exchange, trainable_init startup, the
     # worker, and the inbox loop) and would let the two walks drift apart.
     _reject_unsafe_shard_codecs(proxies)
+    if group is not None:
+        # Rebinds ``proxies`` onto the approved .zarray bytes. The guard above
+        # saw the metadata from open; decode uses the cache after this call,
+        # so the same guard runs on those objects again.
+        verify_directory_producer_seal(group, proxies)
+        _reject_unsafe_shard_codecs(proxies)
     if lazy:
         arrs: dict[str, Any] = proxies
         _attach_identity_meta_arrays(arrs, meta)
