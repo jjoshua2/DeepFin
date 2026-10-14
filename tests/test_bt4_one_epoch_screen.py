@@ -644,45 +644,114 @@ def test_owned_stage_rechecks_preexec_snapshot_before_stamping_workload(tmp_path
     monkeypatch.setattr(arena, 'RUNTIME', tmp_path)
     monkeypatch.setattr(arena, 'disk_guard', lambda _path: None)
     monkeypatch.setattr(arena, 'environment', lambda _gpu=False: {'CUDA_VISIBLE_DEVICES': ''})
-    command = [sys.executable, '-c', 'import time; time.sleep(2); print("exec confirmed")']
+    command = [sys.executable, '-c', 'print("exec confirmed")']
     wrapped = arena.timeout_command(command, 35)
-    original_read = Path.read_bytes
-    injected = []
 
-    def first_preexec_snapshot(path):
-        if str(path).startswith('/proc/') and path.name == 'cmdline' and not injected:
-            injected.append(str(path))
-            if snapshot_kind.startswith('empty'):
-                return b''
-            snapshot = [*command, '--unexpected'] if snapshot_kind == 'unexpected' else wrapped
+    # Control the observation window: a real two-second child can exit between
+    # samples on a busy runner, so the changed PID may never be observed.
+    class Clock:
+        now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+        def time(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.now += seconds
+
+    class Supervisor:
+        pid = 424242
+        returncode = None
+        polls = 0
+
+        def poll(self):
+            self.polls += 1
+            if self.polls > 2:
+                self.returncode = 0
+            return self.returncode
+
+    child = Supervisor()
+    cleaned = []
+
+    def popen(cmd, **kwargs):
+        assert cmd == wrapped
+        assert kwargs['cwd'] == tmp_path
+        assert kwargs['env'] == {'CUDA_VISIBLE_DEVICES': ''}
+        assert kwargs['start_new_session'] is True
+        assert kwargs['pass_fds'] == ()
+        kwargs['stdout'].write('exec confirmed\n')
+        return child
+
+    def cleanup(process):
+        assert process is child
+        cleaned.append(process)
+        process.returncode = 0
+
+    monkeypatch.setattr(arena, 'time', Clock())
+    monkeypatch.setattr(arena.subprocess, 'Popen', popen)
+    monkeypatch.setattr(arena, 'cleanup', cleanup)
+    children_path = Path(f'/proc/{child.pid}/task/{child.pid}/children')
+    workload_pid = 424243
+    changed_pid = 999999
+    original_exists = Path.exists
+    original_text = Path.read_text
+    original_read = Path.read_bytes
+    samples = []
+
+    def exists(path):
+        return True if path == children_path else original_exists(path)
+
+    def children(path, *args, **kwargs):
+        if path == children_path:
+            pid = changed_pid if snapshot_kind == 'empty_pid_change' and samples else workload_pid
+            return str(pid)
+        return original_text(path, *args, **kwargs)
+
+    def cmdline(path):
+        if path in (Path(f'/proc/{workload_pid}/cmdline'), Path(f'/proc/{changed_pid}/cmdline')):
+            samples.append(path)
+            if len(samples) == 1:
+                if snapshot_kind.startswith('empty'):
+                    return b''
+                snapshot = [*command, '--unexpected'] if snapshot_kind == 'unexpected' else wrapped
+            else:
+                snapshot = command
             return ('\0'.join(snapshot) + '\0').encode()
         return original_read(path)
 
-    monkeypatch.setattr(Path, 'read_bytes', first_preexec_snapshot)
+    monkeypatch.setattr(Path, 'exists', exists)
+    monkeypatch.setattr(Path, 'read_text', children)
+    monkeypatch.setattr(Path, 'read_bytes', cmdline)
+    out = tmp_path / 'stage'
     if snapshot_kind == 'empty_pid_change':
-        original_text = Path.read_text
-        def changed_child(path, *args, **kwargs):
-            if str(path).startswith('/proc/') and path.name == 'children' and injected:
-                return '999999'
-            return original_text(path, *args, **kwargs)
-        monkeypatch.setattr(Path, 'read_text', changed_child)
         with pytest.raises(ValueError, match='workload child changed'):
-            arena.run_owned_stage(command, tmp_path / 'stage', 35, None, 'arena', {}, manifest={})
-        assert (tmp_path / 'stage/failed.json').is_file()
-        return
-    receipt = arena.run_owned_stage(command, tmp_path / 'stage', 35, None, 'arena', {}, manifest={})
-    assert injected
-    if snapshot_kind == 'unexpected':
-        assert receipt['arena_cmdline'] == [*command, '--unexpected']
-        assert 'arena_preexec_cmdline' not in receipt
-    elif snapshot_kind == 'empty':
-        assert receipt['arena_empty_cmdline'] == ['']
-        assert receipt['arena_cmdline'] == command
-        assert receipt['arena_pid'] == receipt['arena_empty_cmdline_pid']
+            arena.run_owned_stage(command, out, 35, None, 'arena', {}, manifest={})
+        failed = arena.read(out / 'failed.json')
+        assert failed['complete'] is False
+        assert failed['arena_empty_cmdline_pid'] == workload_pid
+        assert 'arena_pid' not in failed
+        assert 'arena_cmdline' not in failed
+        assert len(samples) == 1  # Reject the changed child before reading its argv.
     else:
-        assert receipt['arena_preexec_cmdline'] == wrapped
-        assert receipt['arena_cmdline'] == command
-        assert receipt['arena_pid'] == receipt['arena_preexec_pid']
-    assert receipt['process_complete']
-    assert receipt['exit_code'] == 0
-    assert 'exec confirmed' in (tmp_path / 'stage/arena.log').read_text()
+        receipt = arena.run_owned_stage(command, out, 35, None, 'arena', {}, manifest={})
+        if snapshot_kind == 'unexpected':
+            assert receipt['arena_cmdline'] == [*command, '--unexpected']
+            assert 'arena_preexec_cmdline' not in receipt
+            assert len(samples) == 1
+        elif snapshot_kind == 'empty':
+            assert receipt['arena_empty_cmdline'] == ['']
+            assert receipt['arena_cmdline'] == command
+            assert receipt['arena_pid'] == receipt['arena_empty_cmdline_pid'] == workload_pid
+            assert len(samples) == 2
+        else:
+            assert receipt['arena_preexec_cmdline'] == wrapped
+            assert receipt['arena_cmdline'] == command
+            assert receipt['arena_pid'] == receipt['arena_preexec_pid'] == workload_pid
+            assert len(samples) == 2
+        assert receipt['process_complete']
+        assert receipt['exit_code'] == 0
+        assert receipt['gpu_seconds'] == 0.0
+        assert 'exec confirmed' in (out / 'arena.log').read_text()
+    assert cleaned == [child]
