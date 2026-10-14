@@ -307,7 +307,7 @@ def test_previous_extension_is_refused_before_solved_search(monkeypatch) -> None
     import chess_anti_engine.mcts.gumbel_c as runner
 
     monkeypatch.setattr(runner._mcts_tree_ext, "ABI_VERSION", 6)
-    with pytest.raises(RuntimeError, match="ABI_VERSION=6 < required 8"):
+    with pytest.raises(RuntimeError, match="ABI_VERSION=6 < required 9"):
         run_gumbel_root_many_c(
             None, [chess.Board()], device="cpu", rng=np.random.default_rng(7),
             cfg=GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False),
