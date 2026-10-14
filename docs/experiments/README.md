@@ -18,6 +18,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Indexed bootstrap dose preparation](2026-10-04-indexed-bootstrap-dose-preparation.md) | Original-shard nested row loading, bounded metadata and CPU regression evidence; full scientific qualification pending |
 | [Local arena adapter reuse source packet](2026-10-10-local-arena-adapter-reuse.md) | Reviewed operational adapter reuse, 11 isolated CPU contracts and future-launch preparation; no live adoption |
 | [Actual multi-bit scan_after full-Ply count](2026-10-03-bend-scan-after-count.md) | Actual arbitrary-mask scan_after full-Ply occurrence count with duplicate-tail preservation; legal target geometry and full-generator correctness remain open
 | [Closed actual multi-bit scan_after count](2026-10-03-bend-scan-after-closed-count.md) | Exact per-query in-range bit contribution plus arbitrary full-Ply tail count, checked through actual Chess.destinations and scan_after; legal geometry remains separate
