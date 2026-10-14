@@ -421,6 +421,8 @@ class Engine:
   # by quiescence before any command changes the worker or starts another go.
         self._search_gen = 0
         self._state_lock = threading.Lock()
+        self._warmup_done = threading.Event()
+        self._warmup_done.set()
   # `position` commands go here; the tree isn't advanced until `go` so
   # ponder mode can choose to back off one ply (see _handle_go).
         self._pending_fen: str | None = None
@@ -1479,6 +1481,21 @@ class Engine:
   # -- search thread body ---------------------------------------------------
 
     def warmup_search(self) -> None:
+        """Keep public warmup custody separate from the background go thread."""
+        with self._state_lock:
+            if self._quit_requested or self._closed:
+                return
+            if not self._warmup_done.is_set():
+                raise SearchNotQuiescent("warmup already owns the worker")
+            if self._search_thread is not None and self._search_thread.is_alive():
+                raise SearchNotQuiescent("active search owns the worker; warmup deferred")
+            self._warmup_done.clear()
+        try:
+            self._warmup_search_owned()
+        finally:
+            self._warmup_done.set()
+
+    def _warmup_search_owned(self) -> None:
         """Run one tiny real search on the start position at startup so the first
         actual ``go`` doesn't pay torch.compile + cudagraph capture mid-move.
 
@@ -1855,6 +1872,10 @@ class Engine:
         ``SearchNotQuiescent`` and retains worker ownership for a later join."""
         if self._closed:
             return
+        # Record terminal intent before a bounded join can fail or emit.
+        with self._state_lock:
+            self._quit_requested = True
+            self._search_gen += 1
         self._wait_for_search()
         if self._gil_probe is not None:
             self._gil_probe.close()
@@ -1871,6 +1892,8 @@ class Engine:
             self._search_thread.join(timeout=_JOIN_TIMEOUT_S)
             if self._search_thread.is_alive():
                 raise SearchNotQuiescent("search stop timed out; thread still running; worker unchanged")
+        if not self._warmup_done.wait(timeout=_JOIN_TIMEOUT_S):
+            raise SearchNotQuiescent("warmup stop timed out; worker unchanged")
         self._search_thread = None
 
 
