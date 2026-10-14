@@ -148,19 +148,48 @@ def test_forced_turn_keeps_original_pending_record_and_position(monkeypatch, c_p
     )
 
 
-def test_queue_cap_without_original_query_does_not_rebind_after_forced_move(monkeypatch):
+def test_omitted_original_query_does_not_rebind_after_forced_move(monkeypatch):
     pool = HeldPool()
     state = _state(pool)
-    # A full queue can drop the P1 query entirely. Dedup cannot protect this.
-    state.pending_sf_labels = cast(Any, [object()] * 8)
+    original = stockfish_turn.submit_async_sf_label_queries
+    suppressed: list[list[int]] = []
+
+    def omit_original_label(_state, idxs):
+        suppressed.append(list(idxs))
+        return 0
+
+    # Model missing P1 admission independently of the corrected queue cap.
+    # Actual cap spill and unrelated-future custody have separate controls.
     _choose(monkeypatch, "c1a1", chess.WHITE)
-    _step(state)
+    with monkeypatch.context() as admission:
+        admission.setattr(stockfish_turn, "submit_async_sf_label_queries", omit_original_label)
+        if getattr(manager, "submit_async_sf_label_queries", None) is original:
+            admission.setattr(manager, "submit_async_sf_label_queries", omit_original_label)
+        _step(state)
+    assert suppressed == [[0]]
+    assert stockfish_turn.submit_async_sf_label_queries is original
     rec = state.samples_per_game[0][-1]
     assert not pool.queries
-    state.pending_sf_labels.clear()
+    assert not state.pending_sf_labels
+
+    # Restored admission at the forced reply must reject the earlier row.
     _step(state, opponent=True)
     assert not pool.queries
+    assert state.samples_per_game[0] == [rec]
     assert rec.sf_wdl is None
+
+    # A later valid NET record still admits its own original-position query.
+    _choose(monkeypatch, "a1a2", chess.WHITE)
+    _step(state)
+    later = state.samples_per_game[0][-1]
+    assert later is not rec
+    assert len(pool.queries) == 1
+    fen, _, future = pool.queries[0]
+    future.set_result(_result(fen, [0.2, 0.0, 0.8]))
+    assert stockfish_turn.poll_async_sf_labels(state) == (1, 0)
+    _assert_wdl(later, [0.8, 0.0, 0.2])
+    assert rec.sf_wdl is None
+    assert rec.sf_move_index is None
 
 
 def test_distinct_records_receive_out_of_order_labels_for_their_own_positions(monkeypatch):
