@@ -20,7 +20,59 @@ from ..table_preservation._validation import begin_report, require, write_report
 SUITE = Path(__file__).resolve().parent
 ENGINE = SUITE.parents[2]
 REPO = ENGINE.parents[1]
-INHERITED_GATE = REPO / "docs/experiments/evidence/bend-bitboard-inventory/inherited-destination-factorization.json"
+
+
+
+def check_inherited_destination(compiler: Path, report_path: Path, report: dict) -> None:
+    """Own a persistent receipt per invocation; never write historical evidence."""
+    report_path = report_path.resolve()
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    directory = Path(tempfile.mkdtemp(
+        prefix=f".{report_path.name}.destination-", dir=report_path.parent,
+    ))
+    receipt = directory / "receipt.json"
+    evidence: dict = {
+        "exit_code": None, "timed_out": False,
+        "receipt": str(receipt), "receipt_sha256": None,
+    }
+    report["inherited_destination_gate"] = evidence
+    # Persist ownership before the nested writer can create or replace its receipt.
+    write_report(report_path, report)
+    try:
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m",
+                 "native.bend_engine.standalone.proofs.destination_factorization.qualify",
+                 str(compiler.resolve()), "--report", str(receipt)],
+                cwd=REPO, capture_output=True, text=True, timeout=900, check=False,
+            )
+            evidence["exit_code"] = result.returncode
+        except subprocess.TimeoutExpired:
+            evidence["timed_out"] = True
+            raise
+        finally:
+            # Hash the exact bytes that will be parsed, including failed receipts.
+            # On timeout this is an observation, not a claim that descendants exited.
+            evidence["receipt_observed_at_unix"] = time.time()
+            if receipt.is_file():
+                raw = receipt.read_bytes()
+                evidence["receipt_sha256"] = hashlib.sha256(raw).hexdigest()
+            else:
+                raw = None
+        require(result.returncode == 0, "inherited destination gate failed")
+        if raw is None:
+            raise AssertionError("inherited destination receipt missing")
+        prior_run = json.loads(raw)
+        require(prior_run.get("destination_factorization_gate") == "PASS"
+                and prior_run.get("accepted_candidate_definitions") == 4
+                and len(prior_run.get("controls", [])) == 5
+                and all(control.get("rejected") for control in prior_run["controls"]),
+                "inherited gate did not recheck all four contracts and five controls")
+    except Exception as error:
+        evidence["failure"] = type(error).__name__ + ": " + str(error)
+        raise
+    finally:
+        write_report(report_path, report)
 
 
 def safe_result(result: dict) -> bool:
@@ -140,26 +192,7 @@ def main() -> None:
                 "prior checked source identity changed")
         manifest()
 
-        inherited_gate = subprocess.run(
-            [sys.executable, "-m", "native.bend_engine.standalone.proofs.destination_factorization.qualify",
-             str(compiler), "--report", str(INHERITED_GATE)],
-            cwd=REPO, capture_output=True, text=True, timeout=900, check=False,
-        )
-        report["inherited_destination_gate"] = {
-            "exit_code": inherited_gate.returncode,
-            "receipt": str(INHERITED_GATE),
-        }
-        require(inherited_gate.returncode == 0, "inherited destination gate failed")
-        prior_run = json.loads(INHERITED_GATE.read_text())
-        require(prior_run.get("destination_factorization_gate") == "PASS"
-                and prior_run.get("accepted_candidate_definitions") == 4
-                and len(prior_run.get("controls", [])) == 5
-                and all(control.get("rejected") for control in prior_run["controls"]),
-                "inherited gate did not recheck all four contracts and five controls")
-        report["inherited_destination_gate"]["receipt_sha256"] = hashlib.sha256(
-            INHERITED_GATE.read_bytes()
-        ).hexdigest()
-        write_report(args.report, report)
+        check_inherited_destination(compiler, args.report, report)
 
         def cpu_used() -> float:
             now = resource.getrusage(resource.RUSAGE_CHILDREN)
