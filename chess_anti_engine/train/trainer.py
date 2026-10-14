@@ -7192,10 +7192,15 @@ class Trainer:
                     "reinitialising scheduler: %s", exc,
                 )
                 self._scheduler.load_state_dict(fresh_scheduler_state)
-        if "peak_lr" in ckpt:
-            self._peak_lr = float(ckpt["peak_lr"])
-        else:
-            self._peak_lr = self._reference_lr_from_bases()
+  # A rejected donor restores the pre-load optimizer and scheduler snapshots.
+  # Keep their peak too: a donor peak would make the next set_peak_lr call
+  # rescale fresh bases by configured_peak / donor_peak, for either value of
+  # rescale_current. Accepted optimizer state still adopts its donor peak.
+        if optimizer_state_loaded:
+            if "peak_lr" in ckpt:
+                self._peak_lr = float(ckpt["peak_lr"])
+            else:
+                self._peak_lr = self._reference_lr_from_bases()
   # Gated on `optimizer_state_loaded` for the same reason the scheduler is:
   # that branch only fails when the model's parameter layout no longer
   # matches the donor's, and an EMA of gradient norms taken over a
@@ -7227,7 +7232,10 @@ class Trainer:
                 logging.getLogger(__name__).warning(
                     "SWA model state incompatible, reinitialising: %s", exc,
                 )
-        self.step = int(ckpt.get("step", 0))
+  # A cold-started optimizer keeps its pre-load schedule phase (normally 0),
+  # rather than skipping warmup or the release window using the donor step.
+        if optimizer_state_loaded:
+            self.step = int(ckpt.get("step", 0))
         if optimizer_state_loaded and scheduler_state_loaded:
             self._reapply_configured_lr_ratios()
   # Emitted AFTER `self.step` is set so the point lands on the resumed step
