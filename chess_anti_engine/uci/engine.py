@@ -1065,14 +1065,7 @@ class Engine:
                 # UseVL/Threads flags set but no live path materialised.
                 self._reinstall_configured_search_path(after_leaving_gumbel=True)
             return
-        # Shrink primary to device 0 before installing the pool so we don't
-        # keep a full MultiGPUDispatcher stack alongside per-GPU pool evals.
-        if self._rebuild_evaluator is not None:
-            new_eval = self._rebuild_evaluator(
-                self._options.max_batch, self._options.eval_cache_entries,
-            )
-            self._worker.set_evaluator(new_eval)
-        n_devices = self._install_multi_gpu_pucv_pool()
+        n_devices = self._install_multi_gpu_pucv_pool(rebuild_primary=True)
         if n_devices is None:
             return
         # Mutual exclusion with SearchParallel=gumbel: the pool install clears
@@ -1095,13 +1088,13 @@ class Engine:
             "the c_scale-tuned classic Gumbel path"
         )
 
-    def _install_multi_gpu_pucv_pool(self) -> int | None:
+    def _install_multi_gpu_pucv_pool(self, *, rebuild_primary: bool = False) -> int | None:
         """Install/reinstall the multi-GPU pool from current options.
 
         Returns device count on success, or None (and leaves
         ``use_multi_gpu_pucv`` False) when factories are missing or fewer
-        than two devices. Does not rebuild the primary evaluator — callers
-        that need a single-device primary do that first.
+        than two devices. ``rebuild_primary`` stages a single-device primary
+        after checking factory availability. Other reinstalls retain theirs.
         """
         if self._rebuild_multi_gpu_pucv_factories is None:
             self._options.use_multi_gpu_pucv = False
@@ -1115,6 +1108,21 @@ class Engine:
             self._options.use_multi_gpu_pucv = False
             _println("info string UseMultiGpuPUCV unavailable — need at least two devices")
             return None
+        if rebuild_primary and self._rebuild_evaluator is not None:
+            # The entry factory closes over these shared options. Construction
+            # must see the intended topology, including when leaving RPG.
+            # The setoption search barrier excludes readers; restore before
+            # installing so only a successful transition commits the options.
+            previous = self._options.use_multi_gpu_pucv, self._options.search_parallel
+            self._options.use_multi_gpu_pucv = True
+            self._options.search_parallel = "pucv"
+            try:
+                new_eval = self._rebuild_evaluator(
+                    self._options.max_batch, self._options.eval_cache_entries,
+                )
+            finally:
+                self._options.use_multi_gpu_pucv, self._options.search_parallel = previous
+            self._worker.set_evaluator(new_eval)
         self._worker.install_multi_gpu_pucv(
             factories, gather=gather, as_factories=True,
         )

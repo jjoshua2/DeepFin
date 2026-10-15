@@ -1668,18 +1668,6 @@ class SearchWorker:
             # Do NOT "optimize" this back onto the pools without first teaching them to
             # honor allowed_root_indices, or the restriction is silently ignored.
             #
-            # RPG leaves root N/W at the initial eval (its scorer takes the
-            # fresh root value), so an RPG-shaped tree's root Q does not describe
-            # its children -- and _run_gumbel_chunk's caller returns
-            # self._tree.node_q(self._root_id) as the REPORTED root value. Drop it.
-            # ⚑ Classic gss_score_and_halve no longer reads W[root]/N[root] (it
-            # takes the fresh root_qs), so that is no longer the reason.
-            if self._rpg_pool is not None:
-                # Drop the RPG tree, not this position's fresh root eval. A
-                # declined classic root still needs the cached filtered prior.
-                pol, wdl = self._root_pol_logits, self._root_wdl_logits
-                self.reset_tree()
-                self._root_pol_logits, self._root_wdl_logits = pol, wdl
             return self._run_gumbel_chunk(
                 chunk, board, tb_probe, allowed_root_indices,
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
@@ -2226,6 +2214,13 @@ class SearchWorker:
         self._last_gumbel_action_idx = None
         self._seldepth = 0
         self._ensure_root_eval_cached(board, tb_probe)
+        if allowed_root_indices is not None and self._rpg_pool is not None:
+            # Convert an RPG-shaped tree once for this restricted search.
+            # Later classic chunks must retain their own tree progress. Keep
+            # the current root heads for the declined-root prior fallback.
+            pol, wdl = self._root_pol_logits, self._root_wdl_logits
+            self.reset_tree()
+            self._root_pol_logits, self._root_wdl_logits = pol, wdl
         self._pre_expand_root_for_pool(
             board,
             allowed_root_indices,
