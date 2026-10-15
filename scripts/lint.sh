@@ -238,9 +238,7 @@ if [[ $RUN_SLOP -eq 1 ]]; then
     start_job 1 "scb-check (verbosity + erosion + slop patterns)" run_slop
 fi
 
-if [[ ${#JOB_PIDS[@]} -gt 0 ]]; then
-    run_group
-fi
+run_group
 
 echo
 echo "lint: OK"
