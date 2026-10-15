@@ -24,6 +24,7 @@ from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 from .buffer import ReplaySample
+from chess_anti_engine.replay.sampling import priority_probabilities, sample_pool_indices, wdl_batch_counts
 from .shard import (
     HISTORY_REP_FIX_ARRAY_KEY,
     INPUT_HISTORY_ENCODING_ARRAY_KEY,
@@ -1938,32 +1939,10 @@ class DiskReplayBuffer:
             )
 
     def _sample_indices(self, pool: np.ndarray, k: int) -> np.ndarray:
-        if k <= 0 or pool.size == 0:
-            return np.zeros((0,), dtype=np.int64)
-        pool = np.asarray(pool, dtype=np.int64)
-        k_uni = round(k * (1.0 - self.surprise_mix))
-        k_pri = k - k_uni
-        picks: list[np.ndarray] = []
-        if k_uni > 0:
-            chosen = self.rng.choice(pool.shape[0], size=k_uni, replace=True)
-            picks.append(pool[np.asarray(chosen, dtype=np.int64)])
-        if k_pri > 0:
-            pri = self._active_shuffle_priority()[pool].astype(np.float64, copy=True)
-            np.nan_to_num(pri, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-            np.maximum(pri, 0.0, out=pri)
-            ps = float(pri.sum())
-            if ps <= 0.0 or not np.isfinite(ps):
-                chosen = self.rng.choice(pool.shape[0], size=k_pri, replace=True)
-                picks.append(pool[np.asarray(chosen, dtype=np.int64)])
-            else:
-                p = pri / ps
-                chosen = self.rng.choice(pool.shape[0], size=k_pri, replace=True, p=p)
-                picks.append(pool[np.asarray(chosen, dtype=np.int64)])
-        if not picks:
-            return np.zeros((0,), dtype=np.int64)
-        if len(picks) == 1:
-            return picks[0]
-        return np.concatenate(picks, axis=0)
+        return sample_pool_indices(
+            pool, k, rng=self.rng, surprise_mix=self.surprise_mix,
+            priority=self._active_shuffle_priority,
+        )
 
     def _sample_all_indices(self, batch_size: int) -> np.ndarray:
         n = self._shuffle_len()
@@ -1977,15 +1956,12 @@ class DiskReplayBuffer:
         if k_uni > 0:
             picks.append(np.asarray(self.rng.integers(0, n, size=k_uni), dtype=np.int64))
         if k_pri > 0:
-            pri = self._active_shuffle_priority().astype(np.float64, copy=True)
-            np.nan_to_num(pri, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-            np.maximum(pri, 0.0, out=pri)
-            ps = float(pri.sum())
-            if ps <= 0.0 or not np.isfinite(ps):
+            p = priority_probabilities(self._active_shuffle_priority())
+            if p is None:
                 picks.append(np.asarray(self.rng.integers(0, n, size=k_pri), dtype=np.int64))
             else:
                 picks.append(
-                    np.asarray(self.rng.choice(n, size=k_pri, replace=True, p=(pri / ps)), dtype=np.int64)
+                    np.asarray(self.rng.choice(n, size=k_pri, replace=True, p=p), dtype=np.int64)
                 )
         if not picks:
             return np.zeros((0,), dtype=np.int64)
@@ -2115,28 +2091,10 @@ class DiskReplayBuffer:
         if win_idx.size == 0 or loss_idx.size == 0:
             return self._sample_raw_arrays(bs)
 
-        p_draw = float(draw_idx.size) / float(max(1, n))
-        n_draw = round(bs * p_draw)
-        n_draw_cap = int(np.floor(self.draw_cap_frac * bs))
-        n_draw = min(n_draw, n_draw_cap)
-        n_draw = max(0, min(bs, n_draw))
-
-        bs_decisive = bs - n_draw
-        n_win = 0
-        n_loss = 0
-        if bs_decisive > 0:
-            p_win = float(win_idx.size) / float(win_idx.size + loss_idx.size)
-            n_win = round(bs_decisive * p_win)
-            n_win = max(0, min(bs_decisive, n_win))
-            n_loss = bs_decisive - n_win
-
-            r = self.wl_max_ratio
-            if n_win > int(np.floor(r * n_loss)):
-                n_loss = int(np.ceil(bs_decisive / (1.0 + r)))
-                n_win = bs_decisive - n_loss
-            elif n_loss > int(np.floor(r * n_win)):
-                n_win = int(np.ceil(bs_decisive / (1.0 + r)))
-                n_loss = bs_decisive - n_win
+        n_draw, n_win, n_loss = wdl_batch_counts(
+            bs, size=n, wins=win_idx.size, draws=draw_idx.size,
+            losses=loss_idx.size, draw_cap_frac=self.draw_cap_frac, wl_max_ratio=self.wl_max_ratio,
+        )
 
         picks = [
             self._sample_indices(draw_idx, n_draw),
