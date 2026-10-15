@@ -2,7 +2,7 @@
 
 ## Revision, scope and outcome
 
-Audit base: `32370b099f6d8d4ec965de135e70a752fc95a7a9`, the remote `main` observed on 2026-10-15. Repository: <https://github.com/jjoshua2/DeepFin>. Isolated worktree: `/home/josh/projects/chess-worktrees/unused-code-audit-20261015`; branch: `cleanup/unused-code-audit-20261015`. The running checkout was not switched or edited.
+Audit base: `32370b099f6d8d4ec965de135e70a752fc95a7a9`, the remote `main` observed on 2026-10-15. Repository: <https://github.com/jjoshua2/DeepFin>. Isolated worktree: `~/projects/chess-worktrees/unused-code-audit-20261015`; branch: `cleanup/unused-code-audit-20261015`. The running checkout was not switched or edited.
 
 Three narrowly justified cleanup changes were selected: two unreferenced functions and one redundant shell conditional. No feature, experiment, configuration key, supported driver or historical record is declared retired. The source evidence supports preserving checked-in behavior; deployment and external consumers remain separate questions.
 
@@ -111,11 +111,11 @@ Code commits (all based on the pinned main):
 
 The full code diff is three files, one insertion and 13 deletions. This report is a separate documentation commit; it changes no executing code. Independent Sol reviewed the full exact code range and the report draft, finding no actionable code issues. The draft's inventory typo was corrected from 47 to 27 and the eager-allocation location corrected to base lines1575–1586.
 
-Grok R1 review returned `BEGIN_FINDINGS / NONE / END_FINDINGS`, wrapper exit0, source unchanged. Raw receipt: `/home/josh/chess-artifacts/unused-code-audit-20261015/grok/review.0LPmOJwU/raw.txt`, SHA256 `fed786b27f266f9503fe135baf866f2b7c6842dfd2e0c0036475c8d6b8a75982`.
+Grok R1 review returned `BEGIN_FINDINGS / NONE / END_FINDINGS`, wrapper exit0, source unchanged. Raw receipt: `~/chess-artifacts/unused-code-audit-20261015/grok/review.0LPmOJwU/raw.txt`, SHA256 `fed786b27f266f9503fe135baf866f2b7c6842dfd2e0c0036475c8d6b8a75982`.
 
-Grok full three-file review hit its 300-second limit (`grok` exit124, wrapper command exit1) and has **no valid full-patch verdict**. Raw partial receipt: `/home/josh/chess-artifacts/unused-code-audit-20261015/grok-final/review.3v4s7XNa/raw.txt`. The wrapper confirmed source unchanged. No retry or budget increase was launched; this is not credited as a clean review.
+Grok full three-file review hit its 300-second limit (`grok` exit124, wrapper command exit1) and has **no valid full-patch verdict**. Raw partial receipt: `~/chess-artifacts/unused-code-audit-20261015/grok-final/review.3v4s7XNa/raw.txt`. The wrapper confirmed source unchanged. No retry or budget increase was launched; this is not credited as a clean review.
 
-Source evidence: `source-inventory-v1.json` SHA256 `96075a252dd7402420b2f054f405a706ef1ac9a869eb98d67aa94aba00b55128`; reversible `cleanup-code.patch` SHA256 `81876dd206f827912f633d7a4580e48a4e003f3c623c8b6a801179f09b4429b1`; saved full-code Sol review `independent-sol-review-v1.md` SHA256 `081c1feddd768729eccca5a3758a1881f66725831a4ca1f062cbfbda846d8493`. All reside under `/home/josh/chess-artifacts/unused-code-audit-20261015/`. Local paths are supporting evidence, not portable runtime authority.
+Source evidence: `source-inventory-v1.json` SHA256 `96075a252dd7402420b2f054f405a706ef1ac9a869eb98d67aa94aba00b55128`; reversible `cleanup-code.patch` SHA256 `81876dd206f827912f633d7a4580e48a4e003f3c623c8b6a801179f09b4429b1`; saved full-code Sol review `independent-sol-review-v1.md` SHA256 `081c1feddd768729eccca5a3758a1881f66725831a4ca1f062cbfbda846d8493`. All reside under `~/chess-artifacts/unused-code-audit-20261015/`. Local paths are supporting evidence, not portable runtime authority.
 
 At report-commit preparation, hosted checks have not yet run, and local regressions/lint/builds remain unrun. [Draft PR #1098](https://github.com/jjoshua2/DeepFin/pull/1098) is open against the pinned base. Its [existing CI check records](https://github.com/jjoshua2/DeepFin/pull/1098/checks) are authoritative for its actual head; there is no borrowed qualification credit. Final hosted results and PR identity will also be preserved in the task's off-C report/receipts after publication. Any uncompleted check remains a blocker to declaring validation complete.
 
