@@ -57,6 +57,6 @@ this is process I/O, not a measurement of unique duplicated data. The cleanup re
 is `scratchpad/bt4_joint20/efficiency500m_20260919/workspace_duplicate_cleanup.jsonl`
 on the pinned host. Active training and frozen queued runtimes remain in place.
 
-See the [September 19 migration record](https://github.com/jjoshua2/DeepFin-research/blob/9f4e747540881a91c3aacb09ffdeae6cdd5ab497/docs/experiments/2026-09-19-workspace-storage.md)
+See the [September 19 migration record](https://github.com/jjoshua2/DeepFin-research/blob/a99db80a6de3c89bdfac8d208ba8c2bc7060ad1e/docs/experiments/2026-09-19-workspace-storage.md)
 for completed relocations, active-path constraints, qualifications and queued-job
 adoption receipts.

@@ -37,8 +37,9 @@ attribution and portable links; original code blocks and historical commands rem
 This draft removes **121 independent dated prose files / 834,985 bytes** from main and
 updates their Markdown navigation links. It retains **130 imported source copies** wherever
 machine-readable receipts, native/proof docs or scratchpad references make removal unsafe.
-It leaves all non-Markdown evidence, all executable verifiers, maintained Bend proof source,
-frozen proof receipts and all runtime/queued paths unchanged. Original Git history remains
+The next increment relocates21 historical publication JSON summaries through the
+catalog-compatible reader described below. All executable verifiers, maintained Bend
+proof source, frozen proof receipts and runtime/queued paths remain unchanged. Original Git history remains
 in DeepFin and is linked from research provenance.
 
 The original two roots contain **133,666,800 bytes**; this first removal is only **0.62%**
@@ -82,9 +83,29 @@ the current tree does not reclaim historical Git blobs.
 For future executable/evidence changes, use existing scope-appropriate tests and the
 project review process. Coordinate local CPU/GPU validation with the current owner;
 a documentation migration does not authorize a new controller, guard or live workload.
-This draft changes prose/navigation and a gitlink, with all executable/evidence source
-bytes retained. No test-suite result is claimed for it.
+The initial prose phase retains executable/evidence bytes. The publication increment
+changes21 historical JSON locations through the documented catalog reader; original
+JSON bytes and frozen identity manifests remain preserved. Local reader execution
+requires separate bounded admission; no local test result is claimed here.
 
 Rollback is a normal revert of the migration commit. The original files remain in DeepFin
 history and the byte-preserving research import. Main's merge and live deployment are
 separate actions; this draft requests neither a merge nor a training restart.
+
+## Publication-summary increment
+
+Research imports22 already-public historical JSON summaries byte-for-byte, with original
+paths/modes/blob/SHA256 identities. Main removes21 of them (20,802,555 bytes) and
+retains the2744-byte C-policy summary linked by a frozen prose record. Total original
+source bytes removed across both increments are21,637,540 (16.19% of the two roots),
+before new metadata. This does not reclaim historical Git objects or complete migration.
+
+The BT4 catalog and four packed plans remain byte-identical. The current BT4 evidence
+README checksum loop tries an existing main path first, then research/<published_path>
+only when absent. Its original size/hash assertions remain, so a corrupt present main
+file fails rather than being hidden by fallback. Historical audits require explicit
+initialization of the exact pinned research submodule; production does not. The old
+packed plans still bind their own frozen /tmp runtime roots, exact commits and inventories.
+No live checkout, source runtime, queue or deployment is repointed. Source inspection
+cannot rule out an external reader; owning-lane clearance remains a merge/adoption
+requirement. No zero-dependency clearance is claimed.
