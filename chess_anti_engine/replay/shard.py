@@ -763,10 +763,6 @@ def _u8(x: np.ndarray) -> np.ndarray:
     return x.astype(np.uint8, copy=False)
 
 
-def _f16(x: np.ndarray) -> np.ndarray:
-    return x.astype(np.float16, copy=False)
-
-
 def _copy_row(arr: np.ndarray, i: int, *, dtype: np.dtype | type | None = None) -> np.ndarray:
     if dtype is None:
         return np.array(arr[i], copy=True, order="C")
