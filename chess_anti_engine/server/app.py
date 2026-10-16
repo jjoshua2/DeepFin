@@ -3829,11 +3829,16 @@ def create_app(
             users = load_users(users_path)
             existing = users.get(username)
             if existing is None:
+                # The early check avoids unnecessary KDF work. Recheck here:
+                # other requests can consume the quota while this one hashes.
+                # Check, commit and charge share this app's registration lock.
+                access_guard.check_registration_allowed(ip)
                 users[username] = _UserRecord(
                     username=username, salt_b64=salt_b64, hash_b64=hash_b64,
                     iterations=iterations,
                 )
                 save_users(users_path, users)
+                access_guard.note_registration(ip)
                 record, won = users[username], True
             else:
                 record, won = existing, False
@@ -3858,7 +3863,6 @@ def create_app(
                 raise _RegistrationRaceLost(username)
             return record
 
-        access_guard.note_registration(ip)
         auth_cache.invalidate()
         _log.info(
             "registered new worker account %r from %s (trust-on-first-use)",
