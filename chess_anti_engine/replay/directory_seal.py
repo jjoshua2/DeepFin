@@ -62,7 +62,10 @@ each array; the loader then applies this producer seal before decoding.
 
 Verification re-reads the manifest and each ``.zarray`` on every load,
 including ``validate=False``. It does not read chunk payloads. Caps: 100_000
-declared chunks per array, 200_000 final store keys, 4_000_000 manifest bytes.
+declared chunks per array, four axes (the shard schema maximum), 4_000_000
+JSON-escaped key bytes across the manifest, 200_000 final store keys,
+8_000_000 listed store-key bytes, and 4_000_000 manifest bytes. Grid key cost
+is checked before coordinates are enumerated; coordinates are consumed lazily.
 The store-key cap is that final count on both the writer and the reader.
 """
 from __future__ import annotations
@@ -84,6 +87,11 @@ DENSITY_DENSE = "dense"
 MAX_DECLARED_CHUNKS = 100_000
 MAX_STORE_KEYS = 200_000
 MAX_SEAL_BYTES = 4_000_000
+# Shard declarations have at most four axes (N,C,8,8). Bound representation
+# as well as cardinality: a small grid can otherwise contain enormous keys.
+MAX_ARRAY_RANK = 4
+MAX_GRID_KEY_BYTES = MAX_SEAL_BYTES
+MAX_STORE_KEY_BYTES = 2 * MAX_SEAL_BYTES
 # Quarantine strips ``priority`` and still needs the honest row count.
 # Every other declared array must remain, or the window count is refused.
 _WINDOW_OPTIONAL_ARRAYS = frozenset({"priority"})
@@ -109,10 +117,13 @@ def write_directory_producer_seal(group: Any) -> None:
     names = _array_names(group)
     store = group.store
     listed = _store_keys(store)
-    specs = {
-        name: _spec_for_array(group[name], listed)
-        for name in names
-    }
+    specs: dict[str, Any] = {}
+    key_bytes = 0
+    for name in names:
+        spec = _spec_for_array(group[name], listed)
+        key_bytes += _key_bytes(spec["stored"])
+        _refuse_key_bytes(key_bytes, MAX_GRID_KEY_BYTES)
+        specs[name] = spec
     payload = _canonical_bytes({
         "schema": SCHEMA,
         "kind": KIND,
@@ -250,7 +261,7 @@ def sealed_row_count(group: Any, name: str) -> int | None:
         arr = group[found]
         raw = _declaration_bytes(found, arr, spec, digest)
         stored = _stored_keys(found, spec["stored"])
-        if _grid_keys(found, raw) != stored:
+        if _grid_keys(found, raw, expected_count=len(stored)) != stored:
             raise ValueError(
                 f"directory producer seal chunk grid for {found!r} does not "
                 "match the declared coordinates; refusing fill decode"
@@ -350,6 +361,20 @@ def _manifest(group: Any) -> tuple[dict[str, Any], str] | None:
             f"directory producer seal density {doc['density']!r} is not "
             "dense; refusing fill decode"
         )
+    arrays = doc["arrays"]
+    if not isinstance(arrays, dict):
+        raise ValueError("directory producer seal arrays is not an object")
+    key_bytes = 0
+    key_count = 0
+    for name, spec in arrays.items():
+        if not isinstance(spec, dict) or not _exact_keys(spec, _ARRAY_KEYS):
+            raise ValueError(f"directory producer seal entry for {name!r} has unexpected fields")
+        _hex_digest(name, spec["zarray_sha256"])
+        stored = _stored_keys(name, spec["stored"])
+        key_count += len(stored)
+        _refuse_store_key_count(key_count)
+        key_bytes += _key_bytes(stored)
+        _refuse_key_bytes(key_bytes, MAX_GRID_KEY_BYTES)
     if _canonical_bytes(doc) != raw:
         raise ValueError(
             "directory producer seal is not canonical JSON; refusing fill decode"
@@ -464,9 +489,12 @@ def _verify_array(
             f"directory producer seal declaration for {name!r} does not match "
             "the .zarray bytes; refusing fill decode"
         )
+    stored = _stored_keys(name, spec["stored"])
+    # Check cheap schema/cardinality/cost against the bound bytes before reload
+    # and enumeration. Keep the approved metadata installation before decode.
+    _grid_declaration(name, raw, expected_count=len(stored))
     _install_approved_metadata(name, arr, raw)
     declared = _declared_keys(arr)
-    stored = _stored_keys(name, spec["stored"])
     if stored != declared:
         raise ValueError(
             f"directory producer seal chunk grid for {name!r} does not match "
@@ -623,8 +651,10 @@ def _store_has_file(store: Any, key: str) -> bool:
         ) from exc
 
 
-def _grid_keys(name: str, raw: bytes) -> list[str]:
-    """Chunk keys declared by these ``.zarray`` bytes, in inventory order."""
+def _grid_declaration(
+    name: str, raw: bytes, *, expected_count: int | None = None,
+) -> tuple[list[int], str]:
+    """Bound the raw declaration before reloading metadata or enumerating keys."""
     try:
         doc = json.loads(raw)
         shape = doc["shape"]
@@ -650,39 +680,72 @@ def _grid_keys(name: str, raw: bytes) -> list[str]:
             f"directory producer seal declaration for {name!r} has chunk "
             f"separator {separator!r}; refusing fill decode"
         )
-    dims: list[int] = []
-    product = 1
-    for index, (length, chunk) in enumerate(zip(shape, chunks, strict=True)):
-        if (
-            isinstance(length, bool)
-            or isinstance(chunk, bool)
-            or not isinstance(length, int)
-            or not isinstance(chunk, int)
-            or length < 0
-            or chunk <= 0
-        ):
-            raise ValueError(
-                f"directory producer seal declaration for {name!r} has axis "
-                f"{index} shape {length!r} chunk {chunk!r}; refusing fill decode"
-            )
-        count = _chunk_count(length, chunk)
-        dims.append(count)
-        product *= count
-        if product > MAX_DECLARED_CHUNKS:
-            raise ValueError(
-                f"{name} declares {product} chunks; "
-                f"seal cap is {MAX_DECLARED_CHUNKS}"
-            )
-    if any(dim == 0 for dim in dims):
-        coords: list[tuple[int, ...]] = []
-    else:
-        coords = list(itertools.product(*(range(dim) for dim in dims)))
+    dims = _bounded_grid(name, shape, chunks)
+    if expected_count is not None and math.prod(dims) != expected_count:
+        raise ValueError(
+            f"directory producer seal chunk grid for {name!r} does not match "
+            "the declared coordinates; refusing fill decode"
+        )
+    return dims, separator
+
+
+def _grid_keys(name: str, raw: bytes, *, expected_count: int | None = None) -> list[str]:
+    """Chunk keys declared by these ``.zarray`` bytes, in inventory order."""
+    dims, separator = _grid_declaration(name, raw, expected_count=expected_count)
+    if 0 in dims:
+        return []
     keys = [
         f"{name}/{separator.join(str(coord) for coord in point)}"
-        for point in coords
+        for point in itertools.product(*(range(dim) for dim in dims))
     ]
     keys.sort()
     return keys
+
+
+def _refuse_key_bytes(size: int, cap: int) -> None:
+    if size > cap:
+        raise ValueError(f"directory producer seal key representation exceeds {cap} bytes")
+
+
+def _key_bytes(keys: list[str]) -> int:
+    # JSON escaping is at least as large as the string's in-memory characters.
+    return sum(len(json.dumps(key, ensure_ascii=True)) for key in keys)
+
+
+def _bounded_grid(name: str, shape: Any, chunks: Any) -> list[int]:
+    """Refuse unsupported rank, cardinality and aggregate key cost before product.
+
+    Count the decimal characters in each axis without creating coordinates or
+    range pools. Empty axes still undergo schema checks, but have no key cost.
+    """
+    if (
+        not isinstance(shape, (list, tuple))
+        or not isinstance(chunks, (list, tuple))
+        or len(shape) != len(chunks)
+        or len(shape) > MAX_ARRAY_RANK
+    ):
+        raise ValueError(f"directory producer seal {name!r} rank/grid exceeds supported rank {MAX_ARRAY_RANK}")
+    dims: list[int] = []
+    for length, chunk in zip(shape, chunks, strict=True):
+        if type(length) is not int or type(chunk) is not int or length < 0 or chunk <= 0:
+            raise ValueError(f"directory producer seal {name!r} has invalid shape/chunks")
+        dims.append(_chunk_count(length, chunk))
+    product = math.prod(dims)
+    if product > MAX_DECLARED_CHUNKS:
+        raise ValueError(f"{name} declares {product} chunks; seal cap is {MAX_DECLARED_CHUNKS}")
+    if not product:
+        return dims
+    # Prefix, quotes, separators, then the sum of axis digits across the grid.
+    cost = product * (len(json.dumps(name, ensure_ascii=True)) + 1 + max(0, len(dims) - 1))
+    for dim in dims:
+        digits = dim
+        power = 10
+        while power < dim:
+            digits += dim - power
+            power *= 10
+        cost += digits * (product // dim)
+    _refuse_key_bytes(cost, MAX_GRID_KEY_BYTES)
+    return dims
 
 
 def _chunk_count(length: int, chunk: int) -> int:
@@ -704,41 +767,11 @@ def _chunk_count(length: int, chunk: int) -> int:
 
 
 def _declared_keys(arr: Any) -> list[str]:
-    shape = tuple(int(dim) for dim in arr.shape)
-    chunks = tuple(int(dim) for dim in arr.chunks)
-    if len(chunks) != len(shape) or any(dim <= 0 for dim in chunks):
-        raise ValueError(
-            f"{arr.path} has chunks {chunks} for shape {shape}; "
-            "refusing the directory producer seal"
-        )
-    for length, chunk in zip(shape, chunks, strict=True):
-        if length < 0:
-            raise ValueError(
-                f"{arr.path} has shape {shape} and chunks {chunks}; "
-                "refusing the directory producer seal"
-            )
-        _chunk_count(length, chunk)
-    cdata = tuple(int(dim) for dim in arr.cdata_shape)
-    if any(dim < 0 for dim in cdata):
-        raise ValueError(f"{arr.path} declared a negative chunk grid {cdata}")
-    if cdata and any(dim == 0 for dim in cdata):
-        coords: list[tuple[int, ...]] = []
-    else:
-        product = 1
-        for dim in cdata:
-            if dim > MAX_DECLARED_CHUNKS:
-                raise ValueError(
-                    f"{arr.path} declares a chunk axis of {dim}; "
-                    f"seal cap is {MAX_DECLARED_CHUNKS}"
-                )
-            product *= dim
-            if product > MAX_DECLARED_CHUNKS:
-                raise ValueError(
-                    f"{arr.path} declares {product} chunks; "
-                    f"seal cap is {MAX_DECLARED_CHUNKS}"
-                )
-        coords = [()] if not cdata else list(itertools.product(*(range(dim) for dim in cdata)))
-    keys = [str(arr._chunk_key(coord)) for coord in coords]
+    dims = _bounded_grid(str(arr.path), arr.shape, arr.chunks)
+    if 0 in dims:
+        return []
+    keys = [str(arr._chunk_key(coord)) for coord in itertools.product(*(range(dim) for dim in dims))]
+    _refuse_key_bytes(_key_bytes(keys), MAX_GRID_KEY_BYTES)
     if len(keys) != len(set(keys)):
         raise ValueError(f"{arr.path} declared duplicate chunk keys")
     keys.sort()
@@ -767,9 +800,13 @@ def _refuse_store_key_count(count: int) -> None:
 
 def _store_keys(store: Any) -> list[str]:
     found: list[str] = []
+    key_bytes = 0
     for key in store:
-        found.append(key if isinstance(key, str) else str(key))
-        _refuse_store_key_count(len(found))
+        key = key if isinstance(key, str) else str(key)
+        key_bytes += _key_bytes([key])
+        _refuse_key_bytes(key_bytes, MAX_STORE_KEY_BYTES)
+        _refuse_store_key_count(len(found) + 1)
+        found.append(key)
     return found
 
 
@@ -838,9 +875,10 @@ def _stored_keys(name: str, value: Any) -> list[str]:
             f"directory producer seal stored keys for {name!r} are malformed; "
             "refusing fill decode"
         )
+    _refuse_key_bytes(_key_bytes(value), MAX_GRID_KEY_BYTES)
     if len(value) != len(set(value)):
         raise ValueError(
             f"directory producer seal stored keys for {name!r} repeat; "
             "refusing fill decode"
         )
-    return list(value)
+    return value
