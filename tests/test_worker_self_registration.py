@@ -555,7 +555,7 @@ def test_distinct_name_registrations_cannot_race_past_the_ip_quota(
 def test_a_busy_registration_does_not_create_an_account_or_spend_quota(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from contextlib import contextmanager
 
     from chess_anti_engine.server import auth as auth_mod
@@ -565,7 +565,7 @@ def test_a_busy_registration_does_not_create_an_account_or_spend_quota(
     fail_next = False
 
     @contextmanager
-    def lock_with_one_busy_result(path: str | Path) -> Iterator[None]:
+    def lock_with_one_busy_result(path: str | Path) -> Generator[None]:
         nonlocal fail_next
         if fail_next:
             fail_next = False
