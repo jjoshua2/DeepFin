@@ -191,12 +191,6 @@ def sidecar_name(source_name: str) -> str:
     raise ValueError(f"raw source shard has an unsupported name: {source_name!r}")
 
 
-def source_name_from_sidecar(name: str) -> str | None:
-    if not name.endswith(".bt4.zarr"):
-        return None
-    return name[: -len(".bt4.zarr")] + ".jsonl.zst"
-
-
 def sha_array(value: np.ndarray) -> str:
     return hashlib.sha256(np.ascontiguousarray(value).tobytes(order="C")).hexdigest()
 
