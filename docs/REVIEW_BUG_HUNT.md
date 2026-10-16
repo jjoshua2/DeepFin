@@ -6,6 +6,193 @@ training-quality bugs, runtime reliability bugs, efficiency/performance bugs,
 scalability bugs, security bugs, missing tests, and code structure that should
 be simplified before it becomes harder to reason about.
 
+## Account-state follow-through — 2026-10-16 (open)
+
+Owner: isolated account-state lane, branch
+`fix/account-state-integration-20261016`, integration base
+`3d133cc26e51d2cc62953e2f018bac82526867c7` (PR #1098 merge). Original candidate
+`b84eb2e56fa87810e34930f645a6ee9ac04495dc`, tree
+`5348151aeefcabd7454d80945395137be639972b`, remains preserved on source base
+`32370b099f6d8d4ec965de135e70a752fc95a7a9`. The integration candidate carries
+identical account production/test Git blobs and retains main's lint script.
+The V15 comparison below qualifies ten transaction cases on the original
+candidate's fixed source graph; it does not qualify current-main integration.
+Integration operator `01a13697-1896-7746-9f70-83f5e2d6a0db` owns all execution
+admissions and further qualification. The account source lane holds no CPU
+reservation and launches no competing validation.
+
+The parent recovered the historical Sol `remaining_helpers` technical evidence
+and supplied its exact mapping on 2026-10-16. Its source revision was
+`265adece34a6dbe8d4a32122fff4e5c65a5d84c0` (October 13). Those witnesses compiled
+unchanged AST bodies with in-memory facades under cloud Python 3.12. They used
+synthetic accounts and no actual server process; they are historical source
+witnesses, not current project integration results. The raw report/witness files
+are held by the parent and have not been inspected locally. The earlier local
+search of tracked docs and research tree
+`a99db80a6de3c89bdfac8d208ba8c2bc7060ad1e` did not recover their paths; that
+earlier missing-mapping status is superseded by this parent evidence.
+
+| Historical ID | Disposition | Next action / evidence needed |
+| --- | --- | --- |
+| H2 | Open; original candidate's transaction regressions pass | Historical rotation changed disabled from true to false. V15 observes disabled rotation and disable-during-hashing fail on baseline and pass on candidate, with enabled creation/explicit overrides preserved. HTTP and final integration qualification remain pending. |
+| H3 | Open; original candidate's transaction regressions pass | Historical migration injected a disable during the stats write and persisted disabled=false. V15 observes disable/rotation interleaves fail on baseline and pass on candidate. Existing crash-order suite and final integration qualification remain pending. |
+| H4 | Open; source candidate matches recovered claim | Historical pre-lock hash interleave persisted eight distinct accounts with limit five and charged eight. Candidate rechecks quota and charges only after persistence within the app transaction. Run distinct-name race plus default-off, same-name, failed-password and busy controls after admission. |
+| H5 | Open; original candidate's transaction regressions pass | V15 observes concurrent ban and unban lost updates fail on baseline and pass on candidate; the read-only auth reload control passes on both. Final integration and broader qualification remain pending. |
+| H8 | Open; supported compatibility decision required | Setters preserve boundary spaces while environment and password-file resolvers strip them. No credential normalization or existing credential is changed by this candidate. See compatibility choices below. |
+
+The recovered H2-H5 claims match the independent current-source investigation.
+The following files are byte-identical between historical revision and candidate
+base: `server/auth.py`, `server/manage_users.py`, `server/access.py`,
+`server/secrets.py` and `server/app.py`. `worker.py` changed only in unrelated
+label-suspension commentary and selfplay exception handling; the H8 resolver
+body did not change. Paths below are relative to `chess_anti_engine/`.
+
+Historical source: [H2 CLI](https://github.com/jjoshua2/DeepFin/blob/265adece34a6dbe8d4a32122fff4e5c65a5d84c0/chess_anti_engine/server/manage_users.py#L212),
+[H2 replacement](https://github.com/jjoshua2/DeepFin/blob/265adece34a6dbe8d4a32122fff4e5c65a5d84c0/chess_anti_engine/server/auth.py#L459),
+[H3 migration](https://github.com/jjoshua2/DeepFin/blob/265adece34a6dbe8d4a32122fff4e5c65a5d84c0/chess_anti_engine/server/auth.py#L239),
+[H3 startup caller](https://github.com/jjoshua2/DeepFin/blob/265adece34a6dbe8d4a32122fff4e5c65a5d84c0/chess_anti_engine/server/app.py#L2876),
+[H3 CLI caller](https://github.com/jjoshua2/DeepFin/blob/265adece34a6dbe8d4a32122fff4e5c65a5d84c0/chess_anti_engine/server/manage_users.py#L225),
+[H4 check/count](https://github.com/jjoshua2/DeepFin/blob/265adece34a6dbe8d4a32122fff4e5c65a5d84c0/chess_anti_engine/server/access.py#L228),
+[H4 registration](https://github.com/jjoshua2/DeepFin/blob/265adece34a6dbe8d4a32122fff4e5c65a5d84c0/chess_anti_engine/server/app.py#L3795),
+[H5 operator mutations](https://github.com/jjoshua2/DeepFin/blob/265adece34a6dbe8d4a32122fff4e5c65a5d84c0/chess_anti_engine/server/manage_users.py#L167).
+
+| Current boundary | Candidate / remaining work |
+| --- | --- |
+| `manage_users.main` set-password → `auth.upsert_user` replaced `disabled` with default `False` | Preserve state from the locked record; perform the CLI's update-only existence check under the same lock. |
+| `auth.migrate_user_stats`, called by app startup and CLI list, rewrote a credential snapshot without the users lock | Lock the read, stats-first durable write and credential strip together; preserve existing crash ordering and file mode. |
+| `app.create_app._register_new_user` checked quota before hashing and charged it after releasing `stats_write_lock` | Recheck, persist and charge inside the existing transaction; keep failed writes and same-name losers uncharged. |
+| CLI ban/unban loaded and replaced the entire ban list without a transaction | Take the existing file-lock helper on the ban-list path across load/mutate/save. |
+
+The related historical [PR #361](https://github.com/jjoshua2/DeepFin/pull/361)
+is already merged as `2d77d03c311fdc64170e8bf444c7ae1331fd327b`; it added
+credential writer locking and migration mode preservation. Its actual diff does
+not lock the migration or change password-rotation state preservation. It is
+related evidence, not closure of this lane. The open-PR title search for auth,
+registration, bans and password found no duplicate on 2026-10-16; this does not
+establish an exhaustive historical report search.
+
+Prepared regressions in `tests/test_account_state_transactions.py` force an
+operator to finish before a stale baseline write, or announce actual contention
+on the candidate lock. They cover password state, a disable or deletion during
+hashing, migration versus disable/rotation, and concurrent ban/ban or unban/ban.
+`tests/test_worker_self_registration.py` adds HTTP revocation checks with both
+registration flag values and a six-name synchronized quota race (the same
+five-account invariant as the historical eight-name facade witness, not a
+claimed replay of it). Additional controls preserve quota after a busy result
+and allow auth to reload bans while the operator writer lock is held. Existing
+tests retain default-off, same-name and failed-password controls. These are
+fourteen prepared account cases: ten transaction cases now measured in V15 and
+four HTTP cases still unrun. Existing password, cache, migration, file-lock and
+registration suites, plus whole-repository lint, also remain unrun at this
+handoff. The integration operator is continuing those gates separately.
+
+An independent Sol boundary investigation and a separate fresh Sol candidate
+review completed without executing project code. The candidate review reported
+no concrete surviving defect within the four changed boundaries; quota review
+retains the documented single-process limitation. Those reviews were source
+only; the subsequent measured result is described separately below. No Grok
+review is claimed.
+The same independent Sol reviewer inspected the source-only reconciliation
+successor and its two added controls, reporting no concrete mapping or test
+design mistake. The ban-reader control calls `AccessGuard` directly, and the
+busy-registration control injects a synthetic lock failure. V15 subsequently
+executed the reader control; the HTTP busy control remains unrun.
+
+### V15 transaction comparison and integration boundary
+
+The integration operator's sealed V15 handoff records the same ten literal
+`tests/test_account_state_transactions.py` IDs on both source profiles: baseline
+**7 failed / 3 passed**, candidate **10 passed**, with all thirty
+setup/call/teardown reports per profile and no skips or xfails. Baseline pytest
+exit 1 is an observed failure, not a product pass or preapproved expected-failure
+result. The outer's successful receipt records completion of that observation.
+
+The seven baseline failures are disabled rotation, disable during hashing,
+deletion during hashing, migration versus disable, migration versus rotation,
+concurrent ban, and concurrent unban. Three controls pass on both: enabled
+rotation, create/explicit-state compatibility, and auth reloading bans while
+the writer lock is held. Thus H2/H3/H5 have focused measured coverage. **H4
+has no case in this ten-case result**; its distinct-name quota race, busy
+registration control and two HTTP revocation cases remain unrun.
+
+The literal test has 8,703 bytes, SHA-256
+`c2da100c8e4a127968710527b0b3e277b5eaced0e51ac369a24a881fe28ee29f`.
+Common packet SHA-256:
+`667b9ec11e0a4979013c9f22fe933ea203589057703f29813a1f3c0a6addf299`.
+Data packet SHA-256:
+`9134557ebca2347167491ece80b678bfc8a711d97e0e1fe36c6711d0c08767c7`.
+The source lane independently matched all 39 source-map Git blobs and modes to
+the preserved candidate and rehashed all 28 embedded UTF-8 raw texts. An
+independent Sol saved-result review found no contradiction in the paired test
+IDs, source pins or results. Full off-C receipts remain owned by the integration
+operator; no frozen evidence was edited or re-executed here.
+
+The compact operator handoff JSON has SHA-256
+`b6853504c0e129857f99fee4e62d6304c4186ea27e4c736fcfc33714898c02a2`;
+raw capture SHA-256:
+`f040fbc76d65be6bf4037030329a454fa5bb59aeddb04ca4958331fdd7d810c0`;
+accepted independent result-review report SHA-256:
+`d39f9f2d870628336dbfcebb6e324cbf6d0e627f688216b5b5f694e818b5bff9`;
+review seal SHA-256:
+`0a22b087b31f14eef1a8b8042afb535e30c50b0184e124b76cab60d6df001ae9`.
+All 24 inert custody/provenance control groups passed; these are distinct from
+the ten product transaction cases. Failed V13/V14 windows remain excluded.
+Sampled aggregate CPU/RSS accounting and inherited per-process hard address
+space are separate claims. V15 provides no future execution admission.
+
+Main advanced through PR #1098, which removes an always-true conditional around
+`scripts/lint.sh`'s final `run_group` call and removes two unrelated unused
+helpers. This integration candidate inherits that exact lint script and main
+content. Production/test equality for the account change does not turn the
+earlier fixed-39-file result into whole-main validation; the remaining HTTP,
+broader tests, lint and final-source review must bind the integration source.
+
+### H8 compatibility boundary (decision pending)
+
+Historical [CLI setters](https://github.com/jjoshua2/DeepFin/blob/265adece34a6dbe8d4a32122fff4e5c65a5d84c0/chess_anti_engine/server/manage_users.py#L35)
+and [new-password validation](https://github.com/jjoshua2/DeepFin/blob/265adece34a6dbe8d4a32122fff4e5c65a5d84c0/chess_anti_engine/server/auth.py#L103)
+accept nonempty credentials with boundary spaces without rewriting the bytes.
+The [server environment resolver](https://github.com/jjoshua2/DeepFin/blob/265adece34a6dbe8d4a32122fff4e5c65a5d84c0/chess_anti_engine/server/secrets.py#L122)
+strips them; `_read_secret_file` strips file framing, and the
+[worker password-file resolver](https://github.com/jjoshua2/DeepFin/blob/265adece34a6dbe8d4a32122fff4e5c65a5d84c0/chess_anti_engine/worker.py#L578)
+uses the stripped first line. Worker explicit CLI/config values remain raw.
+The historical synthetic witness reported setting/resolution lengths eleven
+versus nine and recorded no credential value. This candidate leaves all those
+behaviors intact; trimming an existing credential would select different hash
+input and cannot be treated as a harmless cleanup.
+
+Two compatibility choices require an explicit supported contract:
+
+- Refuse boundary whitespace only when choosing a new credential, retain
+  byte-exact verification of existing credentials and existing file framing,
+  and require intentional rotation for an incompatible stored credential.
+  This narrows newly accepted setters, so it requires a compatibility decision.
+- Preserve boundary whitespace as supported credential data and introduce an
+  explicit byte-preserving resolution path with documented framing and opt-in
+  migration. Changing current `.strip()` or first-line behavior silently is
+  excluded; this is a broader resolver/client compatibility change.
+
+Neither choice is adopted. No H8 fix or closure is claimed, and no live
+credential, secret file or account has been read or modified.
+
+The next execution step needs a source-bound reviewed profile and fresh admission
+from that integration operator, with authenticated environment/import/native/startup
+provenance and owned off-C output/temp paths. Proposed ceilings are 90 seconds wall,
+60 seconds CPU, 4 GiB hard address space, at most two numerical threads, hidden GPU,
+low priority and affinity excluding CPU 31. Aggregate RSS is a separate ceiling;
+sampled RSS does not establish a hard address-space cap. The original coordination
+guard and recovery IO lease are untouched. No test/install/build/environment copy,
+hosted run, live account/configuration/service change or deployment is part of this
+source-only result.
+
+Two adjacent source observations remain open for follow-through rather than
+silently expanding this candidate: `tune/harness.py` checks existence before
+first-time `upsert_user`, so concurrent creation can still overwrite a rotated
+password; `access.BanList.save` does not specify a restrictive creation mode.
+They are separate from the recovered H8 whitespace claim and are not assigned
+an invented historical ID. Review their compatibility/operational boundary
+before a separate correction.
+
 Current strategy: review by component and contract boundary, not only by commit.
 Commit-level review is still useful for newly landed changes, but the long-term
 pass should ask whether each subsystem is correct, minimal, observable, and easy

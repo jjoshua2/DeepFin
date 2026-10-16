@@ -249,6 +249,13 @@ def migrate_user_stats(users_path: str | Path, stats_path: str | Path) -> int:
     between the two leaves the counters in both places, which the next load
     resolves in favour of the stats file; the reverse order could lose them.
     """
+    # Migration rewrites credentials too. Keep its snapshot and both writes in
+    # the same transaction as admin changes and first-connect registration.
+    with users_db_lock(users_path):
+        return _migrate_user_stats_locked(users_path, stats_path)
+
+
+def _migrate_user_stats_locked(users_path: str | Path, stats_path: str | Path) -> int:
     users_p, stats_p = Path(users_path), Path(stats_path)
     if stats_p.exists() or not users_p.exists():
         return 0
@@ -461,23 +468,31 @@ def upsert_user(
     *,
     username: str,
     password: str,
-    disabled: bool = False,
+    disabled: bool | None = None,
+    require_existing: bool = False,
 ) -> None:
     """Create or update (re-hash) a user's password.
 
     No longer has to carry counters across the rewrite: they live in the stats
     file and this function does not touch it, so a password change cannot zero
     a contributor's upload history by forgetting a field.
+
+    Omitted ``disabled`` preserves an existing account's state; a new account
+    starts enabled. ``require_existing`` makes password rotation update-only,
+    with the existence check covered by the same lock as the write.
     """
     salt_b64, hash_b64, iterations = hash_password(password)
     with users_db_lock(users_path):
         users = load_users(users_path)
+        existing = users.get(username)
+        if require_existing and existing is None:
+            raise ValueError(f"user {username!r} not found")
         users[username] = UserRecord(
             username=username,
             salt_b64=salt_b64,
             iterations=iterations,
             hash_b64=hash_b64,
-            disabled=bool(disabled),
+            disabled=(existing.disabled if existing else False) if disabled is None else bool(disabled),
         )
         save_users(users_path, users)
 

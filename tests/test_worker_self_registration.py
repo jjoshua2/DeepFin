@@ -116,6 +116,21 @@ def test_the_existing_credential_path_is_untouched_in_both_worlds(tmp_path: Path
         assert _ping(client, "known", "wrong").status_code == 401
 
 
+@pytest.mark.parametrize("self_register", [False, True])
+def test_password_rotation_keeps_a_revoked_worker_forbidden_on_http(
+    tmp_path: Path, self_register: bool,
+) -> None:
+    from chess_anti_engine.server.auth import set_disabled, upsert_user
+
+    _seed(tmp_path)
+    with _client(tmp_path, self_register=self_register) as client:
+        assert _ping(client, "known", "pw").status_code not in (401, 403)
+        set_disabled(tmp_path / "users.json", username="known", disabled=True)
+        upsert_user(tmp_path / "users.json", username="known", password="new-password")
+        assert _ping(client, "known", "new-password").status_code == 403
+        assert _ping(client, "known", "pw").status_code == 403
+
+
 # ---------------------------------------------------------------------------
 # Bans
 # ---------------------------------------------------------------------------
@@ -501,6 +516,73 @@ def test_a_ten_way_first_connect_race_authenticates_exactly_one_password(
     for pw in passwords:
         if pw != accepted[0]:
             assert not verify_password(pw, record)
+
+
+def test_distinct_name_registrations_cannot_race_past_the_ip_quota(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from chess_anti_engine.server import auth as auth_mod
+
+    _seed(tmp_path)
+    real_hash = auth_mod.hash_password
+    # Six distinct names all pass the early quota check before any can commit.
+    # Synchronize after hashing rather than relying on request timing.
+    hashed = threading.Barrier(6)
+
+    def synchronized_hash(password: str) -> tuple[str, str, int]:
+        material = real_hash(password)
+        hashed.wait(timeout=10)
+        return material
+
+    monkeypatch.setattr(auth_mod, "hash_password", synchronized_hash)
+    with _client(tmp_path, self_register=True) as client:
+        def attempt(index: int) -> int:
+            return _ping(client, f"synthetic-{index}", f"synthetic-password-{index}").status_code
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            results = list(pool.map(attempt, range(6)))
+
+    assert results.count(429) == 1, results
+    assert all(code not in (400, 401, 403, 503) for code in results), results
+    users = json.loads((tmp_path / "users.json").read_text(encoding="utf-8"))
+    assert len(users) == 6  # One pre-existing account plus exactly five registrations.
+    assert sum(name.startswith("synthetic-") for name in users) == 5
+
+
+def test_a_busy_registration_does_not_create_an_account_or_spend_quota(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from collections.abc import Iterator
+    from contextlib import contextmanager
+
+    from chess_anti_engine.server import auth as auth_mod
+
+    _seed(tmp_path)
+    real_lock = auth_mod.users_db_lock
+    fail_next = False
+
+    @contextmanager
+    def lock_with_one_busy_result(path: str | Path) -> Iterator[None]:
+        nonlocal fail_next
+        if fail_next:
+            fail_next = False
+            raise auth_mod.UsersDbBusy("synthetic operator contention")
+        with real_lock(path):
+            yield
+
+    monkeypatch.setattr(auth_mod, "users_db_lock", lock_with_one_busy_result)
+    with _client(tmp_path, self_register=True) as client:
+        fail_next = True
+        response = _ping(client, "synthetic-busy", "synthetic-password")
+        assert response.status_code == 503
+        assert response.headers["Retry-After"] == "5"
+        assert "synthetic-busy" not in json.loads((tmp_path / "users.json").read_text(encoding="utf-8"))
+        for index in range(5):
+            assert _ping(client, f"synthetic-{index}", "synthetic-password").status_code == 200
+        assert _ping(client, "synthetic-sixth", "synthetic-password").status_code == 429
 
 
 def test_the_loser_of_a_registration_race_can_still_get_in_with_the_right_password(

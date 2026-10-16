@@ -18,6 +18,7 @@ from .auth import (
     set_disabled,
     upsert_user,
     user_stats_path_for,
+    users_db_lock,
 )
 
 
@@ -167,19 +168,22 @@ def main() -> None:
     if args.cmd in ("ban", "unban"):
         if not args.username and not args.ip:
             raise SystemExit(f"{args.cmd}: give --username and/or --ip")
-        bans = BanList.load(bans_path)
-        for value, bucket in ((args.username, bans.usernames), (args.ip, bans.ips)):
-            if not value:
-                continue
-            key = str(value)
-            if args.cmd == "ban":
-                bucket.add(key)
-                if getattr(args, "reason", ""):
-                    bans.notes[key] = str(args.reason)
-            else:
-                bucket.discard(key)
-                bans.notes.pop(key, None)
-        bans.save()
+        # Atomic replacement protects readers; the lock also protects one
+        # operator's update from another operator's older snapshot.
+        with users_db_lock(bans_path):
+            bans = BanList.load(bans_path)
+            for value, bucket in ((args.username, bans.usernames), (args.ip, bans.ips)):
+                if not value:
+                    continue
+                key = str(value)
+                if args.cmd == "ban":
+                    bucket.add(key)
+                    if getattr(args, "reason", ""):
+                        bans.notes[key] = str(args.reason)
+                else:
+                    bucket.discard(key)
+                    bans.notes.pop(key, None)
+            bans.save()
   # Print the resulting state, not "ok": the operator needs to see that the
   # ban landed on the identity they meant, and a bare success line is how a
   # typo'd username reads as a successful ban.
@@ -211,10 +215,10 @@ def main() -> None:
 
     if args.cmd == "set-password":
         pw = _resolve_password(args.password, args.password_env)
-        users = load_users(db)
-        if str(args.username) not in users:
-            raise SystemExit(f"user {args.username!r} not found")
-        upsert_user(db, username=str(args.username), password=pw)
+        try:
+            upsert_user(db, username=str(args.username), password=pw, require_existing=True)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
         print(f"Updated password for {args.username!r}")
         return
 
