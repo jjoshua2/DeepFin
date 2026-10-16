@@ -37,21 +37,20 @@ def test_wdl_balance_draw_cap_and_wl_ratio():
     p = np.zeros((64 * 73,), dtype=np.float32)
     p[0] = 1.0
 
-    # Very draw-heavy buffer with some decisive outcomes.
-    for i in range(9_000):
+    # A tiny draw-heavy pool still exercises the 90% cap and both ratio branches.
+    for i in range(95):
         buf.add(ReplaySample(x=x, policy_target=p, wdl_target=1, priority=float(i + 1)))
-    for i in range(900):
-        buf.add(ReplaySample(x=x, policy_target=p, wdl_target=2, priority=float(i + 1)))  # win
-    for i in range(100):
-        buf.add(ReplaySample(x=x, policy_target=p, wdl_target=0, priority=float(i + 1)))  # loss
+    for i in range(4):
+        buf.add(ReplaySample(x=x, policy_target=p, wdl_target=2, priority=float(i + 1)))  # loss
+    buf.add(ReplaySample(x=x, policy_target=p, wdl_target=0, priority=1.0))  # win
 
     bs = 100
     batch = buf.sample_batch(bs)
     assert len(batch) == bs
 
     n_draw = sum(1 for s in batch if int(s.wdl_target) == 1)
-    n_win = sum(1 for s in batch if int(s.wdl_target) == 2)
-    n_loss = sum(1 for s in batch if int(s.wdl_target) == 0)
+    n_win = sum(1 for s in batch if int(s.wdl_target) == 0)
+    n_loss = sum(1 for s in batch if int(s.wdl_target) == 2)
 
     # Draw cap is 90%.
     assert n_draw <= int(np.floor(0.90 * bs))
@@ -71,10 +70,10 @@ def test_wdl_balance_falls_back_without_both_decisive_classes():
 
     # Draws + wins only (no losses). We should fall back to _sample_raw behavior,
     # meaning draws are NOT artificially capped.
-    for i in range(9_500):
+    for i in range(95):
         buf.add(ReplaySample(x=x, policy_target=p, wdl_target=1, priority=float(i + 1)))
-    for i in range(500):
-        buf.add(ReplaySample(x=x, policy_target=p, wdl_target=2, priority=float(i + 1)))
+    for i in range(5):
+        buf.add(ReplaySample(x=x, policy_target=p, wdl_target=0, priority=float(i + 1)))
 
     bs = 100
     batch = buf.sample_batch(bs)

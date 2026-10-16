@@ -445,6 +445,11 @@ def _pucv_key(row: np.ndarray) -> _PucvKey:
 def _encoded_row_digest(row: np.ndarray) -> bytes:
     if not row.flags["C_CONTIGUOUS"]:
         row = np.ascontiguousarray(row, dtype=np.float32)
+    # PUCV owns these rows until get/put returns, before slot reuse or submit.
+    # Borrow plain arrays only: subclasses can customize tobytes semantics.
+    if type(row) is np.ndarray:
+        # NumPy's legacy type stubs omit its C buffer protocol.
+        return hashlib.blake2b(row, digest_size=16).digest()  # pyright: ignore[reportArgumentType]
     return hashlib.blake2b(row.tobytes(order="C"), digest_size=16).digest()
 
 
