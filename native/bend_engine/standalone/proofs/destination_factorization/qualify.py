@@ -64,7 +64,7 @@ def main() -> None:
 
         before = identities()
         report["source_sha256s"] = before
-        inherited_path = ENGINE.parents[1] / "docs/experiments/evidence/bend-king-away/source.json"
+        inherited_path = ENGINE.parents[1] / "docs/experiments/evidence/bend-king-away-pr994-v1/source.json"
         inherited = json.loads(inherited_path.read_text())["source_sha256s"]
         report["inherited_receipt_sha256"] = hashlib.sha256(inherited_path.read_bytes()).hexdigest()
         report["inherited_inputs"] = len(inherited)

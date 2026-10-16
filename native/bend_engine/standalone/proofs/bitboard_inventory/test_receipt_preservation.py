@@ -44,6 +44,7 @@ class ReceiptPreservationTests(unittest.TestCase):
         raw = receipt if isinstance(receipt, str) else json.dumps(receipt)
 
         def child(command, **kwargs):
+            self.assertEqual(command[:3], [sys.executable, "-S", "-m"])
             target = Path(command[-1])
             self.assertTrue(target.is_absolute())
             self.assertEqual(command[-2], "--report")
@@ -70,7 +71,7 @@ class ReceiptPreservationTests(unittest.TestCase):
             if mode == "missing":
                 source = "import sys; sys.exit(0)"
             return self.real_run(
-                [sys.executable, "-c", source, str(target), raw, str(code)],
+                [sys.executable, "-S", "-c", source, str(target), raw, str(code)],
                 cwd=kwargs["cwd"], capture_output=True, text=True,
                 timeout=0.5 if mode == "timeout" else 5, check=False,
             )
@@ -157,7 +158,7 @@ class ReceiptPreservationTests(unittest.TestCase):
             target = engine / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(b"fixture")
-        prior = self.repo / "docs/experiments/evidence/bend-king-away/source.json"
+        prior = self.repo / "docs/experiments/evidence/bend-king-away-pr994-v1/source.json"
         prior.parent.mkdir(parents=True)
         prior.write_text(json.dumps({"source_sha256s": {
             name: hashlib.sha256(b"fixture").hexdigest() for name in names
