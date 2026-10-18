@@ -51,7 +51,7 @@ def _safe_int(v: object, default: int = 0) -> int:
         return v
     try:
         return int(v) if isinstance(v, str | float) else default
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
