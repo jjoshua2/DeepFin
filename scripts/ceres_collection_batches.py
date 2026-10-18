@@ -142,6 +142,13 @@ def absolute_path(value: Any, name: str) -> Path:
     return path
 
 
+def require_completion_inside_output(output: Path, completion: Path, ident: str) -> None:
+    root = output.resolve()
+    receipt = completion.resolve()
+    require(receipt != root and root in receipt.parents,
+            f"{ident} expected completion is not inside the output directory")
+
+
 def shard_name(index: int) -> str:
     return f"shard_{index:06d}.zarr"
 
@@ -317,9 +324,7 @@ def validate_chunk(chunk: Any, index: int, state: Path, seen_ids: set[str],
                 f"{ident} output overlaps another chunk output")
     outputs.append(output)
     if completion is not None:
-        require(completion != output and (completion.parent == output
-                                          or output in completion.parents),
-                f"{ident} expected completion is not inside the output directory")
+        require_completion_inside_output(output, completion, ident)
     end = start + width
     for other_start, other_end in ranges:
         require(end <= other_start or other_end <= start,
@@ -483,8 +488,9 @@ def validate_completion(chunk: dict[str, Any], started_unix: float,
         path = discover_ceres_completion(chunk["output_directory"], chunk["id"])
     else:
         path = chunk["expected_completion"]
-        require(path.is_file(), f"{chunk['id']} expected completion is missing")
         require(not path.is_symlink(), f"{chunk['id']} completion receipt is a symlink")
+        require_completion_inside_output(chunk["output_directory"], path, chunk["id"])
+        require(path.is_file(), f"{chunk['id']} expected completion is missing")
     receipt = load_json(path)
     require(isinstance(receipt, dict), f"{chunk['id']} completion is not an object")
     validate_completion_body(chunk, receipt)
