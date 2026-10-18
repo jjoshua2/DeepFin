@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 _spec = importlib.util.spec_from_file_location(
     "loop_health", Path(__file__).resolve().parents[1] / "scripts" / "loop_health.py"
 )
@@ -26,6 +28,59 @@ HEALTHY = {
     "wdl_regret": 0.0447,
     "time_this_iter_s": 2400.0,
 }
+
+
+@pytest.mark.parametrize(("body", "expected"), [
+    ("opening_fen_dole_per_iter: 0\nopening_fen_prob: 0\n", (0, 0.0)),
+    ("opening_fen_prob: 0.25\nselfplay:\n  opening_fen_dole_per_iter: 0\n", (0, 0.25)),
+    ("opening_fen_dole_per_iter: 0\nselfplay:\n  opening_fen_prob: 0.25\n", (0, 0.25)),
+    ("opening_fen_dole_per_iter: 4\nselfplay:\n  opening_fen_dole_per_iter: 0\n  opening_fen_prob: 0\n", (0, 0.0)),
+    ("selfplay:\n  opening_fen_dole_per_iter: 0\n", (None, None)),
+    ("opening_fen_prob: 0\n", (None, None)),
+    ("opening_fen_dole_per_iter: 0.5\nopening_fen_prob: 0\n", (None, None)),
+    ("opening_fen_dole_per_iter: false\nopening_fen_prob: 0\n", (None, None)),
+    ("opening_fen_dole_per_iter: 0\nopening_fen_prob: false\n", (None, None)),
+    ("opening_fen_dole_per_iter: .inf\nopening_fen_prob: 0\n", (None, None)),
+    ("opening_fen_dole_per_iter: 0\nopening_fen_prob: .nan\n", (None, None)),
+    ("opening_fen_dole_per_iter: -1\nopening_fen_prob: 0\n", (None, None)),
+    ("opening_fen_dole_per_iter: 0\nopening_fen_prob: 2\n", (None, None)),
+    ("opening_fen_dole_per_iter: 0\nopening_fen_prob: 0\nselfplay: []\n", (None, None)),
+    ("[", (None, None)),
+    ("{}", (None, None)),
+    ("[]", (None, None)),
+    ("opening_fen_dole_per_iter: 0\nopening_fen_prob: null\n", (None, None)),
+    ("opening_fen_dole_per_iter: 0\nopening_fen_prob: invalid\n", (None, None)),
+], ids=["flat-zero", "root-prob", "nested-prob", "nested-override", "missing-prob", "missing-dole",
+        "fractional", "bool-dole", "bool-prob", "infinite", "nan", "negative", "prob-range",
+        "bad-section", "bad-yaml", "empty", "bad-root", "null", "nonnumeric"])
+def test_live_fen_dose_uses_canonical_config(tmp_path: Path, body: str, expected: tuple) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(body)
+    assert loop_health._live_fen_dose(path) == expected
+
+
+@pytest.mark.parametrize(("probability", "disabled"), [("0.25", False), ("0", True), (".nan", False), ("null", False)],
+                         ids=["enabled", "disabled", "invalid", "missing"])
+def test_live_fen_dose_controls_alert_suppression(tmp_path: Path, monkeypatch, capsys, probability: str, disabled: bool) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text("opening_fen_prob: " + probability
+                      + "\nselfplay:\n  opening_fen_dole_per_iter: 0\n")
+    result = tmp_path / "result.json"
+    rows = [{**HEALTHY, "outcome_stats": "opening_fenlist_games=1|selfplay_fenlist_games=1"}]
+    rows.extend({**HEALTHY, "outcome_stats": "opening_fenlist_games=0|selfplay_fenlist_games=0"} for _ in range(3))
+    result.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    monkeypatch.setattr(loop_health.sys, "argv", ["loop_health", "--result-json", str(result),
+                        "--live-config", str(config), "--ratchet-attempts", str(tmp_path / "absent.csv")])
+    with pytest.raises(SystemExit) as exit_info:
+        loop_health.main()
+    assert exit_info.value.code == (0 if disabled else 1)
+    output = capsys.readouterr().out
+    assert ("SUPPRESSED:" in output) == disabled
+    assert ("ALERTS PRESENT" in output) != disabled
+
+
+def test_live_fen_dose_missing_file_is_unknown(tmp_path: Path) -> None:
+    assert loop_health._live_fen_dose(tmp_path / "absent.yaml") == (None, None)
 
 
 def _check(row: dict, prev: dict | None = None, *, fen_total: bool = False,
