@@ -24,7 +24,7 @@ def _feed(monkeypatch: pytest.MonkeyPatch, live: Path, boot: Path, holdout: Path
 
 
 @pytest.mark.parametrize("cadence", [0, 40], ids=["disabled", "enabled"])
-@pytest.mark.parametrize("trial,membership", [
+@pytest.mark.parametrize(("trial", "membership"), [
     pytest.param(feed._LEGACY_PRETAG_TRIAL, "bare", id="legacy-bare"),
     pytest.param(feed._LEGACY_PRETAG_TRIAL, "tagged", id="legacy-tagged"),
     pytest.param("train_trial_other", "tagged", id="other-tagged"),
