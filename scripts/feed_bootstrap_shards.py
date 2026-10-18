@@ -189,9 +189,13 @@ def main() -> int:
     boot_max = max(boot_idxs) if boot_idxs else -1
     holdout_names = {p.name for p in holdout_dir.glob("shard_*.zarr")}
     holdout_every_n = max(0, int(args.holdout_every_n))
+    bare_compat = live_dir.parent.name == _LEGACY_PRETAG_TRIAL
 
     def _dst_name(src: Path) -> str:
         return f"{src.stem}.{tag}.zarr"
+
+    def _in_boot_pool(src: Path) -> bool:
+        return _dst_name(src) in boot_names or (bare_compat and src.name in boot_names)
 
     def _is_holdout(src: Path) -> bool:
         # Deterministic on the SOURCE index so the split is stable regardless
@@ -201,7 +205,7 @@ def main() -> int:
         # longer serve as held-out eval data no matter what its index is.
         if holdout_every_n <= 0:
             return False
-        if _dst_name(src) in boot_names:
+        if _in_boot_pool(src):
             return False
         return _idx(src) % holdout_every_n == 0
 
@@ -212,12 +216,10 @@ def main() -> int:
     # collision (fresh trials restart at shard_000000) must NOT mask the new
     # trial's shard, whose tagged destination is distinct. The holdout pool is
     # new (post-tagging), so it has no legacy bare-name history to match.
-    bare_compat = live_dir.parent.name == _LEGACY_PRETAG_TRIAL
-
     def _already_fed(src: Path) -> bool:
         if _is_holdout(src):
             return _dst_name(src) in holdout_names
-        return _dst_name(src) in boot_names or (bare_compat and src.name in boot_names)
+        return _in_boot_pool(src)
 
     # Prefer strictly newer-than-boot-max; also any name not present (safety).
     # boot_max only rate-limits the training-pool watermark — holdout shards
