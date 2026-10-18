@@ -385,7 +385,7 @@ def _live_fen_dose(path: Path) -> tuple[int | None, float | None]:
     # values must be explicit evidence before a zero dose can silence alerts.
     dole = config.get("opening_fen_dole_per_iter")
     prob = config.get("opening_fen_prob")
-    if isinstance(dole, bool) or isinstance(prob, bool):
+    if dole is None or prob is None or isinstance(dole, bool) or isinstance(prob, bool):
         return (None, None)
     try:
         dose, probability = float(dole), float(prob)
