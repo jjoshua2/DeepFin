@@ -37,9 +37,9 @@ def test_explicit_runs_resolve_appended_pair_ids() -> None:
     assert [[g.order for g in p.games] for p in pairs[("A", "B")]] == [[1, 2], [0, 3]]
 
 
-@pytest.mark.parametrize("count", (3, 4))
+@pytest.mark.parametrize("count", [3, 4])
 def test_untagged_appended_collision_refused(count: int) -> None:
-    with pytest.raises(SystemExit, match="one.pgn.*PairId='0'"):
+    with pytest.raises(SystemExit, match=r"one.pgn.*PairId='0'"):
         group_pairs([game(i, reverse=bool(i % 2)) for i in range(count)])
 
 
@@ -48,19 +48,19 @@ def test_duplicate_orientation_refused() -> None:
         group_pairs([game(0), game(1)])
 
 
-@pytest.mark.parametrize("half", ("0", "2", "bad"))
+@pytest.mark.parametrize("half", ["0", "2", "bad"])
 def test_repeated_or_invalid_half_refused(half: str) -> None:
     with pytest.raises(SystemExit, match="ambiguous pair"):
         group_pairs([game(0, half="0"), game(1, half=half, reverse=True)])
 
 
-@pytest.mark.parametrize("runs", ((None, "known"), ("known", None)))
+@pytest.mark.parametrize("runs", [(None, "known"), ("known", None)])
 def test_partial_run_identity_refused(runs: tuple[str | None, str | None]) -> None:
     with pytest.raises(SystemExit, match="mixes known and missing RunId"):
         group_pairs([game(0, run=runs[0]), game(1, run=runs[1], reverse=True)])
 
 
-@pytest.mark.parametrize("count", (1, 2))
+@pytest.mark.parametrize("count", [1, 2])
 def test_legacy_pair_without_optional_metadata(count: int) -> None:
     pairs, singles = group_pairs([game(i, reverse=bool(i)) for i in range(count)])
     assert singles == 0
@@ -103,7 +103,7 @@ def test_reader_blank_identity_is_unknown(tmp_path: Path) -> None:
     assert row.pair_half is None
 
 
-@pytest.mark.parametrize("tagged", (False, True))
+@pytest.mark.parametrize("tagged", [False, True])
 def test_appended_pgn_requires_resolving_metadata(tmp_path: Path, tagged: bool) -> None:
     path = tmp_path / "appended.pgn"
     path.write_text("".join(pgn(reverse=bool(i % 2), run=str(i // 2) if tagged else None)
