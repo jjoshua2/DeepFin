@@ -106,6 +106,8 @@ class Game:
     # (an operator holding six PGNs cannot act on "they disagree").
     eval_hoist: str | None = None
     source: str = "?"
+    run_id: str | None = None  # Explicit PGN RunId, never inferred from date/order.
+    pair_half: str | None = None
 
 
 @dataclass
@@ -165,6 +167,8 @@ def read_games(paths: list[Path]) -> list[Game]:
                     order=order,
                     eval_hoist=hoist or None,
                     source=str(path),
+                    run_id=h.get("RunId", "").strip() or None,
+                    pair_half=h.get("PairHalf", "").strip() or None,
                 ))
                 order += 1
     return games
@@ -257,20 +261,43 @@ def check_hoist_consistency(
 
 
 def group_pairs(games: list[Game]) -> tuple[dict[tuple[str, str], list[Pair]], int]:
-    """Group into pairs keyed by (matchup, PairId). Returns (pairs by matchup,
+    """Group by (source, explicit RunId, matchup, PairId). Returns (pairs by matchup,
     n_unpaired). A game with no PairId becomes its own singleton block, so a
     mixed file degrades to a game-level bootstrap for those rows instead of
-    silently grouping unrelated games."""
-    buckets: dict[tuple[tuple[str, str], str], Pair] = {}
+    silently grouping unrelated games. One untagged input is assumed to contain
+    one run; detectable appended-run collisions are refused, never split by
+    completion order. Verified RunId tags can distinguish runs in one file.
+    """
+    buckets: dict[tuple[str, str | None, tuple[str, str], str], Pair] = {}
+    runs: dict[tuple[str, tuple[str, str], str], set[str | None]] = defaultdict(set)
     singles: list[Pair] = []
     for g in games:
         matchup = matchup_key(g.white, g.black)
         if g.pair_id is None:
             singles.append(Pair(matchup=matchup, games=[g]))
             continue
-        buckets.setdefault((matchup, g.pair_id), Pair(matchup=matchup)).games.append(g)
+        scope = (g.source, matchup, g.pair_id)
+        runs[scope].add(g.run_id)
+        if None in runs[scope] and len(runs[scope]) > 1:
+            raise SystemExit(
+                f"ambiguous pair in {g.source}: {matchup} PairId={g.pair_id!r} "
+                "mixes known and missing RunId; use verified run metadata or separate run files"
+            )
+        key = (g.source, g.run_id, matchup, g.pair_id)
+        buckets.setdefault(key, Pair(matchup=matchup)).games.append(g)
     by_matchup: dict[tuple[str, str], list[Pair]] = defaultdict(list)
-    for (matchup, _pid), pair in buckets.items():
+    for (source, run_id, matchup, pid), pair in buckets.items():
+        halves = [g.pair_half for g in pair.games if g.pair_half is not None]
+        if (len(pair.games) > 2 or any(half not in {"0", "1"} for half in halves)
+                or len(set(halves)) != len(halves)
+                or (len(pair.games) == 2 and
+                    (pair.games[0].white, pair.games[0].black) !=
+                    (pair.games[1].black, pair.games[1].white))):
+            raise SystemExit(
+                f"ambiguous pair in {source}: {matchup} PairId={pid!r} RunId={run_id!r}; "
+                "expected at most two color-swapped games with distinct PairHalf values. "
+                "Duplicate/appended runs need verified RunId metadata or separate run files."
+            )
         by_matchup[matchup].append(pair)
     for p in singles:
         by_matchup[p.matchup].append(p)
