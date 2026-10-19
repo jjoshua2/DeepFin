@@ -18,6 +18,8 @@ as in production), so the third entry is the outcome's weight alone.
 """
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 import torch
@@ -546,7 +548,7 @@ def _terminal_effect_result(batch, monkeypatch, **knobs):
             targets.append(target.detach().clone())
         return real_ce(logits, target)
 
-    options = {
+    options: dict[str, Any] = {
         "sf_wdl_frac": 0.75, "search_wdl_frac": 0.25,
         "w_policy": 0.0, "w_sf_move": 0.0, "w_sf_eval": 0.0,
         "w_categorical": 0.0, "w_volatility": 0.0, "w_moves_left": 0.0,
