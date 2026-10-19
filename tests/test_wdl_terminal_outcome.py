@@ -526,3 +526,115 @@ def test_enabled_without_the_ply_cap_raises() -> None:
         terminal_outcome_transfer_taper(
             _batch(1), plies=PLIES, full_plies=FULL_PLIES, max_plies=0.0,
         )
+
+
+# Effective transfer telemetry is distinct from the requested taper weights.
+def _terminal_effect_result(batch, monkeypatch, **knobs):
+    """Observe the actual WDL target while preserving the real CE calculation."""
+    from chess_anti_engine.train import losses as losses_module
+
+    count = int(batch["x"].shape[0])
+    outputs = {
+        "policy": torch.zeros((count, 3)),
+        "wdl": _PROBE_LOGITS[0].repeat(count, 1),
+    }
+    targets = []
+    real_ce = losses_module.soft_cross_entropy
+
+    def observe_target(logits, target):
+        if logits is outputs["wdl"]:
+            targets.append(target.detach().clone())
+        return real_ce(logits, target)
+
+    options = {
+        "sf_wdl_frac": 0.75, "search_wdl_frac": 0.25,
+        "w_policy": 0.0, "w_sf_move": 0.0, "w_sf_eval": 0.0,
+        "w_categorical": 0.0, "w_volatility": 0.0, "w_moves_left": 0.0,
+        "moves_left_max_plies": float(MAX_PLIES),
+        "wdl_terminal_outcome_plies": PLIES,
+        "wdl_terminal_outcome_full_plies": FULL_PLIES,
+        "wdl_terminal_outcome_sf_frac": 0.5,
+    }
+    options.update(knobs)
+    with monkeypatch.context() as scoped:
+        scoped.setattr(losses_module, "soft_cross_entropy", observe_target)
+        result = compute_loss(outputs, batch, **options)
+    assert len(targets) == 1
+    return result, targets[0], outputs["wdl"]
+
+
+@pytest.mark.parametrize(
+    ("case", "weight", "sf_target"),
+    [("missing-sf", 0.25, 0.0), ("missing-search", 0.375, 0.375),
+     ("missing-both", 0.0, 0.0), ("zero-sf", 0.25, 0.0),
+     ("zero-search", 0.375, 0.375), ("zero-both", 0.0, 0.0)],
+    ids=["missing-sf", "missing-search", "missing-both", "zero-sf", "zero-search", "zero-both"],
+)
+def test_terminal_effect_excludes_outcome_fallbacks(monkeypatch, case, weight, sf_target):
+    batch = _batch(1)
+    for field, flag in (("sf_wdl", "has_sf_wdl"), ("search_wdl", "has_search_wdl")):
+        side = "sf" if field == "sf_wdl" else "search"
+        if case in ("missing-" + side, "missing-both"):
+            del batch[field]  # Keep a stale positive mask: column absence wins.
+        if case in ("zero-" + side, "zero-both"):
+            batch[flag].zero_()
+
+    result, target, logits = _terminal_effect_result(batch, monkeypatch)
+    expected = torch.tensor([[sf_target, 0.0, 1.0 - sf_target]])
+    assert torch.equal(target, expected)
+    assert torch.equal(result["wdl_ce"], soft_cross_entropy(logits, expected).mean())
+    assert float(result["wdl_terminal_outcome_weight_sum"]) == weight
+    assert float(result["wdl_terminal_outcome_rows"]) == float(weight > 0.0)
+
+
+def test_terminal_effect_mixed_rows_keeps_all_row_denominator(monkeypatch):
+    rows = [_batch(d) for d in (1, 1, 8, 1)]
+    batch = {key: torch.cat([row[key] for row in rows]) for key in rows[0]}
+    batch["has_sf_wdl"] = torch.tensor([1.0, 0.0, 1.0, 1.0])
+    batch["has_search_wdl"] = torch.tensor([0.0, 1.0, 1.0, 1.0])
+    batch["has_moves_left"] = torch.tensor([1.0, 1.0, 1.0, 0.0])
+
+    result, target, logits = _terminal_effect_result(batch, monkeypatch)
+    expected = torch.tensor([
+        [0.375, 0.0, 0.625], [0.0, 0.0, 1.0],
+        [0.75, 0.25, 0.0], [0.75, 0.25, 0.0],
+    ])
+    assert torch.equal(target, expected)
+    assert torch.equal(result["wdl_ce"], soft_cross_entropy(logits, expected).mean())
+    assert float(result["wdl_terminal_outcome_weight_sum"]) == 0.625
+    assert float(result["wdl_terminal_outcome_rows"]) == 2.0
+    # The consumer divides the numerator by every physical row, not eligible rows.
+    assert float(result["wdl_terminal_outcome_weight_sum"]) / len(rows) == 0.15625
+
+
+@pytest.mark.parametrize(
+    ("dampen", "weight", "loss_share"), [(0.5, 0.25, 0.25), (1.0, 0.0, 0.0)],
+    ids=["partial", "full"],
+)
+def test_terminal_effect_respects_sf_disagreement_dampening(monkeypatch, dampen, weight, loss_share):
+    batch = _batch(1, outcome=1)
+    batch["sf_wdl"] = torch.tensor([[0.0, 0.0, 1.0]])
+    batch["search_wdl"] = torch.tensor([[1.0, 0.0, 0.0]])
+    # Search still establishes disagreement, but its configured blend share is zero.
+    result, target, logits = _terminal_effect_result(
+        batch, monkeypatch, sf_wdl_frac=1.0, search_wdl_frac=0.0,
+        sf_search_dampen_sf_low=dampen,
+    )
+    expected = torch.tensor([[0.0, 1.0 - loss_share, loss_share]])
+    assert torch.equal(target, expected)
+    assert torch.equal(result["wdl_ce"], soft_cross_entropy(logits, expected).mean())
+    assert float(result["wdl_terminal_outcome_weight_sum"]) == weight
+    assert float(result["wdl_terminal_outcome_rows"]) == float(weight > 0.0)
+
+
+def test_terminal_effect_knob_off_preserves_target_and_zero_counters(monkeypatch):
+    batch = _batch(1)
+    batch["has_search_wdl"].zero_()
+    result, target, logits = _terminal_effect_result(
+        batch, monkeypatch, wdl_terminal_outcome_plies=0,
+    )
+    expected = _reference_untouched_blend(batch, sf_wdl_frac=0.75, search_wdl_frac=0.25)
+    assert torch.equal(target, expected)
+    assert torch.equal(result["wdl_ce"], soft_cross_entropy(logits, expected).mean())
+    assert float(result["wdl_terminal_outcome_weight_sum"]) == 0.0
+    assert float(result["wdl_terminal_outcome_rows"]) == 0.0
