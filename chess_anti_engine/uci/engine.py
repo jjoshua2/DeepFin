@@ -1041,8 +1041,8 @@ class Engine:
             had_pool = getattr(self._worker, "_pucv_pool", None) is not None
             self._options.use_multi_gpu_pucv = False
             self._worker.clear_multi_gpu_pucv()
-            # Expand primary back to all devices for the routing/walker path
-            # (rebuild_evaluator closes over use_multi_gpu_pucv → primary_only=False).
+            # Size the primary for the remaining path: RPG still needs only
+            # device 0; the routing/walker path uses all devices.
             if (
                 self._rebuild_evaluator is not None
                 and self._rebuild_multi_gpu_pucv_factories is not None
@@ -1158,11 +1158,19 @@ class Engine:
         if normalized not in ("pucv", "gumbel"):
             return
         if normalized == "gumbel":
-            if not self._try_install_root_parallel_gumbel():
+            if not self._try_install_root_parallel_gumbel(
+                rebuild_primary=self._options.search_parallel != "gumbel",
+            ):
                 return
             return
+        was_gumbel = self._options.search_parallel == "gumbel"
         self._options.search_parallel = "pucv"
         self._worker.clear_root_parallel_gumbel()
+        if (was_gumbel and not self._options.use_multi_gpu_pucv
+                and self._rebuild_evaluator is not None):
+            self._worker.set_evaluator(self._rebuild_evaluator(
+                self._options.max_batch, self._options.eval_cache_entries,
+            ))
         self._warmup_dirty = True
         _println("info string SearchParallel pucv")
         # Restore whichever non-RPG path is configured. install_root_parallel
@@ -1171,7 +1179,7 @@ class Engine:
         # single-thread classic Gumbel even with Threads>1 / UseVL / PUCV on.
         self._reinstall_configured_search_path(after_leaving_gumbel=True)
 
-    def _try_install_root_parallel_gumbel(self) -> bool:
+    def _try_install_root_parallel_gumbel(self, *, rebuild_primary: bool = False) -> bool:
         """Install the RPG pool from current MaxBatch/VLGather. On success
         sets ``search_parallel=gumbel`` and suppresses the PUCV auto-enable
         flag so later MaxBatch rebuilds reinstall Gumbel, not PUCV. Returns
@@ -1195,6 +1203,18 @@ class Engine:
                 "need at least two devices",
             )
             return False
+        if rebuild_primary and self._rebuild_evaluator is not None:
+            # Preflight factories first, then let the primary factory observe
+            # the intended topology, as in the multi-GPU PUCV transition.
+            previous = self._options.search_parallel
+            self._options.search_parallel = "gumbel"
+            try:
+                new_eval = self._rebuild_evaluator(
+                    self._options.max_batch, self._options.eval_cache_entries,
+                )
+            finally:
+                self._options.search_parallel = previous
+            self._worker.set_evaluator(new_eval)
         self._options.search_parallel = "gumbel"
         # search_parallel is the source of truth while Gumbel is selected:
         # _reinstall_configured_search_path prefers it over use_multi_gpu_pucv

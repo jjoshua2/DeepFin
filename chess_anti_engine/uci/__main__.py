@@ -1268,7 +1268,7 @@ def main() -> int:
                 if len(devices) > 1
                 else None
             )
-  # Primary stack: when the multi-GPU PUCV pool owns search, only device 0
+  # Primary stack: when the multi-GPU PUCV or RPG pool owns search, only device 0
   # is needed for root eval (and for the walker fallback after opt-out until
   # rebuild expands it). Avoid building MultiGPUDispatcher + pool factories
   # (≈2× per-device memory). rebuild_evaluator closes over startup_options so
@@ -1282,8 +1282,9 @@ def main() -> int:
                     eval_cache_entries,
                     n_walkers=n_walkers,
                     primary_only=bool(
-                        startup_options.use_multi_gpu_pucv
-                        and startup_options.search_parallel == "pucv"
+                        startup_options.search_parallel == "gumbel"
+                        or (startup_options.use_multi_gpu_pucv
+                            and startup_options.search_parallel == "pucv")
                     ),
                 )
 
