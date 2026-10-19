@@ -12,6 +12,7 @@ from tests.test_uci_topology_reuse import (
 
 
 def _fixture(*, enabled: bool = False, parallel: str = "pucv", devices: int = 2) -> tuple[Any, Any, list]:
+    worker: Any
     engine, worker, _models, messages, builds = engine_fixture(enabled, parallel, devices)
     options = engine._options
     options.use_vl = False
