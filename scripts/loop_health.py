@@ -87,12 +87,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics
 import sys
 import time
 from pathlib import Path
 
 from chess_anti_engine.tune.result_keys import row_counter, row_counter_opt
+from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults, load_yaml_file
 from scripts.trial_paths import latest_result_path
 
 
@@ -376,25 +378,23 @@ def _live_fen_dose(path: Path) -> tuple[int | None, float | None]:
     construction: worst case the auto-detect keeps deciding.
     """
     try:
-        import yaml
-        with path.open() as fh:
-            doc = yaml.safe_load(fh) or {}
+        config = flatten_run_config_defaults(load_yaml_file(path))
     except Exception:
         return (None, None)
-    if not isinstance(doc, dict):
+    # Use the same root/nested precedence as the training configuration. Both
+    # values must be explicit evidence before a zero dose can silence alerts.
+    dole = config.get("opening_fen_dole_per_iter")
+    prob = config.get("opening_fen_prob")
+    if dole is None or prob is None or isinstance(dole, bool) or isinstance(prob, bool):
         return (None, None)
-    # The knobs live under `selfplay:`, but tolerate a flat layout rather than
-    # assuming a shape that a config refactor could quietly change.
-    for section in (doc.get("selfplay"), doc):
-        if not isinstance(section, dict):
-            continue
-        if "opening_fen_dole_per_iter" in section:
-            try:
-                return (int(section["opening_fen_dole_per_iter"]),
-                        float(section.get("opening_fen_prob", 0.0)))
-            except (TypeError, ValueError):
-                return (None, None)
-    return (None, None)
+    try:
+        dose, probability = float(dole), float(prob)
+    except (TypeError, ValueError, OverflowError):
+        return (None, None)
+    if (not math.isfinite(dose) or dose < 0 or not dose.is_integer()
+            or not math.isfinite(probability) or not 0 <= probability <= 1):
+        return (None, None)
+    return (int(dose), probability)
 
 
 def ratchet_gap_alerts(path: Path) -> list[str]:
