@@ -3097,7 +3097,14 @@ def compute_loss(
   # 0.0 while the knob is off, so a non-zero value is the observation that the
   # config reached the trained target. Read it with its row count: the frac
   # alone cannot tell "knob off" from "no near-terminal rows".
-        terminal_outcome_flat = terminal_outcome_w.squeeze(1)
+        # Count only source mass that was not already the outcome fallback.
+        # Availability alone is insufficient when a label column is absent;
+        # the SF source additionally carries the existing disagreement keep.
+        terminal_outcome_flat = torch.zeros_like(sf_effective)
+        if sf_wdl_probs is not None:
+            terminal_outcome_flat += sf_outcome_w.squeeze(1) * sf_effective
+        if search_wdl_probs is not None:
+            terminal_outcome_flat += search_outcome_w.squeeze(1) * search_available
         terminal_outcome_weight_sum = terminal_outcome_flat.sum()
         terminal_outcome_rows = (terminal_outcome_flat > 0.0).to(torch.float32).sum()
     blended_wdl_ce = soft_cross_entropy(outputs["wdl"], target.detach())
