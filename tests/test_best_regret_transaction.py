@@ -7,7 +7,7 @@ import os
 import sys
 from collections.abc import Generator
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -32,17 +32,19 @@ class _Trainer:
             raise RuntimeError("fake save failure")
 
 
+def _manifest_module() -> ModuleType:
+    module = ModuleType("chess_anti_engine.tune.salvage")
+    module.__dict__["build_pool_manifest_dict"] = lambda **kwargs: kwargs
+    return module
+
+
 def _install_manifest_fake() -> None:
-    sys.modules["chess_anti_engine.tune.salvage"] = SimpleNamespace(
-        build_pool_manifest_dict=lambda **kwargs: kwargs,
-    )
+    sys.modules["chess_anti_engine.tune.salvage"] = _manifest_module()
 
 
 @pytest.fixture(autouse=True)
 def _fake_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "chess_anti_engine.tune.salvage", SimpleNamespace(
-        build_pool_manifest_dict=lambda **kwargs: kwargs,
-    ))
+    monkeypatch.setitem(sys.modules, "chess_anti_engine.tune.salvage", _manifest_module())
 
 
 def _save(root: Path, payload: str, regret: float = 0.1, **trainer_kwargs: Any) -> None:
@@ -61,7 +63,8 @@ def test_same_metric_step_iteration_allocates_distinct_checkpoint_slots(tmp_path
     _save(tmp_path, "trial-a")
     _save(tmp_path, "trial-b")
     entries = _index(tmp_path)
-    assert len(entries) == 2 and len({e["tag"] for e in entries}) == 2
+    assert len(entries) == 2
+    assert len({e["tag"] for e in entries}) == 2
     # train.sh salvage-export --iter selects this legacy suffix by glob.
     assert {p.name for p in tmp_path.glob("regret_*_iter2")} == {e["tag"] for e in entries}
     assert {(tmp_path / e["tag"] / "trainer.pt").read_text() for e in entries} == {"trial-a", "trial-b"}
@@ -193,14 +196,11 @@ def test_another_process_cannot_lock_directory_during_checkpoint_save(tmp_path: 
     try:
         assert entered.wait(10), "fake save did not reach its controlled hold"
         with (tmp_path / ".best_regret.lock").open("a+b") as contender:
-            acquired = False
             try:
                 with pytest.raises(BlockingIOError):
                     fcntl.flock(contender.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    acquired = True
             finally:
-                if acquired:
-                    fcntl.flock(contender.fileno(), fcntl.LOCK_UN)
+                fcntl.flock(contender.fileno(), fcntl.LOCK_UN)
     finally:
         release.set()
         child.join(timeout=10)

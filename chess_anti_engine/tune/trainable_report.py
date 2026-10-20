@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import shutil
+import sys
 import uuid
 import time
 import traceback
@@ -541,9 +542,7 @@ _BEST_REGRET_KEEP = 3  # Keep top-N checkpoints by lowest regret
 def _best_regret_transaction(directory: Path) -> Generator[None, None, None]:
     """Serialize every writer on a stable sidecar; never replace/unlink it."""
     with (directory / ".best_regret.lock").open("a+b") as lock:
-        try:
-            import fcntl
-        except ImportError:
+        if sys.platform == "win32":
             import msvcrt
 
             # The one-byte region may extend beyond EOF (msvcrt contract).
@@ -555,6 +554,8 @@ def _best_regret_transaction(directory: Path) -> Generator[None, None, None]:
                 lock.seek(0)
                 msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
         else:
+            import fcntl
+
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             try:
                 yield
