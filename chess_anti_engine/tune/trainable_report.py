@@ -10,9 +10,10 @@ import json
 import logging
 import math
 import shutil
+import uuid
 import time
 import traceback
-from collections.abc import Iterable
+from collections.abc import Callable, Generator, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -536,6 +537,34 @@ def _update_best_model(
 _BEST_REGRET_KEEP = 3  # Keep top-N checkpoints by lowest regret
 
 
+@contextlib.contextmanager
+def _best_regret_transaction(directory: Path) -> Generator[None, None, None]:
+    """Serialize every writer on a stable sidecar; never replace/unlink it."""
+    with (directory / ".best_regret.lock").open("a+b") as lock:
+        try:
+            import fcntl
+        except ImportError:
+            import msvcrt
+
+            locking: Callable[[int, int, int], None] = getattr(msvcrt, "locking")
+            lock_mode: int = getattr(msvcrt, "LK_LOCK")
+            unlock_mode: int = getattr(msvcrt, "LK_UNLCK")
+            # The one-byte region may extend beyond EOF (msvcrt contract).
+            lock.seek(0)
+            locking(lock.fileno(), lock_mode, 1)
+            try:
+                yield
+            finally:
+                lock.seek(0)
+                locking(lock.fileno(), unlock_mode, 1)
+        else:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
 def _update_best_regret_checkpoints(
     *,
     trainer,
@@ -545,7 +574,7 @@ def _update_best_regret_checkpoints(
     opp_strength_ema: float,
     best_loss: float,
 ) -> None:
-    """Save checkpoint if current regret is in the top-N lowest seen."""
+    """Save a unique top-N checkpoint under the shared-directory writer lock."""
     if pid is None:
         return
     regret = float(pid.wdl_regret)
@@ -556,103 +585,107 @@ def _update_best_regret_checkpoints(
 
     best_regret_dir.mkdir(parents=True, exist_ok=True)
 
-  # Read existing entries
-    index_path = best_regret_dir / "index.json"
-    entries: list[dict] = []
-    if index_path.exists():
+    with _best_regret_transaction(best_regret_dir):
+      # Read existing entries
+        index_path = best_regret_dir / "index.json"
+        entries: list[dict] = []
+        if index_path.exists():
+            try:
+                entries = json.loads(index_path.read_text(encoding="utf-8"))
+            except Exception:
+                entries = []
+
+      # Check if this regret qualifies
+        if len(entries) >= _BEST_REGRET_KEEP:
+            worst = max(entries, key=lambda e: e["regret"])
+            if regret >= worst["regret"]:
+                return  # Not in top-N
+
+      # Save checkpoint
+        tag = f"regret_{regret:.4f}_step{step}_{uuid.uuid4().hex}_iter{iteration_idx}"
+        slot_dir = best_regret_dir / tag
+        # Exclusive creation is the collision guarantee; retain normal mkdir
+        # permissions and the terminal iteration suffix used by train.sh.
+        slot_dir.mkdir()
         try:
-            entries = json.loads(index_path.read_text(encoding="utf-8"))
+            trainer.save(slot_dir / "trainer.pt")
+            pid_state = pid.state_dict()
+            atomic_write_text(
+                slot_dir / SIDECAR_PID_STATE,
+                json.dumps(pid_state, sort_keys=True, indent=2),
+            )
+            atomic_write_text(
+                slot_dir / "meta.json",
+                json.dumps({
+                    "regret": regret, "step": step, "iter": iteration_idx,
+                    "ema_winrate": ema_wr, "best_loss": best_loss,
+                    "opp_strength_ema": opp_strength_ema,
+                }, indent=2),
+            )
         except Exception:
-            entries = []
-
-  # Check if this regret qualifies
-    if len(entries) >= _BEST_REGRET_KEEP:
-        worst = max(entries, key=lambda e: e["regret"])
-        if regret >= worst["regret"]:
-            return  # Not in top-N
-
-  # Save checkpoint
-    tag = f"regret_{regret:.4f}_step{step}_iter{iteration_idx}"
-    slot_dir = best_regret_dir / tag
-    slot_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        trainer.save(slot_dir / "trainer.pt")
-        pid_state = pid.state_dict()
-        atomic_write_text(
-            slot_dir / SIDECAR_PID_STATE,
-            json.dumps(pid_state, sort_keys=True, indent=2),
-        )
-        atomic_write_text(
-            slot_dir / "meta.json",
-            json.dumps({
-                "regret": regret, "step": step, "iter": iteration_idx,
-                "ema_winrate": ema_wr, "best_loss": best_loss,
-                "opp_strength_ema": opp_strength_ema,
-            }, indent=2),
-        )
-    except Exception:
-        print(
-            f"[best_regret] WARN: failed to save checkpoint tag={tag} "
-            f"regret={regret:.4f} iter={iteration_idx}; skipping entry",
-            flush=True,
-        )
-        traceback.print_exc()
-        with contextlib.suppress(Exception):
-            shutil.rmtree(slot_dir, ignore_errors=True)
-        return
-
-    entries.append({
-        "regret": regret, "step": step, "iter": iteration_idx, "tag": tag,
-        "ema_winrate": ema_wr, "opp_strength_ema": opp_strength_ema,
-    })
-
-  # Prune to top-N (lowest regret)
-    entries.sort(key=lambda e: e["regret"])
-    evicted = entries[_BEST_REGRET_KEEP:]
-    entries = entries[:_BEST_REGRET_KEEP]
-
-    for ev in evicted:
-        ev_dir = best_regret_dir / ev["tag"]
-        if ev_dir.exists():
+            print(
+                f"[best_regret] WARN: failed to save checkpoint tag={tag} "
+                f"regret={regret:.4f} iter={iteration_idx}; skipping entry",
+                flush=True,
+            )
+            traceback.print_exc()
             with contextlib.suppress(Exception):
-                shutil.rmtree(ev_dir)
+                shutil.rmtree(slot_dir, ignore_errors=True)
+            return
 
-    atomic_write_text(index_path, json.dumps(entries, indent=2))
+        entries.append({
+            "regret": regret, "step": step, "iter": iteration_idx, "tag": tag,
+            "ema_winrate": ema_wr, "opp_strength_ema": opp_strength_ema,
+        })
 
-  # Also emit a salvage-pool-compatible manifest.json so this directory can be
-  # consumed directly by `train.sh salvage-restart` without further packaging.
-    try:
-        from chess_anti_engine.tune.salvage import build_pool_manifest_dict
-        manifest = build_pool_manifest_dict(
-            metric="wdl_regret",
-            label="auto_best_regret",
-            entries=[
-                {
-                    "slot": i,
-                    "metric": float(e["regret"]),
-                    "training_iteration": int(e["iter"]),
-                    "seed_dir": e["tag"],
-                    "copied_replay_shards": 0,
-                    "result_row": {
-                        "wdl_regret": float(e["regret"]),
-                        "pid_ema_winrate": float(e.get("ema_winrate", -1)),
-                        "opponent_strength": float(e.get("opp_strength_ema", -1)),
-                    },
-                }
-                for i, e in enumerate(entries)
-            ],
-        )
-        atomic_write_text(
-            best_regret_dir / "manifest.json",
-            json.dumps(manifest, indent=2, sort_keys=True),
-        )
-    except Exception:
-        print(
-            f"[best_regret] WARN: failed to emit manifest at "
-            f"{best_regret_dir}/manifest.json (index still updated)",
-            flush=True,
-        )
-        traceback.print_exc()
+      # Prune to top-N (lowest regret)
+        entries.sort(key=lambda e: e["regret"])
+        evicted = entries[_BEST_REGRET_KEEP:]
+        entries = entries[:_BEST_REGRET_KEEP]
+
+        atomic_write_text(index_path, json.dumps(entries, indent=2))
+
+        for ev in evicted:
+            ev_dir = best_regret_dir / ev["tag"]
+            if ev_dir.exists():
+                with contextlib.suppress(Exception):
+                    shutil.rmtree(ev_dir)
+
+
+      # Also emit a salvage-pool-compatible manifest.json so this directory can be
+      # consumed directly by `train.sh salvage-restart` without further packaging.
+        try:
+            from chess_anti_engine.tune.salvage import build_pool_manifest_dict
+            manifest = build_pool_manifest_dict(
+                metric="wdl_regret",
+                label="auto_best_regret",
+                entries=[
+                    {
+                        "slot": i,
+                        "metric": float(e["regret"]),
+                        "training_iteration": int(e["iter"]),
+                        "seed_dir": e["tag"],
+                        "copied_replay_shards": 0,
+                        "result_row": {
+                            "wdl_regret": float(e["regret"]),
+                            "pid_ema_winrate": float(e.get("ema_winrate", -1)),
+                            "opponent_strength": float(e.get("opp_strength_ema", -1)),
+                        },
+                    }
+                    for i, e in enumerate(entries)
+                ],
+            )
+            atomic_write_text(
+                best_regret_dir / "manifest.json",
+                json.dumps(manifest, indent=2, sort_keys=True),
+            )
+        except Exception:
+            print(
+                f"[best_regret] WARN: failed to emit manifest at "
+                f"{best_regret_dir}/manifest.json (index still updated)",
+                flush=True,
+            )
+            traceback.print_exc()
 
 
 _PID_REASON_CODES = {
