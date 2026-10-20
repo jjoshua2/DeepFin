@@ -555,7 +555,7 @@ def _best_regret_transaction(directory: Path) -> Generator[None, None, None]:
         except ImportError:
             import msvcrt
 
-            backend = cast(_WindowsFileLock, msvcrt)
+            backend = cast(_WindowsFileLock, cast(object, msvcrt))
             # The one-byte region may extend beyond EOF (msvcrt contract).
             lock.seek(0)
             backend.locking(lock.fileno(), backend.LK_LOCK, 1)
