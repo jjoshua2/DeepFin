@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from collections import deque
 from collections.abc import Sequence
@@ -123,6 +124,17 @@ def next_bucket(bucket: int) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _parse_arrival(pair: object) -> tuple[float, int] | None:
+    """Read one arrival without inventing a timestamp for invalid input."""
+    if not isinstance(pair, (list, tuple)) or len(pair) < 2:
+        return None
+    try:
+        timestamp, rows = float(pair[0]), int(pair[1])
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return (timestamp, rows) if math.isfinite(timestamp) and rows > 0 else None
+
+
 def load_trace(path: str) -> list[tuple[float, int]]:
     """Flatten JSONL arrival records into a sorted (t_arrival, rows) stream."""
     out: list[tuple[float, int]] = []
@@ -146,16 +158,16 @@ def load_trace(path: str) -> list[tuple[float, int]]:
                     file=sys.stderr,
                 )
                 continue
+            rejected = 0
             for pair in arrivals:
-                if not isinstance(pair, (list, tuple)) or len(pair) < 2:
-                    continue
-                try:
-                    t_arr = float(pair[0])
-                    rows = int(pair[1])
-                except (TypeError, ValueError):
-                    continue
-                if rows > 0:
-                    out.append((t_arr, rows))
+                parsed = _parse_arrival(pair)
+                if parsed is None:
+                    rejected += 1
+                else:
+                    out.append(parsed)
+            if rejected:
+                print(f"warning: skipped {rejected} malformed arrivals at {path}:{lineno}",
+                      file=sys.stderr)
     out.sort(key=lambda x: x[0])
     return out
 
@@ -451,10 +463,26 @@ class SimMetrics:
 
 def _to_ms_stream(arrivals: Sequence[tuple[float, int]]) -> list[tuple[float, int]]:
     """Convert absolute perf_counter seconds to ms relative to first arrival."""
-    if not arrivals:
-        return []
-    t0 = arrivals[0][0]
-    return [((t - t0) * 1000.0, rows) for t, rows in arrivals]
+    out: list[tuple[float, int]] = []
+    t0: float | None = None
+    rejected = 0
+    for pair in arrivals:
+        parsed = _parse_arrival(pair)
+        if parsed is None:
+            rejected += 1
+            continue
+        timestamp, rows = parsed
+        if t0 is None:
+            t0 = timestamp
+        relative_ms = (timestamp - t0) * 1000.0
+        if not math.isfinite(relative_ms):
+            rejected += 1
+            continue
+        out.append((relative_ms, rows))
+    if rejected:
+        print(f"warning: skipped {rejected} malformed arrivals converting to milliseconds",
+              file=sys.stderr)
+    return out
 
 
 def run_simulation(

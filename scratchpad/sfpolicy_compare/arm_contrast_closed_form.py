@@ -118,14 +118,21 @@ def arms_for_shard(path: Path, *, floor: float) -> dict[str, np.ndarray]:
     return out
 
 
+def _average_ranks(values: np.ndarray) -> np.ndarray:
+    """Zero-based ranks with each tied group assigned its average rank."""
+    _, inverse, counts = np.unique(values, return_inverse=True, return_counts=True)
+    ends = np.cumsum(counts)
+    return (ends - (counts + 1) / 2.0)[inverse]
+
+
 def _spearman(a: np.ndarray, b: np.ndarray) -> float:
     """Rank correlation, computed by hand so this file needs no scipy."""
     keep = np.isfinite(a) & np.isfinite(b)
     if keep.sum() < 100:
         return float("nan")
     a, b = a[keep], b[keep]
-    ra = np.argsort(np.argsort(a)).astype(np.float64)
-    rb = np.argsort(np.argsort(b)).astype(np.float64)
+    ra = _average_ranks(a)
+    rb = _average_ranks(b)
     ra -= ra.mean()
     rb -= rb.mean()
     d = float(np.sqrt((ra * ra).sum() * (rb * rb).sum()))
