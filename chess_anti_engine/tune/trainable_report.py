@@ -10,13 +10,12 @@ import json
 import logging
 import math
 import shutil
-import sys
 import uuid
 import time
 import traceback
 from collections.abc import Generator, Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 
 from chess_anti_engine.eval.era_probe import probe_metric_defaults
 from chess_anti_engine.tune._utils import (
@@ -538,24 +537,34 @@ def _update_best_model(
 _BEST_REGRET_KEEP = 3  # Keep top-N checkpoints by lowest regret
 
 
+class _WindowsFileLock(Protocol):
+    """Native msvcrt interface, absent from POSIX type stubs."""
+
+    LK_LOCK: int
+    LK_UNLCK: int
+
+    def locking(self, fd: int, mode: int, nbytes: int, /) -> None: ...
+
+
 @contextlib.contextmanager
 def _best_regret_transaction(directory: Path) -> Generator[None, None, None]:
     """Serialize every writer on a stable sidecar; never replace/unlink it."""
     with (directory / ".best_regret.lock").open("a+b") as lock:
-        if sys.platform == "win32":
+        try:
+            import fcntl
+        except ImportError:
             import msvcrt
 
+            backend = cast(_WindowsFileLock, msvcrt)
             # The one-byte region may extend beyond EOF (msvcrt contract).
             lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+            backend.locking(lock.fileno(), backend.LK_LOCK, 1)
             try:
                 yield
             finally:
                 lock.seek(0)
-                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+                backend.locking(lock.fileno(), backend.LK_UNLCK, 1)
         else:
-            import fcntl
-
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             try:
                 yield
