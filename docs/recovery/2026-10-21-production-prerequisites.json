@@ -1,6 +1,6 @@
 {
   "schema": "pr1110_production_prerequisites_v1",
-  "status": "FINITE_STARTUP_FAILED_CORRECTED_SOURCE_PREREQUISITES_IN_PROGRESS",
+  "status": "CORRECTED_FINITE_ATTEMPT_CLOSED_FAILED_ACTIVE_DEADLINE",
   "latest_code_commit": "42027482a7091ddbd2c8bc98e266b3ac3afbb744",
   "fresh_native_build_source": "e964def51baa2b10d6b99f0aaacab1b9165f95c0",
   "native_images": 5,
@@ -37,7 +37,11 @@
     "complete_output_hash_readback": true,
     "subject_imports": false,
     "source_review_sha256": "5a90068d8118b7d237bb3172fb17f2af60bac799eba4cc143e4fb419f4a2c99d",
-    "missing_transitive_modules": ["scripts.bt4_continuous_queue_v3", "scripts.bootstrap_operator_support", "scripts.canonical_queue_custody_v2"],
+    "missing_transitive_modules": [
+      "scripts.bt4_continuous_queue_v3",
+      "scripts.bootstrap_operator_support",
+      "scripts.canonical_queue_custody_v2"
+    ],
     "completion": "Distinct runtime-v2 with exact retained-donor dependencies under source review; original copy preserved"
   },
   "finite_protocol_controls": {
@@ -71,7 +75,7 @@
     "retained_failure": "Prior distinct v2 checker rejected normal dill /dev/null file-type inspection. Narrow independently reviewed v3 permits only the authenticated null character device; original failure and output namespace preserved.",
     "warning": "ORT import attempted sysfs device discovery and emitted a warning. No claim of zero implicit device-metadata queries or actual CUDA/provider qualification."
   },
-  "current_finite_gate": "Canonical420 moves repetition-mode setup before checkpoint recovery and evaluator startup. The distinct runtime-v3 copy passed complete readback. Three focused actual-caller CPU regressions, current static checks and a freshly reviewed finite successor remain required; the consumed failed attempt is preserved.",
+  "current_finite_gate": "Corrected runtime passed startup and reached pooled gameplay, then failed the unchanged 300-second active deadline. Physical closure independently accepted; inspect retained provider and durable writer/owner ACK evidence before deciding any distinct successor. No retry or limit increase inferred.",
   "runtime_copy_v3": {
     "composition": "Accepted609-payload runtime-v2 plus exactly canonical420 shared_teacher_owner.py; not whole current Git-tree equivalence",
     "payload_files": 609,
@@ -106,6 +110,27 @@
     "raw_stdout_sha256": "c2c7586924d2edb5d542fd613414ed1b9fbfa0040ee0caf7b7736e4f383b9b56",
     "independent_actual_review_sha256": "759473117eb6f6584a8bf1194aa5d35040ab767d3d7534a6d7eb852ccba7796a"
   },
+  "canonical420_startup_cpu": {
+    "passed": 3,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "initial_repetition_modes": [
+      null,
+      false,
+      true
+    ],
+    "runtime_closure_sha256": "1fce66e0409ca24449d0ea6c897f9a0a5457d35fc0982e6ee9ee87a137168f12",
+    "normal_conftest_preserved": true,
+    "actual_module_origin_and_hashes_before_and_after": 37,
+    "cuda_initialized": false,
+    "repetition_state_restored": true,
+    "native_pext_images_verified": true,
+    "raw_stdout_sha256": "1bd4170df350b3fb7a9dc6bb608ef9c392225abe1c556ef3a89928c9ae3d8b3d",
+    "independent_actual_review_sha256": "4a249ac70949aed3ab22b7146348a335b2c7456b2732e6fe237dcc7759f42e0e",
+    "retained_checker_failure": "Original checker ran the same three passing cases, then incorrectly rejected the unchanged fixture entry's deliberate sys.path prepend. Original wrapper remains FAILED with unreached postchecks. A distinct reviewed checker authenticates exactly those three owned fixture prefixes and unchanged suffix; all postchecks passed. Three unique cases, not six.",
+    "scope": "Real native repetition setter and evaluator constructor with synthetic session; no model, inference or gameplay qualification"
+  },
   "finite_real_attempt_v1": {
     "status": "FAILED_STARTUP_BEFORE_INFERENCE_OR_GAMEPLAY_QUALIFICATION",
     "native_seconds": 15.1037997,
@@ -128,9 +153,65 @@
   "final_cpu_and_copy_independent_actual_review_sha256": "2ccc43b63c27a18ab99080c519fa354d61164d795da43b23500416554237922f",
   "case_count_relationship": "Overlapping evidence scopes; do not sum with each other or the original616",
   "whole_ordinary_suite": "UNRUN_HOST_DEPENDENCY_BINDING_UNRESOLVED",
-  "real_bt4_gpu_qualification": "FAILED_STARTUP_NO_INFERENCE_QUALIFICATION",
+  "real_bt4_gpu_qualification": "PARTIAL_REAL_CUDA_AND_ONE_OWNER_ACK_FULL128_DEADLINE_FAILED",
   "model_load": true,
   "throughput_or_playing_claim": false,
   "merge_or_live_adoption": false,
-  "training_admission_credit": 0
+  "training_admission_credit": 0,
+  "finite_real_attempt_v2": {
+    "status": "CLOSED_FAILED_ACTIVE_DEADLINE_NO_FULL128_QUALIFICATION",
+    "runtime_closure_sha256": "1fce66e0409ca24449d0ea6c897f9a0a5457d35fc0982e6ee9ee87a137168f12",
+    "native_seconds": 302.9676139,
+    "parent_seconds": 301.64187962107826,
+    "parent_error": "ValueError('active deadline')",
+    "child_error": "RuntimeError: accepted owner deadline",
+    "actual_scope": "Passed evaluator startup and reached pooled gameplay loop; inference and ACK counts not inferred from stack",
+    "saved_export_sha256": "656d7bba1f84d8a7a7cf619bb0f9d5f66ad7e891f3394202098f0c6976776141",
+    "closed_paused_receipt_sha256": "f9967e151c02493b775054133922c0743cbc4b23d2ceb01941620e3f5131a30b",
+    "independent_failure_and_closure_review_sha256": "30a7bb8b8f24686785c93497f8ae73e2e1882590c13a45e7ad662c91294a69f2",
+    "kernel_echild": true,
+    "canonical_lock_rows_after": [],
+    "ordinary_snapshot_sha256": "7bc24eb410a8672f519312da639385deedde1cf757f1f9a27faf7ab99b7e222a",
+    "ordinary_state": "CLOSED_PAUSED",
+    "ordinary_queue_controls_and_checkpoint_components_unchanged": true,
+    "controls": 564,
+    "evaluation_stops": 6,
+    "stopped_checkpoint_sets": 5,
+    "sampled_family_peak_rss_bytes": 1839222784,
+    "sampled_family_peak_pss_bytes": 1820335104,
+    "conservative_family_cpu_seconds": 204.99269948100002,
+    "sampled_process_peak_as_bytes": 153907634176,
+    "gpu_as_limit_changed": false,
+    "complete128_qualification": false,
+    "provider_and_partial_ack_evidence": "INDEPENDENTLY_ACCEPTED_LIMITED_FIRST_CUDA_AND_ONE_STORED_OWNER_ACK",
+    "qualification_or_training_credit": 0,
+    "retry_or_extension_authorized": false,
+    "retained_progress": {
+      "observer_stdout_sha256": "864b6a0fa753a6acdeb29db8c64fe357a1ff9d13abf7089da9785fdc3f49ee84",
+      "metadata_bytes_read": 985089,
+      "npz_payload_bytes_read": 0,
+      "first_input_shape": [
+        32,
+        112,
+        8,
+        8
+      ],
+      "cuda_nodes": 644,
+      "cuda_neural_nodes": 195,
+      "cpu_provider_nodes": 0,
+      "profile_sha256": "30316882b276edf759f24355e13736f52337c46efa26f7d2e82fe9195732df53",
+      "unit_proof_sha256": "e58dea1a18a32dfa2fd40ab85d068b1840630eff8f8b8d26ba3a9f952e716c60",
+      "launch_sha256": "527ea53db012ab8f037ad750d66c0373bd9283d96c16233b83b2a68d04f27ca2",
+      "writer_receipts": 1,
+      "committed_owner_ack_games": 1,
+      "game_id": 52,
+      "committed_rows": 22,
+      "raw_payload_reverified": false,
+      "checkpoint_sidecars_present": false,
+      "checkpoint_attempt_state": "RUNNING",
+      "final_batch_histogram_and_refill_trace": "NOT_PERSISTED_ON_EXCEPTION",
+      "throughput_claim": false,
+      "independent_actual_review_sha256": "f17dd6c698beeb7c3412985325a129bc6c6f5993d42c9aed2181c1edcdfb3ed0"
+    }
+  }
 }

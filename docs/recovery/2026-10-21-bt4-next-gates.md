@@ -1,8 +1,9 @@
 # Remaining qualification boundary
 
 The newly reconstructed code has scoped real-import CPU and whole static
-evidence in `2026-10-21-cpu-qualification.json`. It has no real BT4 GPU result,
-throughput result, playing-strength result or deployment approval. The draft
+evidence in `2026-10-21-cpu-qualification.json`. Two real BT4 attempts failed:
+the first at startup, the corrected second at its 300-second deadline. It has no
+full-unit correctness, throughput, playing-strength or deployment approval. The draft
 PR remains a recovery/reconstruction vehicle. The final v8 bytes were lost;
 these new bytes have their own identity and reviews.
 
@@ -116,5 +117,39 @@ hash readback and the old runtime revalidated unchanged. Its separate 46-file te
 capsule preserves normal conftest and exact regression inputs. The accounting
 correction passed five controls, including a real test-owned unreaped child.
 The whole static gate passed on canonical420: Ruff, basedpyright and Vulture.
-The three startup regressions and fresh successor packet remain separate gates
-before the next real-model attempt.
+All three startup regressions now pass on the copied production runtime with
+normal conftest, verified module/native origins, restored repetition state and
+CUDA remaining uninitialized. The original checker rejected the fixture's
+deliberate private path insertion after its cases passed; that failed wrapper
+is preserved. A distinct reviewed checker authenticates exactly those private
+prefixes and retained every postcheck. These are three unique cases, not six.
+The distinct successor passed whole-action and native decision reviews and ran
+once. It passed evaluator startup and reached the actual pooled gameplay loop,
+then stopped at its unchanged 300-second active deadline (302.97 seconds native
+elapsed). Full 128-game qualification failed. Independent saved closure review confirms
+kernel ECHILD, released canonical locks and identical ordinary queue, all 564
+controls, six evaluation STOPs and five stopped checkpoint component sets.
+Ordinary generation remains CLOSED+PAUSED. Sampled family peaks were 1,839,222,784
+RSS bytes and 1,820,335,104 PSS bytes; these are sampled observations, not hard
+family quotas. The inherited GPU address-space limit was unchanged.
+
+Read-only inspection of the retained private artifacts confirms first-root CUDA
+inference: 644 CUDA-provider nodes including 195 neural nodes, zero CPU-provider
+nodes, with first saved input shape `[32, 112, 8, 8]`. The unit proof binds the
+same live session to its exact launch. One completed game (52) has both a writer
+receipt and a committed owner-checkpoint ACK for 22 rows. No WAL, SHM or journal
+was present before the immutable read; the main/component state was unchanged
+afterward. NPZ contents were not read or reverified. These are partial functional
+observations, not a complete 128-game unit, numerical equivalence, refill-order or speed proof.
+
+The qualification adapter enabled global Python call/return profiling and the
+finite guard rechecks the preserved control set on its hot path. Both add work;
+their measured share of elapsed time is unknown. The final batch histogram and
+completion trace were only returned on normal completion, so this failed run did
+not persist them. Replace the broad profiling witness with narrowly targeted,
+exception-safe diagnostics before proposing another comparison; retain existing
+custody, STOP, preservation and resource checks. The failed receipts remain
+preserved. No blind retry, longer limit, generation resume or training credit
+follows this result.
+
+See the [banked qualification readout](../experiments/2026-10-21-shared-generation-recovery-qualification.md).
