@@ -141,11 +141,25 @@ The four utility production changes are outside the hosted `f32feb76` result.
 Their separate focused static successor passed Ruff and Basedpyright with zero
 errors, warnings or notes. The eight-case execution used the V5 test; the final
 V7 test differs only by separately reviewed style/type edits and passed static
-validation. Those eight cases were not rerun on V7, and the hosted pass does not
-transfer to these postimages.
+validation. Those eight cases were not rerun locally on V7 at that checkpoint;
+the earlier `f32feb76` hosted pass does not transfer to these postimages.
 
 Activation of the proposed ten-second control
 audit remains disabled pending the material-tradeoff decision; candidate GPU
 admission remains disabled. Any subsequent model trial still requires its exact
 runtime, canonical custody and action review. These records change no ordinary
 generation control, audit policy, resource limit or training admission.
+## Later hosted qualification on `8a4a346e`
+
+Hosted [run 39653955003](https://github.com/jjoshua2/DeepFin/actions/runs/39653955003)
+on published `8a4a346ed9ab5c7a97ff233d1d06010e01294010` completed successfully:
+lint, PEXT and the CPU job passed. The ordinary suite reported **16,217 passed,
+145 skipped, four deselected and four expected failures**. The separate capped
+regression reported **24 passed**. These totals describe this exact revision;
+the earlier `f32feb76` run is retained separately and is not added to them.
+
+This later hosted result is distinct from the local eight-case V5 execution and
+reviewed V7 style/type and static evidence above. It provides no qualification
+for unpublished private finite adapters, model/provider bindings, GPU execution,
+production custody, full-worker performance or the disabled audit policy.
+No model, throughput, merge, live adoption or training-admission claim follows.
