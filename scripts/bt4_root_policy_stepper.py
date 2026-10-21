@@ -37,13 +37,13 @@ from chess_anti_engine.selfplay.bt4_outcome import (
 )
 from chess_anti_engine.selfplay.game import _result_to_wdl
 from scripts.bt4_generation_evaluator import BT4RootOutput
+from scripts.bt4_model_arithmetic import validate_model_wdl
 from scripts.bt4_prepared_root import (
     BT4LegalSnapshot,
     BT4PreparedInput,
     copy_history_board,
     immutable_array,
 )
-from scripts.bt4_raw_corpus_sidecar import validate_wdl_values
 from scripts.gen_sf_rooted_corpus import input_tensor_key
 
 
@@ -540,8 +540,8 @@ class BT4RootPolicyStepper:
             raise ValueError("BT4 root teacher tensors violate the output contract")
         if output.wdl_kind not in ("probabilities", "logits"):
             raise ValueError("BT4 root WDL kind is unsupported")
-        validate_wdl_values(
-            raw[None], 1, {"dtype": raw.dtype.name, "kind": output.wdl_kind},
+        validate_model_wdl(
+            raw[None], 1, {"dtype": raw.dtype.name, "kind": output.wdl_kind}, output.model_sha256,
         )
         legal = prepared.legal
         weights = policy[legal.compact_indices].astype(np.float64, copy=True)

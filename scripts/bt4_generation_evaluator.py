@@ -28,9 +28,10 @@ from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding, x_to_
 from chess_anti_engine.eval.rvg_surgery import FINGERPRINT_BYTES, position_fingerprints
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE, legal_move_indices
 from scripts import gen_sf_rooted_corpus as corpus
+from scripts.bt4_model_arithmetic import validate_model_wdl
 from scripts.bt4_policy_dump import compact_legal_policy, resolve_policy_output
 from scripts.bt4_prepared_root import BT4LegalSnapshot, BT4PreparedInput
-from scripts.bt4_raw_corpus_sidecar import resolve_wdl_output, validate_wdl_values
+from scripts.bt4_raw_corpus_sidecar import resolve_wdl_output
 
 _ZERO_LOGIT = np.float32(-1e9)
 
@@ -227,7 +228,7 @@ class BT4OnnxEvaluator:
         values = np.asarray(fetched[1])
         if policy.shape != (len(prepared.feed), COMPACT_POLICY_SIZE):
             raise ValueError(f"BT4 policy shape {policy.shape} is not (N,{COMPACT_POLICY_SIZE})")
-        validate_wdl_values(values, len(prepared.feed), self.wdl_contract)
+        validate_model_wdl(values, len(prepared.feed), self.wdl_contract, self.model_sha256)
         return policy, values
 
     def _infer(self, x: np.ndarray, *, root: bool = False) -> tuple[np.ndarray, np.ndarray, list[str]]:
