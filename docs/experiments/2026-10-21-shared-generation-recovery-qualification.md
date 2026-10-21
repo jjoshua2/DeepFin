@@ -176,3 +176,17 @@ There is no speedup, numerical-equivalence, adoption or training-credit claim.
 
 The [V3 evidence index](../recovery/2026-10-21-bt4-diagnostic-attempt-v3.json)
 retains exact failure, proof, writer, component and independent-review hashes.
+
+## Distinct 60-second during-work diagnostic
+
+The durability mechanism passed eleven standalone CPU observations, including two actual owned-child termination cases. Five further pure source-join checks passed before a separately reviewed 60-second model attempt. The source preregistration was published at `5c519c0`; none of the old 300-second attempts was replayed or relabeled.
+
+This attempt reached its active deadline and returned native exit 1 after 62.991 seconds. Saved physical closure was independently accepted: kernel `ECHILD`, no held canonical locks, and identical CLOSED+PAUSED preservation digests with 564 controls, six evaluation STOPs and five stopped checkpoint sets. Ordinary generation remained paused. The saved child return code is null; it is not invented from the native exit.
+
+Five immutable snapshots survived: entered, first-execute pending, first-execute post, and two later during-work records. At the last saved timestamp, the trace recorded 12 entered and returned executes, all with 32 rows, 64 actor admissions, no execute exception, and zero writer/ACK callbacks. These are historical counters, not final counts. The fixed receipt inventory observed zero completed writer JSONs; SQLite stayed unopened with WAL/SHM present, so the checkpoint ACK-row count remains unknown.
+
+Across the same entered-to-last-saved interval of 53.716 seconds, completed original evaluator `execute` boundaries accumulated 0.966 seconds, about 1.8%. Most of that interval was outside the measured boundaries. This is not GPU utilization, a full-run time partition, or proof of a unique guard/host bottleneck. Startup versus steady gameplay was not cleanly separated.
+
+The newly saved first-root proof reports 644 CUDA graph nodes, including 195 neural nodes, and zero CPU nodes; registered providers include CUDA and CPU. Those are saved first-call graph-node counts, not inference-call counts or a fresh profile recount. The proof links this attempt's launch and same live session. No numerical-equivalence, full-unit, throughput, speedup, adoption or training-credit claim follows.
+
+The next narrow hypothesis is time spent in unchanged owner-side guard/control/proof and callback-service work. Any added timing must preserve every call, result, exception, STOP and custody check, pass CPU fault controls, and receive separate review before another model attempt. The [result index](../recovery/2026-10-21-bt4-diagnostic60-result.json) retains source, closure, snapshot and readout identities.
