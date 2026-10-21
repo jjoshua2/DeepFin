@@ -100,5 +100,11 @@ created. A read-only paused-state snapshot refused its bounded SQL-result guard;
 a compact exact content-digest projection is being reviewed with unchanged bounds.
 The exact operational packet and final action review remain pending. Ordinary generation
 remains CLOSED+PAUSED; the finite test must preserve that state on return.
-No model load or GPU qualification has occurred. This document records planning
-and completed prerequisite evidence; it authorizes no executable stage.
+The first reviewed finite attempt reached real ONNX session construction and
+failed before inference: the owner sets history/repetition mode after constructing
+an evaluator that requires it already enabled. A separate exited-child accounting
+error obscured the original child failure. Saved closure proves kernel ECHILD,
+released canonical custody and unchanged ordinary queue, controls and complete
+checkpoint component sets. The consumed attempt is preserved. Correct startup
+ordering and accounting require focused regression evidence and fresh bindings;
+no inference, gameplay, speedup or adoption qualification has passed.
