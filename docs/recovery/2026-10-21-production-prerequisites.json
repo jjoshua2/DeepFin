@@ -1,7 +1,7 @@
 {
   "schema": "pr1110_production_prerequisites_v1",
-  "status": "PRODUCTION_BUILD_SCOPED_CPU_STATIC_AND_COPIED_RUNTIME_IMPORT_PASS_FINITE_GPU_UNRUN",
-  "latest_code_commit": "8d3b9f9b25bc7cd0caa706dace3cad1daa37b47e",
+  "status": "FINITE_STARTUP_FAILED_CORRECTED_SOURCE_PREREQUISITES_IN_PROGRESS",
+  "latest_code_commit": "42027482a7091ddbd2c8bc98e266b3ac3afbb744",
   "fresh_native_build_source": "e964def51baa2b10d6b99f0aaacab1b9165f95c0",
   "native_images": 5,
   "native_build_and_production_cpu_independent_review_sha256": "44f6c2ff2b551ceb19c46cc816463e94cbcf8a5ab676fe17170b6b53617a4f5d",
@@ -71,7 +71,41 @@
     "retained_failure": "Prior distinct v2 checker rejected normal dill /dev/null file-type inspection. Narrow independently reviewed v3 permits only the authenticated null character device; original failure and output namespace preserved.",
     "warning": "ORT import attempted sysfs device discovery and emitted a warning. No claim of zero implicit device-metadata queries or actual CUDA/provider qualification."
   },
-  "current_finite_gate": "Actual finite attempt reached ONNX session construction, then the strict evaluator refused unset history_rep_fix. The shared owner configures the required mode too late. Correct startup ordering and exited-child accounting must receive focused tests and fresh successor bindings before another attempt.",
+  "current_finite_gate": "Canonical420 moves repetition-mode setup before checkpoint recovery and evaluator startup. The distinct runtime-v3 copy passed complete readback. Three focused actual-caller CPU regressions, current static checks and a freshly reviewed finite successor remain required; the consumed failed attempt is preserved.",
+  "runtime_copy_v3": {
+    "composition": "Accepted609-payload runtime-v2 plus exactly canonical420 shared_teacher_owner.py; not whole current Git-tree equivalence",
+    "payload_files": 609,
+    "payload_bytes": 17944190,
+    "complete_files_including_closure": 610,
+    "closure_sha256": "1fce66e0409ca24449d0ea6c897f9a0a5457d35fc0982e6ee9ee87a137168f12",
+    "actual_stdout_sha256": "caf25212b0dbbd20fcb72321150f2d327c2e3c5fb930bee9f692ef26cf7a63a8",
+    "independent_actual_review_sha256": "0a0a59c15892c0c8f609b8c26fa8f4563d786ac9807e755684689054ed5dc4bd",
+    "private_test_capsule_files": 46,
+    "private_test_capsule_bytes": 828001,
+    "complete_output_hash_readback": true,
+    "old_runtime_revalidated_unchanged": true,
+    "tests_or_model_executed_by_copy": false
+  },
+  "exited_child_accounting_controls": {
+    "passed": 5,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "includes_real_test_owned_unreaped_child": true,
+    "independent_actual_review_sha256": "fa8a57de94da24d3479e6855cdcbb231b82c39d8b6e45ec027c1ccceca1f6af5",
+    "scope": "Private accounting controls only; no model, global ECHILD or GPU qualification credit"
+  },
+  "canonical420_whole_static": {
+    "status": "PASS",
+    "source_commit": "42027482a7091ddbd2c8bc98e266b3ac3afbb744",
+    "ruff": "PASS",
+    "basedpyright_errors": 0,
+    "basedpyright_warnings": 0,
+    "vulture": "PASS",
+    "suite_seconds": 113.66,
+    "raw_stdout_sha256": "c2c7586924d2edb5d542fd613414ed1b9fbfa0040ee0caf7b7736e4f383b9b56",
+    "independent_actual_review_sha256": "759473117eb6f6584a8bf1194aa5d35040ab767d3d7534a6d7eb852ccba7796a"
+  },
   "finite_real_attempt_v1": {
     "status": "FAILED_STARTUP_BEFORE_INFERENCE_OR_GAMEPLAY_QUALIFICATION",
     "native_seconds": 15.1037997,

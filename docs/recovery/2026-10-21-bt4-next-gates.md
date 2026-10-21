@@ -96,10 +96,10 @@ remains a separately qualified route.
 The finite child entry and parent deadline/resource protocol have source review
 and scoped synthetic controls. The corrected 610-file runtime has passed actual
 37-module production Python3.10 import/origin checks; no model or session was
-created. A read-only paused-state snapshot refused its bounded SQL-result guard;
-a compact exact content-digest projection is being reviewed with unchanged bounds.
-The exact operational packet and final action review remain pending. Ordinary generation
-remains CLOSED+PAUSED; the finite test must preserve that state on return.
+created. A compact exact content-digest projection subsequently passed the
+unchanged snapshot bounds, including retained checkpoint WAL/SHM components.
+Ordinary generation remains CLOSED+PAUSED; the finite test must preserve that
+state on return.
 The first reviewed finite attempt reached real ONNX session construction and
 failed before inference: the owner sets history/repetition mode after constructing
 an evaluator that requires it already enabled. A separate exited-child accounting
@@ -108,3 +108,13 @@ released canonical custody and unchanged ordinary queue, controls and complete
 checkpoint component sets. The consumed attempt is preserved. Correct startup
 ordering and accounting require focused regression evidence and fresh bindings;
 no inference, gameplay, speedup or adoption qualification has passed.
+
+Canonical commit `42027482` now configures repetition mode before checkpoint
+recovery and evaluator startup. A distinct runtime-v3 copy overlays only that
+canonical production postimage on the accepted 609-payload runtime, with complete
+hash readback and the old runtime revalidated unchanged. Its separate 46-file test
+capsule preserves normal conftest and exact regression inputs. The accounting
+correction passed five controls, including a real test-owned unreaped child.
+The whole static gate passed on canonical420: Ruff, basedpyright and Vulture.
+The three startup regressions and fresh successor packet remain separate gates
+before the next real-model attempt.
