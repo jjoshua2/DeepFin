@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, wait
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from typing import Any, Generic, Protocol, TypeAlias, TypeVar, cast
 import math
@@ -109,7 +110,9 @@ class OwnerThreadCallbacks:
             self._pending.append((future, expires))
         try:
             future.result(timeout=max(0, expires - time.monotonic()))
-        except TimeoutError as error:
+        except FutureTimeoutError as error:
+            # Python 3.10's Future timeout is distinct from builtin TimeoutError.
+            # Guard/service exceptions already become sticky before publication.
             # cancel only succeeds before the owner starts the check. If it is
             # already running, the caller still refuses to execute new work.
             future.cancel()

@@ -5,6 +5,7 @@ import threading
 import time
 import unittest
 from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -112,15 +113,21 @@ class OwnerCallbackTests(unittest.TestCase):
         def call():
             try:
                 bridge()
-            except TimeoutError:
-                errors.append("expired")
+            except FutureTimeoutError as error:
+                errors.append(error)
 
         thread = threading.Thread(target=call)
         thread.start()
         thread.join(2)
         try:
             assert not thread.is_alive()
-            assert errors == ["expired"]
+            assert len(errors) == 1
+            # This refusal precedes service: even an unscheduled owner must
+            # observe the actual Future.result timeout, including on Python3.10.
+            with pytest.raises(FutureTimeoutError) as failure:
+                bridge()
+            assert failure.value is errors[0]
+            assert checked == []
             bridge.service()
             assert checked == []
         finally:
