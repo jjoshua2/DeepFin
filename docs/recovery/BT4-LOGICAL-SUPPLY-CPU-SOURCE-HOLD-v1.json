@@ -86,7 +86,7 @@
     {
       "module": "numpy",
       "accepted_closure_pin": {
-        "path": "/home/josh/.local/lib/python3.10/site-packages/numpy/__init__.py",
+        "path": "<python-site-packages>/numpy/__init__.py",
         "sha256": "11a9455eb4297e45351657f5a60f198c21831c7a395f8c59a7361fb2edf785e5",
         "version": "1.26.2"
       },
@@ -95,7 +95,7 @@
     {
       "module": "numpy.core._multiarray_umath",
       "accepted_closure_pin": {
-        "path": "/home/josh/.local/lib/python3.10/site-packages/numpy/core/_multiarray_umath.cpython-310-x86_64-linux-gnu.so",
+        "path": "<python-site-packages>/numpy/core/_multiarray_umath.cpython-310-x86_64-linux-gnu.so",
         "sha256": "66fd7a7c485be559a11fa2cd69b5d86ab87198f187067b572ab7f30ea1e41fa4",
         "version": "3.1"
       },
@@ -104,7 +104,7 @@
     {
       "module": "chess",
       "accepted_closure_pin": {
-        "path": "/home/josh/.local/lib/python3.10/site-packages/chess/__init__.py",
+        "path": "<python-site-packages>/chess/__init__.py",
         "sha256": "1fde6a8e932508d14b31f6a584497b49c2969fc3c7cdc675347f819f0d667a5b",
         "version": "1.11.2"
       },

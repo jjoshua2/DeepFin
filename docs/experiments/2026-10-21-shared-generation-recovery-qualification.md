@@ -72,9 +72,9 @@ No model process or experimental custody remains. Ordinary generation stays paus
 ## Evidence custody
 
 Private native evidence lives under
-`C:/Users/jjosh/Documents/Codex/2026-10-13/task-5/bt4-qualification-intake-root-20261021-v1`.
+`<private-workspace>/bt4-qualification-intake-root-20261021-v1`.
 The private child output is
-`/home/josh/chess-artifacts/operations/bt4-pr1110-correctness-private-20261021-v2`;
+`<private-operations>/bt4-pr1110-correctness-private-20261021-v2`;
 its parent output is the adjacent `pr1110-finite-one-unit-correctness-20261021-v2`.
 No private outputs are committed or deleted.
 

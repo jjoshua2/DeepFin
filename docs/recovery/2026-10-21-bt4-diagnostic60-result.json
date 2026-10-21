@@ -52,7 +52,7 @@
   },
   "snapshots": [
     {
-      "path": "/home/josh/chess-artifacts/operations/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-00.json",
+      "path": "<private-operations>/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-00.json",
       "sha256": "509292fb0795a6263ca2f8c9a2dcfd643675ade22ab90c9fb4dfe746b97497d2",
       "phase": "entered",
       "snapshot_monotonic_seconds": 563234.092290273,
@@ -67,7 +67,7 @@
       "owner_acks": 0
     },
     {
-      "path": "/home/josh/chess-artifacts/operations/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-01.json",
+      "path": "<private-operations>/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-01.json",
       "sha256": "55ae438719e43640ede769376f78b7822046331a7864ef6cafe43782072e17fb",
       "phase": "first_execute_pending",
       "snapshot_monotonic_seconds": 563243.556135469,
@@ -84,7 +84,7 @@
       "owner_acks": 0
     },
     {
-      "path": "/home/josh/chess-artifacts/operations/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-02.json",
+      "path": "<private-operations>/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-02.json",
       "sha256": "5a6fa872693a71209e578c46e14eff235a6df59a36b6bdcaed40b09cac9f9c1d",
       "phase": "first_execute_post",
       "snapshot_monotonic_seconds": 563244.19871653,
@@ -101,7 +101,7 @@
       "owner_acks": 0
     },
     {
-      "path": "/home/josh/chess-artifacts/operations/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-03.json",
+      "path": "<private-operations>/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-03.json",
       "sha256": "4775184c576adbe0faedb6d29c5d9a0712a02ada47ebc225dceaefa5b941cb9a",
       "phase": "during_work",
       "snapshot_monotonic_seconds": 563267.803864467,
@@ -118,7 +118,7 @@
       "owner_acks": 0
     },
     {
-      "path": "/home/josh/chess-artifacts/operations/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-04.json",
+      "path": "<private-operations>/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-04.json",
       "sha256": "4fa05948c21084cc931f626500c5630fd852c302d17adf6221bf1bc8ebc8b7b2",
       "phase": "during_work",
       "snapshot_monotonic_seconds": 563287.808182526,
