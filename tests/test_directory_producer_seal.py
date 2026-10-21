@@ -41,7 +41,7 @@ from chess_anti_engine.replay.shard import (
     shard_positions,
 )
 
-PLANES = 8
+PLANES = 112  # Valid replay width; row/chunk/seal adversarial cases are unchanged.
 TAIL = 512
 
 

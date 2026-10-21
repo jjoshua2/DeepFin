@@ -42,7 +42,8 @@ from chess_anti_engine.replay.buffer import ArrayReplayBuffer
 from chess_anti_engine.train import trainer as trainer_mod
 from chess_anti_engine.train.trainer import Trainer
 
-PLANES = 4
+PLANES = 112  # Valid replay storage width; only the original four planes feed the tiny net.
+NETWORK_PLANES = 4
 POLICY = 1858  # COMPACT_POLICY_SIZE; the shard validator accepts only 4672 or 1858
 ROWS = 2000
 BATCH = 512
@@ -67,8 +68,8 @@ class _MarkedNet(nn.Module):
 
     def __init__(self) -> None:
         super().__init__()
-        self.policy = nn.Linear(PLANES * 64, POLICY)
-        self.wdl = nn.Linear(PLANES * 64, 3)
+        self.policy = nn.Linear(NETWORK_PLANES * 64, POLICY)
+        self.wdl = nn.Linear(NETWORK_PLANES * 64, 3)
         with torch.no_grad():
             for layer in (self.policy, self.wdl):
                 layer.weight.zero_()
@@ -78,7 +79,7 @@ class _MarkedNet(nn.Module):
             self.policy.weight[0, 0] = 3.0
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
-        h = x.flatten(1)
+        h = x[:, :NETWORK_PLANES].flatten(1)
         return {"policy": self.policy(h), "wdl": self.wdl(h)}
 
 

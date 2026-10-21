@@ -38,6 +38,13 @@ Moves = tuple[tuple[subject.BT4SelectedMove, ...], ...]
 Request = tuple[subject.BT4RootPolicyStepper, subject.PreparedBatch, Sequence[BT4RootOutput], Mapping[int, float]]
 _RETAINED_COMPONENT_FAILURES: list[tuple[object, ...]] = []
 
+
+def model_runtime_modules() -> frozenset[str]:
+    return frozenset(name for name in sys.modules
+                     if name in {"torch", "onnxruntime"}
+                     or name.startswith(("torch.", "onnxruntime.")))
+
+
 def raises(expected: type[Exception], operation: Callable[[], object], text: str = "") -> None:
     caught: Exception | None = None
     try:
@@ -140,21 +147,24 @@ class NativeStepperComponentControls(unittest.TestCase):
     def setUp(self) -> None:
         if _RETAINED_COMPONENT_FAILURES:
             raise RuntimeError("unresolved producer ownership retained; no further native work")
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        if "torch" in sys.modules or "onnxruntime" in sys.modules:
-            raise AssertionError("native component must not import model runtimes")
+        # Normal pytest conftest may already own Torch. The actual component
+        # calls must introduce no model-runtime modules in either environment;
+        # the isolated controller additionally requires their global absence.
+        self._model_runtime_modules_before = model_runtime_modules()
         if not callable(getattr(_lc0_ext, "encode_full_batch", None)):
             raise AssertionError("actual native batch encoder required; no fallback")
         if not callable(getattr(_lc0_ext, "set_history_rep_fix", None)):
             raise AssertionError("actual native history setter required")
         if not callable(getattr(_mcts_tree, "set_history_rep_fix", None)):
             raise AssertionError("actual secondary native history setter required")
-        # Dedicated bounded component process; no prior live board survives.
+        # The normal conftest restores this flag after each case, so initialize
+        # each case before its boards/producer threads; no board crosses cases.
         rep_fix.apply(True, boards_discarded=True)
         if rep_fix.current() is not True:
             raise AssertionError("actual process history mode not True")
+
+    def tearDown(self) -> None:
+        assert not (model_runtime_modules() - self._model_runtime_modules_before)
 
     def test_serial_equals_two_disjoint_producers_native_history_apply_and_rng(self) -> None:
         parallel, parallel_rng = construct()
@@ -243,8 +253,7 @@ class NativeStepperComponentControls(unittest.TestCase):
             raise cleanup
         assert not live
         assert rep_fix.current() is True
-        assert "torch" not in sys.modules
-        assert "onnxruntime" not in sys.modules
+        assert not (model_runtime_modules() - self._model_runtime_modules_before)
 
     def test_rejected_transition_and_duplicate_lane_do_not_consume_rng(self) -> None:
         steppers, rngs = construct()

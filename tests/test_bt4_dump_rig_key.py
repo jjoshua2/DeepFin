@@ -296,8 +296,21 @@ def test_a_shard_too_narrow_to_fingerprint_is_refused(tmp_path: Path) -> None:
     """The guard fires as a REFUSAL, not a skip: a row that cannot be keyed
     cannot join, and emitting it under the empty-string key would make the rig
     refuse the whole file for a duplicate hours later."""
+    import zarr
+
+    # New production writes refuse underwidth inputs before a shard exists.
+    with pytest.raises(ValueError, match="at least 112 input planes"):
+        write_shard(tmp_path / "writer-refused", planes=110)
+
+    # The dump also reads untrusted/legacy stores directly. Corrupt only x in
+    # an otherwise real shard so its own refusal remains exercised; do not
+    # bypass or weaken the production writer's admission rule.
     shard_dir = tmp_path / "narrow"
-    write_shard(shard_dir, planes=110)
+    shard = write_shard(shard_dir)
+    group = zarr.open(str(shard), mode="a")
+    narrow = np.asarray(group["x"][:])[:, :110]
+    del group["x"]
+    group.create_dataset("x", data=narrow)
     with pytest.raises(SystemExit, match="too narrow"):
         list(dump.iter_shard_rows([str(shard_dir)]))
 

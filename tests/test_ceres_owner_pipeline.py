@@ -81,6 +81,9 @@ def test_cpu_reference_relocation_rejects_real_mode_or_unreviewed_encoder_before
     config["shared_service"] = {"units": [], "max_games": 1, "target_rows": 1, "max_rows": 1,
         "batch_wait_ms": 1, "poll_seconds": 0.001, "deadline_seconds": 10, "physical_batch": 32,
         "source_pins": {relative: digest(root / relative) for relative in (
+            "chess_anti_engine/completion.py", "chess_anti_engine/producer_executor.py",
+            "chess_anti_engine/generation_runtime.py", "chess_anti_engine/staged_execution.py",
+            "chess_anti_engine/async_safety.py", "chess_anti_engine/request_routing.py",
             "chess_anti_engine/teacher_dispatch.py", "scripts/ceres_shared_game_service.py",
             "scripts/ceres_raw_backend.py", "scripts/shared_teacher_generation.py")},
         "retained_service_source": {"path": str(reference / "scripts/ceres_dynamic_game_service.py"),
@@ -351,6 +354,9 @@ def test_retained_companion_starts_actual_fake_child_and_pipelines_units(
         "max_games": 2, "target_rows": 2, "max_rows": 8, "batch_wait_ms": 100, "poll_seconds": 0.001,
         "deadline_seconds": 10, "physical_batch": physical,
         "source_pins": {relative: digest(root / relative) for relative in (
+            "chess_anti_engine/completion.py", "chess_anti_engine/producer_executor.py",
+            "chess_anti_engine/generation_runtime.py", "chess_anti_engine/staged_execution.py",
+            "chess_anti_engine/async_safety.py", "chess_anti_engine/request_routing.py",
             "chess_anti_engine/teacher_dispatch.py", "scripts/ceres_shared_game_service.py",
             "scripts/ceres_raw_backend.py", "scripts/shared_teacher_generation.py")},
         "retained_service_source": {"path": retained.__file__, "sha256": digest(Path(retained.__file__))},

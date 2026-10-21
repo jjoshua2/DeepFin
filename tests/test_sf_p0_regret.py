@@ -19,7 +19,7 @@ _W = 4672
 
 def _sample(reg: np.ndarray | None) -> ReplaySample:
     return ReplaySample(
-        x=np.zeros((1, 8, 8), dtype=np.float32),
+        x=np.zeros((112, 8, 8), dtype=np.float32),
         policy_target=np.zeros((_W,), dtype=np.float32),
         wdl_target=0,
         sf_p0_regret=reg,
@@ -99,7 +99,7 @@ def test_sf_p0_regret_uncovered_caps_at_one_when_worst_covered_caps() -> None:
 
 def test_legacy_sample_without_sf_p0_regret_has_flag_zero() -> None:
     s = ReplaySample(
-        x=np.zeros((1, 8, 8), dtype=np.float32),
+        x=np.zeros((112, 8, 8), dtype=np.float32),
         policy_target=np.zeros((_W,), dtype=np.float32),
         wdl_target=0,
     )
@@ -113,7 +113,7 @@ def test_absent_sf_p0_regret_allocates_no_dense_array() -> None:
     experiment imposes no per-batch memory cost when disabled."""
     samples = [
         ReplaySample(
-            x=np.zeros((1, 8, 8), dtype=np.float32),
+            x=np.zeros((112, 8, 8), dtype=np.float32),
             policy_target=np.zeros((_W,), dtype=np.float32),
             wdl_target=0,
         )
@@ -129,7 +129,7 @@ def _valid_sample(reg: np.ndarray | None) -> ReplaySample:
     policy = np.zeros((_W,), dtype=np.float32)
     policy[0] = 1.0  # valid distribution (passes prune validation)
     return ReplaySample(
-        x=np.zeros((1, 8, 8), dtype=np.float32),
+        x=np.zeros((112, 8, 8), dtype=np.float32),
         policy_target=policy,
         wdl_target=0,
         sf_p0_regret=reg,
