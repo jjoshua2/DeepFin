@@ -200,3 +200,11 @@ All six raw overhead records are retained. The three synthetic Guard phase-wrapp
 The earlier source-only escrow and its UNRUN-at-escrow index remain immutable. This separate result package preserves final controller/proposal/argv/source pins, complete native raw result and stderr, terminal/intent records, source review and independent actual review. It authorizes no rerun or model action.
 
 [Exact source escrow](../recovery/2026-10-21-bounded-phase-timing-source-v1.json) and [separate CPU actual evidence](../recovery/2026-10-21-bounded-phase-cpu-actual-v2.json) retain frozen bytes, reviews and complete raw observations. The next model diagnostic remains separately gated; no model attempt occurred in this CPU stage.
+
+## Preregistered unchanged-geometry phase diagnostic
+
+The next separate observation keeps 128 games, 64 actors, one producer, 32-game native preparation chunks, target/max 64 rows and zero batch-fill wait. One producer publishing a 32-ready-row prefix explains the prior histogram without establishing a hard batch cap. No geometry change is proposed in this diagnostic.
+
+The fixed 60-second active and 180-second custody-cleanup ceilings remain unchanged. Bounded caller hooks measure original guard/control, callback, preparation, writer/checkpoint and owned-wait sections. Closed inclusive time overlaps; self time subtracts only measured direct children on the same thread. Open-frame CPU from other threads is unknown. Phase inclusive time includes pre-publication instrumentation, with diagnostics work separately labeled. Uncovered work remains unattributed.
+
+The deciding evidence is valid historical phase counts/timings and durable snapshots, plus actual provider/call/row evidence and genuine physical closure. Deadline failure may still yield partial diagnostic evidence; no full-unit, target300, speedup, adoption or training-credit claim follows. All guards, STOPs, canonical custody and CLOSED+PAUSED preservation remain mandatory. The [eight-file source preregistration](../recovery/2026-10-21-phase-diagnostic60-preregistration-v1.json) contains no executable grant; exact packet/action admission is separate.
