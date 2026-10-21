@@ -65,22 +65,34 @@ def _frozen_copy(array: np.ndarray) -> np.ndarray:
     return result
 
 
-def infer_raw_roots(
-    roots: Sequence[Root],
-    *,
-    session: Any,
-    physical_batch: int = 32,
+@dataclass(frozen=True)
+class PreparedChunk:
+    roots: tuple[Root, ...]
+    physical: np.ndarray
+    mapped_rows: tuple[np.ndarray, ...]
+
+
+@dataclass(frozen=True)
+class PreparedCeresBatch:
+    chunks: tuple[PreparedChunk, ...]
+    physical_batch: int
+    receipt: BatchReceipt
+
+
+def prepare_raw_roots(
+    roots: Sequence[Root], *, physical_batch: int = 32,
     gather_context: Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]],
     gather_indices: Callable[[np.ndarray, np.ndarray], np.ndarray],
-) -> tuple[tuple[RawRootOutput, ...], BatchReceipt]:
-    """Use the collector's exact parameterized isolated repeat-last feed and raw C3 outputs.
+) -> PreparedCeresBatch:
+    """Canonical host validation and repeat-last physical plan, no session I/O.
 
-    The session must come from pinned ``ceres_derived_sidecar.open_teacher``;
-    that method's provider proof and runtime/source pins are separate gates.
-    No actor softmax/temperature or G10 qualification is implied here.
+    Production qualification remains physical32. The existing explicit256/512
+    CPU/isolated shape controls remain available, not silently selected by a
+    logical target such as340.
     """
-    if type(physical_batch) is not int or physical_batch not in (32,256,512):
+    if type(physical_batch) is not int or physical_batch not in (32, 256, 512):
         raise ValueError("isolated physical batch must be32/256/512")
+    roots = tuple(roots)
     n = len(roots)
     if n < 1 or n > 8192:
         raise ValueError("C3 parameterized isolated adapter needs 1..8192 real roots")
@@ -95,9 +107,8 @@ def infer_raw_roots(
                 or len(set(root.compact_indices)) != len(root.legal_moves)
                 or len(set(root.independent_leela_indices)) != len(root.legal_moves)):
             raise ValueError("C3 root legal indices are invalid or duplicated")
-    output: list[RawRootOutput] = []
+    chunks = []
     padding = 0
-    calls = 0
     for start in range(0, n, physical_batch):
         chunk = roots[start:start + physical_batch]
         real = len(chunk)
@@ -110,32 +121,61 @@ def infer_raw_roots(
         padding += physical_batch - real
         if physical.dtype != np.uint8 or physical.shape != (physical_batch, *FEED_SHAPE):
             raise ValueError("physical C3 feed differs from parameterized isolated uint8 contract")
-        # Refuse a changed/ambiguous legal map before spending a model call.
         pawn_mask, castling = gather_context(feed)
         gather: Any = gather_indices(pawn_mask, castling)
         if not isinstance(gather, np.ndarray) or gather.shape != (real, POLICY_WIDTH):
             raise ValueError("C3 Leela gather matrix shape differs")
-        mapped_rows: list[np.ndarray] = []
+        mapped_rows = []
         for local, root in enumerate(chunk):
             compact = np.asarray(root.compact_indices, dtype=np.int64)
             mapped = np.asarray(gather[local, compact], dtype=np.int64)
             if (len(set(mapped.tolist())) != len(mapped)
                     or not np.array_equal(mapped, root.independent_leela_indices)):
                 raise ValueError("C3 legal Leela map disagrees with independent move oracle")
-            mapped_rows.append(mapped)
-        fetched = session.run(list(OUTPUT_NAMES), {"squares_byte": physical})
-        calls += 1
+            mapped_rows.append(_frozen_copy(mapped))
+        physical.flags.writeable = False
+        chunks.append(PreparedChunk(chunk, physical, tuple(mapped_rows)))
+    receipt = BatchReceipt(n, padding, n + padding, len(chunks), "repeat_last_real", OUTPUT_NAMES)
+    if receipt.physical_rows != receipt.calls * physical_batch:
+        raise AssertionError("C3 physical batch accounting differs")
+    return PreparedCeresBatch(tuple(chunks), physical_batch, receipt)
+
+
+def execute_raw_roots(prepared: PreparedCeresBatch, *, session: Any) -> tuple[Any, ...]:
+    """One session owner; snapshot each physical output before another run."""
+    fetched_chunks = []
+    for chunk in prepared.chunks:
+        for local, root in enumerate(chunk.roots):
+            if (root.board.fen() != root.fen or tuple(root.board.move_stack) != root.move_stack
+                    or not np.array_equal(root.feed, chunk.physical[local])):
+                raise ValueError("prepared C3 board or feed changed before inference")
+        fetched = session.run(list(OUTPUT_NAMES), {"squares_byte": chunk.physical})
+        if not isinstance(fetched, (list, tuple)) or len(fetched) != 3:
+            raise ValueError("C3 session returned missing raw heads")
+        # Preserve original dtype/type validation rather than coercing an invalid
+        # list or float32 result into the required raw FP16 output contract.
+        fetched_chunks.append(tuple(_frozen_copy(value) if isinstance(value, np.ndarray)
+                                    else value for value in fetched))
+    return tuple(fetched_chunks)
+
+
+def finish_raw_roots(prepared: PreparedCeresBatch, fetched_chunks: Sequence[Any]) -> tuple[tuple[RawRootOutput, ...], BatchReceipt]:
+    """Canonical CPU head checks and raw-output assembly for all entrypoints."""
+    if len(fetched_chunks) != len(prepared.chunks):
+        raise ValueError("C3 physical output count differs")
+    output = []
+    for chunk, fetched in zip(prepared.chunks, fetched_chunks, strict=True):
         if not isinstance(fetched, (list, tuple)) or len(fetched) != 3:
             raise ValueError("C3 session returned missing raw heads")
         for value, width in zip(fetched, (POLICY_WIDTH, 3, 3), strict=True):
             if (not isinstance(value, np.ndarray) or value.dtype != np.dtype("float16")
-                    or value.shape != (physical_batch, width) or not np.isfinite(value).all()):
+                    or value.shape != (prepared.physical_batch, width) or not np.isfinite(value).all()):
                 raise ValueError("C3 raw output dtype, shape, or finiteness differs")
-        for local, root in enumerate(chunk):
+        for local, root in enumerate(chunk.roots):
             compact = np.asarray(root.compact_indices, dtype=np.int64)
-            mapped = mapped_rows[local]
+            mapped = chunk.mapped_rows[local]
             policy = _frozen_copy(fetched[0][local])
-            raw_feed = _frozen_copy(root.feed)
+            raw_feed = _frozen_copy(chunk.physical[local])
             output.append(RawRootOutput(
                 SOURCE_SCHEMA, root.slot_id, root.fen,
                 _frozen_copy(compact.astype(np.uint16)),
@@ -144,7 +184,15 @@ def infer_raw_roots(
                 policy, _frozen_copy(policy[mapped]),
                 _frozen_copy(fetched[1][local]), _frozen_copy(fetched[2][local]),
             ))
-    receipt = BatchReceipt(n, padding, n + padding, calls, "repeat_last_real", OUTPUT_NAMES)
-    if receipt.physical_rows != receipt.calls * physical_batch:
-        raise AssertionError("C3 physical batch accounting differs")
-    return tuple(output), receipt
+    return tuple(output), prepared.receipt
+
+
+def infer_raw_roots(
+    roots: Sequence[Root], *, session: Any, physical_batch: int = 32,
+    gather_context: Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]],
+    gather_indices: Callable[[np.ndarray, np.ndarray], np.ndarray],
+) -> tuple[tuple[RawRootOutput, ...], BatchReceipt]:
+    """Synchronous compatibility API delegates to the same staged implementation."""
+    prepared = prepare_raw_roots(roots, physical_batch=physical_batch,
+                                 gather_context=gather_context, gather_indices=gather_indices)
+    return finish_raw_roots(prepared, execute_raw_roots(prepared, session=session))

@@ -58,8 +58,14 @@ def bind_owner_checkpoints(
         if threading.get_ident() != owner_thread:
             raise RuntimeError("owner SQLite acknowledgment requires controller thread")
 
-    def canonical_raw(raw: dict[str, Any], actual: dict[str, Any], path: Path, game: int) -> None:
-        if (set(raw) != {"path", "sha256", "game_id", "status", "rows", "discarded_rows", "launch_sha256"}
+    def canonical_raw(
+        raw: dict[str, Any], actual: dict[str, Any], path: Path, game: int, *, restoring: bool = False,
+    ) -> dict[str, Any]:
+        fields = {"path", "sha256", "game_id", "status", "rows", "discarded_rows", "launch_sha256"}
+        if actual["status"] == "discarded":
+            fields.add("termination")
+        legacy_discard = restoring and actual["status"] == "discarded" and set(raw) == fields - {"termination"}
+        if (not (set(raw) == fields or legacy_discard)
                 or type(game) is not int or not 0 <= game < 128 or raw["game_id"] != game
                 or path.name != f"game_{game:08d}.npz" or raw["path"] != path.name
                 or any(raw[key] != actual[key] for key in ("sha256", "status", "rows"))):
@@ -74,6 +80,15 @@ def bind_owner_checkpoints(
             metadata = json.loads(archive["metadata"].tobytes().decode())
         if metadata["game_id"] != game or metadata["discarded_rows"] != raw["discarded_rows"]:
             raise ValueError("canonical owner embedded game accounting changed")
+        if actual["status"] == "discarded":
+            termination = metadata.get("termination")
+            if (type(termination) is not str or not termination
+                    or (not legacy_discard and raw["termination"] != termination)):
+                raise ValueError("canonical owner discard termination changed")
+            # Historical orphan recovery recorded seven fields. Normalize only
+            # the restored in-memory view, never the retained receipt or digest.
+            return {**raw, "termination": termination}
+        return dict(raw)
 
     for name, (ordinal, root, checkpoint, attempt) in units.items():
         owner_only()
@@ -91,7 +106,7 @@ def bind_owner_checkpoints(
             actual = verify_raw(unit, path, game)
             if any(receipt.get(key) != value for key, value in actual.items()):
                 raise ValueError("retained owner raw binding changed")
-            canonical_raw(canonical, actual, Path(receipt["path"]), game)
+            canonical = canonical_raw(canonical, actual, Path(receipt["path"]), game, restoring=True)
             verify_completed(unit, receipt)
             target[game] = {**canonical, **({"ceres_companion": receipt["ceres_companion"]}
                                             if "ceres_companion" in receipt else {})}
@@ -142,7 +157,8 @@ def run_owned_roster(
     max_units: int, max_live_games: int, target_rows: int, max_rows: int,
     batch_wait_ms: float, max_writes: int, deadline_seconds: float,
     companion_module: Any | None = None, companion_config: Path | None = None,
-    fake_cpu: bool = False,
+    fake_cpu: bool = False, producer_threads: int = 1, writer_threads: int = 1,
+    native_microbatch: int = 32, retained_byte_budget: int | None = None,
     verify_companion: Callable[[str, dict[str, Any]], None] | None = None,
     max_pending: int = 128, wire_bytes: int = 8192,
 ) -> dict[str, Any]:
@@ -153,17 +169,33 @@ def run_owned_roster(
     closure are checked before inherited custody, checkpoint attempts or startup.
     This API creates no authorization artifact or queue item. Production adoption
     still requires an independently admitted roster and real GPU qualification.
+    writer_threads>1 is an opt-in execution contract, not live qualification.
+    The retained owner's real output sampler/control callbacks require source
+    and concurrency review before enabling parallel writers in an admitted run.
     """
     from scripts import bt4_root_policy_worker as worker
     from scripts import shared_teacher_generation as generation_module
+    from scripts import bt4_root_policy_stepper as stepper_module
+    from chess_anti_engine.encoding import cboard_encode as encoding_module
     from scripts import ceres_pipelined_client as companion_adapter
+    from chess_anti_engine import completion as completion_module
     from chess_anti_engine import teacher_dispatch as dispatcher_module
+    from chess_anti_engine import request_routing as routing_module
+    from chess_anti_engine import producer_executor as producer_module
+    from chess_anti_engine import generation_runtime as runtime_module
+    from chess_anti_engine import fixed_domain_supervision as supervision_module
+    from chess_anti_engine import staged_execution as staged_module
+    from chess_anti_engine import async_safety as safety_module
+    from scripts import bt4_prepared_root as prepared_module
+    from scripts import bt4_generation_evaluator as evaluator_module
+    from scripts import bt4_policy_dump as policy_module
     from scripts.ceres_pipelined_client import PipelinedCompanion
 
     frozen = json.loads(json.dumps(dict(descriptors)))
     worker.validate_cross_unit_budgets(tuple(frozen), max_units=max_units, max_live_games=max_live_games,
         max_writes=max_writes, deadline_seconds=deadline_seconds, target_rows=target_rows,
-        max_rows=max_rows, batch_wait_ms=batch_wait_ms)
+        max_rows=max_rows, batch_wait_ms=batch_wait_ms, producer_threads=producer_threads,
+        writer_threads=writer_threads)
     if companion_module is not None:
         PipelinedCompanion.validate_bounds(tuple(frozen), max_pending=max_pending, wire_bytes=wire_bytes)
     if not 1 <= len(frozen) <= min(max_units, 4096) or len({value["unit"] for value in frozen.values()}) != len(frozen):
@@ -172,7 +204,14 @@ def run_owned_roster(
         raise ValueError("dual owner requires verified durable companion recovery")
     source_root = Path(entry.__file__).resolve().parents[1]
     required_shared = ("scripts/shared_teacher_owner.py", "scripts/shared_teacher_generation.py",
-                       "chess_anti_engine/teacher_dispatch.py", "scripts/bt4_root_policy_worker.py",
+                       "chess_anti_engine/completion.py", "chess_anti_engine/producer_executor.py",
+            "chess_anti_engine/generation_runtime.py", "chess_anti_engine/staged_execution.py",
+            "chess_anti_engine/async_safety.py",
+                       "chess_anti_engine/teacher_dispatch.py", "chess_anti_engine/request_routing.py",
+                       "scripts/bt4_root_policy_worker.py", "scripts/bt4_root_policy_stepper.py",
+                       "chess_anti_engine/fixed_domain_supervision.py", "scripts/bt4_prepared_root.py",
+                       "scripts/bt4_generation_evaluator.py", "scripts/bt4_policy_dump.py",
+                       "chess_anti_engine/encoding/cboard_encode.py",
                        "scripts/bt4_runtime_closure_v1.json", "scripts/comparison_priority.py",
                        "scripts/phase_consumption.py")
     if companion_module is not None:
@@ -205,6 +244,9 @@ def run_owned_roster(
                   json.dumps(value["generation"], sort_keys=True)) for value in frozen.values()}
     if len(contracts) != 1 or sum(value["generation"]["parallel_games"] for value in frozen.values()) > max_live_games:
         raise ValueError("one explicit shared owner scope/source/generation and aggregate bound required")
+    worker.trajectory_reservations(specs, retained_byte_budget=retained_byte_budget,
+        native_microbatch=native_microbatch, producer_threads=producer_threads, max_rows=max_rows,
+        writer_threads=writer_threads)
     entry.external(out)
     campaign = Path(next(iter(frozen.values()))["external_root"])
     stops = {Path(path) for value in frozen.values() for path in value["stop_paths"]}
@@ -224,7 +266,19 @@ def run_owned_roster(
         raise ValueError("loaded priority phase helper source differs")
     loaded_shared = (("scripts/shared_teacher_owner.py", Path(__file__)),
                      ("scripts/shared_teacher_generation.py", Path(generation_module.__file__)),
-                     ("chess_anti_engine/teacher_dispatch.py", Path(dispatcher_module.__file__)))
+                     ("scripts/bt4_root_policy_stepper.py", Path(stepper_module.__file__)),
+                     ("chess_anti_engine/encoding/cboard_encode.py", Path(encoding_module.__file__)),
+                     ("chess_anti_engine/completion.py", Path(completion_module.__file__)),
+                     ("chess_anti_engine/producer_executor.py", Path(producer_module.__file__)),
+                     ("chess_anti_engine/teacher_dispatch.py", Path(dispatcher_module.__file__)),
+                     ("chess_anti_engine/request_routing.py", Path(routing_module.__file__)),
+                     ("chess_anti_engine/generation_runtime.py", Path(runtime_module.__file__)),
+                     ("chess_anti_engine/fixed_domain_supervision.py", Path(supervision_module.__file__)),
+                     ("chess_anti_engine/staged_execution.py", Path(staged_module.__file__)),
+                     ("chess_anti_engine/async_safety.py", Path(safety_module.__file__)),
+                     ("scripts/bt4_prepared_root.py", Path(prepared_module.__file__)),
+                     ("scripts/bt4_generation_evaluator.py", Path(evaluator_module.__file__)),
+                     ("scripts/bt4_policy_dump.py", Path(policy_module.__file__)))
     if companion_module is not None:
         loaded_shared += (("scripts/ceres_pipelined_client.py", Path(companion_adapter.__file__)),)
     if any(hashlib.sha256(path.read_bytes()).hexdigest() != next(iter(frozen.values()))["source_pins"][relative]
@@ -248,7 +302,11 @@ def run_owned_roster(
                           for name, value in frozen.items()]
         if shared["units"] != expected_units or any(
                 shared["source_pins"].get(relative) != next(iter(frozen.values()))["source_pins"].get(relative)
-                for relative in ("chess_anti_engine/teacher_dispatch.py", "scripts/ceres_shared_game_service.py",
+                for relative in ("chess_anti_engine/completion.py", "chess_anti_engine/producer_executor.py",
+            "chess_anti_engine/generation_runtime.py", "chess_anti_engine/staged_execution.py",
+            "chess_anti_engine/async_safety.py",
+                       "chess_anti_engine/teacher_dispatch.py", "chess_anti_engine/request_routing.py",
+                                 "scripts/ceres_shared_game_service.py",
                                  "scripts/ceres_raw_backend.py", "scripts/shared_teacher_generation.py")):
             raise ValueError("exact owner Ceres roster/source configuration required")
         if not fake_cpu and shared["physical_batch"] != 32:
@@ -267,6 +325,7 @@ def run_owned_roster(
     client = None
     pipeline = None
     finished: set[str] = set()
+    retained_custody = False
     def control(*, poll: bool = True) -> None:
         guard.check()
         if priority_module.requested(yield_paths):
@@ -345,6 +404,7 @@ def run_owned_roster(
             for root in roots:
                 if root.exists():
                     worker.validate_resume_contract(replace(spec, out=root))
+                    worker.validate_writer_resume_contract(root, writer_threads)
             def recover_game(path: Path, game: int, unit: str = name,
                              saved: dict[int, dict[str, Any]] = recorded) -> dict[str, Any]:
                 raw = verify_raw(unit, path, game)
@@ -360,6 +420,8 @@ def run_owned_roster(
                 canonical = {"path": path.name, "sha256": raw["sha256"], "game_id": game,
                     "status": raw["status"], "rows": raw["rows"], "discarded_rows": meta["discarded_rows"],
                     "launch_sha256": hashlib.sha256((path.parent.parent / "launch.json").read_bytes()).hexdigest()}
+                if raw["status"] == "discarded":
+                    canonical["termination"] = meta["termination"]
                 if pipeline is not None:
                     pending = pipeline.submit(unit, raw, game)
                     while not pending.done():
@@ -379,37 +441,47 @@ def run_owned_roster(
 
         result = worker.run_pooled_units(units, actor, out, max_units=max_units, max_live_games=max_live_games,
             target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms, max_writes=max_writes,
-            deadline_seconds=deadline_seconds, owner_completed=completed, acknowledge=acknowledge, control=control)
+            deadline_seconds=deadline_seconds, producer_threads=producer_threads,
+            native_microbatch=native_microbatch, retained_byte_budget=retained_byte_budget,
+            writer_threads=writer_threads,
+            owner_completed=completed, acknowledge=acknowledge, control=control)
         for name, checkpoint in checkpoints.items():
             checkpoint.finish(attempts[name], result["status"] == "COMPLETE_NOT_ADMISSION")
             finished.add(name)
         return result
+    except producer_module.ProducerJoinTimeout as exc:
+        # The outer hard reaper owns this non-quiescent process. Closing a
+        # tablebase/SQLite/client/lease here would race still-running work.
+        retained_custody = True
+        exc.retain(client, pipeline, checkpoints, handle, fd, guard, parent, leases)
+        raise
     finally:
-        # Original Companion retains its reviewed private-session cleanup; the
-        # existing queue hard reaper owns blocked native/cleanup deadlines.
-        try:
-            if client is not None:
-                client.close()
-        finally:
+        if not retained_custody:
+            # Original Companion retains its reviewed private-session cleanup; the
+            # existing queue hard reaper owns blocked native/cleanup deadlines.
             try:
-                close_errors: list[BaseException] = []
-                for name, checkpoint in checkpoints.items():
-                    try:
-                        if name in attempts and name not in finished:
-                            checkpoint.finish(attempts[name], False)
-                    except BaseException:
-                        pass  # stopped guard leaves RUNNING evidence for exact owner recovery
-                    finally:
+                if client is not None:
+                    client.close()
+            finally:
+                try:
+                    close_errors: list[BaseException] = []
+                    for name, checkpoint in checkpoints.items():
                         try:
-                            checkpoint.close()
+                            if name in attempts and name not in finished:
+                                checkpoint.finish(attempts[name], False)
+                        except BaseException:
+                            pass  # stopped guard leaves RUNNING evidence for exact owner recovery
+                        finally:
+                            try:
+                                checkpoint.close()
+                            except BaseException as exc:
+                                close_errors.append(exc)
+                    if handle is not None:
+                        try:
+                            handle.close()
                         except BaseException as exc:
                             close_errors.append(exc)
-                if handle is not None:
-                    try:
-                        handle.close()
-                    except BaseException as exc:
-                        close_errors.append(exc)
-                if close_errors:
-                    raise close_errors[0]
-            finally:
-                os.close(fd)  # validated duplicate only; inherited owner lease remains held
+                    if close_errors:
+                        raise close_errors[0]
+                finally:
+                    os.close(fd)  # validated duplicate only; inherited owner lease remains held

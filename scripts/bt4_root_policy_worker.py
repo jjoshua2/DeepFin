@@ -22,7 +22,7 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import chess
 import chess.syzygy
@@ -32,7 +32,10 @@ from chess_anti_engine import tablebase
 from chess_anti_engine.encoding import _lc0_ext, rep_fix
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
 from chess_anti_engine.teacher_dispatch import TeacherDispatcher
-from scripts.shared_teacher_generation import BT4GamePool, DurableWriter
+from chess_anti_engine.producer_executor import ProducerExecutor, ProducerJoinTimeout
+from chess_anti_engine.generation_runtime import GenerationSessionRunner
+from chess_anti_engine.staged_execution import StagedBackend
+from scripts.shared_teacher_generation import BT4GamePool, BT4GenerationDriver, DurableWriter
 from scripts import bt4_generation_evaluator
 from scripts.bt4_policy_dump import file_sha256, open_session
 from scripts.bt4_root_policy_stepper import (
@@ -53,12 +56,21 @@ RESEARCH_MAX_PLIES = 400
 RESEARCH_PARALLEL_GAMES = frozenset({16, 32, 64})
 RESEARCH_MAX_BUFFERED_ROWS = 64 * RESEARCH_MAX_PLIES
 MAX_GPU_MEM_GB = 8.0
+DEFAULT_NATIVE_MICROBATCH = 32
 GPU_LOCK = Path(__file__).resolve().parents[1] / "scratchpad" / "gpu0_experiment.lock"
 _NEURAL_OPS = {"Conv", "FusedConv", "NhwcConv", "MatMul", "FusedMatMul", "Gemm", "FusedGemm"}
 _SOURCE_FILES = (
     "scripts/bt4_root_policy_worker.py",
     "scripts/shared_teacher_generation.py",
+    "chess_anti_engine/completion.py",
+    "chess_anti_engine/producer_executor.py",
+    "chess_anti_engine/generation_runtime.py",
+    "chess_anti_engine/fixed_domain_supervision.py",
+    "chess_anti_engine/staged_execution.py",
+    "chess_anti_engine/async_safety.py",
+    "scripts/bt4_prepared_root.py",
     "chess_anti_engine/teacher_dispatch.py",
+    "chess_anti_engine/request_routing.py",
     "scripts/bt4_root_policy_stepper.py",
     "scripts/bt4_generation_evaluator.py",
     "scripts/bt4_policy_dump.py",
@@ -280,17 +292,47 @@ class CudaQualifiedEvaluator:
             fsync_directory(out)
             self._published_outputs.add(out)
 
+    def prepare(self, rows: Sequence[Any]) -> Any:
+        prepare = getattr(self.base, "prepare", None)
+        if callable(prepare):
+            return prepare(rows)
+        return tuple(rows)  # synchronous test adapter only
+
+    def execute(self, prepared: Any) -> Any:
+        if self.proof is not None and self.session.get_providers()[0] != "CUDAExecutionProvider":
+            raise RuntimeError("CUDA provider changed after qualification")
+        started = time.monotonic()
+        execute = getattr(self.base, "execute", None)
+        if callable(execute):
+            fetched = execute(prepared)
+        else:
+            fetched = _evaluate_rows_sync(self.base, prepared)
+        # This first-call barrier executes on the sole session owner before
+        # another session.run or result publication may pass it.
+        if self.proof is None:
+            self._qualify_first_call(started)
+        self._publish_shared_proof()
+        return fetched
+
+    def finish(self, prepared: Any, fetched: Any) -> Sequence[bt4_generation_evaluator.BT4RootOutput]:
+        if self.proof is None:
+            raise RuntimeError("CUDA results cannot publish before first-call proof")
+        finish = getattr(self.base, "finish", None)
+        if callable(finish):
+            return cast(Sequence[bt4_generation_evaluator.BT4RootOutput], finish(prepared, fetched))
+        return fetched
+
     def evaluate_roots(
         self, boards: list[chess.Board], x_batch: np.ndarray,
     ) -> list[bt4_generation_evaluator.BT4RootOutput]:
-        if self.proof is not None:
-            if self.session.get_providers()[0] != "CUDAExecutionProvider":
-                raise RuntimeError("CUDA provider changed after qualification")
-            outputs = self.base.evaluate_roots(boards, x_batch)
-            self._publish_shared_proof()
-            return outputs
-        started = time.monotonic()
-        outputs = self.base.evaluate_roots(boards, x_batch)
+        prepared = self.prepare(tuple(zip(boards, x_batch, strict=True)))
+        return list(self.finish(prepared, self.execute(prepared)))
+
+    def evaluate_prepared_roots(self, rows: Sequence[Any]) -> list[bt4_generation_evaluator.BT4RootOutput]:
+        prepared = self.prepare(rows)
+        return list(self.finish(prepared, self.execute(prepared)))
+
+    def _qualify_first_call(self, started: float) -> None:
         profile_path = Path(self.session.end_profiling())
         events = json.loads(profile_path.read_text(encoding="utf-8"))
         if not isinstance(events, list):
@@ -308,7 +350,6 @@ class CudaQualifiedEvaluator:
         self.proof = proof
         self.qualified_at = time.monotonic()
         self._publish_shared_proof()
-        return outputs
 
 
 @dataclass(frozen=True)
@@ -535,30 +576,70 @@ def write_finalized_game(
     }
 
 
-def _evaluate_shared_roots(
-    evaluator: RootEvaluator, rows: Sequence[tuple[chess.Board, np.ndarray]], specs: Sequence[WorkerSpec],
-) -> Sequence[bt4_generation_evaluator.BT4RootOutput]:
-    """Canonical evaluator packing and unchanged per-unit provider proof checks."""
-    outputs = evaluator.evaluate_roots([board for board, _ in rows], np.stack([x for _, x in rows]))
-    for spec in specs:
-        if spec.requested_provider == "cuda":
-            proof = json.loads((spec.out / "provider_proof.json").read_text())
-            providers = proof.get("providers_after_first_call")
-            if (int(proof.get("cuda_neural_nodes", 0)) < 1 or not providers
-                    or providers[0] != "CUDAExecutionProvider"
-                    or proof.get("profile_sha256") != file_sha256(spec.out / "provider_profile.json")):
-                raise RuntimeError("CUDA root inference has no unchanged provider proof")
-            if ("shared_unit_launch_sha256" in proof
-                    and proof["shared_unit_launch_sha256"] != file_sha256(spec.out / "launch.json")):
-                raise RuntimeError("shared CUDA proof launch binding changed")
-    return outputs
+def _evaluate_rows_sync(evaluator: RootEvaluator, rows: Sequence[Any]) -> Sequence[Any]:
+    """Strict compatibility adapter for external scalar fixtures/public callers."""
+    from scripts.bt4_prepared_root import BT4PreparedInput
+    if not rows:
+        return evaluator.evaluate_roots([], np.empty((0,), dtype=np.float32))
+    if rows and isinstance(rows[0], BT4PreparedInput):
+        prepared_call = getattr(evaluator, "evaluate_prepared_roots", None)
+        if callable(prepared_call):
+            return cast(Sequence[bt4_generation_evaluator.BT4RootOutput], prepared_call(rows))
+        return evaluator.evaluate_roots([row.board for row in rows], np.stack([row.x for row in rows]))
+    return evaluator.evaluate_roots([board for board, _ in rows], np.stack([x for _, x in rows]))
 
+
+class _SharedBT4Backend:
+    """Retain staged canonical execution and same-session per-unit CUDA proof."""
+
+    def __init__(self, evaluator: RootEvaluator, specs: Sequence[WorkerSpec],
+                 control: Callable[[], None] = lambda: None) -> None:
+        self.evaluator, self.specs, self.control = evaluator, tuple(specs), control
+        self.staged = all(callable(getattr(evaluator, name, None)) for name in ("prepare", "execute", "finish"))
+        self._staged = (cast(StagedBackend[Any, Any, Any, bt4_generation_evaluator.BT4RootOutput],
+                            cast(object, evaluator))
+                        if self.staged else None)
+
+    def prepare(self, rows: Sequence[Any]) -> Any:
+        return self._staged.prepare(rows) if self._staged is not None else tuple(rows)
+
+    def execute(self, prepared: Any) -> Any:
+        self.control()
+        fetched = (self._staged.execute(prepared) if self._staged is not None else
+                   _evaluate_rows_sync(self.evaluator, prepared))
+        for spec in self.specs:
+            if spec.requested_provider == "cuda":
+                proof = json.loads((spec.out / "provider_proof.json").read_text())
+                providers = proof.get("providers_after_first_call")
+                if (int(proof.get("cuda_neural_nodes", 0)) < 1 or not providers
+                        or providers[0] != "CUDAExecutionProvider"
+                        or proof.get("profile_sha256") != file_sha256(spec.out / "provider_profile.json")):
+                    raise RuntimeError("CUDA root inference has no unchanged provider proof")
+                if ("shared_unit_launch_sha256" in proof
+                        and proof["shared_unit_launch_sha256"] != file_sha256(spec.out / "launch.json")):
+                    raise RuntimeError("shared CUDA proof launch binding changed")
+        self.control()
+        return fetched
+
+    def finish(self, prepared: Any, fetched: Any) -> Sequence[Any]:
+        return self._staged.finish(prepared, fetched) if self._staged is not None else fetched
+
+    def __call__(self, rows: Sequence[Any]) -> Sequence[Any]:
+        prepared = self.prepare(rows)
+        return self.finish(prepared, self.execute(prepared))
+
+
+def _evaluate_shared_roots(
+    evaluator: RootEvaluator, rows: Sequence[Any], specs: Sequence[WorkerSpec],
+) -> Sequence[bt4_generation_evaluator.BT4RootOutput]:
+    return _SharedBT4Backend(evaluator, specs)(rows)
 
 
 def _make_pooled_unit(
     spec: WorkerSpec, match_tablebase: chess.syzygy.Tablebase, games_dir: Path,
     dispatcher: TeacherDispatcher[tuple[chess.Board, np.ndarray], bt4_generation_evaluator.BT4RootOutput], *,
     max_writes: int, resume: bool, namespace: str = "", writer: DurableWriter | None = None,
+    writer_threads: int = 1,
     control: Callable[[], None] = lambda: None,
     owner_completed: dict[int, dict[str, Any]] | None = None,
     acknowledge: Callable[[int, dict[str, Any]], dict[str, Any] | Future[dict[str, Any]]] | None = None,
@@ -577,6 +658,7 @@ def _make_pooled_unit(
     completed: dict[int, dict[str, Any]] = dict(owner_completed or {})
     if resume and owner_completed is None:
         validate_resume_contract(spec)
+        validate_writer_resume_contract(spec.out, writer_threads)
         for checkpoint in games_dir.glob("game_*.checkpoint.json"):
             receipt = json.loads(checkpoint.read_text())
             game_id = receipt["game_id"]
@@ -607,14 +689,14 @@ def _make_pooled_unit(
         games=spec.games, capacity=min(spec.parallel_games, spec.games), seed=spec.seed,
         temperature=spec.temperature, make_stepper=make, dispatcher=dispatcher,
         commit=commit, max_writes=max_writes, completed=completed, namespace=namespace, writer=writer,
-        acknowledge=acknowledge,
+        acknowledge=acknowledge, writer_threads=writer_threads,
     )
 
 
 def run_pooled_games(
     spec: WorkerSpec, evaluator: RootEvaluator, match_tablebase: chess.syzygy.Tablebase, games_dir: Path, *,
     target_rows: int, max_rows: int, batch_wait_ms: float, max_writes: int,
-    stop: Callable[[], bool] | None = None, resume: bool = False,
+    stop: Callable[[], bool] | None = None, resume: bool = False, writer_threads: int = 1,
 ) -> dict[str, Any]:
     """Actual worker callsite: canonical board/history/RNG/outcome and raw NPZ.
 
@@ -623,6 +705,7 @@ def run_pooled_games(
     a matching orphan NPZ is validated against the retained finalized outcome.
     """
     spec.validate()
+    validate_writer_threads(writer_threads, max_writes)
     if rep_fix.current() is not True:
         raise RuntimeError("shared generation requires actual history_rep_fix=True")
     if spec.requested_provider == "cuda" and not isinstance(evaluator, CudaQualifiedEvaluator):
@@ -633,31 +716,71 @@ def run_pooled_games(
         return stop() if stop is not None else (spec.out / "STOP").exists()
 
     dispatcher = TeacherDispatcher[tuple[chess.Board, np.ndarray], bt4_generation_evaluator.BT4RootOutput](
-                                   lambda rows: _evaluate_shared_roots(evaluator, rows, (spec,)),
+                                   _SharedBT4Backend(evaluator, (spec,)),
                                    target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms)
     try:
         pool = _make_pooled_unit(spec, match_tablebase, games_dir, dispatcher,
-                                 max_writes=max_writes, resume=resume)
+                                 max_writes=max_writes, resume=resume, writer_threads=writer_threads)
     except BaseException:
         dispatcher.close(timeout=30)
         raise
-    paused = False
+    reservations, progress_bytes, byte_budget = trajectory_reservations(
+        {"": spec}, retained_byte_budget=None, native_microbatch=DEFAULT_NATIVE_MICROBATCH,
+        producer_threads=1, max_rows=max_rows, writer_threads=writer_threads)
+    producers = ProducerExecutor(max_workers=1, capacity=1)
+    runner = GenerationSessionRunner()
+    driver = BT4GenerationDriver(
+        {"": pool}, producers=producers, native_microbatch=DEFAULT_NATIVE_MICROBATCH,
+        max_live_games=pool.capacity, retained_byte_budget=byte_budget - progress_bytes,
+        reservation_bytes=reservations, should_stop=should_stop, wake=runner.wake,
+    )
+    primary_error: BaseException | None = None
     try:
-        while True:
-            paused = should_stop()
-            remaining = pool.advance(stopped=paused)
-            if not remaining or paused:
-                break
-            # Cooperative poll only; evaluation and writes run independently.
-            time.sleep(0.001)
-        return {"receipts": [pool.receipts[i] for i in sorted(pool.receipts)],
-                "histogram": dispatcher.histogram, "writer_seconds": pool.writer_seconds,
-                "paused": paused, "restart_active": "replay_from_frozen_seed_and_initial_board"}
+        runner.run(driver.advance)
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
+        deadline = time.monotonic() + 30
+        producers.request_stop()
+        cleanup_error: BaseException | None = None
         try:
-            dispatcher.close(timeout=30)
-        finally:
-            pool.close(timeout=30)
+            producers.finish(timeout=max(0, deadline - time.monotonic()))
+        except ProducerJoinTimeout as exc:
+            exc.retain(pool, driver, dispatcher, evaluator, match_tablebase)
+            raise exc from primary_error
+        except BaseException as exc:
+            cleanup_error = exc
+        if primary_error is None and cleanup_error is None and driver.paused:
+            try:
+                driver.settle_stopped()
+            except BaseException as exc:
+                cleanup_error = exc
+        for owner in (dispatcher, pool):
+            try:
+                owner.close(timeout=max(0, deadline - time.monotonic()))
+            except TimeoutError as exc:
+                alive = dispatcher.is_alive if owner is dispatcher else pool._writer.is_alive
+                if alive:
+                    custody = ProducerJoinTimeout(
+                        "BT4 single-unit shutdown budget expired; ownership retained",
+                        pool, driver, dispatcher, producers, evaluator, match_tablebase)
+                    raise custody from (primary_error or cleanup_error or exc)
+                cleanup_error = cleanup_error or exc
+            except BaseException as exc:
+                cleanup_error = cleanup_error or exc
+        if primary_error is None and cleanup_error is not None:
+            raise cleanup_error
+    pool.drain_writes(stopped=driver.paused)
+    return {"receipts": [pool.receipts[i] for i in sorted(pool.receipts)],
+            "histogram": dispatcher.histogram, "writer_seconds": pool.writer_seconds,
+            "writer_timing": "sum_of_canonical_commit_elapsed_seconds",
+            "paused": driver.paused, "restart_active": "replay_from_frozen_seed_and_initial_board",
+            "writer_threads": writer_threads,
+            "retained_byte_budget": byte_budget, "progress_reserved_bytes": progress_bytes,
+            "peak_reserved_trajectory_bytes": driver.credits.peak,
+            "cpu_microbatch_histogram": dict(driver.cpu_microbatches),
+            "backend_stages": dispatcher.stage_stats}
 
 
 def reconcile_raw_game(
@@ -741,10 +864,24 @@ def validate_resume_contract(spec: Any) -> None:
         raise ValueError("resume source/model/native/table provenance changed")
 
 
+def validate_writer_threads(writer_threads: int, max_writes: int) -> None:
+    if (type(writer_threads) is not int or writer_threads not in (1, 2, 4)
+            or type(max_writes) is not int or writer_threads > max_writes):
+        raise ValueError("writer_threads must be 1/2/4 within total max_writes")
+
+
+def validate_writer_resume_contract(out: Path, writer_threads: int) -> None:
+    launch = json.loads((out / "launch.json").read_text())
+    # Old one-writer manifests had no separate execution-concurrency field.
+    if launch.get("writer_threads", 1) != writer_threads:
+        raise ValueError("resume writer concurrency changed")
+
+
 
 def _worker_manifest(
     spec: WorkerSpec, match_tablebase: chess.syzygy.Tablebase,
     shared_dispatch: tuple[int, int, float, int] | None, table_inventory: dict[str, Any],
+    *, writer_threads: int = 1,
 ) -> dict[str, Any]:
     """The existing unit manifest payload; no cross-unit science schema."""
     root = Path(__file__).resolve().parents[1]
@@ -755,6 +892,7 @@ def _worker_manifest(
         "teacher_observation": "root_inference_compact_t1_policy_and_native_wdl_unmodified_by_outcome",
         "seed": spec.seed, "games": spec.games, "max_plies": spec.max_plies,
         "parallel_games": spec.parallel_games,
+        "writer_threads": writer_threads,
         "shared_dispatch": list(shared_dispatch) if shared_dispatch is not None else None,
         "research_capacity_128x400": spec.research_capacity_128x400,
         "max_buffered_rows": (RESEARCH_MAX_BUFFERED_ROWS
@@ -787,7 +925,8 @@ def _worker_manifest(
 
 def validate_cross_unit_budgets(names: Sequence[str], *, max_units: int, max_live_games: int,
                                max_writes: int, deadline_seconds: float, target_rows: int,
-                               max_rows: int, batch_wait_ms: float) -> None:
+                               max_rows: int, batch_wait_ms: float, producer_threads: int = 1,
+                               writer_threads: int = 1) -> None:
     """Preflight the existing controller bounds before caller-owned startup."""
     if (any(type(value) is not int or value < 1 for value in (max_units, max_live_games, max_writes))
             or not 1 <= len(names) <= max_units or max_writes > max_live_games
@@ -795,31 +934,71 @@ def validate_cross_unit_budgets(names: Sequence[str], *, max_units: int, max_liv
         raise ValueError("finite explicit cross-unit budgets required")
     if any(type(name) is not str or not name or ":" in name or len(name.encode()) > 128 for name in names):
         raise ValueError("distinct bounded unit namespaces required")
+    if type(producer_threads) is not int or not 1 <= producer_threads <= min(max_live_games, 32):
+        raise ValueError("producer_threads must be bounded by live games and 32")
+    validate_writer_threads(writer_threads, max_writes)
     TeacherDispatcher.validate_geometry(target_rows, max_rows, batch_wait_ms)
+
+
+def trajectory_reservations(
+    specs: Mapping[str, WorkerSpec], *, retained_byte_budget: int | None,
+    native_microbatch: int, producer_threads: int, max_rows: int, writer_threads: int = 1,
+) -> tuple[dict[str, int], int, int]:
+    """Reserve complete trajectories and independent execution/writer progress.
+
+    The fixed worker schema retains FP32 175-plane roots, dense FP32 compact
+    policy and up to FP64 three-head WDL, plus generous Python/history/metadata
+    allowance. This is a conservative schema reservation, not a measured RSS
+    guarantee for the interpreter, ORT session, model or native allocator.
+    """
+    if ((retained_byte_budget is not None and
+            (type(retained_byte_budget) is not int or retained_byte_budget < 1))
+            or type(native_microbatch) is not int or not 1 <= native_microbatch <= 256):
+        raise ValueError("finite positive host budget and native microbatch within 1..256 required")
+    validate_writer_threads(writer_threads, writer_threads)
+    row_bytes = 175 * 8 * 8 * 4 + COMPACT_POLICY_SIZE * 4 + 3 * 8 + 8192
+    reserved = {name: spec.max_plies * row_bytes + 65536 for name, spec in specs.items()}
+    # Each active canonical writer reserves its own stack/readback copies and
+    # JSON, independent of trajectory credits. Other stages keep their reserves.
+    progress = (2 * writer_threads * max(reserved.values()) +
+                (producer_threads * native_microbatch * 3 + max_rows * 4) * row_bytes + 1024 ** 2)
+    requested = sum(min(spec.parallel_games, spec.games) * reserved[name] for name, spec in specs.items())
+    # Default derives from the frozen existing geometry, not assumed host RAM.
+    # Operators can impose a stricter measured-safe memory ceiling explicitly.
+    if retained_byte_budget is None:
+        retained_byte_budget = requested + progress
+    if requested + progress > retained_byte_budget:
+        raise ValueError("requested live reservoir and progress reserve exceed retained trajectory byte budget")
+    return reserved, progress, retained_byte_budget
 
 
 def run_pooled_units(
     units: Mapping[str, tuple[WorkerSpec, chess.syzygy.Tablebase]], evaluator: RootEvaluator, out: Path, *,
     max_units: int, max_live_games: int, target_rows: int, max_rows: int,
     batch_wait_ms: float, max_writes: int, deadline_seconds: float,
+    producer_threads: int = 1, native_microbatch: int = DEFAULT_NATIVE_MICROBATCH,
+    retained_byte_budget: int | None = None, writer_threads: int = 1,
     resume: bool = False, control: Callable[[], None] = lambda: None,
     owner_completed: Mapping[str, dict[int, dict[str, Any]]] | None = None,
     acknowledge: Callable[[str, int, dict[str, Any]], dict[str, Any] | Future[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    """Finite cross-unit API: canonical local IDs/seeds, one dispatcher and writer.
+    """Finite cross-unit API: canonical local IDs/seeds and bounded publication.
 
     Unit WorkerSpecs retain their existing limits. Unit IDs namespace only async
     request routing; raw metadata, seed streams and checkpoints remain local.
     The ordered roster and aggregate bounds are frozen before actor admission.
     Production owner/resource admission and session proof remain with the caller.
     No queue/replay admission or physical/GPU geometry qualification is implied.
+    Explicit parallel writers require a concurrent-safe control callback; visit
+    order is stable, but physical completion and cross-game ACK timing may differ.
     """
     units = dict(units)  # freeze caller-owned roster before any control callback
     if owner_completed is not None:
         owner_completed = {name: dict(values) for name, values in owner_completed.items()}
     validate_cross_unit_budgets(tuple(units), max_units=max_units, max_live_games=max_live_games,
         max_writes=max_writes, deadline_seconds=deadline_seconds, target_rows=target_rows,
-        max_rows=max_rows, batch_wait_ms=batch_wait_ms)
+        max_rows=max_rows, batch_wait_ms=batch_wait_ms, producer_threads=producer_threads,
+        writer_threads=writer_threads)
     if rep_fix.current() is not True:
         raise RuntimeError("cross-unit generation requires actual history_rep_fix=True")
     ids = tuple(units)
@@ -846,38 +1025,54 @@ def run_pooled_units(
     actors = sum(min(spec.parallel_games, spec.games) for spec in specs)
     if actors > max_live_games:
         raise ValueError("unit actor capacities exceed explicit aggregate bound")
+    reservations, progress_reserved_bytes, retained_byte_budget = trajectory_reservations(
+        {name: value[0] for name, value in units.items()}, retained_byte_budget=retained_byte_budget,
+        native_microbatch=native_microbatch, producer_threads=producer_threads, max_rows=max_rows,
+        writer_threads=writer_threads)
     if not resume and (coordinator.exists() or any(path.exists() for path in directories)):
         raise FileExistsError("cross-unit outputs already exist; explicit frozen resume required")
     geometry = (target_rows, max_rows, batch_wait_ms, max_writes)
     deadline = time.monotonic() + deadline_seconds
 
-    def evaluate(rows: Sequence[tuple[chess.Board, np.ndarray]]) -> Sequence[bt4_generation_evaluator.BT4RootOutput]:
-        control()
-        result = _evaluate_shared_roots(evaluator, rows, specs)
-        control()
-        return result
-
-    dispatcher = TeacherDispatcher(evaluate, target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms)
+    dispatcher = TeacherDispatcher(_SharedBT4Backend(evaluator, specs, control),
+        target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms)
     try:
-        writer = DurableWriter(capacity=max_writes)
+        writer = DurableWriter(capacity=max_writes, workers=writer_threads)
     except BaseException:
         dispatcher.close(timeout=min(deadline_seconds, 30))
         raise
     pools: dict[str, BT4GamePool] = {}
     peak_live = 0
     paused = False
+    producers: ProducerExecutor | None = None
+    driver: BT4GenerationDriver | None = None
+    primary_error: BaseException | None = None
+
+    def should_stop() -> bool:
+        # Only the controller observes files. Actor/per-root hot paths consume
+        # the event published immediately after that observation, not O(units)
+        # filesystem scans per game. Busy rosters still poll every outer pass.
+        return ((producers is not None and producers.stop_event.is_set())
+                or (coordinator / "STOP").exists()
+                or any((spec.out / "STOP").exists() for spec in specs))
+
     try:
+        producers = ProducerExecutor(max_workers=producer_threads, capacity=producer_threads)
         control()
         if not resume:
             coordinator.mkdir(parents=True, exist_ok=False)
             for name, (spec, handle) in units.items():
                 spec.out.mkdir(parents=True, exist_ok=False)
                 (spec.out / "games").mkdir()
-                _atomic_json(spec.out / "launch.json", _worker_manifest(spec, handle, geometry, inventory[name]))
+                _atomic_json(spec.out / "launch.json", _worker_manifest(
+                    spec, handle, geometry, inventory[name], writer_threads=writer_threads))
                 fsync_directory(spec.out)
         contract = {
             "kind": "finite_bt4_cross_unit_v1", "shared_dispatch": list(geometry),
             "max_units": max_units, "max_live_games": max_live_games,
+            "producer_threads": producer_threads, "native_microbatch": native_microbatch,
+            "writer_threads": writer_threads,
+            "retained_byte_budget": retained_byte_budget, "progress_reserved_bytes": progress_reserved_bytes,
             "units": [{"unit_id": name, "out": str(spec.out.resolve()),
                        "launch_sha256": file_sha256(spec.out / "launch.json")}
                       for name, (spec, _) in units.items()],
@@ -888,6 +1083,7 @@ def run_pooled_units(
                 raise ValueError("cross-unit frozen roster/geometry changed on resume")
             for spec in specs:
                 validate_resume_contract(spec)
+                validate_writer_resume_contract(spec.out, writer_threads)
         else:
             _atomic_json(launch, contract)
             fsync_directory(coordinator)
@@ -895,48 +1091,79 @@ def run_pooled_units(
             pools[name] = _make_pooled_unit(
                 spec, handle, spec.out / "games", dispatcher, resume=resume, namespace=name,
                 max_writes=min(max_writes, spec.parallel_games, spec.games), writer=writer, control=control,
+                writer_threads=writer_threads,
                 owner_completed=None if owner_completed is None else owner_completed[name],
                 acknowledge=None if acknowledge is None else
                 lambda game, receipt, unit=name: acknowledge(unit, game, receipt),
             )
-        cursor = 0
-        while True:
-            control()
-            if time.monotonic() >= deadline:
-                raise TimeoutError("finite cross-unit operation budget expired; artifacts retained")
-            paused = (coordinator / "STOP").exists() or any((spec.out / "STOP").exists() for spec in specs)
-            remaining = False
-            # Rotating the first unit gives shared writer and row admission fair
-            # turns. Every unit advances even when an earlier unit has work.
-            for name in ids[cursor:] + ids[:cursor]:
-                unit_remaining = pools[name].advance(stopped=paused)
-                remaining = unit_remaining or remaining
-            cursor = (cursor + 1) % len(ids)
-            live = sum(len(pool.active) for pool in pools.values())
-            peak_live = max(peak_live, live)
-            if live > max_live_games:
-                raise RuntimeError("cross-unit actor bound violated")
-            if paused or not remaining:
-                break
-            time.sleep(0.001)
+        runner = GenerationSessionRunner(control=control, deadline=deadline)
+        driver = BT4GenerationDriver(
+            pools, producers=producers, native_microbatch=native_microbatch,
+            max_live_games=max_live_games, retained_byte_budget=retained_byte_budget - progress_reserved_bytes,
+            reservation_bytes=reservations, should_stop=should_stop, wake=runner.wake,
+        )
+        runner.run(driver.advance)
+        paused, peak_live = driver.paused, driver.peak_live
         for name, (spec, _) in units.items():
             if table_file_inventory(spec.syzygy_path) != inventory[name]:
                 raise RuntimeError("unit table provenance changed during cross-unit generation")
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
-        # Both owners get a finite join attempt, including setup/control errors.
-        try:
-            dispatcher.close(timeout=min(deadline_seconds, 30))
-        finally:
-            writer.close(timeout=min(deadline_seconds, 30))
+        # One finite shutdown budget. An unresolved producer keeps *all*
+        # dependencies alive; the owner must retain custody for its hard reaper.
+        shutdown_deadline = time.monotonic() + min(deadline_seconds, 30)
+        cleanup_error: BaseException | None = None
+        if producers is not None:
+            producers.request_stop()
+            try:
+                producers.finish(timeout=max(0, shutdown_deadline - time.monotonic()))
+            except ProducerJoinTimeout as exc:
+                exc.retain(pools, driver, dispatcher, writer, evaluator, units, control, acknowledge)
+                if primary_error is not None:
+                    raise exc from primary_error
+                raise
+            except BaseException as exc:
+                cleanup_error = exc
+        if primary_error is None and cleanup_error is None and paused and driver is not None:
+            try:
+                driver.settle_stopped()
+            except BaseException as exc:
+                cleanup_error = exc
+        for owner in (dispatcher, writer):
+            try:
+                owner.close(timeout=max(0, shutdown_deadline - time.monotonic()))
+            except TimeoutError as exc:
+                if owner.is_alive:
+                    custody = ProducerJoinTimeout(
+                        f"teacher resource still active after shutdown budget; ownership retained ({exc})",
+                        pools, driver, producers, dispatcher, writer, evaluator, units, control, acknowledge,
+                    )
+                    raise custody from (primary_error or cleanup_error or exc)
+                if cleanup_error is None:
+                    cleanup_error = exc
+            except BaseException as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+        if primary_error is None and cleanup_error is not None:
+            raise cleanup_error
 
     for pool in pools.values():
         pool.drain_writes(stopped=paused)
     result = {
         "status": "PAUSED_NOT_ADMISSION" if paused else "COMPLETE_NOT_ADMISSION",
         "cross_unit_launch_sha256": file_sha256(launch), "peak_live_games": peak_live,
+        "producer_threads": producer_threads, "native_microbatch": native_microbatch,
+        "writer_threads": writer_threads,
+        "retained_byte_budget": retained_byte_budget, "progress_reserved_bytes": progress_reserved_bytes,
+        "peak_reserved_trajectory_bytes": driver.credits.peak if driver is not None else 0,
+        "cpu_microbatch_histogram": dict(driver.cpu_microbatches) if driver is not None else {},
         "logical_batch_histogram": dict(dispatcher.histogram),
+        "backend_stages": dispatcher.stage_stats,
         "unit_receipts": {name: [pool.receipts[i] for i in sorted(pool.receipts)] for name, pool in pools.items()},
         "writer_seconds": sum(pool.writer_seconds for pool in pools.values()),
+        "writer_timing": "sum_of_canonical_commit_elapsed_seconds",
     }
     _atomic_json(coordinator / ("cross_unit_paused.json" if paused else "cross_unit_complete.json"), result)
     fsync_directory(coordinator)
@@ -947,9 +1174,16 @@ def run_worker(
     spec: WorkerSpec, evaluator: RootEvaluator,
     match_tablebase: chess.syzygy.Tablebase,
     *, shared_dispatch: tuple[int, int, float, int] | None = None,
+    writer_threads: int = 1,
 ) -> dict[str, Any]:
     """Run a finite seeded corpus. A missing strict probe aborts without summary."""
     spec.validate()
+    explicit_shared_dispatch = shared_dispatch is not None
+    # Default CLI generation uses the same ready-game runtime. Compatibility
+    # geometry derives from the old parallel-game request, not another loop.
+    if shared_dispatch is None:
+        shared_dispatch = (spec.parallel_games, spec.parallel_games, 0.0, 1)
+    validate_writer_threads(writer_threads, shared_dispatch[3])
     if spec.requested_provider == "cuda" and not isinstance(evaluator, CudaQualifiedEvaluator):
         raise TypeError("CUDA run requires the first-root profiled evaluator")
     if rep_fix.current() is not True:
@@ -960,7 +1194,8 @@ def run_worker(
     )
     table_inventory = table_file_inventory(spec.syzygy_path)
     run_started = time.monotonic()
-    manifest = _worker_manifest(spec, match_tablebase, shared_dispatch, table_inventory)
+    manifest = _worker_manifest(
+        spec, match_tablebase, shared_dispatch, table_inventory, writer_threads=writer_threads)
     spec.out.mkdir(parents=True, exist_ok=False)
     games_dir = spec.out / "games"
     games_dir.mkdir()
@@ -971,72 +1206,32 @@ def run_worker(
     writer_seconds = 0.0
     gpu_proof_verified = False
     effective_batch_sizes: Counter[int] = Counter()
-    if shared_dispatch is not None:
-        pooled = run_pooled_games(
-            spec, evaluator, match_tablebase, games_dir,
-            target_rows=shared_dispatch[0], max_rows=shared_dispatch[1],
-            batch_wait_ms=shared_dispatch[2], max_writes=shared_dispatch[3],
-        )
-        receipts.extend(pooled["receipts"])
-        for receipt in receipts:
-            emitted += receipt["rows"]
-            attempted += receipt["rows"] + receipt["discarded_rows"]
-            if receipt["status"] == "discarded":
-                discarded[receipt["termination"]] += 1
-        effective_batch_sizes.update(pooled["histogram"])
-        writer_seconds = pooled["writer_seconds"]
-        gpu_proof_verified = spec.requested_provider == "cuda"
-        if pooled["paused"]:
-            paused = {"schema": SCHEMA, "status": "paused", "game_files": receipts,
-                      "restart_active": pooled["restart_active"]}
-            _atomic_json(spec.out / "paused.json", paused)
-            return paused
-    for first in range(0, spec.games if shared_dispatch is None else 0, spec.parallel_games):
-        ids = range(first, min(first + spec.parallel_games, spec.games))
-        boards = {game_id: chess.Board(spec.initial_fen) for game_id in ids}
-        rngs = {game_id: np.random.default_rng(np.random.SeedSequence([spec.seed, game_id]))
-                for game_id in ids}
-        stepper = BT4RootPolicyStepper(
-            boards, rngs, max_plies=spec.max_plies, syzygy_path=spec.syzygy_path,
-            input_history_encoding=INPUT_HISTORY_ENCODING,
-            input_extra_features=INPUT_EXTRA_FEATURES, history_rep_fix=True,
-            model_sha256=spec.model_sha256, outcome_mode=OUTCOME_MODE,
-            match_tablebase=match_tablebase,
-        )
-        while stepper.counts.games_completed + stepper.counts.games_discarded < len(boards):
-            batch, finalized = stepper.prepare_roots()
-            for game in finalized:
-                if spec.requested_provider == "cuda" and not gpu_proof_verified:
-                    raise RuntimeError("CUDA game cannot publish before root provider proof")
-                writing_started = time.monotonic()
-                receipt = write_finalized_game(game, games_dir, initial_fen=spec.initial_fen)
-                writer_seconds += time.monotonic() - writing_started
-                receipts.append(receipt)
-                emitted += receipt["rows"]
-                attempted += receipt["rows"] + receipt["discarded_rows"]
-                if isinstance(game, BT4DiscardedGame):
-                    discarded[game.termination] += 1
-            if batch is None:
-                continue
-            inference_boards, inputs = batch.inference_inputs()
-            effective_batch_sizes[len(inference_boards)] += 1
-            outputs = evaluator.evaluate_roots(inference_boards, inputs)
-            if spec.requested_provider == "cuda" and not gpu_proof_verified:
-                proof_file = spec.out / "provider_proof.json"
-                if not proof_file.exists():
-                    raise RuntimeError("CUDA root inference has no provider proof")
-                proof = json.loads(proof_file.read_text(encoding="utf-8"))
-                providers_after = proof.get("providers_after_first_call")
-                if (int(proof.get("cuda_neural_nodes", 0)) < 1
-                        or not isinstance(providers_after, list) or not providers_after
-                        or providers_after[0] != "CUDAExecutionProvider"
-                        or proof.get("profile_sha256") != file_sha256(spec.out / "provider_profile.json")):
-                    raise RuntimeError("CUDA provider proof is incomplete or changed")
-                gpu_proof_verified = True
-            stepper.apply_root_outputs(
-                batch, outputs,
-                temperatures={root.slot_id: spec.temperature for root in batch.roots},
-            )
+    pooled = run_pooled_games(
+        spec, evaluator, match_tablebase, games_dir,
+        target_rows=shared_dispatch[0], max_rows=shared_dispatch[1],
+        batch_wait_ms=shared_dispatch[2], max_writes=shared_dispatch[3],
+        writer_threads=writer_threads,
+    )
+    receipts.extend(pooled["receipts"])
+    for receipt in receipts:
+        emitted += receipt["rows"]
+        attempted += receipt["rows"] + receipt["discarded_rows"]
+        if receipt["status"] == "discarded":
+            discarded[receipt["termination"]] += 1
+    if not explicit_shared_dispatch:
+        # The default public raw receipt schema is unchanged. Durable checkpoint
+        # bindings remain on disk and inside the runtime, not new response keys.
+        receipt_keys = {"path", "sha256", "game_id", "status", "rows", "discarded_rows"}
+        receipts = [{key: value for key, value in receipt.items() if key in receipt_keys}
+                    for receipt in receipts]
+    effective_batch_sizes.update(pooled["histogram"])
+    writer_seconds = pooled["writer_seconds"]
+    gpu_proof_verified = spec.requested_provider == "cuda"
+    if pooled["paused"]:
+        paused = {"schema": SCHEMA, "status": "paused", "game_files": receipts,
+                  "restart_active": pooled["restart_active"]}
+        _atomic_json(spec.out / "paused.json", paused)
+        return paused
     if table_file_inventory(spec.syzygy_path) != table_inventory:
         raise RuntimeError("Syzygy file inventory changed during BT4 generation")
     if spec.requested_provider == "cuda":
@@ -1056,9 +1251,16 @@ def run_worker(
         "completed": spec.games - sum(discarded.values()),
         "discarded": dict(discarded), "rows_emitted": emitted,
         "rows_attempted": attempted, "game_files": receipts,
+        "retained_byte_budget": pooled["retained_byte_budget"],
+        "progress_reserved_bytes": pooled["progress_reserved_bytes"],
+        "peak_reserved_trajectory_bytes": pooled["peak_reserved_trajectory_bytes"],
+        "cpu_microbatch_histogram": pooled["cpu_microbatch_histogram"],
+        "backend_stages": pooled["backend_stages"],
         "launch_sha256": file_sha256(spec.out / "launch.json"),
         "run_wall_seconds": finished - run_started,
         "writer_wall_seconds": writer_seconds,
+        "writer_timing": "sum_of_canonical_commit_elapsed_seconds",
+        "writer_threads": writer_threads,
         "requested_parallel_games": spec.parallel_games,
         "effective_batch_size_histogram": {
             str(size): count for size, count in sorted(effective_batch_sizes.items())
@@ -1109,9 +1311,13 @@ def main() -> None:
     parser.add_argument("--shared-max-rows", type=int)
     parser.add_argument("--shared-batch-wait-ms", type=float)
     parser.add_argument("--shared-max-writes", type=int)
+    parser.add_argument("--shared-writer-threads", type=int, choices=[1, 2, 4], default=1)
     parser.add_argument("--shared-unit-roster", type=Path)
     parser.add_argument("--shared-unit-roster-sha256")
     parser.add_argument("--shared-max-units", type=int)
+    parser.add_argument("--shared-producer-threads", type=int, default=1)
+    parser.add_argument("--shared-native-microbatch", type=int, default=DEFAULT_NATIVE_MICROBATCH)
+    parser.add_argument("--shared-retained-byte-budget", type=int)
     parser.add_argument("--shared-max-live-games", type=int)
     parser.add_argument("--shared-deadline-seconds", type=float)
     parser.add_argument("--shared-resume", action="store_true")
@@ -1121,6 +1327,14 @@ def main() -> None:
     if any(value is not None for value in shared_values) and any(value is None for value in shared_values):
         parser.error("shared generation requires all four explicit row/wait/writer controls")
     shared_dispatch = shared_values if all(value is not None for value in shared_values) else None
+    if args.shared_writer_threads != 1 and shared_dispatch is None:
+        parser.error("--shared-writer-threads requires explicit shared generation controls")
+    validate_writer_threads(args.shared_writer_threads, shared_dispatch[3] if shared_dispatch is not None else 1)
+    if args.shared_producer_threads != 1 and args.shared_unit_roster is None:
+        parser.error("--shared-producer-threads requires a shared unit roster")
+    if args.shared_unit_roster is None and (args.shared_native_microbatch != DEFAULT_NATIVE_MICROBATCH
+            or args.shared_retained_byte_budget is not None):
+        parser.error("shared CPU/memory overrides require a shared unit roster")
     roster_values = (args.shared_unit_roster, args.shared_max_units,
                      args.shared_max_live_games, args.shared_deadline_seconds)
     if any(value is not None for value in roster_values):
@@ -1154,6 +1368,14 @@ def main() -> None:
                 or not math.isfinite(args.shared_batch_wait_ms) or args.shared_batch_wait_ms < 0
                 or not 1 <= args.shared_max_writes <= args.shared_max_live_games):
             raise ValueError("finite aggregate roster geometry required before session startup")
+        validate_cross_unit_budgets(
+            tuple(item["unit_id"] for item in roster), max_units=args.shared_max_units,
+            max_live_games=args.shared_max_live_games, max_writes=args.shared_max_writes,
+            deadline_seconds=args.shared_deadline_seconds, target_rows=args.shared_target_rows,
+            max_rows=args.shared_max_rows, batch_wait_ms=args.shared_batch_wait_ms,
+            producer_threads=args.shared_producer_threads,
+            writer_threads=args.shared_writer_threads,
+        )
     if args.threads not in (1, 2):
         parser.error("experimental worker requires --threads 1 or 2")
     if args.provider == "cuda":
@@ -1178,63 +1400,85 @@ def main() -> None:
         research_capacity_128x400=args.research_capacity_128x400,
     )
     spec.validate(check_realized_provider=False)
+    if roster is not None:
+        trajectory_reservations(
+            {item["unit_id"]: spec for item in roster}, retained_byte_budget=args.shared_retained_byte_budget,
+            native_microbatch=args.shared_native_microbatch, producer_threads=args.shared_producer_threads,
+            max_rows=args.shared_max_rows, writer_threads=args.shared_writer_threads)
     # No native board is constructed until the mode is installed. Validation
     # above only constructs python-chess boards.
     rep_fix.apply(True, boards_discarded=True)
     tb = tablebase.open_strict_match_tablebase(args.syzygy_path, max_pieces=6)
+    retained_custody = False
+    profile_directory: tempfile.TemporaryDirectory[str] | None = None
     try:
         if args.provider == "cuda":
             # The CUDA session and its threads stay in this one process. The
             # descriptor is deliberately held until process exit, including
             # ORT teardown. An outer supervisor supplies the finite deadline.
             _gpu_fd = acquire_gpu_lock()
-        with tempfile.TemporaryDirectory(prefix="bt4_root_ort_") as profile_dir:
-            prefix = Path(profile_dir) / "first_root" if args.provider == "cuda" else None
-            sess, input_name, input_dtype, providers, provider_options = open_worker_session(
-                str(model_path), requested_provider=args.provider,
-                gpu_mem_gb=args.gpu_mem_gb, threads=args.threads,
-                profile_prefix=prefix,
-                cudnn_conv_algo_search=args.cudnn_conv_algo_search,
-                cudnn_conv_use_max_workspace=args.cudnn_conv_use_max_workspace,
-            )
-            if args.provider == "cuda":
-                verify_cuda_model_schema(
-                    sess, input_name=args.expected_input_name,
-                    input_dtype=args.expected_input_dtype,
-                    policy_output=args.policy_output, wdl_output=args.wdl_output,
-                    wdl_kind=args.wdl_kind,
-                )
-            evaluator = bt4_generation_evaluator.BT4OnnxEvaluator(
-                sess, input_name=input_name, input_dtype=input_dtype,
+        # A first-call session owner may still need this path after a join
+        # timeout. Do not let a context manager delete it while unwinding.
+        profile_directory = tempfile.TemporaryDirectory(prefix="bt4_root_ort_")
+        prefix = Path(profile_directory.name) / "first_root" if args.provider == "cuda" else None
+        sess, input_name, input_dtype, providers, provider_options = open_worker_session(
+            str(model_path), requested_provider=args.provider,
+            gpu_mem_gb=args.gpu_mem_gb, threads=args.threads,
+            profile_prefix=prefix,
+            cudnn_conv_algo_search=args.cudnn_conv_algo_search,
+            cudnn_conv_use_max_workspace=args.cudnn_conv_use_max_workspace,
+        )
+        if args.provider == "cuda":
+            verify_cuda_model_schema(
+                sess, input_name=args.expected_input_name,
+                input_dtype=args.expected_input_dtype,
                 policy_output=args.policy_output, wdl_output=args.wdl_output,
-                wdl_kind=args.wdl_kind, input_history_encoding=INPUT_HISTORY_ENCODING,
-                input_extra_features=INPUT_EXTRA_FEATURES, model_sha256=model_sha256,
-                history_rep_fix=True,
+                wdl_kind=args.wdl_kind,
             )
-            realized = replace(
-                spec, providers=providers, provider_options=provider_options,
+        evaluator = bt4_generation_evaluator.BT4OnnxEvaluator(
+            sess, input_name=input_name, input_dtype=input_dtype,
+            policy_output=args.policy_output, wdl_output=args.wdl_output,
+            wdl_kind=args.wdl_kind, input_history_encoding=INPUT_HISTORY_ENCODING,
+            input_extra_features=INPUT_EXTRA_FEATURES, model_sha256=model_sha256,
+            history_rep_fix=True,
+        )
+        realized = replace(
+            spec, providers=providers, provider_options=provider_options,
+        )
+        realized.validate()
+        actor: RootEvaluator = (
+            CudaQualifiedEvaluator(evaluator, sess, realized.out)
+            if args.provider == "cuda" else evaluator
+        )
+        if roster is None:
+            result = run_worker(realized, actor, tb, shared_dispatch=shared_dispatch,
+                                writer_threads=args.shared_writer_threads)
+        else:
+            units = {item["unit_id"]: (replace(realized, seed=args.seed + item["ordinal"],
+                     out=realized.out / f"unit-{item['ordinal']:012d}" / "raw"), tb) for item in roster}
+            assert shared_dispatch is not None
+            result = run_pooled_units(
+                units, actor, realized.out, max_units=args.shared_max_units,
+                max_live_games=args.shared_max_live_games, target_rows=shared_dispatch[0],
+                max_rows=shared_dispatch[1], batch_wait_ms=shared_dispatch[2],
+                max_writes=shared_dispatch[3], deadline_seconds=args.shared_deadline_seconds,
+                resume=args.shared_resume, producer_threads=args.shared_producer_threads,
+                native_microbatch=args.shared_native_microbatch,
+                retained_byte_budget=args.shared_retained_byte_budget,
+                writer_threads=args.shared_writer_threads,
             )
-            realized.validate()
-            actor: RootEvaluator = (
-                CudaQualifiedEvaluator(evaluator, sess, realized.out)
-                if args.provider == "cuda" else evaluator
-            )
-            if roster is None:
-                result = run_worker(realized, actor, tb, shared_dispatch=shared_dispatch)
-            else:
-                units = {item["unit_id"]: (replace(realized, seed=args.seed + item["ordinal"],
-                         out=realized.out / f"unit-{item['ordinal']:012d}" / "raw"), tb) for item in roster}
-                assert shared_dispatch is not None
-                result = run_pooled_units(
-                    units, actor, realized.out, max_units=args.shared_max_units,
-                    max_live_games=args.shared_max_live_games, target_rows=shared_dispatch[0],
-                    max_rows=shared_dispatch[1], batch_wait_ms=shared_dispatch[2],
-                    max_writes=shared_dispatch[3], deadline_seconds=args.shared_deadline_seconds,
-                    resume=args.shared_resume,
-                )
-            print(json.dumps(result, sort_keys=True))
+        print(json.dumps(result, sort_keys=True))
+    except ProducerJoinTimeout as exc:
+        retained_custody = True
+        exc.retain(tb, profile_directory)
+        raise
     finally:
-        tb.close()
+        if not retained_custody:
+            try:
+                if profile_directory is not None:
+                    profile_directory.cleanup()
+            finally:
+                tb.close()
 
 
 if __name__ == "__main__":
