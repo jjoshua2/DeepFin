@@ -8,6 +8,8 @@ from concurrent.futures import Future
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from chess_anti_engine import staged_execution
 from chess_anti_engine.producer_executor import ProducerExecutor
 from chess_anti_engine.staged_execution import OwnerThreadCallbacks, guard_staged_backend
@@ -20,7 +22,7 @@ class OwnerCallbackTests(unittest.TestCase):
         checked = []
 
         def check():
-            self.assertEqual(threading.get_ident(), owner)
+            assert threading.get_ident() == owner
             checked.append(owner)
 
         bridge = OwnerThreadCallbacks(check, capacity=2, timeout=2, deadline=time.monotonic() + 5)
@@ -33,8 +35,8 @@ class OwnerCallbackTests(unittest.TestCase):
             while not future.done() and time.monotonic() < deadline:
                 bridge.service()
                 time.sleep(0.001)
-            self.assertEqual(future.result(0), (1,))
-            self.assertTrue(checked)
+            assert future.result(0) == (1,)
+            assert checked
         finally:
             # Real close waits are bounded; keep servicing a final guard check
             # rather than blocking its original owner inside one long join.
@@ -54,7 +56,7 @@ class OwnerCallbackTests(unittest.TestCase):
         checked = []
 
         def check():
-            self.assertEqual(threading.get_ident(), owner)
+            assert threading.get_ident() == owner
             checked.append(owner)
 
         bridge = OwnerThreadCallbacks(check, capacity=1, timeout=2, deadline=time.monotonic() + 5)
@@ -66,11 +68,11 @@ class OwnerCallbackTests(unittest.TestCase):
             return 42
 
         future = producers.submit(produce)
-        self.assertTrue(reached.wait(5))
+        assert reached.wait(5)
         try:
             producers.finish(timeout=2, service=bridge.service)
-            self.assertEqual(future.result(0), 42)
-            self.assertEqual(checked, [owner])
+            assert future.result(0) == 42
+            assert checked == [owner]
         finally:
             bridge.close()
             producers.finish(timeout=2, service=bridge.service)
@@ -80,7 +82,7 @@ class OwnerCallbackTests(unittest.TestCase):
         reached = threading.Event()
 
         def check():
-            self.assertEqual(threading.get_ident(), owner)
+            assert threading.get_ident() == owner
             raise RuntimeError("original owner STOP")
 
         bridge = OwnerThreadCallbacks(check, capacity=1, timeout=2, deadline=time.monotonic() + 5)
@@ -91,12 +93,12 @@ class OwnerCallbackTests(unittest.TestCase):
             bridge()
 
         future = producers.submit(produce)
-        self.assertTrue(reached.wait(5))
+        assert reached.wait(5)
         try:
-            with self.assertRaisesRegex(RuntimeError, "original owner STOP"):
+            with pytest.raises(RuntimeError, match="original owner STOP"):
                 producers.finish(timeout=2, service=bridge.service)
-            self.assertTrue(future.done())
-            with self.assertRaisesRegex(RuntimeError, "original owner STOP"):
+            assert future.done()
+            with pytest.raises(RuntimeError, match="original owner STOP"):
                 bridge()
         finally:
             bridge.close()
@@ -117,10 +119,10 @@ class OwnerCallbackTests(unittest.TestCase):
         thread.start()
         thread.join(2)
         try:
-            self.assertFalse(thread.is_alive())
-            self.assertEqual(errors, ["expired"])
+            assert not thread.is_alive()
+            assert errors == ["expired"]
             bridge.service()
-            self.assertEqual(checked, [])
+            assert checked == []
         finally:
             bridge.close()
 
@@ -139,12 +141,12 @@ class OwnerCallbackTests(unittest.TestCase):
         thread = threading.Thread(target=serve_elsewhere)
         thread.start()
         thread.join(2)
-        self.assertFalse(thread.is_alive())
-        self.assertEqual(errors, ["owner callbacks require original controller thread"])
+        assert not thread.is_alive()
+        assert errors == ["owner callbacks require original controller thread"]
         bridge.close()
-        with self.assertRaisesRegex(RuntimeError, "bridge closed"):
+        with pytest.raises(RuntimeError, match="bridge closed"):
             bridge()
-        self.assertEqual(checked, [])
+        assert checked == []
 
     def test_service_expiry_poison_precedes_waiter_resumption(self):
         checked = []
@@ -154,7 +156,7 @@ class OwnerCallbackTests(unittest.TestCase):
         resume = threading.Event()
 
         class PausedWaiterFuture(Future):
-            def result(inner, timeout=None):
+            def result(self, timeout=None):
                 waiting.set()
                 if not resume.wait(2):
                     raise AssertionError("test waiter resume deadline")
@@ -177,19 +179,19 @@ class OwnerCallbackTests(unittest.TestCase):
             thread = threading.Thread(target=call)
             thread.start()
             try:
-                self.assertTrue(waiting.wait(2))
+                assert waiting.wait(2)
                 clock[0] = 1.0  # queued request expires while its waiter is paused
                 bridge.service()
-                self.assertEqual(errors, [])
-                with self.assertRaisesRegex(TimeoutError, "handoff expired"):
+                assert errors == []
+                with pytest.raises(TimeoutError, match="handoff expired"):
                     bridge()
-                self.assertEqual(checked, [])
+                assert checked == []
             finally:
                 resume.set()
                 thread.join(2)
                 bridge.close()
-            self.assertFalse(thread.is_alive())
-            self.assertEqual(errors, ["owner callback handoff expired"])
+            assert not thread.is_alive()
+            assert errors == ["owner callback handoff expired"]
 
 
 if __name__ == "__main__":
