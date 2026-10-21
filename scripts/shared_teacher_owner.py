@@ -318,7 +318,6 @@ def run_owned_roster(
     authorize(json.loads(json.dumps(frozen)), out)  # callback cannot mutate validated internal contracts
     owner_thread = threading.get_ident()
     guard.check()
-    fd = consumer.canonical_gpu_lock_consumer(worker, parent, leases, custody_profile="all_three")()
     checkpoints: dict[str, Any] = {}
     attempts: dict[str, int] = {}
     handle = None
@@ -326,13 +325,35 @@ def run_owned_roster(
     pipeline = None
     finished: set[str] = set()
     retained_custody = False
-    def control(*, poll: bool = True) -> None:
+    polling = False
+
+    def check_control() -> None:
+        # The original guard is controller-affine, including output metering.
+        # Neither inference nor writers may call it or poll SQLite directly.
         guard.check()
         if priority_module.requested(yield_paths):
             raise RuntimeError("owner priority yield/drain")
-        # Backend/writer guards never poll or mutate the SQLite controller.
-        if poll and pipeline is not None and threading.get_ident() == owner_thread and pipeline.pending:
-            pipeline.poll()
+
+    callback_deadline = time.monotonic() + min(
+        deadline_seconds, guard.limits["deadline_unix"] - time.time())
+    callbacks = staged_module.OwnerThreadCallbacks(
+        check_control, capacity=producer_threads + writer_threads + 1,
+        timeout=min(30.0, deadline_seconds), deadline=callback_deadline)
+
+    def control(*, poll: bool = True) -> None:
+        nonlocal polling
+        if threading.get_ident() != owner_thread:
+            callbacks()
+            return  # An off-thread check never recursively polls companion.
+        callbacks.service()
+        callbacks()
+        if poll and not polling and pipeline is not None and pipeline.pending:
+            polling = True
+            try:
+                pipeline.poll()
+            finally:
+                polling = False
+    fd = consumer.canonical_gpu_lock_consumer(worker, parent, leases, custody_profile="all_three")()
     try:
         control()
         for name, descriptor in frozen.items():
@@ -444,7 +465,8 @@ def run_owned_roster(
             deadline_seconds=deadline_seconds, producer_threads=producer_threads,
             native_microbatch=native_microbatch, retained_byte_budget=retained_byte_budget,
             writer_threads=writer_threads,
-            owner_completed=completed, acknowledge=acknowledge, control=control)
+            owner_completed=completed, acknowledge=acknowledge, control=control,
+            service_control=callbacks.service)
         for name, checkpoint in checkpoints.items():
             checkpoint.finish(attempts[name], result["status"] == "COMPLETE_NOT_ADMISSION")
             finished.add(name)
@@ -453,10 +475,11 @@ def run_owned_roster(
         # The outer hard reaper owns this non-quiescent process. Closing a
         # tablebase/SQLite/client/lease here would race still-running work.
         retained_custody = True
-        exc.retain(client, pipeline, checkpoints, handle, fd, guard, parent, leases)
+        exc.retain(client, pipeline, checkpoints, handle, fd, guard, parent, leases, callbacks)
         raise
     finally:
         if not retained_custody:
+            callbacks.close()  # run_pooled_units proved all background callers quiescent
             # Original Companion retains its reviewed private-session cleanup; the
             # existing queue hard reaper owns blocked native/cleanup deadlines.
             try:

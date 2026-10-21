@@ -979,6 +979,7 @@ def run_pooled_units(
     producer_threads: int = 1, native_microbatch: int = DEFAULT_NATIVE_MICROBATCH,
     retained_byte_budget: int | None = None, writer_threads: int = 1,
     resume: bool = False, control: Callable[[], None] = lambda: None,
+    service_control: Callable[[], None] = lambda: None,
     owner_completed: Mapping[str, dict[int, dict[str, Any]]] | None = None,
     acknowledge: Callable[[str, int, dict[str, Any]], dict[str, Any] | Future[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
@@ -989,8 +990,9 @@ def run_pooled_units(
     The ordered roster and aggregate bounds are frozen before actor admission.
     Production owner/resource admission and session proof remain with the caller.
     No queue/replay admission or physical/GPU geometry qualification is implied.
-    Explicit parallel writers require a concurrent-safe control callback; visit
-    order is stable, but physical completion and cross-game ACK timing may differ.
+    Background controls require an explicit controller rendezvous when their
+    guard is owner-affine. service_control progresses that rendezvous during
+    joins; it must deliver errors to callers without aborting cleanup itself.
     """
     units = dict(units)  # freeze caller-owned roster before any control callback
     if owner_completed is not None:
@@ -1035,7 +1037,8 @@ def run_pooled_units(
     deadline = time.monotonic() + deadline_seconds
 
     dispatcher = TeacherDispatcher(_SharedBT4Backend(evaluator, specs, control),
-        target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms)
+        target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms,
+        control=control)
     try:
         writer = DurableWriter(capacity=max_writes, workers=writer_threads)
     except BaseException:
@@ -1118,7 +1121,8 @@ def run_pooled_units(
         if producers is not None:
             producers.request_stop()
             try:
-                producers.finish(timeout=max(0, shutdown_deadline - time.monotonic()))
+                producers.finish(timeout=max(0, shutdown_deadline - time.monotonic()),
+                                 service=service_control)
             except ProducerJoinTimeout as exc:
                 exc.retain(pools, driver, dispatcher, writer, evaluator, units, control, acknowledge)
                 if primary_error is not None:
@@ -1133,7 +1137,19 @@ def run_pooled_units(
                 cleanup_error = exc
         for owner in (dispatcher, writer):
             try:
-                owner.close(timeout=max(0, shutdown_deadline - time.monotonic()))
+                # A dispatcher/writer may be waiting for the original owner's
+                # guard. Join in bounded slices while servicing those checks;
+                # a single blocking join would deadlock an otherwise idle guard.
+                while True:
+                    service_control()
+                    remaining = max(0, shutdown_deadline - time.monotonic())
+                    try:
+                        owner.close(timeout=min(0.05, remaining))
+                    except TimeoutError:
+                        if owner.is_alive and time.monotonic() < shutdown_deadline:
+                            continue
+                        raise
+                    break
             except TimeoutError as exc:
                 if owner.is_alive:
                     custody = ProducerJoinTimeout(
@@ -1144,6 +1160,12 @@ def run_pooled_units(
                 if cleanup_error is None:
                     cleanup_error = exc
             except BaseException as exc:
+                if owner.is_alive:
+                    raise ProducerJoinTimeout(
+                        "teacher shutdown service failed; active ownership retained",
+                        pools, driver, producers, dispatcher, writer, evaluator, units,
+                        control, acknowledge, service_control,
+                    ) from (primary_error or cleanup_error or exc)
                 if cleanup_error is None:
                     cleanup_error = exc
         if primary_error is None and cleanup_error is not None:

@@ -112,7 +112,8 @@ class ProducerExecutor:
             self._futures.add(future)
             return future
 
-    def finish(self, *, timeout: float | None) -> None:
+    def finish(self, *, timeout: float | None,
+               service: Callable[[], None] = lambda: None) -> None:
         """Close admission and join all admitted work, optionally to one deadline.
 
         None preserves the existing selfplay session's cooperative lifetime.
@@ -130,8 +131,20 @@ class ProducerExecutor:
                 future.cancel()  # only a job that never started can be cancelled
         # A cancelled queued Future has no actor ownership even before an
         # executor worker marks its cancellation notified for wait().
-        active = tuple(future for future in futures if not future.done())
-        _done, pending = wait(active, timeout=None if deadline is None else max(0, deadline - time.monotonic()))
+        pending = {future for future in futures if not future.done()}
+        while pending:
+            try:
+                service()  # owner-affine guard handoffs must progress during joins
+            except BaseException as error:
+                self.request_stop()
+                self._executor.shutdown(wait=False, cancel_futures=True)
+                raise ProducerJoinTimeout(
+                    "producer join service failed; active ownership retained", self, futures,
+                ) from error
+            remaining = None if deadline is None else max(0, deadline - time.monotonic())
+            if remaining == 0:
+                break
+            _done, pending = wait(pending, timeout=0.05 if remaining is None else min(0.05, remaining))
         if pending:
             self.request_stop()
             self._executor.shutdown(wait=False, cancel_futures=True)

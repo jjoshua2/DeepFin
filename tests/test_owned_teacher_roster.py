@@ -43,6 +43,14 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, ...]:
                        "chess_anti_engine/teacher_dispatch.py", "scripts/bt4_root_policy_worker.py",
                        "scripts/bt4_generation_evaluator.py", "scripts/ceres_shared_game_service.py",
                        "scripts/ceres_pipelined_client.py", "scripts/ceres_raw_backend.py"]
+    # The recovered owner validates these actual imported implementations too.
+    # Materialize and hash their real candidate bytes, never dummy stand-ins.
+    relative_paths += ["chess_anti_engine/completion.py", "chess_anti_engine/producer_executor.py",
+                       "chess_anti_engine/generation_runtime.py", "chess_anti_engine/staged_execution.py",
+                       "chess_anti_engine/async_safety.py", "chess_anti_engine/request_routing.py",
+                       "chess_anti_engine/fixed_domain_supervision.py", "scripts/bt4_root_policy_stepper.py",
+                       "scripts/bt4_prepared_root.py", "scripts/bt4_policy_dump.py",
+                       "chess_anti_engine/encoding/cboard_encode.py"]
     for relative in relative_paths:
         destination = overlay / relative
         destination.parent.mkdir(parents=True, exist_ok=True)

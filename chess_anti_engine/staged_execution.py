@@ -2,15 +2,17 @@
 
 Routing, row compatibility and error policy belong to the caller. This module
 owns the pipeline ordering and bounded stage capacity, not a second request
-queue. The ORT bridge gives preparation, execution and finishing independent
-progress capacity; only its single execution owner may call a session.
+queue. The ORT bridge overlaps preparation with dispatcher-owned execution and
+finish acceptance; only that dispatcher owner may call a session.
 """
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable, Sequence
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Any, Generic, Protocol, TypeAlias, TypeVar, cast
+import math
 import threading
 import time
 
@@ -46,6 +48,107 @@ TeacherBackend: TypeAlias = (
     StagedBackend[Input, Any, Any, Output]
     | Callable[[Sequence[Input]], Sequence[Output]]
 )
+
+
+class OwnerThreadCallbacks:
+    """Bounded guard rendezvous, not an executor or a second work scheduler.
+
+    Only the constructing controller may service callbacks. Worker threads wait
+    for that controller's exact check; they never invoke it themselves. The
+    controller must service during normal progress AND finite shutdown joins.
+    A timed-out, not-yet-serviced check is cancelled and cannot later run.
+    """
+
+    def __init__(self, operation: Callable[[], None], *, capacity: int,
+                 timeout: float, deadline: float):
+        if (type(capacity) is not int or capacity < 1 or not math.isfinite(timeout)
+                or timeout <= 0 or not math.isfinite(deadline)):
+            raise ValueError("bounded owner callback capacity/time required")
+        self._operation, self._capacity = operation, capacity
+        self._timeout, self._deadline = timeout, deadline
+        self._owner = threading.get_ident()
+        self._lock = threading.Lock()
+        self._pending: deque[tuple[Future[None], float]] = deque()
+        self._failure: BaseException | None = None
+        self._closed = False
+
+    def _owner_only(self) -> None:
+        if threading.get_ident() != self._owner:
+            raise RuntimeError("owner callbacks require original controller thread")
+
+    def _check(self) -> None:
+        if self._failure is not None:
+            raise self._failure
+        if self._closed:
+            raise RuntimeError("owner callback bridge closed")
+        if time.monotonic() >= self._deadline:
+            raise TimeoutError("owner callback deadline expired")
+
+    def _invoke(self) -> None:
+        self._owner_only()
+        try:
+            with self._lock:
+                self._check()
+            self._operation()
+        except BaseException as error:
+            with self._lock:
+                if self._failure is None:
+                    self._failure = error
+            raise
+
+    def __call__(self) -> None:
+        if threading.get_ident() == self._owner:
+            self._invoke()
+            return
+        with self._lock:
+            self._check()
+            if len(self._pending) >= self._capacity:
+                raise BufferError("owner callback capacity exhausted")
+            future: Future[None] = Future()
+            expires = min(self._deadline, time.monotonic() + self._timeout)
+            self._pending.append((future, expires))
+        try:
+            future.result(timeout=max(0, expires - time.monotonic()))
+        except TimeoutError as error:
+            # cancel only succeeds before the owner starts the check. If it is
+            # already running, the caller still refuses to execute new work.
+            future.cancel()
+            with self._lock:
+                if self._failure is None:
+                    self._failure = error
+            raise
+
+    def service(self) -> None:
+        """Deliver checks/errors without aborting the owner's shutdown join.
+
+        The next direct owner check raises a saved failure. Background callers
+        get it through their own Future; service never polls companion/SQLite.
+        """
+        self._owner_only()
+        with self._lock:
+            pending = tuple(self._pending)
+            self._pending.clear()
+        for future, expires in pending:
+            if not future.set_running_or_notify_cancel():
+                continue
+            try:
+                if time.monotonic() >= expires:
+                    raise TimeoutError("owner callback handoff expired")
+                self._invoke()
+            except BaseException as error:
+                future.set_exception(error)
+            else:
+                future.set_result(None)
+
+    def close(self) -> None:
+        self._owner_only()
+        with self._lock:
+            self._closed = True
+            pending = tuple(self._pending)
+            self._pending.clear()
+        for future, _expires in pending:
+            if future.set_running_or_notify_cancel():
+                future.set_exception(RuntimeError("owner callback bridge closed"))
 
 
 class TwoSlotPump:
@@ -121,23 +224,26 @@ class HostReceipt:
 class StagedHostBackend(Generic[Input, Output]):
     """Bounded by the pump's two leases; no producer-pool dependency.
 
-    prepare and finish have separate single-worker executors. execute alone has
-    a dedicated session owner; it schedules finish but never waits for it. A
-    Future around an opaque evaluator is supported only for legacy callables;
-    production adapters implement the canonical three-stage API.
+    Submission hands preparation to its single-worker executor. Retirement is
+    the rendezvous with the constructing dispatcher thread: that thread alone
+    executes the session, finishes and accepts the output. The pump may submit
+    the next preparation first, but cannot execute its session before accepting
+    this output. In particular, an invalid finish poisons both owned slots.
     """
 
-    def __init__(self, backend: TeacherBackend[Input, Output]):
+    def __init__(self, backend: TeacherBackend[Input, Output], *,
+                 control: Callable[[], None] = lambda: None):
         self.backend = backend
+        self._control = control
         self._staged_backend = (
             cast(StagedBackend[Input, Any, Any, Output], backend)
             if all(callable(getattr(backend, name, None))
                    for name in ("prepare", "execute", "finish")) else None
         )
         self._prepare = ThreadPoolExecutor(1, thread_name_prefix="TeacherPrepare")
-        self._execute = ThreadPoolExecutor(1, thread_name_prefix="TeacherSession")
-        self._finish = ThreadPoolExecutor(1, thread_name_prefix="TeacherFinish")
+        self._owner_thread = threading.get_ident()
         self._receipts: list[HostReceipt] = []
+        self._work: list[Callable[[], tuple[Output, ...]]] = []
         self._closed = False
         self._fatal: BaseException | None = None
         self._stats_lock = threading.Lock()
@@ -161,6 +267,7 @@ class StagedHostBackend(Generic[Input, Output]):
                 self._stats[stage + "_calls"] += 1
 
     def submit(self, rows: tuple[Input, ...]) -> HostReceipt:
+        self._owner_only()
         if self._closed or len(self._receipts) >= 2:
             raise RuntimeError("staged host slots are closed or exhausted")
         result: Future = Future()
@@ -171,54 +278,63 @@ class StagedHostBackend(Generic[Input, Output]):
         staged = self._staged_backend
         prepared = self._prepare.submit(self._timed, "prepare", staged.prepare, rows) if staged is not None else None
 
-        def settle(finished: Future) -> None:
-            try:
-                values = tuple(finished.result())
-                if len(values) != len(rows):
-                    raise ValueError("teacher output count differs from dispatched rows")
-                result.set_result(values)
-            except BaseException as error:
-                self._fatal = error
-                result.set_exception(error)
-
-        def execute() -> None:
-            try:
-                if self._fatal is not None:
-                    raise self._fatal
-                if staged is None:
-                    # Backward-compatible fixtures remain serialized on the
-                    # same session owner, without claiming host-stage overlap.
-                    synchronous = cast(Callable[[Sequence[Input]], Sequence[Output]], self.backend)
-                    values = tuple(self._timed("execute", synchronous, rows))
-                    if len(values) != len(rows):
-                        raise ValueError("teacher output count differs from dispatched rows")
-                    result.set_result(values)
-                    return
+        def execute() -> tuple[Output, ...]:
+            if self._fatal is not None:
+                raise self._fatal
+            self._control()
+            if staged is None:
+                synchronous = cast(Callable[[Sequence[Input]], Sequence[Output]], self.backend)
+                values = tuple(self._timed("execute", synchronous, rows))
+            else:
                 assert prepared is not None
+                # A preparation can be opaque/blocking. Keep the owner-side
+                # stop/deadline handoff responsive while retaining its slot;
+                # public close(timeout) still retains a blocked preparation.
+                while not prepared.done():
+                    self._control()
+                    wait((prepared,), timeout=0.05)
                 value = prepared.result()
+                self._control()
                 raw = self._timed("execute", staged.execute, value)
-                finished = self._finish.submit(self._timed, "finish", staged.finish, value, raw)
-                finished.add_done_callback(settle)
-            except BaseException as error:
-                self._fatal = error
-                result.set_exception(error)
+                values = tuple(self._timed("finish", staged.finish, value, raw))
+            if len(values) != len(rows):
+                raise ValueError("teacher output count differs from dispatched rows")
+            self._control()
+            return values
 
-        self._execute.submit(execute)
+        self._work.append(execute)
         return receipt
 
+    def _owner_only(self) -> None:
+        if threading.get_ident() != self._owner_thread:
+            raise RuntimeError("staged execution requires its dispatcher owner thread")
+
     def release(self, receipt: HostReceipt) -> Any:
+        self._owner_only()
+        if not self._receipts or self._receipts[0] is not receipt:
+            raise RuntimeError("staged receipts must retire in submission order")
+        if not receipt.future.done():
+            try:
+                receipt.future.set_result(self._work[0]())
+            except BaseException as error:
+                self._fatal = error
+                # No later session may start after a failed guard/finish. Keep
+                # the owned receipts and preparations until close quiesces them.
+                for retained in self._receipts:
+                    if not retained.future.done():
+                        retained.future.set_exception(error)
         value = receipt.future.result()
-        self._receipts.remove(receipt)
+        self._receipts.pop(0)
+        self._work.pop(0)
         return value
 
     def close(self) -> None:
         # Called only on the pump thread after it has retired all output, or on
         # failure while it still owns the backend. close(timeout) on its caller
         # joins that thread and never destroys dependencies on timeout.
+        self._owner_only()
         self._closed = True
         self._prepare.shutdown(wait=True, cancel_futures=False)
-        self._execute.shutdown(wait=True, cancel_futures=False)
-        self._finish.shutdown(wait=True, cancel_futures=False)
 
 
 def guard_staged_backend(backend: Any, before_execute: Callable[[], None]) -> Any:

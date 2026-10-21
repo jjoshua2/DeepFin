@@ -1,8 +1,8 @@
 """Bounded FIFO teacher requests, independent of feed type and head count.
 
 The condition/deadline/gather/scatter structure follows ThreadedDispatcher.
-Unlike Torch, ORT uses bounded independent host prepare/finish capacity and one
-session execution owner. No CUDA/DMA overlap or performance claim is implied.
+Unlike Torch, ORT prepares the next batch off-thread, then rendezvous with the
+dispatcher for execution and accepted finish. No CUDA/DMA overlap is claimed.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import math
 import threading
 import time
 from collections import Counter, deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
@@ -45,9 +45,14 @@ class TeacherDispatcher(Generic[Input, Output]):
     def __init__(
         self, backend: TeacherBackend[Input, Output], *,
         target_rows: int, max_rows: int, batch_wait_ms: float,
+        control: Callable[[], None] = lambda: None,
     ) -> None:
         self.validate_geometry(target_rows, max_rows, batch_wait_ms)
         self.backend = backend
+        # This callback runs on TeacherDispatcher, never a prepare executor.
+        # An outer controller-affine guard must explicitly marshal to that
+        # controller; accepting a callback does not make it thread-safe.
+        self._control = control
         self.target_rows = target_rows
         self.max_rows = max_rows
         self.wait_s = batch_wait_ms / 1000
@@ -214,7 +219,7 @@ class TeacherDispatcher(Generic[Input, Output]):
             request.future.set_result(tuple(request.outputs))
 
     def _run(self) -> None:
-        self._host = StagedHostBackend(self.backend)
+        self._host = StagedHostBackend(self.backend, control=self._control)
         def failed(_value: Any, error: BaseException, _stage: str) -> None:
             # Teachers retain poison/fail-all, unlike selfplay batch settlement.
             raise error
