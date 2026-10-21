@@ -130,6 +130,7 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, ...]:
     evaluator = fixture.FakeEvaluator()
     def startup(*_args: Any) -> tuple[Any, ...]:
         seen.append(("startup",))
+        assert worker.rep_fix.current() is True
         for value in descriptors.values():
             with sqlite3.connect(value["checkpoint_path"]) as db:
                 assert db.execute("SELECT state FROM attempts ORDER BY id DESC LIMIT 1").fetchone() == ("RUNNING",)
@@ -152,12 +153,80 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, ...]:
     monkeypatch.setattr(worker, "run_pooled_units", pool)
     resume = worker.validate_resume_contract
     monkeypatch.setattr(worker, "validate_resume_contract", lambda spec: resume(cpu_spec(spec)))
-    worker.rep_fix.apply(True, boards_discarded=True)
     options = {"entry": entry, "consumer": consumer, "recovery": recovery, "guard": guard, "parent": {}, "leases": {}, "priority_module": priority,
         "out": campaign / "controller-00", "authorize": lambda roster, _out: seen.append(("authorize", tuple(roster))),
         "max_units": 2, "max_live_games": 32, "target_rows": 8, "max_rows": 32, "batch_wait_ms": 1, "max_writes": 2,
         "deadline_seconds": 30}
     return descriptors, options, seen, evaluator, loaded, closure_path
+
+
+@pytest.mark.parametrize("initial_mode", [None, False, True])
+def test_owner_installs_rep_fix_before_recovery_and_actual_evaluator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, initial_mode: bool | None,
+) -> None:
+    from scripts.bt4_generation_evaluator import BT4OnnxEvaluator
+
+    previous = worker.rep_fix.current()
+    apply_mode = worker.rep_fix.apply
+    events: list[str] = []
+    try:
+        descriptors, options, seen, _evaluator, loaded, _closure = setup(tmp_path, monkeypatch)
+        # No native board is alive. Model a fresh process (None), an off
+        # process, and an already configured process using the real setter.
+        worker.rep_fix._current = None
+        apply_mode(bool(initial_mode), boards_discarded=True)
+        if initial_mode is None:
+            worker.rep_fix._current = None
+
+        def configure(enabled: bool, *, boards_discarded: bool = False) -> None:
+            assert seen == [("authorize", ("u7", "u9")), ("custody", "all_three")]
+            assert enabled is True
+            assert boards_discarded is True
+            events.append("configure")
+            apply_mode(enabled, boards_discarded=boards_discarded)
+
+        checkpoint_type = loaded["bt4_longblock_checkpoint_v2"].Checkpoint
+        recover = checkpoint_type.recover
+
+        def recover_after_mode(checkpoint: Any, alive: Any) -> Any:
+            assert worker.rep_fix.current() is True
+            events.append("recover")
+            return recover(checkpoint, alive)
+
+        class StartupObserved(Exception):
+            pass
+
+        def actual_evaluator_startup(*_args: Any) -> None:
+            session = SimpleNamespace(get_outputs=lambda: [
+                SimpleNamespace(name="policy", shape=["batch", 1858], type="tensor(float)"),
+                SimpleNamespace(name="wdl", shape=["batch", 3], type="tensor(float)"),
+            ])
+            evaluator = BT4OnnxEvaluator(
+                session, input_name="planes", input_dtype=np.dtype("float32"),
+                policy_output="policy", wdl_output="wdl", wdl_kind="probabilities",
+                input_history_encoding="lc0_root_legacy_meta", input_extra_features="v2_threats",
+                model_sha256="a" * 64, history_rep_fix=True,
+            )
+            assert evaluator.history_rep_fix is True
+            events.append("evaluator")
+            raise StartupObserved
+
+        monkeypatch.setattr(worker.rep_fix, "apply", configure)
+        monkeypatch.setattr(checkpoint_type, "recover", recover_after_mode)
+        monkeypatch.setattr(options["consumer"], "fixed_bt4_startup", actual_evaluator_startup)
+        with pytest.raises(StartupObserved):
+            run_owned_roster(descriptors, **options)
+        assert events == ["configure", "recover", "recover", "evaluator"]
+        assert worker.rep_fix.current() is True
+        for descriptor in descriptors.values():
+            with sqlite3.connect(descriptor["checkpoint_path"]) as db:
+                assert db.execute("SELECT state FROM attempts").fetchone() == ("FAILED_RETAINED_ZERO_CREDIT",)
+    finally:
+        # Restore the sentinel AND compiled globals, including the unset state.
+        worker.rep_fix._current = None
+        apply_mode(bool(previous), boards_discarded=True)
+        if previous is None:
+            worker.rep_fix._current = None
 
 
 def test_actual_owner_descriptor_runtime_checkpoint_and_finite_controller(
