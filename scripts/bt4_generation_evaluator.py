@@ -33,7 +33,12 @@ from scripts.bt4_policy_dump import compact_legal_policy, resolve_policy_output
 from scripts.bt4_prepared_root import BT4LegalSnapshot, BT4PreparedInput
 from scripts.bt4_raw_corpus_sidecar import resolve_wdl_output
 
-_ZERO_LOGIT = np.float32(-1e9)
+from scripts.bt4_root_contracts import (
+    BT4RootOutput as BT4RootOutput,
+    _ZERO_LOGIT as _ZERO_LOGIT,
+    _search_policy_logits as _search_policy_logits,
+    _search_wdl_logits as _search_wdl_logits,
+)
 
 
 def _feed_row_sha256(input_name: str, row: np.ndarray) -> str:
@@ -46,60 +51,6 @@ def _feed_row_sha256(input_name: str, row: np.ndarray) -> str:
     digest.update(np.asarray(row.shape, dtype="<i8").tobytes())
     digest.update(np.ascontiguousarray(row).tobytes())
     return digest.hexdigest()
-
-
-def _search_policy_logits(dense_policy: np.ndarray) -> np.ndarray:
-    """Compact search logits whose legal softmax retains exact zero mass."""
-    logits = np.full((COMPACT_POLICY_SIZE,), _ZERO_LOGIT, dtype=np.float32)
-    positive = dense_policy > 0.0
-    logits[positive] = np.log(dense_policy[positive]).astype(np.float32)
-    return logits
-
-
-def _search_wdl_logits(raw: np.ndarray, kind: str) -> np.ndarray:
-    """Stable search-only logits; never alter the native WDL observation."""
-    values = np.asarray(raw, dtype=np.float64)
-    if kind == "probabilities":
-        logits = np.full((3,), float(_ZERO_LOGIT), dtype=np.float64)
-        positive = values > 0.0
-        logits[positive] = np.log(values[positive])
-    elif kind == "logits":
-        with np.errstate(over="ignore"):
-            logits = values - values.max()
-        logits = np.maximum(logits, float(_ZERO_LOGIT))
-    else:
-        raise ValueError(f"unsupported WDL output kind {kind!r}")
-    result = logits.astype(np.float32)
-    if not np.isfinite(result).all():
-        raise ValueError("BT4 WDL cannot be represented as finite search logits")
-    return result
-
-
-@dataclass(frozen=True)
-class BT4RootOutput:
-    """In-memory root observation, not a complete corpus provenance record."""
-
-    fen: str
-    input_key: str
-    source_key: bytes
-    policy_t1: np.ndarray  # dense lc0_1858, float32; not search-improved policy
-    wdl_raw: np.ndarray  # native dtype and named head; side-to-move POV
-    policy_output: str
-    wdl_output: str
-    wdl_kind: str
-    model_sha256: str
-    input_name: str
-    input_dtype: str
-    input_history_encoding: str
-    input_extra_features: str
-    history_rep_fix: bool
-    onnx_feed_sha256: str = ""
-    verified_session_sha256: str | None = None
-
-    def search_inputs(self) -> tuple[np.ndarray, np.ndarray]:
-        """Fresh batched logits for search; root-only actors retain no derived copy."""
-        return (_search_policy_logits(self.policy_t1)[None],
-                _search_wdl_logits(self.wdl_raw, self.wdl_kind)[None])
 
 
 @dataclass(frozen=True)

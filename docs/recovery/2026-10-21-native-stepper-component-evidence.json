@@ -1,0 +1,122 @@
+{
+  "schema": "PR1110_NATIVE_STEPPER_LOWDEP_PUBLIC_SOURCE_EVIDENCE_V3",
+  "status": "FINAL_SOURCE_FOCUSED_STATIC_NATIVE_COMPONENT_AND_TYPED_BOUNDARY_ACCEPTED",
+  "files": [
+    {
+      "path": "chess_anti_engine/eval/__init__.py",
+      "sha256": "9418df66c305caeecdd7937d0867268c1467f3e5904e353cfd1f1cfa84c5e1c6",
+      "bytes": 1121
+    },
+    {
+      "path": "chess_anti_engine/mcts/__init__.py",
+      "sha256": "8478eb0b15733f75fe3cd50624331b7d3b736afb8d5fd191468b65d7d7ea47a5",
+      "bytes": 1241
+    },
+    {
+      "path": "chess_anti_engine/selfplay/__init__.py",
+      "sha256": "4306bed67e9cfcac551775d93b83dd492b1b009fa8f0ed1f7ed0cd74d8a26f52",
+      "bytes": 815
+    },
+    {
+      "path": "scripts/bt4_root_contracts.py",
+      "sha256": "61b4819fd350761b42fd811be9918685017c322a9fe6f980e46fa4aba2ce55e4",
+      "bytes": 4191
+    },
+    {
+      "path": "scripts/bt4_generation_evaluator.py",
+      "sha256": "e59a564c95e1426f2fb91adadb061eece40d1ebe9aa01ff67188681ac8aee938",
+      "bytes": 18004
+    },
+    {
+      "path": "scripts/gen_sf_rooted_corpus.py",
+      "sha256": "903f3dee9eafeaae4011f7d653a2529900de577da0a37744cd28194a9fc163d8",
+      "bytes": 226742
+    },
+    {
+      "path": "scripts/bt4_raw_corpus_sidecar.py",
+      "sha256": "e28ab536c786cef2f701a69026d2ceba710d8ec2b4240a8e0e530de8b8758a91",
+      "bytes": 61843
+    },
+    {
+      "path": "scripts/bt4_model_arithmetic.py",
+      "sha256": "d6aa80b1c4229c470d91351428f64936460c2f1d444c478e245e998d37fdb39d",
+      "bytes": 2217
+    },
+    {
+      "path": "scripts/bt4_root_policy_stepper.py",
+      "sha256": "03c0f68112d12553f6f0c14a49237e5c3169660433c11930498c1bf28e8273a7",
+      "bytes": 28856
+    },
+    {
+      "path": "tests/test_bt4_native_stepper_component_v4_unittest.py",
+      "sha256": "144578f338d7d94b1b956b487e0e9604c8fc6d669cf6f14053018d5215014154",
+      "bytes": 14224
+    },
+    {
+      "path": "tests/test_bt4_lowdep_contract_exports.py",
+      "sha256": "089bbfa58634b42baa49f480e5ab9e2a243ded48ca1a823b60e33451ebb54cb9",
+      "bytes": 3342
+    }
+  ],
+  "production_file_count": 9,
+  "test_file_count": 2,
+  "source_reviews": [
+    "51f4cad28873a568db74d431cecb2a9869fdcd01775ed901d793e2fc7ff1f726",
+    "3314eda52a1daecff3962d293a4ba35a085791fe396e79a689e64f46a9787164"
+  ],
+  "native_four": {
+    "review_sha256": "702d7a0e8be5af4a3338a652bad0f9a57859f4b571ffb16196e4d8b0bd70da80",
+    "decoded_state_sha256": "53fb0af09c9679b5d2d6da31ef41139fb98b3c29f4cfd58cba72b6501ca3708a",
+    "tests": 4,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "original_arithmetic_postimage_sha256": "7f8edd563bad31f82048b21f767bfc5e8fb753a96d7b9e06ba9a1b0f08557a33",
+    "scope": "Actual native fullhistory/prepare/apply/serial-versus-two-disjoint-producers/RNG and negativeadmission/mode/purecontracts. Syntheticpolicy/WDL only. Fourdistinctcontracts, V7repeat afterreceiptfailure notadditionalcount."
+  },
+  "typed_boundary": {
+    "review_sha256": "f7fee71d7ead422031f96328d66ce978b09f4bbe778e8653bff59071247e2e7e",
+    "decoded_state_sha256": "a2444c155b8f05c6c6c06a5a8b3c8d432a96180af045b885619a505142cbe4c7",
+    "envelope_sha256": "4f32e38f7504e852f2439c9043243830aa498832ac6f8b9c930fa2f882626b66",
+    "final_arithmetic_postimage_sha256": "d6aa80b1c4229c470d91351428f64936460c2f1d444c478e245e998d37fdb39d",
+    "repeated_unittest_cases": 1,
+    "separately_recorded_actual_call_observations": 10,
+    "scope": "ReadonlyFP32 valid809 andordinary; untypedlist exacterror; wrongdtype/shape/nan/range/mass rejection; .0005mass deviation accepted onlyexact809 while ordinaryFP32 keeps2e-6; exactinputbytesunchanged. No model/session/precisionattestation."
+  },
+  "both_receipts": {
+    "normal_nonstdlib_origins_each_phase": 154,
+    "fresh_ELF_candidate_files_before_and_after": 27,
+    "native_source_files": 48,
+    "native_images": 5,
+    "dependency_files": 277,
+    "copied_payloads": 621,
+    "owned_producers_closed": true,
+    "own_ECHILD": true,
+    "original_CPU_guard_clear": true,
+    "all_source_hashes_readback": true
+  },
+  "source_changes": [
+    "Convenience-only eval/mcts/selfplay package exports become lazy normalimports; __all__/__dir__/objectidentity/unknownAttributeError retained; importfailure timing changes.",
+    "Pure outputtype/inputhash/WDLvalidator bodies movedverbatim into one lowdependency module andlegacyreexports; BT4RootOutput definingmodule changes, historicalpicklealias retained, APIpickle testsUNRUN.",
+    "Typing-only cast(object,values) retains realnonarray runtimeguard andsameerrors/tolerances/defaults."
+  ],
+  "static_status": {
+    "status": "PASS_FOCUSED_ELEVEN_FILES",
+    "independent_reconciliation_sha256": "cb3b3946bf3e05870adbd638c4f9219de59333851f08146490e6b4d49e9db70a",
+    "Ruff": "All checks passed; exact11finalcanonicalfiles incombinedlintcall, noextraACKcredit.",
+    "Basedpyright": "0errors0warnings0notes; same11coherenttargetfiles/canonicalconfig/actualnativeimages.",
+    "API_pytest_executed": false,
+    "whole_repository_static_claimed": false
+  },
+  "unrun": [
+    "Seven API/legacyexport/pickle pytestcases",
+    "Eight separate strict-tablebase integration pytestcases"
+  ],
+  "excluded": [
+    "Model/ORT/GPU",
+    "RealSyzygy tablefile decoding",
+    "Fullworker or160/320row supply",
+    "Throughput, memoryfit or adoption"
+  ],
+  "failure_history": "Originalimportclosure failures andfinalreceipt sizefailure preserved. Completeproofacceptedonly afterfullreceiptdecoded/reconciled; no failedattemptpostfacts transferred."
+}

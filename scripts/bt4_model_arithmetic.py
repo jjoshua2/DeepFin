@@ -15,17 +15,17 @@ binding and authority before startup. A caller's hash is not model attestation.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
-from scripts.bt4_raw_corpus_sidecar import validate_wdl_values
+from scripts.bt4_root_contracts import validate_wdl_values
 
 _FP16_INTERNAL_FP32_IO_MODEL_SHA256 = "809db9c3c8063683bf8e7c08de8fec92ea4e37ad8c68c8b1befbde4bd1958961"
 
 
 def validate_model_wdl(
-    values: Any, rows: int, contract: Mapping[str, Any], model_sha256: str,
+    values: np.ndarray, rows: int, contract: Mapping[str, Any], model_sha256: str,
 ) -> None:
     """Validate unmodified native values under a closed model-bound rule."""
     if model_sha256 != _FP16_INTERNAL_FP32_IO_MODEL_SHA256:
@@ -34,7 +34,7 @@ def validate_model_wdl(
     if contract.get("kind") != "probabilities" or contract.get("dtype") != "float32":
         raise ValueError("exact FP16-internal model requires FP32 probability storage")
     # Retain the runtime boundary even for untyped external session adapters.
-    if not isinstance(values, np.ndarray):
+    if not isinstance(cast(object, values), np.ndarray):
         raise ValueError("exact raw WDL shape/storage required")
     if values.dtype != np.dtype("float32") or values.shape != (rows, 3):
         raise ValueError("exact raw WDL shape/storage required")

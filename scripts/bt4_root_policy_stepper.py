@@ -36,7 +36,7 @@ from chess_anti_engine.selfplay.bt4_outcome import (
     decide_bt4_outcome,
 )
 from chess_anti_engine.selfplay.game import _result_to_wdl
-from scripts.bt4_generation_evaluator import BT4RootOutput
+from scripts.bt4_root_contracts import BT4RootOutput, input_tensor_key
 from scripts.bt4_model_arithmetic import validate_model_wdl
 from scripts.bt4_prepared_root import (
     BT4LegalSnapshot,
@@ -44,7 +44,6 @@ from scripts.bt4_prepared_root import (
     copy_history_board,
     immutable_array,
 )
-from scripts.gen_sf_rooted_corpus import input_tensor_key
 
 
 @dataclass(frozen=True)
