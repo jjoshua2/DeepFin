@@ -1320,11 +1320,21 @@ def test_resume_flag_is_watched_and_defaults_off() -> None:
 def _bare_session(tmp_path: Path) -> Any:
     """A WorkerSession with only the fields the resume plumbing touches."""
     import logging
+    import threading
 
     from chess_anti_engine.worker import WorkerSession
 
     session = object.__new__(WorkerSession)
     session.log = logging.getLogger("test-worker")
+    # Bypassing __init__ must still preserve the real session-handoff state.
+    # _wired_session drives _run_selfplay's real active/inactive transitions.
+    session._selfplay_session_active = False
+    session._model_watch_started = False
+    session._model_watch_lock = threading.Lock()
+    session._model_watch_stop = threading.Event()
+    session._model_watch_thread = None
+    session._model_stale_since_s = None
+    session._model_stale_alarmed = False
     session.resume_dir = tmp_path / "selfplay_resume"
     session.resume_dir.mkdir(parents=True, exist_ok=True)
     session.fixed_trial_id = ""

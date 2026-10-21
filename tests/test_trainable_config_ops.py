@@ -796,14 +796,21 @@ def test_live_reload_names_every_key_the_yaml_stopped_setting(
 ) -> None:
     """The reloader is ADD/UPDATE-only, so removing a line cannot revert the
     value the trial is running. That is a behaviour this PR deliberately does
-    NOT change -- but it now says so, naming the key and the value still in
-    effect (audit T4)."""
+    NOT change -- but it now says so, naming each key without disclosing its
+    retained value (audit T4 plus the warning-privacy contract)."""
     reset_yaml_reload_key_tracking()
     yaml_path = tmp_path / "cfg.yaml"
-    _write_cfg(yaml_path, body="train:\n  lr: 0.0007\n  rebuild_sf_targets: true\n")
+    secret = "synthetic-private-retained-value-marker"
+    _write_cfg(yaml_path, body=(
+        "train:\n  lr: 0.0007\n  rebuild_sf_targets: true\n"
+        f"tune:\n  distributed_worker_password: {secret}\n"
+    ))
     config: dict = {}
-    _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+    # Establish the startup baseline; adding password settings live is
+    # separately refused by the dead-key guard and is not this observable.
+    _reload_yaml_into_config(config, str(yaml_path), live_reload=False)
     assert config["rebuild_sf_targets"] is True
+    assert config["distributed_worker_password"] == secret
 
     _write_cfg(yaml_path, body="train:\n  lr: 0.0007\n")
     with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
@@ -811,11 +818,20 @@ def test_live_reload_names_every_key_the_yaml_stopped_setting(
 
     # Semantics unchanged: the deleted key keeps the value it was running.
     assert config["rebuild_sf_targets"] is True
+    assert config["distributed_worker_password"] == secret
     warnings = _reload_warnings(caplog)
-    assert len(warnings) == 1, warnings
-    assert "rebuild_sf_targets" in warnings[0]
-    assert "delete does not revert" in warnings[0]
-    assert "True" in warnings[0]
+    assert len(warnings) == 2, warnings
+    for key in ("rebuild_sf_targets", "distributed_worker_password"):
+        warning = next(message for message in warnings if f"YAML reload: {key} " in message)
+        assert str(yaml_path) in warning
+        assert "STILL RUNNING its previous value" in warning
+        assert "delete does not revert" in warning
+        assert "write the old value explicitly" in warning
+        assert f"`{key}: null`" in warning
+    records = [record for record in caplog.records if "no longer set by" in record.getMessage()]
+    captured = caplog.text + repr([record.args for record in records])
+    assert secret not in captured
+    assert "True" not in captured
 
 
 def test_live_reload_reports_a_nulled_key_as_a_deletion(
