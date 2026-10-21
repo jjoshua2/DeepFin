@@ -1,0 +1,66 @@
+{
+  "schema": "WORKFLOW_CADENCE_SOURCE_HANDOFF_V2",
+  "base_commit": "a2881557469ed4dc93efeacf26812b013489c686",
+  "worktree": "C:\\Users\\jjosh\\Documents\\Codex\\2026-10-13\\task-5\\bt4-pr1110-recovery-20261021-v1\\worktree-workflow-cadence",
+  "branch": "recovery/workflow-cadence-20261021",
+  "status": "FROZEN_SOURCE_ONLY_REVIEW_PENDING_NO_CANONICAL_COMMIT",
+  "files": [
+    {
+      "path": "CLAUDE.md",
+      "bytes": 10352,
+      "sha256": "163329dc7d5a738ea3ad4c7a751856e971d8fd5fabb2971aa9a5baa2d5caa9a8",
+      "git_blob": "67e9f79ff21871e86cc60254b89bbb61ab302936"
+    },
+    {
+      "path": "docs/agent_execution.md",
+      "bytes": 9530,
+      "sha256": "2beebf641369510a0b9495307f87ca7a0e1e755c540d88e0903dffc796c591c7",
+      "git_blob": "780a9c5966f166a99103f8cb253c08c50e0afc4f"
+    }
+  ],
+  "patch": {
+    "path": "C:\\Users\\jjosh\\Documents\\Codex\\2026-10-13\\task-5\\bt4-pr1110-recovery-20261021-v1\\workflow-cadence-artifacts-v1\\workflow-cadence-v2.patch",
+    "bytes": 11271,
+    "sha256": "2a1cc66b1d2a2c984419b4753772358c7471e06ddb5901590ddfd26c4170fb8a"
+  },
+  "unchanged": {
+    "AGENTS_pointer": true,
+    "all_preexisting_CLAUDE_text_verified": true,
+    "PR1097_head": "3fc568d4a34ad4b520d102c7331602dec8ab8a36",
+    "PR1097_CLAUDE_hunk": "Experiments and evidence at77",
+    "own_CLAUDE_hunk": "New section after implementation/review at142",
+    "PR1097_paragraph_unchanged": true
+  },
+  "helper_search": {
+    "tracked_paths": [
+      ".agents",
+      ".claude",
+      "tools",
+      "scripts"
+    ],
+    "terms": [
+      "followup_task",
+      "send_message",
+      "completion event",
+      "next.action",
+      "worker.*completed",
+      "orchestrat"
+    ],
+    "agent_event_consumer_found": false,
+    "production_queue_helpers_changed": false,
+    "new_daemon_or_scheduler": false
+  },
+  "validation": {
+    "git_diff_cached_check": "exit0",
+    "preexisting_CLAUDE_text_comparison": "exact UTF8/LF equality after removing sole additive section",
+    "manual_scenarios": 10,
+    "automated_tests_run": 0,
+    "subject_imports": 0,
+    "WSL_commands": 0,
+    "GPU_actions": 0,
+    "control_mutations": 0,
+    "limitations": "Documentation changes agent procedure only; cannot alter platform delivery/scheduling or wake an idle worker automatically. No executable agent helper found, so no fake checker/test harness created."
+  },
+  "scope": "Additive instructions and procedure only; no new action authority, retry/cap/security waiver, merge/deploy/resume or qualification credit.",
+  "previous_patch": "workflow-cadence-v1.patch preserved, unpublished; V2 adds fail-fast wrapper/receipt-validation guidance."
+}
