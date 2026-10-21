@@ -100,10 +100,9 @@ negative checks both writer rejection and the dump reader's refusal of a
 malformed raw store. The separate isolated native controller retains its strict
 no-model-runtime import guarantee.
 
-These are **source-reviewed repairs, not a passing rerun**. Neither targeted
-collection nor post-repair ordinary-suite success is inferred here. Documentation
-corrections likewise do not make the hosted path test pass without rerunning it.
-No new test credit, model execution or performance claim follows.
+At that stage these were **source-reviewed repairs, not a passing rerun**. The
+later hosted successor result is recorded below; the original failed run remains
+retained and is not relabeled successful.
 
 ## Dependency inspection and remaining runtime gate
 
@@ -121,3 +120,32 @@ and prior low-dependency component results do not waive it. Material audit
 approval and exact runtime/custody/action review remain outstanding before another
 aggregate model trial. No larger cap, audit bypass, live adoption, merge or
 training credit is authorized by this note.
+## Hosted successor passes; utility candidate remains separately scoped
+
+Hosted [run 39646964682](https://github.com/jjoshua2/DeepFin/actions/runs/39646964682)
+on published `f32feb7611460263e7d2fa7c6f3ef668467fafec` passed lint, PEXT and
+the CPU job. The ordinary suite reported **16,209 passed, 145 skipped, four
+deselected and four expected failures**. The separate capped regression reported
+**24 passed**. These are results for that published revision, following the
+failed `20836` run; skips and expected failures are not passing coverage.
+
+A separate local utility-boundary candidate passed eight selected normal-import
+and metadata-caller controls, with independent saved-result acceptance. The
+controls cover the selected utility interfaces and constructor boundaries. The
+owner and pooled-worker entry points were imported and checked as callable,
+not executed. This is not full-worker, model-session, GPU, gameplay, throughput,
+or adoption qualification, and those eight cases are not added to the hosted
+suite's pass count.
+
+The four utility production changes are outside the hosted `f32feb76` result.
+Their separate focused static successor passed Ruff and Basedpyright with zero
+errors, warnings or notes. The eight-case execution used the V5 test; the final
+V7 test differs only by separately reviewed style/type edits and passed static
+validation. Those eight cases were not rerun on V7, and the hosted pass does not
+transfer to these postimages.
+
+Activation of the proposed ten-second control
+audit remains disabled pending the material-tradeoff decision; candidate GPU
+admission remains disabled. Any subsequent model trial still requires its exact
+runtime, canonical custody and action review. These records change no ordinary
+generation control, audit policy, resource limit or training admission.
