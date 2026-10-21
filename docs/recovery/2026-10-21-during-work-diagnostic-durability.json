@@ -1,0 +1,100 @@
+{
+  "schema": "PR1110_DURING_WORK_DIAGNOSTIC_DURABILITY_V1",
+  "disposition": "ELEVEN_STANDALONE_CPU_OBSERVATIONS_ACCEPTED_NO_MODEL_ATTEMPT",
+  "hypothesis": "Termination can bypass terminal Python unwinding; CPU tests verify this mechanism without identifying the unique cause of V3 telemetry loss.",
+  "helper_sha256": "998061bfe81aaf49eca04a71dbf5bdf1fe573f2877da340d4c143bce71249993",
+  "runner_sha256": "e57fefee71a42a71b573f7b393813311ea6bc1868a3ebd6c47fe10914302ef44",
+  "combined_source_review_sha256": "f491d4db35f05ef0290430c855c5d1517fa9615b671e1dad292a3e912cc9c2ee",
+  "actual_sha256": "a18a8ca691eeb726ae6619016d99663f2c19278d677689b4baf0a40524ee4ecd",
+  "actual_review_sha256": "679a75f679dcbfedf7abf2c85161b186e302536b32668e63053232ba9ac0bac5",
+  "native_terminal_sha256": "9592377970d9b38d6d259e9a8de5787e781ba5ea61d5befdde5d049dea7b02e7",
+  "observations": {
+    "controller_retention": [
+      "bounded_raw_prefix_and_failure_receipt",
+      "persistence_failures_preserve_primary"
+    ],
+    "source_controls": [
+      "initial_publication_failure_failclosed",
+      "first_execute_pre_and_post_before_cadence",
+      "first_execute_publication_failure_original_not_called",
+      "first_post_io_failure_preserves_original_exception",
+      "cadence_count_byte_bounds_and_restore",
+      "early_byte_exhaustion_preserves_prior_snapshot_and_return",
+      "nonquiescent_ownership_until_explicit_quiescence"
+    ],
+    "termination_controls": [
+      "owned_SIGTERM_inside_first_execute_after_pending_ack",
+      "owned_SIGKILL_inside_first_execute_after_pending_ack"
+    ]
+  },
+  "native_wall_seconds": 0.7025821,
+  "guest_wall_seconds": 0.5365837520221248,
+  "parent_cpu_seconds": 0.132317,
+  "reaped_children_cpu_seconds": 0.047063999999999995,
+  "peak_rss_bytes": 29925376,
+  "children": [
+    {
+      "ack": {
+        "durable_snapshot": "/tmp/pr1110-diagnostic-durability-cpu-20261021-v1/cases/termination-controls/sigterm/trace.json.during-01.json",
+        "pid": 239631,
+        "sha256": "d1fbdb3f62f67ca5a2c4ce02bd102ef26f78529867ce116512a63d7049b6e859"
+      },
+      "birth_ticks": 56152249,
+      "child_elapsed_seconds": 0.04982393700629473,
+      "kernel_ECHILD": true,
+      "observed_origins": {
+        "targeted_diagnostics_v1": "/tmp/pr1110-diagnostic-durability-cpu-20261021-v1/source/targeted_diagnostics_v1.py",
+        "targeted_diagnostics_v2": "/tmp/pr1110-diagnostic-durability-cpu-20261021-v1/source/targeted_diagnostics_v2.py",
+        "targeted_diagnostics_v4": "/tmp/pr1110-diagnostic-durability-cpu-20261021-v1/source/targeted_diagnostics_v4.py"
+      },
+      "pid": 239631,
+      "pinned_runpy_source_path": "/tmp/pr1110-diagnostic-durability-cpu-20261021-v1/source/diagnostic_termination_child_v4.py",
+      "returncode": -15,
+      "signal": 15,
+      "stderr_bytes": 371,
+      "stderr_sha256": "67e38835157eaeb79a40cac48bfa96cea51b333033f0b061436105e0206a74fb",
+      "stdout_bytes": 228,
+      "stdout_sha256": "1c1366d78f95f77214fbd4b872cb97497a33d91b8729ffecd8cd275fd30d4ba3"
+    },
+    {
+      "ack": {
+        "durable_snapshot": "/tmp/pr1110-diagnostic-durability-cpu-20261021-v1/cases/termination-controls/sigkill/trace.json.during-01.json",
+        "pid": 239632,
+        "sha256": "9568bc1e013162f39c1517dfbffacaed1e6ce13826190720dcda96c85a807104"
+      },
+      "birth_ticks": 56152255,
+      "child_elapsed_seconds": 0.051858359947800636,
+      "kernel_ECHILD": true,
+      "observed_origins": {
+        "targeted_diagnostics_v1": "/tmp/pr1110-diagnostic-durability-cpu-20261021-v1/source/targeted_diagnostics_v1.py",
+        "targeted_diagnostics_v2": "/tmp/pr1110-diagnostic-durability-cpu-20261021-v1/source/targeted_diagnostics_v2.py",
+        "targeted_diagnostics_v4": "/tmp/pr1110-diagnostic-durability-cpu-20261021-v1/source/targeted_diagnostics_v4.py"
+      },
+      "pid": 239632,
+      "pinned_runpy_source_path": "/tmp/pr1110-diagnostic-durability-cpu-20261021-v1/source/diagnostic_termination_child_v4.py",
+      "returncode": -9,
+      "signal": 9,
+      "stderr_bytes": 371,
+      "stderr_sha256": "67e38835157eaeb79a40cac48bfa96cea51b333033f0b061436105e0206a74fb",
+      "stdout_bytes": 228,
+      "stdout_sha256": "c72759a47dec36dd450e060c6eee80aff6ba077f946206947eb273e959533cbf"
+    }
+  ],
+  "kernel_echild": true,
+  "diagnostic_design": [
+    "Mandatory fsynced entered snapshot before target body",
+    "Mandatory first-execute pending snapshot before original call, regardless of cadence",
+    "First post-call best-effort snapshot without masking original return or error",
+    "Later opportunistic20s snapshots on existing callbacks only; no watcher thread",
+    "At most17 publication attempts and separate conservative4MiB budget; immutable create-only records"
+  ],
+  "limitations": [
+    "Standalone stdlib boundary doubles, not actual model/runtime/provider qualification",
+    "Pending counters describe saved state at publication, never live state at closure",
+    "V3 ACK remains unknown; no V2 ACK transfer",
+    "No model, speed, full-unit, product or training credit"
+  ],
+  "next_gate": "Separately reviewed60s diagnostic-only actual-caller experiment, same128games/64actors, unchanged guards/STOPs/custody, cleanup<=180s. Runtime/source/whole-action binding pending; not admitted.",
+  "product_credit": 0,
+  "training_credit": 0
+}

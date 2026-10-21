@@ -1,0 +1,146 @@
+{
+  "schema": "PR1110_DIAGNOSTIC_DURABILITY_V4_DURABLE_SOURCE_V1",
+  "status": "PREPARED_SOURCE_ESCROW_CPU_EVIDENCE_ONLY_NOT_PUBLISHED",
+  "archive": "2026-10-21-diagnostic-durability-v4-source-v1.zip",
+  "archive_sha256": "5cc2a0c8f5bfd5acbe1dacfa2d8a3a4413ea92c0773485aaa2c8e279162de0ac",
+  "archive_bytes": 40323,
+  "member_count": 18,
+  "determinism": "Explicit sorted member roster; fixed1980 UTC ZIP timestamps, attributes0, compressionOptimal; source bytes preserved. No source imports/execution.",
+  "all_member_hashes_read_back": true,
+  "all_original_sources_rehashed": true,
+  "members": [
+    {
+      "path": "cpu/DURABILITY-CPU-PROPOSAL-v3.json",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/durability-cpu-v1/DURABILITY-CPU-PROPOSAL-v3.json",
+      "bytes": 8507,
+      "sha256": "49ae8d458a98ffc09495dc8fea3d58514f57bde7c510cec674b1f32517bc78ed"
+    },
+    {
+      "path": "cpu/qualify_diagnostic_durability_v3.py",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/durability-cpu-v1/qualify_diagnostic_durability_v3.py",
+      "bytes": 27438,
+      "sha256": "e57fefee71a42a71b573f7b393813311ea6bc1868a3ebd6c47fe10914302ef44"
+    },
+    {
+      "path": "diagnostics/diagnostic_termination_child_v4.py",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/diagnostic_termination_child_v4.py",
+      "bytes": 1530,
+      "sha256": "2c62f7aeca4183d39e152c913f99530c508d06f11621fce87301ecca660301ee"
+    },
+    {
+      "path": "diagnostics/targeted_diagnostics_v1.py",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/targeted_diagnostics_v1.py",
+      "bytes": 9421,
+      "sha256": "48dc44768aabdc4e18c4314abeeaefdb255e65ea54150c6b0d04285d36332a22"
+    },
+    {
+      "path": "diagnostics/targeted_diagnostics_v2.py",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/targeted_diagnostics_v2.py",
+      "bytes": 2616,
+      "sha256": "444bf23fcd1850efcacd55bb888e7d275e3a02bde3846c80bf0813cecc336bb3"
+    },
+    {
+      "path": "diagnostics/targeted_diagnostics_v4.py",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/targeted_diagnostics_v4.py",
+      "bytes": 9304,
+      "sha256": "998061bfe81aaf49eca04a71dbf5bdf1fe573f2877da340d4c143bce71249993"
+    },
+    {
+      "path": "diagnostics/test_targeted_diagnostics_v4_durability.py",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/test_targeted_diagnostics_v4_durability.py",
+      "bytes": 8332,
+      "sha256": "347b457b79827318c603cd6500445af855d9bc6bee5b938f7823e4e2cfc1adc1"
+    },
+    {
+      "path": "documentation/DIAGNOSTIC-DURABILITY-V4-PLAN-CPU10-SUPPLEMENT-v1.json",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/DIAGNOSTIC-DURABILITY-V4-PLAN-CPU10-SUPPLEMENT-v1.json",
+      "bytes": 1236,
+      "sha256": "5fcdee85d94bf0fa61fd590ad8cf092704bb5f5ef7415b42c8fea84325e51085"
+    },
+    {
+      "path": "documentation/DIAGNOSTIC-DURABILITY-V4-SOURCE-AND-FAULT-PLAN-v1.md",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/DIAGNOSTIC-DURABILITY-V4-SOURCE-AND-FAULT-PLAN-v1.md",
+      "bytes": 3953,
+      "sha256": "486136613cc78fbcc7783bd00e4b4a4f84e8acc15a8d26387c7206523551f393"
+    },
+    {
+      "path": "documentation/DURABILITY-CPU-V3-EXACT-ARGV-v1.json",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/DURABILITY-CPU-V3-EXACT-ARGV-v1.json",
+      "bytes": 774,
+      "sha256": "73fad362949d9b9b30a6b65d8b08e88662ea34a7b6b3a6b842ab29cd7c4a2103"
+    },
+    {
+      "path": "documentation/DURABILITY-V4-PUBLICATION-PARAGRAPH-v1.md",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/DURABILITY-V4-PUBLICATION-PARAGRAPH-v1.md",
+      "bytes": 784,
+      "sha256": "c8bfc944fc77e335fa908819e9e3ce03a5b7c017574474f2cd5a9d8b08cc7edc"
+    },
+    {
+      "path": "raw/DURABILITY-CPU-V3-ACTUAL-stderr.txt",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/DURABILITY-CPU-V3-ACTUAL-stderr.txt",
+      "bytes": 1273,
+      "sha256": "f42c604fc7c3bca6da85a8cc2f248d2f5397b5a257d2132539c7516f5770079b"
+    },
+    {
+      "path": "raw/DURABILITY-CPU-V3-ACTUAL-stdout.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/DURABILITY-CPU-V3-ACTUAL-stdout.json",
+      "bytes": 14254,
+      "sha256": "a18a8ca691eeb726ae6619016d99663f2c19278d677689b4baf0a40524ee4ecd"
+    },
+    {
+      "path": "raw/DURABILITY-CPU-V3-NATIVE-TERMINAL-v1.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/DURABILITY-CPU-V3-NATIVE-TERMINAL-v1.json",
+      "bytes": 481,
+      "sha256": "9592377970d9b38d6d259e9a8de5787e781ba5ea61d5befdde5d049dea7b02e7"
+    },
+    {
+      "path": "raw/DURABILITY-CPU-V3-ONE-USE-INTENT-v1.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/DURABILITY-CPU-V3-ONE-USE-INTENT-v1.json",
+      "bytes": 567,
+      "sha256": "fa16519299b6bf74640cada241fe004cad92ac6d60e5d367dcc546dfc8909a97"
+    },
+    {
+      "path": "reviews/DIAGNOSTIC-DURABILITY-CPU-V3-COMBINED-INDEPENDENT-REVIEW-v1.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/DIAGNOSTIC-DURABILITY-CPU-V3-COMBINED-INDEPENDENT-REVIEW-v1.json",
+      "bytes": 6330,
+      "sha256": "f491d4db35f05ef0290430c855c5d1517fa9615b671e1dad292a3e912cc9c2ee"
+    },
+    {
+      "path": "reviews/DIAGNOSTIC-DURABILITY-CPU-V3-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/DIAGNOSTIC-DURABILITY-CPU-V3-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "bytes": 2486,
+      "sha256": "679a75f679dcbfedf7abf2c85161b186e302536b32668e63053232ba9ac0bac5"
+    },
+    {
+      "path": "reviews/DIAGNOSTIC-DURABILITY-V4-INDEPENDENT-SOURCE-REVIEW-v1.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/DIAGNOSTIC-DURABILITY-V4-INDEPENDENT-SOURCE-REVIEW-v1.json",
+      "bytes": 2816,
+      "sha256": "8822b81e41fb2a83600e5f149d52801f1c10d52aabdfde94f7fa08990dfcde22"
+    }
+  ],
+  "cpu": {
+    "status": "ACCEPT_ELEVEN_CPU_OBSERVATIONS_THREE_GROUPS_ONLY",
+    "actual_review_sha256": "679a75f679dcbfedf7abf2c85161b186e302536b32668e63053232ba9ac0bac5",
+    "source_controls": 7,
+    "owned_termination_controls": 2,
+    "controller_failure_retention_controls": 2,
+    "unittest_groups": 3,
+    "native_exit": 0,
+    "native_seconds": 0.7025821,
+    "guest_seconds": 0.5365837520221248,
+    "self_cpu_seconds": 0.132317,
+    "reaped_child_cpu_seconds": 0.047063999999999995,
+    "kernel_ECHILD": true,
+    "training_credit": 0,
+    "product_credit": 0
+  },
+  "scope_limits": [
+    "CPU boundary durability/fault cases only; no model/GPU/real roster/full128/speed/guard-share qualification",
+    "Saved pending state describes capture time, not inference proof or still-inflight status at closure",
+    "No aggregation with previous mixed eight observations, strict two or finite-adapter five; no lost-v8 transfer",
+    "Historic source UNRUN labels and CPU60 plan text remain byte-identical; separate CPU10 supplement corrects resource wording",
+    "Archive not installed or activated; no packet/grant/runtime adoption/retry/deployment authority",
+    "Native hashes/ZIP construction/readback only; no new tests/project imports/model/guest action"
+  ],
+  "provenance_privacy": "Workspace-relative member/source names; original source/proposals/reviews/raw streams retain disclosed local paths/process identities byte-for-byte. Root decides destination visibility."
+}
