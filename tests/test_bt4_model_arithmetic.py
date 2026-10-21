@@ -131,6 +131,11 @@ def test_next_representable_value_outside_existing_budget_refused() -> None:
         validate_model_wdl(values, 1, CONTRACT, SELECTED)
 
 
+def test_selected_untyped_adapter_must_return_an_actual_array() -> None:
+    with pytest.raises(ValueError, match="shape/storage"):
+        validate_model_wdl([[0.5, 0.5, 0.0]], 1, CONTRACT, SELECTED)
+
+
 @pytest.mark.parametrize("values, message", [
     (np.array([[0.5, 0.5]], dtype=np.float32), "shape/storage"),
     (np.array([[0.5, 0.5, 0]], dtype=np.float64), "shape/storage"),
