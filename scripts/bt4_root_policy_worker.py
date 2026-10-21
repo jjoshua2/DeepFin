@@ -43,7 +43,8 @@ from scripts.bt4_root_policy_stepper import (
     BT4FinalizedGame,
     BT4RootPolicyStepper,
 )
-from scripts.gen_sf_rooted_corpus import INPUT_EXTRA_FEATURES, INPUT_HISTORY_ENCODING
+from chess_anti_engine.encoding.features import EXTRA_FEATURES_V2_THREATS as INPUT_EXTRA_FEATURES
+from chess_anti_engine.encoding.lc0 import LC0_HISTORY_ROOT_LEGACY_META as INPUT_HISTORY_ENCODING
 
 
 SCHEMA = "bt4_root_policy_games_v1"

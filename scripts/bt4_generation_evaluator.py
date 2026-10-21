@@ -27,14 +27,14 @@ from chess_anti_engine.encoding.encode import input_plane_count
 from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding, x_to_lc0_planes
 from chess_anti_engine.eval.rvg_surgery import FINGERPRINT_BYTES, position_fingerprints
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE, legal_move_indices
-from scripts import gen_sf_rooted_corpus as corpus
 from scripts.bt4_model_arithmetic import validate_model_wdl
 from scripts.bt4_policy_dump import compact_legal_policy, resolve_policy_output
 from scripts.bt4_prepared_root import BT4LegalSnapshot, BT4PreparedInput
-from scripts.bt4_raw_corpus_sidecar import resolve_wdl_output
 
 from scripts.bt4_root_contracts import (
     BT4RootOutput as BT4RootOutput,
+    input_tensor_key as input_tensor_key,
+    resolve_wdl_output as resolve_wdl_output,
     _ZERO_LOGIT as _ZERO_LOGIT,
     _search_policy_logits as _search_policy_logits,
     _search_wdl_logits as _search_wdl_logits,
@@ -272,7 +272,7 @@ class BT4OnnxEvaluator:
         ):
             raise ValueError("BT4 root source fingerprint is unavailable")
         fens = [board.fen() for board in boards]
-        input_keys = [corpus.input_tensor_key(row) for row in arr]
+        input_keys = [input_tensor_key(row) for row in arr]
         if prepared is not None and any(
             (payload.fen, payload.input_key, payload.source_key)
             != (fen, key, source_key)

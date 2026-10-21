@@ -102,3 +102,16 @@ def validate_wdl_values(values: np.ndarray, rows: int, contract: Mapping[str, An
             raise ValueError("WDL probability range/mass invalid")
 
 
+def resolve_wdl_output(sess: Any, requested: Mapping[str, str] | None,
+                       policy_name: str) -> dict[str, str] | None:
+    """Explicit named W/D/L STM contract, never guess a three-wide head."""
+    if requested is None:
+        return None
+    matches = [out for out in sess.get_outputs() if out.name == requested["output"]]
+    if len(matches) != 1 or requested["output"] == policy_name:
+        raise ValueError("WDL output absent, ambiguous or aliases policy")
+    out = matches[0]
+    types = {"tensor(float16)": "float16", "tensor(float)": "float32", "tensor(double)": "float64"}
+    if len(out.shape) != 2 or out.shape[1] != 3 or out.type not in types:
+        raise ValueError("WDL output must be a native floating [batch,3] tensor")
+    return {**requested, "dtype": types[out.type]}
