@@ -262,3 +262,15 @@ The separate five-unit/320-actor plan remains source-only. Two independent revie
 This publication capsule preserves the frozen inventory source/proposal/argv/freeze, source and actual reviews, native intent/terminal/full stdout/stderr, and the separate five-unit JSON/readable plan plus both source/risk reviews. Source paths are read-only provenance. No canonical source edits, tests, imports, guest actions or new execution were performed while preparing the capsule.
 
 [Exact inventory evidence and source-only resource plan](../recovery/DEPENDENCY-INVENTORY-AND-AGGREGATE-PLAN-v1.json).
+
+## Logical supply result
+
+The later distinct V3 CPU gate passed three logical methods at 13:47 UTC and
+independent evidence review accepted the saved result. This supersedes the
+earlier UNRUN label only for those exact logical controls. V1 and V2 failed
+controllers remain separate with zero method credit. Explicit fake computation,
+trajectory reservations and writer/ACK seams limit the result; native concurrency,
+canonical durability, memory fit and real-model performance remain unqualified.
+
+The full local evidence capsule is banked by hash, including prepared outcome
+branches. [Scoped result and evidence identities](../recovery/2026-10-21-logical-supply-readout.md).
