@@ -29,3 +29,21 @@ Failed stderr SHA256:
 `06e6d44681215d23730f4cb75fd77af471f7ac82670d14a69b6ccac40d736d99`.
 Independent failed-actual review:
 `3844fb7f873202420ac84a1ba11974decbc1976d1d791df99876388ed6200c12`.
+
+## Authenticated loader-name successor
+
+A distinct successor verified the actual `libc.so.6` request, canonical file
+identity and resolved function address inside the executable libc mapping. It
+then refused the first post-import native-map binding before any test method.
+Exit status was 1 after 4.7599368 seconds native elapsed, with complete streams.
+The offending mapping was not retained by that controller, which is a diagnostic
+defect. The NumPy dependency inventory is not a complete dependency closure for
+the five project native extensions. A bounded static transitive ELF inventory
+and rejection logging are required before another coherent component attempt.
+This is a private harness failure, not observed stepper behavior or a platform
+access denial. Production imports and resource limits remain unchanged.
+
+Successor stdout SHA256:
+`a721d22c05e9cf96f80df0918d82491073d097f13ba137345e25b2ad7a4cc8ae`.
+Independent failed-actual review:
+`a7a74a6e348e7a8847e2fa77c46bb9d6160a705db1ba3eb84a5872b182174019`.
