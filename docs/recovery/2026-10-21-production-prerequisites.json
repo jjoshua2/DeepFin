@@ -1,6 +1,6 @@
 {
   "schema": "pr1110_production_prerequisites_v1",
-  "status": "PRODUCTION_BUILD_AND_SCOPED_CPU_PASS_COPIED_RUNTIME_IMPORT_PENDING",
+  "status": "PRODUCTION_BUILD_SCOPED_CPU_STATIC_AND_COPIED_RUNTIME_IMPORT_PASS_FINITE_GPU_UNRUN",
   "latest_code_commit": "8d3b9f9b25bc7cd0caa706dace3cad1daa37b47e",
   "fresh_native_build_source": "e964def51baa2b10d6b99f0aaacab1b9165f95c0",
   "native_images": 5,
@@ -48,6 +48,30 @@
     "child_actual_independent_review_sha256": "a8506101c060f1de753a13b96aa98516336974695c9eeceebc5ddfd2b03b5fa7",
     "scope": "stdlib synthetic/mock only; no real kernel custody, model, durability or performance qualification"
   },
+  "runtime_copy_v2": {
+    "preserved_v1": true,
+    "payload_files": 609,
+    "complete_files_including_closure": 610,
+    "payload_bytes": 17943967,
+    "closure_sha256": "8a09571e89f72830d0fbd567015c0005a3ba464cfa31f44b88af9d8b129fc23f",
+    "raw_export_sha256": "7ab44678b08ed9e08db78e5aa511b05c15d1c55e6fc064403a13dd7402a5bf8c",
+    "independent_actual_review_sha256": "d68a1ebec0a8a6a6cbc77ac69d39c5f85e1b110a89c3deaff5bcab260af3dcc0",
+    "transitive_source_gaps": 0
+  },
+  "copied_runtime_actual_import": {
+    "status": "PASS_CPU_NORMAL_IMPORT_ONLY",
+    "declared_module_origins_and_hashes": 37,
+    "wall_seconds": 2.353534,
+    "cpu_seconds": 2.454183,
+    "peak_rss_bytes": 636207104,
+    "cuda_initialized": false,
+    "model_or_session_created": false,
+    "raw_sha256": "d0c16e4a50b58959a73cd541cc1a15aa49ff2f8c25ccf545074e24b668b1a552",
+    "independent_actual_review_sha256": "67ab730425933f62767b2f14097b19229c1ba44a6de67115b7e9ebf47639a9cf",
+    "retained_failure": "Prior distinct v2 checker rejected normal dill /dev/null file-type inspection. Narrow independently reviewed v3 permits only the authenticated null character device; original failure and output namespace preserved.",
+    "warning": "ORT import attempted sysfs device discovery and emitted a warning. No claim of zero implicit device-metadata queries or actual CUDA/provider qualification."
+  },
+  "current_finite_gate": "Read-only paused-state capture refused its joint 8MiB/0.5s SQL-result guard before checkpoint scans. Distinct compact per-job content-digest projection is being reviewed without increasing bounds. Final exact packet/action/custody gates remain pending.",
   "final_cpu_and_copy_raw_export_sha256": "0e418e0c0f95ea2170745affb43c5dff8074bdc31549a7cc8e7f9878c9e979af",
   "final_cpu_and_copy_independent_actual_review_sha256": "2ccc43b63c27a18ab99080c519fa354d61164d795da43b23500416554237922f",
   "case_count_relationship": "Overlapping evidence scopes; do not sum with each other or the original616",

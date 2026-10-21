@@ -93,8 +93,12 @@ are hypotheses, not guaranteed batch sizes or optimality claims. No new toleranc
 global math setting, extra reserve or source waiver is implicit. Ceres physical32
 remains a separately qualified route.
 
-The finite child entry, parent deadline/resource protocol and exact operational
-packet are still being authored and independently reviewed. Ordinary generation
+The finite child entry and parent deadline/resource protocol have source review
+and scoped synthetic controls. The corrected 610-file runtime has passed actual
+37-module production Python3.10 import/origin checks; no model or session was
+created. A read-only paused-state snapshot refused its bounded SQL-result guard;
+a compact exact content-digest projection is being reviewed with unchanged bounds.
+The exact operational packet and final action review remain pending. Ordinary generation
 remains CLOSED+PAUSED; the finite test must preserve that state on return.
 No model load or GPU qualification has occurred. This document records planning
 and completed prerequisite evidence; it authorizes no executable stage.
