@@ -76,3 +76,31 @@ Final regression receipt SHA256:
 `c57bbf32a83dfbcdda413a6a3e07a7be4e49ef66b17d97d012095110a785a9a7`.
 Independent actual review:
 `c3cf98ed7ed5ece0bb807940702ed5396a28b3947700ac232cfb9bfa33792a50`.
+
+## Actual finite-caller wiring component follow-up
+
+A distinct unarmed child, adapter and parent successor now bind the validation
+policy and source origins explicitly. The child performs the full preservation
+sweep after authenticated quiescence; the parent verifies preservation after
+owned-child settlement. Cleanup rendering and verification failures preserve the
+primary exception, and verification failure cannot produce a successful closure
+record. The production OwnerGuard implementation is unchanged.
+
+The source-bound CPU gate passed 18 observations: eight wiring groups, nine
+settlement groups and one actual-callsite AST group. Native elapsed time was
+0.8980103 seconds, with complete stdout and empty stderr. The gate exercised the
+actual OwnerGuard class body through explicit fake custody, process, memory,
+disk and output seams. It did not establish normal production import behavior,
+real file-lock custody, native quiescence, performance or model qualification.
+Canonical custody was observed only; no lease was acquired by this gate.
+
+All current-authority paths remain runtime checked by default. No concrete
+exemptions are approved. Controls demonstrate that an endpoint-only mutation
+which is restored before closure can be missed entirely; that coverage change
+is explicit rather than claimed equivalent to continuous checking. Frozen
+source versions rejected during review remain retained and were never run.
+
+Actual receipt SHA256:
+`593e4ffcd6469df217cc9295f683314ac3cfa1ba993388c96813b1e086d0c877`.
+Independent actual review:
+`d8d2fa020a59cb01b70788d194a1dd61a6befb9e61c60ecfae630c2a1843c42f`.
