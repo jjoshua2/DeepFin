@@ -188,6 +188,7 @@ def run_owned_roster(
     from chess_anti_engine import async_safety as safety_module
     from scripts import bt4_prepared_root as prepared_module
     from scripts import bt4_generation_evaluator as evaluator_module
+    from scripts import bt4_model_arithmetic as arithmetic_module
     from scripts import bt4_policy_dump as policy_module
     from scripts.ceres_pipelined_client import PipelinedCompanion
 
@@ -210,7 +211,8 @@ def run_owned_roster(
                        "chess_anti_engine/teacher_dispatch.py", "chess_anti_engine/request_routing.py",
                        "scripts/bt4_root_policy_worker.py", "scripts/bt4_root_policy_stepper.py",
                        "chess_anti_engine/fixed_domain_supervision.py", "scripts/bt4_prepared_root.py",
-                       "scripts/bt4_generation_evaluator.py", "scripts/bt4_policy_dump.py",
+                       "scripts/bt4_generation_evaluator.py", "scripts/bt4_model_arithmetic.py",
+                       "scripts/bt4_policy_dump.py",
                        "chess_anti_engine/encoding/cboard_encode.py",
                        "scripts/bt4_runtime_closure_v1.json", "scripts/comparison_priority.py",
                        "scripts/phase_consumption.py")
@@ -278,6 +280,7 @@ def run_owned_roster(
                      ("chess_anti_engine/async_safety.py", Path(safety_module.__file__)),
                      ("scripts/bt4_prepared_root.py", Path(prepared_module.__file__)),
                      ("scripts/bt4_generation_evaluator.py", Path(evaluator_module.__file__)),
+                     ("scripts/bt4_model_arithmetic.py", Path(arithmetic_module.__file__)),
                      ("scripts/bt4_policy_dump.py", Path(policy_module.__file__)))
     if companion_module is not None:
         loaded_shared += (("scripts/ceres_pipelined_client.py", Path(companion_adapter.__file__)),)

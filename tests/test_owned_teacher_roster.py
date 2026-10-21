@@ -41,7 +41,8 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, ...]:
     relative_paths += ["scripts/dual_companion_config.json"]
     relative_paths += ["scripts/shared_teacher_owner.py", "scripts/shared_teacher_generation.py",
                        "chess_anti_engine/teacher_dispatch.py", "scripts/bt4_root_policy_worker.py",
-                       "scripts/bt4_generation_evaluator.py", "scripts/ceres_shared_game_service.py",
+                       "scripts/bt4_generation_evaluator.py", "scripts/bt4_model_arithmetic.py",
+                       "scripts/ceres_shared_game_service.py",
                        "scripts/ceres_pipelined_client.py", "scripts/ceres_raw_backend.py"]
     # The recovered owner validates these actual imported implementations too.
     # Materialize and hash their real candidate bytes, never dummy stand-ins.
@@ -316,7 +317,7 @@ def test_actual_owned_dual_roster_uses_retained_child_and_controller_sqlite_ack(
     assert service_result["successful_validated_physical_accounting"].get("calls", 0) == 0
 
 
-@pytest.mark.parametrize("failure", ["geometry", "roster_geometry", "scope", "external_root", "duplicate", "source", "native", "stop_coverage", "authorize", "yield"])
+@pytest.mark.parametrize("failure", ["geometry", "roster_geometry", "scope", "external_root", "duplicate", "source", "arithmetic_missing", "arithmetic_stale", "native", "stop_coverage", "authorize", "yield"])
 def test_owner_preflight_rejects_or_defers_before_custody_and_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
 ) -> None:
@@ -339,6 +340,10 @@ def test_owner_preflight_rejects_or_defers_before_custody_and_session(
         descriptors["u9"]["unit"] = 7
     elif failure == "source":
         descriptors["u7"]["source_pins"]["scripts/shared_teacher_owner.py"] = "0" * 64
+    elif failure == "arithmetic_missing":
+        del descriptors["u7"]["source_pins"]["scripts/bt4_model_arithmetic.py"]
+    elif failure == "arithmetic_stale":
+        descriptors["u7"]["source_pins"]["scripts/bt4_model_arithmetic.py"] = "0" * 64
     elif failure == "native":
         record = json.loads(closure.read_text())
         key = next(iter(record["runtime_files"]))
@@ -358,7 +363,8 @@ def test_owner_preflight_rejects_or_defers_before_custody_and_session(
         assert run_owned_roster(descriptors, **options)["status"] == "PRIORITY_DEFERRED_BEFORE_CUDA"
     else:
         message = {"geometry": "geometry", "roster_geometry": "roster", "scope": "scope", "external_root": "scope", "duplicate": "roster",
-                   "source": "source pin", "native": "runtime file pin", "stop_coverage": "STOP",
+                   "source": "source pin", "arithmetic_missing": "shared owner source closure",
+                   "arithmetic_stale": "source pin", "native": "runtime file pin", "stop_coverage": "STOP",
                    "authorize": "authority"}[failure]
         with pytest.raises(ValueError, match=message):
             run_owned_roster(descriptors, **options)
@@ -520,7 +526,8 @@ def test_poststartup_yield_after_committed_game_recovers_without_duplicate(
 
 
 @pytest.mark.parametrize("relative", ["scripts/shared_teacher_owner.py", "scripts/shared_teacher_generation.py",
-                                     "chess_anti_engine/teacher_dispatch.py", "scripts/ceres_pipelined_client.py"])
+                                     "chess_anti_engine/teacher_dispatch.py", "scripts/bt4_model_arithmetic.py",
+                                     "scripts/ceres_pipelined_client.py"])
 def test_owner_rejects_pinned_overlay_different_from_executing_shared_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: str,
 ) -> None:
