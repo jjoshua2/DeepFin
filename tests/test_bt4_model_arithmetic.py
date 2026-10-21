@@ -136,7 +136,7 @@ def test_selected_untyped_adapter_must_return_an_actual_array() -> None:
         validate_model_wdl([[0.5, 0.5, 0.0]], 1, CONTRACT, SELECTED)
 
 
-@pytest.mark.parametrize("values, message", [
+@pytest.mark.parametrize(("values", "message"), [
     (np.array([[0.5, 0.5]], dtype=np.float32), "shape/storage"),
     (np.array([[0.5, 0.5, 0]], dtype=np.float64), "shape/storage"),
     (np.array([[0.5, 0.5, 0]], dtype=np.float16), "shape/storage"),
