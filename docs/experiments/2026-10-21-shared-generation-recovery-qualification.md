@@ -107,3 +107,33 @@ or deadlines, then independently review the smallest distinct successor. No blin
 retry, cap increase, arbitrary queue refill, model adoption or generation resume
 is authorized by this failed readout. Matched performance qualification follows
 correctness; target 320/340 remains a hypothesis.
+
+## Targeted diagnostic follow-up
+
+The diagnostic helper now observes only the actual commit, owner ACK, actor
+construction and evaluator-execute boundaries. It retains instrumentation when
+callers are not quiescent, preserves the primary exception, and writes explicitly
+partial evidence; a later quiescent observation uses a distinct output. It never
+publishes a complete unit or grants custody.
+
+The first ten-case CPU wrapper failed: eight exact cases passed, then its audit
+hook rejected the positive SQLite control before the final negative case ran.
+CPython 3.10 converts the database argument to bytes before emitting its audit
+event; the wrapper recognized only the string memory sentinel. The failed run
+and original nine-case JUnit remain preserved. The distinct correction accepts
+only the string and bytes forms of that same exact sentinel; all external-file
+restrictions and fixture bytes stayed unchanged.
+
+Only the failed positive and previously unrun negative controls were selected
+for a second, independently reviewed CPU gate. Both passed with the actual
+worker factory/nested commit and retained checkpoint transaction. The saved audit
+metadata observes the bytes form. Production imports, native images, normal
+conftest, method/profiler/thread restoration, native repetition state and
+CUDA-uninitialized checks passed. This does not retroactively make the first
+wrapper successful or add product qualification credit.
+
+[Diagnostic source and evidence manifest](../recovery/2026-10-21-targeted-diagnostics.json)
+indexes a byte-preserving source archive, the two separate CPU outcomes and exact
+reviews. The finite adapter still needs its actual caller/import binding and
+independent action review before another model attempt. No failed attempt is
+silently resumed or overwritten.

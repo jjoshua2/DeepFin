@@ -153,3 +153,10 @@ preserved. No blind retry, longer limit, generation resume or training credit
 follows this result.
 
 See the [banked qualification readout](../experiments/2026-10-21-shared-generation-recovery-qualification.md).
+
+The targeted helper has separate CPU evidence: eight case passes within a failed
+ten-case wrapper, then two strict factory/checkpoint passes after correcting only
+the exact SQLite audit sentinel's string/bytes handling. The failed wrapper is
+not relabeled successful. Source, case identities and reviews are preserved in
+the [diagnostic manifest](2026-10-21-targeted-diagnostics.json) and its source
+archive. Actual finite adapter/caller/import binding remains a separate gate.
