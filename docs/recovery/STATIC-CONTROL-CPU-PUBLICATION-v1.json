@@ -1,0 +1,125 @@
+{
+  "schema": "static-control-cpu-publication-v1",
+  "status": "SCREEN_FAILED_NO_GPU_NO_ADOPTION",
+  "scope": "20 authored controls observed PASS (19 fake-IO equivalence+1helper);3actual pairedscans median1.373301272% reduction/onepairslower fail10% prereg. Pythonboundary/pathclasscalls notsyscalls;3pairs notconfidence. No production/productcount/model/adoption/performancegeneralization or rerun authority.",
+  "actual_review_sha256": "407ae121b50166dcf27e56d029b6b4b07edb7647487572b79dd5c50efbbe0cf7",
+  "scientific_review_sha256": "710912033f2eaa1fa079e8867fc27c6792b5d316a96553a8b173ac2cefdc1be1",
+  "archive": {
+    "sha256": "c7c92a2a6ff7e85214b17288f593ad5f989aac4b96e40636bc7174ac67f93125",
+    "fixed_member_timestamp": "2026-10-21T00:00:00Z",
+    "bytes": 45568,
+    "member_count": 18,
+    "readback_verified": true,
+    "file": "STATIC-CONTROL-CPU-PUBLICATION-v1.zip"
+  },
+  "members": [
+    {
+      "bytes": 4655,
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-static-control-plan-v1/static_control_lexical_candidate_v1.py",
+      "sha256": "267d6326d27eb18426b2cd254536ce903854303dbb5d25b16369be23d1ce25e4",
+      "member": "source/static_control_lexical_candidate_v1.py"
+    },
+    {
+      "bytes": 7701,
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-static-control-plan-v1/static_control_lexical_source_controls_v1.py",
+      "sha256": "1816a802ab1b560f4e6a270566ac839f0ba8f3c77a92f22f8d46dd0106cb8c1f",
+      "member": "source/static_control_lexical_source_controls_v1.py"
+    },
+    {
+      "bytes": 5700,
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-static-control-plan-v1/STATIC-DYNAMIC-OBLIGATIONS-v2.json",
+      "sha256": "83ce84f3a91a136f6530c07e3be9cbe2c54939846dfecb0baaed3c784b698b3f",
+      "member": "source/STATIC-DYNAMIC-OBLIGATIONS-v2.json"
+    },
+    {
+      "bytes": 27726,
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-phase-diagnostic60-draft-v1/finite_phase_diagnostic_child_60s_v2.py",
+      "sha256": "689b878c62647155247f7c5d04b467df3abaf53f3baf9c8c878589c7edef22f3",
+      "member": "source/finite_phase_diagnostic_child_60s_v2.py"
+    },
+    {
+      "bytes": 15282,
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/static-control-cpu-v1/measure_static_controls_v5.py",
+      "sha256": "c71d40eba5d5476f6625c1239354bf1b48464581b1015253df293fc744a0edc0",
+      "member": "controller/measure_static_controls_v5.py"
+    },
+    {
+      "bytes": 6550,
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/static-control-cpu-v1/CPU-PROPOSAL-v5.json",
+      "sha256": "1689b91432e3a0faa561c251d625a26d92d831d7b5ae66ee7b11cd111b27c655",
+      "member": "controller/CPU-PROPOSAL-v5.json"
+    },
+    {
+      "bytes": 795,
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/static-control-cpu-v1/FULL-ARGV-v5.json",
+      "sha256": "a7212fb9f98a1f04caab1db328247bae465257ff04661cab359c8b3a1f35345e",
+      "member": "controller/FULL-ARGV-v5.json"
+    },
+    {
+      "bytes": 1901,
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/static-control-cpu-v1/FINAL-FREEZE-v5.json",
+      "sha256": "810c13c92e2875c9e2ff68df4b879f2e87ff2cd1d2c07a79ee60a921f7377ed9",
+      "member": "controller/FINAL-FREEZE-v5.json"
+    },
+    {
+      "bytes": 2143,
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/STATIC-CONTROL-CPU-MEASUREMENT-PREREG-v1.json",
+      "sha256": "0a134cc9ecb956032d30099b3d668711b901f56d5d8f6664c884e97d6cebfb63",
+      "member": "evidence/STATIC-CONTROL-CPU-MEASUREMENT-PREREG-v1.json"
+    },
+    {
+      "bytes": 3780,
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/STATIC-CONTROL-LEXICAL-CANDIDATE-INDEPENDENT-SOURCE-REVIEW-v1.json",
+      "sha256": "a5d650712f2f6946dd74577f50674d797a4f71d02a283aeb8702c2013e96a7e5",
+      "member": "evidence/STATIC-CONTROL-LEXICAL-CANDIDATE-INDEPENDENT-SOURCE-REVIEW-v1.json"
+    },
+    {
+      "bytes": 7533,
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/STATIC-CONTROL-CPU-V5-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json",
+      "sha256": "e2673a27484b40ab4205cda80afc470a2b9d1e5b285d4837fa0526189eaedcc8",
+      "member": "evidence/STATIC-CONTROL-CPU-V5-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json"
+    },
+    {
+      "bytes": 448,
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/STATIC-CONTROL-CPU-ONE-USE-INTENT-v1.json",
+      "sha256": "35df76c94ccac36f14f6336ce50dd041d4841184929471545dc7464560e60ccf",
+      "member": "evidence/STATIC-CONTROL-CPU-ONE-USE-INTENT-v1.json"
+    },
+    {
+      "bytes": 1472,
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/STATIC-CONTROL-CPU-NATIVE-TERMINAL-v1.json",
+      "sha256": "e8c7f093ad609f9804225a4b3762e1f3b38afea6a98070fc1bf05ee3cdab3fa8",
+      "member": "evidence/STATIC-CONTROL-CPU-NATIVE-TERMINAL-v1.json"
+    },
+    {
+      "bytes": 48673,
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/STATIC-CONTROL-CPU-ACTUAL-stdout-v1.json",
+      "sha256": "4363aa6053d8b7e359e59203ed49b6357ee8fd7639ef0fca27ee1b7f7ab00918",
+      "member": "evidence/STATIC-CONTROL-CPU-ACTUAL-stdout-v1.json"
+    },
+    {
+      "bytes": 0,
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/STATIC-CONTROL-CPU-ACTUAL-stderr-v1.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "member": "evidence/STATIC-CONTROL-CPU-ACTUAL-stderr-v1.txt"
+    },
+    {
+      "bytes": 13229,
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/STATIC-CONTROL-CPU-V5-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "sha256": "407ae121b50166dcf27e56d029b6b4b07edb7647487572b79dd5c50efbbe0cf7",
+      "member": "evidence/STATIC-CONTROL-CPU-V5-INDEPENDENT-ACTUAL-REVIEW-v1.json"
+    },
+    {
+      "bytes": 4244,
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/STATIC-CONTROL-CPU-INDEPENDENT-SCIENTIFIC-READOUT-v1.json",
+      "sha256": "710912033f2eaa1fa079e8867fc27c6792b5d316a96553a8b173ac2cefdc1be1",
+      "member": "evidence/STATIC-CONTROL-CPU-INDEPENDENT-SCIENTIFIC-READOUT-v1.json"
+    },
+    {
+      "bytes": 2070,
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/STATIC-CONTROL-CPU-EXPERIMENT-APPEND-v1.md",
+      "sha256": "6fe5b36f3d4776079ef46193caf05cbcb03bf62479095311cc283bf0b78ebd47",
+      "member": "evidence/STATIC-CONTROL-CPU-EXPERIMENT-APPEND-v1.md"
+    }
+  ]
+}

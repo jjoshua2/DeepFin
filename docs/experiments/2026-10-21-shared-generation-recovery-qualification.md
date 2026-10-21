@@ -224,3 +224,16 @@ The accompanying compact archive retains the exact native failure streams/termin
 Here, outer_guard is the finite child's ParentDeadlineGuard.check; retained_guard is the existing OwnerGuard.check. The dominant measured time belongs to the qualification wrapper and does not establish unwrapped production throughput. Source inspection confirms that every completed outer check walks all 564 preserved marker records. The 124 completed checks imply 69,936 record checks, not a measured syscall count or whole-run total. Of the 564 records, 349 use /mnt/c paths; this inventory alone does not establish filesystem latency. Further investigation must preserve every presence/hash, STOP, deadline and custody check.
 
 The [final result index](../recovery/2026-10-21-phase-diagnostic60-final-result-v2.json) retains complete raw readout and independent reviews. The [source/count join](../recovery/PHASE-DIAGNOSTIC60-CONTROL-ROSTER-SOURCE-JOIN-INDEPENDENT-REVIEW-v1.json) records the separate marker-loop inference. No further model run or adoption is queued by this result.
+
+
+## Lexical-only guard optimization: CPU screen rejected
+
+The static-control CPU screening gate failed its preregistered numeric screen. Twenty authored controls passed (19 synthetic original/candidate transcript comparisons and one immutable lexical-helper control), while three actual paired scans showed a median wall reduction of 1.373301272%, below the required 10%; the candidate was slower in one pair (-0.501822996%). Three pairs do not establish a confidence interval or general performance result. No GPU or model run, adoption, product credit or rerun is authorized by this screen.
+
+All six real scans retained matching dynamic transcript digests and 572 measured boundary events: one Reads construction, seven checked-read calls, 557 preserved-path lexists calls and seven abort-path lexists calls. Each scan read 2,838 bytes. These are instrumented Python path-class/boundary calls, not measured operating-system syscall counts. The 344 mounted-Windows preserved-path lexists calls dominated measured wall time, but that does not isolate a unique filesystem or 9p cause. The 220 other lexists calls comprise 213 preserved paths and seven abort paths. Candidate preparation/compile cost (1.727595 milliseconds) remains separate from paired scan timing.
+
+The candidate changes lexical preparation only; dynamic reads, hashes, presence checks, STOP controls, guard calls and custody obligations were retained. Passing equivalence controls does not validate the original obligations independently. Actual 32-row inference batches from the prior diagnostic remain explained by native_microbatch=32, one producer and zero batching wait; this CPU screen changes none of that geometry.
+
+The compact evidence archive retains the complete 48,673-byte stdout file, empty stderr, native intent/terminal records, frozen candidate/controls/design and controller/proposal/argv/freeze, preregistration and independent source/actual/scientific reviews. Tool display truncation is not a claim that the raw file is incomplete. All originals are preserved; publication preparation performed no new tests, model calls or guest actions.
+
+[Exact source, preregistration and complete CPU evidence](../recovery/STATIC-CONTROL-CPU-PUBLICATION-v1.json).
