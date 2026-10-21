@@ -131,19 +131,19 @@ def test_next_representable_value_outside_existing_budget_refused() -> None:
         validate_model_wdl(values, 1, CONTRACT, SELECTED)
 
 
-@pytest.mark.parametrize("values", [
-    np.array([[0.5, 0.5]], dtype=np.float32),
-    np.array([[0.5, 0.5, 0]], dtype=np.float64),
-    np.array([[0.5, 0.5, 0]], dtype=np.float16),
-    np.array([[np.nan, 0.5, 0.5]], dtype=np.float32),
-    np.array([[np.inf, 0, 0]], dtype=np.float32),
-    np.array([[-1e-8, 0.5, 0.5]], dtype=np.float32),
-    np.array([[1 + 1e-6, 0, 0]], dtype=np.float32),
-    np.array([[0.5, 0.5, 2**-9]], dtype=np.float32),
+@pytest.mark.parametrize("values, message", [
+    (np.array([[0.5, 0.5]], dtype=np.float32), "shape/storage"),
+    (np.array([[0.5, 0.5, 0]], dtype=np.float64), "shape/storage"),
+    (np.array([[0.5, 0.5, 0]], dtype=np.float16), "shape/storage"),
+    (np.array([[np.nan, 0.5, 0.5]], dtype=np.float32), "finite range"),
+    (np.array([[np.inf, 0, 0]], dtype=np.float32), "finite range"),
+    (np.array([[-1e-8, 0.5, 0.5]], dtype=np.float32), "finite range"),
+    (np.array([[1 + 1e-6, 0, 0]], dtype=np.float32), "finite range"),
+    (np.array([[0.5, 0.5, 2**-9]], dtype=np.float32), "probability mass"),
 ])
-def test_selected_shape_storage_finite_range_and_mass_negatives(values: np.ndarray) -> None:
+def test_selected_shape_storage_finite_range_and_mass_negatives(values: np.ndarray, message: str) -> None:
     original = values.tobytes()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=message):
         validate_model_wdl(values, 1, CONTRACT, SELECTED)
     assert values.tobytes() == original
 
