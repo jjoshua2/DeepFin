@@ -68,6 +68,7 @@ class ScheduledWdlTable(chess.syzygy.WdlTable):
         self.read_condition = ObservedCondition(eviction_wait)
 
     def _probe_wdl_table(self, board: chess.Board) -> int:
+        _ = board  # Preserve the dependency's keyword-compatible override.
         # This seam replaces file decoding, not the actual counted-reader
         # wrapper, eviction, close, or their acquisition order.
         if self.first:

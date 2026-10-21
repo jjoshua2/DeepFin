@@ -63,6 +63,7 @@ class ScheduledTable(chess.syzygy.WdlTable):
         self.read_condition = ObservedCondition(eviction_wait)
 
     def _probe_wdl_table(self, board: chess.Board) -> int:
+        _ = board  # Preserve the dependency's keyword-compatible override.
         if self.first:
             self.entered.set()
             if not self.release.wait(2):
@@ -109,28 +110,28 @@ class StrictMatchComponentControls(unittest.TestCase):
         b = threading.Thread(target=capture, args=(errors, lambda: handle.probe_wdl(SECOND.copy())))
         try:
             a.start()
-            self.assertTrue(entered.wait(2))
+            assert entered.wait(2)
             b.start()
-            self.assertTrue((gate.contender if gate else eviction_wait).wait(2))
+            assert (gate.contender if gate else eviction_wait).wait(2)
             release.set()
         finally:
             release.set()
             a.join(3)
             if b.ident is not None:
                 b.join(3)
-        self.assertFalse(a.is_alive())
-        self.assertFalse(b.is_alive())
-        self.assertEqual(first.read_count, 0)
-        self.assertEqual(second.read_count, 0)
-        self.assertEqual(eviction_wait.is_set(), gate is None)
+        assert not a.is_alive()
+        assert not b.is_alive()
+        assert first.read_count == 0
+        assert second.read_count == 0
+        assert eviction_wait.is_set() == (gate is None)
         handle.close()
         return errors
 
     def test_actual_reader_lru_original_negative_and_serialized_success(self) -> None:
         errors = self.schedule(False)
-        self.assertEqual(len(errors), 1)
-        self.assertEqual(str(errors[0]), "counted reader blocked by eviction write lock")
-        self.assertEqual(self.schedule(True), [])
+        assert len(errors) == 1
+        assert str(errors[0]) == "counted reader blocked by eviction write lock"
+        assert self.schedule(True) == []
 
     def test_atomic_pair_reentrancy_and_competing_probe(self) -> None:
         handle, gate = StrictMatchTablebase(), Gate()
@@ -157,19 +158,19 @@ class StrictMatchComponentControls(unittest.TestCase):
             b = threading.Thread(target=capture, args=(errors, lambda: handle.probe_wdl(SECOND.copy())))
             try:
                 a.start()
-                self.assertTrue(entered.wait(2))
+                assert entered.wait(2)
                 b.start()
-                self.assertTrue(gate.contender.wait(2))
+                assert gate.contender.wait(2)
                 release.set()
             finally:
                 release.set()
                 a.join(3)
                 if b.ident is not None:
                     b.join(3)
-        self.assertFalse(a.is_alive())
-        self.assertFalse(b.is_alive())
-        self.assertEqual(errors, [])
-        self.assertEqual(trace, ["first_wdl", "first_dtz", "second_wdl"])
+        assert not a.is_alive()
+        assert not b.is_alive()
+        assert errors == []
+        assert trace == ["first_wdl", "first_dtz", "second_wdl"]
 
     def test_probe_exception_identity_and_gate_release(self) -> None:
         handle = StrictMatchTablebase()
@@ -180,19 +181,24 @@ class StrictMatchComponentControls(unittest.TestCase):
 
         with (patch.object(chess.syzygy.Tablebase, "probe_wdl", wdl),
               patch.object(chess.syzygy.Tablebase, "probe_dtz", return_value=0)):
-            with self.assertRaises(chess.syzygy.MissingTableError) as caught:
+            observed = None
+            try:
                 handle.probe_wdl(FIRST.copy())
-            self.assertIs(caught.exception, failure)
+            except chess.syzygy.MissingTableError as caught:
+                observed = caught
+            else:
+                raise AssertionError("expected the original MissingTableError")
+            assert observed is failure
             errors: list[Exception] = []
             worker = threading.Thread(target=capture, args=(errors, lambda: handle.probe_dtz(FIRST.copy())))
             worker.start()
             worker.join(3)
-            self.assertFalse(worker.is_alive())
-            self.assertEqual(errors, [])
+            assert not worker.is_alive()
+            assert errors == []
 
     def test_close_follows_pair_and_keeps_default_fd_bound(self) -> None:
         handle, gate = StrictMatchTablebase(), Gate()
-        self.assertEqual(handle.max_fds, 128)
+        assert handle.max_fds == 128
         entered, release = threading.Event(), threading.Event()
         trace: list[str] = []
         errors: list[Exception] = []
@@ -219,29 +225,33 @@ class StrictMatchComponentControls(unittest.TestCase):
             b = threading.Thread(target=capture, args=(errors, handle.close))
             try:
                 a.start()
-                self.assertTrue(entered.wait(2))
+                assert entered.wait(2)
                 b.start()
-                self.assertTrue(gate.contender.wait(2))
+                assert gate.contender.wait(2)
                 release.set()
             finally:
                 release.set()
                 a.join(3)
                 if b.ident is not None:
                     b.join(3)
-        self.assertFalse(a.is_alive())
-        self.assertFalse(b.is_alive())
-        self.assertEqual(errors, [])
-        self.assertEqual(trace, ["wdl", "dtz", "close"])
+        assert not a.is_alive()
+        assert not b.is_alive()
+        assert errors == []
+        assert trace == ["wdl", "dtz", "close"]
 
     def test_serial_values_and_wdl_conversion_failure_precedes_dtz(self) -> None:
         handle = StrictMatchTablebase()
         with (patch.object(chess.syzygy.Tablebase, "probe_wdl", return_value=2),
               patch.object(chess.syzygy.Tablebase, "probe_dtz", return_value=1)):
-            self.assertEqual(handle.probe_wdl_dtz(FIRST.copy()), (2, 1))
+            assert handle.probe_wdl_dtz(FIRST.copy()) == (2, 1)
         with (patch.object(chess.syzygy.Tablebase, "probe_wdl", return_value="invalid"),
               patch.object(chess.syzygy.Tablebase, "probe_dtz", return_value=1) as dtz):
-            with self.assertRaises(ValueError):
+            try:
                 handle.probe_wdl_dtz(FIRST.copy())
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("expected WDL conversion to fail")
             dtz.assert_not_called()
 
 

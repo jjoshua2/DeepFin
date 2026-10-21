@@ -53,3 +53,26 @@ full caller, native encoding, real decoding, model inference, memory fit or spee
 
 Receipt SHA256: `e7af6c54be1f6dbe75b4ad2d4a6b41bdf130fb5303839a8ffd976cbeaf414b36`.
 Independent actual review: `32be23b0bd864f7c05dd1509cb0588e0196e1464dd92bc5b2d48f1ba0227474e`.
+
+## Test-convention follow-up
+
+CI subsequently reported assertion-style and unused-argument lint findings in
+the two new test files. The repair preserves all oracles and exception identity
+and ordering without adding a pytest dependency to the low-dependency component.
+The override parameter retains its original keyword-compatible name and
+explicitly discards its unused value. No lint rule or fixture was suppressed.
+
+Pinned Ruff 0.15.20 passes on the two files. Pinned Basedpyright 1.39.9, using the
+repository's configuration and the same two-file scope, reports zero errors and
+warnings. These are focused checks, not a whole-repository static result.
+
+The five existing component cases passed again after the final repair, with
+zero errors, failures or skips, in 1.4059826 seconds native elapsed time. This is
+a regression rerun of the same five cases, not five new cases. The separate
+eight-case pytest integration scope remains unrun locally. No manual CI rerun
+was requested.
+
+Final regression receipt SHA256:
+`c57bbf32a83dfbcdda413a6a3e07a7be4e49ef66b17d97d012095110a785a9a7`.
+Independent actual review:
+`c3cf98ed7ed5ece0bb807940702ed5396a28b3947700ac232cfb9bfa33792a50`.
