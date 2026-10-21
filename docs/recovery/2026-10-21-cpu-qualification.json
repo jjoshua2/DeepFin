@@ -19,7 +19,10 @@
     "pytest": "9.1.1",
     "zarr": "2.18.7",
     "native_backend": "magic",
-    "affinity": [29, 30],
+    "affinity": [
+      29,
+      30
+    ],
     "numeric_threads": 2,
     "fresh_local_extension_preflight": "PASS"
   },
@@ -59,7 +62,10 @@
     "tests": 2,
     "intended_failures": 2,
     "errors": 0,
-    "causes": ["TeacherSession_0 guard instead of TeacherDispatcher", "Next execute raced unaccepted finish"],
+    "causes": [
+      "TeacherSession_0 guard instead of TeacherDispatcher",
+      "Next execute raced unaccepted finish"
+    ],
     "same_controls_pass_in_reconstructed_candidate": true,
     "stderr_sha256": "622a81e07f0b5c201d0b5fbc5a5ec3687f463d97ceab1067f46344032f86587b",
     "stdout_sha256": "47ada50218e35536391dc2770d9bb95cb7656f588afb990abe46bb445e0233a0",
@@ -87,5 +93,56 @@
   "actual_bt4_gpu": "UNRUN",
   "native_pext_variant": "UNRUN",
   "merge_or_live_adoption": false,
-  "training_or_data_admission_credit": 0
+  "training_or_data_admission_credit": 0,
+  "latest_code_commit": "e964def51baa2b10d6b99f0aaacab1b9165f95c0",
+  "production_python310_timeout_correction": {
+    "schema": "pr1110_python310_future_timeout_actual_v1",
+    "source_commit": "e964def51baa2b10d6b99f0aaacab1b9165f95c0",
+    "source_review_commit": "33b33157714874e678fdfa546f44ee63d24830cb",
+    "independent_source_findings": [],
+    "probe_sha256": "07671dea85c43e0ae610665d63568cb8f9ea6befbdab795985c998f593592895",
+    "old": {
+      "source_commit": "1e459966b21dcccf3a88fc9d5e4da1af632f843a",
+      "observed_sticky_refusal": false,
+      "guard_calls_before_service": 1,
+      "tool_chunk": "20a131",
+      "tool_exit_code": 0,
+      "seconds": 0.280940521,
+      "actual_module_sha256": "0b1df721a7f0406fb028e15efd809713a85cf42218742ebe3bd37a77858faea9"
+    },
+    "fixed": {
+      "observed_sticky_refusal": true,
+      "guard_calls_before_service": 0,
+      "tool_chunk": "3adc1a",
+      "tool_exit_code": 0,
+      "seconds": 0.3756674,
+      "actual_crlf_module_sha256": "f319819e3386032f5daa32a3141e850d568f0abffee9ea44b4e99a0aa5bbdc0f",
+      "canonical_git_module_sha256": "a02bc7eb86efde6910d6852056ef5414728885e9da733bbed41e1a17da6508f2"
+    },
+    "interpreter": "Python3.10.12",
+    "future_timeout_is_builtin": false,
+    "requester_thread_joined": true,
+    "same_exception_identity": true,
+    "torch_numpy_ort_imported": false,
+    "gpu_model_live_actions": false,
+    "cpu313_retest": {
+      "tests": 102,
+      "passed": 102,
+      "skipped": 0,
+      "failures": 0,
+      "errors": 0,
+      "junit_seconds": 60.038,
+      "relationship": "Overlaps original616; no new distinct-case total",
+      "junit_sha256": "9ae26ecd290c593b5091b3ed02c91afa081533b7f2f05517e0c3b3268ad913f7"
+    },
+    "whole_static": {
+      "ruff": "PASS",
+      "basedpyright_errors": 0,
+      "basedpyright_warnings": 0,
+      "vulture": "PASS",
+      "seconds": 117.44,
+      "log_sha256": "285b0137bf413c9f09df722618b933e39dc10385514133831a0eb1e41c2a2755"
+    },
+    "raw_receipt_export_sha256": "6e167fe734f5ca385a357da63e50f26baf1d5e4123930688845771ddcebf55e4"
+  }
 }

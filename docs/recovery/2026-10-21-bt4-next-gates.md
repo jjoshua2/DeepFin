@@ -20,6 +20,19 @@ Stockfish-dependent skips also remain missing end-to-end evidence.
 
 ## Bind a real finite owner before any model load
 
+Production-version reconciliation found and corrected a real Python3.10
+contract gap after the original CPU record: `Future.result` raises
+`concurrent.futures.TimeoutError`, which is distinct from the builtin timeout
+class there. The bridge now catches that exact class. An actual-import3.10
+control reproduced the old late owner acceptance and proved sticky refusal on
+the correction. All 102 affected CPU regressions and whole static checks passed
+on the corrected source; those tests overlap the original 616.
+
+The retained production native images also cannot simply be copied as current
+source qualification. The candidate changes two C files and one encoding header
+relative to their recorded build inputs. A separate exact-source Python3.10
+native build and its actual import/encoder/MCTS checks remain prerequisites.
+
 The supported integration surface is the actual
 `scripts.shared_teacher_owner.run_owned_roster` API, called by an admitted finite
 owner. It requires descriptors, retained entry/consumer/recovery/priority helpers,
