@@ -28,10 +28,26 @@ control reproduced the old late owner acceptance and proved sticky refusal on
 the correction. All 102 affected CPU regressions and whole static checks passed
 on the corrected source; those tests overlap the original 616.
 
-The retained production native images also cannot simply be copied as current
-source qualification. The candidate changes two C files and one encoding header
-relative to their recorded build inputs. A separate exact-source Python3.10
-native build and its actual import/encoder/MCTS checks remain prerequisites.
+The retained production native images could not supply current source
+qualification: two C files and one encoding header differ. Five fresh Python3.10
+images have now been built using the existing production compiler recipe.
+An independently reconciled production-version run passed 117 actual-import,
+encoder, MCTS, owner-rendezvous and arithmetic controls. CUDA was not initialized;
+these controls establish no real-provider or model result.
+
+Both actual WDL consumers now share the retained artifact-specific FP16-internal,
+FP32-storage acceptance rule. The ordinary FP32 rule remains unchanged. The new
+arithmetic module is required in descriptor and executing-module source closure.
+The final 95-case arithmetic/owner regression run and whole static gate passed
+on `8d3b9f9b25bc7cd0caa706dace3cad1daa37b47e`. These overlapping scopes are
+reported separately, without adding them to the original 616.
+
+An independently source-reviewed, one-use copy produced an isolated runtime
+from canonical source at `3214e7b9f624624362f1a69d3737b5dc1cfb1f32`,
+30 retained operational source supplements and the five fresh native images.
+It read back every output hash. The subsequent `8d3b9f9` commit changes only
+a test decorator. Runtime copy is source preparation, not model qualification.
+See `2026-10-21-production-prerequisites.json` for exact evidence identities.
 
 The supported integration surface is the actual
 `scripts.shared_teacher_owner.run_owned_roster` API, called by an admitted finite
@@ -77,6 +93,8 @@ are hypotheses, not guaranteed batch sizes or optimality claims. No new toleranc
 global math setting, extra reserve or source waiver is implicit. Ceres physical32
 remains a separately qualified route.
 
-Exact executable bindings, model/provider references, deadlines and acceptance
-thresholds remain unfilled until the custody owner reconciles the packet. This
-document is source-only planning and authorizes no executable stage.
+The finite child entry, parent deadline/resource protocol and exact operational
+packet are still being authored and independently reviewed. Ordinary generation
+remains CLOSED+PAUSED; the finite test must preserve that state on return.
+No model load or GPU qualification has occurred. This document records planning
+and completed prerequisite evidence; it authorizes no executable stage.

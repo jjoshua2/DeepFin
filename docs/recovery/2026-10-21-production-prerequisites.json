@@ -1,0 +1,48 @@
+{
+  "schema": "pr1110_production_prerequisites_v1",
+  "status": "CPU_PREREQUISITES_COMPLETE_FINITE_GPU_PACKET_IN_PREPARATION",
+  "latest_code_commit": "8d3b9f9b25bc7cd0caa706dace3cad1daa37b47e",
+  "fresh_native_build_source": "e964def51baa2b10d6b99f0aaacab1b9165f95c0",
+  "native_images": 5,
+  "native_build_and_production_cpu_independent_review_sha256": "44f6c2ff2b551ceb19c46cc816463e94cbcf8a5ab676fe17170b6b53617a4f5d",
+  "production_cpu": {
+    "source_commit": "083f994232e58e2037528f4fa39a58044bc4124f",
+    "python": "3.10.12",
+    "passed": 117,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "cuda_initialized": false,
+    "raw_export_sha256": "3507de30117d04b1bd309a798b99394b0cf03e867dfec7902bc832b208649c8a"
+  },
+  "final_arithmetic_owner_cpu": {
+    "source_commit": "8d3b9f9b25bc7cd0caa706dace3cad1daa37b47e",
+    "passed": 95,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "junit_sha256": "05e40eb24cd0c020060954a0b08577bc1466f1613054fc47352f51f78422f3ca",
+    "whole_static": "PASS",
+    "static_seconds": 110.08,
+    "static_log_sha256": "e4d27d19a7aa79b99782448cd0105912e59bdd3e2632f9e70533bf711f307b67"
+  },
+  "runtime_copy": {
+    "source_commit": "3214e7b9f624624362f1a69d3737b5dc1cfb1f32",
+    "latest_commit_delta": "8d3b9f9 changes only tests/test_bt4_model_arithmetic.py decorator style",
+    "payload_files": 606,
+    "payload_bytes": 17902383,
+    "closure_sha256": "9385e2762d9e5d328801584890e93a9382ba612ed857d55a1847746b73b5377f",
+    "actual_receipt_sha256": "7fbcbc72fb18b48d858a58e8d34e866b05ed23d0aa2b07fb562b77744c0a98f7",
+    "complete_output_hash_readback": true,
+    "subject_imports": false,
+    "source_review_sha256": "5a90068d8118b7d237bb3172fb17f2af60bac799eba4cc143e4fb419f4a2c99d"
+  },
+  "final_cpu_and_copy_raw_export_sha256": "0e418e0c0f95ea2170745affb43c5dff8074bdc31549a7cc8e7f9878c9e979af",
+  "case_count_relationship": "Overlapping evidence scopes; do not sum with each other or the original616",
+  "whole_ordinary_suite": "UNRUN_HOST_DEPENDENCY_BINDING_UNRESOLVED",
+  "real_bt4_gpu_qualification": "UNRUN",
+  "model_load": false,
+  "throughput_or_playing_claim": false,
+  "merge_or_live_adoption": false,
+  "training_admission_credit": 0
+}
