@@ -237,3 +237,13 @@ The candidate changes lexical preparation only; dynamic reads, hashes, presence 
 The compact evidence archive retains the complete 48,673-byte stdout file, empty stderr, native intent/terminal records, frozen candidate/controls/design and controller/proposal/argv/freeze, preregistration and independent source/actual/scientific reviews. Tool display truncation is not a claim that the raw file is incomplete. All originals are preserved; publication preparation performed no new tests, model calls or guest actions.
 
 [Exact source, preregistration and complete CPU evidence](../recovery/STATIC-CONTROL-CPU-PUBLICATION-v1.json).
+
+## Coherent end-state assessment after the failed screen
+
+Independent source review separates the costly finite qualification wrapper from batch supply. The existing cross-unit owner/driver/dispatcher is the supported architectural base; the64-actor diagnostic is not a320-row supply qualification. Five canonical64-actor units would supply a320-actor reservoir in principle and carry640 total game quotas. They do not guarantee320 ready rows. Two full320-row waves require at least640 queued-or-running row credits and enough independent ready actors. Source trajectory reservation is about7.23GiB for320 games before progress, model and runtime overhead; old resource limits are not assumed to fit.
+
+The unchanged checking contract requires fresh ordered observations of externally mutable authoritative paths. Static compilation cannot eliminate those crossings. Mirroring, watching, asynchronous verdicts, bulk lookup or endpoint-only checking alter detection or identity semantics. A synchronous Windows-native same-path verifier is documented only as a material, unimplemented research proposal with path/link/error/identity/rendezvous risks; no controls, mounts or security settings change.
+
+The next credible CPU evidence is logical320-row gather/routing, exclusive producer ownership, tail/backpressure and modeled writer/ACK-before-refill using actual selected classes with explicit fakes. Exact import closure, finite joins and resource/source review precede execution. Such a proof would not establish native concurrency, actual canonical checkpoint integration, model correctness, memory fit or throughput. No320 roster, GPU action, generation resume or adoption is admitted by this assessment.
+
+[Assessment and exact risks](../recovery/OPTIMIZED-BT4-ENDSTATE-ASSESSMENT-v2.md) · [independent source assessment](../recovery/BT4-COHERENT-320-ENDSTATE-INDEPENDENT-SOURCE-ASSESSMENT-v1.json) · [guard-contract options](../recovery/GUARD-CONTROL-ENDSTATE-SOURCE-OPTIONS-INDEPENDENT-v1.json).
