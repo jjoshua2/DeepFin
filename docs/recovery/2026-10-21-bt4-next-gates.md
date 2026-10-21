@@ -160,3 +160,14 @@ the exact SQLite audit sentinel's string/bytes handling. The failed wrapper is
 not relabeled successful. Source, case identities and reviews are preserved in
 the [diagnostic manifest](2026-10-21-targeted-diagnostics.json) and its source
 archive. Actual finite adapter/caller/import binding remains a separate gate.
+
+Five distinct finite-adapter CPU controls subsequently passed with strict saved
+result reconciliation: 3.68 seconds native wall time, no model or CUDA session.
+These test quiescence, exception retention, the complete ordering predicate and
+the exact prepared-root boundary. They do not establish a full gameplay unit.
+The [source and evidence supplement](2026-10-21-finite-adapter-five.json) retains
+all five cases separately from the earlier eight observations and two controls.
+
+A separate source-only copy read back 613 payloads and a closure containing 41
+module pins. The old runtime remained unchanged. This establishes source-copy
+identity; actual imported origins and model behavior remain finite-launch gates.
