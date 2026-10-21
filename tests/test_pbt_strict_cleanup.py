@@ -11,10 +11,18 @@ SOURCE = Path(__file__).resolve().parents[1]
 
 
 class PbtStrictCleanup(unittest.TestCase):
+    def __init__(self, methodName: str = "runTest") -> None:
+        super().__init__(methodName)
+        self.root = Path()
+        self.bin = Path()
+        self.config = Path()
+        self.log = Path()
+        self.env: dict[str, str] = {}
+
     def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
         self.bin = self.root / "bin"
         self.bin.mkdir()
         (self.root / "scripts").mkdir()
@@ -72,32 +80,32 @@ class PbtStrictCleanup(unittest.TestCase):
     def assert_cleanup(self, count: int) -> None:
         killed = [line.removeprefix("kill ") for line in self.calls("kill ")]
         waited = [line.removeprefix("wait ") for line in self.calls("wait ")]
-        self.assertEqual(len(killed), count)
-        self.assertEqual(waited, killed)
-        self.assertTrue(all(pid.isdecimal() and int(pid) > 0 for pid in killed))
-        self.assertEqual(self.calls("ray "), ["ray stop --force"] * count)
-        self.assertEqual(len(self.calls("python")), count)
-        self.assertEqual(list(self.root.glob("bench_batch_wait.*.yaml")), [])
-        self.assertIn("use_compile: true", self.config.read_text())
+        assert len(killed) == count
+        assert waited == killed
+        assert all(pid.isdecimal() and int(pid) > 0 for pid in killed)
+        assert self.calls("ray ") == ["ray stop --force"] * count
+        assert len(self.calls("python")) == count
+        assert list(self.root.glob("bench_batch_wait.*.yaml")) == []
+        assert "use_compile: true" in self.config.read_text()
 
     def test_failed_log_reaps_child_and_preserves_failure(self) -> None:
         self.env["TAIL_STATUS"] = "17"
         result = self.run_fixture("bench_batch_wait.sh")
-        self.assertEqual(result.returncode, 17, result.stderr)
+        assert result.returncode == 17, result.stderr
         self.assert_cleanup(1)
 
     def test_normal_benchmark_cleans_each_child_once(self) -> None:
         result = self.run_fixture("bench_batch_wait.sh")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Done.", result.stdout)
+        assert result.returncode == 0, result.stderr
+        assert "Done." in result.stdout
         self.assert_cleanup(6)
 
     def test_failure_before_child_does_not_stop_ray(self) -> None:
         self.env["BENCH_BATCH_WAIT_CONFIG"] = str(self.root / "missing.yaml")
         result = self.run_fixture("bench_batch_wait.sh")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(self.log.exists())
-        self.assertEqual(list(self.root.glob("bench_batch_wait.*.yaml")), [])
+        assert result.returncode != 0
+        assert not self.log.exists()
+        assert list(self.root.glob("bench_batch_wait.*.yaml")) == []
 
     def monitor_fixture(self, status: int) -> subprocess.CompletedProcess[str]:
         # The real monitor, guard and train script never enter this fixture.
@@ -116,19 +124,19 @@ class PbtStrictCleanup(unittest.TestCase):
 
     def test_monitor_status_one_continues(self) -> None:
         result = self.monitor_fixture(1)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.calls("monitor"), ["monitor", "monitor"])
-        self.assertEqual(self.calls("python"), [])
+        assert result.returncode == 0, result.stderr
+        assert self.calls("monitor") == ["monitor", "monitor"]
+        assert self.calls("python") == []
 
     def test_monitor_success_continues(self) -> None:
         result = self.monitor_fixture(0)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.calls("monitor"), ["monitor", "monitor"])
+        assert result.returncode == 0, result.stderr
+        assert self.calls("monitor") == ["monitor", "monitor"]
 
     def test_unexpected_monitor_status_is_fatal(self) -> None:
         result = self.monitor_fixture(2)
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertEqual(self.calls("monitor"), ["monitor"])
+        assert result.returncode == 2, result.stderr
+        assert self.calls("monitor") == ["monitor"]
 
 
 if __name__ == "__main__":
