@@ -1,6 +1,6 @@
 {
   "schema": "pr1110_production_prerequisites_v1",
-  "status": "CPU_PREREQUISITES_COMPLETE_FINITE_GPU_PACKET_IN_PREPARATION",
+  "status": "PRODUCTION_BUILD_AND_SCOPED_CPU_PASS_COPIED_RUNTIME_IMPORT_PENDING",
   "latest_code_commit": "8d3b9f9b25bc7cd0caa706dace3cad1daa37b47e",
   "fresh_native_build_source": "e964def51baa2b10d6b99f0aaacab1b9165f95c0",
   "native_images": 5,
@@ -27,6 +27,7 @@
     "static_log_sha256": "e4d27d19a7aa79b99782448cd0105912e59bdd3e2632f9e70533bf711f307b67"
   },
   "runtime_copy": {
+    "status": "SOURCE_READBACK_PASS_STATIC_TRANSITIVE_IMPORT_GAP_FOUND_BEFORE_EXECUTION",
     "source_commit": "3214e7b9f624624362f1a69d3737b5dc1cfb1f32",
     "latest_commit_delta": "8d3b9f9 changes only tests/test_bt4_model_arithmetic.py decorator style",
     "payload_files": 606,
@@ -35,9 +36,20 @@
     "actual_receipt_sha256": "7fbcbc72fb18b48d858a58e8d34e866b05ed23d0aa2b07fb562b77744c0a98f7",
     "complete_output_hash_readback": true,
     "subject_imports": false,
-    "source_review_sha256": "5a90068d8118b7d237bb3172fb17f2af60bac799eba4cc143e4fb419f4a2c99d"
+    "source_review_sha256": "5a90068d8118b7d237bb3172fb17f2af60bac799eba4cc143e4fb419f4a2c99d",
+    "missing_transitive_modules": ["scripts.bt4_continuous_queue_v3", "scripts.bootstrap_operator_support", "scripts.canonical_queue_custody_v2"],
+    "completion": "Distinct runtime-v2 with exact retained-donor dependencies under source review; original copy preserved"
+  },
+  "finite_protocol_controls": {
+    "parent_source_commit": "4ddb01f0d64a03493d39c61b1a651acb1012d2a4",
+    "parent_passed": 19,
+    "parent_actual_independent_review_sha256": "61aaa54545246c1403e1297735a8b1bada82d2f5d2464cc0fd33084303cd49b6",
+    "child_coverage": "21 original passes plus one corrected fixture's separate pass; original21pass/1error preserved, no clean fullV2 run claimed",
+    "child_actual_independent_review_sha256": "a8506101c060f1de753a13b96aa98516336974695c9eeceebc5ddfd2b03b5fa7",
+    "scope": "stdlib synthetic/mock only; no real kernel custody, model, durability or performance qualification"
   },
   "final_cpu_and_copy_raw_export_sha256": "0e418e0c0f95ea2170745affb43c5dff8074bdc31549a7cc8e7f9878c9e979af",
+  "final_cpu_and_copy_independent_actual_review_sha256": "2ccc43b63c27a18ab99080c519fa354d61164d795da43b23500416554237922f",
   "case_count_relationship": "Overlapping evidence scopes; do not sum with each other or the original616",
   "whole_ordinary_suite": "UNRUN_HOST_DEPENDENCY_BINDING_UNRESOLVED",
   "real_bt4_gpu_qualification": "UNRUN",
