@@ -334,8 +334,9 @@ def run_owned_roster(
         if priority_module.requested(yield_paths):
             raise RuntimeError("owner priority yield/drain")
 
-    callback_deadline = time.monotonic() + min(
-        deadline_seconds, guard.limits["deadline_unix"] - time.time())
+    # Reuse the aggregate guard deadline. The generation-only runner budget
+    # begins after startup; do not silently start that separate clock here.
+    callback_deadline = time.monotonic() + guard.limits["deadline_unix"] - time.time()
     callbacks = staged_module.OwnerThreadCallbacks(
         check_control, capacity=producer_threads + writer_threads + 1,
         timeout=min(30.0, deadline_seconds), deadline=callback_deadline)

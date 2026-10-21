@@ -119,6 +119,8 @@ class ProducerExecutor:
         None preserves the existing selfplay session's cooperative lifetime.
         Finite callers get a typed custody exception if a producer stays alive.
         No unbounded executor context-manager shutdown is used on that path.
+        service runs on this joining caller between bounded waits, allowing an
+        owner-affine guard to unblock admitted producers during shutdown.
         """
         if timeout is not None and (not math.isfinite(timeout) or timeout < 0):
             raise ValueError("finite nonnegative producer shutdown timeout required")
