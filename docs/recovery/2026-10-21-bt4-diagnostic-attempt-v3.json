@@ -1,0 +1,61 @@
+{
+  "schema": "PR1110_TARGETED_DIAGNOSTIC_ATTEMPT_V3_EVIDENCE_V1",
+  "disposition": "FAILED_FULL_UNIT_DEADLINE_CLOSED_PAUSED_PRESERVED",
+  "candidate_source_commit": "42027482a7091ddbd2c8bc98e266b3ac3afbb744",
+  "runtime_closure_sha256": "8ee05190e1bee290d0d03e1b69e1af12e0939d56f16722b9b37797797cf89c1c",
+  "native": {
+    "decision_sha256": "49fc1d0285e59e90cdef34f1b5f263c98695b23cbe9ce1efe8683d1612c2c94f",
+    "elapsed_seconds": 303.0159733,
+    "terminal_sha256": "59ce01531c539258ad0cf6f11c74f07a521070bc78fc42e26c052be0ccd9a787",
+    "exit_code": 1,
+    "stderr_sha256": "abc9303a22157efdde02f9063e5c8dd518c3071be25222322029a11c00b08115"
+  },
+  "closed_receipt_sha256": "f25f40c78a5cd096214e9dacbeabacde4a88d1e5f376797c513147f31f986210",
+  "closure_review_sha256": "cae9df204fe377366134d9de4a06c54db66a2630aef675650d681c8428f9f4ff",
+  "ordinary_snapshot_sha256_before_and_after": "7bc24eb410a8672f519312da639385deedde1cf757f1f9a27faf7ab99b7e222a",
+  "ordinary": "CLOSED_PAUSED",
+  "control_count": 564,
+  "evaluation_stops": 6,
+  "stopped_component_sets": 5,
+  "kernel_echild_saved": true,
+  "canonical_lock_rows_saved": [],
+  "model_launch_sha256": "f335c33a5f7f0b54213f1a0317e741814dca089f199f86ceedd81524666c427f",
+  "provider_proof_sha256": "95a50c176a21319b2d04affec9da74ec1a04782df5114ea4d097c02984ae9d99",
+  "provider_counts_saved_claims": {
+    "cuda_neural": 195,
+    "profile_sha256": "904f1a5f32b0b92cc93297c9f84a3bad0c89b6fb00b9fb3030611e8cb4252a3d",
+    "cpu": 0,
+    "cuda": 644,
+    "profile_payload_recounted": false
+  },
+  "writer_receipt": {
+    "sha256": "5cb10f34b5b62d0ce18c90927755cb846c962f46da228c70876b18e0b6384a7b",
+    "npz_payload_reverified": false,
+    "rows": 22,
+    "game_id": 52
+  },
+  "owner_ack_count": null,
+  "owner_ack_reason": "WAL and SHM present; SQLite not opened",
+  "checkpoint_component_sha256": {
+    "main": "a928d6f73a13ed50a77a86f625d57969cca4c120d0f1c9c9d3ebe0c4499d86cc",
+    "shm": "5a47273af10a1b0fcba1919d09d242bff3e943a80153e4b52398629c15e74a8f",
+    "wal": "e6a05d33c0e189f7fb7eccad1776751ce48be019e1b7bbef03ab6d643aa03558"
+  },
+  "targeted_snapshots_present": false,
+  "batch_histogram": null,
+  "refill_witness": null,
+  "raw_export_sha256": "6aa114618110c83fe5994a72d15434124ca416c54964b6d4e74c17cef04b65a5",
+  "saved_metadata_sha256": "f71e5cdb05f72f1653cc6e4f6fce4f95ff21d0e2a79d7bad0a478ff23493ad13",
+  "metadata_actual_review_sha256": "3e94af1d6b6deac441e742b6c68b5b1e370915efc801c5c578f978c1350f4572",
+  "limits": {
+    "games": 128,
+    "cleanup_seconds": 180,
+    "active_seconds": 300,
+    "actors": 64
+  },
+  "full_unit_pass": false,
+  "speed_claim": false,
+  "training_credit": 0,
+  "retry_granted": false,
+  "next_gate": "Bounded during-work diagnostic persistence; preserve every guard/custody/STOP/deadline check. Source hypothesis of signal-before-unwind is not unique causal proof."
+}

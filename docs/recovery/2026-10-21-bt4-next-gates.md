@@ -171,3 +171,5 @@ all five cases separately from the earlier eight observations and two controls.
 A separate source-only copy read back 613 payloads and a closure containing 41
 module pins. The old runtime remained unchanged. This establishes source-copy
 identity; actual imported origins and model behavior remain finite-launch gates.
+
+The distinct targeted-diagnostic V3 model attempt also reached the unchanged active deadline. Saved closure was accepted; one writer receipt was retained, but ACK count is unknown with WAL/SHM present and both diagnostic snapshots are absent. The next gate is bounded during-work telemetry that survives terminal cleanup, with unchanged guards, custody, STOPs and limits. See the banked experiment readout; no further model launch or retry follows this record.

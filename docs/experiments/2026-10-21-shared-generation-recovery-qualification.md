@@ -137,3 +137,42 @@ indexes a byte-preserving source archive, the two separate CPU outcomes and exac
 reviews. The finite adapter still needs its actual caller/import binding and
 independent action review before another model attempt. No failed attempt is
 silently resumed or overwritten.
+
+## Targeted-diagnostic finite attempt V3
+
+After five distinct adapter CPU controls passed, one independently reviewed
+successor used the copied runtime containing 613 payloads and 41 module pins.
+It retained the same one-unit, 128-game, 64-actor geometry and 300-second active
+plus 180-second cleanup limits. It returned native exit 1 after 303.016 seconds
+at the active deadline; full-unit qualification failed.
+
+The saved unit launch binds the original model and repetition fix. Its saved
+first-root provider proof reports 644 CUDA nodes, including 195 neural nodes,
+and zero CPU-provider nodes in the same child/session. This observation read the
+proof JSON, not the profile payload; the reported provider counts were not
+independently recounted. One completed writer receipt, game 52 with 22 rows,
+was retained. NPZ payloads were not read. Checkpoint WAL and SHM files remained,
+so the observer did not open SQLite and the owner ACK count is unknown. The
+previous attempt's verified ACK must not be transferred to this run.
+
+Neither targeted diagnostic snapshot was present. There is no batch histogram,
+refill-order witness or full-unit result from this attempt. Source inspection
+shows that deadline cleanup may signal the child before Python unwinds its
+context managers; this is a plausible explanation, not a uniquely established
+cause. CPU exception-retention tests do not prove persistence across process
+termination. Before another model experiment, bounded telemetry must be saved
+during work, without relying on terminal unwinding, while retaining every
+original guard call, STOP, custody and deadline check. No retry or larger limit
+is authorized by this failure record.
+
+Independent saved-closure reconciliation accepted kernel `ECHILD`, released
+canonical locks, and identical before/after ordinary-state digests: generation
+stayed CLOSED+PAUSED with all 564 controls, six evaluation STOPs and five stopped
+checkpoint component sets preserved. Sampled family peaks were 1,861,275,648 RSS
+bytes and 1,842,258,944 PSS bytes; these are sampled observations, not hard family
+quotas. Conservative family CPU accounting was 160.702 seconds. These figures
+and one writer receipt do not establish throughput or explain the deadline.
+There is no speedup, numerical-equivalence, adoption or training-credit claim.
+
+The [V3 evidence index](../recovery/2026-10-21-bt4-diagnostic-attempt-v3.json)
+retains exact failure, proof, writer, component and independent-review hashes.
