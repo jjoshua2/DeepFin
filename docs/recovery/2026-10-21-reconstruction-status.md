@@ -42,15 +42,31 @@ The failures exposed stale warning-value assertions, bypassed worker constructor
 fixtures missing watcher state, omitted retained Ceres source pins, an obsolete
 constructor-failure seam, and the old scalar-encoder monkeypatch after bulk
 encoding adoption. Test-only corrections preserve or strengthen the original
-oracles; their independent source reviews found no actionable issues, but the
-corrections have not yet been rerun at this checkpoint.
+oracles; their independent source reviews found no actionable issues.
 
 Complete first-run stdout SHA256:
 `6ddc6758b3edad4e58288efabed489c3808bdd11ee11fbcd472e64cc7d70d6e7`.
 Full JUnit/metrics and native streams are retained outside the checkout under
-the isolated qualification report roots. Whole static analysis is in progress
-on the frozen first candidate; ordinary CPU compatibility remains outstanding.
-No retained model or GPU execution has occurred.
+the isolated qualification report roots. The corrected focused run on exact
+`416a4189a35e731c1f864478787a3a1ec7f3b45d` completed **625 tests: 616 passed,
+9 skipped, zero errors/failures** in JUnit83.737s. All nine skips require the
+missing Stockfish engine; they are not passing e2e evidence.
+
+Whole Ruff/basedpyright/vulture subsequently passed on
+`1e459966b21dcccf3a88fc9d5e4da1af632f843a`, with zero type errors/warnings.
+That commit changes only two test files relative to the passing focused run;
+all three affected cases passed a separate rerun. These are overlapping cases,
+not three additional unique passes. The two actual-import affinity/ordering
+controls fail for their intended reasons on recovered `377e5d5` and pass on the
+reconstruction. All earlier failed runs and the first pre-test Git packing
+failure remain retained.
+
+The whole ordinary CPU suite remains unrun: present host-dependent fixtures
+would import a historical frozen runtime and automatically use an installed,
+unbound Bend toolchain. Neither was executed, hidden or removed. No retained
+model or GPU execution has occurred. Compact identities and scope are in
+`2026-10-21-cpu-qualification.json`; remaining gates are in
+`2026-10-21-bt4-next-gates.md`.
 
 Actual BT4 qualification remains separate: existing canonical exclusive custody,
 exact successor controls/source bindings, unique nontraining outputs, independent
