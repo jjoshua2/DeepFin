@@ -66,6 +66,7 @@ from chess_anti_engine.model import (
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
 )
+from chess_anti_engine.uci.model_loader import model_config_from_arch
 from chess_anti_engine.utils.config_yaml import strict_config_bool
 from chess_anti_engine.replay.shard import (
     LOCAL_SHARD_SUFFIX,
@@ -1215,6 +1216,8 @@ class WorkerSession:
   # with the per-ply on_step call; _model_stale_since_s drives the alarm.
         self._model_watch_started = False
         self._model_watch_lock = threading.Lock()
+        self._model_watch_stop = threading.Event()
+        self._model_watch_thread: threading.Thread | None = None
         self._model_stale_since_s: float | None = None
         self._model_stale_alarmed = False
   # Manifest-watch state (lazy-init in _check_model_update via getattr fallback).
@@ -1691,8 +1694,29 @@ class WorkerSession:
                 break
         return last_uploaded_at
 
-    def _load_and_compile_model(self, path: Path, cfg: ModelConfig, *, label: str, sha_short: str) -> torch.nn.Module:
+    def _load_and_compile_model(
+        self, path: Path, cfg: ModelConfig, *, label: str, sha_short: str,
+        checkpoint_arch: bool = False,
+    ) -> torch.nn.Module:
         """Build model, load checkpoint, optionally compile."""
+  # weights_only=True blocks arbitrary pickle execution on a file that came
+  # off the network. The manifest sha is verified before we get here, but the
+  # sha arrives over the SAME channel as the file, so it does not authenticate
+  # anything an on-path attacker could not also rewrite. Our published export
+  # is `{"model": state_dict, "arch": {...primitives...}}` -- measured: a full
+  # trainer.pt (model + opt + scheduler + zclip) loads clean under
+  # weights_only=True, and this payload is a strict subset of that.
+  # Same rationale as uci/model_loader.py.
+        ckpt = torch.load(str(path), map_location="cpu", weights_only=True)
+        arch = ckpt.get("arch") if checkpoint_arch else None
+        from_arch = isinstance(arch, dict)
+        if from_arch:
+            # Arena best is a different checkpoint from the active manifest.
+            # Use its serving identity, including repetition/history settings.
+            # Arch-less legacy exports retain the caller's config fallback.
+            cfg = dataclasses.replace(
+                model_config_from_arch(arch), use_gradient_checkpointing=False,
+            )
         model = build_model(cfg)
         # Slot width vs the model actually built here. NOT the production
         # selfplay check: a worker with a broker client does not reach this
@@ -1706,17 +1730,8 @@ class WorkerSession:
                 model, int(client.input_planes),
                 where="worker inference slot (local model)",
             )
-  # weights_only=True blocks arbitrary pickle execution on a file that came
-  # off the network. The manifest sha is verified before we get here, but the
-  # sha arrives over the SAME channel as the file, so it does not authenticate
-  # anything an on-path attacker could not also rewrite. Our published export
-  # is `{"model": state_dict, "arch": {...primitives...}}` -- measured: a full
-  # trainer.pt (model + opt + scheduler + zclip) loads clean under
-  # weights_only=True, and this payload is a strict subset of that.
-  # Same rationale as uci/model_loader.py.
-        ckpt = torch.load(str(path), map_location="cpu", weights_only=True)
         sd = ckpt.get("model", ckpt)
-        load_state_dict_tolerant(model, sd, label=label)
+        load_state_dict_tolerant(model, sd, label=label, require_complete=from_arch)
         # `.to(device)` is the first driver-touching call on this path and the
         # one observed to wedge (audit R1). It runs while a server lease is
         # already held, so an unbounded block here is a silently stalled worker.
@@ -2491,7 +2506,27 @@ class WorkerSession:
         if not self._model_watch_lock.acquire(blocking=False):
             return
         try:
+            # Teardown acquires this same lock before handing state back to
+            # run(). A callback admitted before the handoff must finish first;
+            # one admitted afterward must not touch the next session's setup.
+            if self._selfplay_session_active and not self._model_watch_stop.is_set():
+                self._check_model_update_locked()
+        finally:
+            self._model_watch_lock.release()
+
+    def _set_selfplay_session_active(self, active: bool) -> None:
+        """Transfer manifest/model ownership at a completed watcher boundary."""
+        with self._model_watch_lock:
+            self._selfplay_session_active = active
+
+    def _model_watch_iteration(self) -> None:
+        if not self._model_watch_lock.acquire(blocking=False):
+            return
+        try:
+            if not self._selfplay_session_active or self._model_watch_stop.is_set():
+                return
             self._check_model_update_locked()
+            self._check_model_freshness()
         finally:
             self._model_watch_lock.release()
 
@@ -2878,7 +2913,7 @@ class WorkerSession:
         down by a selfplay thread, so the worst case is a slow swap, never a
         permanently stale one.
         """
-        if self._model_watch_started:
+        if self._model_watch_started or self._model_watch_stop.is_set():
             return
         raw = os.environ.get("CAE_WORKER_MODEL_WATCH_S", "5").strip()
         try:
@@ -2901,15 +2936,9 @@ class WorkerSession:
         )
 
         def _loop() -> None:
-            while True:
-                time.sleep(poll_s)
-                if not self._selfplay_session_active:
-                    # Between sessions the outer run() loop owns the manifest;
-                    # a concurrent swap here would race its session setup.
-                    continue
+            while not self._model_watch_stop.wait(poll_s):
                 try:
-                    self._check_model_update()
-                    self._check_model_freshness()
+                    self._model_watch_iteration()
                 except Exception as exc:
                     # Never let a transient failure kill the watch thread —
                     # that would recreate the exact single-point-of-failure
@@ -2919,9 +2948,16 @@ class WorkerSession:
                         poll_s, exc, exc_info=True,
                     )
 
-        threading.Thread(
+        self._model_watch_thread = threading.Thread(
             target=_loop, name="model-watch", daemon=True,
-        ).start()
+        )
+        self._model_watch_thread.start()
+
+    def _stop_model_watch_thread(self) -> None:
+        self._model_watch_stop.set()
+        self._set_selfplay_session_active(False)
+        if self._model_watch_thread is not None:
+            self._model_watch_thread.join()
 
     def _check_model_freshness(self) -> None:
         """Alarm when our shard tag has lagged the published model too long.
@@ -3800,6 +3836,7 @@ class WorkerSession:
 
             self.best_model = self._load_and_compile_model(
                 best_path, self.model_cfg_active, label="worker-best", sha_short=str(best_sha)[:8],
+                checkpoint_arch=True,
             )
             self.last_best_sha = best_sha
 
@@ -5141,7 +5178,7 @@ class WorkerSession:
         t0 = time.time()
         self._saw_completed_game = False
         self._note_selfplay_progress()
-        self._selfplay_session_active = True
+        self._set_selfplay_session_active(True)
         self._start_selfplay_stall_watchdog()
         self._start_model_watch_thread()
         n_dole = len(fen_dole_queue)
@@ -5172,7 +5209,7 @@ class WorkerSession:
                 fen_sf_refute_queue=fen_sf_refute_queue,
             )
         finally:
-            self._selfplay_session_active = False
+            self._set_selfplay_session_active(False)
   # Session over: whatever the session did NOT drain is preserved for the next
   # session start — a normally-stopped-but-empty session (games=0) keeps its full
   # batch, a recoverable dispatch failure (stats is None) keeps the remainder,
@@ -5287,6 +5324,9 @@ class WorkerSession:
         return killed
 
     def _cleanup(self) -> None:
+        # Drain any in-flight model update before closing its clients. The
+        # event also wakes an idle watcher rather than leaking a daemon.
+        self._stop_model_watch_thread()
         self._boot_hang_watchdog.stop()
         self._gil_probe.close()
         if self.inference_client is not None and hasattr(self.inference_client, "close"):

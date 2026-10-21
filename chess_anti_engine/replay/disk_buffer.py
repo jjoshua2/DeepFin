@@ -11,6 +11,7 @@ import copy
 import fcntl
 import logging
 import os
+import stat
 import threading
 import time
 from collections import deque
@@ -1835,8 +1836,27 @@ class DiskReplayBuffer:
             return
         lock_path = self._shard_dir / _WRITER_LOCK_NAME
         try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+            try:
+                before = lock_path.lstat()
+            except FileNotFoundError:
+                before = None
+            if before is not None and not stat.S_ISREG(before.st_mode):
+                raise OSError("writer lock is not a regular file")
+            flags = (os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_NONBLOCK", 0))
+            fd = os.open(str(lock_path), flags, 0o644)
         except OSError as exc:
+            raise RuntimeError(
+                f"cannot claim replay writer lock {lock_path}: {exc}"
+            ) from exc
+        try:
+            opened = os.fstat(fd)
+            named = lock_path.lstat()
+            if (not stat.S_ISREG(opened.st_mode) or not stat.S_ISREG(named.st_mode)
+                    or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)):
+                raise OSError("writer lock inode changed or is not a regular file")
+        except OSError as exc:
+            os.close(fd)
             raise RuntimeError(
                 f"cannot claim replay writer lock {lock_path}: {exc}"
             ) from exc

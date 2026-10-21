@@ -11,7 +11,9 @@ from chess_anti_engine.tune.trainable_config_ops import (
     _apply_lr_gamma_weights,
     _play_batch_kwargs,
     _reload_yaml_into_config,
+    _warn_on_keys_dropped_from_yaml,
     reset_yaml_reload_key_tracking,
+    seed_yaml_reload_baseline,
 )
 from chess_anti_engine.tune.trial_config import TrialConfig
 
@@ -1034,3 +1036,44 @@ def test_live_reload_refuses_optimizer_group_value_knobs(
     assert restarted["matrix_weight_decay"] == 0
     assert restarted["aux_weight_decay"] == pytest.approx(0.01)
     assert restarted["aurora_uw_floor"] == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize("resumed", [False, True], ids=["live", "resumed"])
+def test_dropped_yaml_warning_omits_all_values(caplog, monkeypatch, resumed) -> None:
+    from chess_anti_engine.tune import trainable_config_ops as ops
+
+    yaml_path = "synthetic-config.yaml"
+    config = {
+        "worker_password": "synthetic-password-marker",
+        "api_token": "synthetic-token-marker",
+        "worker_password_env": "SYNTHETIC_ENV_LOCATOR_MARKER",
+        "worker_password_file": "/synthetic/file-locator-marker",
+        "benign_setting": "synthetic-benign-value-marker",
+    }
+    original = config.copy()
+    previous = frozenset(config) | {"absent_from_trial"}
+    # Isolate the module baseline without changing any other test's state.
+    monkeypatch.setattr(ops, "_LAST_RELOAD_YAML_KEYS", {yaml_path: frozenset() if resumed else previous})
+    with caplog.at_level(logging.WARNING, logger=ops.__name__):
+        if resumed:
+            seed_yaml_reload_baseline(yaml_path=yaml_path, keys=previous, config=config)
+        else:
+            _warn_on_keys_dropped_from_yaml(yaml_path=yaml_path, fresh={}, config=config)
+
+    records = [record for record in caplog.records if record.name == ops.__name__]
+    assert len(records) == len(config)
+    for record, key in zip(records, sorted(config), strict=True):
+        message = record.getMessage()
+        assert key in message
+        assert yaml_path in message
+        assert "STILL RUNNING its previous value" in message
+        assert "delete does not revert" in message
+        assert "write the old value explicitly" in message
+        assert f"`{key}: null`" in message
+        assert ("the checkpoint this process resumed from" if resumed else "the previous reload") in message
+    # Check both rendered output and deferred logging arguments.
+    captured = caplog.text + repr([record.args for record in records])
+    for value in config.values():
+        assert value not in captured
+    assert "absent_from_trial" not in captured
+    assert config == original

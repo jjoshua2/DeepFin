@@ -1195,10 +1195,10 @@ def _warn_on_keys_dropped_from_yaml(
             continue
         log.warning(
             "YAML reload: %s is no longer set by %s (it was, as of %s) but the "
-            "trial is STILL RUNNING %r — delete does not revert; write the old "
+            "trial is STILL RUNNING its previous value - delete does not revert; write the old "
             "value explicitly. (`%s: null` is dropped before the reloader sees "
             "it, so it reads as a delete too.)",
-            key, yaml_path, since, current, key,
+            key, yaml_path, since, key,
         )
 
 
