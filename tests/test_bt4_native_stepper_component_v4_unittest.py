@@ -144,6 +144,8 @@ def transition(steppers: list[subject.BT4RootPolicyStepper], prepared: Prepared,
 
 
 class NativeStepperComponentControls(unittest.TestCase):
+    _model_runtime_modules_before: frozenset[str] = frozenset()
+
     def setUp(self) -> None:
         if _RETAINED_COMPONENT_FAILURES:
             raise RuntimeError("unresolved producer ownership retained; no further native work")

@@ -61,9 +61,9 @@ controls fail for their intended reasons on recovered `377e5d5` and pass on the
 reconstruction. All earlier failed runs and the first pre-test Git packing
 failure remain retained.
 
-The whole ordinary CPU suite remains unrun: present host-dependent fixtures
+At that earlier checkpoint the whole ordinary CPU suite remained unrun: host-dependent fixtures
 would import a historical frozen runtime and automatically use an installed,
-unbound Bend toolchain. Neither was executed, hidden or removed. No retained
+unbound Bend toolchain. Neither was executed, hidden or removed. At that checkpoint no retained
 model or GPU execution has occurred. Compact identities and scope are in
 `2026-10-21-cpu-qualification.json`; remaining gates are in
 `2026-10-21-bt4-next-gates.md`.
@@ -74,3 +74,50 @@ launch review and a qualified restoration path are required. No generation
 restart, PAUSE/STOP removal, live adoption, merge or evaluation is performed by
 this source checkpoint. Targets 320/340 remain hypotheses; Ceres physical32
 evidence remains separate.
+## Hosted ordinary suite: failed qualification, reviewed test repairs
+
+The later hosted run on `20836c925fe195971ac40a9a755eb7028f26c989` completed
+with **105 failed, 16,100 passed, 145 skipped and four setup errors** (plus four
+deselected and four expected failures) in 1,747.97 seconds. Hosted lint and
+PEXT passed. The ordinary suite failed; its passing cases do not qualify the
+whole reconstructed candidate.
+
+Complete failure attribution separates five families:
+
+| Family | Hosted result | Source correction scope |
+| --- | ---: | --- |
+| Replay fixture widths | 95 failures | Valid positive fixtures use at least 112 planes; row, label, seal, dtype and negative-input oracles remain. |
+| Watchdog fake interface | 3 failures | Supply the stop Event read by the actual watcher method. |
+| Ceres fixture source closure | 6 failures | Add required consequential source pins; the three child exits may still expose further failures. |
+| Public-document paths | 1 failure | Correct documentation paths without changing runtime source. |
+| Native component suite compatibility | 4 setup errors | Permit model-runtime modules already loaded by normal conftest; reject newly introduced modules per component case and initialize encoder mode before each case. |
+
+Eleven test files have reviewed corrections. The replay minimum-width admission
+rule, production watcher and Ceres checks, normal conftest, native equality/RNG
+oracles and ownership cleanup are unchanged. The tiny holdout model still reads
+its original four planes despite valid 112-plane storage. The narrow-shard
+negative checks both writer rejection and the dump reader's refusal of a
+malformed raw store. The separate isolated native controller retains its strict
+no-model-runtime import guarantee.
+
+These are **source-reviewed repairs, not a passing rerun**. Neither targeted
+collection nor post-repair ordinary-suite success is inferred here. Documentation
+corrections likewise do not make the hosted path test pass without rerunning it.
+No new test credit, model execution or performance claim follows.
+
+## Dependency inspection and remaining runtime gate
+
+Six synthetic sparse-ELF parser controls passed and were independently reconciled.
+They exercise bounded table/string parsing and refusal mechanisms only. They did
+not read installed dependency payloads or qualify a loader, normal runtime import,
+model session or accelerator. The separate sparse metadata observation identified
+130 installed file records; it is not a complete dependency identity/import proof.
+The earlier full census stopped before completion and remains failed evidence.
+
+The selected aggregate runtime still needs its complete normal-import and native
+loader closure under the admitted resource limits. The full Torch startup that
+failed under a 4 GiB address-space limit remains a real boundary; parser controls
+and prior low-dependency component results do not waive it. Material audit
+approval and exact runtime/custody/action review remain outstanding before another
+aggregate model trial. No larger cap, audit bypass, live adoption, merge or
+training credit is authorized by this note.

@@ -307,7 +307,7 @@ def test_a_shard_too_narrow_to_fingerprint_is_refused(tmp_path: Path) -> None:
     # bypass or weaken the production writer's admission rule.
     shard_dir = tmp_path / "narrow"
     shard = write_shard(shard_dir)
-    group = zarr.open(str(shard), mode="a")
+    group = zarr.open_group(str(shard), mode="a")
     narrow = np.asarray(group["x"][:])[:, :110]
     del group["x"]
     group.create_dataset("x", data=narrow)
