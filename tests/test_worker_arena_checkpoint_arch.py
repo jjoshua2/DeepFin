@@ -92,7 +92,7 @@ def harness() -> Any:
         "time": SimpleNamespace(time=lambda: 1.0, sleep=forbidden),
         "_sha256_file": lambda _path: "best",
         "_download_and_verify_shared": forbidden, "_worker_headers": forbidden,
-        "OpeningConfig": lambda **kwargs: SimpleNamespace(**kwargs),
+        "OpeningConfig": SimpleNamespace,
         "play_match_batch": match,
     }
     source = (Path(__file__).resolve().parents[1] / "chess_anti_engine/worker.py").read_text()
@@ -108,14 +108,17 @@ def harness() -> Any:
         exec(compile(ast.fix_missing_locations(module), "<worker-arena-methods>", "exec"), env)
         methods[name] = env[name]
     cls = type("ArenaLoadSession", (), methods)
-    h.session = cls()
-    h.session.args = SimpleNamespace(
+    # The class body comes from the actual source AST at runtime; this is the
+    # deliberate dynamic boundary for the fake collaborators, not WorkerSession.
+    session_instance: Any = cls()
+    session_instance.args = SimpleNamespace(
         compile_inference=False, threaded_selfplay=False, compile_mode="default",
     )
-    h.session.inference_client = None
-    h.session.device = "cpu"
-    h.session._boot_hang_watchdog = SimpleNamespace(stage=lambda _name: nullcontext())
-    h.session.log = SimpleNamespace(info=lambda *_args, **_kwargs: None)
+    session_instance.inference_client = None
+    session_instance.device = "cpu"
+    session_instance._boot_hang_watchdog = SimpleNamespace(stage=lambda _name: nullcontext())
+    session_instance.log = SimpleNamespace(info=lambda *_args, **_kwargs: None)
+    h.session = session_instance
     return h
 
 
@@ -130,7 +133,7 @@ def _load(h: Any, cfg: ModelConfig, *, embedded: bool = True) -> Any:
     )
 
 
-@pytest.mark.parametrize("current_fix,best_fix", [(False, True), (True, False)])
+@pytest.mark.parametrize(("current_fix", "best_fix"), [(False, True), (True, False)])
 def test_best_uses_own_topology_and_repetition_identity(
     harness: Any, current_fix: bool, best_fix: bool,
 ) -> None:
@@ -186,14 +189,18 @@ def test_invalid_embedded_arch_refuses_before_construction(harness: Any, bad: st
     arch = _arch(ModelConfig())
     if bad == "missing-schema":
         del arch["_schema_version"]
+        expected = "missing an integer _schema_version"
     elif bad == "noninteger-schema":
         arch["_schema_version"] = "20"
+        expected = "missing an integer _schema_version"
     elif bad == "future-schema":
         arch["_schema_version"] = ARCH_SCHEMA_VERSION + 1
+        expected = "is newer than this loader"
     else:
         arch["unknown-topology"] = 1
+        expected = "embedded arch has unknown keys"
     harness.checkpoints["best.pt"] = {"model": {}, "arch": arch}
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=expected):
         _load(harness, ModelConfig())
     assert not harness.built
     assert not harness.weights
@@ -245,7 +252,7 @@ def _prepare_arena(h: Any, active_fix: bool, best_fix: bool) -> tuple[FakeModel,
     return current, cfg
 
 
-@pytest.mark.parametrize("active_fix,best_fix", [(False, True), (True, False)])
+@pytest.mark.parametrize(("active_fix", "best_fix"), [(False, True), (True, False)])
 def test_arena_caller_constructs_independent_best_identity(
     harness: Any, active_fix: bool, best_fix: bool,
 ) -> None:
@@ -269,9 +276,11 @@ def test_failed_best_load_keeps_prior_arena_identity(harness: Any, failure: str)
     harness.session.best_model = old_best
     if failure == "arch":
         harness.checkpoints["best_best.pt"]["arch"]["unsupported-topology"] = 1
+        expected = "embedded arch has unknown keys"
     else:
         harness.fail_weights = True
-    with pytest.raises((ValueError, RuntimeError)):
+        expected = "synthetic incomplete load"
+    with pytest.raises((ValueError, RuntimeError), match=expected):
         harness.session._run_arena({"best_model": {"sha256": "best"}}, {"arena": {}})
     assert harness.session.best_model is old_best
     assert harness.session.last_best_sha == "old"

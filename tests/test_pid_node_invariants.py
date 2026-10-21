@@ -41,7 +41,7 @@ def test_integral_config_values_and_clamping_remain_supported() -> None:
     assert pid.nodes == 100
 
 
-@pytest.mark.parametrize("field,value", [
+@pytest.mark.parametrize(("field", "value"), [
     ("sf_pid_min_nodes", 0), ("sf_pid_max_nodes", -1),
     ("sf_pid_min_nodes", 4.5), ("sf_pid_max_nodes", "broken"),
 ])
@@ -68,7 +68,7 @@ def test_unchanged_live_bounds_preserve_fractional_accumulator_and_frozen_metric
     assert (pid.metric_min_nodes, pid.metric_max_nodes) == (100, 1000)
 
 
-@pytest.mark.parametrize("key,value", [("nodes", 0), ("metric_min_nodes", -1), ("metric_max_nodes", 1.5)])
+@pytest.mark.parametrize(("key", "value"), [("nodes", 0), ("metric_min_nodes", -1), ("metric_max_nodes", 1.5)])
 def test_invalid_restored_node_fields_refuse_before_state_change(key: str, value: Any) -> None:
     pid = make_pid()
     before = pid.state_dict()

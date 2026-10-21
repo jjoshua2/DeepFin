@@ -55,7 +55,7 @@ def lock_spies(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, dict[str, Any]]:
     return owner, state
 
 
-@pytest.mark.parametrize("mode", (stat.S_IFLNK, stat.S_IFIFO, stat.S_IFDIR, stat.S_IFCHR))
+@pytest.mark.parametrize("mode", [stat.S_IFLNK, stat.S_IFIFO, stat.S_IFDIR, stat.S_IFCHR])
 def test_existing_nonregular_lock_refuses_before_open(lock_spies: Any, mode: int) -> None:
     owner, state = lock_spies
     state["named_mode"] = mode
@@ -65,7 +65,7 @@ def test_existing_nonregular_lock_refuses_before_open(lock_spies: Any, mode: int
     assert owner._writer_lock_fd is None
 
 
-@pytest.mark.parametrize("change", ("fd_mode", "named_ino", "after_open_mode"))
+@pytest.mark.parametrize("change", ["fd_mode", "named_ino", "after_open_mode"])
 def test_opened_inode_must_be_regular_and_match_name(lock_spies: Any, change: str) -> None:
     owner, state = lock_spies
     state[change] = stat.S_IFIFO if change != "named_ino" else 9
@@ -75,7 +75,7 @@ def test_opened_inode_must_be_regular_and_match_name(lock_spies: Any, change: st
     assert owner._writer_lock_fd is None
 
 
-@pytest.mark.parametrize("failure", ("open_error", "fstat_error"))
+@pytest.mark.parametrize("failure", ["open_error", "fstat_error"])
 def test_open_and_validation_failures_leave_no_owned_fd(lock_spies: Any, failure: str) -> None:
     owner, state = lock_spies
     state[failure] = True
@@ -95,7 +95,7 @@ def test_regular_contention_closes_without_pid_stamping(lock_spies: Any) -> None
     assert owner._writer_lock_fd is None
 
 
-@pytest.mark.parametrize("missing", (False, True))
+@pytest.mark.parametrize("missing", [False, True])
 def test_regular_lock_claim_reuse_and_release(lock_spies: Any, missing: bool) -> None:
     owner, state = lock_spies
     state["missing"] = missing

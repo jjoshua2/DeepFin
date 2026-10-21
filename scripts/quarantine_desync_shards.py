@@ -492,6 +492,8 @@ def _validate_restore_manifest(man: dict[str, Any], shard_dir: Path, quar_dir: P
         if not isinstance(rec, dict):
             raise ManifestError("restore shard record must be an object")
         name = rec.get("name")
+        if not isinstance(name, str):
+            raise ManifestError(f"invalid restore shard name: {name!r}")
         _restore_path(shard_dir, name)
         _restore_path(quar_dir, name)
         if name in names:

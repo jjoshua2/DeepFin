@@ -32,12 +32,12 @@ def forbid_mutations(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return calls
 
 
-@pytest.mark.parametrize("name", (
+@pytest.mark.parametrize("name", [
     "../shard_000001.zarr", "/tmp/shard_000001.zarr", "C:\\shard_000001.zarr",
     "\\\\host\\share\\shard_000001.zarr", "nested/shard_000001.zarr",
     "nested\\shard_000001.zarr", "shard_000001.zarr:stream", ".", "..", "",
     "shard_\0.zarr", None, 123, "unrelated-directory",
-))
+])
 def test_invalid_late_record_refuses_before_any_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: Any,
 ) -> None:
@@ -48,7 +48,7 @@ def test_invalid_late_record_refuses_before_any_mutation(
     assert (quarantine / qds.MANIFEST_NAME).exists()
 
 
-@pytest.mark.parametrize("reservation", ("../victim", "shard_999999.zarr"))
+@pytest.mark.parametrize("reservation", ["../victim", "shard_999999.zarr"])
 def test_reservation_must_be_a_valid_recorded_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reservation: str,
 ) -> None:
@@ -58,7 +58,7 @@ def test_reservation_must_be_a_valid_recorded_name(
     assert calls == []
 
 
-@pytest.mark.parametrize("records", ({}, [None], [{"name": "shard_000001.zarr"}] * 2))
+@pytest.mark.parametrize("records", [{}, [None], [{"name": "shard_000001.zarr"}] * 2])
 def test_malformed_or_duplicate_records_refuse_preflight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, records: Any,
 ) -> None:
@@ -68,7 +68,7 @@ def test_malformed_or_duplicate_records_refuse_preflight(
     assert calls == []
 
 
-@pytest.mark.parametrize("side", ("shards", "quarantine"))
+@pytest.mark.parametrize("side", ["shards", "quarantine"])
 def test_symlink_entry_refuses_without_move_or_delete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, side: str,
 ) -> None:

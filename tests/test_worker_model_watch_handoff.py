@@ -74,7 +74,8 @@ def test_session_handoff_waits_for_inflight_swap_before_next_setup(session: Any)
         watch.join(5)
         if owner.ident is not None:
             owner.join(5)
-    assert not watch.is_alive() and not owner.is_alive()
+    assert not watch.is_alive()
+    assert not owner.is_alive()
     assert handed_off.is_set()
     assert calls == ["old-swap-finished", "new-session-setup"]
     session._check_model_update()
@@ -164,5 +165,6 @@ def test_cleanup_drains_callback_before_closing_clients(session: Any) -> None:
         callback.join(5)
         if owner.ident is not None:
             owner.join(5)
-    assert not owner.is_alive() and not callback.is_alive()
+    assert not owner.is_alive()
+    assert not callback.is_alive()
     assert events == ["update-finished", "client-closed"]
