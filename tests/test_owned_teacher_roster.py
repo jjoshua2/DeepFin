@@ -252,6 +252,9 @@ def test_actual_owned_dual_roster_uses_retained_child_and_controller_sqlite_ack(
         "prior_roots": value["prior_roots"]} for name, value in descriptors.items()], "max_games": 4,
         "target_rows": 4, "max_rows": 400, "batch_wait_ms": 1, "poll_seconds": 0.001, "deadline_seconds": 60, "physical_batch": 512,
         "source_pins": {relative: digest(candidate / relative) for relative in (
+            "chess_anti_engine/completion.py", "chess_anti_engine/producer_executor.py",
+            "chess_anti_engine/generation_runtime.py", "chess_anti_engine/staged_execution.py",
+            "chess_anti_engine/async_safety.py", "chess_anti_engine/request_routing.py",
             "chess_anti_engine/teacher_dispatch.py", "scripts/ceres_shared_game_service.py",
             "scripts/ceres_raw_backend.py", "scripts/shared_teacher_generation.py")},
         "retained_service_source": {"path": str(reference / "scripts/ceres_dynamic_game_service.py"),
