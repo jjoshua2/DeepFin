@@ -4,7 +4,11 @@ from __future__ import annotations
 import threading
 import time
 import unittest
+from concurrent.futures import Future
+from types import SimpleNamespace
+from unittest.mock import patch
 
+from chess_anti_engine import staged_execution
 from chess_anti_engine.producer_executor import ProducerExecutor
 from chess_anti_engine.staged_execution import OwnerThreadCallbacks, guard_staged_backend
 from chess_anti_engine.teacher_dispatch import TeacherDispatcher
@@ -141,6 +145,51 @@ class OwnerCallbackTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "bridge closed"):
             bridge()
         self.assertEqual(checked, [])
+
+    def test_service_expiry_poison_precedes_waiter_resumption(self):
+        checked = []
+        errors = []
+        clock = [0.0]
+        waiting = threading.Event()
+        resume = threading.Event()
+
+        class PausedWaiterFuture(Future):
+            def result(inner, timeout=None):
+                waiting.set()
+                if not resume.wait(2):
+                    raise AssertionError("test waiter resume deadline")
+                return super().result(timeout=timeout)
+
+        # Exercise real request admission and service, but keep its requester
+        # unscheduled until after the owner tries a subsequent direct check.
+        with patch.object(staged_execution, "Future", PausedWaiterFuture), patch.object(
+            staged_execution, "time", SimpleNamespace(monotonic=lambda: clock[0]),
+        ):
+            bridge = OwnerThreadCallbacks(lambda: checked.append(True), capacity=1,
+                                          timeout=0.5, deadline=10)
+
+            def call():
+                try:
+                    bridge()
+                except TimeoutError as error:
+                    errors.append(str(error))
+
+            thread = threading.Thread(target=call)
+            thread.start()
+            try:
+                self.assertTrue(waiting.wait(2))
+                clock[0] = 1.0  # queued request expires while its waiter is paused
+                bridge.service()
+                self.assertEqual(errors, [])
+                with self.assertRaisesRegex(TimeoutError, "handoff expired"):
+                    bridge()
+                self.assertEqual(checked, [])
+            finally:
+                resume.set()
+                thread.join(2)
+                bridge.close()
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(errors, ["owner callback handoff expired"])
 
 
 if __name__ == "__main__":

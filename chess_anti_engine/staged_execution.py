@@ -136,6 +136,12 @@ class OwnerThreadCallbacks:
                     raise TimeoutError("owner callback handoff expired")
                 self._invoke()
             except BaseException as error:
+                # Publish poison before waking the requester. In particular an
+                # owner-observed expiry must not depend on that waiter being
+                # scheduled before the next queued/direct owner check.
+                with self._lock:
+                    if self._failure is None:
+                        self._failure = error
                 future.set_exception(error)
             else:
                 future.set_result(None)
