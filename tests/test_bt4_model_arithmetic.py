@@ -4,7 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import chess
 import numpy as np
@@ -133,7 +133,7 @@ def test_next_representable_value_outside_existing_budget_refused() -> None:
 
 def test_selected_untyped_adapter_must_return_an_actual_array() -> None:
     with pytest.raises(ValueError, match="shape/storage"):
-        validate_model_wdl([[0.5, 0.5, 0.0]], 1, CONTRACT, SELECTED)
+        validate_model_wdl(cast(Any, [[0.5, 0.5, 0.0]]), 1, CONTRACT, SELECTED)
 
 
 @pytest.mark.parametrize(("values", "message"), [

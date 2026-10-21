@@ -110,7 +110,7 @@
   },
   "unrun": [
     "Seven API/legacyexport/pickle pytestcases",
-    "Eight separate strict-tablebase integration pytestcases"
+    "Seven source-enumerated strict-tablebase integration pytest cases UNRUN; not collected (historical eight-case label corrected)."
   ],
   "excluded": [
     "Model/ORT/GPU",
