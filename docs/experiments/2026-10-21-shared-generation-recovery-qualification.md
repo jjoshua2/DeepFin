@@ -190,3 +190,13 @@ Across the same entered-to-last-saved interval of 53.716 seconds, completed orig
 The newly saved first-root proof reports 644 CUDA graph nodes, including 195 neural nodes, and zero CPU nodes; registered providers include CUDA and CPU. Those are saved first-call graph-node counts, not inference-call counts or a fresh profile recount. The proof links this attempt's launch and same live session. No numerical-equivalence, full-unit, throughput, speedup, adoption or training-credit claim follows.
 
 The next narrow hypothesis is time spent in unchanged owner-side guard/control/proof and callback-service work. Any added timing must preserve every call, result, exception, STOP and custody check, pass CPU fault controls, and receive separate review before another model attempt. The [result index](../recovery/2026-10-21-bt4-diagnostic60-result.json) retains source, closure, snapshot and readout identities.
+
+## Bounded phase timing CPU prerequisite
+
+The bounded phase timing CPU gate passed once: three unittest groups produced 13 named observations (two controller retention controls, nine source controls and two owned termination controls). Both SIGTERM/SIGKILL children were reaped with kernel ECHILD, and durable pending-phase snapshots survived. The exact source capsule includes the retained pure OwnerThreadCallbacks implementation; this is no model, GPU, full-runtime or product qualification.
+
+All six raw overhead records are retained. The three synthetic Guard phase-wrapper/cadence-noop measurements observed 22.25–24.31 microseconds added wall time per call; separate timer-core measurements remain distinct. This measures the fixed pure-call harness, excludes durable publication and real model overhead, and carries no speed or acceptance threshold claim. Parent CPU was 0.318594 seconds; reaped children CPU totaled 0.0629 seconds; gate wall time was 0.633219635 seconds. These are observed process accounting values, not a hard family CPU quota.
+
+The earlier source-only escrow and its UNRUN-at-escrow index remain immutable. This separate result package preserves final controller/proposal/argv/source pins, complete native raw result and stderr, terminal/intent records, source review and independent actual review. It authorizes no rerun or model action.
+
+[Exact source escrow](../recovery/2026-10-21-bounded-phase-timing-source-v1.json) and [separate CPU actual evidence](../recovery/2026-10-21-bounded-phase-cpu-actual-v2.json) retain frozen bytes, reviews and complete raw observations. The next model diagnostic remains separately gated; no model attempt occurred in this CPU stage.
