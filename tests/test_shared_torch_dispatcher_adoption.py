@@ -298,7 +298,8 @@ def test_actual_compile_and_compiled_update_stay_on_dispatcher_thread(monkeypatc
         assert dispatcher._evaluator.model is compiled_model
         np.testing.assert_array_equal(dispatcher.evaluate(_rows(2)).result(3)[0], [[12, 12]])
         assert len(compiled_threads) == 1
-        assert {event[2] for event in cast(_Backend, dispatcher._evaluator).events} == set(compiled_threads)
+        backend = cast(_Backend, cast(object, dispatcher._evaluator))
+        assert {event[2] for event in backend.events} == set(compiled_threads)
         assert compiled_threads[0] != threading.get_ident()
     finally:
         dispatcher.shutdown()

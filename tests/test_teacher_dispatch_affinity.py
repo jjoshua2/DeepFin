@@ -112,7 +112,8 @@ class TeacherAffinityTests(unittest.TestCase):
                 executed.append(prepared)
                 return super().execute(prepared)
 
-            def finish(self, _prepared, _raw):
+            def finish(self, _prepared, raw):
+                assert raw == _prepared
                 if not second_prepared.wait(5):
                     raise AssertionError("second prepare missing")
                 if raises:
