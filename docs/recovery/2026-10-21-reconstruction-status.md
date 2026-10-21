@@ -15,23 +15,42 @@ Source checkpoints composed so far:
   not recycle finished games. Torch adopts shared FIFO routing and the two-slot
   pump, preserving request grouping, barriers and owned output snapshots.
 
-The actual shared-owner callback affinity and finish-before-next-execute repair
-is still being reconstructed in a separate source worktree. It must land before
-any production-owner callback or model qualification. An executor-thread guard
-callback is not accepted as an owner-thread checkpoint/control substitute.
+The shared-owner callback repair is now composed through `55f28a1`. Dispatcher
+execution and finish acceptance share one owner, preparation may overlap, and
+background guard checks rendezvous with the original controller during both
+progress and shutdown. Independent review found a serviced-expiry ordering issue;
+the correction records sticky failure before publishing the callback error.
+Checkpoint/ACK ownership and retained timeout custody remain mandatory.
 
-Independent read-only source review found no actionable issue in the replay
-increment. Backlog and selfplay/Torch independent reviews are pending. Every new
-test remains uncollected and unrun. Git whitespace checks are the only executed
-source checks so far; no Python imports, native builds, model loads or GPU tests
-have qualified these changes.
+Independent read-only review found no remaining actionable source issue in the
+replay, backlog, selfplay/Torch and corrected affinity increments. Source review
+alone does not qualify the reconstructed runtime.
 
 The local CPU environment proposal uses a fresh Linux checkout and locked
 CPython 3.13.15/uv 0.12.10 `dev`+`cpu` environment. Review corrections sanitize
 the build environment and explicitly materialize/verify the tracked skill
-symlink. Environment installation has not started at this checkpoint. Native
-extension origins/backend freshness, actual-import regressions, whole static
-checks and ordinary CPU compatibility remain outstanding.
+symlink. Installation completed in a fresh disposable Linux root. The first
+focused run on exact `55f28a1295ada48618524ac5fa49e82504cd1b2a` authenticated
+CPython3.13.15, Torch2.14.0+cpu (no CUDA build), NumPy2.2.6, pytest9.1.1,
+Zarr2.18.7, CPU affinity29/30 and local fresh magic native extensions.
+
+That first run completed **624 tests: 608 passed, 7 failed, 9 skipped**, with
+zero collection errors and JUnit time69.235s. It is a failed qualification run.
+Stockfish discovery returned none, so engine-dependent skips are missing e2e
+evidence. The new owner-thread/dispatcher/STOP regression controls passed.
+The failures exposed stale warning-value assertions, bypassed worker constructor
+fixtures missing watcher state, omitted retained Ceres source pins, an obsolete
+constructor-failure seam, and the old scalar-encoder monkeypatch after bulk
+encoding adoption. Test-only corrections preserve or strengthen the original
+oracles; their independent source reviews found no actionable issues, but the
+corrections have not yet been rerun at this checkpoint.
+
+Complete first-run stdout SHA256:
+`6ddc6758b3edad4e58288efabed489c3808bdd11ee11fbcd472e64cc7d70d6e7`.
+Full JUnit/metrics and native streams are retained outside the checkout under
+the isolated qualification report roots. Whole static analysis is in progress
+on the frozen first candidate; ordinary CPU compatibility remains outstanding.
+No retained model or GPU execution has occurred.
 
 Actual BT4 qualification remains separate: existing canonical exclusive custody,
 exact successor controls/source bindings, unique nontraining outputs, independent
