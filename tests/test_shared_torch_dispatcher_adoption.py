@@ -7,8 +7,10 @@ from __future__ import annotations
 
 from concurrent.futures import Future
 import threading
+from typing import Any, cast
 
 import numpy as np
+from numpy.typing import DTypeLike
 import pytest
 
 from chess_anti_engine import inference_threaded as threaded
@@ -28,6 +30,12 @@ class _Model:
     def load_state_dict(self, values, *, strict):
         assert strict
         self.value = values["value"]
+
+
+def _model(value: int = 0) -> Any:
+    # Explicit fake seam: the patched backend accepts this inert model rather
+    # than a real torch Module; dispatcher/model-barrier methods stay actual.
+    return _Model(value)
 
 
 class _Event:
@@ -99,14 +107,14 @@ def held_dispatcher(monkeypatch):
                 raise TimeoutError("test did not release compile owner")
             return model.eval()
 
-    dispatcher = Held(_Model(), device="cpu", max_batch=8, target_batch=4)
+    dispatcher = Held(_model(), device="cpu", max_batch=8, target_batch=4)
     yield dispatcher, release, compile_threads
     release.set()
     dispatcher.shutdown()
     assert not dispatcher._thread.is_alive()
 
 
-def _rows(*values, dtype=np.float32):
+def _rows(*values, dtype: DTypeLike = np.float32):
     return np.asarray(values, dtype=dtype).reshape(-1, 1)
 
 
@@ -154,11 +162,12 @@ def test_model_barrier_retires_old_output_before_new_forward(held_dispatcher):
     done = threading.Event()
     result = {}
     with dispatcher._cond:
-        dispatcher._queue.enqueue_control(threaded._ModelUpdateRequest(_Model(10), done, result))
+        dispatcher._queue.enqueue_control(threaded._ModelUpdateRequest(_model(10), done, result))
     new = dispatcher.evaluate(_rows(2))
     release.set()
     np.testing.assert_array_equal(old.result(3)[0], [[1, 1]])
-    assert done.wait(3) and not result
+    assert done.wait(3)
+    assert not result
     np.testing.assert_array_equal(new.result(3)[0], [[12, 12]])
     events = dispatcher._evaluator.events
     assert [(event[0], event[1]) for event in events[:3]] == [
@@ -201,12 +210,13 @@ def test_pipeline_failure_fails_queued_and_model_barrier(held_dispatcher, phase)
     done = threading.Event()
     result = {}
     with dispatcher._cond:
-        dispatcher._queue.enqueue_control(threaded._ModelUpdateRequest(_Model(10), done, result))
+        dispatcher._queue.enqueue_control(threaded._ModelUpdateRequest(_model(10), done, result))
     release.set()
     for future in (failed, queued):
-        with pytest.raises(RuntimeError, match="inert (launch|retire) failure"):
+        with pytest.raises(RuntimeError, match=r"inert (launch|retire) failure"):
             future.result(3)
-    assert done.wait(3) and "error" in result
+    assert done.wait(3)
+    assert "error" in result
     dispatcher.shutdown()
     with pytest.raises(RuntimeError, match="thread died"):
         dispatcher.evaluate(_rows(6))
@@ -252,7 +262,8 @@ def test_coalescing_wait_requires_known_not_ready(held_dispatcher, monkeypatch, 
     release.set()
     result.result(3)
     nonblocking = [call for call in observed if not call["blocking"]]
-    assert nonblocking and nonblocking[0]["coalesce_wait"] is (ready is False)
+    assert nonblocking
+    assert nonblocking[0]["coalesce_wait"] is (ready is False)
 
 
 def test_actual_compile_and_compiled_update_stay_on_dispatcher_thread(monkeypatch):
@@ -278,16 +289,16 @@ def test_actual_compile_and_compiled_update_stay_on_dispatcher_thread(monkeypatc
 
     monkeypatch.setattr(threaded.torch, "compile", compile_model)
     dispatcher = threaded.ThreadedDispatcher(
-        _Model(), device="cpu", max_batch=8, compile_mode="reduce-overhead",
+        _model(), device="cpu", max_batch=8, compile_mode="reduce-overhead",
     )
     try:
         np.testing.assert_array_equal(dispatcher.evaluate(_rows(1)).result(3)[0], [[1, 1]])
         compiled_model = dispatcher._evaluator.model
-        dispatcher.update_model(_Model(10))
+        dispatcher.update_model(_model(10))
         assert dispatcher._evaluator.model is compiled_model
         np.testing.assert_array_equal(dispatcher.evaluate(_rows(2)).result(3)[0], [[12, 12]])
         assert len(compiled_threads) == 1
-        assert {event[2] for event in dispatcher._evaluator.events} == set(compiled_threads)
+        assert {event[2] for event in cast(_Backend, dispatcher._evaluator).events} == set(compiled_threads)
         assert compiled_threads[0] != threading.get_ident()
     finally:
         dispatcher.shutdown()
