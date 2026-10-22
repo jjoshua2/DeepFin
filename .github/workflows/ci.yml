@@ -11,6 +11,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  backlog-handoff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+      - name: Backlog handoff and report-consumer regressions
+        run: python -B -S -m unittest discover -s tools/backlog_handoff -p 'test_*.py' -v
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 360
