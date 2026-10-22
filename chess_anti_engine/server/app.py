@@ -2435,6 +2435,19 @@ def _compaction_identity_error(meta: dict[str, Any]) -> str | None:
     return None
 
 
+def _upload_sample_payload_bytes(samples: list[ReplaySample]) -> int:
+    """Owned ndarray payload retained by these materialized replay rows.
+
+    This is not a process-RSS estimate: decoder temporaries, Python object
+    overhead and writer scratch are separate. A separate source-upload count bounds empty buffers and pending-path lists.
+    """
+    return sum(
+        int(getattr(getattr(sample, spec.name), "nbytes", 0))
+        for sample in samples
+        for spec in dataclasses.fields(sample)
+    )
+
+
 @dataclass
 class _BufferedUploadAccumulator:
     trial_id: str | None
@@ -2442,6 +2455,7 @@ class _BufferedUploadAccumulator:
     created_at_unix: float
     last_update_unix: float
     samples: list[ReplaySample] = field(default_factory=list)
+    sample_payload_bytes: int = 0
     games: int = 0
     positions: int = 0
     wins: int = 0
@@ -2530,6 +2544,7 @@ class _BufferedUploadAccumulator:
   # the ban procedure this field exists to serve.
         self._record_contribution(username, len(samples))
         self.samples.extend(samples)
+        self.sample_payload_bytes += _upload_sample_payload_bytes(samples)
         self.positions += len(samples)
         for field_name in _AGGREGATE_COUNTER_FIELDS:
             setattr(
@@ -2770,6 +2785,8 @@ def create_app(
     max_worker_delta_per_rebalance: int = 1,
     upload_compact_shard_size: int = 2000,
     upload_compact_max_age_seconds: float = 90.0,
+    upload_compact_buffer_bytes: int = 0,
+    upload_compact_buffer_uploads: int = 2000,
     max_upload_positions: int = DEFAULT_MAX_SHARD_POSITIONS,
     max_upload_uncompressed_bytes: int = DEFAULT_MAX_SHARD_UNCOMPRESSED_BYTES,
     worker_self_register: bool = False,
@@ -2889,6 +2906,18 @@ def create_app(
     leases_root.mkdir(parents=True, exist_ok=True)
     compact_target_positions = max(1, int(upload_compact_shard_size))
     compact_max_age_seconds = max(1.0, float(upload_compact_max_age_seconds))
+    # Opt-in, launch-fixed retained-payload budget. Zero preserves existing
+    # behavior; this is deliberately not a bound on concurrent decoder RSS.
+    compact_buffer_bytes = int(upload_compact_buffer_bytes)
+    compact_buffer_uploads = int(upload_compact_buffer_uploads)
+    if compact_buffer_bytes < 0 or compact_buffer_uploads <= 0:
+        raise ValueError("upload compaction buffer bytes must be >= 0 and uploads > 0")
+    if compact_buffer_bytes > 0 and (
+        int(max_upload_uncompressed_bytes) <= 0
+        or compact_buffer_bytes < int(max_upload_uncompressed_bytes)
+    ):
+        raise ValueError("compaction buffer budget must cover the per-upload uncompressed-byte limit")
+    pending_recovery_state = {"deferred": False}
     upload_accumulators: dict[tuple[str | None, str, str], _BufferedUploadAccumulator] = {}
     recent_upload_shas: dict[tuple[str | None, str], float] = {}
     receipt_upload_shas: set[tuple[str | None, str]] = set()
@@ -3303,6 +3332,39 @@ def create_app(
         _invalidate_queued_games_cache(acc.trial_id)
         return True
 
+    def _make_upload_buffer_room(_acc_key, *, incoming_bytes: int, now_unix: float) -> bool:
+        """Under upload_lock, flush accepted groups before admitting more rows.
+
+        The size/age targets remain batching preferences. Only this opt-in
+        budget can trigger early cross-trial flushes. Failure never evicts an
+        accepted group: its memory and pending witnesses stay owned for retry.
+        """
+        if compact_buffer_bytes <= 0:
+            return True
+        if incoming_bytes > compact_buffer_bytes:
+            return False
+
+        def fits() -> bool:
+            return (
+                sum(acc.sample_payload_bytes for acc in upload_accumulators.values())
+                + incoming_bytes <= compact_buffer_bytes
+                and sum(max(1, len(acc.pending_paths)) for acc in upload_accumulators.values())
+                + 1 <= compact_buffer_uploads
+            )
+
+        if fits():
+            return True
+        for key in sorted(upload_accumulators, key=lambda item: upload_accumulators[item].created_at_unix):
+            acc = upload_accumulators[key]
+            # Empty groups have no writable compacted shard. Keep their raw
+            # witnesses rather than treating a no-output flush as a commit.
+            if not acc.samples:
+                continue
+            _try_flush_and_pop(key, inbox_root=_inbox_root(acc.trial_id), acc=acc, now_unix=now_unix)
+            if fits():
+                return True
+        return False
+
     def _expire_upload_receipt(key: tuple[str | None, str], *, now_unix: float) -> bool:
         seen_at = recent_upload_shas.get(key)
         if seen_at is None or now_unix - float(seen_at) <= 6.0 * 3600.0:
@@ -3357,6 +3419,8 @@ def create_app(
                     continue
                 if _try_flush_and_pop(key, inbox_root=_inbox_root(acc.trial_id), acc=acc, now_unix=now_unix):
                     flushed += 1
+            if pending_recovery_state["deferred"] and not force_all:
+                _resume_deferred_pending_uploads()
         return flushed
 
     # Compat-gate observability (A11). The gate's whole failure mode was that a
@@ -5223,20 +5287,20 @@ def create_app(
                     status_code=503,
                     detail=f"provenance stamp failed: {type(exc).__name__}: {exc}",
                 ) from exc
-            try:
-                zarr_root.replace(pending_path)
-            except Exception as exc:
-                delete_shard_path(tmp_zarr)
-                log.exception("failed to promote extracted shard to pending dir")
-                return {
-                    "stored": False,
-                    "rejected": True,
-                    "reason": f"pending stage failed: {type(exc).__name__}: {exc}",
-                }
-            # Clean up the (now empty) wrapper dir if extraction nested a child.
-            if zarr_root != tmp_zarr:
-                delete_shard_path(tmp_zarr)
-            tmp_zarr = None
+            def _promote_pending() -> None:
+                # Promotion shares upload_lock with deferred recovery. A live
+                # rescan must not ingest this request between promotion and
+                # dedupe/accumulation, then let its duplicate cleanup delete
+                # the newly owned recovery witness.
+                try:
+                    zarr_root.replace(pending_path)
+                except Exception as exc:
+                    delete_shard_path(tmp_zarr)
+                    raise HTTPException(
+                        status_code=503, detail="pending upload staging failed; retry later",
+                    ) from exc
+                if zarr_root != tmp_zarr:
+                    delete_shard_path(tmp_zarr)
 
             def _accumulate_under_lock() -> bool:
                 """The upload critical section. Runs in a THREAD, never on the loop.
@@ -5269,6 +5333,7 @@ def create_app(
                 Returns whether the upload was newly accumulated.
                 """
                 with upload_lock:
+                    _promote_pending()
                     return _accumulate_locked()
 
             def _accumulate_locked() -> bool:
@@ -5277,6 +5342,20 @@ def create_app(
                 if upload_seen_key not in recent_upload_shas:
                     model_sha = str(meta.get("model_sha256") or sha)
                     acc_key = (trial_key, model_sha, _upload_identity_acc_key(meta))
+                    samples = arrays_to_samples(shard_arrs)
+                    if not _make_upload_buffer_room(
+                        acc_key, incoming_bytes=_upload_sample_payload_bytes(samples), now_unix=now_unix,
+                    ):
+                        # This request has not been acknowledged or entered into
+                        # dedupe. The worker keeps its original on non-200. If
+                        # cleanup fails, the server also keeps a recovery copy.
+                        delete_shard_path(pending_path)
+                        if pending_path.exists():
+                            pending_recovery_state["deferred"] = True
+                        raise HTTPException(
+                            status_code=503, detail="upload compaction buffer is full; retry later",
+                            headers={"Retry-After": "1"},
+                        )
                     acc = upload_accumulators.get(acc_key)
                     if acc is None:
                         acc = _BufferedUploadAccumulator(
@@ -5287,7 +5366,7 @@ def create_app(
                         )
                         upload_accumulators[acc_key] = acc
                     acc.add_upload(
-                        samples=arrays_to_samples(shard_arrs),
+                        samples=samples,
                         meta=meta,
                         now_unix=now_unix,
                         username=str(username),
@@ -5930,7 +6009,12 @@ def create_app(
         if not pending_dir.is_dir():
             return 0
         recovered = 0
+        # Resumes occur while live accumulators still own durable pending files.
+        # The boot-only duplicate branch must never delete those witnesses.
+        buffered_paths = {p for acc in upload_accumulators.values() for p in acc.pending_paths}
         for entry in sorted(pending_dir.iterdir()):
+            if entry in buffered_paths:
+                continue
             name = entry.name
             if is_tmp_shard_name(name):
                 continue
@@ -5959,6 +6043,8 @@ def create_app(
                 # failure is bounded, keeping the bytes for post-mortem rather
                 # than deleting them. Transient system errors still just retry.
                 if _is_transient_load_error(exc):
+                    if compact_buffer_bytes > 0:
+                        pending_recovery_state["deferred"] = True
                     log.exception("failed to load pending shard %s; skipping", entry)
                     continue
                 log.exception("failed to load pending shard %s; quarantining", entry)
@@ -5971,6 +6057,8 @@ def create_app(
                 # deterministic: this runs on arrays that already loaded and
                 # passed validate_arrays, so the environment is not in play.
                 if _is_transient_load_error(exc):
+                    if compact_buffer_bytes > 0:
+                        pending_recovery_state["deferred"] = True
                     log.exception("failed to materialize pending shard %s; skipping", entry)
                     continue
                 log.exception("failed to materialize pending shard %s; quarantining", entry)
@@ -6036,6 +6124,17 @@ def create_app(
             except OSError:
                 mtime = float(time.time())
             acc_key = (trial_key, model_sha, _upload_identity_acc_key(meta_dict))
+            if not _make_upload_buffer_room(
+                acc_key, incoming_bytes=_upload_sample_payload_bytes(samples), now_unix=time.time(),
+            ):
+                # Valid, previously accepted bytes are neither quarantine nor
+                # eviction material. Leave this and later sources on disk; a
+                # later manifest sweep retries after pressure/IO recovers.
+                pending_recovery_state["deferred"] = True
+                if _upload_sample_payload_bytes(samples) > compact_buffer_bytes:
+                    log.warning("pending shard %s exceeds the configured compaction buffer budget; retained for operator recovery", entry)
+                    continue
+                break
             acc = upload_accumulators.get(acc_key)
             if acc is None:
                 acc = _BufferedUploadAccumulator(
@@ -6085,6 +6184,32 @@ def create_app(
                 recent_upload_shas[(trial_key, upload_sha)] = mtime if seen_at is None else seen_at
             recovered += 1
         return recovered
+
+    def _resume_deferred_pending_uploads() -> None:
+        """Retry deferred raw sources under upload_lock, without moving in-flight files.
+
+        In-flight groups may still belong to a live failed flush. Only startup
+        recovery may rename those; doing so here would invalidate pending_paths.
+        """
+        try:
+            pending_dirs = _upload_staging_dirs()
+        except OSError:
+            pending_recovery_state["deferred"] = True
+            log.exception("could not enumerate deferred pending-upload directories")
+            return
+        pending_recovery_state["deferred"] = False
+        for pending_dir in pending_dirs:
+            if pending_dir.name != _PENDING_DIR_NAME:
+                continue
+            try:
+                trial_key = None if pending_dir.parent == inbox else _normalize_trial_id(pending_dir.parent.parent.name)
+            except HTTPException:
+                continue
+            try:
+                _scan_pending_dir(pending_dir=pending_dir, trial_key=trial_key)
+            except Exception:
+                pending_recovery_state["deferred"] = True
+                log.exception("deferred pending-upload recovery failed for %s", pending_dir)
 
     def _upload_staging_dirs() -> list[Path]:
         """Every dir that can hold a shard awaiting compaction."""
@@ -6206,6 +6331,8 @@ def create_app(
         try:
             _scan_pending_dir(pending_dir=inbox / _PENDING_DIR_NAME, trial_key=None)
         except Exception:
+            if compact_buffer_bytes > 0:
+                pending_recovery_state["deferred"] = True
             log.exception("pending-upload recovery (default inbox) failed")
         # Per-trial inboxes.
         trials_dir = root / "trials"
@@ -6236,6 +6363,8 @@ def create_app(
                         trial_key=trial_key,
                     )
                 except Exception:
+                    if compact_buffer_bytes > 0:
+                        pending_recovery_state["deferred"] = True
                     log.exception("pending-upload recovery for trial %s failed", trial_key)
 
     _recover_pending_uploads()
