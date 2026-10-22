@@ -15,7 +15,8 @@ class Watchdog:
         return 1
 
     def mark_forward_done(self, *, success: bool, token: int) -> None:
-        assert success and token == 1
+        assert success
+        assert token == 1
 
 
 def slot(rows: int, *, mode: int = inf._MODE_DENSE_F32) -> Any:
@@ -49,7 +50,8 @@ def test_invalid_rows_do_not_poison_healthy_neighbor(monkeypatch, rows, same_tri
     bad, good = slot(rows), slot(2)
     calls = []
 
-    def forward(model, x, *, device):
+    def forward(_model, x, *, device):
+        del device
         calls.append(x.clone())
         return {"policy": torch.full((2, 8), 7.0), "wdl": torch.full((2, 3), 5.0)}
 
@@ -57,10 +59,12 @@ def test_invalid_rows_do_not_poison_healthy_neighbor(monkeypatch, rows, same_tri
     monkeypatch.setattr(inf, "_policy_output_full", lambda out: out["policy"])
     ready = {"healthy": [bad, good]} if same_trial else {"bad": [bad], "healthy": [good]}
     assert b._process_parallel(ready) == 0
-    assert len(calls) == 1 and tuple(calls[0].shape) == (2, 4)
+    assert len(calls) == 1
+    assert tuple(calls[0].shape) == (2, 4)
     assert bad.state == inf._STATE_IDLE
     assert np.all(bad.policy == -99)
-    assert good.state == inf._STATE_RESPONSE and good.request_id == 19
+    assert good.state == inf._STATE_RESPONSE
+    assert good.request_id == 19
     assert np.all(good.policy == 7)
     assert b._last_served_rows == 2
 
@@ -70,7 +74,8 @@ def test_invalid_counts_with_no_model_or_unsupported_mode_are_not_throughput():
     b._trial_models = {}
     bad = slot(-2)
     assert b._process_parallel({"bad": [bad]}) == 0
-    assert b._last_served_rows == 0 and bad.state == inf._STATE_IDLE
+    assert b._last_served_rows == 0
+    assert bad.state == inf._STATE_IDLE
     b._trial_models = {"bad": object()}
     unsupported = slot(2, mode=inf._MODE_LEGAL_BF16)
     assert b._process_parallel({"bad": [unsupported]}) == 2
@@ -90,7 +95,8 @@ def test_serve_loop_reports_only_successfully_scattered_rows(monkeypatch, capsys
     ticks = iter([1.0, 2.0, 3.0, 13.0])
     monkeypatch.setattr(inf.time, "monotonic", lambda: next(ticks))
 
-    def forward(model, x, *, device):
+    def forward(_model, _x, *, device):
+        del device
         b._stop = True
         return {"policy": torch.ones((2, 8)), "wdl": torch.ones((2, 3))}
 

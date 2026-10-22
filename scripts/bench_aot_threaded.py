@@ -28,7 +28,7 @@ def _run_config(
     import numpy as np
     import torch
 
-    from chess_anti_engine.inference import DirectGPUEvaluator
+    from chess_anti_engine.inference import AOTEvaluator, DirectGPUEvaluator
     from chess_anti_engine.model import (
         ModelConfig,
         build_model,
@@ -54,14 +54,16 @@ def _run_config(
         ckpt = torch.load(bootstrap_path, map_location="cuda", weights_only=True)
         load_state_dict_tolerant(model, ckpt.get("model", ckpt))
 
+    contexts: list[ProducerContext] = []
+    evaluator: AOTEvaluator | DirectGPUEvaluator
     if n_threads > 1:
         # Multi-threaded: use AOT with per-thread CUDA streams
-        from chess_anti_engine.inference import AOTEvaluator, model_constant_source
-        contexts = []
+        from chess_anti_engine.inference import model_constant_source
         for _ in range(n_threads):
             evaluator = AOTEvaluator(aot_dir, device="cuda", max_batch=4096)
             evaluator.load_weights(model_constant_source(model))
             contexts.append(ProducerContext(evaluator, torch.cuda))
+        evaluator = contexts[0].evaluator
     else:
         # Single thread baseline: use compiled DirectGPU (same as production)
         model = cast(torch.nn.Module, torch.compile(model, mode="reduce-overhead"))

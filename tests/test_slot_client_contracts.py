@@ -13,11 +13,14 @@ def test_scalar_is_rejected_before_pool_acquisition(legal: bool) -> None:
     client = MultiSlotInferenceClient(slot_names=["unused"], max_batch=4)
     try:
         x = np.array(0, dtype=np.uint16 if legal else np.float32)
-        with pytest.raises(ValueError, match="expected encoded batch shape"):
+        def invoke():
             if legal:
                 client.evaluate_legal_bf16(x, np.array([], dtype=np.int32), np.array([], dtype=np.int32))
             else:
                 client.evaluate_encoded(x)
+
+        with pytest.raises(ValueError, match="expected encoded batch shape"):
+            invoke()
         assert client.stats["inflight"] == 0
         assert client.stats["available_slots"] == 1
         assert client.stats["lifetime_requests"] == 0

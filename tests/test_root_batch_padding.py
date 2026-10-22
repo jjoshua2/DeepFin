@@ -180,9 +180,11 @@ def test_async_only_pinned_evaluator_uses_supported_dense_fallback() -> None:
     """AOT has input buffers and async inplace, but no synchronous inplace API."""
     class AsyncOnlyEvaluator(_FakeBrokerClient):
         def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
+            del bsz, slot
             raise AssertionError("unsupported synchronous inplace path selected")
 
         def evaluate_inplace_async(self, bsz: int, *, slot: int = 0) -> None:
+            del bsz, slot
             raise AssertionError("synchronous root path must use evaluate_encoded")
 
     evaluator = AsyncOnlyEvaluator()

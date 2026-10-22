@@ -56,8 +56,11 @@ def test_producers_keep_distinct_staging_and_streams_across_both_phases() -> Non
         return contexts[tid].run(submit)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        for offset in (10, 20):  # warmup and measurement use the same owners
-            observations.append(list(pool.map(lambda tid: phase(tid, offset), range(2))))
+        # Warmup and measurement use the same owners, in sequence.
+        observations = [
+            list(pool.map(lambda tid, offset=offset: phase(tid, offset), range(2)))
+            for offset in (10, 20)
+        ]
     for offset, results in zip((10, 20), observations, strict=True):
         assert [result[0] for result in results] == [offset, offset + 1]
         assert results[0][1] is not results[1][1]

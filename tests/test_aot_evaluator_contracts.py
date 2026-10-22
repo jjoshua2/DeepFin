@@ -17,13 +17,13 @@ class Package:
         self.calls = 0
         self.weight = 1.0
         self.fail_load = False
-        self.entered = None
-        self.release = None
+        self.entered: threading.Event | None = None
+        self.release: threading.Event | None = None
 
     def get_constant_fqns(self):
         return ["weight"]
 
-    def load_constants(self, constants, **kwargs):
+    def load_constants(self, constants, **_kwargs):
         if self.fail_load:
             raise RuntimeError("injected rebind failure")
         self.weight = float(constants["weight"][0])
@@ -33,6 +33,7 @@ class Package:
         assert x.shape[0] == self.bucket
         if self.entered is not None:
             self.entered.set()
+            assert self.release is not None
             assert self.release.wait(2)
         return {
             "policy": torch.full((self.bucket, inf.POLICY_SIZE), self.weight),
@@ -52,7 +53,7 @@ def test_missing_largest_package_rejects_before_stage_or_launch(monkeypatch, tmp
     ev, packages = evaluator(monkeypatch, tmp_path)
     x = np.zeros((17, 1, 8, 8), dtype=np.float32)
     ev._pinned_input.fill_(42)
-    with pytest.raises(ValueError, match="17"):
+    def invoke():
         if api == "sync":
             ev.evaluate_encoded(x)
         elif api == "async":
@@ -63,6 +64,9 @@ def test_missing_largest_package_rejects_before_stage_or_launch(monkeypatch, tmp
             ev.get_input_buffer(17)
         else:
             ev.get_input_buffer_bf16_bits(17)
+
+    with pytest.raises(ValueError, match="17"):
+        invoke()
     assert packages[16].calls == 0
     assert torch.all(ev._pinned_input == 42)
     assert ev._max_batch == 16
@@ -98,7 +102,8 @@ def test_missing_middle_bucket_uses_adequate_larger_package(monkeypatch, tmp_pat
 def test_reload_waits_for_local_forward_then_resumes(monkeypatch, tmp_path):
     ev, packages = evaluator(monkeypatch, tmp_path)
     package = packages[16]
-    package.entered, package.release = threading.Event(), threading.Event()
+    entered, release = threading.Event(), threading.Event()
+    package.entered, package.release = entered, release
     reload_started = threading.Event()
     x = np.zeros((1, 1, 8, 8), dtype=np.float32)
 
@@ -108,12 +113,12 @@ def test_reload_waits_for_local_forward_then_resumes(monkeypatch, tmp_path):
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         forward = pool.submit(ev.evaluate_encoded, x)
-        assert package.entered.wait(2)
+        assert entered.wait(2)
         update = pool.submit(reload)
         assert reload_started.wait(2)
         assert package.weight == 1.0
         assert not update.done()
-        package.release.set()
+        release.set()
         old_policy, _ = forward.result(timeout=2)
         update.result(timeout=2)
     assert np.all(old_policy == 1.0)
@@ -127,7 +132,7 @@ class Event:
         self.release = threading.Event()
         self.calls = 0
 
-    def record(self, stream):
+    def record(self, _stream):
         pass
 
     def synchronize(self):

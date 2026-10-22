@@ -11,7 +11,7 @@ import struct
 import threading
 import time
 import zlib
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from dataclasses import dataclass, fields as dataclass_fields, replace as dataclass_replace
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
@@ -3433,7 +3433,7 @@ class MultiSlotInferenceClient:
             return client.evaluate_legal_bf16(xb, legal_flat, legal_counts)
 
     @contextlib.contextmanager
-    def _client_lease(self, *, positions: int, legal: bool) -> Iterator[SlotInferenceClient]:
+    def _client_lease(self, *, positions: int, legal: bool) -> Generator[SlotInferenceClient]:
         """Release exactly once using metadata captured before acquisition."""
         idx, client, wait_s = self._acquire_client()
         t0 = time.perf_counter()
@@ -3744,6 +3744,7 @@ class SharedSlotBroker:
       # fires, and this one is the difference between a loud timeout and a
       # mis-decoded policy reaching MCTS (SHARED_BROKER_AUDIT B1).
         self.unsupported_mode_requests = 0
+        self._last_served_rows = 0
         self._all_slots: list[tuple[str, _InferenceSlot]] = []
         # Monotonic start of the current no-work stretch (None = work flowing).
         self._idle_since: float | None = None

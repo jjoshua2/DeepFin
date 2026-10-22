@@ -98,7 +98,7 @@ def test_recompile_failure_signals_update_and_escapes_for_poison(monkeypatch):
     dispatcher, _ = _dispatcher(_HeadModel(), monkeypatch)
     failure = RuntimeError("compile failed")
 
-    def fail_compile(model: torch.nn.Module) -> torch.nn.Module:
+    def fail_compile(_model: torch.nn.Module) -> torch.nn.Module:
         raise failure
 
     monkeypatch.setattr(dispatcher, "_compile_model_on_dispatcher", fail_compile)
@@ -116,12 +116,12 @@ def test_strict_load_failure_keeps_recompile_or_poison_contract(monkeypatch, fal
     new = _HeadModel(weight=3.0)
     dispatcher, compiled = _dispatcher(old, monkeypatch)
 
-    def fail_load(*args, **kwargs):
+    def fail_load(*_args, **_kwargs):
         raise RuntimeError("strict load failed")
 
     monkeypatch.setattr(old, "load_state_dict", fail_load)
     if fallback_fails:
-        def fail_compile(model: torch.nn.Module) -> torch.nn.Module:
+        def fail_compile(_model: torch.nn.Module) -> torch.nn.Module:
             raise RuntimeError("fallback failed")
 
         monkeypatch.setattr(dispatcher, "_compile_model_on_dispatcher", fail_compile)
