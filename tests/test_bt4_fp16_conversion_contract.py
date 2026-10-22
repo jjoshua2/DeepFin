@@ -5,10 +5,12 @@ import math
 import pathlib
 import tempfile
 import unittest
+from typing import Any
+import pytest
 from scripts import bt4_fp16_conversion_contract_v1 as p
 
 class PrecisionControls(unittest.TestCase):
-    def fixture(self, root):
+    def fixture(self, root: pathlib.Path) -> tuple[dict[str, Any], dict[str, Any], pathlib.Path, str]:
         evidence = {}
         for kind in p.KINDS:
             path = root / (kind + '.json')
@@ -29,12 +31,12 @@ class PrecisionControls(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             entry, _, path, sha = self.fixture(pathlib.Path(tmp))
             doc = p.load_manifest(path, sha, 'a'*64)
-            self.assertEqual(p.mass_tolerance(entry), 2e-6)
+            assert p.mass_tolerance(entry) == 2e-6
             row = [.5, .25, .250244140625]
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 p.check_mass_rows([row], p.mass_tolerance(entry))
             entry['_exact809_context'] = p.authenticated_context(doc, entry)
-            self.assertEqual(p.mass_tolerance(entry), 2**-10)
+            assert p.mass_tolerance(entry) == 2**-10
             p.check_mass_rows([row, [.5, .25, .2503662109375]], p.mass_tolerance(entry))
 
     def test_forged_json_context_and_wrong_raw_refuse(self):
@@ -43,24 +45,24 @@ class PrecisionControls(unittest.TestCase):
             doc = p.load_manifest(path, sha, 'a'*64)
             context = p.authenticated_context(doc, entry)
             entry['_exact809_context'] = dict(context)
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 p.mass_tolerance(entry)
             entry['_exact809_context'] = context
             entry['receipt']['sha256'] = 'd'*64
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 p.mass_tolerance(entry)
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 p.authenticated_context(doc, {**entry, 'game': 1})
 
     def test_stale_manifest_evidence_and_roster(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, doc, path, sha = self.fixture(pathlib.Path(tmp))
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 p.load_manifest(path, '0'*64, 'a'*64)
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 p.load_manifest(path, sha, 'd'*64)
             pathlib.Path(doc['evidence']['descriptor']['path']).write_bytes(b'{"changed":true}')
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 p.load_manifest(path, sha, 'a'*64)
 
     def test_closed_schema_precision_duplicates(self):
@@ -71,20 +73,20 @@ class PrecisionControls(unittest.TestCase):
                            lambda d:d['evidence'].pop('checkpoint')):
                 bad = copy.deepcopy(doc)
                 mutate(bad)
-                with self.assertRaises(ValueError):
+                with pytest.raises(ValueError):
                     p.validate_manifest(bad, 'a'*64)
 
     def test_numerical_negatives(self):
         for row in ([.5,.25,.252], [-.01,.5,.51], [1.01,0,0], [float('nan'),0,1],
                     [float('inf'),0,0], [0,0,0], [.5,.5]):
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 p.check_mass_rows([row], 2**-10)
         p.check_mass_rows([[.5,.25,.25]], 2e-6)
 
     def test_exact_mass_boundary(self):
         p.check_mass_rows([[.5, .25, .25 + 2**-10]], 2**-10)
         above = math.nextafter(1.0 + 2**-10, math.inf) - .75
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             p.check_mass_rows([[.5, .25, above]], 2**-10)
 
     def test_authenticated_context_cannot_transfer_to_other_model(self):
@@ -93,7 +95,7 @@ class PrecisionControls(unittest.TestCase):
             doc = p.load_manifest(path, sha, 'a'*64)
             entry['_exact809_context'] = p.authenticated_context(doc, entry)
             entry['model_sha256'] = '0' * 64
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 p.mass_tolerance(entry)
 
     def test_distinct_raw_alias_and_physical_game_duplicates_refuse(self):
@@ -102,19 +104,19 @@ class PrecisionControls(unittest.TestCase):
             duplicate_uid = copy.deepcopy(doc['games'][0])
             duplicate_uid['receipt']['sha256'] = 'd' * 64
             doc['games'].append(duplicate_uid)
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 p.validate_manifest(doc, 'a' * 64)
             doc['games'][1]['game'] = 1
             doc['games'][1]['receipt']['sha256'] = 'c' * 64
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 p.validate_manifest(doc, 'a' * 64)
 
     def test_raw_dictionary_cannot_bypass_loader(self):
         with tempfile.TemporaryDirectory() as tmp:
             entry, doc, _, _ = self.fixture(pathlib.Path(tmp))
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 p.authenticated_context(doc, entry)
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 p.LoadedManifest(doc, object())
 
 if __name__ == '__main__':
