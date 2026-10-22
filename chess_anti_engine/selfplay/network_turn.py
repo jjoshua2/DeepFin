@@ -504,7 +504,11 @@ def _evaluate_root_batch(
     hist_enc = normalize_lc0_history_encoding(state.game.input_history_encoding)
     batch_enc, batch_enc_bf16 = _batch_encoder_pair(state)
 
-    use_inplace = batch_enc is not None and hasattr(eval_impl, "get_input_buffer")
+    use_inplace = (
+        batch_enc is not None
+        and callable(getattr(eval_impl, "get_input_buffer", None))
+        and callable(getattr(eval_impl, "evaluate_inplace", None))
+    )
     padded_bsz = _root_submit_size(eval_impl, bsz, use_inplace=use_inplace)
     use_bf16_input = (
         state.has_c_ply

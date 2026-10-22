@@ -105,7 +105,7 @@ def _broker(monkeypatch, *, mode, stage, fail_drain):
     stream = _LoanStream(events, fail_drain=fail_drain, error=error, stage=stage)
     broker: Any = object.__new__(inference.SlotBroker)
     broker.device = "cuda:0"
-    broker._layout = SimpleNamespace(max_batch=2)
+    broker._layout = SimpleNamespace(max_batch=2, policy_bytes=2 * 4672 * 4)
     broker._pinned_input_np = np.zeros((2, 1, 8, 8), np.float32)
     broker._pinned_input_bf16_bits_np = np.zeros((2, 1, 8, 8), np.uint16)
     broker._pinned_input = _InputProxy(broker._pinned_input_np, stream, events, stage=stage, error=error)
