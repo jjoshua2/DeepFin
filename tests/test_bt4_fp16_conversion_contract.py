@@ -73,13 +73,13 @@ class PrecisionControls(unittest.TestCase):
                            lambda d:d['evidence'].pop('checkpoint')):
                 bad = copy.deepcopy(doc)
                 mutate(bad)
-                with pytest.raises(ValueError, match='closed provenance schema|exact roster/model/precision|duplicate provenance game|closed evidence kinds'):
+                with pytest.raises(ValueError, match=r'closed provenance schema|exact roster/model/precision|duplicate provenance game|closed evidence kinds'):
                     p.validate_manifest(bad, 'a'*64)
 
     def test_numerical_negatives(self):
         for row in ([.5,.25,.252], [-.01,.5,.51], [1.01,0,0], [float('nan'),0,1],
                     [float('inf'),0,0], [0,0,0], [.5,.5]):
-            with pytest.raises(ValueError, match='WDL (range/finite/shape|mass)'):
+            with pytest.raises(ValueError, match=r'WDL (range/finite/shape|mass)'):
                 p.check_mass_rows([row], 2**-10)
         p.check_mass_rows([[.5,.25,.25]], 2e-6)
 
