@@ -886,6 +886,8 @@ _DRIVER_LAUNCH_FIXED_KEYS = frozenset({
     "distributed_max_worker_delta_per_rebalance",
     "distributed_upload_compact_shard_size",
     "distributed_upload_compact_max_age_seconds",
+    "distributed_upload_compact_buffer_bytes",
+    "distributed_upload_compact_buffer_uploads",
     "worker_self_register",
     "require_worker_lease",
   # Read through a LOOP VARIABLE (`base_config.get(cfg_key)`), which is why the
