@@ -86,7 +86,7 @@ def finding_ids(ledger: dict) -> set[str]:
     return set(ids)
 
 
-def validate_event(event: dict, ids: set[str]) -> None:
+def validate_event(event: object, ids: set[str]) -> None:
     if not isinstance(event, dict) or not isinstance(event.get("event_id"), str) or not event["event_id"]:
         raise ValueError("event_id required")
     stamp(event["at"])

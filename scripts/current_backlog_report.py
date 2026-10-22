@@ -18,7 +18,8 @@ import sys
 if __package__:
     from . import backlog_handoff as handoff
 else:
-    import backlog_handoff as handoff
+    # Direct script execution puts scripts/ on sys.path; package imports use the branch above.
+    import backlog_handoff as handoff  # pyright: ignore[reportImplicitRelativeImport]
 
 
 def require_handoff_audit(ledger: dict, now: str) -> dict:
