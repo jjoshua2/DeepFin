@@ -15,11 +15,13 @@ import pytest
 
 from chess_anti_engine import inference_threaded as threaded
 from chess_anti_engine.request_routing import FifoRequestQueue
+from chess_anti_engine.model import ModelConfig
 
 
 class _Model:
     def __init__(self, value=0):
         self.value = value
+        self.cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2)
 
     def eval(self):
         return self
@@ -266,7 +268,11 @@ def test_coalescing_wait_requires_known_not_ready(held_dispatcher, monkeypatch, 
     assert nonblocking[0]["coalesce_wait"] is (ready is False)
 
 
-def test_actual_compile_and_compiled_update_stay_on_dispatcher_thread(monkeypatch):
+@pytest.mark.parametrize(
+    "known_config", [True, False],
+    ids=["supported_config_reuse", "unknown_config_replacement"],
+)
+def test_actual_compile_and_compiled_update_stay_on_dispatcher_thread(monkeypatch, known_config):
     monkeypatch.setattr(threaded, "DirectGPUEvaluator", _Backend)
     monkeypatch.setattr(threaded, "_snapshot_dynamo_counters", lambda: None)
     compiled_threads = []
@@ -288,16 +294,26 @@ def test_actual_compile_and_compiled_update_stay_on_dispatcher_thread(monkeypatc
         return Compiled(model)
 
     monkeypatch.setattr(threaded.torch, "compile", compile_model)
+    old_model = _model()
+    new_model = _model(10)
+    if not known_config:
+        del old_model.cfg
+        del new_model.cfg
     dispatcher = threaded.ThreadedDispatcher(
-        _model(), device="cpu", max_batch=8, compile_mode="reduce-overhead",
+        old_model, device="cpu", max_batch=8, compile_mode="reduce-overhead",
     )
     try:
         np.testing.assert_array_equal(dispatcher.evaluate(_rows(1)).result(3)[0], [[1, 1]])
         compiled_model = dispatcher._evaluator.model
-        dispatcher.update_model(_model(10))
-        assert dispatcher._evaluator.model is compiled_model
+        dispatcher.update_model(new_model)
+        if known_config:
+            assert dispatcher._evaluator.model is compiled_model
+        else:
+            assert dispatcher._evaluator.model is not compiled_model
+            assert dispatcher._evaluator.model._orig_mod is new_model
         np.testing.assert_array_equal(dispatcher.evaluate(_rows(2)).result(3)[0], [[12, 12]])
-        assert len(compiled_threads) == 1
+        assert len(compiled_threads) == (1 if known_config else 2)
+        assert len(set(compiled_threads)) == 1
         backend = cast(_Backend, cast(object, dispatcher._evaluator))
         assert {event[2] for event in backend.events} == set(compiled_threads)
         assert compiled_threads[0] != threading.get_ident()
