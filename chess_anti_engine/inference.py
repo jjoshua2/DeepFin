@@ -11,7 +11,7 @@ import struct
 import threading
 import time
 import zlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, fields as dataclass_fields, replace as dataclass_replace
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
@@ -262,6 +262,52 @@ def _coerce_bf16_bits_batch(x: np.ndarray) -> np.ndarray:
     if x.flags["C_CONTIGUOUS"]:
         return x
     return np.ascontiguousarray(x, dtype=np.uint16)
+
+
+
+def _legal_metadata_error(
+    counts: np.ndarray, flat: np.ndarray, *, batch_size: int,
+    n_legal: int, policy_bytes: int,
+) -> str:
+    """The same compact payload contract before publication and after snapshot."""
+    if counts.ndim != 1 or counts.size != batch_size:
+        return f"counts len {counts.size} != batch_size {batch_size}"
+    if np.any(counts < 0):
+        return "legal_counts contains negative counts"
+    if n_legal < 0:
+        return f"negative header n_legal {n_legal}"
+    if 1 + batch_size + n_legal > policy_bytes // 4:
+        return "compact legal metadata exceeds slot capacity"
+    if n_legal > policy_bytes // 2:
+        return "compact legal policy exceeds slot capacity"
+    counts_sum = int(counts.sum(dtype=np.int64))
+    if counts_sum != n_legal:
+        return f"counts sum {counts_sum} != header n_legal {n_legal}"
+    if flat.ndim != 1 or flat.size != n_legal:
+        return f"flat len {flat.size} != header n_legal {n_legal}"
+    if flat.size and (int(flat.min()) < 0 or int(flat.max()) >= _POLICY_SIZE):
+        return (
+            f"flat index range [{int(flat.min())}, {int(flat.max())}] "
+            f"outside [0, {_POLICY_SIZE})"
+        )
+    return ""
+
+
+def _prepare_legal_metadata(
+    legal_counts: np.ndarray, legal_flat: np.ndarray, *, batch_size: int,
+    policy_bytes: int,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    # Private snapshots keep validation true until the request is published.
+    counts = np.array(legal_counts, dtype=np.int32, copy=True)
+    flat = np.array(legal_flat, dtype=np.int32, copy=True)
+    n_legal = int(counts.sum(dtype=np.int64))
+    reason = _legal_metadata_error(
+        counts, flat, batch_size=batch_size, n_legal=n_legal,
+        policy_bytes=policy_bytes,
+    )
+    if reason:
+        raise ValueError(reason)
+    return counts, flat, n_legal
 
 
 def _bf16_bits_to_float32_np(x: np.ndarray) -> np.ndarray:
@@ -1165,6 +1211,19 @@ def load_aot_packages(
     return models
 
 
+class _AOTCompletion:
+    """Receipt retained by its evaluator until completion or weight reload."""
+
+    def __init__(self, owner: AOTEvaluator, event: CompletionEvent) -> None:
+        self._owner = owner
+        self._event = event
+
+    def synchronize(self) -> None:
+        with self._owner._ownership:
+            self._event.synchronize()
+            self._owner._pending.discard(self)
+
+
 class AOTEvaluator:
     """Evaluator using pre-compiled AOTInductor models for fixed bucket sizes.
 
@@ -1173,6 +1232,8 @@ class AOTEvaluator:
     to the matching pre-compiled model.  No torch.compile or CUDA graph
     capture at runtime.
     """
+
+    pads_batches_internally = True
 
     def __init__(
         self,
@@ -1190,6 +1251,10 @@ class AOTEvaluator:
         self._models = load_aot_packages(aot_dir, buckets=buckets)
         self._sorted_buckets = sorted(self._models.keys())
         self._constant_fqns = assert_uniform_constant_fqns(self._models)
+        # Missing packages cannot supply their requested capacity.
+        self._max_batch = min(self._max_batch, self._sorted_buckets[-1])
+        self._ownership = threading.RLock()
+        self._pending: set[_AOTCompletion] = set()
 
         # Pre-allocate pinned buffers
         _pin = self.device.startswith("cuda")
@@ -1232,26 +1297,53 @@ class AOTEvaluator:
         drop would leave a package constant unfilled -> CUDA illegal memory
         access on the next forward.
         """
-        constants = build_aot_constants(
-            source, self._constant_fqns, device=self.device,
-        )
-        check_full = aot_check_full_update_enabled()
-        for bucket, model in self._models.items():
-            try:
-                model.load_constants(constants, check_full_update=check_full)
-            except Exception as exc:  # re-raised below with the bucket named
-                raise RuntimeError(
-                    f"AOT bucket {bucket} rejected the rebind of {len(constants)} "
-                    f"constants (check_full_update={check_full}): {exc}. Rebuild "
-                    f"the packages against this model rather than serving stale "
-                    f"build-time weights."
-                ) from exc
+        with self._ownership:
+            ensure_usable(self)
+            # Exclude new launches until old receipts complete and every bucket
+            # has been rebound; enqueue completion alone is not sufficient.
+            for receipt in tuple(self._pending):
+                receipt.synchronize()
+            constants = build_aot_constants(
+                source, self._constant_fqns, device=self.device,
+            )
+            check_full = aot_check_full_update_enabled()
+            for bucket, model in self._models.items():
+                try:
+                    model.load_constants(constants, check_full_update=check_full)
+                except BaseException as exc:
+                    # Earlier buckets may already carry the new weights.
+                    from chess_anti_engine.async_safety import poison
+
+                    poison(self, constants, exc)
+                    raise RuntimeError(
+                        f"AOT bucket {bucket} rejected the rebind of {len(constants)} "
+                        f"constants (check_full_update={check_full}): {exc}. Rebuild "
+                        f"the packages against this model rather than serving stale "
+                        f"build-time weights."
+                    ) from exc
+            if self.device.startswith("cuda"):
+                try:
+                    # Constant preparation/rebind may enqueue device copies.
+                    # Complete them before another thread launches on its stream.
+                    torch.cuda.current_stream(torch.device(self.device)).synchronize()
+                except BaseException as exc:
+                    from chess_anti_engine.async_safety import poison
+
+                    poison(self, constants, exc)
+                    raise
 
     def _pick_bucket(self, bsz: int) -> int:
+        if not 0 <= bsz <= self._max_batch:
+            raise ValueError(f"batch {bsz} outside supported range [0, {self._max_batch}]")
         for b in self._sorted_buckets:
             if b >= bsz:
                 return b
-        return self._sorted_buckets[-1]
+        raise ValueError(f"no AOT package can serve batch {bsz}")
+
+    def _completion(self, event: Any, stream: Any, *retained: Any) -> CompletionEvent:
+        receipt = _AOTCompletion(self, guarded_event(self, event, stream, *retained))
+        self._pending.add(receipt)
+        return receipt
 
     @property
     def supports_input_bf16_bits(self) -> bool:
@@ -1274,8 +1366,7 @@ class AOTEvaluator:
         return self._pinned_inputs_bf16_bits_np[slot][:bsz]
 
     def _validate_input_slot(self, bsz: int, slot: int) -> None:
-        if bsz > self._max_batch:
-            raise ValueError(f"batch {bsz} > max {self._max_batch}")
+        self._pick_bucket(bsz)
         if not 0 <= slot < self._n_slots:
             raise ValueError(f"slot {slot} out of range [0, {self._n_slots})")
 
@@ -1307,62 +1398,66 @@ class AOTEvaluator:
     def evaluate_encoded(
         self, x: np.ndarray, relations: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        ensure_usable(self)
-        if relations is not None:
-            raise NotImplementedError(
-                "dynamic relations are not transported on the AOTEvaluator path; "
-                "use worker-local direct inference (see "
-                "check_dynamic_relations_transport)"
-            )
-        if x.ndim != 4:
-            raise ValueError(f"expected 4D input, got {x.ndim}D")
-        bsz = x.shape[0]
-        if bsz > self._max_batch:
-            raise ValueError(f"batch {bsz} > max {self._max_batch}")
-        bucket = self._pick_bucket(bsz)
-        model = self._models[bucket]
+        with self._ownership:
+            ensure_usable(self)
+            if relations is not None:
+                raise NotImplementedError(
+                    "dynamic relations are not transported on the AOTEvaluator path; "
+                    "use worker-local direct inference (see "
+                    "check_dynamic_relations_transport)"
+                )
+            if x.ndim != 4:
+                raise ValueError(f"expected 4D input, got {x.ndim}D")
+            bsz = x.shape[0]
+            if bsz > self._max_batch:
+                raise ValueError(f"batch {bsz} > max {self._max_batch}")
+            bucket = self._pick_bucket(bsz)
+            model = self._models[bucket]
 
-  # Native search can supply bit-packed BF16 directly; float32 callers retain
-  # the compatibility path and convert during H2D.
-        stream = torch.cuda.current_stream(torch.device(self.device)) if str(self.device).startswith("cuda") else None
-        with launch_guard(self, stream):
-            xt = self._device_input(x, bucket=bucket)
+            # Native search can supply bit-packed BF16 directly; float32 callers
+            # convert during H2D.
+            stream = torch.cuda.current_stream(torch.device(self.device)) if str(self.device).startswith("cuda") else None
+            with launch_guard(self, stream):
+                xt = self._device_input(x, bucket=bucket)
 
-            with torch.no_grad():
-                out = model(xt)
+                with torch.no_grad():
+                    out = model(xt)
 
-            pol = _policy_output_full(out)[:bsz].detach().float().cpu().numpy()
-            wdl = out["wdl"][:bsz].detach().float().cpu().numpy()
-        return pol, wdl
+                pol = _policy_output_full(out)[:bsz].detach().float().cpu().numpy()
+                wdl = out["wdl"][:bsz].detach().float().cpu().numpy()
+            return pol, wdl
 
     def evaluate_encoded_async(
         self, x: np.ndarray,
     ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
-        ensure_usable(self)
-        if x.ndim != 4:
-            raise ValueError(f"expected 4D input, got {x.ndim}D")
-        bsz = x.shape[0]
-        if bsz > self._max_batch:
-            raise ValueError(f"batch {bsz} > max {self._max_batch}")
-        bucket = self._pick_bucket(bsz)
-        model = self._models[bucket]
+        with self._ownership:
+            ensure_usable(self)
+            if x.ndim != 4:
+                raise ValueError(f"expected 4D input, got {x.ndim}D")
+            bsz = x.shape[0]
+            if bsz > self._max_batch:
+                raise ValueError(f"batch {bsz} > max {self._max_batch}")
+            bucket = self._pick_bucket(bsz)
+            model = self._models[bucket]
 
-        stream = torch.cuda.current_stream(torch.device(self.device)) if str(self.device).startswith("cuda") else None
-        with launch_guard(self, stream):
-            xt = self._device_input(x, bucket=bucket)
+            stream = torch.cuda.current_stream(torch.device(self.device)) if str(self.device).startswith("cuda") else None
+            with launch_guard(self, stream):
+                xt = self._device_input(x, bucket=bucket)
 
-            with torch.no_grad():
-                out = model(xt)
+                with torch.no_grad():
+                    out = model(xt)
 
-            pol = _policy_output_full(out)[:bsz].detach().to(
-                dtype=torch.float32, device="cpu", non_blocking=True,
-            )
-            wdl = out["wdl"][:bsz].detach().to(
-                dtype=torch.float32, device="cpu", non_blocking=True,
-            )
-            done = torch.cuda.Event()
-            done.record(stream)
-            return pol, wdl, guarded_event(self, done, stream, pol, wdl)
+                pol = _policy_output_full(out)[:bsz].detach().to(
+                    dtype=torch.float32, device="cpu", non_blocking=True,
+                )
+                wdl = out["wdl"][:bsz].detach().to(
+                    dtype=torch.float32, device="cpu", non_blocking=True,
+                )
+                if stream is None:
+                    return pol, wdl, None
+                done = torch.cuda.Event()
+                done.record(stream)
+                return pol, wdl, self._completion(done, stream, pol, wdl)
 
     def evaluate_inplace_async(
         self,
@@ -1371,28 +1466,31 @@ class AOTEvaluator:
         slot: int = 0,
         relations: np.ndarray | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
-        ensure_usable(self)
-        if relations is not None:
-            raise NotImplementedError(
-                "dynamic relations are not transported on the AOTEvaluator path",
-            )
-        self._validate_input_slot(bsz, slot)
-        bucket = self._pick_bucket(bsz)
-        model = self._models[bucket]
-        stream = torch.cuda.current_stream(torch.device(self.device)) if str(self.device).startswith("cuda") else None
-        with launch_guard(self, stream):
-            xt = self._device_input_inplace(bucket=bucket, slot=slot)
-            with torch.no_grad():
-                out = model(xt)
-            pol = _policy_output_full(out)[:bsz].detach().to(
-                dtype=torch.float32, device="cpu", non_blocking=True,
-            )
-            wdl = out["wdl"][:bsz].detach().to(
-                dtype=torch.float32, device="cpu", non_blocking=True,
-            )
-            done = torch.cuda.Event()
-            done.record(stream)
-            return pol, wdl, guarded_event(self, done, stream, pol, wdl)
+        with self._ownership:
+            ensure_usable(self)
+            if relations is not None:
+                raise NotImplementedError(
+                    "dynamic relations are not transported on the AOTEvaluator path",
+                )
+            self._validate_input_slot(bsz, slot)
+            bucket = self._pick_bucket(bsz)
+            model = self._models[bucket]
+            stream = torch.cuda.current_stream(torch.device(self.device)) if str(self.device).startswith("cuda") else None
+            with launch_guard(self, stream):
+                xt = self._device_input_inplace(bucket=bucket, slot=slot)
+                with torch.no_grad():
+                    out = model(xt)
+                pol = _policy_output_full(out)[:bsz].detach().to(
+                    dtype=torch.float32, device="cpu", non_blocking=True,
+                )
+                wdl = out["wdl"][:bsz].detach().to(
+                    dtype=torch.float32, device="cpu", non_blocking=True,
+                )
+                if stream is None:
+                    return pol, wdl, None
+                done = torch.cuda.Event()
+                done.record(stream)
+                return pol, wdl, self._completion(done, stream, pol, wdl)
 
 
 # ---------------------------------------------------------------------------
@@ -2297,7 +2395,7 @@ class SlotBroker:
             bsz = _slot_rows(slot, self._layout.max_batch)
             if compact_legal:
                 meta = slot.policy_i32
-                n_legal = max(0, int(meta[0]))
+                n_legal = int(meta[0])
                 # SNAPSHOT, never view. This is client-writable shared memory
                 # and the client does rewrite it under us: after a request
                 # timeout the worker resets its client and re-submits into the
@@ -2320,22 +2418,10 @@ class SlotBroker:
                 # reader unable to tell a torn snapshot (counts/header
                 # disagreement) from a real client encoding bug (out-of-range
                 # indices), which is the first thing worth knowing.
-                counts_sum = int(counts.sum())
-                if counts.shape[0] != bsz:
-                    bad_reason = f"counts len {counts.shape[0]} != batch_size {bsz}"
-                elif counts_sum != n_legal:
-                    bad_reason = f"counts sum {counts_sum} != header n_legal {n_legal}"
-                elif flat.shape[0] != n_legal:
-                    bad_reason = f"flat len {flat.shape[0]} != header n_legal {n_legal}"
-                elif flat.size > 0 and (
-                    int(flat.min()) < 0 or int(flat.max()) >= _POLICY_SIZE
-                ):
-                    bad_reason = (
-                        f"flat index range [{int(flat.min())}, {int(flat.max())}] "
-                        f"outside [0, {_POLICY_SIZE})"
-                    )
-                else:
-                    bad_reason = ""
+                bad_reason = _legal_metadata_error(
+                    counts, flat, batch_size=bsz, n_legal=n_legal,
+                    policy_bytes=self._layout.policy_bytes,
+                )
                 if bad_reason:
                     # Release the slot unanswered rather than fabricating a
                     # response. The old code here zeroed policy_u16[:1] and the
@@ -3120,28 +3206,10 @@ class SlotInferenceClient:
                 raise ValueError(
                     f"batch size {bsz} exceeds slot max {self._layout.max_batch}"
                 )
-            counts = np.asarray(legal_counts, dtype=np.int32)
-            if counts.ndim != 1 or counts.shape[0] != bsz:
-                raise ValueError(f"legal_counts must be shape ({bsz},), got {counts.shape}")
-            flat = np.asarray(legal_flat, dtype=np.int32)
-            if flat.ndim != 1:
-                raise ValueError(f"legal_flat must be 1D, got {flat.ndim}D")
-            n_legal = int(counts.sum())
-            if n_legal != int(flat.shape[0]):
-                raise ValueError(f"legal_flat len {flat.shape[0]} != sum(legal_counts) {n_legal}")
-            if flat.size > 0 and (int(flat.min()) < 0 or int(flat.max()) >= _POLICY_SIZE):
-                raise ValueError("legal_flat contains out-of-range policy indices")
-            meta_len = 1 + bsz + n_legal
-            if meta_len > self._layout.policy_bytes // 4:
-                raise ValueError(
-                    f"compact legal metadata has {meta_len} int32 entries > "
-                    f"{self._layout.policy_bytes // 4} capacity"
-                )
-            if n_legal > self._layout.policy_bytes // 2:
-                raise ValueError(
-                    f"compact legal policy has {n_legal} entries > "
-                    f"{self._layout.policy_bytes // 2} capacity"
-                )
+            counts, flat, n_legal = _prepare_legal_metadata(
+                legal_counts, legal_flat, batch_size=bsz,
+                policy_bytes=self._layout.policy_bytes,
+            )
 
             def _submit(slot: _InferenceSlot, request_id: int) -> None:
                 slot.input_bf16_bits[:bsz] = xb
@@ -3338,25 +3406,10 @@ class MultiSlotInferenceClient:
                 "use worker-local direct inference (see "
                 "check_dynamic_relations_transport)"
             )
-        idx, client, wait_s = self._acquire_client()
-        t0 = time.perf_counter()
-        # Set BEFORE the call and cleared only on a normal return, so every
-        # abnormal exit (exception, GeneratorExit) is accounted as a failure
-        # rather than as served throughput.
-        failed = True
-        try:
-            out = client.evaluate_encoded(x)
-            failed = False
-            return out
-        finally:
-            self._release_client(
-                idx, client,
-                positions=int(x.shape[0]),
-                legal=False,
-                wait_s=wait_s,
-                roundtrip_s=time.perf_counter() - t0,
-                failed=failed,
-            )
+        xb = _coerce_bf16_bits_batch(x) if x.dtype == np.uint16 else _coerce_input_batch(x)
+        positions = int(xb.shape[0])
+        with self._client_lease(positions=positions, legal=False) as client:
+            return client.evaluate_encoded(xb)
 
     @property
     def supports_input_bf16_bits(self) -> bool:
@@ -3374,21 +3427,24 @@ class MultiSlotInferenceClient:
     def evaluate_legal_bf16(
         self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
+        xb = _coerce_bf16_bits_batch(x)
+        positions = int(xb.shape[0])
+        with self._client_lease(positions=positions, legal=True) as client:
+            return client.evaluate_legal_bf16(xb, legal_flat, legal_counts)
+
+    @contextlib.contextmanager
+    def _client_lease(self, *, positions: int, legal: bool) -> Iterator[SlotInferenceClient]:
+        """Release exactly once using metadata captured before acquisition."""
         idx, client, wait_s = self._acquire_client()
         t0 = time.perf_counter()
         failed = True
         try:
-            out = client.evaluate_legal_bf16(x, legal_flat, legal_counts)
+            yield client
             failed = False
-            return out
         finally:
             self._release_client(
-                idx, client,
-                positions=int(x.shape[0]),
-                legal=True,
-                wait_s=wait_s,
-                roundtrip_s=time.perf_counter() - t0,
-                failed=failed,
+                idx, client, positions=positions, legal=legal, wait_s=wait_s,
+                roundtrip_s=time.perf_counter() - t0, failed=failed,
             )
 
     def _acquire_client(self) -> tuple[int, SlotInferenceClient, float]:
@@ -3682,6 +3738,7 @@ class SharedSlotBroker:
         self._trial_no_model_warned_at: dict[str, float] = {}
       # Same, for a request whose transport this broker has no dispatch for.
         self._trial_bad_mode_warned_at: dict[str, float] = {}
+        self._trial_bad_size_warned_at: dict[str, float] = {}
       # Lifetime count of requests refused for an unimplemented request_mode.
       # A refusal nobody can count is indistinguishable from one that never
       # fires, and this one is the difference between a loud timeout and a
@@ -3732,6 +3789,7 @@ class SharedSlotBroker:
       # have its first no-model gap silently un-warned by the previous
       # incarnation's timestamp (and dead ids would accumulate forever).
         self._trial_no_model_warned_at.pop(trial_id, None)
+        self._trial_bad_size_warned_at.pop(trial_id, None)
         print(f"[shared-broker] deregistered stale trial {trial_id}", flush=True)
 
     def _scan_trials(self) -> None:
@@ -3860,10 +3918,9 @@ class SharedSlotBroker:
 
         Returns the number of ROWS released UNANSWERED, on either path that
         can release one: a trial with no model yet, and a request_mode this
-        broker does not implement. The serve loop counts positions BEFORE
-        calling this, so without the return its pos/s would count rows this
-        broker declined to evaluate -- the same "a failure reads as throughput"
-        defect B6 fixed on the client side, in the sibling path.
+        broker does not implement. Invalid row counts contribute no rows.
+        The serve loop uses _last_served_rows, populated only after successful
+        scatter, so declined requests cannot read as served throughput.
 
         The name is ``unanswered_rows`` rather than the original
         ``refused_rows`` because it stopped meaning "refused for an
@@ -3873,10 +3930,33 @@ class SharedSlotBroker:
         """
         use_cuda = self.device.startswith("cuda")
         unanswered_rows = 0
+        self._last_served_rows = 0
 
         # Host-side pack first; H2D + forward sit under the hang watchdog.
         packed: list[tuple[str, list[_InferenceSlot], list[int], list[int], np.ndarray]] = []
         for trial_id, ready in ready_by_trial.items():
+            # Snapshot metadata before any release permits resubmission.
+            snapshots: list[tuple[_InferenceSlot, int, int, int]] = []
+            for slot in ready:
+                req = int(slot.request_id)
+                mode = int(slot.request_mode)
+                rows = int(slot.batch_size)
+                capacity = min(slot.input.shape[0], slot.policy.shape[0], slot.wdl.shape[0])
+                if not 0 < rows <= capacity:
+                    now = time.monotonic()
+                    if now - self._trial_bad_size_warned_at.get(trial_id, -30.0) >= 30.0:
+                        self._trial_bad_size_warned_at[trial_id] = now
+                        log.warning(
+                            "shared broker rejecting invalid batch_size %d (capacity %d) for trial %s",
+                            rows, capacity, trial_id,
+                        )
+                    slot.state = _STATE_IDLE
+                    continue
+                snapshots.append((slot, req, mode, rows))
+            if not snapshots:
+                continue
+            ready = [slot for slot, _, _, _ in snapshots]
+            batch_sizes = [rows for _, _, _, rows in snapshots]
             model = self._trial_models.get(trial_id)
             if model is None:
                 # Release unanswered rather than fabricating zeros: an all-zero
@@ -3907,15 +3987,15 @@ class SharedSlotBroker:
                 # had every one of its rows reported as served pos/s -- the
                 # fourth instance of the family, in the path that is hardest to
                 # notice because it is the transient one.
-                unanswered_rows += sum(int(s.batch_size) for s in ready)
+                unanswered_rows += sum(batch_sizes)
                 for slot in ready:
                     slot.state = _STATE_IDLE
                 continue
             # Tags snapshotted BEFORE batch_size/input, and echoed on response.
             # Same contract and same reason as SlotBroker._process_batch_mode
             # (audit I1) -- this broker shares the slot protocol verbatim.
-            request_ids = [int(slot.request_id) for slot in ready]
-            request_modes = [int(slot.request_mode) for slot in ready]
+            request_ids = [req for _, req, _, _ in snapshots]
+            request_modes = [mode for _, _, mode, _ in snapshots]
             # The mode was never read here at all (SHARED_BROKER_AUDIT B1).
             # This broker only implements dense-f32; a bf16-bits or compact
             # request was decoded AS f32 (the slot regions alias) and answered
@@ -3931,9 +4011,9 @@ class SharedSlotBroker:
             unsupported = sorted({m for m in request_modes if m != _MODE_DENSE_F32})
             if unsupported:
                 n_bad = sum(1 for m in request_modes if m != _MODE_DENSE_F32)
-                for slot, mode in zip(ready, request_modes, strict=True):
+                for slot, mode, rows in zip(ready, request_modes, batch_sizes, strict=True):
                     if mode != _MODE_DENSE_F32:
-                        unanswered_rows += int(slot.batch_size)
+                        unanswered_rows += rows
                         slot.state = _STATE_IDLE
                 # Throttled for the same reason as the no-model branch above:
                 # a released slot comes straight back round the serve loop, so
@@ -3955,17 +4035,17 @@ class SharedSlotBroker:
                     )
                 self.unsupported_mode_requests += n_bad
                 kept = [
-                    (slot, req)
-                    for slot, req, mode in zip(
-                        ready, request_ids, request_modes, strict=True,
+                    (slot, req, rows)
+                    for slot, req, mode, rows in zip(
+                        ready, request_ids, request_modes, batch_sizes, strict=True,
                     )
                     if mode == _MODE_DENSE_F32
                 ]
                 if not kept:
                     continue
-                ready = [slot for slot, _ in kept]
-                request_ids = [req for _, req in kept]
-            batch_sizes = [slot.batch_size for slot in ready]
+                ready = [slot for slot, _, _ in kept]
+                request_ids = [req for _, req, _ in kept]
+                batch_sizes = [rows for _, _, rows in kept]
             xs = [np.array(slot.input[:bsz], copy=True, order="C") for slot, bsz in zip(ready, batch_sizes, strict=True)]
             xb = np.concatenate(xs, axis=0)
             packed.append((trial_id, ready, batch_sizes, request_ids, xb))
@@ -4026,6 +4106,7 @@ class SharedSlotBroker:
                     slot.request_id = req_id
                     slot.state = _STATE_RESPONSE
                     start = end
+            self._last_served_rows = hang_batch
             forward_ok = True
         finally:
             self._hang_watchdog.mark_forward_done(success=forward_ok, token=hang_token)
@@ -4092,15 +4173,10 @@ class SharedSlotBroker:
             self._idle_since = None
 
   # Process all trials' batches in parallel on separate CUDA streams
-            for ready in ready_by_trial.values():
-                _batch_count += 1
-                _total_positions += sum(s.batch_size for s in ready)
-  # Rows released UNANSWERED were counted above but never evaluated;
-  # subtract them so pos/s means served rows. Both release paths in
-  # _process_parallel are in that return: an unimplemented request_mode
-  # AND a trial whose model has not loaded yet. The comment used to name
-  # only the first, which is exactly how the second went unfixed.
-            _total_positions -= self._process_parallel(ready_by_trial)
+            _batch_count += len(ready_by_trial)
+            self._process_parallel(ready_by_trial)
+            # Count successfully scattered rows, never untrusted claimed sizes.
+            _total_positions += self._last_served_rows
 
   # Periodic metrics
             now = time.monotonic()

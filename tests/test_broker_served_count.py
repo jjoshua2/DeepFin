@@ -498,6 +498,7 @@ def _shared_broker(*, with_model: bool) -> SharedSlotBroker:
     broker._trial_models = {"t0": _TinyPolicy().eval()} if with_model else {}
     broker._trial_no_model_warned_at = {}
     broker._trial_bad_mode_warned_at = {}
+    broker._trial_bad_size_warned_at = {}
     broker._trial_streams = {}
     broker._first_inference_done = False
     broker._hang_watchdog = _SharedWatchdog()  # pyright: ignore[reportAttributeAccessIssue]

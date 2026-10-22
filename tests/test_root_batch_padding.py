@@ -174,3 +174,19 @@ def test_broker_clients_declare_that_they_pad_internally() -> None:
     finally:
         single.close()
         multi.close()
+
+
+def test_async_only_pinned_evaluator_uses_supported_dense_fallback() -> None:
+    """AOT has input buffers and async inplace, but no synchronous inplace API."""
+    class AsyncOnlyEvaluator(_FakeBrokerClient):
+        def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
+            raise AssertionError("unsupported synchronous inplace path selected")
+
+        def evaluate_inplace_async(self, bsz: int, *, slot: int = 0) -> None:
+            raise AssertionError("synchronous root path must use evaluate_encoded")
+
+    evaluator = AsyncOnlyEvaluator()
+    xs, policy, wdl, _ = _evaluate_root_batch(_state(evaluator, n_boards=1), [0])
+    assert evaluator.submitted_rows == [1]
+    assert xs is not None
+    assert policy.shape[0] == wdl.shape[0] == 1

@@ -166,6 +166,7 @@ def _shared_broker_skeleton(models: dict[str, object]) -> SharedSlotBroker:
     broker._trial_models = models  # pyright: ignore[reportAttributeAccessIssue]
     broker._trial_no_model_warned_at = {}
     broker._trial_bad_mode_warned_at = {}
+    broker._trial_bad_size_warned_at = {}
     broker.unsupported_mode_requests = 0
     broker.device = "cpu"
     return broker

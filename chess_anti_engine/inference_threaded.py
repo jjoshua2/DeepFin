@@ -21,7 +21,9 @@ from chess_anti_engine.inference import (
     DirectGPUEvaluator,
     _COMPILED_BATCH_BUCKETS,
     _bf16_bits_to_float32_np,
+    model_config_identity_key,
 )
+from chess_anti_engine.model import ModelConfig
 
 logger = logging.getLogger(__name__)
 
@@ -456,25 +458,39 @@ class ThreadedDispatcher:
         try:
             if self._compile_mode is not None:
                 load_target = getattr(self._evaluator.model, "_orig_mod", self._evaluator.model)
-                load_target.load_state_dict(item.model.state_dict(), strict=True)
-                load_target.eval()
+                old_cfg = getattr(load_target, "cfg", None)
+                new_cfg = getattr(item.model, "cfg", None)
+                # Equal tensor shapes do not establish forward equivalence:
+                # attention head count/dimension can change without a shape change.
+                # Unknown model contracts conservatively take the replacement path.
+                reuse = (
+                    type(load_target) is type(item.model)
+                    and isinstance(old_cfg, ModelConfig)
+                    and isinstance(new_cfg, ModelConfig)
+                    and model_config_identity_key(old_cfg) == model_config_identity_key(new_cfg)
+                    and getattr(load_target, "_inference_only", None)
+                    == getattr(item.model, "_inference_only", None)
+                )
+                if reuse:
+                    try:
+                        load_target.load_state_dict(item.model.state_dict(), strict=True)
+                        load_target.eval()
+                    except BaseException as primary_exc:
+                        logger.warning(
+                            "dispatcher strict-load model update failed (%r); "
+                            "falling back to a from-scratch recompile", primary_exc,
+                        )
+                        self._evaluator.model = self._compile_model_on_dispatcher(item.model)
+                else:
+                    self._evaluator.model = self._compile_model_on_dispatcher(item.model)
             else:
                 self._evaluator.model = item.model
             self._evaluator.model.eval()
-        except BaseException as primary_exc:
-            logger.warning(
-                "dispatcher strict-load model update failed (%r); "
-                "falling back to a from-scratch recompile", primary_exc,
-            )
-            try:
-                self._evaluator.model = self._compile_model_on_dispatcher(item.model)
-                self._evaluator.model.eval()
-            except BaseException as fallback_exc:
-                item.result["error"] = fallback_exc
-                item.done.set()
-  # A failed strict load may have partially overwritten weights;
-  # poison the dispatcher rather than keep serving them.
-                raise
+        except BaseException as exc:
+            item.result["error"] = exc
+            # A failed strict load may have partially overwritten weights;
+            # poison the dispatcher rather than keep serving them.
+            raise
         finally:
             item.done.set()
 

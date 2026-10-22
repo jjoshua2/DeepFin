@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Benchmark AOT evaluator with 1 vs 2 threads (StreamPerThread).
 
-AOT kernels are thread-safe across CUDA streams — no CUDA graph conflicts.
+Each AOT producer owns a separately loaded evaluator and CUDA stream.
+Constants and staging memory are replicated per producer.
 """
 from __future__ import annotations
 
@@ -9,6 +10,8 @@ import argparse
 import multiprocessing as mp
 import time
 from typing import cast
+
+from chess_anti_engine.aot_benchmark_contexts import ProducerContext
 
 
 def _run_config(
@@ -54,8 +57,11 @@ def _run_config(
     if n_threads > 1:
         # Multi-threaded: use AOT with per-thread CUDA streams
         from chess_anti_engine.inference import AOTEvaluator, model_constant_source
-        evaluator = AOTEvaluator(aot_dir, device="cuda", max_batch=4096)
-        evaluator.load_weights(model_constant_source(model))
+        contexts = []
+        for _ in range(n_threads):
+            evaluator = AOTEvaluator(aot_dir, device="cuda", max_batch=4096)
+            evaluator.load_weights(model_constant_source(model))
+            contexts.append(ProducerContext(evaluator, torch.cuda))
     else:
         # Single thread baseline: use compiled DirectGPU (same as production)
         model = cast(torch.nn.Module, torch.compile(model, mode="reduce-overhead"))
@@ -78,12 +84,12 @@ def _run_config(
         from concurrent.futures import ThreadPoolExecutor
 
         def _run_warmup(tid):
-            return play_batch(
+            return contexts[tid].run(lambda evaluator: play_batch(
                 None, device="cuda", rng=np.random.default_rng(tid),
                 stockfish=sf, evaluator=evaluator,
                 games=min(thread_batch, 4),
                 opponent=opponent, temp=temp, search=search, opening=opening, game=game,
-            )
+            ))
         with ThreadPoolExecutor(max_workers=n_threads) as pool:
             list(pool.map(_run_warmup, range(n_threads)))
     else:
@@ -103,12 +109,12 @@ def _run_config(
         seeds = [int(rng.integers(2**63)) for _ in range(n_threads)]
 
         def _run_bench(tid):
-            return play_batch(
+            return contexts[tid].run(lambda evaluator: play_batch(
                 None, device="cuda", rng=np.random.default_rng(seeds[tid]),
                 stockfish=sf, evaluator=evaluator,
                 games=thread_batch,
                 opponent=opponent, temp=temp, search=search, opening=opening, game=game,
-            )
+            ))
 
         with ThreadPoolExecutor(max_workers=n_threads) as pool:
             results = list(pool.map(_run_bench, range(n_threads)))
@@ -156,6 +162,7 @@ def main():
 
     print(f"Benchmark: batch={args.batch_size}, {args.mcts_sims} sims, {args.sf_nodes} SF nodes")
     print(f"AOT dir: {args.aot_dir}")
+    print("AOT ownership: independent evaluator + CUDA stream per thread; constants and staging memory replicated.")
     print("=" * 80)
 
     results = []
