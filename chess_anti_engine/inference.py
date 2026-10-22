@@ -39,6 +39,7 @@ from chess_anti_engine.model import (
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
 )
+from chess_anti_engine.model.transformer import TransformerConfig
 from chess_anti_engine.neural_work import WorkCounters
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.moves.torch_maps import compact_to_full_index_for as _compact_to_full_index_for
@@ -3659,11 +3660,12 @@ class MultiSlotInferenceClient:
 _NON_IDENTITY_MODEL_CONFIG_FIELDS = frozenset({"use_gradient_checkpointing"})
 
 
-def model_config_identity_key(model_cfg: ModelConfig) -> tuple:
+def model_config_identity_key(model_cfg: ModelConfig | TransformerConfig) -> tuple:
     """Architecture identity of a published model, for the shared broker's
     "different model config, skipping" guard.
 
-    Derived from `dataclasses.fields` rather than hand-enumerated. The previous
+    Accepts the published ModelConfig or effective runtime TransformerConfig.
+    Derived from the actual dataclass fields rather than hand-enumerated. The previous
     hand-written tuple listed 35 of 41 fields and had silently drifted: it
     omitted `input_extra_features`, `history_rep_fix`, `use_dynamic_relations`,
     `policy_dynamic_relations` and `dynamic_relation_count` -- all of which
@@ -3676,7 +3678,7 @@ def model_config_identity_key(model_cfg: ModelConfig) -> tuple:
         getattr(model_cfg, name)
         for name in sorted(
             f.name
-            for f in dataclass_fields(ModelConfig)
+            for f in dataclass_fields(model_cfg)
             if f.name not in _NON_IDENTITY_MODEL_CONFIG_FIELDS
         )
     )

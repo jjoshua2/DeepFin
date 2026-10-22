@@ -9,12 +9,16 @@ import torch
 
 from chess_anti_engine.inference_threaded import ThreadedDispatcher, _ModelUpdateRequest
 from chess_anti_engine.model import ModelConfig
+from chess_anti_engine.model.transformer import TransformerConfig
 
 
 class _HeadModel(torch.nn.Module):
-    def __init__(self, heads: int = 2, weight: float = 1.0) -> None:
+    def __init__(self, heads: int = 2, weight: float = 1.0, *, effective_config: bool = False) -> None:
         super().__init__()
-        self.cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=heads)
+        self.cfg = (
+            TransformerConfig(in_planes=1, embed_dim=16, num_layers=1, num_heads=heads)
+            if effective_config else ModelConfig(embed_dim=16, num_layers=1, num_heads=heads)
+        )
         self._inference_only = True
         self.weight = torch.nn.Parameter(torch.tensor(weight))
 
@@ -53,20 +57,22 @@ def _update(dispatcher: ThreadedDispatcher, model: torch.nn.Module) -> _ModelUpd
     return request
 
 
-def test_same_architecture_reuses_compiled_wrapper_and_updates_output(monkeypatch):
-    old = _HeadModel(weight=1.0)
+@pytest.mark.parametrize("effective_config", [False, True])
+def test_same_architecture_reuses_compiled_wrapper_and_updates_output(monkeypatch, effective_config):
+    old = _HeadModel(weight=1.0, effective_config=effective_config)
     dispatcher, compiled = _dispatcher(old, monkeypatch)
     wrapper = dispatcher._evaluator.model
-    new = _HeadModel(weight=3.0)
+    new = _HeadModel(weight=3.0, effective_config=effective_config)
     _update(dispatcher, new)
     assert dispatcher._evaluator.model is wrapper
     assert compiled == []
     torch.testing.assert_close(wrapper(torch.ones(1)), new(torch.ones(1)))
 
 
-def test_same_shaped_changed_heads_recompiles_and_uses_new_forward(monkeypatch):
-    old = _HeadModel(heads=2)
-    new = _HeadModel(heads=4)
+@pytest.mark.parametrize("effective_config", [False, True])
+def test_same_shaped_changed_heads_recompiles_and_uses_new_forward(monkeypatch, effective_config):
+    old = _HeadModel(heads=2, effective_config=effective_config)
+    new = _HeadModel(heads=4, effective_config=effective_config)
     assert {k: v.shape for k, v in old.state_dict().items()} == {
         k: v.shape for k, v in new.state_dict().items()
     }

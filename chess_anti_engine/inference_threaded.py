@@ -24,6 +24,7 @@ from chess_anti_engine.inference import (
     model_config_identity_key,
 )
 from chess_anti_engine.model import ModelConfig
+from chess_anti_engine.model.transformer import TransformerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -465,11 +466,17 @@ class ThreadedDispatcher:
                 # Unknown model contracts conservatively take the replacement path.
                 reuse = (
                     type(load_target) is type(item.model)
-                    and isinstance(old_cfg, ModelConfig)
-                    and isinstance(new_cfg, ModelConfig)
+                    and type(old_cfg) is type(new_cfg)
+                    and isinstance(old_cfg, (ModelConfig, TransformerConfig))
+                    and isinstance(new_cfg, (ModelConfig, TransformerConfig))
                     and model_config_identity_key(old_cfg) == model_config_identity_key(new_cfg)
-                    and getattr(load_target, "_inference_only", None)
-                    == getattr(item.model, "_inference_only", None)
+                    and all(
+                        getattr(load_target, name, None) == getattr(item.model, name, None)
+                        for name in (
+                            "_inference_only", "policy_encoding", "input_history_encoding",
+                            "history_rep_fix", "input_extra_features", "use_dynamic_relations",
+                        )
+                    )
                 )
                 if reuse:
                     try:
