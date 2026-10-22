@@ -62,10 +62,10 @@ class UpgradeFailureCache:
             digest.update(metadata)
             if arr.size:
                 if arr.flags.c_contiguous:
-                    digest.update(memoryview(arr).cast("B"))
+                    digest.update(arr.data.cast("B"))
                 else:
                     for row in arr:
-                        digest.update(memoryview(np.ascontiguousarray(row)).cast("B"))
+                        digest.update(np.ascontiguousarray(row).data.cast("B"))
         return digest.digest()
 
     def contains(self, key: bytes | None) -> bool:

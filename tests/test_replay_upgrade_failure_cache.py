@@ -108,9 +108,11 @@ def test_unknown_value_error_is_not_cached():
 
 def test_non_value_error_still_propagates():
     buf, arrs = (_buffer(), _chunk())
-    with patch.object(disk_buffer, 'upgrade_arrays_to_planes', side_effect=RuntimeError('temporary')):
-        with pytest.raises(RuntimeError, match='temporary'):
-            buf._pad_x_planes(arrs)
+    with (
+        patch.object(disk_buffer, 'upgrade_arrays_to_planes', side_effect=RuntimeError('temporary')),
+        pytest.raises(RuntimeError, match='temporary'),
+    ):
+        buf._pad_x_planes(arrs)
     assert buf._upgrade_failures == 0
 
 
