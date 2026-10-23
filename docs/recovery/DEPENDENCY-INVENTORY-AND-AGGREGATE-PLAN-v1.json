@@ -1,0 +1,106 @@
+{
+  "schema": "dependency-inventory-and-aggregate-plan-v1",
+  "status": "INVENTORY_COMPLETE_STATIC_IDENTITY_ONLY_AGGREGATE_PLAN_SOURCE_ONLY",
+  "scope": "277files61361300B fullsecondhash122925839 explicitreadB;noimports/dlopen/GPU/tests/guestwrites/newECHILD. ConservativefixedsourceELFgraph notfutureimport/loader/pluginqualification. Separate5unitplan reviewedsourcearithmetic notexecutionauthority;3logicalmethodsUNRUN.",
+  "actual_review_sha256": "0e156935c34482d40b49c11f11fa8931dbfa64b5aebcff8a4805289a0cc5902f",
+  "archive": {
+    "fixed_member_timestamp": "2026-10-21T00:00:00Z",
+    "readback_verified": true,
+    "sha256": "08fe02d2a751edd641d23da49c7128ad9300c21bb21cb171173025a234ecc8bc",
+    "member_count": 15,
+    "bytes": 51459,
+    "file": "DEPENDENCY-INVENTORY-AND-AGGREGATE-PLAN-v1.zip"
+  },
+  "members": [
+    {
+      "bytes": 15075,
+      "sha256": "0703903746424ee00f5cd1bca26604367dfba858fd25c85e4634264dfd665123",
+      "member": "inventory-source/inventory_numpy_chess_v2.py",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/numpy-chess-inventory-v1/inventory_numpy_chess_v2.py"
+    },
+    {
+      "bytes": 6656,
+      "sha256": "378d2177e669aa92e75305e9b7e35b02020db7eeb9259563139a0004e956e725",
+      "member": "inventory-source/INVENTORY-PROPOSAL-v2.json",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/numpy-chess-inventory-v1/INVENTORY-PROPOSAL-v2.json"
+    },
+    {
+      "bytes": 796,
+      "sha256": "75e61f3883f525b5986317c69cc48c2895196a46aad51ff3df56ca421d233fbc",
+      "member": "inventory-source/FULL-ARGV-v2.json",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/numpy-chess-inventory-v1/FULL-ARGV-v2.json"
+    },
+    {
+      "bytes": 1119,
+      "sha256": "d7e28c9f970e2333512f6db345b936dfef5a67161334a46665a768abfadee4eb",
+      "member": "inventory-source/FINAL-FREEZE-v2.json",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/numpy-chess-inventory-v1/FINAL-FREEZE-v2.json"
+    },
+    {
+      "bytes": 14128,
+      "sha256": "685d362d76d6d471880253753e608e0227042a70388576999c56a033a7f255ce",
+      "member": "source-only-plan/FIVE-UNIT-320-AGGREGATE-RESOURCE-PLAN-v2.json",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-aggregate320-resource-plan-v1/FIVE-UNIT-320-AGGREGATE-RESOURCE-PLAN-v2.json"
+    },
+    {
+      "bytes": 5371,
+      "sha256": "7078f91754d3a14d042c8b59a911bc6abd64c0c34b5b33fa61152a48ecb8d2cd",
+      "member": "source-only-plan/FIVE-UNIT-320-AGGREGATE-RESOURCE-PLAN-v1.md",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-aggregate320-resource-plan-v1/FIVE-UNIT-320-AGGREGATE-RESOURCE-PLAN-v1.md"
+    },
+    {
+      "bytes": 4702,
+      "sha256": "bc386b0b9ec4177e5e3778d4c67e2f412cca38ea16f9d5dbc8b7688be711649d",
+      "member": "evidence/NUMPY-CHESS-INVENTORY-V2-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/NUMPY-CHESS-INVENTORY-V2-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json"
+    },
+    {
+      "bytes": 353,
+      "sha256": "7c2ea64cddf69a7ed3002c91361e45c0508c2e6aba4a4eca88e7d922acc5b02a",
+      "member": "evidence/NUMPY-CHESS-INVENTORY-ONE-USE-INTENT-v1.json",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/NUMPY-CHESS-INVENTORY-ONE-USE-INTENT-v1.json"
+    },
+    {
+      "bytes": 1477,
+      "sha256": "6b11b299bd142abf2b546c90077785d6f0c863024bc1111ddf314f883232b004",
+      "member": "evidence/NUMPY-CHESS-INVENTORY-NATIVE-TERMINAL-v1.json",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/NUMPY-CHESS-INVENTORY-NATIVE-TERMINAL-v1.json"
+    },
+    {
+      "bytes": 71031,
+      "sha256": "70b63d9d17869721dcf367b231462cda0f76ebd318d17a5439dc689f4d639241",
+      "member": "evidence/NUMPY-CHESS-INVENTORY-ACTUAL-stdout-v1.json",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/NUMPY-CHESS-INVENTORY-ACTUAL-stdout-v1.json"
+    },
+    {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "member": "evidence/NUMPY-CHESS-INVENTORY-ACTUAL-stderr-v1.txt",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/NUMPY-CHESS-INVENTORY-ACTUAL-stderr-v1.txt"
+    },
+    {
+      "bytes": 4169,
+      "sha256": "0e156935c34482d40b49c11f11fa8931dbfa64b5aebcff8a4805289a0cc5902f",
+      "member": "evidence/NUMPY-CHESS-INVENTORY-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/NUMPY-CHESS-INVENTORY-INDEPENDENT-ACTUAL-REVIEW-v1.json"
+    },
+    {
+      "bytes": 3566,
+      "sha256": "e6996db414e2fe6b063f314b8f75a73f96a7cbbedd47f3a63bd33d7ce1e0cbd4",
+      "member": "evidence/FIVE-UNIT-320-RESOURCE-PLAN-INDEPENDENT-SOURCE-RISK-REVIEW-v1.json",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/FIVE-UNIT-320-RESOURCE-PLAN-INDEPENDENT-SOURCE-RISK-REVIEW-v1.json"
+    },
+    {
+      "bytes": 3708,
+      "sha256": "7003913027881716bad082653d45b1017ae08614eb79d300c7b628ddb3eb4bd7",
+      "member": "evidence/FIVE-UNIT-320-AGGREGATE-RESOURCE-PLAN-INDEPENDENT-SOURCE-REVIEW-v1.json",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/FIVE-UNIT-320-AGGREGATE-RESOURCE-PLAN-INDEPENDENT-SOURCE-REVIEW-v1.json"
+    },
+    {
+      "bytes": 1864,
+      "sha256": "68f47db99864b2739f14f068ff1f2986959f08a1c380c44f122f7bb529e260d1",
+      "member": "evidence/DEPENDENCY-INVENTORY-AND-AGGREGATE-PLAN-v1.md",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/DEPENDENCY-INVENTORY-AND-AGGREGATE-PLAN-v1.md"
+    }
+  ]
+}

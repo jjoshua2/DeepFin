@@ -41,6 +41,8 @@ def _bare_worker_session() -> WorkerSession:
     session._manifest_path = None
     session._model_watch_started = False
     session._model_watch_lock = threading.Lock()
+    session._model_watch_stop = threading.Event()
+    session._model_watch_thread = None
     session._model_stale_since_s = None
     session._model_stale_alarmed = False
     session._selfplay_session_active = True
@@ -1358,6 +1360,7 @@ def test_model_watch_thread_updates_the_tag_with_no_on_step_caller(tmp_path: Pat
         while session.model_sha != "new-sha" and time.time() < deadline:
             time.sleep(0.02)
     finally:
+        session._stop_model_watch_thread()
         _os.environ.pop("CAE_WORKER_MODEL_WATCH_S", None)
 
     assert session.model_sha == "new-sha", (
@@ -1479,7 +1482,7 @@ def test_model_watch_thread_survives_a_failing_iteration(caplog) -> None:
         if len(calls) == 1:
             raise RuntimeError("transient")
 
-    cast(Any, session)._check_model_update = _flaky
+    cast(Any, session)._check_model_update_locked = _flaky
     cast(Any, session)._check_model_freshness = lambda: None
 
     import os as _os
@@ -1492,6 +1495,7 @@ def test_model_watch_thread_survives_a_failing_iteration(caplog) -> None:
             while len(calls) < 3 and time.time() < deadline:
                 time.sleep(0.02)
     finally:
+        session._stop_model_watch_thread()
         _os.environ.pop("CAE_WORKER_MODEL_WATCH_S", None)
 
     assert len(calls) >= 3, "watch thread stopped after the failing iteration"
@@ -1508,7 +1512,7 @@ def test_model_watch_loop_also_runs_the_freshness_alarm() -> None:
     session._model_watch_started = False
     session._selfplay_session_active = True
     freshness_calls: list[int] = []
-    cast(Any, session)._check_model_update = lambda: None
+    cast(Any, session)._check_model_update_locked = lambda: None
     cast(Any, session)._check_model_freshness = lambda: freshness_calls.append(1)
 
     import os as _os
@@ -1520,6 +1524,7 @@ def test_model_watch_loop_also_runs_the_freshness_alarm() -> None:
         while not freshness_calls and time.time() < deadline:
             time.sleep(0.02)
     finally:
+        session._stop_model_watch_thread()
         _os.environ.pop("CAE_WORKER_MODEL_WATCH_S", None)
 
     assert freshness_calls, "watch loop never ran the staleness alarm"
@@ -1531,7 +1536,7 @@ def test_model_watch_thread_idles_between_sessions() -> None:
     session._model_watch_started = False
     session._selfplay_session_active = False
     calls: list[int] = []
-    session._check_model_update = lambda: calls.append(1)
+    session._check_model_update_locked = lambda: calls.append(1)
     session._check_model_freshness = lambda: None
 
     import os as _os
@@ -1541,6 +1546,7 @@ def test_model_watch_thread_idles_between_sessions() -> None:
         session._start_model_watch_thread()
         time.sleep(0.4)
     finally:
+        session._stop_model_watch_thread()
         _os.environ.pop("CAE_WORKER_MODEL_WATCH_S", None)
 
     assert calls == []
@@ -1550,11 +1556,14 @@ def test_model_watch_thread_starts_only_once() -> None:
     session = _bare_worker_session()
     session._model_watch_started = False
     session._selfplay_session_active = False
-    session._check_model_update = lambda: None
+    session._check_model_update_locked = lambda: None
     session._check_model_freshness = lambda: None
 
     before = threading.active_count()
-    session._start_model_watch_thread()
-    session._start_model_watch_thread()
-    session._start_model_watch_thread()
-    assert threading.active_count() - before == 1
+    try:
+        session._start_model_watch_thread()
+        session._start_model_watch_thread()
+        session._start_model_watch_thread()
+        assert threading.active_count() - before == 1
+    finally:
+        session._stop_model_watch_thread()

@@ -52,6 +52,8 @@ from chess_anti_engine.moves.leela_index import compact_index_for_move
 from scripts import corpus_row_provenance as provenance
 from scripts import derive_corpus_targets as derive
 from scripts import gen_sf_rooted_corpus as corpus
+from scripts.bt4_root_contracts import validate_wdl_values as validate_wdl_values
+from scripts.bt4_root_contracts import resolve_wdl_output as _resolve_wdl_output
 from scripts.bt4_policy_dump import (
     DEFAULT_ONNX,
     compact_legal_policy,
@@ -363,32 +365,8 @@ def requested_wdl(args: argparse.Namespace) -> dict[str, str] | None:
 
 def resolve_wdl_output(sess: Any, requested: Mapping[str, str] | None,
                        policy_name: str) -> dict[str, str] | None:
-    """Explicit named W/D/L STM contract, never guess a three-wide head."""
-    if requested is None:
-        return None
-    matches = [out for out in sess.get_outputs() if out.name == requested["output"]]
-    if len(matches) != 1 or requested["output"] == policy_name:
-        raise ValueError("WDL output absent, ambiguous or aliases policy")
-    out = matches[0]
-    types = {"tensor(float16)": "float16", "tensor(float)": "float32", "tensor(double)": "float64"}
-    if len(out.shape) != 2 or out.shape[1] != 3 or out.type not in types:
-        raise ValueError("WDL output must be a native floating [batch,3] tensor")
-    return {**requested, "dtype": types[out.type]}
-
-
-def validate_wdl_values(values: np.ndarray, rows: int, contract: Mapping[str, Any]) -> None:
-    if values.shape != (rows, 3) or values.dtype != np.dtype(contract["dtype"]):
-        raise ValueError("WDL shape/native dtype differs")
-    if not np.isfinite(values).all():
-        raise ValueError("WDL values are nonfinite")
-    if contract["kind"] == "probabilities":
-        # Raw values stay untouched; tolerate only native rounding of unit mass.
-        tolerance = 2**-10 if values.dtype == np.dtype("float16") else 2e-6
-        if (np.any(values < 0) or np.any(values > 1)
-                or not np.allclose(values.sum(axis=1, dtype=np.float64), 1,
-                                   rtol=0, atol=tolerance)):
-            raise ValueError("WDL probability range/mass invalid")
-
+    """Compatibility entry point; keep its public module and pickle lookup."""
+    return _resolve_wdl_output(sess, requested, policy_name)
 
 def validate_wdl_metadata(group: Any, attrs: Mapping[str, Any], rows: int,
                           expected: Mapping[str, str] | None = None,

@@ -1,0 +1,71 @@
+{
+  "schema": "WORKFLOW_CADENCE_MANUAL_SCENARIO_WALKTHROUGH_V1",
+  "status": "AUTHOR_MANUAL_RULE_EVALUATION_NOT_EXECUTABLE_TESTS",
+  "scenarios": [
+    {
+      "forbidden": "send-only assumed restart",
+      "event": "Worker completes; reviewer assignment authorized",
+      "selected": "Preserve diff; followup_task starts existing reviewer",
+      "id": "completed_worker_review_ready"
+    },
+    {
+      "forbidden": "wait for user prompt",
+      "event": "Tool yields live session",
+      "selected": "Supported wait/poll; independent work continues",
+      "id": "live_tool_session"
+    },
+    {
+      "forbidden": "unaccepted credit or repeated permission",
+      "event": "Success reconciled; next bounded step authorized",
+      "selected": "Required acceptance then fresh action gates and next action",
+      "id": "accepted_success_ready_next"
+    },
+    {
+      "forbidden": "stop at routine source hold",
+      "event": "Readable pins missing; bounded collection authorized",
+      "selected": "Collect and review evidence now",
+      "id": "recoverable_dependency"
+    },
+    {
+      "forbidden": "blind retry or discarded evidence",
+      "event": "Startup fails",
+      "selected": "Preserve exact failure; prepared diagnosis/correction",
+      "id": "startup_failure"
+    },
+    {
+      "forbidden": "fallback admission before closure",
+      "event": "Timeout with unresolved custody",
+      "selected": "Conflicting runtime held; authorized settlement",
+      "id": "timeout_unknown_custody"
+    },
+    {
+      "forbidden": "assume no remote process or alter access",
+      "event": "Transport disconnects after request",
+      "selected": "Prior action uncertain; reconcile before replay",
+      "id": "disconnection_after_request"
+    },
+    {
+      "forbidden": "transport-retry workaround",
+      "event": "Actual approval/access denial",
+      "selected": "Stop denied action; preserve reason; unaffected work continues",
+      "id": "access_denial"
+    },
+    {
+      "forbidden": "idle indefinitely or remove controls blindly",
+      "event": "Candidate unready; fallback successor authorized and qualified",
+      "selected": "Coordinate sole-owner handoff and fresh gates",
+      "id": "productive_fallback_ready"
+    },
+    {
+      "forbidden": "transport exit alone claimed PASS",
+      "event": "Transport exits0 but wrapper error/null receipt",
+      "selected": "Reject success; preserve failed receipt; authorized correction",
+      "id": "wrapper_exit_zero_invalid_receipt"
+    }
+  ],
+  "selected_actions_are_not_executed": true,
+  "gpu_launches": 0,
+  "control_mutations": 0,
+  "automated_test_pass_count": 0,
+  "independent_review_pending": true
+}

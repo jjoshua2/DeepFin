@@ -1,0 +1,31 @@
+{
+  "schema": "PR1110_OPTIMIZED_BT4_ENDSTATE_SYNTHESIS_REVIEW_V1",
+  "status": "ACCEPT_SOURCE_ASSESSMENT_WITH_CPU_SCOPE_WORDING_LIMIT",
+  "assessment_sha256": "aa871c59106d2817a85fd493b5353ed303dbcfc11d5c7b85303c551b30335f72",
+  "source_identity": {
+    "owner_working_crlf": "26944c9c592e1358d5a17ed6c28a1a01f5df1e2edc67bb75769fa811fd114f22",
+    "owner_normalized_lf": "a77c2d9c05a60eddfb44dfb7604ea31c7c85d965bf8da82d452aa0e1104a153f",
+    "child": "689b878c62647155247f7c5d04b467df3abaf53f3baf9c8c878589c7edef22f3"
+  },
+  "verified": [
+    "Worker research profile parallelGames{16,32,64}, games128/plies400. Five64actor units imply320 simultaneous logical lanes and640 total game quotas; readiness not guaranteed.",
+    "Native microbatch1..256 bound and disjoint lane leases support multiple producer completions as required for320, not source proof of actual320 throughput.",
+    "320x24244736=7758315520bytes=7.225494384765625GiB;640=14.45098876953125GiB. Source driver reserves pool.capacity times per-unit reservation; totals exclude progress/model/native/interpreter/telemetry and are not RSS.",
+    "_fill invokes _observe_stop. Actual pooled should_stop checks producer event and coordinator/unit STOP paths; does not call full owner guard per actor. Owner full guard is controller-affine and separately invoked at control/backend/publication boundaries.",
+    "Two full320 waves require outstanding capacity>=640 and sufficient independent lanes; ten64actor units are logical reservoir, no ready-row guarantee. Target alone cannot produce supply.",
+    "Windows-native verifier correctly labeled unimplemented material proposal; path/link/error/identity/stamp/bytes, rendezvous/freshness/current aliases and canonical WSL custody remain unresolved. Endpoints-only policy explicitly changes intermediate detection and is not adopted.",
+    "Document creates no executable packet/reservation or authority, retains synchronous checks, no STOP/PAUSE migration, merges/deployment/resumption. Negative lexical CPU screen remains rejected."
+  ],
+  "refinement": {
+    "severity": "scope clarification",
+    "detail": "If selected driver/dispatcher closure uses fake backend/writer/ACK seams, qualify only actual logical-supply/FIFO/scatter and the modeled ownership protocol; do not describe that result as actual canonical writer receipt or actual owner checkpoint ACK integration. That requires actual source components or separately identified integration evidence. Current source-only text is acceptable as planned goals, not an observed qualification claim.",
+    "location": "Smallest credible next evidence paragraph1"
+  },
+  "limitations": [
+    "No actual readiness/performance/thread-safety/memory/model qualification is inferred. Other independent reviewer owns full logical multiunit source assessment.",
+    "Normalized working owner bytes match expected runtime a77 source; raw2694 hash is CRLF and not a replacement runtime identity. No affinity source substitution.",
+    "No tests/imports/guest/model execution performed by reviewer. Proposed CPU packet still needs exact selected closure/source/resource review."
+  ],
+  "blocking_findings": [],
+  "execution_performed": false
+}

@@ -18,7 +18,7 @@ import select
 import time
 from pathlib import Path
 import sys
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 
 import numpy as np
 
@@ -26,7 +26,10 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from chess_anti_engine.teacher_dispatch import TeacherDispatcher
-from scripts.shared_teacher_generation import CompletedGameLabels
+from chess_anti_engine.generation_runtime import AdvanceResult, GenerationSessionRunner
+from chess_anti_engine.producer_executor import ProducerJoinTimeout
+from chess_anti_engine.staged_execution import CallableStagedBackend, StagedBackend, guard_staged_backend
+from scripts.shared_teacher_generation import CompletedGameLabels, ceres_game_reservation
 from scripts import ceres_raw_backend
 
 RETAINED_SHA = {
@@ -160,7 +163,7 @@ def bind_ceres_raw_backend(
     gather_context: Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]],
     gather_indices: Callable[[np.ndarray, np.ndarray], np.ndarray],
     accounting: dict[str, int],
-) -> Callable[[Sequence[Any]], Sequence[Any]]:
+) -> CallableStagedBackend[Any, Any, Any, Any]:
     """Bind the reviewed raw adapter to RPC without opening a teacher session.
 
     Default32 remains fixed. Explicit256/512 are isolated shape experiments;
@@ -175,28 +178,41 @@ def bind_ceres_raw_backend(
         raise ValueError("fresh physical accounting required")
     accounting.update(calls=0, real_rows=0, padding_rows=0, physical_rows=0)
 
-    def infer(roots: Sequence[Any]) -> Sequence[Any]:
-        values, receipt = ceres_raw_backend.infer_raw_roots(
-            roots, session=session, physical_batch=physical_batch,
-            gather_context=gather_context, gather_indices=gather_indices,
-        )
-        for key in ("calls", "real_rows", "padding_rows", "physical_rows"):
-            accounting[key] += getattr(receipt, key)
-        return values
+    class BoundRawBackend:
+        def prepare(self, roots: Sequence[Any]) -> Any:
+            return ceres_raw_backend.prepare_raw_roots(
+                roots, physical_batch=physical_batch,
+                gather_context=gather_context, gather_indices=gather_indices,
+            )
 
-    return infer
+        def execute(self, prepared: Any) -> Any:
+            return ceres_raw_backend.execute_raw_roots(prepared, session=session)
+
+        def finish(self, prepared: Any, fetched: Any) -> Sequence[Any]:
+            values, receipt = ceres_raw_backend.finish_raw_roots(prepared, fetched)
+            for key in ("calls", "real_rows", "padding_rows", "physical_rows"):
+                accounting[key] += getattr(receipt, key)
+            return values
+
+        def __call__(self, roots: Sequence[Any]) -> Sequence[Any]:
+            prepared = self.prepare(roots)
+            return self.finish(prepared, self.execute(prepared))
+
+    return BoundRawBackend()
 
 
 def checked_ceres_backend(
-    infer: Callable[[Sequence[Any]], Sequence[Any]],
-) -> Callable[[Sequence[Any]], Sequence[Any]]:
-    """Keep the frozen C3 raw three-head contract and validate exact routing."""
-    def evaluate(roots: Sequence[Any]) -> Sequence[Any]:
-        identities = [(root.slot_id, root.fen, np.ascontiguousarray(root.feed).tobytes()) for root in roots]
-        values = tuple(infer(roots))
+    infer: CallableStagedBackend[Any, Any, Any, Any] | Callable[[Sequence[Any]], Sequence[Any]],
+) -> CallableStagedBackend[Any, Any, Any, Any] | Callable[[Sequence[Any]], Sequence[Any]]:
+    """Preserve the raw contract and the stage boundary without duplicate inference."""
+    def identities(roots: Sequence[Any]) -> Any:
+        return tuple((root.slot_id, root.fen, np.ascontiguousarray(root.feed).tobytes()) for root in roots)
+
+    def checked(roots: Sequence[Any], values: Sequence[Any], expected: Any) -> tuple[Any, ...]:
+        values = tuple(values)
         if len(values) != len(roots):
             raise ValueError("Ceres exact root coverage changed")
-        for root, value, (root_id, fen, feed_bytes) in zip(roots, values, identities):
+        for root, value, (root_id, fen, feed_bytes) in zip(roots, values, expected, strict=True):
             digest = hashlib.sha256(feed_bytes).hexdigest()
             if (root.feed.dtype != np.uint8 or root.feed.shape != (64, 137)
                     or root.slot_id != root_id or root.fen != fen
@@ -210,7 +226,33 @@ def checked_ceres_backend(
                 if array.dtype != np.float16 or array.shape != (width,) or not np.isfinite(array).all():
                     raise ValueError("Ceres raw FP16 head contract changed: " + name)
         return values
-    return evaluate
+
+    if not all(callable(getattr(infer, name, None)) for name in ("prepare", "execute", "finish")):
+        def evaluate(roots: Sequence[Any]) -> Sequence[Any]:
+            expected = identities(roots)
+            return checked(roots, infer(roots), expected)
+        return evaluate
+
+    staged = cast(StagedBackend[Any, Any, Any, Any], infer)
+
+    class CheckedBackend:
+        def prepare(self, roots: Sequence[Any]) -> Any:
+            roots = tuple(roots)
+            expected = identities(roots)
+            return roots, expected, staged.prepare(roots)
+
+        def execute(self, prepared: Any) -> Any:
+            return staged.execute(prepared[2])
+
+        def finish(self, prepared: Any, fetched: Any) -> Sequence[Any]:
+            roots, expected, inner = prepared
+            return checked(roots, staged.finish(inner, fetched), expected)
+
+        def __call__(self, roots: Sequence[Any]) -> Sequence[Any]:
+            prepared = self.prepare(roots)
+            return self.finish(prepared, self.execute(prepared))
+
+    return CheckedBackend()
 
 
 def serve_ceres_stream(
@@ -223,6 +265,7 @@ def serve_ceres_stream(
     control: Callable[[], None] = lambda: None,
     unit_roster: tuple[str, ...] | None = None,
     fake_cpu: bool | None = None,
+    retained_byte_budget: int | None = None,
 ) -> dict[str, Any]:
     """Actual bounded JSON-line RPC: pipeline games, route complete durable replies.
 
@@ -241,13 +284,19 @@ def serve_ceres_stream(
             or not math.isfinite(poll_seconds) or not 0 < poll_seconds <= 1
             or not math.isfinite(deadline_seconds) or deadline_seconds <= 0):
         raise ValueError("finite explicit RPC poll and operation budget required")
+    # Include one decoded held request, independent host/backend stages and
+    # canonical writer copies; this is schema capacity, not observed host RSS.
+    row_bytes = 2 * 64 * 137 + 2 * (1858 + 3 + 3) + 8192
+    trajectory_bytes = max_games * ceres_game_reservation(400)
+    progress_bytes = ceres_game_reservation(400) + (2 * 400 + 4 * max_rows) * row_bytes + 1024 ** 2
+    if retained_byte_budget is None:
+        retained_byte_budget = trajectory_bytes + progress_bytes
+    if (type(retained_byte_budget) is not int or
+            retained_byte_budget < trajectory_bytes + progress_bytes):
+        raise ValueError("Ceres requested reservoir and progress reserve exceed retained label byte budget")
     messages: dict[int, dict[str, Any]] = {}
     responses: dict[int, dict[str, Any]] = {}
     evaluate = checked_ceres_backend(infer)
-
-    def guarded_infer(roots: Sequence[Any]) -> Sequence[Any]:
-        control()
-        return evaluate(roots)
 
     def durable(game_id: int, raw_sha: str, values: tuple[Any, ...]) -> None:
         control()
@@ -256,10 +305,11 @@ def serve_ceres_stream(
             raise ValueError("Ceres raw-game provenance changed")
         responses[game_id] = publish(message, values)
 
-    dispatcher = TeacherDispatcher(guarded_infer, target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms)
+    dispatcher = TeacherDispatcher(guard_staged_backend(evaluate, control), target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms)
     try:
         labels = CompletedGameLabels(dispatcher, max_games=max_games, total_games=total_games,
-                                    max_game_rows=400, publish=durable)
+                                    max_game_rows=400, publish=durable,
+                                    retained_byte_budget=retained_byte_budget - progress_bytes)
     except BaseException:
         dispatcher.close(timeout=min(deadline_seconds, 30))
         raise
@@ -272,18 +322,23 @@ def serve_ceres_stream(
         outgoing.write(json.dumps(message, sort_keys=True) + "\n")
         outgoing.flush()
 
-    try:
-        emit({"state": "READY_FOR_GAME", "gpu_session_opened": False,
-              **({"fake_cpu": fake_cpu} if fake_cpu is not None else {})})
-        while not closing or labels.pending or held is not None:
-            control()
-            if time.monotonic() >= deadline:
-                raise TimeoutError("finite Ceres RPC budget expired; owned state retained")
+    class CeresLabelDomain:
+        """Immutable game admission, durable replies and explicit accepted drain."""
+
+        def wait_for_input(self, timeout: float) -> None:
+            # The common runner owns blocking/wakeup. Socket readiness is an
+            # external wait, not a blocking operation inside a lane advance.
+            select.select([incoming], [], [], timeout)
+
+        def advance(self) -> AdvanceResult:
+            nonlocal held, closing, wire_buffer
+            progress = False
             for game_id in labels.drain():
                 message = messages[game_id]
                 emit({**responses.pop(game_id), "state": "GAME_DURABLE", "game_id": message["game_id"],
                       **({"unit_id": message["unit_id"], "request_id": game_id} if unit_roster else {})})
                 del messages[game_id]
+                progress = True
             if held is not None:
                 message, roots = held
                 try:
@@ -294,8 +349,9 @@ def serve_ceres_stream(
                 else:
                     messages[key] = message
                     held = None
+                    progress = True
             if not closing and held is None:
-                ready, _, _ = select.select([incoming], [], [], 0 if b"\n" in wire_buffer else poll_seconds)
+                ready, _, _ = select.select([incoming], [], [], 0)
                 if ready or b"\n" in wire_buffer:
                     if b"\n" not in wire_buffer:
                         chunk = os.read(incoming.fileno(), 4096)
@@ -307,40 +363,72 @@ def serve_ceres_stream(
                             wire_buffer += chunk
                             if len(wire_buffer) > 8192:
                                 raise ValueError("Ceres RPC wire buffer exceeds bound")
-                    if b"\n" not in wire_buffer:
-                        continue
-                    line, wire_buffer = wire_buffer.split(b"\n", 1)
-                    message = json.loads(line)
-                    if message["op"] == "stop":
-                        closing = True
-                        dispatcher.flush()
-                    elif message["op"] == "game":
-                        game_id = message["game_id"]
-                        if unit_roster is not None:
-                            unit = message.get("unit_id")
-                            if unit not in unit_roster or type(game_id) is not int or not 0 <= game_id < 128:
-                                raise ValueError("exact local unit/game namespace required")
-                            request = unit_roster.index(unit) * 128 + game_id
-                            if message.get("request_id") != request:
-                                raise ValueError("Ceres wire namespace changed")
-                            game_id = request
-                        if (type(game_id) is not int or not 0 <= game_id < total_games
-                                or game_id in labels.pending or game_id in labels.durable):
-                            raise ValueError("distinct finite Ceres game RPC required")
-                        held = message, load_roots(message)
-                    else:
-                        raise ValueError("unsupported Ceres game RPC operation")
-            else:
-                time.sleep(min(poll_seconds, 0.01))
+                        progress = True
+                    if b"\n" in wire_buffer:
+                        line, wire_buffer = wire_buffer.split(b"\n", 1)
+                        message = json.loads(line)
+                        if message["op"] == "stop":
+                            closing = True
+                            dispatcher.flush()
+                        elif message["op"] == "game":
+                            game_id = message["game_id"]
+                            if unit_roster is not None:
+                                unit = message.get("unit_id")
+                                if unit not in unit_roster or type(game_id) is not int or not 0 <= game_id < 128:
+                                    raise ValueError("exact local unit/game namespace required")
+                                request = unit_roster.index(unit) * 128 + game_id
+                                if message.get("request_id") != request:
+                                    raise ValueError("Ceres wire namespace changed")
+                                game_id = request
+                            if (type(game_id) is not int or not 0 <= game_id < total_games
+                                    or game_id in labels.pending or game_id in labels.durable):
+                                raise ValueError("distinct finite Ceres game RPC required")
+                            held = message, load_roots(message)
+                            if len(held[1]) > labels.max_game_rows:
+                                raise ValueError("Ceres held input exceeds bounded game rows")
+                        else:
+                            raise ValueError("unsupported Ceres game RPC operation")
+                        progress = True
+            waits = tuple(future for _, future in labels.pending.values() if not future.done())
+            if labels._writing is not None:
+                waits += (labels._writing[1],)
+            return AdvanceResult(
+                progress=progress,
+                terminal=closing and not labels.pending and held is None,
+                waits=waits, wait_seconds=min(poll_seconds, 0.01),
+                wait=self.wait_for_input if not closing and held is None else None,
+            )
+
+    primary_error: BaseException | None = None
+    try:
+        emit({"state": "READY_FOR_GAME", "gpu_session_opened": False,
+              **({"fake_cpu": fake_cpu} if fake_cpu is not None else {})})
+        runner = GenerationSessionRunner(control=control, deadline=deadline, idle_wait=min(poll_seconds, 0.01))
+        runner.run(CeresLabelDomain().advance)
         result = {"status": "C3_GAME_LABEL_SERVICE_COMPLETE_NOT_ADMISSION",
-                  "games": len(labels.durable), "logical_batch_histogram": dispatcher.histogram}
+                  "games": len(labels.durable), "logical_batch_histogram": dispatcher.histogram,
+                  "retained_byte_budget": retained_byte_budget, "progress_reserved_bytes": progress_bytes,
+                  "peak_reserved_label_bytes": labels.credits.peak,
+                  "backend_stages": dispatcher.stage_stats}
         emit(result)
         return result
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
-        try:
-            dispatcher.close(timeout=min(deadline_seconds, 30))
-        finally:
-            labels.close(timeout=min(deadline_seconds, 30))
+        close_deadline = time.monotonic() + min(deadline_seconds, 30)
+        for owner in (dispatcher, labels):
+            try:
+                owner.close(timeout=max(0, close_deadline - time.monotonic()))
+            except TimeoutError as exc:
+                if owner.is_alive:
+                    custody = ProducerJoinTimeout(
+                        "Ceres service shutdown budget expired; accepted ownership retained",
+                        dispatcher, labels, held, messages, responses, infer, publish, incoming, outgoing,
+                    )
+                    raise custody from (primary_error or exc)
+                if primary_error is None:
+                    raise
 
 
 def main() -> None:
@@ -370,7 +458,7 @@ def main() -> None:
     shared = config["shared_service"]
     required = {"units", "max_games", "target_rows", "max_rows", "batch_wait_ms", "poll_seconds",
                 "deadline_seconds", "physical_batch", "source_pins", "retained_service_source", "publisher_source"}
-    if set(shared) != required:
+    if set(shared) - {"retained_byte_budget"} != required:
         raise ValueError("closed shared service configuration required")
     seconds = shared["deadline_seconds"]
     if not math.isfinite(seconds) or not 0 < seconds <= 600:
@@ -384,11 +472,34 @@ def main() -> None:
         deadline = min(deadline, parent_deadline)
     if not args.fake_cpu and shared["physical_batch"] != 32:
         raise ValueError("real256/512 require independent shape-qualified owner loader; unarmed")
-    for relative in ("chess_anti_engine/teacher_dispatch.py", "scripts/ceres_shared_game_service.py",
+    for relative in ("chess_anti_engine/completion.py", "chess_anti_engine/producer_executor.py",
+            "chess_anti_engine/generation_runtime.py", "chess_anti_engine/staged_execution.py",
+            "chess_anti_engine/async_safety.py",
+            "chess_anti_engine/teacher_dispatch.py", "chess_anti_engine/request_routing.py",
+                     "scripts/ceres_shared_game_service.py",
                      "scripts/ceres_raw_backend.py", "scripts/shared_teacher_generation.py"):
         path = Path(__file__).resolve().parents[1] / relative
         if shared["source_pins"].get(relative) != hashlib.sha256(path.read_bytes()).hexdigest():
             raise ValueError("shared service consequential source closure changed")
+    # Disk pins also bind the modules actually imported into this interpreter.
+    from chess_anti_engine import completion, producer_executor, generation_runtime, staged_execution, async_safety
+    from chess_anti_engine import teacher_dispatch, request_routing
+    from scripts import shared_teacher_generation
+    for relative, module in (
+        ("chess_anti_engine/completion.py", completion),
+        ("chess_anti_engine/producer_executor.py", producer_executor),
+        ("chess_anti_engine/generation_runtime.py", generation_runtime),
+        ("chess_anti_engine/staged_execution.py", staged_execution),
+        ("chess_anti_engine/async_safety.py", async_safety),
+        ("chess_anti_engine/teacher_dispatch.py", teacher_dispatch),
+        ("chess_anti_engine/request_routing.py", request_routing),
+        ("scripts/shared_teacher_generation.py", shared_teacher_generation),
+        ("scripts/ceres_raw_backend.py", ceres_raw_backend),
+    ):
+        source_file = module.__file__
+        if (source_file is None
+                or shared["source_pins"].get(relative) != hashlib.sha256(Path(source_file).read_bytes()).hexdigest()):
+            raise ValueError("loaded shared Ceres source closure changed")
     plan = config["qualified_plan"]
     cpu_paths = plan.get("cpu_fixture_paths")
     if cpu_paths is not None:
@@ -447,15 +558,14 @@ def main() -> None:
     accounting: dict[str, int] = {}
     provider = None
     session = None
-    bound = None
     def control() -> None:
         if time.monotonic() >= deadline:
             raise TimeoutError("inherited service setup/inference deadline expired")
         if not args.fake_cpu:
             comparison.guard(args, plan)
     control()
-    def infer(roots: Sequence[Any]) -> Sequence[Any]:
-        nonlocal session, provider, bound
+    def initialize_session(roots: Sequence[Any]) -> None:
+        nonlocal session, provider
         control()
         if session is None:
             if args.fake_cpu:
@@ -475,13 +585,40 @@ def main() -> None:
                     "scope": "three fixed32 warmups; same persistent shared label session", "warmup_calls": 3})
                 provider = {"path": str(proof_path), "sha256": comparison.sha(proof_path)}
             session.calls.clear()
-            bound = bind_ceres_raw_backend(session=session, physical_batch=shared["physical_batch"],
-                gather_context=api[-2].ceres_tpg_gather_context, gather_indices=api[6], accounting=accounting)
-        assert bound is not None
-        try:
-            return bound(roots)
-        finally:
-            session.calls.clear()  # retain aggregate validated counters, no unbounded call history
+
+    class SessionProxy:
+        def run(self, names: Any, feeds: Any) -> Any:
+            if session is None:
+                raise RuntimeError("Ceres session used before qualified initialization")
+            return session.run(names, feeds)
+
+    # Construct no GPU session here. CPU preparation can progress independently;
+    # lazy session startup/warmup/proof is a first-execute barrier on its owner.
+    bound = bind_ceres_raw_backend(session=SessionProxy(), physical_batch=shared["physical_batch"],
+        gather_context=api[-2].ceres_tpg_gather_context, gather_indices=api[6], accounting=accounting)
+
+    class LazyServiceBackend:
+        def prepare(self, roots: Sequence[Any]) -> Any:
+            return tuple(roots[:32]), bound.prepare(roots)
+
+        def execute(self, prepared: Any) -> Any:
+            initialize_session(prepared[0])
+            active_session = session
+            if active_session is None:
+                raise RuntimeError("Ceres session initialization returned no session")
+            try:
+                return bound.execute(prepared[1])
+            finally:
+                active_session.calls.clear()  # aggregate successful counts only
+
+        def finish(self, prepared: Any, fetched: Any) -> Sequence[Any]:
+            return bound.finish(prepared[1], fetched)
+
+        def __call__(self, roots: Sequence[Any]) -> Sequence[Any]:
+            prepared = self.prepare(roots)
+            return self.finish(prepared, self.execute(prepared))
+
+    infer = LazyServiceBackend()
     load, publish = bind_retained_ceres_history(retained=retained, comparison=comparison, publisher=publisher,
         api=api, units=units, model=plan["models"]["ceres"], fake_cpu=args.fake_cpu,
         physical_batch=shared["physical_batch"], provider=lambda: provider,
@@ -490,7 +627,8 @@ def main() -> None:
         max_games=shared["max_games"], target_rows=shared["target_rows"], max_rows=shared["max_rows"],
         batch_wait_ms=shared["batch_wait_ms"], poll_seconds=shared["poll_seconds"],
         deadline_seconds=max(0.001, deadline - time.monotonic()), load_roots=load, infer=infer, publish=publish,
-        control=control, unit_roster=tuple(units), fake_cpu=args.fake_cpu)
+        control=control, unit_roster=tuple(units), fake_cpu=args.fake_cpu,
+        retained_byte_budget=shared.get("retained_byte_budget"))
     publisher.durable_json(out / "RESULT.json", {**result, "status": "CPU_FAKE_ONLY" if args.fake_cpu else result["status"],
         "successful_validated_physical_accounting": accounting, "admission_credit": 0})
 

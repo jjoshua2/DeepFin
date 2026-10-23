@@ -22,16 +22,23 @@ import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding import rep_fix
-from chess_anti_engine.encoding.cboard_encode import encode_cboard
+from chess_anti_engine.encoding.cboard_encode import encode_cboard, encode_cboard_batch
 from chess_anti_engine.encoding.encode import input_plane_count
 from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding, x_to_lc0_planes
 from chess_anti_engine.eval.rvg_surgery import FINGERPRINT_BYTES, position_fingerprints
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE, legal_move_indices
-from scripts import gen_sf_rooted_corpus as corpus
+from scripts.bt4_model_arithmetic import validate_model_wdl
 from scripts.bt4_policy_dump import compact_legal_policy, resolve_policy_output
-from scripts.bt4_raw_corpus_sidecar import resolve_wdl_output, validate_wdl_values
+from scripts.bt4_prepared_root import BT4LegalSnapshot, BT4PreparedInput
 
-_ZERO_LOGIT = np.float32(-1e9)
+from scripts.bt4_root_contracts import (
+    BT4RootOutput as BT4RootOutput,
+    input_tensor_key as input_tensor_key,
+    resolve_wdl_output as resolve_wdl_output,
+    _ZERO_LOGIT as _ZERO_LOGIT,
+    _search_policy_logits as _search_policy_logits,
+    _search_wdl_logits as _search_wdl_logits,
+)
 
 
 def _feed_row_sha256(input_name: str, row: np.ndarray) -> str:
@@ -46,58 +53,22 @@ def _feed_row_sha256(input_name: str, row: np.ndarray) -> str:
     return digest.hexdigest()
 
 
-def _search_policy_logits(dense_policy: np.ndarray) -> np.ndarray:
-    """Compact search logits whose legal softmax retains exact zero mass."""
-    logits = np.full((COMPACT_POLICY_SIZE,), _ZERO_LOGIT, dtype=np.float32)
-    positive = dense_policy > 0.0
-    logits[positive] = np.log(dense_policy[positive]).astype(np.float32)
-    return logits
-
-
-def _search_wdl_logits(raw: np.ndarray, kind: str) -> np.ndarray:
-    """Stable search-only logits; never alter the native WDL observation."""
-    values = np.asarray(raw, dtype=np.float64)
-    if kind == "probabilities":
-        logits = np.full((3,), float(_ZERO_LOGIT), dtype=np.float64)
-        positive = values > 0.0
-        logits[positive] = np.log(values[positive])
-    elif kind == "logits":
-        with np.errstate(over="ignore"):
-            logits = values - values.max()
-        logits = np.maximum(logits, float(_ZERO_LOGIT))
-    else:
-        raise ValueError(f"unsupported WDL output kind {kind!r}")
-    result = logits.astype(np.float32)
-    if not np.isfinite(result).all():
-        raise ValueError("BT4 WDL cannot be represented as finite search logits")
-    return result
+@dataclass(frozen=True)
+class _PreparedFeed:
+    feed: np.ndarray
+    feed_hashes: tuple[str, ...]
+    root: bool
 
 
 @dataclass(frozen=True)
-class BT4RootOutput:
-    """In-memory root observation, not a complete corpus provenance record."""
-
-    fen: str
-    input_key: str
-    source_key: bytes
-    policy_t1: np.ndarray  # dense lc0_1858, float32; not search-improved policy
-    wdl_raw: np.ndarray  # native dtype and named head; side-to-move POV
-    policy_output: str
-    wdl_output: str
-    wdl_kind: str
-    model_sha256: str
-    input_name: str
-    input_dtype: str
-    input_history_encoding: str
-    input_extra_features: str
-    history_rep_fix: bool
-    onnx_feed_sha256: str = ""
-    verified_session_sha256: str | None = None
-
-    def search_inputs(self) -> tuple[np.ndarray, np.ndarray]:
-        """Fresh batched logits for search; root-only actors retain no derived copy."""
-        return (_search_policy_logits(self.policy_t1)[None],
-                _search_wdl_logits(self.wdl_raw, self.wdl_kind)[None])
+class BT4PreparedExecution:
+    """Validated, independently owned CPU input and immutable root identities."""
+    owner: Any
+    inference: _PreparedFeed
+    fens: tuple[str, ...]
+    input_keys: tuple[str, ...]
+    source_keys: tuple[bytes, ...]
+    legal: tuple[BT4LegalSnapshot, ...]
 
 
 class BT4OnnxEvaluator:
@@ -178,30 +149,43 @@ class BT4OnnxEvaluator:
             )
         return arr
 
-    def _infer(self, x: np.ndarray, *, root: bool = False) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    def _prepare_feed(self, x: np.ndarray, *, root: bool) -> _PreparedFeed:
         if self.fixed_batch_size is not None and len(x) != self.fixed_batch_size:
             raise ValueError("BT4 row count differs from fixed ONNX batch size")
-        feed = x_to_lc0_planes(
+        feed = np.array(x_to_lc0_planes(
             x, input_history_encoding=self.input_history_encoding,
-        ).astype(self.input_dtype, copy=False)
-        feed_hashes: list[str] = []
-        if root:
-            feed_hashes = [_feed_row_sha256(self.input_name, row) for row in feed]
-        if root:
-            # Count submitted ONNX calls/rows, including a session failure.
+        ), dtype=self.input_dtype, copy=True, order="C")
+        hashes = tuple(_feed_row_sha256(self.input_name, row) for row in feed) if root else ()
+        feed.flags.writeable = False
+        return _PreparedFeed(feed, hashes, root)
+
+    def _execute_feed(self, prepared: _PreparedFeed) -> tuple[np.ndarray, ...]:
+        self._require_history_rep_fix()
+        if prepared.root:
+            # Count submitted calls/rows, including a session failure.
             self.root_calls += 1
-            self.root_rows += len(x)
+            self.root_rows += len(prepared.feed)
         fetched = self.sess.run(
-            [self.policy_output, self.wdl_contract["output"]], {self.input_name: feed},
+            [self.policy_output, self.wdl_contract["output"]],
+            {self.input_name: prepared.feed},
         )
+        # Take output ownership before the session owner may run another call.
+        return tuple(np.array(value, copy=True, order="C") for value in fetched)
+
+    def _finish_feed(self, prepared: _PreparedFeed, fetched: Any) -> tuple[np.ndarray, np.ndarray]:
         if len(fetched) != 2:
             raise ValueError("BT4 session returned the wrong number of named outputs")
         policy = np.asarray(fetched[0], dtype=np.float32)
         values = np.asarray(fetched[1])
-        if policy.shape != (len(x), COMPACT_POLICY_SIZE):
+        if policy.shape != (len(prepared.feed), COMPACT_POLICY_SIZE):
             raise ValueError(f"BT4 policy shape {policy.shape} is not (N,{COMPACT_POLICY_SIZE})")
-        validate_wdl_values(values, len(x), self.wdl_contract)
-        return policy, values, feed_hashes
+        validate_model_wdl(values, len(prepared.feed), self.wdl_contract, self.model_sha256)
+        return policy, values
+
+    def _infer(self, x: np.ndarray, *, root: bool = False) -> tuple[np.ndarray, np.ndarray, list[str]]:
+        prepared = self._prepare_feed(x, root=root)
+        policy, values = self._finish_feed(prepared, self._execute_feed(prepared))
+        return policy, values, list(prepared.feed_hashes)
 
     def evaluate_root(self, board: chess.Board, x: np.ndarray) -> BT4RootOutput:
         """Singleton convenience path with the same validation as batched roots."""
@@ -211,24 +195,74 @@ class BT4OnnxEvaluator:
     def evaluate_roots(
         self, boards: Sequence[chess.Board], x_batch: np.ndarray,
     ) -> list[BT4RootOutput]:
-        """Validate every root, then retain aligned outputs from one ONNX call.
+        """Strict public boundary: independently verify every full board history."""
+        prepared = self._prepare_roots(boards, x_batch)
+        return list(self.finish(prepared, self.execute(prepared)))
 
-        History/shape/identity failures reject the entire batch before inference.
-        The session is never asked to evaluate padding or an empty root batch.
+    def evaluate_prepared_roots(self, payloads: Sequence[BT4PreparedInput]) -> list[BT4RootOutput]:
+        prepared = self.prepare(payloads)
+        return list(self.finish(prepared, self.execute(prepared)))
+
+    def prepare(self, rows: Sequence[Any]) -> BT4PreparedExecution:
+        """CPU-only validation/conversion shared by synchronous and staged APIs."""
+        self._require_history_rep_fix()
+        rows = tuple(rows)
+        if not rows:
+            raise ValueError("BT4 root boards and encoded batch must have equal nonzero length")
+        if isinstance(rows[0], BT4PreparedInput):
+            for payload in rows:
+                if type(payload) is not BT4PreparedInput:
+                    raise TypeError("BT4 internal roots require canonical prepared inputs")
+                if (payload.model_sha256 != self.model_sha256
+                        or payload.input_history_encoding != self.input_history_encoding
+                        or payload.input_extra_features != self.input_extra_features
+                        or payload.history_rep_fix is not self.history_rep_fix
+                        or not payload._matches_board(payload._borrow_board())):
+                    raise ValueError("BT4 prepared input belongs to another root or model")
+            return self._prepare_roots(
+                [payload._borrow_board() for payload in rows],
+                np.stack([payload.x for payload in rows]), prepared=rows,
+            )
+        boards, inputs = zip(*rows, strict=True)
+        return self._prepare_roots(boards, np.stack(inputs))
+
+    def execute(self, prepared: BT4PreparedExecution) -> tuple[np.ndarray, ...]:
+        """Session-owner-only stage; provider qualification wraps this boundary."""
+        if prepared.owner is not self:
+            raise ValueError("BT4 prepared execution belongs to another evaluator")
+        return self._execute_feed(prepared.inference)
+
+    def __call__(self, rows: Sequence[Any]) -> tuple[BT4RootOutput, ...]:
+        prepared = self.prepare(rows)
+        return self.finish(prepared, self.execute(prepared))
+
+    def _prepare_roots(
+        self, boards: Sequence[chess.Board], x_batch: np.ndarray,
+        *, prepared: tuple[BT4PreparedInput, ...] | None = None,
+    ) -> BT4PreparedExecution:
+        """One canonical validation/inference boundary for both entry points.
+
+        Rebuild verification CBoards independently from Python full histories,
+        never from the persistent actor CBoards. No inference is attempted until
+        all rows pass. This deliberately retains the second encoding operation.
         """
         self._require_history_rep_fix()
         arr = self._checked_inputs(x_batch)
         if not boards or len(boards) != len(arr):
             raise ValueError("BT4 root boards and encoded batch must have equal nonzero length")
-        for idx, board in enumerate(boards):
-            if board.legal_moves.count() == 0:
-                raise ValueError(f"BT4 root {idx} has no legal move")
-            expected = encode_cboard(
-                CBoard.from_board(board),
-                input_history_encoding=self.input_history_encoding,
-                input_extra_features=self.input_extra_features,
-            )
-            if not np.array_equal(arr[idx], expected):
+        legal = (
+            [BT4LegalSnapshot(board) for board in boards] if prepared is None
+            else [payload.legal for payload in prepared]
+        )
+        expected = encode_cboard_batch(
+            [CBoard.from_board(board) for board in boards],
+            input_history_encoding=self.input_history_encoding,
+            input_extra_features=self.input_extra_features,
+        )
+        if expected.shape != arr.shape:
+            raise ValueError("BT4 verification encoding batch has the wrong shape")
+        for idx, (row, reference) in enumerate(zip(arr, expected)):
+            if not np.array_equal(row, reference):
                 raise ValueError(f"BT4 root {idx} board/history does not match encoded input")
         source_keys = position_fingerprints(
             arr, input_history_encoding=self.input_history_encoding,
@@ -238,11 +272,30 @@ class BT4OnnxEvaluator:
         ):
             raise ValueError("BT4 root source fingerprint is unavailable")
         fens = [board.fen() for board in boards]
-        input_keys = [corpus.input_tensor_key(row) for row in arr]
-        policy_rows, native_values, feed_hashes = self._infer(arr, root=True)
+        input_keys = [input_tensor_key(row) for row in arr]
+        if prepared is not None and any(
+            (payload.fen, payload.input_key, payload.source_key)
+            != (fen, key, source_key)
+            for payload, fen, key, source_key in zip(prepared, fens, input_keys, source_keys)
+        ):
+            raise ValueError("BT4 prepared input identity disagrees with verified input")
+        return BT4PreparedExecution(
+            self, self._prepare_feed(arr, root=True), tuple(fens), tuple(input_keys),
+            tuple(source_keys), tuple(legal),
+        )
+
+    def finish(self, prepared: BT4PreparedExecution, fetched: Any) -> tuple[BT4RootOutput, ...]:
+        """CPU-only head validation and immutable legal-policy assembly."""
+        if prepared.owner is not self:
+            raise ValueError("BT4 prepared execution belongs to another evaluator")
+        policy_rows, native_values = self._finish_feed(prepared.inference, fetched)
+        fens, input_keys, source_keys, legal = (
+            prepared.fens, prepared.input_keys, prepared.source_keys, prepared.legal,
+        )
+        feed_hashes = prepared.inference.feed_hashes
         outputs = []
-        for idx, board in enumerate(boards):
-            _, _, dense = compact_legal_policy(board, policy_rows[idx])
+        for idx, snapshot in enumerate(legal):
+            dense = snapshot._dense_policy(fens[idx], policy_rows[idx])
             raw = native_values[idx].copy()
             for value in (dense, raw):
                 value.flags.writeable = False
@@ -258,7 +311,7 @@ class BT4OnnxEvaluator:
                 onnx_feed_sha256=feed_hashes[idx],
                 verified_session_sha256=self.verified_session_sha256,
             ))
-        return outputs
+        return tuple(outputs)
 
     def evaluate_encoded(
         self, x: np.ndarray, relations: np.ndarray | None = None,

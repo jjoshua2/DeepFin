@@ -1,0 +1,171 @@
+{
+  "schema": "PR1110_LOGICAL_SUPPLY_CPU_SOURCE_DESIGN_V1",
+  "status": "SOURCE_HOLD_MISSING_AUTHENTICATED_NUMPY_ELF_DEPENDENCY_ROSTER",
+  "source_only": true,
+  "operator_executed": false,
+  "actual_runtime_closure": {
+    "path": "/tmp/deepfin-pr1110-production-20261021-v1/runtime-v6/scripts/bt4_runtime_closure_v1.json",
+    "sha256": "9d30112a802059feb4c177ca4efbabd280ebc6e6941eb75f8cb11d3cdfc24bc4",
+    "bytes": 91228,
+    "native_evidence": "bt4-qualification-intake-root-20261021-v1/RUNTIME-COPY-V8-ACTUAL-AND-CLOSURE-RAW-v1.json",
+    "raw_bytes_hash_verified": true
+  },
+  "selected_project_sources": [
+    {
+      "relative": "chess_anti_engine/__init__.py",
+      "runtime_path": "/tmp/deepfin-pr1110-production-20261021-v1/runtime-v6/chess_anti_engine/__init__.py",
+      "sha256": "36d2d5d42f1b8f07957b14e420a5e9a18c09acb9caeb32eb63252d335bc36d50",
+      "bytes": 199,
+      "native_readonly_source": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/__init__.py"
+    },
+    {
+      "relative": "chess_anti_engine/async_safety.py",
+      "runtime_path": "/tmp/deepfin-pr1110-production-20261021-v1/runtime-v6/chess_anti_engine/async_safety.py",
+      "sha256": "72d2db150d1ff4522e30cd6d586340cb0a93cd181e15240645b7ed7a7da8f70c",
+      "bytes": 4889,
+      "native_readonly_source": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/async_safety.py"
+    },
+    {
+      "relative": "chess_anti_engine/request_routing.py",
+      "runtime_path": "/tmp/deepfin-pr1110-production-20261021-v1/runtime-v6/chess_anti_engine/request_routing.py",
+      "sha256": "6a656cffe5a503bd0c0ed7f2b93291fa0cfc44c9f90ba7aa112a874f26827e46",
+      "bytes": 5123,
+      "native_readonly_source": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/request_routing.py"
+    },
+    {
+      "relative": "chess_anti_engine/staged_execution.py",
+      "runtime_path": "/tmp/deepfin-pr1110-production-20261021-v1/runtime-v6/chess_anti_engine/staged_execution.py",
+      "sha256": "a02bc7eb86efde6910d6852056ef5414728885e9da733bbed41e1a17da6508f2",
+      "bytes": 15931,
+      "native_readonly_source": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/staged_execution.py"
+    },
+    {
+      "relative": "chess_anti_engine/teacher_dispatch.py",
+      "runtime_path": "/tmp/deepfin-pr1110-production-20261021-v1/runtime-v6/chess_anti_engine/teacher_dispatch.py",
+      "sha256": "ce928614666c79075e1e69b9c174d26064b45bb0100d419eac792d963f91c15c",
+      "bytes": 11013,
+      "native_readonly_source": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/teacher_dispatch.py"
+    },
+    {
+      "relative": "chess_anti_engine/completion.py",
+      "runtime_path": "/tmp/deepfin-pr1110-production-20261021-v1/runtime-v6/chess_anti_engine/completion.py",
+      "sha256": "0f34a5084cc01061d226b0ec99b50db96596d2dd73a29dcd83a4af412fcdcb2c",
+      "bytes": 1875,
+      "native_readonly_source": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/completion.py"
+    },
+    {
+      "relative": "chess_anti_engine/producer_executor.py",
+      "runtime_path": "/tmp/deepfin-pr1110-production-20261021-v1/runtime-v6/chess_anti_engine/producer_executor.py",
+      "sha256": "1bbd86f857a37a90ed7e3184a840e02781df313812889ea35863ea21510f466a",
+      "bytes": 6842,
+      "native_readonly_source": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/producer_executor.py"
+    },
+    {
+      "relative": "chess_anti_engine/generation_runtime.py",
+      "runtime_path": "/tmp/deepfin-pr1110-production-20261021-v1/runtime-v6/chess_anti_engine/generation_runtime.py",
+      "sha256": "119cd832c1cdd43e6398b59a3276f78067b961fd2692e60bfc5a259f928a5222",
+      "bytes": 6555,
+      "native_readonly_source": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/generation_runtime.py"
+    },
+    {
+      "relative": "scripts/__init__.py",
+      "runtime_path": "/tmp/deepfin-pr1110-production-20261021-v1/runtime-v6/scripts/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "native_readonly_source": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/scripts/__init__.py"
+    },
+    {
+      "relative": "scripts/shared_teacher_generation.py",
+      "runtime_path": "/tmp/deepfin-pr1110-production-20261021-v1/runtime-v6/scripts/shared_teacher_generation.py",
+      "sha256": "32e6dbc5f2cbd9b698f2a380891af81e50410f528ac43e1141d3971e30f729f2",
+      "bytes": 26911,
+      "native_readonly_source": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/scripts/shared_teacher_generation.py"
+    }
+  ],
+  "external_pins": [
+    {
+      "module": "numpy",
+      "accepted_closure_pin": {
+        "path": "<python-site-packages>/numpy/__init__.py",
+        "sha256": "11a9455eb4297e45351657f5a60f198c21831c7a395f8c59a7361fb2edf785e5",
+        "version": "1.26.2"
+      },
+      "actual_byte_count": null
+    },
+    {
+      "module": "numpy.core._multiarray_umath",
+      "accepted_closure_pin": {
+        "path": "<python-site-packages>/numpy/core/_multiarray_umath.cpython-310-x86_64-linux-gnu.so",
+        "sha256": "66fd7a7c485be559a11fa2cd69b5d86ab87198f187067b572ab7f30ea1e41fa4",
+        "version": "3.1"
+      },
+      "actual_byte_count": null
+    },
+    {
+      "module": "chess",
+      "accepted_closure_pin": {
+        "path": "<python-site-packages>/chess/__init__.py",
+        "sha256": "1fde6a8e932508d14b31f6a584497b49c2969fc3c7cdc675347f819f0d667a5b",
+        "version": "1.11.2"
+      },
+      "actual_byte_count": null
+    }
+  ],
+  "method_ids": [
+    "dispatcher_320_fifo_scatter_tail_and_640_owned_row_credit",
+    "driver_two_disjoint_160_producer_completions_supply_320_exclusive_lanes",
+    "pool_raw_writer_then_owner_ack_refill_and_stop_retains_ownership"
+  ],
+  "method_design": [
+    {
+      "id": "dispatcher_320_fifo_scatter_tail_and_640_owned_row_credit",
+      "actual": "TeacherDispatcher target_rows320/max_rows640 submit_many/FIFO/scatter/flush/close",
+      "fake": "Bounded in-memory echo backend with first-execute event; no ORT/model",
+      "observations": "Atomically admit640 in bounded request(s), hold first backend call to verify queued+running640 and rejection of1more; release, exact ordered scatter outputs, two320 chunks; submit17tail flush exact17. No640readinessclaim."
+    },
+    {
+      "id": "driver_two_disjoint_160_producer_completions_supply_320_exclusive_lanes",
+      "actual": "BT4GenerationDriver +5 BT4GamePool capacities64 +ProducerExecutor max_workers2/capacity2 +ExclusiveLaneRegistry",
+      "fake": "Only instance _advance_games replaced by explicit in-memory per-game prepare seam; never invokes original method/local native stepper import; fake per-game batch dispatch_inputs yields1identity token",
+      "observations": "First advance fills320 actualpoolslots and admits2disjoint160leases; fakeprepare barrier keeps both futures owned, duplicate samegame lane admit refuses. Release barrier, require both actualproducer futures done before next advance; settleall then actual atomic submit_many320 to actual dispatcher. Check320uniquegameidentities, exactbackend rows/scatter/rowcredit. No actual MCTS readiness, timing, throughput or fullworker geometry proof."
+    },
+    {
+      "id": "pool_raw_writer_then_owner_ack_refill_and_stop_retains_ownership",
+      "actual": "BT4GamePool drain_writes/_admit_writes and actualdriver _publish/_fill/credit/lane release",
+      "fake": "Explicit in-memory writer submit/Future and companion ACK Future; fake make_stepper/finalized slotidentity",
+      "observations": "Actualpoolcapacity1 remains owned after writerFuture completes/rawreceipt and unresolvedACK; exactmatching ownerACK accepts/release/refill nextgame; STOP with next admittedwriter receipt prevents newACK/refill and retains activeownership. Modeled protocol, not canonical checkpoint transaction integration."
+    }
+  ],
+  "teardown": "Always release test gates first; finite ProducerExecutor.finish then bounded explicit joins of its actual executor threads (finish(timeout) alone does not prove workerthread exit); TeacherDispatcher.close finite joins owner and waits its actualhost close; verify all actualtestowned Python threads dead. Fakewriter owns no threads. On unresolvedjoin preserve error/objects; no ECHILD or wholeOSthreadquiescence claim.",
+  "import_route": "CP310-I-S-B exact readonly runtime6 + existing sitepackages private sys.path prefixes; normal imports selected project modules +NumPy/chess. TYPE_CHECKING excludes stepper/evaluator; no fullworker import. Need exact external source/ELF roster before any launch.",
+  "draft_caps": {
+    "active_wall_seconds": 60,
+    "cleanup_seconds": 30,
+    "internal_active_deadline_seconds": 55,
+    "cpu_seconds_lower_only": 60,
+    "as_lower_bytes": 4294967296,
+    "proposed_explicit_read_bytes": 134217728,
+    "previous_unadmitted_draft_explicit_read_bytes": 16777216,
+    "output_bytes": 262144,
+    "cpu_affinity": "29,30",
+    "nice": 19,
+    "numeric_threads": 2,
+    "cuda_hidden": true,
+    "child_processes": 0,
+    "guest_writes": 0
+  },
+  "draft_read_change": "Distinct unadmitted planning proposal16MiB->128MiB only. No prior grant/resource authority transferred. Independent design/source review must decide compatibility before root may issue fresh one-use intent. If twice all-source/ELF hashing plus metadata exceeds128MiB STOP; no further increase.",
+  "missing": [
+    "Authenticated current normal NumPy extension/ELF dependency path+SHA roster and byte sizes (including transitive libraries actually loaded)",
+    "Before/after budget feasibility2xallrequiredhashbytes plus selectedsources/intent/closure/facts <=128MiB",
+    "Final exact source+proposal+argv+fresh nativeCreateNew intent schema after donor identities are known"
+  ],
+  "inventory_scope": "Native readonly inspected accepted runtime6closure and all rootintakeJSON for NumPy.libs/OpenBLAS/gfortran/quadmath strings; no current roster found. Historical scratchpad hits are not authenticated current donor evidence and were not adopted.",
+  "prohibitions": [
+    "No test/import/compile/WSL execution yet",
+    "No model/Torch/ORT/chess native stepper/backend",
+    "No sourcecopy/projectmutation/guardacquire/lease/queuewrite/child",
+    "No skippedfreshdependency identities or origin-stat substitute for bytes"
+  ],
+  "created_utc": "2026-10-21T13:05:11.3047005Z"
+}

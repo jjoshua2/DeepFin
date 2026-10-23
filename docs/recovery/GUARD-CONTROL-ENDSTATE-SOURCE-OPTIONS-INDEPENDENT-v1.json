@@ -1,0 +1,66 @@
+{
+  "schema": "PR1110_GUARD_CONTROL_ENDSTATE_SOURCE_OPTIONS_V1",
+  "status": "SOURCE_OPTIONS_ONLY_NO_IMPLEMENTATION_OR_EXPERIMENT_AUTHORITY",
+  "source_pins": {
+    "retained_consumer_export": "5e622271057694f9545b83067c0cd17c6ac5b95f5a4ca854e5fb0a7d6de43a77",
+    "negative_cpu_actual": "4363aa6053d8b7e359e59203ed49b6357ee8fd7639ef0fca27ee1b7f7ab00918",
+    "child": "689b878c62647155247f7c5d04b467df3abaf53f3baf9c8c878589c7edef22f3",
+    "parent": "39a3d45ba6297eeb44a2ab62f20ee9cfb299c7d94262b2b06ced09de68cda833",
+    "obligations": "83ce84f3a91a136f6530c07e3be9cbe2c54939846dfecb0baaed3c784b698b3f"
+  },
+  "answer": "No source-grounded route avoids repeated cross-filesystem observations of the same mutable externally writable paths while preserving every current dynamic check and detection boundary. Pure CPU cleanup can preserve them, but this candidate failed its numeric screen. A useful synthetic test can avoid filesystem traffic only by narrowing what it proves.",
+  "interfaces": [
+    "Child ParentDeadlineGuard.check: monotonic parent deadline first; full CURRENT controls_unchanged; retained.check. charge checks before and after retained.charge, whose implementation also checks. Preserve repeated calls; no silent deduplication.",
+    "Retained OwnerGuard holds parent/leases/limits, checks inherited identity/custody, STOP paths, wall deadline, current resource/physical/output/disk observations. Existing smaps_rollup detailed sample is explicitly aged, but opens each check; that existing special case grants no permission to cache control paths.",
+    "Parent preserved independently compares boot/former-owner absence, ordinary snapshot, each control presence/content and stopped checkpoints. Parent preservation and child per-call enforcement have distinct moments and scopes; neither replaces the other."
+  ],
+  "required_semantics": [
+    "Preserve absolute path strings and source-bound expected hashes, per-call CURRENT mapping/list/record aliases and original lookup/failure order, relative-path refusals and short circuits. Mutating stops/abort/record aliases midcall must affect the same subsequent operations.",
+    "For present markers preserve fresh canonical resolve and no-final-symlink open, regular/size/budget limits, complete authenticated bytes, fstat/lstat identity/stamp and growth checks; descriptor reuse alone misses pathname replacement.",
+    "For absent markers fresh lexists must detect dangling symlink as presence; retain all557 checks and seven abort paths in order on successful full invocation. A directory listing or stat-following substitute has different race/error/symlink behavior.",
+    "Preserve deadline, owner PID/birth/boot, lease/lock/custody/resource checks and exception propagation on the original owning thread/callback boundary. No historical observer receipt can stand in for current check."
+  ],
+  "credible_equivalent_options": [
+    {
+      "assessment": "Immutable literal schema RHS and pure exact-string lexical memo are source-equivalent under stated Path assumption; negative actual screen rejects adoption on benefit grounds. Other ordinary allocation cleanup must preserve CURRENT alias accesses and original dynamic operation transcript; no measured gain currently established.",
+      "option": "Pure local computation cleanup"
+    },
+    {
+      "assessment": "Only currently evidence-backed production choice within strict unchanged contract. Bank source explanation and failed optimization rather than infer a new action.",
+      "option": "Keep current guard/control implementation as coherent end-state"
+    },
+    {
+      "assessment": "Useful to reject semantic regressions without repeated cross-filesystem access. Exercise actual original function code with explicit IO doubles; proves boundary order/error/alias behavior only, cannot establish real latency, races, canonical resolution or performance benefit.",
+      "option": "Offline transcript/mutation harness"
+    },
+    {
+      "assessment": "Possible research candidate only: lower Python orchestration overhead while issuing same fresh ordered operations. Does not eliminate cross-filesystem traffic and has no benefit evidence. Needs exact errno/error/short-circuit/path encoding/GIL and callback-mutation semantics; native batching that snapshots inputs changes CURRENT alias timing.",
+      "option": "Native implementation retaining every operation"
+    }
+  ],
+  "material_contract_changes": [
+    {
+      "risk": "Changes observation-to-use latency and ownership; missed events/overflow/access errors/restarts or observer death can create stale state. Even synchronous rendezvous changes thread and alias boundary. Requires new explicit control contract, not equivalent optimization.",
+      "option": "Async observer/watch/inotify/shared receipt"
+    },
+    {
+      "risk": "Changes authoritative paths and writer/control discovery, synchronization/failure semantics; stale copy can miss original STOP. Explicitly outside current constraints.",
+      "option": "Copy/mirror markers to Linux-local paths or migrate controls"
+    },
+    {
+      "risk": "Changes filesystem consistency/error/custody assumptions and platform state; outside scope, no recommendation to apply.",
+      "option": "Mount/share/cache configuration or security policy change"
+    },
+    {
+      "risk": "Changes replacement detection, race windows, per-path error order, callback mutation and/or poll timing. Fresh bulk lookup is not automatically equivalent to sequential lexists; cannot claim elimination of crossings under present contract.",
+      "option": "Directory snapshot, persistent descriptors, negative cache, grouped parallel reads"
+    }
+  ],
+  "scientific_limits": [
+    "344mnt/c lexists boundaries dominate this measured class; no proof of unique9p/kernel syscall cause. Python boundary transcript equality is not kernel syscall trace equality.",
+    "Six real scans and20 controls are limited observations; three paired measurements median1.37% and one slower fail the declared screen. No model/GPU or production throughput justification.",
+    "Any future actual CPU source/action packet needs independent review; this report implements nothing and runs no observer/test/runtime."
+  ],
+  "tests_guest_imports_execution_performed": false,
+  "findings": []
+}

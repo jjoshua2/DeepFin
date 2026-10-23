@@ -1,0 +1,238 @@
+{
+  "schema": "PR1110_DIAGNOSTIC_60_PREREGISTRATION_DURABLE_SOURCE_V1",
+  "status": "SOURCE_ONLY_PREREGISTRATION_NOT_MODEL_ACTION_OR_RUNNABLE_GRANT",
+  "archive": "2026-10-21-diagnostic-60-preregistration-source-v1.zip",
+  "archive_sha256": "42ab9f9e254f275c7e23b6f7b855d45c0dbbb41ed4dab3626ffcf7d957fcb5a7",
+  "archive_bytes": 179713,
+  "member_count": 32,
+  "determinism": "Explicit sorted roster, fixed1980UTC timestamps, externalattributes0, compressionOptimal, exactsourcebytes.",
+  "all_member_hashes_read_back": true,
+  "all_original_sources_rehashed": true,
+  "members": [
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-sixty-second-diagnostic-draft-v1/FIVE-PURE-60-SOURCE-JOIN-CPU-PROPOSAL-v2.json",
+      "sha256": "9901cf35cc25e58cf4fdeb79eab6cde57004f5f686c851513bda95217df26bb8",
+      "path": "cpu-five/FIVE-PURE-60-SOURCE-JOIN-CPU-PROPOSAL-v2.json",
+      "bytes": 4907
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-sixty-second-diagnostic-draft-v1/qualify_diagnostic_60_source_joins_v1.py",
+      "sha256": "57ad31ba49d6feacfb3f048ea549294c89384631645ee175d943e46070fcb578",
+      "path": "cpu-five/qualify_diagnostic_60_source_joins_v1.py",
+      "bytes": 7266
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-sixty-second-diagnostic-draft-v1/qualify_diagnostic_60_source_joins_v1.sh",
+      "sha256": "77ec3f3e4ad441dc50641c8a251cbe78b63dc91804f1fa8e1d5f8c13f7bee7f6",
+      "path": "cpu-five/qualify_diagnostic_60_source_joins_v1.sh",
+      "bytes": 464
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-sixty-second-diagnostic-draft-v1/test_diagnostic_60_source_joins_v1.py",
+      "sha256": "73842153482210a50cd34f5a9e69bef45ae22f3b42a156cbf836b24bd2dc88e1",
+      "path": "cpu-five/test_diagnostic_60_source_joins_v1.py",
+      "bytes": 9338
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/finite_roster_adapter_v3.py",
+      "sha256": "e9eef16db86884dc7399566b094ae00a272580cdd390b2a397f231bcd5a5e3f1",
+      "path": "dependencies/finite_roster_adapter_v3.py",
+      "bytes": 13479
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/targeted_diagnostics_v1.py",
+      "sha256": "48dc44768aabdc4e18c4314abeeaefdb255e65ea54150c6b0d04285d36332a22",
+      "path": "dependencies/targeted_diagnostics_v1.py",
+      "bytes": 9421
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/targeted_diagnostics_v2.py",
+      "sha256": "444bf23fcd1850efcacd55bb888e7d275e3a02bde3846c80bf0813cecc336bb3",
+      "path": "dependencies/targeted_diagnostics_v2.py",
+      "bytes": 2616
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/targeted_diagnostics_v4.py",
+      "sha256": "998061bfe81aaf49eca04a71dbf5bdf1fe573f2877da340d4c143bce71249993",
+      "path": "dependencies/targeted_diagnostics_v4.py",
+      "bytes": 9304
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/DIAGNOSTIC-60-PREREGISTRATION-PUBLICATION-NOTE-v1.md",
+      "sha256": "6d116caeca631f8286c88880371afb0bce873cd88f1c4656368b8d721f88f494",
+      "path": "documentation/DIAGNOSTIC-60-PREREGISTRATION-PUBLICATION-NOTE-v1.md",
+      "bytes": 1159
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-sixty-second-diagnostic-draft-v1/construct_diagnostic_metadata_60s_v2.py",
+      "sha256": "0dbc757b55b1d2cbb4e57d3d110d26d09dfac1a4d52ad787873317b4f44e3810",
+      "path": "preregistration/construct_diagnostic_metadata_60s_v2.py",
+      "bytes": 24760
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-sixty-second-diagnostic-draft-v1/construct_diagnostic_metadata_entry_v1.py",
+      "sha256": "6f5a465dd4414ff1b49bfd75c42478ef9fc7699507ec72770631be4fa1841e3a",
+      "path": "preregistration/construct_diagnostic_metadata_entry_v1.py",
+      "bytes": 2475
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-sixty-second-diagnostic-draft-v1/DIAGNOSTIC-60-PREPARATION-SCOPE-v1.json",
+      "sha256": "c9fc418059183099de3fd1de276031de866d978a4911db26f57a4b8fe5ccfbb8",
+      "path": "preregistration/DIAGNOSTIC-60-PREPARATION-SCOPE-v1.json",
+      "bytes": 7864
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-sixty-second-diagnostic-draft-v1/DIAGNOSTIC-60-SOURCE-ONLY-DESIGN-v2.json",
+      "sha256": "ff5b496a900ba499f72cdfd37be3a20506043bc8a095d284f7484d87bfd11c56",
+      "path": "preregistration/DIAGNOSTIC-60-SOURCE-ONLY-DESIGN-v2.json",
+      "bytes": 9662
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-sixty-second-diagnostic-draft-v1/finite_all_three_custody_runtime_v5_v1.py",
+      "sha256": "f590c7e6b7338a624122d2257161e4f772e1e354cb5150288e2e0ca008a6aed0",
+      "path": "preregistration/finite_all_three_custody_runtime_v5_v1.py",
+      "bytes": 11708
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-sixty-second-diagnostic-draft-v1/finite_diagnostic_adapter_60s_v2.py",
+      "sha256": "79b1c8dc6c24d038c9609b574376eb2455b237867a30da3176fd6a0560b8edb3",
+      "path": "preregistration/finite_diagnostic_adapter_60s_v2.py",
+      "bytes": 5939
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-sixty-second-diagnostic-draft-v1/finite_diagnostic_child_60s_v1.py",
+      "sha256": "d96826ca415b35fbcdb43317b6a8b96f668cd655f099b407122bcbcb9658991e",
+      "path": "preregistration/finite_diagnostic_child_60s_v1.py",
+      "bytes": 26632
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-sixty-second-diagnostic-draft-v1/mechanical_binding_runtime_v5.py",
+      "sha256": "c97df5cc081b1fb524879007032ab1fb31e6ecf92f64f513568eb3ca0fd4e9bd",
+      "path": "preregistration/mechanical_binding_runtime_v5.py",
+      "bytes": 2615
+    },
+    {
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-sixty-second-diagnostic-draft-v1/parent_diagnostic_60s_v1.py",
+      "sha256": "2a465f8ecb1948e6bd8fc00038208b9cee3cdee95cdfc5182b2fc0e2fb28275b",
+      "path": "preregistration/parent_diagnostic_60s_v1.py",
+      "bytes": 41698
+    },
+    {
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/FIVE-PURE-60-CPU-ACTUAL-stderr.txt",
+      "sha256": "ccdf8d4ad0eac31f9070f0c02517f4b5811e4d70aedf18ae9c721dfbf48315e1",
+      "path": "raw/FIVE-PURE-60-CPU-ACTUAL-stderr.txt",
+      "bytes": 577
+    },
+    {
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/FIVE-PURE-60-CPU-ACTUAL-stdout.json",
+      "sha256": "9217eff52e50cb07431408f9dbdebb0718cad0f9b17786977ee055468c102370",
+      "path": "raw/FIVE-PURE-60-CPU-ACTUAL-stdout.json",
+      "bytes": 2297
+    },
+    {
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/FIVE-PURE-60-CPU-NATIVE-TERMINAL-v1.json",
+      "sha256": "4d0ec05a3073185b5ec124f3f834308235662b149f7420917bd35f8715286175",
+      "path": "raw/FIVE-PURE-60-CPU-NATIVE-TERMINAL-v1.json",
+      "bytes": 380
+    },
+    {
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/RUNTIME-COPY-V6-ACTUAL-AND-CLOSURE-RAW-v1.json",
+      "sha256": "3a9a92ec72b74f86e8b948acc196dcaee03a3759fe034a59c361ef6e344fc12d",
+      "path": "raw/RUNTIME-COPY-V6-ACTUAL-AND-CLOSURE-RAW-v1.json",
+      "bytes": 165390
+    },
+    {
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/RUNTIME-COPY-V6-ACTUAL-stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "raw/RUNTIME-COPY-V6-ACTUAL-stderr.txt",
+      "bytes": 0
+    },
+    {
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/RUNTIME-COPY-V6-ACTUAL-stdout.json",
+      "sha256": "586de88f9666051ecd78cc499083a69e6652335215a9a2664788ed8259f3976f",
+      "path": "raw/RUNTIME-COPY-V6-ACTUAL-stdout.json",
+      "bytes": 67874
+    },
+    {
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/RUNTIME-COPY-V6-NATIVE-TERMINAL-v1.json",
+      "sha256": "178d47383ff870a9a636b43593bb6b4c05d8bc25a9f01c7afc3fc7d17d7ad66c",
+      "path": "raw/RUNTIME-COPY-V6-NATIVE-TERMINAL-v1.json",
+      "bytes": 511
+    },
+    {
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/DIAGNOSTIC-60-BOUND-CONSTRUCTOR-V2-INDEPENDENT-SOURCE-REVIEW-v1.json",
+      "sha256": "71af91248eb705e7d871b9ab9dc6807e725052278d7931864ed8a9b363e3e6bf",
+      "path": "reviews/DIAGNOSTIC-60-BOUND-CONSTRUCTOR-V2-INDEPENDENT-SOURCE-REVIEW-v1.json",
+      "bytes": 1842
+    },
+    {
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/DIAGNOSTIC-60-CHILD-BINDINGS-CONSTRUCTOR-INDEPENDENT-SOURCE-REVIEW-v1.json",
+      "sha256": "4d55b4b9a97e5714f382b9bd7cba8c6064441a4050d4dab996a711f94b790939",
+      "path": "reviews/DIAGNOSTIC-60-CHILD-BINDINGS-CONSTRUCTOR-INDEPENDENT-SOURCE-REVIEW-v1.json",
+      "bytes": 4669
+    },
+    {
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/DIAGNOSTIC-60-WHOLE-PREPARATION-INDEPENDENT-REVIEW-v1.json",
+      "sha256": "41ed6ceed36ea5048b3a76bae73b8eee23e1aa8e5963e7bcc3b6168c9b1b5804",
+      "path": "reviews/DIAGNOSTIC-60-WHOLE-PREPARATION-INDEPENDENT-REVIEW-v1.json",
+      "bytes": 3160
+    },
+    {
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/FIVE-PURE-60-CPU-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "sha256": "e0b9d40036d5bad6c09377013d2482fc15d92ed2959f4f9d2a2bc345f0b3d3fc",
+      "path": "reviews/FIVE-PURE-60-CPU-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "bytes": 7456
+    },
+    {
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/FIVE-PURE-60-SOURCE-JOIN-CPU-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json",
+      "sha256": "5616d0eab7db698f3954f2aca4f70f42b30f727c6cba2b1962e6a7748d3b4146",
+      "path": "reviews/FIVE-PURE-60-SOURCE-JOIN-CPU-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json",
+      "bytes": 5419
+    },
+    {
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/RUNTIME-COPY-V6-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "sha256": "de9c76ec0104212ff246f01b142225701decbb2f1aff523b0497264ff39e130d",
+      "path": "reviews/RUNTIME-COPY-V6-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "bytes": 2567
+    },
+    {
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/RUNTIME-COPY-V6-RAW-BUNDLE-INDEPENDENT-REVIEW-v1.json",
+      "sha256": "dbf9bed8810985d039ac3675d7b8e7d71e5ec0785f8e83dbab043ca1c9f15b8c",
+      "path": "reviews/RUNTIME-COPY-V6-RAW-BUNDLE-INDEPENDENT-REVIEW-v1.json",
+      "bytes": 2171
+    }
+  ],
+  "accepted_cpu_five": {
+    "actual_sha256": "9217eff52e50cb07431408f9dbdebb0718cad0f9b17786977ee055468c102370",
+    "review_sha256": "e0b9d40036d5bad6c09377013d2482fc15d92ed2959f4f9d2a2bc345f0b3d3fc",
+    "scope": "Five pure whole-source joins with explicit doubles only; no actualcustody/runtimeimports/model/GPU.",
+    "passed": 5,
+    "training_credit": 0,
+    "product_credit": 0
+  },
+  "accepted_runtime_copy": {
+    "actual_sha256": "586de88f9666051ecd78cc499083a69e6652335215a9a2664788ed8259f3976f",
+    "review_sha256": "de9c76ec0104212ff246f01b142225701decbb2f1aff523b0497264ff39e130d",
+    "raw_bundle_sha256": "3a9a92ec72b74f86e8b948acc196dcaee03a3759fe034a59c361ef6e344fc12d",
+    "raw_bundle_review_sha256": "dbf9bed8810985d039ac3675d7b8e7d71e5ec0785f8e83dbab043ca1c9f15b8c",
+    "closure_sha256": "a492d9ad8c7480957e28c1503eb6cba7316816c6aae1514892d8db0d0bd34d3f",
+    "payload_sources": 615,
+    "module_roster": 43,
+    "scope": "Sourcecopy/rawidentityonly, no43actualimports/model/provider/GPU/60secondqualification."
+  },
+  "excluded": [
+    "All one-use decisions and intentfiles",
+    "Prepared action/child/parent packets",
+    "DIAGNOSTIC-60-INPUTS-FINAL/INACTIVE temporarymetadata inputs",
+    "No weights/model/data/NPZ/nativebinarypayload"
+  ],
+  "limits": [
+    "Preregistration/sourceescrow before modelattempt, not executablegrant",
+    "60active+180cleanup contemplateddiagnosticonly, same128/64geometry/guards/custody; nofull128/speed/productcredit",
+    "No aggregation or qualificationtransfer from priorattempts/CPU8/2/5/11/lostv8",
+    "Savedpending/progress capturetime notcurrentinflightatclosure norinferenceproof; no guaranteedcadence duringblockedcalls",
+    "Old sourceUNRUN labels preserved chronologically; no sourceactivation/adoption/retry/deploymentauthority"
+  ],
+  "provenance_privacy": "Workspace-relativearchive/source names; rawprovenancelocalpaths/process/source/modelhashreferences preserved byte-for-byte. Root reviews destinationvisibility.",
+  "activity": "Native source/evidence reads, SHA256, deterministicZIPconstruction/readback only; noimports/tests/guest/modelactions."
+}

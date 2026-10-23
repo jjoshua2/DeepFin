@@ -1,0 +1,139 @@
+{
+  "schema": "recovered_runtime_source_checkpoint_v1",
+  "status": "INCOMPLETE_UNQUALIFIED_NOT_V8",
+  "base": "1fdd4c854ace0d63ac08e18e87513741ea0eefec",
+  "capture_window_utc": "2026-10-20T18:35:10Z/2026-10-20T18:35:12Z",
+  "source_files": [
+    {
+      "path": "chess_anti_engine/async_safety.py",
+      "size_bytes": 4889,
+      "sha256": "72d2db150d1ff4522e30cd6d586340cb0a93cd181e15240645b7ed7a7da8f70c",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "chess_anti_engine/completion.py",
+      "size_bytes": 1875,
+      "sha256": "0f34a5084cc01061d226b0ec99b50db96596d2dd73a29dcd83a4af412fcdcb2c",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "chess_anti_engine/encoding/cboard_encode.py",
+      "size_bytes": 6023,
+      "sha256": "9fe7123de8c3ce74d328dc92200b8d5018a1bd4a6d3ed2dc21204c9b95e373b7",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "chess_anti_engine/fixed_domain_supervision.py",
+      "size_bytes": 6249,
+      "sha256": "100bcb17cbc09e5c1ad9723daf33658e47e9a80c1350a7d1d2f43a1a44c12be9",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "chess_anti_engine/generation_runtime.py",
+      "size_bytes": 6555,
+      "sha256": "119cd832c1cdd43e6398b59a3276f78067b961fd2692e60bfc5a259f928a5222",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "chess_anti_engine/producer_executor.py",
+      "size_bytes": 6058,
+      "sha256": "42400c79ef1730fc43e2d00b21cec27a0f6a666d4fd542b687b99b5aa397647b",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "chess_anti_engine/request_routing.py",
+      "size_bytes": 5123,
+      "sha256": "6a656cffe5a503bd0c0ed7f2b93291fa0cfc44c9f90ba7aa112a874f26827e46",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "chess_anti_engine/staged_execution.py",
+      "size_bytes": 10675,
+      "sha256": "26664e5fddc7b28b161ba1600173d6e9679faca406a660512d7f8a16feb2c5b9",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "chess_anti_engine/teacher_dispatch.py",
+      "size_bytes": 10672,
+      "sha256": "ea0fa3009ed9aca0078865e68c0a7c7b2fb420c98b58a95a32c9266a1f4e2b87",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "scripts/bt4_generation_evaluator.py",
+      "size_bytes": 19821,
+      "sha256": "34771c12f6971d49bd96e3d16b98b1bdcbcc0970c0337a1032fe72080ad5cd49",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "scripts/bt4_policy_dump.py",
+      "size_bytes": 54541,
+      "sha256": "db23233abf5b32038aad4531b5d5e9ed89359bff158a81a7c8f923cbfcf4c584",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "scripts/bt4_prepared_root.py",
+      "size_bytes": 7186,
+      "sha256": "2ca193a30afc8c802a54cfd20d91d4a6252cc036afda5c9bdb13128d13bc09bc",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "scripts/bt4_root_policy_stepper.py",
+      "size_bytes": 28885,
+      "sha256": "14f6f0fa08acec3c8c0fa6e6e44c39243e81b3f7d118812421dbc2e01d08841f",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "scripts/bt4_root_policy_worker.py",
+      "size_bytes": 78840,
+      "sha256": "b2f378deadb92fb60586851186cb4f032a8d1459082255efd73d0c0c612c61bb",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "scripts/ceres_pipelined_client.py",
+      "size_bytes": 6641,
+      "sha256": "f4bae6e68d84ac04954040d2ca359ff3de27d1d784a61535272562fdc7e44fb6",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "scripts/ceres_raw_backend.py",
+      "size_bytes": 9088,
+      "sha256": "23831f0fcd0eda92217da800c01eb063a220c0c088a21d3aa74b96e3c20d3621",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "scripts/ceres_shared_game_service.py",
+      "size_bytes": 36101,
+      "sha256": "e0776dcce0acc69980c32061a11511ab850c78266edb50824549b634f0a04fef",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "scripts/shared_teacher_generation.py",
+      "size_bytes": 26911,
+      "sha256": "32e6dbc5f2cbd9b698f2a380891af81e50410f528ac43e1141d3971e30f729f2",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    },
+    {
+      "path": "scripts/shared_teacher_owner.py",
+      "size_bytes": 30756,
+      "sha256": "4c4fb84194b5a454b90797ffe6ff7fd1efb4dd524bffd2bb056684e2109114c0",
+      "origin": "byte-identical Python source from two retained runtime fixtures, captured before final v8"
+    }
+  ],
+  "verification": "SHA256 and byte equality across two retained source copies only; no code execution or current candidate tests",
+  "exclusions": [
+    "fixture configuration and interpreter closures",
+    "native binaries and bytecode",
+    "models, datasets and outputs",
+    "private notes/logs and unrelated artifact packets",
+    "earlier conflicting source variants",
+    "ten external owner-helper fixture copies without authenticated repository-addition provenance"
+  ],
+  "missing": [
+    "final selfplay adapter and manager integration",
+    "final Torch dispatcher routing/staged integration",
+    "native encoder source integration if absent from base",
+    "guard callback affinity and final acceptance ordering corrections",
+    "complete regression tests and qualification harness",
+    "eight later backlog fixes and final independent-review receipts"
+  ]
+}

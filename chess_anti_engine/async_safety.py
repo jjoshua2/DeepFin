@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from contextlib import contextmanager
+from enum import Enum
 from typing import Any, Protocol
 
 
@@ -15,6 +16,33 @@ class CompletionEvent(Protocol):
     """A completion receipt; synchronize before reading returned CPU tensors."""
 
     def synchronize(self) -> None: ...
+
+
+class Readiness(Enum):
+    READY = "ready"
+    NOT_READY = "not_ready"
+    UNKNOWN = "unknown"
+
+
+def completion_readiness(event: Any) -> Readiness:
+    """Absence/failure of a query is not evidence that work is still running."""
+    if event is None:
+        return Readiness.READY
+    readiness = getattr(event, "readiness", None)
+    if callable(readiness):
+        try:
+            value = readiness()
+            return value if isinstance(value, Readiness) else Readiness.UNKNOWN
+        except Exception:
+            return Readiness.UNKNOWN
+    query = getattr(event, "query", None)
+    if not callable(query):
+        return Readiness.UNKNOWN
+    try:
+        return Readiness.READY if query() else Readiness.NOT_READY
+    except Exception:
+        return Readiness.UNKNOWN
+
 
 _quarantine: list[tuple[Any, ...]] = []
 _poisoned: set[int] = set()
@@ -81,6 +109,9 @@ class _Completion:
     def __init__(self, owner: Any, event: Any, stream: Any, retained: tuple[Any, ...]):
         self._owner, self._event, self._stream = owner, event, stream
         self._retained = retained
+
+    def readiness(self) -> Readiness:
+        return completion_readiness(self._event)
 
     def synchronize(self) -> None:
         with launch_guard(self._owner, self._stream):

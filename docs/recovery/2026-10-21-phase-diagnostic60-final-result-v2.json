@@ -1,0 +1,164 @@
+{
+  "schema": "phase-diagnostic60-final-result-v2",
+  "status": "ACTIVE_DEADLINE_FAILURE_SAVED_HISTORICAL_TELEMETRY_PHYSICAL_CLOSURE_ACCEPTED",
+  "scope": "Exactly one phase diagnostic. Latest saved5snapshots/11returned32row execute calls/64actors/0writer-andACKcallbacks atcapture only. Writer receiptfiles NOT INSPECTED, total UNKNOWN; SQLite unopened/globalACK UNKNOWN. Nested inclusive phases overlap, no partition/unique cause/speed/fullunit/adoption/retry credit.",
+  "exclusions": [
+    "ordinary snapshot payload",
+    "full parent/child/adapter packets",
+    "model/data payloads",
+    "active grants/decisions"
+  ],
+  "reviews": {
+    "actual": "9f08fff6b2700ca8926cd56038b1eea9b7a2442aa645919dc141d8527cedf842",
+    "physical": "e9daec4b919230d1638acc5b164d5b5c7124190beee35622f671b4686a5e7773",
+    "scientific": "f342d17b75fbcaf2bb8367ac52d6b411e8819ab1a01a00eb091e97e773a047f8"
+  },
+  "archive": {
+    "fixed_member_timestamp": "2026-10-21T00:00:00Z",
+    "member_count": 23,
+    "sha256": "3d5e06b22e89b087cb26e76a5c5c255f7097d282646698ef9a3b09a85a3d27a8",
+    "bytes": 49218,
+    "readback_verified": true,
+    "file": "2026-10-21-phase-diagnostic60-final-result-v2.zip"
+  },
+  "members": [
+    {
+      "sha256": "e0ca8daadac8916b25d672d51f9aacc69c48640662eda4a0339011887d31bc39",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/PHASE-DIAGNOSTIC60-EXPERIMENT-APPEND-v2.md",
+      "bytes": 2479,
+      "member": "evidence/PHASE-DIAGNOSTIC60-EXPERIMENT-APPEND-v2.md"
+    },
+    {
+      "sha256": "b5eda82ff09c4b1d0c7178b9ff953bb9354f82ca345bb2b43cfab5c955d561dc",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/PHASE-DIAGNOSTIC60-POSTREAD-ACTUAL-stdout.json",
+      "bytes": 42068,
+      "member": "evidence/PHASE-DIAGNOSTIC60-POSTREAD-ACTUAL-stdout.json"
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/PHASE-DIAGNOSTIC60-POSTREAD-ACTUAL-stderr.txt",
+      "bytes": 0,
+      "member": "evidence/PHASE-DIAGNOSTIC60-POSTREAD-ACTUAL-stderr.txt"
+    },
+    {
+      "sha256": "d6a0c2371f7183d70c0507d979a62bfe1350c830444c9985a74e5cbe9301c79a",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/PHASE-DIAGNOSTIC60-POSTREAD-NATIVE-TERMINAL-v1.json",
+      "bytes": 404,
+      "member": "evidence/PHASE-DIAGNOSTIC60-POSTREAD-NATIVE-TERMINAL-v1.json"
+    },
+    {
+      "sha256": "5c1b72f6760e353674559257706e11251be6510d43271674859ff63b97326252",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/PHASE-DIAGNOSTIC60-POSTREAD-FULL-ARGV-v1.json",
+      "bytes": 660,
+      "member": "evidence/PHASE-DIAGNOSTIC60-POSTREAD-FULL-ARGV-v1.json"
+    },
+    {
+      "sha256": "92f667a8ec7a06334440bf4b421268572e739e7591ba9f0ac7ec486384af764c",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/PHASE-DIAGNOSTIC60-POSTREAD-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json",
+      "bytes": 4787,
+      "member": "evidence/PHASE-DIAGNOSTIC60-POSTREAD-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json"
+    },
+    {
+      "sha256": "9f08fff6b2700ca8926cd56038b1eea9b7a2442aa645919dc141d8527cedf842",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/PHASE-DIAGNOSTIC60-POSTREAD-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "bytes": 33502,
+      "member": "evidence/PHASE-DIAGNOSTIC60-POSTREAD-INDEPENDENT-ACTUAL-REVIEW-v1.json"
+    },
+    {
+      "sha256": "f342d17b75fbcaf2bb8367ac52d6b411e8819ab1a01a00eb091e97e773a047f8",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/PHASE-DIAGNOSTIC60-SCIENTIFIC-SAVED-READOUT-INDEPENDENT-REVIEW-v1.json",
+      "bytes": 17970,
+      "member": "evidence/PHASE-DIAGNOSTIC60-SCIENTIFIC-SAVED-READOUT-INDEPENDENT-REVIEW-v1.json"
+    },
+    {
+      "sha256": "37864c34fd1a47c5801b72fba633ae697560dbc9d2a796ce754a89fe04817ae8",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/PHASE-DIAGNOSTIC60-CLOSURE-PROOF-RAW-ACTUAL-stdout.json",
+      "bytes": 3958,
+      "member": "evidence/PHASE-DIAGNOSTIC60-CLOSURE-PROOF-RAW-ACTUAL-stdout.json"
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/PHASE-DIAGNOSTIC60-CLOSURE-PROOF-RAW-ACTUAL-stderr.txt",
+      "bytes": 0,
+      "member": "evidence/PHASE-DIAGNOSTIC60-CLOSURE-PROOF-RAW-ACTUAL-stderr.txt"
+    },
+    {
+      "sha256": "7e489d3b0473d1daf770a83c2b795f6d1f8e88661e87f17615d701396ac99be3",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/PHASE-DIAGNOSTIC60-CLOSURE-PROOF-RAW-NATIVE-TERMINAL-v1.json",
+      "bytes": 405,
+      "member": "evidence/PHASE-DIAGNOSTIC60-CLOSURE-PROOF-RAW-NATIVE-TERMINAL-v1.json"
+    },
+    {
+      "sha256": "e9daec4b919230d1638acc5b164d5b5c7124190beee35622f671b4686a5e7773",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/PHASE-DIAGNOSTIC60-CLOSURE-PROOF-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "bytes": 6748,
+      "member": "evidence/PHASE-DIAGNOSTIC60-CLOSURE-PROOF-INDEPENDENT-ACTUAL-REVIEW-v1.json"
+    },
+    {
+      "sha256": "330d986821efefc889cc2836cf1aa7e2f9188bb6dd7f77f23f9b343aa3f0a111",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/PHASE-RAW-CLOSURE-PROOF-EXPORT-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json",
+      "bytes": 2866,
+      "member": "evidence/PHASE-RAW-CLOSURE-PROOF-EXPORT-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json"
+    },
+    {
+      "sha256": "d95f1c63c6b1ced50650674b6d4e36d74d959dfe8a8de7b69758a4ba9e924ea9",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/RUNTIME-COPY-V8-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "bytes": 6862,
+      "member": "evidence/RUNTIME-COPY-V8-INDEPENDENT-ACTUAL-REVIEW-v1.json"
+    },
+    {
+      "sha256": "96807cb368a1fc4236d51f153e86a478599638f256a8cc7b48dd21d9083b3aac",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/RUNTIME-COPY-V8-RAW-BUNDLE-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "bytes": 3324,
+      "member": "evidence/RUNTIME-COPY-V8-RAW-BUNDLE-INDEPENDENT-ACTUAL-REVIEW-v1.json"
+    },
+    {
+      "sha256": "082858f3b89e8fbab1115f27633dce158be7a5b3b168e4e052935a90d4b8b830",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/2026-10-21-phase-diagnostic60-preregistration-v1.json",
+      "bytes": 3559,
+      "member": "evidence/2026-10-21-phase-diagnostic60-preregistration-v1.json"
+    },
+    {
+      "sha256": "8d11a2faf6404af41e74dc91938f097026690a44fbf13c8cf66ebdb3ee5c6f3d",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/2026-10-21-bounded-phase-timing-source-v1.json",
+      "bytes": 2565,
+      "member": "evidence/2026-10-21-bounded-phase-timing-source-v1.json"
+    },
+    {
+      "sha256": "1874caa5ea570020abc85ccc9a9f6cc823672f68b6f77ac2be13f20b9c40df91",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/2026-10-21-bounded-phase-cpu-actual-v2.json",
+      "bytes": 8167,
+      "member": "evidence/2026-10-21-bounded-phase-cpu-actual-v2.json"
+    },
+    {
+      "sha256": "a292723874828f1205992ccf32fe8b478fe409d5f7235556040661507cac5572",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/BOUNDED-PHASE-CPU-V2-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "bytes": 10853,
+      "member": "evidence/BOUNDED-PHASE-CPU-V2-INDEPENDENT-ACTUAL-REVIEW-v1.json"
+    },
+    {
+      "sha256": "460b000c7c5512dad68efdcc00e820431fe13201784791ed6f6fe7075039ecfd",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/prepared-finite-phase-diagnostic60-20261021-v1/NATIVE-TERMINAL-v1.json",
+      "bytes": 532,
+      "member": "model-terminal/NATIVE-TERMINAL-v1.json"
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/prepared-finite-phase-diagnostic60-20261021-v1/NATIVE-stdout-v1.txt",
+      "bytes": 0,
+      "member": "model-terminal/NATIVE-stdout-v1.txt"
+    },
+    {
+      "sha256": "78341923597bc00647e2b8803f274b7616d66038bd5bcc9f3d84910ea2d012bc",
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/prepared-finite-phase-diagnostic60-20261021-v1/NATIVE-stderr-v1.txt",
+      "bytes": 1291,
+      "member": "model-terminal/NATIVE-stderr-v1.txt"
+    },
+    {
+      "sha256": "d6e0f56867209dbdf3be80e5351f660f8b7ae65347a5433c8fbb6d799480684c",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-phase-diagnostic60-draft-v1/export_saved_phase_diagnostic60_v2.py",
+      "bytes": 14251,
+      "member": "source/export_saved_phase_diagnostic60_v2.py"
+    }
+  ]
+}

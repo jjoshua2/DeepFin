@@ -11,7 +11,9 @@ from chess_anti_engine.tune.trainable_config_ops import (
     _apply_lr_gamma_weights,
     _play_batch_kwargs,
     _reload_yaml_into_config,
+    _warn_on_keys_dropped_from_yaml,
     reset_yaml_reload_key_tracking,
+    seed_yaml_reload_baseline,
 )
 from chess_anti_engine.tune.trial_config import TrialConfig
 
@@ -794,14 +796,21 @@ def test_live_reload_names_every_key_the_yaml_stopped_setting(
 ) -> None:
     """The reloader is ADD/UPDATE-only, so removing a line cannot revert the
     value the trial is running. That is a behaviour this PR deliberately does
-    NOT change -- but it now says so, naming the key and the value still in
-    effect (audit T4)."""
+    NOT change -- but it now says so, naming each key without disclosing its
+    retained value (audit T4 plus the warning-privacy contract)."""
     reset_yaml_reload_key_tracking()
     yaml_path = tmp_path / "cfg.yaml"
-    _write_cfg(yaml_path, body="train:\n  lr: 0.0007\n  rebuild_sf_targets: true\n")
+    secret = "synthetic-private-retained-value-marker"
+    _write_cfg(yaml_path, body=(
+        "train:\n  lr: 0.0007\n  rebuild_sf_targets: true\n"
+        f"tune:\n  distributed_worker_password: {secret}\n"
+    ))
     config: dict = {}
-    _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+    # Establish the startup baseline; adding password settings live is
+    # separately refused by the dead-key guard and is not this observable.
+    _reload_yaml_into_config(config, str(yaml_path), live_reload=False)
     assert config["rebuild_sf_targets"] is True
+    assert config["distributed_worker_password"] == secret
 
     _write_cfg(yaml_path, body="train:\n  lr: 0.0007\n")
     with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
@@ -809,11 +818,20 @@ def test_live_reload_names_every_key_the_yaml_stopped_setting(
 
     # Semantics unchanged: the deleted key keeps the value it was running.
     assert config["rebuild_sf_targets"] is True
+    assert config["distributed_worker_password"] == secret
     warnings = _reload_warnings(caplog)
-    assert len(warnings) == 1, warnings
-    assert "rebuild_sf_targets" in warnings[0]
-    assert "delete does not revert" in warnings[0]
-    assert "True" in warnings[0]
+    assert len(warnings) == 2, warnings
+    for key in ("rebuild_sf_targets", "distributed_worker_password"):
+        warning = next(message for message in warnings if f"YAML reload: {key} " in message)
+        assert str(yaml_path) in warning
+        assert "STILL RUNNING its previous value" in warning
+        assert "delete does not revert" in warning
+        assert "write the old value explicitly" in warning
+        assert f"`{key}: null`" in warning
+    records = [record for record in caplog.records if "no longer set by" in record.getMessage()]
+    captured = caplog.text + repr([record.args for record in records])
+    assert secret not in captured
+    assert "True" not in captured
 
 
 def test_live_reload_reports_a_nulled_key_as_a_deletion(
@@ -1034,3 +1052,44 @@ def test_live_reload_refuses_optimizer_group_value_knobs(
     assert restarted["matrix_weight_decay"] == 0
     assert restarted["aux_weight_decay"] == pytest.approx(0.01)
     assert restarted["aurora_uw_floor"] == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize("resumed", [False, True], ids=["live", "resumed"])
+def test_dropped_yaml_warning_omits_all_values(caplog, monkeypatch, resumed) -> None:
+    from chess_anti_engine.tune import trainable_config_ops as ops
+
+    yaml_path = "synthetic-config.yaml"
+    config = {
+        "worker_password": "synthetic-password-marker",
+        "api_token": "synthetic-token-marker",
+        "worker_password_env": "SYNTHETIC_ENV_LOCATOR_MARKER",
+        "worker_password_file": "/synthetic/file-locator-marker",
+        "benign_setting": "synthetic-benign-value-marker",
+    }
+    original = config.copy()
+    previous = frozenset(config) | {"absent_from_trial"}
+    # Isolate the module baseline without changing any other test's state.
+    monkeypatch.setattr(ops, "_LAST_RELOAD_YAML_KEYS", {yaml_path: frozenset() if resumed else previous})
+    with caplog.at_level(logging.WARNING, logger=ops.__name__):
+        if resumed:
+            seed_yaml_reload_baseline(yaml_path=yaml_path, keys=previous, config=config)
+        else:
+            _warn_on_keys_dropped_from_yaml(yaml_path=yaml_path, fresh={}, config=config)
+
+    records = [record for record in caplog.records if record.name == ops.__name__]
+    assert len(records) == len(config)
+    for record, key in zip(records, sorted(config), strict=True):
+        message = record.getMessage()
+        assert key in message
+        assert yaml_path in message
+        assert "STILL RUNNING its previous value" in message
+        assert "delete does not revert" in message
+        assert "write the old value explicitly" in message
+        assert f"`{key}: null`" in message
+        assert ("the checkpoint this process resumed from" if resumed else "the previous reload") in message
+    # Check both rendered output and deferred logging arguments.
+    captured = caplog.text + repr([record.args for record in records])
+    for value in config.values():
+        assert value not in captured
+    assert "absent_from_trial" not in captured
+    assert config == original

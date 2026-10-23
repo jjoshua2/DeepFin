@@ -1,0 +1,149 @@
+{
+  "schema": "PR1110_TARGETED_DIAGNOSTICS_DURABLE_SOURCE_V1",
+  "status": "REVIEWED_HELPER_SOURCE_CPU_EVIDENCE_PENDING_FINITE_ADAPTER_INTEGRATION",
+  "archive": "2026-10-21-targeted-diagnostics-source-v1.zip",
+  "archive_sha256": "a3f334e9c58de5307faa3de8caedbb4fdd4e864cf1b91e1bfd55f4a75d2f88fa",
+  "archive_bytes": 46800,
+  "all_member_hashes_read_back": true,
+  "members": [
+    {
+      "path": "diagnostics/targeted_diagnostics_v1.py",
+      "sha256": "48dc44768aabdc4e18c4314abeeaefdb255e65ea54150c6b0d04285d36332a22",
+      "bytes": 9421
+    },
+    {
+      "path": "diagnostics/targeted_diagnostics_v2.py",
+      "sha256": "444bf23fcd1850efcacd55bb888e7d275e3a02bde3846c80bf0813cecc336bb3",
+      "bytes": 2616
+    },
+    {
+      "path": "diagnostics/test_targeted_diagnostics_v1.py",
+      "sha256": "d47c59f55a3891884ac73a1adf2cdd39dd834172399a939469d3572f675d1497",
+      "bytes": 4015
+    },
+    {
+      "path": "diagnostics/test_targeted_diagnostics_v2.py",
+      "sha256": "de6d5fb34aa409eed526aa5083515d7545df72f25343e528cb1a1df63bc6ced3",
+      "bytes": 4961
+    },
+    {
+      "path": "diagnostics/test_targeted_diagnostics_v3.py",
+      "sha256": "d7df70e911847e5537841f13c2183a00eab4c00819e633827355f8df3211d8aa",
+      "bytes": 3467
+    },
+    {
+      "path": "diagnostics/README-v2.md",
+      "sha256": "fd97c45de45a18f77a83953d89f58858b5b7afdc0cc1d7f062a474f52b64ce2e",
+      "bytes": 3108
+    },
+    {
+      "path": "diagnostics/README-v3-binding.md",
+      "sha256": "3a93aa0e5293c6b75ba589fe1f351e96c9fe1372878a28bf856ceb8e3be6f004",
+      "bytes": 1609
+    },
+    {
+      "path": "cpu-v4/qualify_targeted_diagnostics_v4.py",
+      "sha256": "303e5aad6e013f3180c1ee5912100a9b8c7203f3e9cfa388b16bc719259d5898",
+      "bytes": 16401
+    },
+    {
+      "path": "cpu-v4/qualify_targeted_diagnostics_v4.sh",
+      "sha256": "477818fdd250da77941a6aa383963d56700a77cd7b4948a6a56be99545ba552f",
+      "bytes": 667
+    },
+    {
+      "path": "cpu-v4/CPU-CAPSULE-PLAN-v4.json",
+      "sha256": "7c11c0aac023665a7dd531ce9cca83e6c9ac0431be33ecc0a226147f4b0d1c5f",
+      "bytes": 4438
+    },
+    {
+      "path": "cpu-v5/qualify_targeted_diagnostics_v5.py",
+      "sha256": "71f24ea6db6d0687df20deabfe580f1e8420709e2342d416791dd97ad9bbcb22",
+      "bytes": 16278
+    },
+    {
+      "path": "cpu-v5/qualify_targeted_diagnostics_v5.sh",
+      "sha256": "96c34e43847f33c0ab6d1c74a60343ee8a27d1ef19dd03599fc426e07943012d",
+      "bytes": 667
+    },
+    {
+      "path": "cpu-v5/CPU-CAPSULE-PLAN-v5.json",
+      "sha256": "058dc7fdc91e6506726a23178d8f2030fbad6c0efc4fa0b58f1ee6bd34d0eb2e",
+      "bytes": 3805
+    },
+    {
+      "path": "cpu-proposals/TARGETED-DIAGNOSTICS-MIXED-TEN-CPU-PROPOSAL-v4.json",
+      "sha256": "35f17b91614539b3769b2395e9f2762a6decafcb3ab2cb21d1115190d6e35cdc",
+      "bytes": 8271
+    },
+    {
+      "path": "cpu-proposals/TARGETED-DIAGNOSTICS-FACTORY-TWO-CPU-PROPOSAL-v5.json",
+      "sha256": "c88d37a437fdb74e5378240ba709e9867ff820854ae6634ae20d842f4c268779",
+      "bytes": 8610
+    },
+    {
+      "path": "reviews/TARGETED-DIAGNOSTICS-MIXED-TEN-CPU-INDEPENDENT-SOURCE-ARGV-REVIEW-v4.json",
+      "sha256": "fdb2d709308c1595d326738b0ac08ee71cec3240b4f01f5a5935696ddedbc7cf",
+      "bytes": 9034
+    },
+    {
+      "path": "reviews/TARGETED-DIAGNOSTICS-MIXED-TEN-CPU-INDEPENDENT-ACTUAL-REVIEW-v4.json",
+      "sha256": "eb55d5736dd8ba57f3319a119e899e8b23fd77a79cd6f1a6cfd78c27a44b738f",
+      "bytes": 3500
+    },
+    {
+      "path": "reviews/TARGETED-DIAGNOSTICS-MIXED-TEN-CPU-INDEPENDENT-ACTUAL-REVIEW-v4-SUPPLEMENT-v1.json",
+      "sha256": "04e4f2320806bfa2ebaf093f2fdf71f8ba3ad37933a97b595d6cbb13c8bc32dd",
+      "bytes": 2336
+    },
+    {
+      "path": "reviews/TARGETED-DIAGNOSTICS-FACTORY-TWO-CPU-INDEPENDENT-SOURCE-ARGV-REVIEW-v5.json",
+      "sha256": "a3484cb365b5fd7fd464e117e015db03dc1f615697e472b5583254e5b829559a",
+      "bytes": 8010
+    },
+    {
+      "path": "reviews/TARGETED-DIAGNOSTICS-FACTORY-TWO-CPU-INDEPENDENT-ACTUAL-REVIEW-v5.json",
+      "sha256": "0e5935a5385082f1f6b0068f2297db60c88696d9a39fb782c9812102457e9f4e",
+      "bytes": 2859
+    }
+  ],
+  "cpu_v4": {
+    "status": "FAILED_RETAINED",
+    "observed_passes": 8,
+    "failed": 1,
+    "unrun": 1,
+    "reason": "Python3.10 sqlite audit bytes memory sentinel rejected by string-only harness policy",
+    "original_junit_sha256": "b7041217454ded46e6446e63e72088b545dda8863f5a1c56858b9a6c8e0b59c7",
+    "independent_actual_review_sha256": "eb55d5736dd8ba57f3319a119e899e8b23fd77a79cd6f1a6cfd78c27a44b738f"
+  },
+  "cpu_v5": {
+    "status": "PASS_DISTINCT_TWO_CASE_GATE",
+    "passed": 2,
+    "skipped": 0,
+    "normal_conftest": true,
+    "runtime_closure_sha256": "1fce66e0409ca24449d0ea6c897f9a0a5457d35fc0982e6ee9ee87a137168f12",
+    "actual_checkpoint_source_sha256": "3e340183934fc06437979898b968d2555cf4931254daafa05c317680b75b9ae9",
+    "actual_sqlite_audit_argument_type": "bytes",
+    "exact_memory_sentinel": true,
+    "guard_change": "Recognize only str and bytes encodings of the same exact memory sentinel; external path guards unchanged",
+    "native_seconds": 3.5195958,
+    "guest_seconds": 3.04843968199566,
+    "cpu_seconds": 2.903518,
+    "peak_rss_bytes": 642121728,
+    "stdout_sha256": "f86497595c6bf8aa210780d84bdbe368e6c002a395100ae8c4a674981112883e",
+    "independent_actual_review_sha256": "0e5935a5385082f1f6b0068f2297db60c88696d9a39fb782c9812102457e9f4e",
+    "cuda_initialized": false,
+    "model_loaded": false,
+    "source_modules_before_after": 37,
+    "native_images": 5,
+    "methods_profiles_threads_native_flag_restored": true
+  },
+  "scope_limits": [
+    "Source escrow only; archive is not installed or activated",
+    "V4 remains failed; eight observations are separate from V5 two-case strict PASS",
+    "Older source README UNRUN labels are historical; this manifest records current scoped evidence",
+    "No product ledger, full-unit, model parity, speed, merge, training or adoption credit",
+    "Finite adapter composition remains source-only pending root-directory, import and whole-action binding"
+  ],
+  "cpython_source": "https://github.com/python/cpython/blob/v3.10.12/Modules/_sqlite/connection.c#L74-L86"
+}

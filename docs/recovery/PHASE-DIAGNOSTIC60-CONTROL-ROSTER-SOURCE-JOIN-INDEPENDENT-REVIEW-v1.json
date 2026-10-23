@@ -1,0 +1,30 @@
+{
+  "schema": "PR1110_PHASE_CONTROL_ROSTER_SOURCE_JOIN_REVIEW_V1",
+  "status": "ACCEPT_SOURCE_ARITHMETIC_ONLY",
+  "packet_sha256": "b1e10c9d10b30451cd924c443e8620a3c52ba9e0e8b5bde9136e8b9db0bb5432",
+  "child_sha256": "689b878c62647155247f7c5d04b467df3abaf53f3baf9c8c878589c7edef22f3",
+  "scientific_review_sha256": "f342d17b75fbcaf2bb8367ac52d6b411e8819ab1a01a00eb091e97e773a047f8",
+  "counts": {
+    "total": 564,
+    "present": 7,
+    "absent": 557,
+    "mnt_c": 349,
+    "mnt_c_present": 5,
+    "mnt_c_absent": 344,
+    "other": 215,
+    "other_present": 2,
+    "other_absent": 213,
+    "abort_paths": 7,
+    "completed_outer_returns": 124,
+    "completed_preserved_record_checks": 69936
+  },
+  "source_join": "ParentDeadlineGuard.check lines391-394 checks deadline, calls controls_unchanged, then retained.check. controls_unchanged lines256-281 validates closed schemas/unique paths/STOP bindings, iterates all preserved records: present uses Reads.checked(metadata=True), absent uses os.path.lexists, then checks seven abort paths. A returned outer invocation necessarily completed that preservation loop.",
+  "accepted_claim": "124 observed completed outer guard returns entail69936 completed preserved-record checks in those invocations:564x124. This is a source-derived operation count, not timed syscall count.",
+  "limits": [
+    "Not an exact whole-run count: startup/preimport controls checks and the125th open outer invocation are outside this124-return derivation.",
+    "Present Reads.checked includes multiple validation/read/hash operations; absent lexists is a Python API boundary. No1:1 syscall mapping or individual marker timing is measured.",
+    "mnt/c prefix categorizes path strings only; it does not prove unique filesystem/9p cause or assign measured wall proportion to either class.",
+    "Source supports a next hypothesis to measure per-marker/class costs while preserving every existing check. No cache, reduced polling, changed geometry, model execution or new experiment permission follows."
+  ],
+  "guest_execution_or_tests_performed": false
+}
