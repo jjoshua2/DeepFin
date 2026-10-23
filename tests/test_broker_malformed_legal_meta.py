@@ -103,6 +103,11 @@ def _arm_malformed_slot(
       # Header disagrees with the per-row counts: the exact shape of a torn
       # read, where the header came from one request and the counts another.
         n_legal_header = n_legal - 2
+    elif bad == "negative_count":
+        counts = np.array([-1, 2], dtype=np.int32)
+        n_legal = 1
+        flat = np.array([3], dtype=np.int32)
+        n_legal_header = 1
     elif bad == "out_of_range":
         n_legal_header = n_legal
         flat[-1] = _POLICY_SIZE
@@ -118,7 +123,7 @@ def _arm_malformed_slot(
     return slot, slot.policy_u16.copy(), slot.wdl.copy()
 
 
-@pytest.mark.parametrize("bad", ["count_sum", "out_of_range"])
+@pytest.mark.parametrize("bad", ["count_sum", "out_of_range", "negative_count"])
 def test_malformed_metadata_releases_the_slot_instead_of_answering(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad: str,
 ) -> None:
@@ -136,7 +141,7 @@ def test_malformed_metadata_releases_the_slot_instead_of_answering(
         broker.shutdown()
 
 
-@pytest.mark.parametrize("bad", ["count_sum", "out_of_range"])
+@pytest.mark.parametrize("bad", ["count_sum", "out_of_range", "negative_count"])
 def test_malformed_metadata_writes_nothing_into_the_response_buffers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad: str,
 ) -> None:
@@ -157,8 +162,9 @@ def test_malformed_metadata_writes_nothing_into_the_response_buffers(
         broker.shutdown()
 
 
+@pytest.mark.parametrize("bad", ["count_sum", "negative_count"])
 def test_malformed_metadata_is_counted_but_does_not_kill_the_broker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad: str,
 ) -> None:
     """Counted for visibility; deliberately outside the exit ceiling.
 
@@ -171,7 +177,7 @@ def test_malformed_metadata_is_counted_but_does_not_kill_the_broker(
     broker = _make_broker(tmp_path, monkeypatch)
     try:
         for _ in range(5):
-            slot, _, _ = _arm_malformed_slot(broker, bad="count_sum")
+            slot, _, _ = _arm_malformed_slot(broker, bad=bad)
             broker._process_batch([slot])
 
         assert broker._malformed_legal_meta_total == 5
@@ -237,8 +243,9 @@ def test_rejection_log_names_the_invariant_that_broke(
         broker.shutdown()
 
 
+@pytest.mark.parametrize("bad_kind", ["count_sum", "negative_count"])
 def test_a_malformed_slot_does_not_corrupt_the_healthy_slots_beside_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad_kind: str,
 ) -> None:
     """Skipping a slot must not desync the compact gather bookkeeping.
 
@@ -288,7 +295,7 @@ def test_a_malformed_slot_does_not_corrupt_the_healthy_slots_beside_it(
     broker._model = _TinyPolicy().eval()
     broker._model_sha = "test"
     try:
-        bad, _, _ = _arm_malformed_slot(broker, bad="count_sum")
+        bad, _, _ = _arm_malformed_slot(broker, bad=bad_kind)
       # bf16 bit patterns: 0x4000 == 2.0, 0x3F80 == 1.0. Distinct per slot so
       # a mis-staged input row changes the answer instead of hiding in zeros.
         bad.input_bf16_bits.fill(0)

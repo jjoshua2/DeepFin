@@ -341,6 +341,7 @@ _TUNE_KEYS = (
     "distributed_server_port", "distributed_server_host", "distributed_server_public_url",
     "distributed_server_root_override", "tune_replay_root_override",
     "distributed_upload_compact_shard_size", "distributed_upload_compact_max_age_seconds",
+    "distributed_upload_compact_buffer_bytes", "distributed_upload_compact_buffer_uploads",
     # Volunteer-facing trust-on-first-use registration. DEFAULT OFF, and
     # RESTART-GATED: the server captures it at create_app time, so a live
     # reload cannot open or close registration on a running server.

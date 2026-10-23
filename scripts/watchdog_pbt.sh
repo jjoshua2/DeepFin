@@ -128,7 +128,11 @@ while true; do
     continue
   fi
 
-  CHESS_ROOT="$ROOT" TRAIN_MONITOR_LOG="$LOG" bash "$ROOT/scripts/monitor_pbt.sh"
+  # Monitor status 1 means DEAD/STALLED; keep polling. Other failures stay fatal.
+  CHESS_ROOT="$ROOT" TRAIN_MONITOR_LOG="$LOG" bash "$ROOT/scripts/monitor_pbt.sh" || {
+    MONITOR_STATUS=$?
+    [ "$MONITOR_STATUS" -eq 1 ] || exit "$MONITOR_STATUS"
+  }
   if [ "$MAX_ITERS" -gt 0 ] && [ "$ITER" -ge "$MAX_ITERS" ]; then break; fi
   sleep "$INTERVAL_SECONDS"
 done

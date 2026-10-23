@@ -5,9 +5,20 @@ ROOT="${CHESS_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 SOURCE_CONFIG="${BENCH_BATCH_WAIT_CONFIG:-$ROOT/configs/pbt2_small.yaml}"
 BROKER_LOG="${BENCH_BATCH_WAIT_BROKER_LOG:-$ROOT/runs/pbt2_small/server/shared_broker.out}"
 TMP_CONFIG="$(mktemp "${TMPDIR:-/tmp}/bench_batch_wait.XXXXXX.yaml")"
+PID=""
+
+cleanup_child() {
+  if [ -n "$PID" ]; then
+    kill "$PID" 2>/dev/null || true
+    wait "$PID" 2>/dev/null || true
+    PID=""
+    ray stop --force >/dev/null 2>&1 || true
+  fi
+}
 
 cleanup() {
-  rm -f "$TMP_CONFIG"
+  cleanup_child
+  rm -f -- "$TMP_CONFIG"
 }
 trap cleanup EXIT
 
@@ -32,9 +43,7 @@ for WAIT_MS in 0.0 0.5 1.0 2.0 5.0 10.0; do
 
   printf "%5s   | %6s    | %s\n" "$WAIT_MS" "$AVG" "$PPS"
 
-  kill "$PID" 2>/dev/null || true
-  wait "$PID" 2>/dev/null || true
-  ray stop --force >/dev/null 2>&1 || true
+  cleanup_child
   sleep 2
 done
 

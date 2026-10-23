@@ -85,6 +85,7 @@ def _broker() -> SharedSlotBroker:
     broker._trial_models = {"t0": _Model()}  # pyright: ignore[reportAttributeAccessIssue]
     broker._trial_no_model_warned_at = {}
     broker._trial_bad_mode_warned_at = {}
+    broker._trial_bad_size_warned_at = {}
     broker._trial_streams = {}
     broker._first_inference_done = False
     broker._hang_watchdog = _Watchdog()  # pyright: ignore[reportAttributeAccessIssue]
@@ -182,19 +183,13 @@ def test_the_refusal_log_is_throttled() -> None:
 
 
 def test_refused_rows_are_not_reported_as_served_throughput() -> None:
-    """``_process_parallel`` returns the refused ROW count.
-
-    The serve loop counts positions BEFORE calling it, so without the return the
-    broker's own `pos/s` would include rows it declined to evaluate — the same
-    "a failure reads as throughput" defect B6 fixed on the client side, in the
-    sibling path. Reviewer finding: the counter also needs a reader, and a
-    reader next to a lying number is not worth much.
-    """
+    """Refused requests contribute zero successfully served rows."""
     broker = _broker()
     refused = broker._process_parallel(
         cast("Any", {"t0": [_StubSlot(_MODE_LEGAL_BF16, batch_size=5)]}),
     )
-    assert refused == 5, "refused rows must be reported back to the serve loop"
+    assert refused == 5
+    assert broker._last_served_rows == 0
 
     # A served batch refuses nothing (the dummy model's forward raises, which is
     # after the count is decided).
@@ -238,10 +233,4 @@ def test_the_refusal_counter_has_a_reader() -> None:
     assert "unsupported_mode_requests" in src, (
         "the B1 refusal counter lost its only reader; a refusal nobody can "
         "count is indistinguishable from one that never fires"
-    )
-    # And the refused rows must not be left in the served-throughput total.
-    assert "_process_parallel" in src
-    assert "_total_positions -=" in src, (
-        "refused rows are being counted as served pos/s again (B6(c) in the "
-        "sibling path)"
     )

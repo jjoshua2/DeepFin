@@ -49,9 +49,12 @@ from .shard import (
     zeros_for_storage_field,
 )
 from .threat_upgrade import (
+    PlaneUpgradeValidationError,
     V1_INPUT_PLANES,
+    equal_width_chunk_needs_repair,
     upgrade_arrays_to_planes,
 )
+from .upgrade_failure_cache import UpgradeFailureCache
 import contextlib
 
 log = logging.getLogger(__name__)
@@ -503,6 +506,7 @@ class DiskReplayBuffer:
         self._input_planes = None if input_planes is None else int(input_planes)
         self._upgrade_v1_planes = bool(upgrade_v1_planes)
         self._upgrade_failures = 0
+        self._upgrade_failure_cache = UpgradeFailureCache()
         self._shard_dir = Path(shard_dir)
         if not self._read_only:
   # A read-only open must leave the filesystem exactly as it found it, and a
@@ -778,22 +782,42 @@ class DiskReplayBuffer:
         # Equal width is NOT an unconditional passthrough: a chunk persisted at
         # the target width by the pre-upgrade zero-pad path carries an all-zero
         # extra block that must be repaired. upgrade_arrays_to_planes recomputes
-        # only those rows (native chunks pass through cheaply via its all-zero
-        # gate), so route equal-width through it too. stored < target_planes
-        # gets the full cross-version recompute.
+        # only those rows; apply its all-zero gate before hashing native chunks.
+        # stored < target_planes gets the full cross-version recompute.
+        failure_key = None
         try:
+            # Native equal-width chunks only need the existing all-zero gate;
+            # hashing their entire x/root arrays would penalize every healthy
+            # opt-in refresh. Only a chunk needing recomputation needs a key.
+            if stored == target_planes and not equal_width_chunk_needs_repair(arrs, target_planes):
+                return arrs
+            failure_key = self._upgrade_failure_cache.fingerprint(arrs, target_planes, version)
+            if self._upgrade_failure_cache.contains(failure_key):
+                self._note_upgrade_failure(version, "unchanged input failed validation (cached)")
+                return arrs
             upgraded, _stats = upgrade_arrays_to_planes(arrs, target_planes)
         except ValueError as exc:
-            self._upgrade_failures += 1
-            # Log the first few in full, then a periodic cumulative count so a
-            # systematic decode failure stays visible instead of going quiet.
-            if self._upgrade_failures <= 3 or self._upgrade_failures % 50 == 0:
-                print(
-                    f"[replay] {version} plane upgrade failed "
-                    f"({self._upgrade_failures} chunk(s) so far), zero-padding: {exc}"
-                )
+            # Only the explicit, deterministic v1-consistency failure is safe
+            # to memoize. Unknown decoder/configuration failures must retry.
+            # Do not bind a failure to inputs that changed during the attempt.
+            if (isinstance(exc, PlaneUpgradeValidationError)
+                    and failure_key == self._upgrade_failure_cache.fingerprint(
+                        arrs, target_planes, version,
+                    )):
+                self._upgrade_failure_cache.remember(failure_key)
+            self._note_upgrade_failure(version, str(exc))
             return arrs
         return upgraded
+
+    def _note_upgrade_failure(self, version: str, reason: str) -> None:
+        self._upgrade_failures += 1
+        # Count fallback chunks, including memo hits, so a systematic failure
+        # remains visible without rerunning the expensive decoder.
+        if self._upgrade_failures <= 3 or self._upgrade_failures % 50 == 0:
+            print(
+                f"[replay] {version} plane upgrade failed "
+                f"({self._upgrade_failures} chunk(s) so far), zero-padding: {reason}"
+            )
 
     def _pad_x_planes(self, arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         """Normalize stored x (and x_lc0_root) up to the configured plane count.

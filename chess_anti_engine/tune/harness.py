@@ -479,6 +479,10 @@ def _launch_distributed_server(
         str(int(base_config.get("distributed_upload_compact_shard_size", base_config.get("shard_size", 2000)))),
         "--upload-compact-max-age-seconds",
         str(float(base_config.get("distributed_upload_compact_max_age_seconds", 90.0))),
+        "--upload-compact-buffer-bytes",
+        str(int(base_config.get("distributed_upload_compact_buffer_bytes", 0))),
+        "--upload-compact-buffer-uploads",
+        str(int(base_config.get("distributed_upload_compact_buffer_uploads", 2000))),
     ]
   # Flag-gated volunteer registration. Baked into the server command line, so
   # it is DRIVER-LAUNCH-FIXED (classified in trainable_config_ops) and takes a

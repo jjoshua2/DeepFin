@@ -37,6 +37,10 @@ _LC0_PLANES = V1_INPUT_PLANES - _V1_EXTRA                       # 112
 _VALIDATE_ATOL = 2e-3
 
 
+class PlaneUpgradeValidationError(ValueError):
+    """Stored v1 planes deterministically disagree with their decoded board."""
+
+
 @dataclass(frozen=True)
 class UpgradeStats:
     rows: int
@@ -73,7 +77,7 @@ def _validated_threat_block(
     if bad.any():
         row = int(np.flatnonzero(bad)[0])
         plane = int(np.unravel_index(np.argmax(diff[row]), diff[row].shape)[0])
-        raise ValueError(
+        raise PlaneUpgradeValidationError(
             f"{label}: recomputed v1 extra planes disagree with stored planes "
             f"on {int(bad.sum())}/{stored.shape[0]} rows (first: row {row}, "
             f"extra plane {plane}, max |diff| {float(diff[row].max()):.4f}) — "
@@ -205,6 +209,23 @@ def _zero_padded_rows_to(arr: np.ndarray, target_planes: int) -> np.ndarray:
     return v1_live & extra_zero
 
 
+def equal_width_chunk_needs_repair(
+    arrs: dict[str, np.ndarray], target_planes: int,
+) -> bool:
+    """The existing equal-width no-op gate, before any failure-cache hashing.
+
+    Callers must establish that x already has the recognized target width.
+    Keep the metadata read and combined x/root row mask used by the upgrade
+    functions, including their behavior for malformed metadata or row shapes.
+    """
+    chunk_history_encoding(arrs)
+    need = _zero_padded_rows_to(np.asarray(arrs["x"]), target_planes)
+    x_root = arrs.get("x_lc0_root")
+    if x_root is not None:
+        need = need | _zero_padded_rows_to(np.asarray(x_root), target_planes)
+    return bool(need.any())
+
+
 def _repair_zero_padded_extra(
     arrs: dict[str, np.ndarray],
     target_planes: int,
@@ -277,7 +298,7 @@ def _validated_extra_block(
     if bad.any():
         row = int(np.flatnonzero(bad)[0])
         plane = int(np.unravel_index(np.argmax(diff[row]), diff[row].shape)[0])
-        raise ValueError(
+        raise PlaneUpgradeValidationError(
             f"{label}: recomputed v1 extra planes disagree with stored planes "
             f"on {int(bad.sum())}/{stored.shape[0]} rows (first: row {row}, "
             f"extra plane {plane}, max |diff| {float(diff[row].max()):.4f}) — "

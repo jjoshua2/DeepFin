@@ -134,3 +134,122 @@ an agent that receives a result; they cannot change platform scheduling, deliver
 missing event, wake a finished agent automatically or guarantee real-time latency.
 An actual event-delivery defect must be reported through supported platform tools,
 not papered over by a repository daemon or a new production queue.
+
+## Durable backlog handoff audit
+
+Use `scripts/backlog_handoff.py` with the **existing** finding ledger. The canonical
+tracker remains [Review Atlas](https://deepfin-review-atlas.new-gecko-0210.chatgpt.site/#queue).
+Keep finding IDs, repair-group membership, dispositions, old failures and evidence
+intact. Do not replace them with a second tracker, new totals or a count of started
+turns. The historical Atlas population, a newer local inventory and Security Cloud
+occurrences are separate populations. Neither source review nor selected test-case
+counts establish full finding closure.
+
+The local inventory shape is `findings: [{finding_id: ...}, ...]`. The recovered
+canonical crosswalk v22 declares schema `backlog-assignment-crosswalk/v18` with
+`records: [{id: "commit:...", ...}, ...]`; the audit also reads that exact shape and
+retains the `commit:` prefix. It refuses an ambiguous crosswalk with a separate
+`findings` member. Both adapters add only a `handoff` member. A different source
+shape needs a reviewed adapter preserving IDs; do not guess a mapping. Never mutate
+a sealed historical inventory: make a successor through its existing producer, bind
+the predecessor identity, and regenerate the seal after adding handoff state.
+
+At a terminal worker/tool result, dispatch decision, useful cycle boundary, restart
+or report, record one complete observed cycle in `handoff.cycles`. Use the existing
+ledger's writer and atomic update route; do not introduce a polling scheduler. Each
+cycle has a unique `event_id`, timezone-aware `at`, pinned observation `evidence`,
+`items` keyed by existing finding ID, `selected` finding IDs and optional `hold`.
+Each evidence reference has a nonempty `ref` and SHA256; hashes are declarations
+until the normal evidence review authenticates their contents. An audit does not
+fetch the referenced evidence or independently observe worker/platform state.
+
+Each open item records:
+
+- `state`: `open`, `ready`, `running`, `blocked` or `terminal`; `updated_at`; and an
+  `evidence` list. `terminal` means returned work awaiting reconciliation, not done.
+- `owner`: `{task_id, status: "active", evidence}`. A role label, null owner or
+  completed task does not count as an executable assignment. `next_action` has a
+  concrete `description` and its own active `owner` using that same shape.
+- `permission`: `{state, reason, evidence}`, where state is explicitly `granted`,
+  `pending`, `denied` or `uncertain`. Also record Boolean `stop` and `custody` as
+  `settled`, `held` or `unknown`. These are observations, never grants or waivers.
+- `depends_on`: existing finding IDs; `blockers`: objects with exact `reason`,
+  active `owner`, resolving action in `resolution`, and pinned `evidence`.
+- A `worker` for terminal items (optional otherwise): `{task_id, state, evidence}`, with state `running`,
+  `completed`, `failed`, `timeout` or `disconnected`. Every non-running result on
+  an unresolved item needs `continuation`: `{kind, owner, description, evidence,
+  worker_result}`. `worker_result` equals the SHA256 of that worker result;
+  `kind` is `review`, `dispatch`, `reconcile` or `blocked`. Record an actual resume
+  operation and its returned state as evidence before claiming a worker restarted.
+  A restart cannot erase an earlier unreconciled terminal result: later continuation
+  or terminal resolution must explicitly bind its result hash, even after a new worker.
+
+An evidence-backed `done` disposition may omit active ownership and next action;
+it requires `resolution: {ref, sha256, reason}` and settled custody. If reconciling a
+prior worker, also bind its hash in `resolution.worker_result`. This permits reviewed false positives
+and accepted terminal decisions without inventing active workers. It does not itself
+prove that tests ran. Optional `credits` require unique `claim_id`, `kind` (`test` or
+`finding`), pinned `evidence` and independent acceptance reference in `review`.
+Test credits additionally require exact `source_sha256` and stable `case_id`, with
+evidence `kind: "test", outcome: "passed"`. Repeated snapshots retain the same claim
+ID. Rerunning an already credited source/case cannot create a second completion.
+Finding credit is keyed by the original finding ID. Scope review remains mandatory.
+
+The audit detects missing ownership/actions, stale items, terminal results without
+continuation, unowned blockers, repeated unchanged result/evidence across three
+cycles, unsupported/duplicate credit and unmet selection gates. Progress evidence
+kinds are `implementation`, `result`, `test`, `source_review`, `disposition` and
+`settlement`; source review stays distinct from test credit. Changing status,
+next-action prose, timestamps or observation-only zero tallies is not progress. A global `hold` records
+`reason`, `evidence` and `blocked_by` IDs. Independent candidates need selection or
+an item-specific `defer_reason` with `defer_evidence`; an unrelated hold cannot hide
+them. Candidates are planning observations, never authorization to execute work.
+
+```text
+python scripts/backlog_handoff.py <existing-ledger.json>
+python scripts/backlog_handoff.py <existing-ledger.json> --event <observed-cycle.json> --expected-sha256 <current-ledger-sha256>
+python -m unittest discover -s tools/backlog_handoff -p test_handoff.py -v
+```
+
+CLI exit 0 means no declared-state defects, 1 means audit findings, 2 means read/write
+or input failure. An exact replay of a cycle is idempotent; changed reuse is refused.
+The optional writer appends immutable cycles under an exclusive cooperating-writer
+lock, compares the expected ledger hash, fsyncs a temporary file and atomically
+replaces the ledger. Reopen state after restart. A leftover `.handoff.lock` is a hold
+for owner reconciliation; never steal it by age. This is not an adversarial-filesystem
+or power-loss durability guarantee. Other ledger writers must honor the same lock
+or use their existing transaction system. Failed attempts and prior cycles remain.
+
+Report producers can call `report_hook(ledger, now)` immediately before serialization,
+seal construction and reporting completion counts. A failure raises and must prevent
+a clean report; preserve its findings and continue independent authorized work.
+The coordinator confirmed that previous chat reports were manually assembled; its
+first `current_backlog_report.py` was an unexecuted proposal. The integrated local
+successor is now `scripts/current_backlog_report.py`. Use a captured successor input,
+its expected hash and a new output directory:
+
+```text
+python scripts/current_backlog_report.py <captured-ledger.json> <new-output-directory> --expected-sha256 <input-sha256>
+python -m unittest discover -s tools/backlog_handoff -p test_report_consumer.py -v
+```
+
+The consumer calls `report_hook` before counting or serialization. It additionally
+checks the receipt overlay's exact source-ID coverage, every nonempty missing-join
+entry (including explanatory/global gaps), source-owner
+assignment match, pending status and unmapped publications. A metadata reconciliation
+owner cannot silently substitute for product ownership. A failed audit writes
+`pending-report.json`, `audit.json`, an exact `ledger.json` snapshot and `result.json`
+with every original ID and unresolved work visible. It writes **no `seal.json`** or
+clean `report.json`. An accepted declared-state audit writes the clean report and
+seal only after the source snapshot, report and audit are persisted; the seal pins
+their hashes and both producer/audit source identities. Existing output directories
+are refused. A clean handoff may still contain unresolved findings and is not closure.
+
+CLI exits are 0 for a clean declared-state report, 1 for an explicit pending report,
+2 for input/write failure. Source imports alone and synthetic consumer tests are not
+evidence that real reports used this route. Record an actual invocation and output
+identities when adopting it for a report. Manual parent chat and the hosted Atlas
+remain outside mechanical enforcement; this consumer is not a dispatch hook and
+cannot wake a terminal worker. No permissions, workload controller, STOP change,
+scheduler or guaranteed completion is provided. Tests and actual report generation
+retain their own resource/owner coordination requirements.
