@@ -122,6 +122,7 @@ _STOCKFISH_KEYS = (
     "sf_pid_nodes_window",
     "sf_pid_nodes_max_step",
     "sf_pid_nodes_max_step_frac",
+    "sf_pid_nodes_ease_step_frac",
     "sf_pid_nodes_safety_floor",
     "sf_pid_nodes_emergency_ease_step",
     "sf_pid_nodes_emergency_ease_mult",
