@@ -19,6 +19,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from operator import index
 
 import chess
 import numpy as np
@@ -627,48 +628,64 @@ def run_value_head_puzzle_eval(
     # Local import: see run_policy_sequence_eval.
     from chess_anti_engine.eval.era_probe import eager_module
 
+    batch_size = index(batch_size)
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
     model.eval()
     module = eager_module(model)
     total = len(suite)
     correct_flags = [False] * total
+    best_moves: list[chess.Move | None] = [None] * total
+    best_scores = np.full(total, -np.inf, dtype=np.float32)
+    pending_x: list[np.ndarray] = []
+    pending_moves: list[chess.Move] = []
+    pending_groups: list[tuple[int, int]] = []  # puzzle index, batch start
 
-    # Flatten (puzzle_idx, candidate_move) pairs across the suite, then batch.
-    flat_idx: list[int] = []
-    flat_moves: list[chess.Move] = []
-    flat_x: list[np.ndarray] = []
-    flat_groups: list[tuple[int, int]] = []  # (puzzle_idx, # legal moves) — used to slice scores
-
-    legal_per_puzzle: list[list[chess.Move]] = []
-    for puzzle in suite.puzzles:
-        legal = list(puzzle.board.legal_moves)
-        legal_per_puzzle.append(legal)
-        for mv in legal:
-            puzzle.board.push(mv)
-            flat_x.append(encode_position_for_model(model, puzzle.board))
-            puzzle.board.pop()
-            flat_moves.append(mv)
-        flat_groups.append((len(flat_idx), len(legal)))
-        flat_idx.extend([len(legal_per_puzzle) - 1] * len(legal))
-
-    # Batched value-head forward.
-    pos_count = len(flat_x)
-    scores = np.empty(pos_count, dtype=np.float32)
-    for start in range(0, pos_count, batch_size):
-        end = min(start + batch_size, pos_count)
-        x = torch.from_numpy(np.stack(flat_x[start:end])).to(device, non_blocking=True)
+    def flush() -> None:
+        if not pending_x:
+            return
+        x = torch.from_numpy(np.stack(pending_x)).to(device, non_blocking=True)
         out = module(x)
         wdl_logits = out["wdl"] if isinstance(out, dict) else out[1]
         wdl_p = torch.softmax(wdl_logits, dim=-1).float().cpu().numpy()
-        # After-push board is opponent's POV: P_opp(L) - P_opp(W) = mover's signed value.
-        scores[start:end] = wdl_p[:, 2] - wdl_p[:, 0]
+        # After-push board is opponent's POV; retain the original signed value.
+        scores = wdl_p[:, 2] - wdl_p[:, 0]
+        for group_idx, (puzzle_idx, start) in enumerate(pending_groups):
+            end = (
+                pending_groups[group_idx + 1][1]
+                if group_idx + 1 < len(pending_groups) else len(pending_x)
+            )
+            best = start + int(np.argmax(scores[start:end]))
+            score = scores[best]
+            previous = best_scores[puzzle_idx]
+            # Strict comparison preserves first-argmax ties across batches.
+            # NumPy argmax also selects the first NaN, if one is present.
+            if (
+                best_moves[puzzle_idx] is None or score > previous
+                or (np.isnan(score) and not np.isnan(previous))
+            ):
+                best_scores[puzzle_idx] = score
+                best_moves[puzzle_idx] = pending_moves[best]
+        pending_x.clear()
+        pending_moves.clear()
+        pending_groups.clear()
 
-    for puzzle_idx, (slot_start, n_legal) in enumerate(flat_groups):
-        if n_legal == 0:
-            continue
-        slot = scores[slot_start:slot_start + n_legal]
-        best = int(np.argmax(slot))
-        chosen = flat_moves[slot_start + best]
-        if chosen in suite.puzzles[puzzle_idx].best_moves:
+    for puzzle_idx, puzzle in enumerate(suite.puzzles):
+        for move in list(puzzle.board.legal_moves):
+            if not pending_groups or pending_groups[-1][0] != puzzle_idx:
+                pending_groups.append((puzzle_idx, len(pending_x)))
+            puzzle.board.push(move)
+            try:
+                pending_x.append(encode_position_for_model(model, puzzle.board))
+            finally:
+                puzzle.board.pop()
+            pending_moves.append(move)
+            if len(pending_x) == batch_size:
+                flush()
+    flush()
+
+    for puzzle_idx, chosen in enumerate(best_moves):
+        if chosen is not None and chosen in suite.puzzles[puzzle_idx].best_moves:
             correct_flags[puzzle_idx] = True
 
     correct = sum(correct_flags)
