@@ -27,10 +27,14 @@ from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
 
 def _loader_thread(shard_paths: list[str], q: queue.Queue) -> None:
-    for path in shard_paths:
-        samples, _ = load_npz(path)
-        q.put(samples)
-    q.put(None)
+    try:
+        for path in shard_paths:
+            samples, _ = load_npz(path)
+            q.put(samples)
+    except Exception as exc:
+        q.put(exc)
+    finally:
+        q.put(None)
 
 
 def main() -> None:
@@ -118,10 +122,17 @@ def main() -> None:
         threads.append(t)
 
     done_count = 0
+    load_error: Exception | None = None
     while done_count < n_loaders:
         item = q.get()
         if item is None:
             done_count += 1
+            continue
+        if isinstance(item, Exception):
+            if load_error is None:
+                load_error = item
+            continue
+        if load_error is not None:
             continue
         if max_pos > 0 and total_loaded >= max_pos:
             del item
@@ -140,6 +151,9 @@ def main() -> None:
 
     for t in threads:
         t.join(timeout=5)
+
+    if load_error is not None:
+        raise RuntimeError("bootstrap shard loading failed") from load_error
 
     load_time = time.time() - t0
     print(f"Loaded {total_loaded:,} positions from {shard_count} shards in {load_time:.0f}s", flush=True)
