@@ -41,7 +41,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train bootstrap net on random game data")
     parser.add_argument("--config", type=str, required=True, help="YAML config file")
     parser.add_argument("--bootstrap-dir", type=str, default=None, help="Override bootstrap_dir from config")
-    parser.add_argument("--max-positions", type=int, default=0, help="Max positions to load (0=all)")
+    parser.add_argument("--max-positions", type=int, default=0, help="Max positions to load (0=all; memory grows with data)")
     parser.add_argument("--epochs", type=int, default=1, help="Number of epochs over the data")
     parser.add_argument("--batch-size", type=int, default=1024, help="Batch size")
     parser.add_argument("--loaders", type=int, default=16, help="Number of parallel loader threads")
@@ -104,7 +104,8 @@ def main() -> None:
 
     # ── Phase 1: threaded loading into buffer ──
     t0 = time.time()
-    buf_cap = max_pos if max_pos > 0 else 2_000_000  # ~120GB at 60KB/sample; fits in memory
+    # Uncapped loading extends this initial ceiling before each append.
+    buf_cap = max_pos if max_pos > 0 else 2_000_000
     buf = ReplayBuffer(buf_cap, rng=rng)
     total_loaded = 0
     shard_count = 0
@@ -142,6 +143,8 @@ def main() -> None:
             item = item[:max_pos - total_loaded]
             n = len(item)
         if n:
+            if max_pos == 0:
+                buf.capacity = max(buf.capacity, total_loaded + n)
             buf.add_many(item)
         total_loaded += n
         shard_count += 1
