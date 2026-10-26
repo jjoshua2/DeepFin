@@ -290,6 +290,8 @@ def attrition_bias(
             float(int(row.legal[j]) in row.surfaced))
         bucket.setdefault("r_k", []).append(float(row.r_k))
         bucket.setdefault("ply", []).append(float(row.ply))
+    if not keep or not drop:
+        return []
     return [
         (name, float(np.mean(keep[name])), float(np.mean(drop[name])))
         for name in sorted(keep)
@@ -414,6 +416,17 @@ def main() -> int:
             for label, n, p_any, p_st, p_tt in curves:
                 print(f"    {label:<14}{n:>6}{p_any:>9.3f}{p_st:>9.3f}{p_tt:>9.3f}")
 
+    eligible = sum(row.prior is not None for row in rows)
+    recovered = sum(row.prior is not None and move is not None
+                    for row, move in zip(rows, search_moves))
+    dropped = eligible - recovered
+    status = ("no_eligible_rows" if not eligible else
+              "no_recovered_rows" if not recovered else
+              "no_dropped_rows" if not dropped else "comparison_available")
+    res["attrition_population"] = {
+        "eligible": eligible, "recovered": recovered, "dropped": dropped,
+        "prior_absent": len(rows) - eligible, "status": status,
+    }
     bias = attrition_bias(rows, search_moves)
     res["attrition_bias"] = [
         {"observable": n, "recovered": k, "dropped": d} for n, k, d in bias
@@ -424,8 +437,12 @@ def main() -> int:
               "  a selection effect. 75% attrition is too large to assume random.")
         print(f"    {'observable':<16}{'recovered':>11}{'dropped':>10}{'ratio':>9}")
         for name, kept, dropped in bias:
-            ratio = kept / dropped if dropped else float("nan")
-            print(f"    {name:<16}{kept:>11.3f}{dropped:>10.3f}{ratio:>9.3f}")
+            ratio = f"{kept / dropped:.3f}" if dropped else "n/a"
+            print(f"    {name:<16}{kept:>11.3f}{dropped:>10.3f}{ratio:>9}")
+    else:
+        print(f"\nSTORED-CHILD SELECTION BIAS unavailable: {status} "
+              f"(recovered={recovered}, dropped={dropped}, "
+              f"prior_absent={len(rows) - eligible}).")
 
     if args.json_out:
         out = {k: v for k, v in res.items()
