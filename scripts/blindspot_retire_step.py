@@ -81,13 +81,24 @@ def update_streaks(
     When ``require_deep_read`` is set, retirement also needs at least one of the
     consecutive AWARE reads to be deep (net_q <= deep_below). ``deep_seen`` tracks
     that flag across the current streak (mutated; reset with the streak).
+
+    Duplicate canonical keys represent one cadence, not independent reads.
+    All evaluations for a key must agree it is AWARE (and all must be deep to
+    establish a deep read). The returned resolved_count remains row-based for
+    the existing pool-size report; duplicate rows cannot advance streaks twice.
     """
     resolved = 0
+    evidence: dict[str, tuple[bool, bool]] = {}
     for k, qi in zip(keys, net_q):
-        if qi <= resolved_below:
-            state[k] = int(state.get(k, 0)) + 1
+        aware = qi <= resolved_below
+        if aware:
             resolved += 1
-            if deep_seen is not None and qi <= deep_below:
+        all_aware, all_deep = evidence.get(k, (True, True))
+        evidence[k] = (all_aware and aware, all_deep and qi <= deep_below)
+    for k, (all_aware, all_deep) in evidence.items():
+        if all_aware:
+            state[k] = int(state.get(k, 0)) + 1
+            if deep_seen is not None and all_deep:
                 deep_seen[k] = True
         else:
             state[k] = 0
