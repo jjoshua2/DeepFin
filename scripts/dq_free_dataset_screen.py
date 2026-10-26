@@ -61,6 +61,7 @@ from scripts.tail_censor_screen import (
     check_invariants,
     collect,
     select_shards,
+    shard_source_key,
 )
 
 
@@ -127,38 +128,54 @@ def recover_search_moves(
     """
     from scripts.cast_probe import recover_played_move
 
-    want = {(r.game_id, r.ply + 1) for r in rows}
-    children: dict[tuple[int, int], np.ndarray] = {}
-    encodings: dict[str, str] = {}
+    want = {(r.source_key, r.game_id, r.ply + 1) for r in rows
+            if r.source_key is not None}
+    children: dict[tuple[tuple[str, str], int, int],
+                   tuple[np.ndarray, tuple[str, str]]] = {}
+    conflicts: set[tuple[tuple[str, str], int, int]] = set()
     for shard in shards:
         try:
-            arrs, _ = load_shard_arrays(shard)
+            arrs, metadata = load_shard_arrays(shard)
         except (OSError, ValueError, KeyError):
             continue
-        encodings.setdefault(
-            "hist", str(np.asarray(arrs["_input_history_encoding"]).item()))
-        encodings.setdefault(
-            "pol", str(np.asarray(arrs["_policy_encoding"]).item()))
+        source_key = shard_source_key(shard, metadata)
+        encodings = (str(np.asarray(arrs["_input_history_encoding"]).item()),
+                     str(np.asarray(arrs["_policy_encoding"]).item()))
         gid = np.asarray(arrs["game_id"])
         ply = np.asarray(arrs["ply_index"])
         x = np.asarray(arrs["x"])
         for i in range(gid.shape[0]):
-            key = (int(gid[i]), int(ply[i]))
-            if key in want:
-                children[key] = x[i]
+            key = (source_key, int(gid[i]), int(ply[i]))
+            if key not in want:
+                continue
+            previous = children.get(key)
+            if previous is not None:
+                if previous[1] != encodings or not np.array_equal(previous[0], x[i]):
+                    conflicts.add(key)
+            else:
+                children[key] = (x[i], encodings)
 
     stats = {"no_child": 0, "ambiguous": 0, "recovered": 0}
     out: list[int | None] = []
     for row, parent_x in zip(rows, planes):
-        child = children.get((row.game_id, row.ply + 1))
+        if row.source_key is None:
+            stats["no_child"] += 1
+            out.append(None)
+            continue
+        key = (row.source_key, row.game_id, row.ply + 1)
+        child = children.get(key)
         if child is None:
             stats["no_child"] += 1
             out.append(None)
             continue
+        if key in conflicts or row.encodings != child[1]:
+            stats["ambiguous"] += 1
+            out.append(None)
+            continue
         mv = recover_played_move(
-            parent_x, child,
-            input_history_encoding=encodings["hist"],
-            policy_encoding=encodings["pol"],
+            parent_x, child[0],
+            input_history_encoding=child[1][0],
+            policy_encoding=child[1][1],
         )
         if mv is None:
             stats["ambiguous"] += 1
