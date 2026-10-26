@@ -1242,7 +1242,7 @@ def test_compare_buckets_preserves_serialized_gap_and_joined_rows(
     """A producer's null second-move gap remains a decisive joined position."""
     import scripts.audit_compare_buckets as acb
 
-    record = {
+    record: dict[str, Any] = {
         "key": "joined", "fen": chess.STARTING_FEN, "phase": 2, "source": 0,
         "multipv": [{"move": "e2e4", "cp": 50}], "bestmove": "e2e4",
         "wdl": [500, 300, 200], "nodes": 1000000, "depth": 40,

@@ -59,7 +59,7 @@ from chess_anti_engine.eval.audit_cache import (
 BUCKETS = list(CRITICALITY_BUCKET_NAMES)
 
 
-def bucket(gap: float | None) -> str:
+def bucket(gap: object) -> str:
     """Decode the producers' null (<2 moves) gap using the shared edges."""
     if gap is None:
         gap = float("inf")
