@@ -66,7 +66,7 @@ def test_cli_drains_loader_failure_before_training(tmp_path, monkeypatch, fail, 
     monkeypatch.setattr(bootstrap, 'Trainer', lambda *a, **kw: SimpleNamespace(
         train_steps=train, save=lambda _: calls.append('save')))
     monkeypatch.setattr(bootstrap, 'ReplayBuffer',
-                        lambda *a, **kw: SimpleNamespace(add_many=lambda _: None))
+                        lambda capacity, **kw: SimpleNamespace(capacity=capacity, add_many=lambda _: None))
     monkeypatch.setattr(bootstrap, 'load_npz', load)
     monkeypatch.setattr(sys, 'argv', ['bootstrap', '--config', 'unused',
         '--bootstrap-dir', str(tmp_path), '--out', str(tmp_path / 'unused.pt'),
