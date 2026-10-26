@@ -19,8 +19,11 @@ def test_raw_identity_layout_and_numpy_header_fit_existing_reservation():
         array = np.zeros(rows, dtype=provenance.RECORD_DTYPE)
         stream = io.BytesIO()
         np.save(stream, array, allow_pickle=False)
-        assert len(stream.getvalue()) <= raw_identity_cache_bytes(rows, 1)
-        written += len(stream.getvalue())
+        used_stream = io.BytesIO()
+        np.save(used_stream, np.zeros(rows, dtype=np.uint8), allow_pickle=False)
+        size = len(stream.getvalue()) + len(used_stream.getvalue())
+        assert size <= raw_identity_cache_bytes(rows, 1)
+        written += size
     assert written <= raw_identity_cache_bytes(1 + 9 + 8192, 3)
 
 
