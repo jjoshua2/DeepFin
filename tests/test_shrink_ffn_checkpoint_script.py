@@ -526,3 +526,162 @@ def test_activation_input_only_preserves_history_selection(monkeypatch: pytest.M
     else:
         with pytest.raises(ValueError, match="no recorded x_lc0_root"):
             module._load_calibration_arrays_from_replay(**kwargs, inputs_only=True)
+
+
+@pytest.mark.parametrize(("batch_size", "positions"), [(1, 1), (3, 5), (5, 6), (8, 6)])
+def test_streamed_activation_preserves_global_batches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, batch_size: int, positions: int,
+) -> None:
+    module = _load_shrink_module()
+    cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
+    x = _calibration_shards(tmp_path, (1858, 4672, 1858))
+    ckpt = {"model": build_model(cfg).state_dict(), "arch": {"_schema_version": ARCH_SCHEMA_VERSION, **dataclasses.asdict(cfg)}}
+    common = {"ckpt_path": Path("trainer.pt"), "batch_size": batch_size, "device": torch.device("cpu")}
+    expected, stats = module.activation_unit_scores_from_x(ckpt, x=torch.as_tensor(x[:positions]), **common)
+
+    def no_concat(_chunks: Any) -> Any:
+        pytest.fail("activation replay must not concatenate selected inputs")
+
+    monkeypatch.setattr(module, "_concat_calibration_chunks", no_concat)
+    actual, actual_stats = module.activation_unit_scores_from_replay(
+        ckpt, replay_dir=tmp_path, positions=positions, prefer_recorded_lc0_root=False,
+        synthetic_lc0_root_history=False, lc0_root_legacy_meta=False, **common,
+    )
+    assert actual_stats == stats
+    for layer, score in expected.items():
+        torch.testing.assert_close(actual[layer], score, rtol=0, atol=0)
+
+
+def test_stream_batches_release_previous_inputs_and_preserve_order() -> None:
+    import weakref
+
+    module = _load_shrink_module()
+    refs = []
+
+    def chunks():
+        for number in range(7):
+            assert all(ref() is None for ref in refs)
+            x = np.full((2, 1), number, dtype=np.float32)
+            refs.append(weakref.ref(x))
+            yield {"x": x}
+            del x
+
+    batches = list(module._calibration_input_batches(chunks(), batch_size=3))
+    assert [int(batch.shape[0]) for batch in batches] == [3, 3, 3, 3, 2]
+    torch.testing.assert_close(torch.cat(batches).flatten(), torch.arange(7).repeat_interleave(2).float())
+    assert all(ref() is None for ref in refs)
+
+
+@pytest.mark.parametrize("failure", ["iterator", "forward", "empty"])
+def test_activation_stream_removes_hooks_on_failure(monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
+    module = _load_shrink_module()
+    cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
+    model = build_model(cfg)
+    ckpt = {"model": model.state_dict(), "arch": {"_schema_version": ARCH_SCHEMA_VERSION, **dataclasses.asdict(cfg)}}
+    monkeypatch.setattr(module, "build_model", lambda _cfg: model)
+
+    def broken_forward(_x: torch.Tensor) -> Any:
+        raise RuntimeError("fixture forward failure")
+
+    def batches():
+        if failure == "empty":
+            return
+        yield torch.zeros((1, 146, 8, 8))
+        raise RuntimeError("fixture iterator failure")
+
+    if failure == "forward":
+        monkeypatch.setattr(model, "forward", broken_forward)
+    error = ValueError if failure == "empty" else RuntimeError
+    message = "calibration tensor is empty" if failure == "empty" else f"fixture {failure} failure"
+    with pytest.raises(error, match=message):
+        module._activation_unit_scores_from_batches(
+            ckpt, ckpt_path=Path("trainer.pt"), batches=batches(),
+            batch_size=1, device=torch.device("cpu"),
+        )
+    for component in model.modules():
+        assert not component._forward_hooks
+
+
+def test_stream_batches_reject_incompatible_input_shapes() -> None:
+    module = _load_shrink_module()
+    chunks = [{"x": np.zeros((1, 2), np.float32)}, {"x": np.zeros((1, 3), np.float32)}]
+    with pytest.raises(ValueError, match="input shapes differ"):
+        list(module._calibration_input_batches(chunks, batch_size=2))
+
+
+@pytest.mark.parametrize("recorded", [True, False])
+def test_activation_stream_preserves_recorded_history(monkeypatch: pytest.MonkeyPatch, recorded: bool) -> None:
+    from chess_anti_engine.replay import shard
+
+    module = _load_shrink_module()
+    cfg = dataclasses.replace(_small_cfg(ffn_mult_by_layer=(2.0, 1.5)), input_history_encoding="lc0_root")
+    arrays = {
+        "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
+        "_input_history_encoding": np.asarray("legacy"),
+        "x_lc0_root": np.full((2, 146, 8, 8), 0.75, dtype=np.float32),
+        "has_x_lc0_root": np.full(2, int(recorded), dtype=np.uint8),
+    }
+    monkeypatch.setattr(shard, "iter_shard_paths", lambda _: [Path("fixture.zarr")])
+    monkeypatch.setattr(shard, "load_shard_arrays", lambda _path, *, lazy: (arrays, {}))
+    ckpt = {"model": build_model(cfg).state_dict(), "arch": {"_schema_version": ARCH_SCHEMA_VERSION, **dataclasses.asdict(cfg)}}
+    common = {"ckpt_path": Path("trainer.pt"), "batch_size": 3, "device": torch.device("cpu")}
+    kwargs = {
+        "replay_dir": Path("fixture"), "positions": 1, "prefer_recorded_lc0_root": False,
+        "synthetic_lc0_root_history": False, "lc0_root_legacy_meta": False,
+    }
+    if not recorded:
+        with pytest.raises(ValueError, match="no recorded x_lc0_root"):
+            module.activation_unit_scores_from_replay(ckpt, **common, **kwargs)
+        return
+    actual, stats = module.activation_unit_scores_from_replay(ckpt, **common, **kwargs)
+    expected, expected_stats = module.activation_unit_scores_from_x(
+        ckpt, x=torch.as_tensor(arrays["x_lc0_root"][:1]), **common,
+    )
+    assert stats == expected_stats
+    for layer, score in expected.items():
+        torch.testing.assert_close(actual[layer], score, rtol=0, atol=0)
+
+
+def test_activation_stream_rejects_late_malformed_target_and_removes_hooks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import zarr
+
+    module = _load_shrink_module()
+    _calibration_shards(tmp_path, (1858, 4672))
+    group = zarr.open_group(str(tmp_path / "shard_000001.zarr"), mode="r+")
+    group["policy_target"][0, 0] = np.nan
+    cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
+    model = build_model(cfg)
+    ckpt = {"model": model.state_dict(), "arch": {"_schema_version": ARCH_SCHEMA_VERSION, **dataclasses.asdict(cfg)}}
+    monkeypatch.setattr(module, "build_model", lambda _cfg: model)
+    with pytest.raises(ValueError, match="policy_target"):
+        module.activation_unit_scores_from_replay(
+            ckpt, ckpt_path=Path("trainer.pt"), replay_dir=tmp_path, positions=4,
+            batch_size=1, device=torch.device("cpu"), prefer_recorded_lc0_root=False,
+            synthetic_lc0_root_history=False, lc0_root_legacy_meta=False,
+        )
+    for component in model.modules():
+        assert not component._forward_hooks
+
+
+def test_stream_batches_do_not_allocate_unfilled_requested_capacity(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_shrink_module()
+    arrays = [{"x": np.ones((1, 2), np.float32)}]
+    original_cat = torch.cat
+    allocated_rows = []
+
+    def checked_cat(parts: Any, *, dim: int) -> torch.Tensor:
+        rows = sum(int(part.shape[0]) for part in parts)
+        allocated_rows.append(rows)
+        assert rows == 1
+        return original_cat(parts, dim=dim)
+
+    def no_empty(*_args: Any, **_kwargs: Any) -> Any:
+        pytest.fail("do not allocate unused requested batch capacity")
+
+    monkeypatch.setattr(module.torch, "empty", no_empty)
+    monkeypatch.setattr(module.torch, "cat", checked_cat)
+    batches = list(module._calibration_input_batches(arrays, batch_size=1_000_000))
+    assert allocated_rows == [1]
+    assert batches[0].shape == (1, 2)
