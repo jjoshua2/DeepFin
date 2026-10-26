@@ -117,10 +117,11 @@ def write_directory_producer_seal(group: Any) -> None:
     names = _array_names(group)
     store = group.store
     listed = _store_keys(store)
+    inventory = _partition_store_keys(group, listed)
     specs: dict[str, Any] = {}
     key_bytes = 0
     for name in names:
-        spec = _spec_for_array(group[name], listed)
+        spec = _spec_for_array(group[name], inventory)
         key_bytes += _key_bytes(spec["stored"])
         _refuse_key_bytes(key_bytes, MAX_GRID_KEY_BYTES)
         specs[name] = spec
@@ -184,6 +185,7 @@ def verify_directory_producer_seal(
             "refusing fill decode"
         )
     listed = _store_keys(group.store)
+    inventory = _partition_store_keys(group, listed)
     rows: int | None = None
     for name in names:
         arr = opened[name] if opened is not None and name in opened else group[name]
@@ -198,7 +200,7 @@ def verify_directory_producer_seal(
                 f"directory producer seal entry for {name!r} has unexpected "
                 "fields; refusing fill decode"
             )
-        count = _verify_array(name, arr, spec, listed)
+        count = _verify_array(name, arr, spec, inventory)
         if rows is None:
             rows = count
         elif count != rows:
@@ -250,6 +252,7 @@ def sealed_row_count(group: Any, name: str) -> int | None:
                 "refusing fill decode"
             )
     listed = _store_keys(group.store)
+    inventory = _partition_store_keys(group, listed)
     rows: int | None = None
     for found in present:
         spec = arrays.get(found)
@@ -266,7 +269,7 @@ def sealed_row_count(group: Any, name: str) -> int | None:
                 f"directory producer seal chunk grid for {found!r} does not "
                 "match the declared coordinates; refusing fill decode"
             )
-        _verify_stored_inventory(found, arr, stored, listed)
+        _verify_stored_inventory(found, arr, stored, inventory)
         count = _rows_in_zarray(found, raw)
         if rows is None:
             rows = count
@@ -409,10 +412,10 @@ def _attr_bound(arr: Any) -> bool:
         ) from exc
 
 
-def _spec_for_array(arr: Any, listed: list[str]) -> dict[str, Any]:
+def _spec_for_array(arr: Any, inventory: Mapping[str, list[str]]) -> dict[str, Any]:
     _require_v2(arr)
     declared = _declared_keys(arr)
-    present = _present_chunks(arr, listed)
+    present = _present_chunks(arr, inventory)
     missing = sorted(set(declared).difference(present))
     if missing:
         raise ValueError(
@@ -480,7 +483,7 @@ def _verify_array(
     name: str,
     arr: Any,
     spec: Mapping[str, Any],
-    listed: list[str],
+    inventory: Mapping[str, list[str]],
 ) -> int:
     _require_v2(arr)
     raw = _raw_bytes(arr.store, _zarray_key(arr), publish=False)
@@ -500,15 +503,15 @@ def _verify_array(
             f"directory producer seal chunk grid for {name!r} does not match "
             "the declared coordinates; refusing fill decode"
         )
-    _verify_stored_inventory(name, arr, stored, listed)
+    _verify_stored_inventory(name, arr, stored, inventory)
     return _rows_in_zarray(name, raw)
 
 
 def _verify_stored_inventory(
-    name: str, arr: Any, stored: list[str], listed: list[str],
+    name: str, arr: Any, stored: list[str], inventory: Mapping[str, list[str]],
 ) -> None:
     """Same bounded decoder-openable inventory check for load and row count."""
-    present = _present_chunks(arr, listed)
+    present = _present_chunks(arr, inventory)
     extra = sorted(present.difference(stored))
     if extra:
         raise ValueError(
@@ -627,13 +630,31 @@ def _is_array_meta(arr: Any, key: str) -> bool:
     return key in (f"{prefix}.zarray", f"{prefix}.zattrs")
 
 
-def _present_chunks(arr: Any, listed: list[str]) -> set[str]:
+def _partition_store_keys(group: Any, listed: list[str]) -> dict[str, list[str]]:
+    """Index a bounded listing once, retaining slash-separated descendants.
+
+    Array names are immediate children of this group. Use its path so seals
+    on nested groups retain the same full-prefix inventory semantics.
+    """
+    path = str(group.path).strip("/")
+    prefix = f"{path}/" if path else ""
+    inventory: dict[str, list[str]] = {}
+    for key in listed:
+        if not key.startswith(prefix):
+            continue
+        name, separator, _ = key[len(prefix):].partition("/")
+        if separator:
+            inventory.setdefault(f"{prefix}{name}/", []).append(key)
+    return inventory
+
+
+def _present_chunks(arr: Any, inventory: Mapping[str, list[str]]) -> set[str]:
     """Chunk keys decode can open. A dangling name is not one of them."""
     store = arr.store
     prefix = _prefix(arr)
     present: set[str] = set()
-    for key in listed:
-        if not key.startswith(prefix) or _is_array_meta(arr, key):
+    for key in inventory.get(prefix, ()):
+        if _is_array_meta(arr, key):
             continue
         if _store_has_file(store, key):
             present.add(key)

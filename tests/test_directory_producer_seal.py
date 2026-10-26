@@ -8,6 +8,7 @@ including sparse omission, and are not claimed valid.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 import hashlib
 import json
 import math
@@ -43,6 +44,113 @@ from chess_anti_engine.replay.shard import (
 
 PLANES = 8
 TAIL = 512
+
+
+@pytest.mark.parametrize("auxiliary_count", [4, 12])
+@pytest.mark.parametrize("operation", ["writer", "lazy", "eager", "validate_false", "rowcount"])
+def test_inventory_key_visits_scale_with_listing_not_array_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, auxiliary_count: int, operation: str,
+) -> None:
+    path = _write(tmp_path, n=2)
+    group = zarr.open_group(str(path), mode="a")
+    for index in range(auxiliary_count):
+        group.create_dataset(
+            f"auxiliary_{index}", data=np.ones((2, 2), dtype=np.uint8),
+            chunks=(1, 1), dimension_separator="/",
+        )
+    write_directory_producer_seal(group)
+
+    class CountedKeys(list[str]):
+        visits = 0
+
+        def __iter__(self) -> Iterator[str]:
+            for key in super().__iter__():
+                self.visits += 1
+                yield key
+
+    listings: list[CountedKeys] = []
+    real_keys = directory_seal._store_keys
+
+    def counted_keys(store: Any) -> list[str]:
+        result = CountedKeys(real_keys(store))
+        listings.append(result)
+        return result
+
+    monkeypatch.setattr(directory_seal, "_store_keys", counted_keys)
+    if operation == "writer":
+        write_directory_producer_seal(group)
+    elif operation == "rowcount":
+        assert shard_positions(path) == 2
+    else:
+        arrays, _ = load_shard_arrays(
+            path, lazy=operation == "lazy", validate=operation != "validate_false",
+        )
+        assert arrays["x"].shape[0] == 2
+        assert "auxiliary_0" not in arrays
+    # The writer also consumes the listing for its projected final key count.
+    # Reading a listing per array would exceed this bound even at four extras.
+    assert listings
+    assert 0 < sum(keys.visits for keys in listings) <= 2 * sum(map(len, listings))
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "dangling", "directory"])
+def test_partitioned_auxiliary_slash_inventory_still_refuses_bad_files(
+    tmp_path: Path, mutation: str,
+) -> None:
+    path = _write(tmp_path, n=2)
+    group = zarr.open_group(str(path), mode="a")
+    group.create_dataset(
+        "auxiliary", data=np.ones((2, 2), dtype=np.uint8),
+        chunks=(1, 1), dimension_separator="/",
+    )
+    write_directory_producer_seal(group)
+    original = bytes(group.store[SEAL_FILENAME])
+    chunk = path / "auxiliary/0/0"
+    if mutation == "extra":
+        (path / "auxiliary/0/99").write_bytes(b"extra")
+    else:
+        chunk.unlink()
+        if mutation == "dangling":
+            try:
+                chunk.symlink_to("absent-chunk")
+            except OSError as exc:
+                pytest.skip(f"symlink creation unavailable: {exc}")
+        elif mutation == "directory":
+            chunk.mkdir()
+    with pytest.raises(ValueError, match=r"(missing|extra stored key)"):
+        load_shard_arrays(path, lazy=True)
+    assert shard_positions(path) == 0
+    with pytest.raises(ValueError, match=r"(omitted stored chunk|unexpected chunk keys)"):
+        write_directory_producer_seal(group)
+    assert bytes(group.store[SEAL_FILENAME]) == original
+
+
+def test_partitioned_inventory_preserves_priority_removal() -> None:
+    group = zarr.group(store=MemoryStore())
+    for name in ("x", "policy_target", "wdl_target", "has_policy", "priority", "auxiliary"):
+        group.create_dataset(
+            name, data=np.ones((2, 2), dtype=np.uint8),
+            chunks=(1, 1), dimension_separator="/",
+        )
+    write_directory_producer_seal(group)
+    verify_directory_producer_seal(group)
+    assert directory_seal.sealed_row_count(group, "x") == 2
+    del group["priority"]
+    assert directory_seal.sealed_row_count(group, "x") == 2
+    with pytest.raises(ValueError, match="array set does not match"):
+        verify_directory_producer_seal(group)
+
+
+def test_partitioned_inventory_preserves_nested_group_prefix() -> None:
+    root = zarr.group(store=MemoryStore())
+    group = root.create_group("nested")
+    root.create_dataset("unrelated", data=np.ones(1, dtype=np.uint8))
+    group.create_dataset(
+        "auxiliary", data=np.ones((2, 2), dtype=np.uint8),
+        chunks=(1, 1), dimension_separator="/",
+    )
+    write_directory_producer_seal(group)
+    verify_directory_producer_seal(group)
 
 
 def _restamp_declaration(path: Path, shape: list[int], chunks: list[int]) -> None:
