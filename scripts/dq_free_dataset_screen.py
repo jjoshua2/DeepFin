@@ -384,6 +384,9 @@ def main() -> int:
     print(f"    prior == search (nothing to adjudicate)  {pairs['same_move']:6d}"
           f"   {pairs['same_move']/u:.3f}")
     print(f"    DISAGREE                                 {dis:6d}   {dis/u:.3f}")
+    res["pairs"] = pairs
+    res["recovery"] = rec
+    res["confidence_curves"] = confidence_curves(obs)
     if dis:
         print(f"      both already in SF6 (ΔQ FREE)          {pairs['both_surfaced']:6d}"
               f"   {pairs['both_surfaced']/dis:.3f}")
@@ -395,7 +398,7 @@ def main() -> int:
               "      `searchmoves a_prior a_search` at MultiPV 2 returns both.\n"
               "      T×T is informationally harder, NOT 2x the query budget.\n")
 
-        curves = confidence_curves(obs)
+        curves = res["confidence_curves"]
         if curves:
             # ⚑ The denominator is printed IN the title. The previous revision's
             # table summed to a different n than the headline split directly
@@ -410,10 +413,11 @@ def main() -> int:
             print(f"    {'confidence':<14}{'n':>6}{'P(any)':>9}{'P(S×T)':>9}{'P(T×T)':>9}")
             for label, n, p_any, p_st, p_tt in curves:
                 print(f"    {label:<14}{n:>6}{p_any:>9.3f}{p_st:>9.3f}{p_tt:>9.3f}")
-        res["pairs"] = {k: v for k, v in pairs.items() if not isinstance(v, list)}
-        res["confidence_curves"] = curves
 
     bias = attrition_bias(rows, search_moves)
+    res["attrition_bias"] = [
+        {"observable": n, "recovered": k, "dropped": d} for n, k, d in bias
+    ]
     if bias:
         print("\n⚑ STORED-CHILD SELECTION BIAS — recovered vs dropped rows.\n"
               "  All observables are computable BEFORE recovery, so a gap here is\n"
@@ -422,12 +426,10 @@ def main() -> int:
         for name, kept, dropped in bias:
             ratio = kept / dropped if dropped else float("nan")
             print(f"    {name:<16}{kept:>11.3f}{dropped:>10.3f}{ratio:>9.3f}")
-        res["attrition_bias"] = [
-            {"observable": n, "recovered": k, "dropped": d} for n, k, d in bias
-        ]
 
     if args.json_out:
-        out = {k: v for k, v in res.items() if not isinstance(v, list)}
+        out = {k: v for k, v in res.items()
+               if k not in {"free_regret", "buyable_regret"}}
         out["free_regret_summary"] = _q(res["free_regret"])
         out["buyable_regret_summary"] = _q(res["buyable_regret"])
         out["k"] = args.k
