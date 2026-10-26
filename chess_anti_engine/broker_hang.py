@@ -385,7 +385,8 @@ class BrokerHangWatchdog:
             if self._aborted:
                 return True
             armed = self._armed
-            oldest = min(self._inflight.values()) if self._inflight else None
+            oldest_entry = min(self._inflight.items(), key=lambda item: item[1]) if self._inflight else None
+            oldest = oldest_entry[1] if oldest_entry is not None else None
             threshold = self._threshold_s
             boot_threshold = self._boot_threshold_s
         if oldest is None:
@@ -405,6 +406,10 @@ class BrokerHangWatchdog:
         with self._lock:
             if self._aborted:
                 return True
+            # Completion/replacement or arming can invalidate the unlocked snapshot.
+            if (oldest_entry is None or self._inflight.get(oldest_entry[0]) != oldest
+                    or self._armed != armed):
+                return False
             self._aborted = True
         # ONE critical line then hard-exit — no cleanup (CUDA context is dead).
         log.critical(
