@@ -339,7 +339,8 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
 # NB: harness's ``work_dir`` is the run root, while the canonical
 # ``resolve_local_override_root`` in ``tune/_utils.py`` expects the *tune*
 # subdir and derives ``run_root = tune_dir.parent``. Pass ``work_dir/"tune"``
-# to bridge the conventions.
+# to bridge the conventions, resolving caller-relative paths first: the shared
+# helper anchors relative tune directories against the repository for actors.
 
 
 def _load_trial_config_from_state_entry(entry: object) -> tuple[dict[str, object] | None, bool]:
@@ -446,7 +447,7 @@ def _launch_distributed_server(
     if server_root_override:
         server_root = resolve_local_override_root(
             raw_root=server_root_override,
-            tune_work_dir=work_dir / "tune",
+            tune_work_dir=work_dir.resolve() / "tune",
             suffix="server",
         ).resolve()
     else:
