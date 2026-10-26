@@ -261,14 +261,24 @@ def _parse_setup_and_best(
     return board, best
 
 
+def _validate_solution_sequence(
+    board: chess.Board, sequence: tuple[chess.Move, ...],
+) -> None:
+    """Reject an illegal continuation without mutating the puzzle position."""
+    position = board.copy()
+    for step, move in enumerate(sequence):
+        if move not in position.legal_moves:
+            raise ValueError(f"illegal solution move {move.uci()} at step {step + 1}")
+        position.push(move)
+
+
 def _parse_solution_sequence(
-    move_tokens: list[str], best: chess.Move,
+    move_tokens: list[str], board: chess.Board,
 ) -> tuple[chess.Move, ...]:
-    """Parse the rest of the solution sequence; fall back to [best] on error."""
-    try:
-        return tuple(chess.Move.from_uci(tok) for tok in move_tokens[1:])
-    except (ValueError, chess.InvalidMoveError):
-        return (best,)
+    """Parse and validate every user move and forced opponent reply."""
+    sequence = tuple(chess.Move.from_uci(tok) for tok in move_tokens[1:])
+    _validate_solution_sequence(board, sequence)
+    return sequence
 
 
 def _row_to_puzzle(
@@ -297,6 +307,11 @@ def _row_to_puzzle(
     if parsed is None:
         return None
     board, best = parsed
+    try:
+        sequence = _parse_solution_sequence(move_tokens, board)
+    except ValueError as exc:
+        _log.warning("Skipping puzzle %s: invalid solution sequence (%s)", row.get("PuzzleId", ""), exc)
+        return None
 
     return Puzzle(
         board=board,
@@ -304,7 +319,7 @@ def _row_to_puzzle(
         puzzle_id=(row.get("PuzzleId") or "").strip(),
         rating=rating if rating > 0 else None,
         themes=themes,
-        solution_sequence=_parse_solution_sequence(move_tokens, best),
+        solution_sequence=sequence,
     )
 
 
@@ -324,8 +339,9 @@ def load_lichess_csv(
     The FEN is the position *before* the opponent's setup move; ``Moves`` is a
     space-separated UCI sequence whose first move is that setup. We apply the
     setup, then take the second move as the puzzle's expected best move (the
-    user's first reply). Multi-move puzzle continuations are ignored — top-1
-    accuracy on the post-setup position matches LC0's blog methodology.
+    user's first reply). The full alternating continuation is validated and
+    retained for policy-sequence scoring; value/MCTS scoring uses the first
+    move. Invalid continuations are skipped with a warning, not shortened.
     """
     p = Path(path)
     if not p.exists():
@@ -533,6 +549,15 @@ def run_policy_sequence_eval(
     # Local import: era_probe pulls in the replay stack and the loss module,
     # ~3.8s that every `from chess_anti_engine.eval import ...` would pay.
     from chess_anti_engine.eval.era_probe import eager_module
+
+    # Programmatic suites bypass CSV validation. Refuse the entire evaluation
+    # before model mutation rather than silently changing its denominator.
+    for puzzle in suite.puzzles:
+        if puzzle.solution_sequence:
+            try:
+                _validate_solution_sequence(puzzle.board, puzzle.solution_sequence)
+            except ValueError as exc:
+                raise ValueError(f"puzzle {puzzle.puzzle_id!r}: {exc}") from exc
 
     model.eval()
     module = eager_module(model)
