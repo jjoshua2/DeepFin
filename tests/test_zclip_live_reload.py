@@ -183,8 +183,8 @@ def test_trainable_pushes_through_the_shared_resolver() -> None:
     from chess_anti_engine.tune import trainable
 
     src = inspect.getsource(trainable)
-    assert "set_grad_clip_max_norm(resolve_zclip_max_norm(config))" in src, (
-        "the live zclip push must resolve via resolve_zclip_max_norm so it "
+    assert "set_grad_clip_from_config(config)" in src, (
+        "the live zclip push must use the shared config-aware setter so it "
         "agrees with trainer_kwargs_from_config"
     )
 

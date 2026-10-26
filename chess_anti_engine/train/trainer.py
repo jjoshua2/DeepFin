@@ -2439,6 +2439,14 @@ def align_compile_prefix(
     }
 
 
+def _configured_zclip_max_norm(config: dict) -> Any:
+    return config.get("zclip_max_norm", config.get("grad_clip", 1.0))
+
+
+def _parse_zclip_max_norm(raw: Any) -> float | None:
+    return None if raw is None else float(raw)
+
+
 def resolve_zclip_max_norm(config: dict) -> float | None:
     """The one answer to "what fixed grad-norm cap does this config mean?".
 
@@ -2455,8 +2463,7 @@ def resolve_zclip_max_norm(config: dict) -> float | None:
     ``grad_clip`` is the argparse spelling in run.py. An explicit ``None``
     disables the fixed cap while leaving adaptive z-score clipping active.
     """
-    raw = config.get("zclip_max_norm", config.get("grad_clip", 1.0))
-    return None if raw is None else float(raw)
+    return _parse_zclip_max_norm(_configured_zclip_max_norm(config))
 
 
 # Construction-site bounds for the per-group optimizer scalars that reach the
@@ -5284,7 +5291,11 @@ class Trainer:
         else:
             pg["lr"] = float(scheduler_last_lr_for_group) if scheduler_last_lr_for_group is not None else new_base
 
-    def set_grad_clip_max_norm(self, max_norm: float | None) -> bool:
+    def set_grad_clip_from_config(self, config: dict) -> bool:
+        """Live config uses startup's key precedence but refuses malformed caps."""
+        return self.set_grad_clip_max_norm(_configured_zclip_max_norm(config))
+
+    def set_grad_clip_max_norm(self, max_norm: Any) -> bool:
         """Re-point zclip's fixed hard cap on a RUNNING trainer.
 
         ``ZClip`` reads ``max_grad_norm`` once in its constructor, so before
@@ -5311,17 +5322,22 @@ class Trainer:
         because erroring out would take down a running trial over a typo.
         """
         old = self.grad_clip_max_norm
-        if max_norm is None:
-            new = None
-        else:
-            new = float(max_norm)
-            if not math.isfinite(new) or new <= 0.0:
-                print(
-                    f"[trainer] REFUSING zclip_max_norm={max_norm!r} "
-                    f"(must be finite and > 0); keeping {old}",
-                    flush=True,
-                )
-                return False
+        try:
+            new = _parse_zclip_max_norm(max_norm)
+        except (TypeError, ValueError, OverflowError):
+            print(
+                f"[trainer] REFUSING zclip_max_norm={max_norm!r} "
+                f"(must be numeric, finite and > 0, or None); keeping {old}",
+                flush=True,
+            )
+            return False
+        if new is not None and (not math.isfinite(new) or new <= 0.0):
+            print(
+                f"[trainer] REFUSING zclip_max_norm={max_norm!r} "
+                f"(must be finite and > 0); keeping {old}",
+                flush=True,
+            )
+            return False
         if new == old:
             return False
         self.zclip.max_grad_norm = new  # pyright: ignore[reportAttributeAccessIssue]

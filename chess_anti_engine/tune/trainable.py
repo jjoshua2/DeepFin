@@ -16,7 +16,6 @@ from chess_anti_engine.model import ModelConfig, build_model, resume_model_confi
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI, pid_from_config
 from chess_anti_engine.train import (
     Trainer,
-    resolve_zclip_max_norm,
     trainer_kwargs_from_config,
 )
 from chess_anti_engine.tune._utils import (
@@ -1076,7 +1075,7 @@ def train_trial(config: dict):
   # Resolve through the SAME helper the constructor uses -- a bare
   # config.get() would read an absent key as "cap disabled".
             _old_cap = trainer.grad_clip_max_norm
-            if trainer.set_grad_clip_max_norm(resolve_zclip_max_norm(config)):
+            if trainer.set_grad_clip_from_config(config):
                 print(
                     f"[trial] zclip_max_norm {_old_cap} -> {trainer.grad_clip_max_norm} "
                     f"(live reload, iteration {iteration_idx})",
