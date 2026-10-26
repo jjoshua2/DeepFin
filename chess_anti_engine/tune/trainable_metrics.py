@@ -210,7 +210,7 @@ def _curriculum_winrate_raw_or_none(
 
 def _games_per_iter_for_iteration(tc: TrialConfig, iteration_idx: int) -> int:
     target = max(1, tc.games_per_iter)
-    start = tc.games_per_iter_start
+    start = target if tc.games_per_iter_start == 0 else tc.games_per_iter_start
     ramp_iters = max(0, tc.games_per_iter_ramp_iters)
 
     if ramp_iters <= 0 or iteration_idx >= ramp_iters:
