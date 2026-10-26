@@ -38,6 +38,7 @@ from chess_anti_engine.tune.distributed_runtime import (
     _stop_process,
     _stop_worker_processes,
     _trial_server_dirs,
+    _distributed_worker_artifacts_root,
 )
 from chess_anti_engine.tune.trainable_config_ops import (
     _reload_yaml_into_config,
@@ -478,14 +479,11 @@ def _avg_batch_from_worker_logs(distributed_dirs, offsets: dict[str, int]) -> fl
     in any new `gumbel profile (...)` line. Returns 0 if no new samples.
     Mutates ``offsets`` in place to record post-read positions per file.
     """
-  # distributed_dirs is a dict from _trial_server_dirs (key "workers_root").
-  # Pre-2026-04-29 this used getattr() and silently returned 0 every iter,
-  # killing the selfplay/avg_batch_size TB scalar.
-    workers_root = distributed_dirs.get("workers_root")
-    if workers_root is None:
+    worker_artifacts_root = distributed_dirs.get("worker_artifacts_root")
+    if worker_artifacts_root is None:
         return 0.0
     samples: list[float] = []
-    for log_path in Path(workers_root).glob("worker_*/worker.log"):
+    for log_path in Path(worker_artifacts_root).glob("worker_*/worker.log"):
         key = str(log_path)
         try:
             sz = log_path.stat().st_size
@@ -952,6 +950,7 @@ def train_trial(config: dict):
     )
     _set_active_run_prefix(server_root=distributed_server_root, trial_id=trial_id)
     distributed_dirs = _trial_server_dirs(server_root=distributed_server_root, trial_id=trial_id)
+    distributed_dirs["worker_artifacts_root"] = _distributed_worker_artifacts_root(trial_dir)
   # Share the trainer's torch.compile cache with selfplay workers so FX
   # graphs + autotuned Triton kernels survive restarts (otherwise the
   # trainer writes to /tmp and pays a fresh ~7min compile each restart).
