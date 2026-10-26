@@ -4,6 +4,8 @@ import dataclasses
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import pytest
 import torch
 
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig, build_model
@@ -393,3 +395,134 @@ def test_shrink_checkpoint_reuses_main_keep_indices_for_swa(tmp_path: Path) -> N
         new_ckpt["swa_model"]["module.blocks.0.ffn.0.weight"],
         swa_state["module.blocks.0.ffn.0.weight"].index_select(0, swa_preferred),
     )
+
+
+def _calibration_shards(path: Path, widths: tuple[int, ...]) -> np.ndarray:
+    from chess_anti_engine.replay import ReplaySample
+    from chess_anti_engine.replay.shard import samples_to_arrays, save_local_shard_arrays
+
+    chunks = []
+    for number, width in enumerate(widths):
+        samples = []
+        for row in range(2):
+            x = np.full((146, 8, 8), (number * 2 + row) / 8.0, dtype=np.float32)
+            policy = np.full(width, 1.0 / width, dtype=np.float32)
+            sample = ReplaySample(x=x, policy_target=policy, wdl_target=1)
+            sample.input_history_encoding = "legacy"
+            samples.append(sample)
+            chunks.append(x)
+        save_local_shard_arrays(
+            path / f"shard_{number:06d}.zarr", arrs=samples_to_arrays(samples), meta={"positions": 2},
+        )
+    return np.stack(chunks)
+
+
+def _calibration_kwargs(path: Path, cfg: ModelConfig, *, positions: int = 4) -> dict[str, Any]:
+    return {
+        "source_cfg": cfg, "replay_dir": path, "positions": positions,
+        "prefer_recorded_lc0_root": False, "synthetic_lc0_root_history": False,
+        "lc0_root_legacy_meta": False,
+    }
+
+
+@pytest.mark.parametrize("widths", [(1858, 4672), (1858, 1858)])
+def test_activation_mixed_policy_widths_match_direct_scores(tmp_path: Path, widths: tuple[int, ...]) -> None:
+    module = _load_shrink_module()
+    cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
+    x = _calibration_shards(tmp_path, widths)
+    ckpt = {"model": build_model(cfg).state_dict(), "arch": {"_schema_version": ARCH_SCHEMA_VERSION, **dataclasses.asdict(cfg)}}
+    common = {"ckpt_path": Path("trainer.pt"), "batch_size": 2, "device": torch.device("cpu")}
+    expected, expected_stats = module.activation_unit_scores_from_x(ckpt, x=torch.as_tensor(x[:3]), **common)
+    actual, actual_stats = module.activation_unit_scores_from_replay(
+        ckpt, replay_dir=tmp_path, positions=3, prefer_recorded_lc0_root=False,
+        synthetic_lc0_root_history=False, lc0_root_legacy_meta=False, **common,
+    )
+    assert actual_stats == expected_stats
+    assert actual_stats["activation_score_positions"] == 3
+    for layer, score in expected.items():
+        torch.testing.assert_close(actual[layer], score, rtol=0, atol=0)
+
+
+def test_activation_loader_releases_unused_targets_before_next_shard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import weakref
+    from chess_anti_engine.replay import shard
+
+    module = _load_shrink_module()
+    expected = _calibration_shards(tmp_path, (1858, 4672, 1858))
+    original = shard.load_shard_arrays
+    refs = []
+
+    def tracked_load(path: Path, *, lazy: bool = False) -> Any:
+        assert not lazy  # Keep the existing whole-shard content validation.
+        assert all(ref() is None for ref in refs)
+        arrays, meta = original(path, lazy=lazy)
+        refs.append(weakref.ref(arrays["policy_target"]))
+        return arrays, meta
+
+    monkeypatch.setattr(shard, "load_shard_arrays", tracked_load)
+    arrs = module._load_calibration_arrays_from_replay(
+        **_calibration_kwargs(tmp_path, _small_cfg(ffn_mult_by_layer=(2.0, 1.5)), positions=6),
+        inputs_only=True,
+    )
+    assert set(arrs) == {"x"}
+    np.testing.assert_array_equal(arrs["x"], expected)
+    assert len(refs) == 3
+    assert all(ref() is None for ref in refs)
+
+
+def test_taylor_default_loader_still_retains_targets(tmp_path: Path) -> None:
+    module = _load_shrink_module()
+    expected = _calibration_shards(tmp_path, (1858, 1858))
+    kwargs = _calibration_kwargs(tmp_path, _small_cfg(ffn_mult_by_layer=(2.0, 1.5)))
+    all_fields = module._load_calibration_arrays_from_replay(**kwargs)
+    only_inputs = module._load_calibration_arrays_from_replay(**kwargs, inputs_only=True)
+    assert all_fields["policy_target"].shape == (4, 1858)
+    assert "wdl_target" in all_fields
+    np.testing.assert_array_equal(all_fields["x"], expected)
+    np.testing.assert_array_equal(only_inputs["x"], all_fields["x"])
+
+
+def test_activation_loader_keeps_whole_shard_validation(tmp_path: Path) -> None:
+    from chess_anti_engine.replay import ReplaySample
+    from chess_anti_engine.replay.shard import samples_to_arrays, save_local_shard_arrays
+    import zarr
+
+    module = _load_shrink_module()
+    policy = np.full(1858, 1.0 / 1858, dtype=np.float32)
+    sample = ReplaySample(x=np.zeros((146, 8, 8), np.float32), policy_target=policy, wdl_target=1)
+    arrs = samples_to_arrays([sample])
+    path = save_local_shard_arrays(tmp_path / "shard_000001.zarr", arrs=arrs, meta={"positions": 1})
+    group = zarr.open_group(str(path), mode="r+")
+    group["policy_target"][0, 0] = np.nan
+    cfg = _small_cfg(ffn_mult_by_layer=(2.0, 1.5))
+    ckpt = {"model": build_model(cfg).state_dict(), "arch": {"_schema_version": ARCH_SCHEMA_VERSION, **dataclasses.asdict(cfg)}}
+    with pytest.raises(ValueError, match="policy_target"):
+        module.activation_unit_scores_from_replay(
+            ckpt, ckpt_path=Path("trainer.pt"), replay_dir=tmp_path, positions=1,
+            batch_size=1, device=torch.device("cpu"), prefer_recorded_lc0_root=False,
+            synthetic_lc0_root_history=False, lc0_root_legacy_meta=False,
+        )
+
+
+@pytest.mark.parametrize("recorded", [True, False])
+def test_activation_input_only_preserves_history_selection(monkeypatch: pytest.MonkeyPatch, recorded: bool) -> None:
+    from chess_anti_engine.replay import shard
+
+    module = _load_shrink_module()
+    cfg = dataclasses.replace(_small_cfg(ffn_mult_by_layer=(2.0, 1.5)), input_history_encoding="lc0_root")
+    arrays = {
+        "x": np.zeros((2, 146, 8, 8), dtype=np.float32),
+        "_input_history_encoding": np.asarray("legacy"),
+        "x_lc0_root": np.full((2, 146, 8, 8), 0.75, dtype=np.float32),
+        "has_x_lc0_root": np.full(2, int(recorded), dtype=np.uint8),
+    }
+    monkeypatch.setattr(shard, "iter_shard_paths", lambda _: [Path("fixture.zarr")])
+    monkeypatch.setattr(shard, "load_shard_arrays", lambda _path, *, lazy: (arrays, {}))
+    kwargs = _calibration_kwargs(Path("fixture"), cfg, positions=1)
+    if recorded:
+        result = module._load_calibration_arrays_from_replay(**kwargs, inputs_only=True)
+        np.testing.assert_array_equal(result["x"], arrays["x_lc0_root"][:1])
+        assert set(result) == {"x"}
+    else:
+        with pytest.raises(ValueError, match="no recorded x_lc0_root"):
+            module._load_calibration_arrays_from_replay(**kwargs, inputs_only=True)

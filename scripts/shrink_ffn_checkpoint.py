@@ -434,6 +434,7 @@ def _load_calibration_arrays_from_replay(
     prefer_recorded_lc0_root: bool,
     synthetic_lc0_root_history: bool,
     lc0_root_legacy_meta: bool,
+    inputs_only: bool = False,
 ) -> dict[str, np.ndarray]:
     from chess_anti_engine.replay.shard import iter_shard_paths
     from chess_anti_engine.replay.shard import load_shard_arrays
@@ -462,10 +463,15 @@ def _load_calibration_arrays_from_replay(
         if n <= 0:
             continue
         idx = np.arange(n, dtype=np.int64)
+        # Keep the existing whole-shard validation and history selector, but
+        # activation scoring consumes no targets. Do not retain or concatenate
+        # unrelated policy widths across shards. Taylor still needs all fields.
+        selected = {"x": arrs["x"]} if inputs_only else arrs
         chunks.append({
             key: np.asarray(value)[idx] if np.asarray(value).ndim > 0 else np.asarray(value)
-            for key, value in arrs.items()
+            for key, value in selected.items()
         })
+        del arrs, selected
         left -= n
     if not chunks:
         raise ValueError(f"could not load calibration positions from {replay_dir}")
@@ -510,6 +516,7 @@ def activation_unit_scores_from_replay(
         prefer_recorded_lc0_root=prefer_recorded_lc0_root,
         synthetic_lc0_root_history=synthetic_lc0_root_history,
         lc0_root_legacy_meta=lc0_root_legacy_meta,
+        inputs_only=True,
     )
     return activation_unit_scores_from_arrays(
         ckpt,
