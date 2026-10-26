@@ -30,9 +30,16 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
     Position update:
         theta_new = theta_recipient + v
 
-    where r1, r2 ~ Uniform[0,1] (re-sampled each update), and gap_scale is the
-    normalised performance gap between donor and recipient (dampens exploitation
-    when the gap is within noise).
+    where r1, r2 ~ Uniform[0,1] (re-sampled each update). gap_scale is the
+    donor-recipient score gap divided by the current score range of scored,
+    unfinished trials, clipped to [0,1]. A range <= 1e-12 (or fewer than two
+    scored trials) uses a denominator of 1.0 instead.
+
+    This is relative-range scaling of the donor-attraction term, not an estimate
+    of score uncertainty or statistical noise. With two finite scored trials
+    and a positive range > 1e-12, the stronger donor has gap_scale=1; the same
+    holds for a pair spanning the population's score extremes. Inertia,
+    resampling and checkpoint transfer are not gated by this scale.
 
     Based on the GPBT-PL paper (Pairwise Learning variant of Guided
     Population-Based Training).
