@@ -55,6 +55,33 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
         self._winner_weight = float(trial_winner_weight)
         self._pairwise_velocity: dict[str, dict[str, float]] = defaultdict(dict)
         self._pending_pairwise_log: dict[str, dict] = {}
+        self._recipient_config_for_summary: dict | None = None
+
+    def _exploit(self, tune_controller, trial: Trial, trial_to_clone: Trial):
+        # Ray's lifecycle is unchanged, but its default summary starts at the
+        # donor. GPBT updates numeric parameters from the recipient instead.
+        self._recipient_config_for_summary = copy.deepcopy(trial.config)
+        try:
+            return super()._exploit(tune_controller, trial, trial_to_clone)
+        finally:
+            self._recipient_config_for_summary = None
+
+    def _summarize_hyperparam_changes(
+        self, old_params: dict, new_params: dict,
+        operations: dict | None = None, prefix: str = "",
+    ) -> str:
+        if not prefix and self._recipient_config_for_summary is not None:
+            old_params = dict(old_params)
+            for name, operation in (operations or {}).items():
+                if operation == "resample" or (
+                    isinstance(operation, str) and operation.startswith("pairwise(gap=")
+                ):
+                    # Only numeric updates originate at the recipient. Keep
+                    # Ray's donor-based clone summary and missing-key behavior.
+                    old_params[name] = self._recipient_config_for_summary[name]
+        return super()._summarize_hyperparam_changes(
+            old_params, new_params, operations, prefix,
+        )
 
     def on_trial_result(
         self, tune_controller: TuneController, trial: Trial, result: dict
@@ -338,6 +365,7 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
             "donor_trial_name": str(new_state.orig_tag),
             "recipient_iter": int(trial.last_result.get("training_iteration", 0)),
             "donor_iter": int(trial_to_clone.last_result.get("training_iteration", 0)),
+            "recipient_config": trial.config,
             "donor_config": trial_to_clone.config,
             "new_config": new_config,
             **context,
