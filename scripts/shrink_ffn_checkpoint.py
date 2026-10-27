@@ -20,6 +20,7 @@ slot indices are no longer safe across the architecture change.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterable, Iterator
 import contextlib
 import dataclasses
 import json
@@ -340,6 +341,22 @@ def activation_unit_scores_from_x(
     device: torch.device,
 ) -> tuple[dict[int, torch.Tensor], dict[str, Any]]:
     """Score FFN units by replay activation energy times down-projection norm."""
+    batch = max(1, int(batch_size))
+    return _activation_unit_scores_from_batches(
+        ckpt, ckpt_path=ckpt_path,
+        batches=(x[start:start + batch] for start in range(0, int(x.shape[0]), batch)),
+        batch_size=batch, device=device,
+    )
+
+
+def _activation_unit_scores_from_batches(
+    ckpt: dict[str, Any],
+    *,
+    ckpt_path: Path,
+    batches: Iterable[torch.Tensor],
+    batch_size: int,
+    device: torch.device,
+) -> tuple[dict[int, torch.Tensor], dict[str, Any]]:
     source_cfg = _checkpoint_model_config(ckpt, ckpt_path)
     source_state = _source_state_dict(ckpt)
     source_hidden = _ffn_hidden_sizes(source_state, num_layers=source_cfg.num_layers)
@@ -368,17 +385,14 @@ def activation_unit_scores_from_x(
 
         return hook
 
-    for layer_idx, block in enumerate(blocks):
-        handles.append(block.ffn[1].register_forward_hook(make_hook(layer_idx)))
-
+    total = 0
     try:
-        total = int(x.shape[0])
-        if total <= 0:
-            raise ValueError("calibration tensor is empty")
-        batch = max(1, int(batch_size))
+        for layer_idx, block in enumerate(blocks):
+            handles.append(block.ffn[1].register_forward_hook(make_hook(layer_idx)))
         with torch.no_grad():
-            for start in range(0, total, batch):
-                xb = x[start:start + batch].to(device=device, dtype=torch.float32, non_blocking=True)
+            for batch in batches:
+                total += int(batch.shape[0])
+                xb = batch.to(device=device, dtype=torch.float32, non_blocking=True)
                 if device.type == "cuda":
                     with torch.autocast(device_type="cuda", dtype=torch.float16):
                         model(xb)
@@ -389,6 +403,8 @@ def activation_unit_scores_from_x(
         for handle in handles:
             handle.remove()
 
+    if total <= 0:
+        raise ValueError("calibration tensor is empty")
     scores: dict[int, torch.Tensor] = {}
     for layer_idx, count in enumerate(counts):
         if count <= 0:
@@ -398,7 +414,7 @@ def activation_unit_scores_from_x(
         scores[layer_idx] = mean_act_sq * down_w.square().sum(dim=0)
 
     stats = {
-        "activation_score_positions": int(x.shape[0]),
+        "activation_score_positions": total,
         "activation_score_batch_size": max(1, int(batch_size)),
         "activation_score_device": str(device),
         "activation_score_layers": len(scores),
@@ -434,7 +450,69 @@ def _load_calibration_arrays_from_replay(
     prefer_recorded_lc0_root: bool,
     synthetic_lc0_root_history: bool,
     lc0_root_legacy_meta: bool,
+    inputs_only: bool = False,
 ) -> dict[str, np.ndarray]:
+    return _concat_calibration_chunks(list(_iter_calibration_arrays_from_replay(
+        source_cfg=source_cfg, replay_dir=replay_dir, positions=positions,
+        prefer_recorded_lc0_root=prefer_recorded_lc0_root,
+        synthetic_lc0_root_history=synthetic_lc0_root_history,
+        lc0_root_legacy_meta=lc0_root_legacy_meta, inputs_only=inputs_only,
+    )))
+
+
+def _activation_directory_prefix(
+    shard_path: Path, *, source_cfg: ModelConfig, positions: int,
+) -> list[dict[str, np.ndarray]] | None:
+    """Validate an ordinary directory completely, retaining only selected inputs.
+
+    Decode at most 256 rows of every field at once. Keep selected bytes until
+    all rows pass validation/history selection, then let the caller score them.
+    This bounds decoded target retention, not selected-prefix or codec memory.
+    Like the eager loader, this is not a snapshot of concurrently edited files.
+    Legacy archives and non-row metadata retain the existing eager path.
+    """
+    from chess_anti_engine.replay.shard import load_shard_arrays, validate_arrays
+    from chess_anti_engine.train.trainer import select_input_history_arrays
+
+    if shard_path.suffix != ".zarr" or not shard_path.is_dir():
+        return None
+    arrays, _meta = load_shard_arrays(shard_path, lazy=True)
+    rows = int(arrays["x"].shape[0])
+    # The ordinary loader attaches scalar identity metadata. Do not turn a
+    # global metadata constraint into per-window acceptance for other inputs.
+    for key, value in arrays.items():
+        shape = value.shape
+        if shape and (key.startswith("_") or int(shape[0]) != rows):
+            return None
+    selected: list[dict[str, np.ndarray]] = []
+    for start in range(0, max(1, rows), 256):
+        stop = min(rows, start + 256)
+        chunk = {
+            key: np.asarray(value[start:stop]) if value.shape else np.asarray(value)
+            for key, value in arrays.items()
+        }
+        validate_arrays(chunk)
+        chunk = select_input_history_arrays(
+            chunk, input_history_encoding=source_cfg.input_history_encoding,
+        )
+        take = min(stop - start, max(0, positions - start))
+        if take > 0:
+            # Own only the prefix, not a view retaining decoded unused rows.
+            selected.append({"x": np.array(chunk["x"][:take], copy=True)})
+        del chunk
+    return selected
+
+
+def _iter_calibration_arrays_from_replay(
+    *,
+    source_cfg: ModelConfig,
+    replay_dir: Path,
+    positions: int,
+    prefer_recorded_lc0_root: bool,
+    synthetic_lc0_root_history: bool,
+    lc0_root_legacy_meta: bool,
+    inputs_only: bool = False,
+) -> Iterator[dict[str, np.ndarray]]:
     from chess_anti_engine.replay.shard import iter_shard_paths
     from chess_anti_engine.replay.shard import load_shard_arrays
     from chess_anti_engine.train.trainer import select_input_history_arrays
@@ -448,10 +526,22 @@ def _load_calibration_arrays_from_replay(
     if not shard_paths:
         raise ValueError(f"no replay shards found in {replay_dir}")
     left = max(1, int(positions))
-    chunks: list[dict[str, np.ndarray]] = []
+    found = False
     for shard_path in shard_paths:
         if left <= 0:
             break
+        if inputs_only:
+            prefix = _activation_directory_prefix(
+                shard_path, source_cfg=source_cfg, positions=left,
+            )
+            if prefix is not None:
+                for chunk in prefix:
+                    left -= int(chunk["x"].shape[0])
+                    found = True
+                    yield chunk
+                    del chunk
+                del prefix
+                continue
         arrs, _meta = load_shard_arrays(shard_path, lazy=False)
         arrs = select_input_history_arrays(
             arrs,
@@ -460,16 +550,24 @@ def _load_calibration_arrays_from_replay(
         n_rows = int(np.asarray(arrs["x"]).shape[0])
         n = min(left, n_rows)
         if n <= 0:
+            del arrs
             continue
         idx = np.arange(n, dtype=np.int64)
-        chunks.append({
+        # Keep the existing whole-shard validation and history selector, but
+        # activation scoring consumes no targets. Do not retain or concatenate
+        # unrelated policy widths across shards. Taylor still needs all fields.
+        selected = {"x": arrs["x"]} if inputs_only else arrs
+        chunk = {
             key: np.asarray(value)[idx] if np.asarray(value).ndim > 0 else np.asarray(value)
-            for key, value in arrs.items()
-        })
+            for key, value in selected.items()
+        }
+        del arrs, selected
         left -= n
-    if not chunks:
+        found = True
+        yield chunk
+        del chunk
+    if not found:
         raise ValueError(f"could not load calibration positions from {replay_dir}")
-    return _concat_calibration_chunks(chunks)
 
 
 def activation_unit_scores_from_arrays(
@@ -490,6 +588,41 @@ def activation_unit_scores_from_arrays(
     )
 
 
+def _calibration_input_batches(
+    chunks: Iterable[dict[str, np.ndarray]], *, batch_size: int,
+) -> Iterator[torch.Tensor]:
+    """Rebatch shard prefixes in global row order with at most one carry batch.
+
+    Copy carry rows into owned parts: a partial batch must not keep a previous
+    shard alive while the next shard is decoded. Whole-shard decoding remains.
+    """
+    size = max(1, int(batch_size))
+    parts: list[torch.Tensor] = []
+    used = 0
+    shape: tuple[int, ...] | None = None
+    for chunk in chunks:
+        x = torch.as_tensor(chunk["x"], dtype=torch.float32)
+        if shape is None:
+            shape = tuple(x.shape[1:])
+        elif tuple(x.shape[1:]) != shape:
+            raise ValueError("calibration input shapes differ across shards")
+        offset = 0
+        while offset < int(x.shape[0]):
+            take = min(size - used, int(x.shape[0]) - offset)
+            # Own just the rows seen, not a view retaining a previous shard or
+            # an allocation sized by a possibly enormous requested batch.
+            parts.append(x[offset:offset + take].clone())
+            used += take
+            offset += take
+            if used == size:
+                yield torch.cat(parts, dim=0)
+                parts.clear()
+                used = 0
+        del x, chunk
+    if parts:
+        yield torch.cat(parts, dim=0)
+
+
 def activation_unit_scores_from_replay(
     ckpt: dict[str, Any],
     *,
@@ -503,18 +636,19 @@ def activation_unit_scores_from_replay(
     lc0_root_legacy_meta: bool,
 ) -> tuple[dict[int, torch.Tensor], dict[str, Any]]:
     source_cfg = _checkpoint_model_config(ckpt, ckpt_path)
-    arrs = _load_calibration_arrays_from_replay(
+    chunks = _iter_calibration_arrays_from_replay(
         source_cfg=source_cfg,
         replay_dir=replay_dir,
         positions=positions,
         prefer_recorded_lc0_root=prefer_recorded_lc0_root,
         synthetic_lc0_root_history=synthetic_lc0_root_history,
         lc0_root_legacy_meta=lc0_root_legacy_meta,
+        inputs_only=True,
     )
-    return activation_unit_scores_from_arrays(
+    return _activation_unit_scores_from_batches(
         ckpt,
         ckpt_path=ckpt_path,
-        arrs=arrs,
+        batches=_calibration_input_batches(chunks, batch_size=batch_size),
         batch_size=batch_size,
         device=device,
     )
