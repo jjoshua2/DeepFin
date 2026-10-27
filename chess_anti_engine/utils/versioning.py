@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 # PEP 440's release-stage order, as sort ranks: a dev build precedes every
 # pre-release, pre-releases precede the release, and a post-release follows it.
@@ -57,7 +58,22 @@ def parse_version(v: str) -> tuple[int, int, int]:
     return int(nums[0]), int(nums[1]), int(nums[2])
 
 
-def _version_sort_key(v: str) -> tuple[int, int, int, int, int, int, int, int]:
+_StageNumber = tuple[int, str]
+_VersionKey = tuple[int, int, int, int, _StageNumber, _StageNumber, int, _StageNumber]
+
+
+def _stage_number(value: str | None) -> _StageNumber:
+    """Numeric ordering for accepted decimal digits without an int-size limit."""
+    digits = value or ""
+    # The unchanged regex accepts Unicode decimal digits (\\d), just as int()
+    # did. Normalize them before lexical comparison; ASCII is the common path.
+    if not digits.isascii():
+        digits = "".join(str(unicodedata.decimal(c)) for c in digits)
+    digits = digits.lstrip("0")
+    return len(digits), digits
+
+
+def _version_sort_key(v: str) -> _VersionKey:
     """Order pre/post/dev stages separately within the existing release triple.
 
     A developmental suffix belongs to its pre/post release: ``1.0b1.dev1``
@@ -71,22 +87,22 @@ def _version_sort_key(v: str) -> tuple[int, int, int, int, int, int, int, int]:
     major, minor, patch = parse_version(v)
     m = _VERSION_RE.match(str(v))
     if m is None:
-        return (major, minor, patch, _STAGE_RELEASE, 0, -1, 1, 0)
+        return (major, minor, patch, _STAGE_RELEASE, (0, ""), (-1, ""), 1, (0, ""))
     pre_label = m.group("pre_l")
     has_post = m.group("post_l") is not None
     has_dev = m.group("dev_l") is not None
     if pre_label is not None:
         pre_rank = _PRE_STAGE_RANK[pre_label.lower()]
-        pre_number = int(m.group("pre_n") or 0)
+        pre_number = _stage_number(m.group("pre_n"))
     elif has_dev and not has_post:
-        pre_rank, pre_number = _STAGE_DEV, 0
+        pre_rank, pre_number = _STAGE_DEV, (0, "")
     else:
-        pre_rank, pre_number = _STAGE_RELEASE, 0
-    post_number = int(m.group("post_n") or 0) if has_post else -1
+        pre_rank, pre_number = _STAGE_RELEASE, (0, "")
+    post_number = _stage_number(m.group("post_n")) if has_post else (-1, "")
     # A missing dev suffix follows every numbered dev build of this stage.
     # Encode presence before number so no finite version number is a sentinel.
     dev_rank = 0 if has_dev else 1
-    dev_number = int(m.group("dev_n") or 0) if has_dev else 0
+    dev_number = _stage_number(m.group("dev_n"))
     return (major, minor, patch, pre_rank, pre_number, post_number, dev_rank, dev_number)
 
 
