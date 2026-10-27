@@ -40,7 +40,7 @@ def _fixture(tmp_path: Path, recipient_lr: float, donor_lr: float, log_config: b
     ds, rs = scheduler._trial_state[donor], scheduler._trial_state[recipient]
     ds.last_score, rs.last_score = 1.0, 0.0
     ds.last_checkpoint = "checkpoint-marker"
-    ds.last_result = {"training_iteration": 2}
+    ds.last_result = {"training_iteration": 2, "score": 1.0}
     return scheduler, controller, recipient, donor, pauses
 
 
@@ -68,7 +68,7 @@ def test_exploit_logs_recipient_transition_without_changing_update(
     result = recipient.latest_checkpoint_result
     assert result is not None
     assert result.checkpoint == "checkpoint-marker"
-    assert result.metrics == {"training_iteration": 2}
+    assert result.metrics == {"training_iteration": 2, "score": 1.0}
     assert scheduler._num_perturbations == 1
     assert scheduler._recipient_config_for_summary is None
     path = tmp_path / "gpbt_pairwise_global.txt"
