@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -39,6 +40,19 @@ StartupSource = Literal[
     "exploit_restore",
     "exploit_restore_model_only",
 ]
+
+
+def _optional_pause_file(value: Any) -> str | None:
+    """Normalize the optional marker path before the pause consumer sees it."""
+    if value is None:
+        return None
+    try:
+        path = os.fspath(value)
+    except TypeError as exc:
+        raise ValueError("pause_file must be a text path or None") from exc
+    if not isinstance(path, str):
+        raise ValueError("pause_file must be a text path or None")
+    return path.strip() or None
 
 
 def _unit_fraction(value: Any, *, name: str) -> float:
@@ -620,7 +634,7 @@ class TrialConfig:
             device=str(config.get("device", "cuda")),
             iterations=int(config.get("iterations", 10)),
             work_dir=str(config.get("work_dir", "")),
-            pause_file=_get("pause_file", None),
+            pause_file=_optional_pause_file(_get("pause_file", None)),
             pause_poll_seconds=int(config.get("pause_poll_seconds", 60)),
             _yaml_config_path=_get("_yaml_config_path", None),
 
