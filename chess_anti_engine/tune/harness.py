@@ -990,97 +990,98 @@ def run_tune(
     if mode not in ("min", "max"):
         raise ValueError(f"mode must be 'min' or 'max', got {mode!r}")
 
-    server_proc = _launch_distributed_server(base_config=base_config, work_dir=work_dir)
-    shared_broker_proc = _maybe_launch_shared_broker(base_config=base_config, work_dir=work_dir)
+    # Own each returned sidecar before any later startup step can fail.
+    # ExitStack also attempts both cleanups if one termination raises.
+    with contextlib.ExitStack() as cleanup:
+        server_proc = _launch_distributed_server(base_config=base_config, work_dir=work_dir)
+        cleanup.callback(_terminate_process, server_proc)
+        shared_broker_proc = _maybe_launch_shared_broker(base_config=base_config, work_dir=work_dir)
+        cleanup.callback(_terminate_process, shared_broker_proc)
 
-    want_cuda = str(base_config.get("device", "")) == "cuda"
-    resources = {
-        "cpu": int(base_config.get("cpus_per_trial", 4)),
-        "gpu": float(base_config.get("gpus_per_trial", 1.0 if want_cuda else 0.0)),
-    }
-    trainable = tune.with_resources(train_trial, resources)
+        want_cuda = str(base_config.get("device", "")) == "cuda"
+        resources = {
+            "cpu": int(base_config.get("cpus_per_trial", 4)),
+            "gpu": float(base_config.get("gpus_per_trial", 1.0 if want_cuda else 0.0)),
+        }
+        trainable = tune.with_resources(train_trial, resources)
 
-    scheduler_name = str(base_config.get("tune_scheduler", "pb2")).lower()
-    param_space, scheduler, search_alg = _build_scheduler_and_param_space(
-        scheduler_name=scheduler_name, base_config=base_config, metric=metric, mode=mode,
-    )
-
-    tune_config_kwargs: dict = {
-        "num_samples": int(num_samples),
-        "scheduler": scheduler,
-        "max_concurrent_trials": int(base_config.get("max_concurrent_trials", num_samples)),
-  # The tune path uses the function-style trainable API, which does not
-  # implement reset_config(). Reusing actors under GPBT/PBT causes Ray to
-  # error during perturb/exploit when it attempts an in-place config reset.
-        "reuse_actors": False,
-    }
-    if search_alg is not None:
-        tune_config_kwargs["search_alg"] = search_alg
-
-    os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-    os.environ.setdefault("RAY_memory_usage_threshold", "0.98")
-
-    ray.init(ignore_reinit_error=True, include_dashboard=False)
-
-    experiment_path = work_dir.resolve() / "tune"
-    if not resume:
-        keep_last_exps = int(base_config.get("tune_keep_last_experiments", 2))
-  # Prune to (N-1) before the new experiment is created so we end at <=N total.
-        _cleanup_old_tune_experiments(
-            tune_dir=experiment_path,
-            keep_last=max(0, keep_last_exps - 1),
+        scheduler_name = str(base_config.get("tune_scheduler", "pb2")).lower()
+        param_space, scheduler, search_alg = _build_scheduler_and_param_space(
+            scheduler_name=scheduler_name, base_config=base_config, metric=metric, mode=mode,
         )
 
-    valid_state_file = (
-        _find_valid_experiment_state(experiment_path)
-        if resume and experiment_path.exists()
-        else None
-    )
+        tune_config_kwargs: dict = {
+            "num_samples": int(num_samples),
+            "scheduler": scheduler,
+            "max_concurrent_trials": int(base_config.get("max_concurrent_trials", num_samples)),
+      # The tune path uses the function-style trainable API, which does not
+      # implement reset_config(). Reusing actors under GPBT/PBT causes Ray to
+      # error during perturb/exploit when it attempts an in-place config reset.
+            "reuse_actors": False,
+        }
+        if search_alg is not None:
+            tune_config_kwargs["search_alg"] = search_alg
 
-    if valid_state_file is not None:
-        restore_param_space = _resolve_resume_param_space(
-            param_space=param_space,
-            valid_state_file=valid_state_file,
-            experiment_path=experiment_path,
-        )
-        tuner = tune.Tuner.restore(
-            str(experiment_path),
-            trainable=trainable,
-            param_space=restore_param_space,
-            resume_errored=True,
-            resume_unfinished=True,
-        )
-        _hotpatch_scheduler_bounds(tuner=tuner, scheduler=scheduler)
-    else:
-        if resume and experiment_path.exists():
-            print("[run_tune] All experiment state files corrupt; starting fresh run.")
-        ckpt_keep = int(base_config.get("tune_num_to_keep", 2))
-        tuner = tune.Tuner(
-            trainable,
-            param_space=param_space,
-            tune_config=tune.TuneConfig(**tune_config_kwargs),
-            run_config=RunConfig(
-                name="tune",
-                storage_path=str(work_dir.resolve()),
-                checkpoint_config=CheckpointConfig(num_to_keep=ckpt_keep),
-            ),
+        os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+        os.environ.setdefault("RAY_memory_usage_threshold", "0.98")
+
+        ray.init(ignore_reinit_error=True, include_dashboard=False)
+
+        experiment_path = work_dir.resolve() / "tune"
+        if not resume:
+            keep_last_exps = int(base_config.get("tune_keep_last_experiments", 2))
+      # Prune to (N-1) before the new experiment is created so we end at <=N total.
+            _cleanup_old_tune_experiments(
+                tune_dir=experiment_path,
+                keep_last=max(0, keep_last_exps - 1),
+            )
+
+        valid_state_file = (
+            _find_valid_experiment_state(experiment_path)
+            if resume and experiment_path.exists()
+            else None
         )
 
-  # Both branches: the second deleter that makes an eviction target vanish is
-  # `_prune_trial_checkpoints`, which runs on a fresh experiment too. The
-  # manager itself lives in this (driver) process, so this is the right place.
-    _make_checkpoint_eviction_idempotent()
-  # Same rationale as above: the CSV logger callback also lives in this
-  # (driver) process, so this is the only place that can patch it before the
-  # first result row is appended.
-    _make_csv_logger_schema_safe()
+        if valid_state_file is not None:
+            restore_param_space = _resolve_resume_param_space(
+                param_space=param_space,
+                valid_state_file=valid_state_file,
+                experiment_path=experiment_path,
+            )
+            tuner = tune.Tuner.restore(
+                str(experiment_path),
+                trainable=trainable,
+                param_space=restore_param_space,
+                resume_errored=True,
+                resume_unfinished=True,
+            )
+            _hotpatch_scheduler_bounds(tuner=tuner, scheduler=scheduler)
+        else:
+            if resume and experiment_path.exists():
+                print("[run_tune] All experiment state files corrupt; starting fresh run.")
+            ckpt_keep = int(base_config.get("tune_num_to_keep", 2))
+            tuner = tune.Tuner(
+                trainable,
+                param_space=param_space,
+                tune_config=tune.TuneConfig(**tune_config_kwargs),
+                run_config=RunConfig(
+                    name="tune",
+                    storage_path=str(work_dir.resolve()),
+                    checkpoint_config=CheckpointConfig(num_to_keep=ckpt_keep),
+                ),
+            )
 
-    try:
+      # Both branches: the second deleter that makes an eviction target vanish is
+      # `_prune_trial_checkpoints`, which runs on a fresh experiment too. The
+      # manager itself lives in this (driver) process, so this is the right place.
+        _make_checkpoint_eviction_idempotent()
+      # Same rationale as above: the CSV logger callback also lives in this
+      # (driver) process, so this is the only place that can patch it before the
+      # first result row is appended.
+        _make_csv_logger_schema_safe()
+
         return tuner.fit()
-    finally:
-        _terminate_process(shared_broker_proc)
-        _terminate_process(server_proc)
 
 
 # ---------------------------------------------------------------------------
