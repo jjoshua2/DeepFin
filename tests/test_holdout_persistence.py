@@ -462,6 +462,406 @@ def test_a_real_checkpoint_write_carries_rows_and_flags(tmp_path: Path) -> None:
     assert rr.holdout_ruler == "v1:full_pass:0123456789abcdef"
 
 
+@pytest.mark.parametrize("fault", ["export", "save", "export_unlink", "save_unlink", "empty_unlink"])
+def test_failed_holdout_save_does_not_restore_an_older_ruler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
+) -> None:
+    from chess_anti_engine.tune import holdout_state
+    from chess_anti_engine.tune.trainable_report import _save_trial_checkpoint
+
+    ckpt_dir = tmp_path / "ckpt"
+    ckpt_dir.mkdir()
+    old = _buffer(4, rows=2, first_row=10)
+    current = _buffer(4, rows=0 if fault == "empty_unlink" else 2, first_row=50)
+    assert save_holdout_rows(ckpt_dir=ckpt_dir, holdout_buf=old) == 2
+    sidecar = ckpt_dir / SIDECAR_HOLDOUT_ROWS
+
+    def _fail(*_args, **_kwargs):
+        raise OSError("injected holdout failure")
+
+    if fault.startswith("export"):
+        monkeypatch.setattr(current, "export_arrays", _fail)
+    elif fault.startswith("save"):
+        monkeypatch.setattr(holdout_state, "save_npz_arrays", _fail)
+    if fault.endswith("unlink"):
+        original_unlink = Path.unlink
+
+        def _unlink(path, *args, **kwargs):
+            if path == sidecar:
+                raise PermissionError("injected unlink failure")
+            return original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _unlink)
+
+    checkpoint = _save_trial_checkpoint(
+        trainer=SimpleNamespace(save=lambda p: Path(p).write_bytes(b"new weights")),
+        buf=SimpleNamespace(flush=lambda: None), ckpt_dir=ckpt_dir,
+        rng=np.random.default_rng(0), trial_id="t1", trial_dir=tmp_path,
+        config={"optimizer": "aurora"}, base_seed=7, restore=RestoreResult(),
+        iteration_idx=42, current_window=1_500_000, holdout_buf=current,
+        holdout_frozen=True, holdout_generation=7, holdout_ruler="new-ruler",
+        opp_strength_ema=321.5, yaml_keys=("batch_size", "lr"),
+        Checkpoint=SimpleNamespace(from_directory=lambda d: d),
+    )
+    assert checkpoint == str(ckpt_dir)
+    assert (ckpt_dir / "trainer.pt").read_bytes() == b"new weights"
+    meta = json.loads((ckpt_dir / SIDECAR_TRIAL_META).read_text())
+    assert (meta["global_iter"], meta["holdout_generation"], meta["holdout_ruler"]) == (
+        42, 7, "new-ruler",
+    )
+    restored = _buffer(4)
+    rr = RestoreResult(holdout_state_dir=ckpt_dir)
+    _apply_restored_holdout_scalars(rr, meta)
+    _restore_holdout_buffer(tc=_tc(), restore=rr, holdout_buf=restored)
+    assert len(restored) == 0, f"restored stale rows {_row_ids(restored)}"
+    assert (rr.holdout_frozen, rr.holdout_generation) == (False, 8)
+
+
+def _write_holdout_checkpoint(
+    path: Path, *, first_row: int, iteration: int, trainer=None, checkpoint_factory=None,
+):
+    from chess_anti_engine.tune.trainable_report import _save_trial_checkpoint
+
+    path.mkdir(parents=True, exist_ok=True)
+    return _save_trial_checkpoint(
+        trainer=trainer or SimpleNamespace(
+            save=lambda p: Path(p).write_text(f"weights-{iteration}"),
+        ),
+        buf=SimpleNamespace(flush=lambda: None), ckpt_dir=path,
+        rng=np.random.default_rng(0), trial_id="t1", trial_dir=path.parent,
+        config={"optimizer": "aurora"}, base_seed=7, restore=RestoreResult(),
+        iteration_idx=iteration, current_window=100, holdout_buf=_buffer(4, rows=2, first_row=first_row),
+        holdout_frozen=True, holdout_generation=iteration, holdout_ruler=f"ruler-{iteration}",
+        opp_strength_ema=321.5, yaml_keys=("lr",),
+        Checkpoint=SimpleNamespace(from_directory=checkpoint_factory or (lambda d: d)),
+    )
+
+
+def _loaded_holdout_ids(path: Path) -> list[int]:
+    buf = _buffer(4)
+    load_holdout_rows(
+        state_dir=path, holdout_buf=buf, expected_planes=PLANES, expected_policy_size=POLICY,
+    )
+    return _row_ids(buf) if len(buf) else []
+
+
+@pytest.mark.parametrize("marker", [0, -1, True, False, "2", None, 2.0, [], 3])
+def test_holdout_restore_refuses_invalid_or_mismatched_saved_row_count(tmp_path: Path, marker) -> None:
+    save_holdout_rows(ckpt_dir=tmp_path, holdout_buf=_buffer(4, rows=2))
+    (tmp_path / SIDECAR_TRIAL_META).write_text(json.dumps({"holdout_rows_saved": marker}))
+    assert _loaded_holdout_ids(tmp_path) == []
+
+
+@pytest.mark.parametrize("metadata", [None, {}, {"holdout_rows_saved": 2}])
+def test_holdout_restore_keeps_legacy_and_valid_marked_rows(tmp_path: Path, metadata) -> None:
+    save_holdout_rows(ckpt_dir=tmp_path, holdout_buf=_buffer(4, rows=2, first_row=10))
+    if metadata is not None:
+        (tmp_path / SIDECAR_TRIAL_META).write_text(json.dumps(metadata))
+    assert _loaded_holdout_ids(tmp_path) == [10, 11]
+
+
+@pytest.mark.parametrize("metadata", [b"{", b"[]", b"\xff"])
+def test_bad_checkpoint_metadata_is_not_mistaken_for_legacy(tmp_path: Path, metadata: bytes) -> None:
+    save_holdout_rows(ckpt_dir=tmp_path, holdout_buf=_buffer(4, rows=2))
+    (tmp_path / SIDECAR_TRIAL_META).write_bytes(metadata)
+    assert _loaded_holdout_ids(tmp_path) == []
+
+
+def test_unreadable_checkpoint_metadata_is_not_mistaken_for_legacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_holdout_checkpoint(tmp_path, first_row=10, iteration=1)
+    original_read = Path.read_text
+
+    def _read(path, *args, **kwargs):
+        if path == tmp_path / SIDECAR_TRIAL_META:
+            raise PermissionError("unreadable metadata")
+        return original_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _read)
+    assert _loaded_holdout_ids(tmp_path) == []
+    with pytest.raises(PermissionError, match="unreadable metadata"):
+        _write_holdout_checkpoint(tmp_path, first_row=50, iteration=2)
+    assert (tmp_path / "trainer.pt").read_bytes() == b"weights-1"
+
+
+@pytest.mark.parametrize("stage", ["invalidate", "invalidate_after", "weights", "rng", "metadata", "metadata_after"])
+def test_interrupted_checkpoint_never_reuses_old_holdout_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str,
+) -> None:
+    from chess_anti_engine.tune import holdout_state, trainable_report
+
+    _write_holdout_checkpoint(tmp_path, first_row=10, iteration=1)
+    original_write = holdout_state.atomic_write_text
+
+    def _fail_write(path, text):
+        if stage.endswith("_after"):
+            original_write(path, text)
+        raise OSError(f"interrupted {stage}")
+
+    def _fail(*_args, **_kwargs):
+        raise OSError(f"interrupted {stage}")
+
+    trainer = None
+    if stage.startswith("invalidate"):
+        monkeypatch.setattr(holdout_state, "atomic_write_text", _fail_write)
+    elif stage.startswith("metadata"):
+        monkeypatch.setattr(trainable_report, "atomic_write_text", _fail_write)
+    elif stage == "weights":
+        trainer = SimpleNamespace(save=_fail)
+    else:
+        monkeypatch.setattr(trainable_report, "_write_rng_state_sidecar", _fail)
+    with pytest.raises(OSError, match="interrupted"):
+        _write_holdout_checkpoint(tmp_path, first_row=50, iteration=2, trainer=trainer)
+
+    meta = json.loads((tmp_path / SIDECAR_TRIAL_META).read_text())
+    expected_rows = [10, 11] if stage == "invalidate" else [50, 51] if stage == "metadata_after" else []
+    assert _loaded_holdout_ids(tmp_path) == expected_rows
+    assert meta["global_iter"] == (2 if stage == "metadata_after" else 1)
+    old_weights = stage.startswith("invalidate") or stage == "weights"
+    assert (tmp_path / "trainer.pt").read_text() == ("weights-1" if old_weights else "weights-2")
+
+
+def test_successful_save_recovers_after_failed_save_in_same_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from chess_anti_engine.tune import holdout_state
+
+    _write_holdout_checkpoint(tmp_path, first_row=10, iteration=1)
+
+    def _fail(*_args, **_kwargs):
+        raise OSError("failed rows")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(holdout_state, "save_npz_arrays", _fail)
+        _write_holdout_checkpoint(tmp_path, first_row=30, iteration=2)
+    assert _loaded_holdout_ids(tmp_path) == []
+    _write_holdout_checkpoint(tmp_path, first_row=50, iteration=3)
+    assert _loaded_holdout_ids(tmp_path) == [50, 51]
+    meta = json.loads((tmp_path / SIDECAR_TRIAL_META).read_text())
+    assert (meta["global_iter"], meta["holdout_rows_saved"]) == (3, 2)
+
+
+def _export_holdout_checkpoint(source: Path, slot: Path, *, copy_replay: bool = False):
+    from chess_anti_engine.tune.salvage import _export_one_seed, _ReplayPlan, _SeedExportPlan
+
+    return _export_one_seed(
+        slot=0, picked_metric=1.0, picked_it=2, td=source.parent,
+        plan=_SeedExportPlan(
+            ckpt_dir=source, ckpt_source="mutable_ckpt_fallback", row=None,
+            training_iteration=None, stale_result_rows=True,
+            newest_ckpt_name=None, row_ckpt_name="",
+        ),
+        metric_key="training_iteration", seeds_dir=slot.parent,
+        out_dir=slot.parent.parent, copy_replay=copy_replay,
+        replay_plan=_ReplayPlan(source=source if copy_replay else None, tried=()),
+    )
+
+
+@pytest.mark.parametrize("metadata", ["marked", "legacy_absent", "legacy_object"])
+def test_complete_salvage_copy_preserves_marked_and_legacy_holdout(tmp_path: Path, metadata: str) -> None:
+    source, slot = tmp_path / "source", tmp_path / "seeds" / "slot_000"
+    _write_holdout_checkpoint(source, first_row=50, iteration=2)
+    _write_holdout_checkpoint(slot, first_row=10, iteration=1)
+    if metadata == "legacy_absent":
+        (source / SIDECAR_TRIAL_META).unlink()
+    elif metadata == "legacy_object":
+        (source / SIDECAR_TRIAL_META).write_text('{"global_iter":2}')
+    _export_holdout_checkpoint(source, slot)
+    assert _loaded_holdout_ids(slot) == [50, 51]
+    assert (slot / "trainer.pt").read_text() == "weights-2"
+    if metadata == "legacy_absent":
+        assert not (slot / SIDECAR_TRIAL_META).exists()
+
+
+@pytest.mark.parametrize("fault", ["weights", "rows", "partial_rows", "metadata", "partial_metadata", "durable"])
+def test_interrupted_salvage_copy_keeps_restore_invalidated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
+) -> None:
+    from chess_anti_engine.tune import salvage
+
+    source, slot = tmp_path / "source", tmp_path / "seeds" / "slot_000"
+    _write_holdout_checkpoint(source, first_row=50, iteration=2)
+    _write_holdout_checkpoint(slot, first_row=10, iteration=1)
+    (source.parent / "gate_state.json").write_text("{}")
+    original_copy = salvage.shutil.copy2
+    selected = {
+        "weights": "trainer.pt", "rows": SIDECAR_HOLDOUT_ROWS,
+        "partial_rows": SIDECAR_HOLDOUT_ROWS, "metadata": SIDECAR_TRIAL_META,
+        "partial_metadata": SIDECAR_TRIAL_META, "durable": "gate_state.json",
+    }[fault]
+
+    def _copy(src, dst, *args, **kwargs):
+        if Path(src).name == selected:
+            if fault.startswith("partial"):
+                Path(dst).write_bytes(b"partial")
+            raise OSError(f"interrupted {fault}")
+        return original_copy(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(salvage.shutil, "copy2", _copy)
+    with pytest.raises(OSError, match="interrupted"):
+        _export_holdout_checkpoint(source, slot)
+    assert json.loads((slot / SIDECAR_TRIAL_META).read_text())["holdout_rows_saved"] == 0
+    assert _loaded_holdout_ids(slot) == []
+
+
+def test_legacy_salvage_without_rows_does_not_keep_destination_rows(tmp_path: Path) -> None:
+    source, slot = tmp_path / "source", tmp_path / "seeds" / "slot_000"
+    source.mkdir()
+    (source / "trainer.pt").write_text("legacy weights")
+    _write_holdout_checkpoint(slot, first_row=10, iteration=1)
+    _export_holdout_checkpoint(source, slot)
+    assert _loaded_holdout_ids(slot) == []
+    assert not (slot / SIDECAR_HOLDOUT_ROWS).exists()
+    assert not (slot / SIDECAR_TRIAL_META).exists()
+
+
+@pytest.mark.parametrize("fault", ["invalidate", "unlink_rows", "legacy_settle", "replay"])
+def test_salvage_invalidation_and_final_legacy_settlement_are_ordered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
+) -> None:
+    from chess_anti_engine.tune import holdout_state, salvage
+
+    source, slot = tmp_path / "source", tmp_path / "seeds" / "slot_000"
+    _write_holdout_checkpoint(source, first_row=50, iteration=2)
+    _write_holdout_checkpoint(slot, first_row=10, iteration=1)
+    if fault == "legacy_settle":
+        (source / SIDECAR_TRIAL_META).unlink()
+
+    def _fail(*_args, **_kwargs):
+        raise OSError(f"injected {fault}")
+
+    if fault == "invalidate":
+        monkeypatch.setattr(holdout_state, "atomic_write_text", _fail)
+    elif fault == "replay":
+        monkeypatch.setattr(salvage, "_copy_replay_shards", _fail)
+    else:
+        original_unlink = Path.unlink
+        selected = slot / (SIDECAR_HOLDOUT_ROWS if fault == "unlink_rows" else SIDECAR_TRIAL_META)
+
+        def _unlink(path, *args, **kwargs):
+            if path == selected:
+                raise PermissionError(f"injected {fault}")
+            return original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _unlink)
+    with pytest.raises(OSError, match="injected"):
+        _export_holdout_checkpoint(source, slot, copy_replay=fault == "replay")
+    assert _loaded_holdout_ids(slot) == ([10, 11] if fault == "invalidate" else [])
+    expected_weights = "weights-1" if fault in {"invalidate", "unlink_rows"} else "weights-2"
+    assert (slot / "trainer.pt").read_text() == expected_weights
+    if fault != "invalidate":
+        assert json.loads((slot / SIDECAR_TRIAL_META).read_text())["holdout_rows_saved"] == 0
+
+
+def test_checkpoint_callbacks_observe_invalidated_then_committed_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from chess_anti_engine.tune import holdout_state
+
+    _write_holdout_checkpoint(tmp_path, first_row=10, iteration=1)
+    order = []
+    original_save = holdout_state.save_npz_arrays
+
+    def _save_weights(path):
+        meta = json.loads((tmp_path / SIDECAR_TRIAL_META).read_text())
+        assert (meta["global_iter"], meta["holdout_rows_saved"]) == (1, 0)
+        assert _loaded_holdout_ids(tmp_path) == []
+        order.append("weights")
+        path.write_text("weights-2")
+
+    def _save_rows(*args, **kwargs):
+        assert (tmp_path / "trainer.pt").read_text() == "weights-2"
+        assert json.loads((tmp_path / SIDECAR_TRIAL_META).read_text())["holdout_rows_saved"] == 0
+        order.append("rows")
+        return original_save(*args, **kwargs)
+
+    def _checkpoint(path):
+        meta = json.loads((tmp_path / SIDECAR_TRIAL_META).read_text())
+        assert (meta["global_iter"], meta["holdout_rows_saved"]) == (2, 2)
+        assert _loaded_holdout_ids(tmp_path) == [50, 51]
+        order.append("publish")
+        return path
+
+    monkeypatch.setattr(holdout_state, "save_npz_arrays", _save_rows)
+    _write_holdout_checkpoint(
+        tmp_path, first_row=50, iteration=2,
+        trainer=SimpleNamespace(save=_save_weights), checkpoint_factory=_checkpoint,
+    )
+    assert order == ["weights", "rows", "publish"]
+
+
+def test_failed_save_with_failed_cleanup_stays_invalid_after_salvage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from chess_anti_engine.tune import holdout_state
+
+    source, slot = tmp_path / "source", tmp_path / "seeds" / "slot_000"
+    _write_holdout_checkpoint(source, first_row=10, iteration=1)
+    _write_holdout_checkpoint(slot, first_row=70, iteration=7)
+    original_unlink = Path.unlink
+
+    def _fail(*_args, **_kwargs):
+        raise OSError("failed save")
+
+    def _unlink(path, *args, **kwargs):
+        if path == source / SIDECAR_HOLDOUT_ROWS:
+            raise PermissionError("failed cleanup")
+        return original_unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(holdout_state, "save_npz_arrays", _fail)
+        patch.setattr(Path, "unlink", _unlink)
+        _write_holdout_checkpoint(source, first_row=50, iteration=2)
+    assert (source / SIDECAR_HOLDOUT_ROWS).exists()
+    _export_holdout_checkpoint(source, slot)
+    assert (slot / SIDECAR_HOLDOUT_ROWS).exists()
+    assert _loaded_holdout_ids(slot) == []
+    assert (slot / "trainer.pt").read_text() == "weights-2"
+
+
+def test_salvage_cannot_invalidate_its_own_source_checkpoint(tmp_path: Path) -> None:
+    source = tmp_path / "seeds" / "slot_000"
+    _write_holdout_checkpoint(source, first_row=10, iteration=1)
+    before = {p.name: p.read_bytes() for p in source.iterdir()}
+    with pytest.raises(ValueError, match="destination must differ"):
+        _export_holdout_checkpoint(source, source)
+    assert {p.name: p.read_bytes() for p in source.iterdir()} == before
+
+
+@pytest.mark.parametrize("metadata", [None, {"global_iter": 1, "holdout_generation": 1}])
+def test_interrupted_legacy_checkpoint_is_invalidated_before_new_weights(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metadata,
+) -> None:
+    from chess_anti_engine.tune import trainable_report
+
+    save_holdout_rows(ckpt_dir=tmp_path, holdout_buf=_buffer(4, rows=2, first_row=10))
+    (tmp_path / "trainer.pt").write_text("weights-1")
+    if metadata is not None:
+        (tmp_path / SIDECAR_TRIAL_META).write_text(json.dumps(metadata))
+
+    def _fail(*_args, **_kwargs):
+        raise OSError("final metadata failure")
+
+    monkeypatch.setattr(trainable_report, "atomic_write_text", _fail)
+    with pytest.raises(OSError, match="final metadata failure"):
+        _write_holdout_checkpoint(tmp_path, first_row=50, iteration=2)
+    assert (tmp_path / "trainer.pt").read_text() == "weights-2"
+    meta = json.loads((tmp_path / SIDECAR_TRIAL_META).read_text())
+    assert meta == {**(metadata or {}), "holdout_rows_saved": 0}
+    assert _loaded_holdout_ids(tmp_path) == []
+
+
+def test_saved_row_count_is_checked_before_capacity_truncation(tmp_path: Path) -> None:
+    _write_holdout_checkpoint(tmp_path, first_row=10, iteration=1)
+    buf = _buffer(1)
+    rows = load_holdout_rows(
+        state_dir=tmp_path, holdout_buf=buf, expected_planes=PLANES, expected_policy_size=POLICY,
+    )
+    assert rows == 1
+    assert _row_ids(buf) == [11]
+
+
 def test_salvage_export_carries_the_holdout_sidecar() -> None:
     """A salvage restore lands in a DIFFERENT trial dir, so the sidecar only
     survives it by being in the fixed list salvage copies out of the
