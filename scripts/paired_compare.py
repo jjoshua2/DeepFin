@@ -27,6 +27,10 @@ and check it against the input files before trusting a verdict. Duplicate join
 keys are refused outright — see ``load_dump``. ``phase`` (int index or string)
 groups the per-phase breakdown.
 
+A confidence interval requires at least two paired positions (or two source
+clusters with ``--cluster-key``). A singleton join is refused: resampling its
+only delta cannot estimate sampling uncertainty, even when that delta is zero.
+
 ⚑ THE TWO DUMPS MUST COME FROM THE SAME RULER. Both sides' ruler stamps
 (``input_encoding``, ``batch_size``) are compared before anything is joined and
 a disagreement is REFUSED, because a paired delta across two rulers measures
@@ -83,9 +87,11 @@ PHASE_NAMES = ("endgame", "middlegame", "opening")
 def paired_bootstrap_ci(
     deltas: np.ndarray, *, n_boot: int = 10_000, alpha: float = 0.05, seed: int = 0,
 ) -> tuple[float, float]:
-    """Percentile bootstrap CI for the mean of paired deltas."""
-    rng = np.random.default_rng(seed)
+    """Percentile bootstrap CI for a mean from at least two paired positions."""
     n = deltas.shape[0]
+    if n < 2:
+        raise ValueError("paired bootstrap needs at least two paired positions")
+    rng = np.random.default_rng(seed)
     idx = rng.integers(0, n, size=(n_boot, n))
     means = deltas[idx].mean(axis=1)
     lo, hi = np.percentile(means, [100 * alpha / 2, 100 * (1 - alpha / 2)])
@@ -998,6 +1004,13 @@ def report(
         lo, hi = paired_cluster_bootstrap_ci(d, clusters, n_boot=n_boot)
         ci_label = f"95% {cluster_key}-cluster CI"
     else:
+        if len(common) < 2:
+            raise SystemExit(
+                f"the join produced only {len(common)} paired position "
+                f"(A={label_a}, B={label_b}); a row bootstrap needs at least "
+                "two paired positions to estimate sampling uncertainty or "
+                "a significance verdict"
+            )
         lo, hi = paired_bootstrap_ci(d, n_boot=n_boot)
         ci_label = "95% CI"
     frac_a = float((d < 0).mean())
