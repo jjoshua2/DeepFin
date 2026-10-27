@@ -460,6 +460,49 @@ def _load_calibration_arrays_from_replay(
     )))
 
 
+def _activation_directory_prefix(
+    shard_path: Path, *, source_cfg: ModelConfig, positions: int,
+) -> list[dict[str, np.ndarray]] | None:
+    """Validate an ordinary directory completely, retaining only selected inputs.
+
+    Decode at most 256 rows of every field at once. Keep selected bytes until
+    all rows pass validation/history selection, then let the caller score them.
+    This bounds decoded target retention, not selected-prefix or codec memory.
+    Like the eager loader, this is not a snapshot of concurrently edited files.
+    Legacy archives and non-row metadata retain the existing eager path.
+    """
+    from chess_anti_engine.replay.shard import load_shard_arrays, validate_arrays
+    from chess_anti_engine.train.trainer import select_input_history_arrays
+
+    if shard_path.suffix != ".zarr" or not shard_path.is_dir():
+        return None
+    arrays, _meta = load_shard_arrays(shard_path, lazy=True)
+    rows = int(arrays["x"].shape[0])
+    # The ordinary loader attaches scalar identity metadata. Do not turn a
+    # global metadata constraint into per-window acceptance for other inputs.
+    for key, value in arrays.items():
+        shape = value.shape
+        if shape and (key.startswith("_") or int(shape[0]) != rows):
+            return None
+    selected: list[dict[str, np.ndarray]] = []
+    for start in range(0, max(1, rows), 256):
+        stop = min(rows, start + 256)
+        chunk = {
+            key: np.asarray(value[start:stop]) if value.shape else np.asarray(value)
+            for key, value in arrays.items()
+        }
+        validate_arrays(chunk)
+        chunk = select_input_history_arrays(
+            chunk, input_history_encoding=source_cfg.input_history_encoding,
+        )
+        take = min(stop - start, max(0, positions - start))
+        if take > 0:
+            # Own only the prefix, not a view retaining decoded unused rows.
+            selected.append({"x": np.array(chunk["x"][:take], copy=True)})
+        del chunk
+    return selected
+
+
 def _iter_calibration_arrays_from_replay(
     *,
     source_cfg: ModelConfig,
@@ -487,6 +530,18 @@ def _iter_calibration_arrays_from_replay(
     for shard_path in shard_paths:
         if left <= 0:
             break
+        if inputs_only:
+            prefix = _activation_directory_prefix(
+                shard_path, source_cfg=source_cfg, positions=left,
+            )
+            if prefix is not None:
+                for chunk in prefix:
+                    left -= int(chunk["x"].shape[0])
+                    found = True
+                    yield chunk
+                    del chunk
+                del prefix
+                continue
         arrs, _meta = load_shard_arrays(shard_path, lazy=False)
         arrs = select_input_history_arrays(
             arrs,

@@ -450,16 +450,24 @@ def test_activation_loader_releases_unused_targets_before_next_shard(tmp_path: P
     module = _load_shrink_module()
     expected = _calibration_shards(tmp_path, (1858, 4672, 1858))
     original = shard.load_shard_arrays
+    original_validate = shard.validate_arrays
     refs = []
 
     def tracked_load(path: Path, *, lazy: bool = False) -> Any:
-        assert not lazy  # Keep the existing whole-shard content validation.
+        # Content/history-before-yield is exercised by directory-prefix tests;
+        # eager loading itself is not required for target lifetime isolation.
         assert all(ref() is None for ref in refs)
         arrays, meta = original(path, lazy=lazy)
-        refs.append(weakref.ref(arrays["policy_target"]))
         return arrays, meta
 
+    def tracked_validate(arrays: dict[str, np.ndarray]) -> None:
+        # Track decoded target storage, not lazy declaration proxies/cycles.
+        assert isinstance(arrays["policy_target"], np.ndarray)
+        refs.append(weakref.ref(arrays["policy_target"]))
+        original_validate(arrays)
+
     monkeypatch.setattr(shard, "load_shard_arrays", tracked_load)
+    monkeypatch.setattr(shard, "validate_arrays", tracked_validate)
     arrs = module._load_calibration_arrays_from_replay(
         **_calibration_kwargs(tmp_path, _small_cfg(ffn_mult_by_layer=(2.0, 1.5)), positions=6),
         inputs_only=True,
