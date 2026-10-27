@@ -115,6 +115,15 @@ class BanList:
                 p, type(raw).__name__,
             )
             return out
+        for field_name in ("usernames", "ips"):
+            value = raw.get(field_name, [])
+            if not isinstance(value, list):
+                _log.warning(
+                    "ban list %s field %s is %s, not an array; PROCEEDING WITH "
+                    "NOBODY BANNED. Expected arrays for usernames and ips.",
+                    p, field_name, type(value).__name__,
+                )
+                return out
         out.usernames = {str(u) for u in raw.get("usernames", []) if str(u).strip()}
         out.ips = {str(i) for i in raw.get("ips", []) if str(i).strip()}
         notes = raw.get("notes")
