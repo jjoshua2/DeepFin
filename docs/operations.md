@@ -429,8 +429,14 @@ absent file stays silent, since that is the normal case.
 When present, `usernames` and `ips` must be JSON arrays. A non-array value in
 either field invalidates the whole ban list, with the same warning and fail-open
 behavior; the other field is not partially applied. Existing list-entry string
-conversion and optional `notes` handling are unchanged. Malformed policy can
-therefore temporarily remove bans until the operator repairs the file.
+conversion and optional `notes` handling are unchanged. Authentication and
+`list-bans` use this read fallback until the operator repairs the file.
+
+Modifying commands (`ban` and `unban`) instead refuse unreadable, corrupt or
+wrong-shaped existing policy with a nonzero exit, leaving its bytes untouched.
+They must not save an empty read fallback and permanently discard valid bans or
+notes from another field. Repair the file before retrying. An absent file remains
+a valid empty policy, so the first `ban` can create it normally.
 
 **Minimum 8 characters** (the same policy as `manage_users`, from the same
 `auth.check_new_password`). A shorter one is refused **400**, not 401 — the
