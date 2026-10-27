@@ -98,7 +98,7 @@ class BanList:
         try:
             raw = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
-            if strict and not isinstance(exc, FileNotFoundError):
+            if strict and (not isinstance(exc, FileNotFoundError) or p.is_symlink()):
                 raise BanListLoadError(f"cannot read ban list {p}: {exc}") from exc
   # Absent is the normal case and means "nobody is banned", so it stays
   # silent. A file that EXISTS and will not parse is a different event with

@@ -181,6 +181,20 @@ def test_cli_refuses_unreadable_policy_path_without_replacing_it(
 
 
 @pytest.mark.parametrize("command", ["ban", "unban"])
+def test_cli_refuses_a_dangling_policy_symlink_without_replacing_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str,
+) -> None:
+    path = tmp_path / "bans.json"
+    target = tmp_path / "missing-policy.json"
+    path.symlink_to(target)
+    with pytest.raises(SystemExit, match="refusing to modify ban list"):
+        _cli(monkeypatch, tmp_path / "users.json", command, "--username", "synthetic-worker")
+    assert path.is_symlink()
+    assert path.readlink() == target
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("command", ["ban", "unban"])
 @pytest.mark.parametrize(("option", "bucket", "target"), [
     ("--username", "usernames", "synthetic-worker"),
     ("--ip", "ips", "203.0.113.8"),
