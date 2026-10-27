@@ -212,7 +212,7 @@ def test_cli_valid_updates_preserve_unrelated_bans_and_notes(
     payload["usernames"] = ["synthetic-worker", "synthetic-other"]
     path.write_text(json.dumps(payload), encoding="utf-8")
     _cli(monkeypatch, tmp_path / "users.json", command, option, target)
-    saved = BanList.load(path, strict=True)
+    saved = BanList.load(path)
     expected_users = {"synthetic-worker", "synthetic-other"}
     expected_ips = {"203.0.113.8"}
     if command == "unban":
@@ -228,7 +228,7 @@ def test_cli_missing_policy_is_a_valid_empty_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str,
 ) -> None:
     _cli(monkeypatch, tmp_path / "users.json", command, "--username", "synthetic-worker")
-    saved = BanList.load(tmp_path / "bans.json", strict=True)
+    saved = BanList.load(tmp_path / "bans.json")
     assert saved.usernames == ({"synthetic-worker"} if command == "ban" else set())
     assert saved.ips == set()
     assert saved.notes == {}

@@ -180,7 +180,7 @@ def test_concurrent_ban_updates_preserve_each_operators_change(
     children: list[subprocess.Popen[str]] = []
 
     def load_with_competitor(path: str | Path, *, strict: bool = False) -> BanList:
-        snapshot = real_load(path, strict=strict)
+        snapshot = real_load(path, strict=True) if strict else real_load(path)
         if not children:
             child = _operator(db, "ban", "--username", "synthetic-other", "--reason", "other reason")
             children.append(child)
