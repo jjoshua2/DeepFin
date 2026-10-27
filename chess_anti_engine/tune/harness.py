@@ -266,12 +266,17 @@ def _prune_orphan_pb2_policy_logs(*, tune_dir: Path) -> None:
             p.unlink()
 
 
-def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
+def _cleanup_old_tune_experiments(
+    *, tune_dir: Path, keep_last: int, reserve_new: bool = False,
+) -> None:
     """Best-effort pruning of old Ray Tune experiments.
 
     Keeps the newest `keep_last` experiment_state-*.json files, then deletes
     trial directories that none of those kept files reference.
     Only intended to run on fresh starts (not --resume).
+    Nonpositive `keep_last` disables pruning. With `reserve_new`, a positive
+    count includes the new experiment the caller is about to create, so one
+    retains no old experiments rather than disabling cleanup.
 
     The reference has to be read out of the state files. It CANNOT be derived
     from the filenames, which is what this used to do: a trial directory is
@@ -292,12 +297,14 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
     keep_last = int(keep_last)
     if keep_last <= 0 or not tune_dir.exists():
         return
+    if reserve_new:
+        keep_last -= 1
 
     state_files = sorted(tune_dir.glob("experiment_state-*.json"))
     if len(state_files) <= keep_last:
         return
 
-    keep = state_files[-keep_last:]
+    keep = state_files[-keep_last:] if keep_last else []
 
   # Fail safe: an unreadable kept state file means we do not know what it
   # protects, so we delete no trial directories at all this pass. Deleting the
@@ -1029,7 +1036,8 @@ def run_tune(
   # Prune to (N-1) before the new experiment is created so we end at <=N total.
         _cleanup_old_tune_experiments(
             tune_dir=experiment_path,
-            keep_last=max(0, keep_last_exps - 1),
+            keep_last=keep_last_exps,
+            reserve_new=True,
         )
 
     valid_state_file = (

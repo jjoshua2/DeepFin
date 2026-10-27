@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,6 +28,78 @@ from chess_anti_engine.tune.harness import (
     _cleanup_old_tune_experiments,
     _trial_dirs_referenced_by,
 )
+
+
+@pytest.mark.parametrize(
+    ("keep_last", "resume", "corrupt_retained"),
+    [
+        (None, False, False), (0, False, False), (-1, False, False),
+        (1, False, False), (2, False, False), (3, False, False),
+        (1, True, False), (2, True, False), (2, False, True),
+    ],
+)
+def test_fresh_start_reserves_room_for_the_new_experiment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, keep_last: int | None,
+    resume: bool, corrupt_retained: bool,
+) -> None:
+    """Exercise the real caller without starting Ray, servers or training."""
+    import ray
+    from ray import tune
+
+    from chess_anti_engine.tune import harness
+
+    tune_dir = tmp_path / "tune"
+    tune_dir.mkdir()
+    old_dir, previous_dir = _live_layout(tune_dir)
+    if corrupt_retained:
+        (tune_dir / "experiment_state-2026-07-25_12-12-34.json").write_text("{bad json")
+    unrelated = tune_dir / "not-a-trial"
+    unrelated.mkdir()
+    (unrelated / "keep.txt").write_text("unrelated")
+    policy_log = tune_dir / "pbt_policy_4c17c_00000.txt"
+    policy_log.write_text("old policy")
+    monkeypatch.setattr(harness, "_patch_ray_artifact_sync_excludes", lambda: None)
+    monkeypatch.setattr(harness, "_launch_distributed_server", lambda **_kw: None)
+    monkeypatch.setattr(harness, "_maybe_launch_shared_broker", lambda **_kw: None)
+    monkeypatch.setattr(harness, "_build_scheduler_and_param_space", lambda **_kw: ({}, None, None))
+    monkeypatch.setattr(harness, "_make_checkpoint_eviction_idempotent", lambda: None)
+    monkeypatch.setattr(harness, "_make_csv_logger_schema_safe", lambda: None)
+    monkeypatch.setattr(harness, "_resolve_resume_param_space", lambda **_kw: {})
+    monkeypatch.setattr(harness, "_hotpatch_scheduler_bounds", lambda **_kw: None)
+    monkeypatch.setattr(ray, "init", lambda **_kw: None)
+    monkeypatch.setattr(tune, "with_resources", lambda fn, _resources: fn)
+
+    current_trial = "train_trial_new_00000_0_lr=0.1_2026-08-01_00-00-00"
+
+    class FakeTuner:
+        def __init__(self, *_args, **_kwargs):
+            _write_state(tune_dir, "2026-08-01_00-00-00", trial_dirs=[current_trial])
+            _make_trial_dir(tune_dir, current_trial)
+
+        def fit(self):
+            return "completed"
+
+        @staticmethod
+        def restore(*_args, **_kwargs):
+            return SimpleNamespace(fit=lambda: "completed")
+
+    monkeypatch.setattr(tune, "Tuner", FakeTuner)
+
+    result = harness.run_tune(
+        base_config={} if keep_last is None else {"tune_keep_last_experiments": keep_last},
+        work_dir=tmp_path, num_samples=1, resume=resume,
+    )
+
+    assert result == "completed"
+    realized = 2 if keep_last is None else keep_last
+    expected = 6 if resume else (realized if realized > 0 else 7)
+    assert len(list(tune_dir.glob("experiment_state-*.json"))) == expected
+    assert len(list(tune_dir.glob("basic-variant-state-*.json"))) == expected
+    assert old_dir.exists() == (resume or realized <= 0 or corrupt_retained)
+    assert previous_dir.exists() == (resume or realized != 1)
+    assert policy_log.exists() == (resume or realized != 1)
+    assert (tune_dir / current_trial / "checkpoint_000250" / "state.pt").exists() == (not resume)
+    assert (unrelated / "keep.txt").read_text() == "unrelated"
 
 
 def _write_state(tune_dir: Path, ts: str, *, trial_dirs: list[str]) -> Path:
