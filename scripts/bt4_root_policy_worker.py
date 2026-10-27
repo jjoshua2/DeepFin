@@ -32,7 +32,7 @@ from chess_anti_engine import tablebase
 from chess_anti_engine.encoding import _lc0_ext, rep_fix
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
 from chess_anti_engine.teacher_dispatch import TeacherDispatcher
-from scripts.shared_teacher_generation import BT4GamePool, DurableWriter
+from scripts.shared_teacher_generation import BT4GamePool, DurableWriter, StopSignal
 from scripts import bt4_generation_evaluator
 from scripts.bt4_policy_dump import file_sha256, open_session
 from scripts.bt4_root_policy_stepper import (
@@ -851,10 +851,14 @@ def run_pooled_units(
     geometry = (target_rows, max_rows, batch_wait_ms, max_writes)
     deadline = time.monotonic() + deadline_seconds
 
+    signal = StopSignal(lambda: (coordinator / "STOP").exists()
+                        or any((spec.out / "STOP").exists() for spec in specs))
+
     def evaluate(rows: Sequence[tuple[chess.Board, np.ndarray]]) -> Sequence[bt4_generation_evaluator.BT4RootOutput]:
         control()
         result = _evaluate_shared_roots(evaluator, rows, specs)
         control()
+        signal.refresh()  # latch before any unit can consume these results
         return result
 
     dispatcher = TeacherDispatcher(evaluate, target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms)
@@ -904,13 +908,14 @@ def run_pooled_units(
             control()
             if time.monotonic() >= deadline:
                 raise TimeoutError("finite cross-unit operation budget expired; artifacts retained")
-            paused = (coordinator / "STOP").exists() or any((spec.out / "STOP").exists() for spec in specs)
+            paused = signal.refresh()
             remaining = False
             # Rotating the first unit gives shared writer and row admission fair
             # turns. Every unit advances even when an earlier unit has work.
             for name in ids[cursor:] + ids[:cursor]:
-                unit_remaining = pools[name].advance(stopped=paused)
+                unit_remaining = pools[name].advance(stopped=paused, stop=signal.is_set)
                 remaining = unit_remaining or remaining
+            paused = signal.is_set()
             cursor = (cursor + 1) % len(ids)
             live = sum(len(pool.active) for pool in pools.values())
             peak_live = max(peak_live, live)

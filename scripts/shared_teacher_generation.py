@@ -85,6 +85,27 @@ class DurableWriter:
             raise TimeoutError("durable writer still owned; shutdown budget expired")
 
 
+class StopSignal:
+    """Share a sticky observation without filesystem reads in per-game loops.
+
+    Refresh on the coordinator and before backend results become visible.
+    A resumed invocation creates a new signal; an observed STOP never clears
+    underneath an invocation's pending results.
+    """
+
+    def __init__(self, observe: Callable[[], bool]) -> None:
+        self._observe = observe
+        self._event = threading.Event()
+
+    def refresh(self) -> bool:
+        if not self._event.is_set() and self._observe():
+            self._event.set()
+        return self._event.is_set()
+
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+
 @dataclass
 class _Game:
     stepper: BT4RootPolicyStepper
@@ -146,7 +167,7 @@ class BT4GamePool:
         finally:
             self.writer_seconds += time.monotonic() - started
 
-    def drain_writes(self, *, stopped: bool = False) -> None:
+    def drain_writes(self, *, stopped: bool = False, stop: Callable[[], bool] | None = None) -> None:
         """Collect acknowledgments without admitting writes, roots or games."""
         for game_id, game in tuple(self.active.items()):
             if game.writing is not None and game.writing.done():
@@ -158,7 +179,7 @@ class BT4GamePool:
             receipt = game.raw_receipt
             if self.acknowledge is not None:
                 if game.acknowledgment is None:
-                    if stopped:
+                    if stopped or (stop is not None and stop()):
                         continue  # no new companion admission after STOP
                     try:
                         ack = self.acknowledge(game_id, dict(receipt))
@@ -181,9 +202,14 @@ class BT4GamePool:
             self.receipts[game_id] = receipt
             del self.active[game_id]
 
-    def advance(self, *, stopped: bool = False) -> bool:
+    def advance(self, *, stopped: bool = False, stop: Callable[[], bool] | None = None) -> bool:
         """Poll completed work without waiting on any game or backend call."""
-        self.drain_writes(stopped=stopped)
+        def stopped_now() -> bool:
+            nonlocal stopped
+            stopped = stopped or (stop is not None and stop())
+            return stopped
+
+        self.drain_writes(stopped=stopped_now(), stop=stopped_now)
         writing_count = sum(game.writing is not None for game in self.active.values())
         for game_id, game in tuple(self.active.items()):
             if game.finalized is not None:
@@ -195,19 +221,21 @@ class BT4GamePool:
                         continue  # a shared writer retains independently bounded ownership
                     writing_count += 1
                 continue
-            if stopped:
+            if stopped_now():
                 continue
             if game.result is not None:
                 if not game.result.done():
                     continue
                 outputs = game.result.result()
+                if stopped_now():
+                    continue  # retain the exact batch/result for resume
                 assert game.batch is not None
                 game.stepper.apply_root_outputs(
                     game.batch, outputs, temperatures={game_id: self.temperature},
                 )
                 game.result = None
                 game.batch = None
-            if game.batch is None:
+            if game.batch is None and not stopped_now():
                 game.batch, finished = game.stepper.prepare_roots()
                 if finished:
                     if len(finished) != 1 or finished[0].slot_id != game_id:
@@ -216,11 +244,13 @@ class BT4GamePool:
                     continue
                 if game.batch is not None:
                     self._ready.append(game_id)
-        while self._ready and not stopped:
+        while self._ready and not stopped_now():
             game_id = self._ready[0]
             game = self.active[game_id]
             if game.batch is not None:
                 boards, inputs = game.batch.inference_inputs()
+                if stopped_now():
+                    break
                 try:
                     game.result = self.dispatcher.submit(
                         f"bt4:{self.namespace}:{game_id}:{game.batch.generation}", list(zip(boards, inputs)),
@@ -229,7 +259,7 @@ class BT4GamePool:
                     # Keep prepared root; no second prepare or RNG/move advance.
                     break
                 self._ready.popleft()
-        while not stopped and len(self.active) < self.capacity and self.next_id < self.games:
+        while not stopped_now() and len(self.active) < self.capacity and self.next_id < self.games:
             game_id = self.next_id
             if game_id in self.receipts:
                 self.next_id += 1
