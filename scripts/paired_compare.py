@@ -42,7 +42,13 @@ warn-only when absent. The inferred stamp adopts the counterpart's SHAPE, since
 stamps a scalar. See ``require_same_ruler`` and ``_match_stamp_shape``.
 
 Sign convention: delta = A - B per position. For regret-style metrics (lower
-is better), a NEGATIVE mean delta means A is better.
+is better), a NEGATIVE mean delta means A is better. For higher-is-better
+metrics, a POSITIVE delta favours A. ``cand.<candidate>.top1_agree`` defaults
+to higher; ``cand.<candidate>.out_of_top10`` and numeric regret metrics default
+to lower. Other boolean fields require an explicit ``--metric-direction``.
+That flag also overrides the defaults for a declared alternative objective.
+"Better" means the declared metric preference, NOT demonstrated playing strength.
+Raw A-B deltas and confidence intervals never change sign with the preference.
 
 Two flags exist for PRE-REGISTERED readouts and are off by default:
 
@@ -236,8 +242,13 @@ def mcnemar(
     )
 
 
-def report_mcnemar(m: McNemar, *, at: float, label_a: str, label_b: str) -> None:
-    """Print the 2x2 and say plainly when it cannot decide anything."""
+def report_mcnemar(
+    m: McNemar, *, at: float, label_a: str, label_b: str,
+    metric_direction: str = "lower",
+) -> None:
+    """Print the fixed <= predicate; preference does not change its numbers."""
+    if metric_direction not in ("lower", "higher"):
+        raise ValueError("metric_direction must be 'lower' or 'higher'")
     print(f"\nMcNemar on (metric <= {at:g}), paired n={m.n}")
     print(f"  both {m.both}   A-only {m.b}   B-only {m.c}   neither {m.neither}")
     if m.b + m.c == 0:
@@ -256,12 +267,17 @@ def report_mcnemar(m: McNemar, *, at: float, label_a: str, label_b: str) -> None
     se = math.sqrt(max(var, 0.0))
     print(f"  discordant {m.b + m.c}  (d_obs {m.discordance:.4f})   "
           f"exact two-sided p = {m.p_two_sided:.4g}")
-    # ⚑ THE SIGN CONVENTION HERE IS THE OPPOSITE OF THE PAIRED DELTA'S, ONE
-    # SCREEN UP, AND BOTH ARE LABELLED "(A-B)". The delta is over a regret in
-    # cp, where LOWER is better, so negative = A better. This is over a rate of
-    # SATISFYING the predicate, where HIGHER is better, so positive = A better.
-    # Neither is wrong; adjacent and unannotated they invite one to be read
-    # with the other's rule.
+    # The <= predicate rate has the opposite preference to the raw metric:
+    # for higher-valued metrics, fewer <= threshold outcomes are preferred.
+    # Complementing the predicate would swap b/c (and both/neither), leaving
+    # the exact two-sided p and discordance unchanged. Keep the declared <=
+    # table, raw rate difference and CI; change only the preference labels.
+    rate_preference = (
+        "higher = A better — OPPOSITE of the cp delta above"
+        if metric_direction == "lower"
+        else "lower = A better — OPPOSITE of the metric delta above; "
+        "fewer <= threshold outcomes are preferred"
+    )
     # ⚑ 5 dp AND a pp form, deliberately. At the registered n=4000 the paired
     # correction ``-(b-c)^2/n`` moves the bound by ~1e-5, so at the 4 dp this
     # line used to print, a build that DROPPED the correction was byte-identical
@@ -272,16 +288,14 @@ def report_mcnemar(m: McNemar, *, at: float, label_a: str, label_b: str) -> None
     print(f"  paired rate diff (A-B) {diff:+.5f} "
           f"[95% CI {diff - 1.96 * se:+.5f} .. {diff + 1.96 * se:+.5f}]"
           f"   ({100 * diff:+.3f}pp)"
-          f"   (higher = A better — OPPOSITE of the cp delta above)")
+          f"   ({rate_preference})")
     print(f"  null-case half-width at this n: ±{m.half_width:.5f} "
           f"(±{100 * m.half_width:.3f}pp) — 1.96*sqrt(d_obs/n), the diff=0 form, "
           f"so an upper bound on the CI above")
     # b == c > 0 is discordance with NO direction: the arms disagree on b+c
     # positions and split them evenly. Naming a winner there invents one.
-    where = (
-        "exactly tied" if m.b == m.c
-        else f"point estimate favours {label_a if diff > 0 else label_b}"
-    )
+    favoured = label_a if (diff > 0) == (metric_direction == "lower") else label_b
+    where = "exactly tied" if m.b == m.c else f"point estimate favours {favoured}"
     print(f"  {'significant at 95%' if m.p_two_sided < 0.05 else 'NOT significant'}"
           f"   ({where})")
 
@@ -322,13 +336,23 @@ class Dump(NamedTuple):
     # Join key -> source-cluster identity. Populated only when load_dump was
     # given --cluster-key; kept separate so existing row-level reads are exact.
     clusters: dict[str, str]
+    # None means an unrecognized boolean field: loading is allowed, but a
+    # directional report needs an explicit preference. Default preserves
+    # existing numeric callers constructing Dump with the original five args.
+    metric_direction: str | None = "lower"
 
 
 def load_dump(
     path: str, *, join_key: str = "fen", field: str = "value",
     mcnemar_at: float | None = None, cluster_key: str | None = None,
+    metric_direction: str | None = None,
 ) -> Dump:
     """Index one per-position dump by its join key.
+
+    ``metric_direction`` explicitly declares the objective, overriding known
+    producer defaults. Unknown boolean fields remain loadable as data, with
+    ``Dump.metric_direction=None``; ``report`` refuses to guess their objective.
+    Numeric fields retain the legacy lower-is-better default unless declared.
 
     **A metric must be finite, not merely numeric.** ``isinstance(v, (int,
     float))`` alone admits NaN, and one NaN row poisons the entire comparison:
@@ -351,6 +375,17 @@ def load_dump(
     tool stops instead of guessing. Rows dropped as unusable never enter the
     index and so cannot trip it.
     """
+    if metric_direction not in (None, "lower", "higher"):
+        raise ValueError("metric_direction must be 'lower' or 'higher'")
+    parts = field.split(".")
+    producer_boolean = (
+        len(parts) == 3 and parts[0] == "cand" and bool(parts[1])
+        and parts[2] in ("top1_agree", "out_of_top10")
+    )
+    # Producer semantics apply equally to JSON booleans and numeric 0/1.
+    direction = metric_direction
+    if direction is None:
+        direction = "higher" if producer_boolean and parts[2] == "top1_agree" else "lower"
     rows: dict[str, tuple[float, str]] = {}
     clusters: dict[str, str] = {}
     duplicates: list[str] = []
@@ -461,19 +496,9 @@ def load_dump(
                 # ways). Refuse rather than pick a direction: this file already
                 # knows bool-is-int one guard down, on `ROW_COUNT_KEY`.
                 #
-                # ⚑ SCOPED TO THE THRESHOLD GATE, deliberately. The inversion is
-                # a property of `value <= at`, so it cannot occur when no
-                # `--mcnemar-at` was given, and refusing there would break the
-                # use these fields were WRITTEN for: `audit_targets`'
-                # `--dump-per-position` help calls `top1_agree`/`out_of_top10`
-                # "the paired per-position booleans ... for offline slicing and
-                # PAIRED statistics", and the paired bootstrap over a rate is
-                # exactly that. Python's bool is an int, so they flow through
-                # the finite-number guard below as 1.0/0.0 and the bootstrap
-                # differences two RATES, which is well defined and directional
-                # by the field's own name. An unconditional refusal here would
-                # have made `out_of_top10` unreachable by the only tool built
-                # to difference it — a guard that costs more than the hazard.
+                # Scoped to the threshold gate. Without it, a bootstrap over
+                # 0/1 rates is valid, but its preference must come from the
+                # producer field contract or an explicit metric direction.
                 raise SystemExit(
                     f"{path}: --field {field!r} is a BOOLEAN and "
                     f"--mcnemar-at {mcnemar_at:g} was given. A threshold gate "
@@ -491,6 +516,8 @@ def load_dump(
             if k is None or not isinstance(v, (int, float)) or not math.isfinite(v):
                 unusable += 1
                 continue
+            if isinstance(v, bool) and metric_direction is None and not producer_boolean:
+                direction = None
             key = str(k)
             if key in rows:
                 duplicates.append(key)
@@ -540,7 +567,7 @@ def load_dump(
             f"key — de-duplicate the dump (or pass the right --join-key) and "
             f"re-run. Refusing rather than silently dropping them."
         )
-    return Dump(rows, unusable, provenance, stamp, clusters)
+    return Dump(rows, unusable, provenance, stamp, clusters, direction)
 
 
 # Stamps that identify WHICH RULER produced a dump. A change to any of them
@@ -969,6 +996,20 @@ def report(
     # Before any statistic is computed: a verdict at the wrong n is worse than
     # no verdict, because it is quotable.
     require_paired_n(len(common), require_n, label_a=label_a, label_b=label_b)
+    if a.metric_direction is None or b.metric_direction is None:
+        raise SystemExit(
+            "unknown BOOLEAN metric preference: pass --metric-direction lower "
+            "or higher (load_dump(metric_direction=...) for direct callers) "
+            "before requesting a directional report"
+        )
+    if a.metric_direction != b.metric_direction:
+        raise SystemExit(
+            f"metric direction disagrees: A={a.metric_direction}, B={b.metric_direction}; "
+            "declare the same metric preference for both dumps"
+        )
+    direction = a.metric_direction
+    if direction not in ("lower", "higher"):
+        raise ValueError("metric_direction must be 'lower' or 'higher'")
     va = np.array([a.rows[k][0] for k in common])
     vb = np.array([b.rows[k][0] for k in common])
     ph = np.array([a.rows[k][1] for k in common])
@@ -1013,8 +1054,8 @@ def report(
             )
         lo, hi = paired_bootstrap_ci(d, n_boot=n_boot)
         ci_label = "95% CI"
-    frac_a = float((d < 0).mean())
-    frac_b = float((d > 0).mean())
+    frac_a = float(((d < 0) if direction == "lower" else (d > 0)).mean())
+    frac_b = float(((d > 0) if direction == "lower" else (d < 0)).mean())
   # Per side, and never as one summed `dropped`. The old single number was
   # computed from the two INDEXES, so a row the scorer failed on -- absent from
   # both -- was invisible: three null rows per side printed "dropped 0". Summing
@@ -1029,11 +1070,13 @@ def report(
           f"{len(a.rows) - len(common)} unmatched"
           f"   B: {len(b.rows) + b.unusable} rows, {b.unusable} unusable, "
           f"{len(b.rows) - len(common)} unmatched")
+    print(f"metric direction: {direction} is better (metric preference, not playing strength)")
     print(f"A = {label_a}: mean {va.mean():.2f}")
     print(f"B = {label_b}: mean {vb.mean():.2f}")
     print(f"paired delta (A-B): {d.mean():+.2f}  "
           f"[{ci_label} {lo:+.2f} .. {hi:+.2f}]")
-    verdict = "A better" if hi < 0 else ("B better" if lo > 0 else "NOT significant")
+    negative, positive = ("A better", "B better") if direction == "lower" else ("B better", "A better")
+    verdict = negative if hi < 0 else (positive if lo > 0 else "NOT significant")
     print(f"verdict at 95%: {verdict}   "
           f"(A better {frac_a:.1%} / B better {frac_b:.1%} / tied {1 - frac_a - frac_b:.1%})")
     for name in sorted(set(ph)):
@@ -1059,6 +1102,7 @@ def report(
         report_mcnemar(
             mcnemar(va, vb, at=mcnemar_at),
             at=mcnemar_at, label_a=label_a, label_b=label_b,
+            metric_direction=direction,
         )
 
 
@@ -1075,6 +1119,11 @@ def main() -> None:
     ap.add_argument("--field", default="value",
                     help="dotted path to the compared metric "
                          "(audit_targets dumps: e.g. 'cand.search.exp')")
+    ap.add_argument("--metric-direction", choices=("lower", "higher"), default=None,
+                    help="declared metric preference, overriding field defaults: "
+                         "cand.<candidate>.top1_agree=higher, out_of_top10=lower, "
+                         "other numeric fields=lower. Required for other booleans; "
+                         "not a claim of playing strength. Raw A-B/CI stay unchanged.")
     ap.add_argument("--n-boot", type=int, default=10_000)
     ap.add_argument("--mcnemar-at", type=float, default=None, metavar="CP",
                     help="also run McNemar's exact test on the paired binary "
@@ -1092,9 +1141,11 @@ def main() -> None:
     if args.cluster_key is not None and args.mcnemar_at is not None:
         ap.error("--cluster-key cannot be combined with row-level --mcnemar-at")
     dump_a = load_dump(args.dump_a, join_key=args.join_key, field=args.field,
-                       mcnemar_at=args.mcnemar_at, cluster_key=args.cluster_key)
+                       mcnemar_at=args.mcnemar_at, cluster_key=args.cluster_key,
+                       metric_direction=args.metric_direction)
     dump_b = load_dump(args.dump_b, join_key=args.join_key, field=args.field,
-                       mcnemar_at=args.mcnemar_at, cluster_key=args.cluster_key)
+                       mcnemar_at=args.mcnemar_at, cluster_key=args.cluster_key,
+                       metric_direction=args.metric_direction)
     label_a = args.label_a or args.dump_a
     label_b = args.label_b or args.dump_b
     require_same_ruler(
