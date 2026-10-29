@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import inspect
 import json
+import math
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import cast
@@ -21,6 +22,7 @@ from chess_anti_engine.tune.promotion_gate import (
     GateConfig,
     GateHoldController,
     PromotionGate,
+    parse_gate_state,
 )
 from chess_anti_engine.tune.trial_config import DifficultyState, RestoreResult, SelfplayResult
 
@@ -72,18 +74,38 @@ def _gate(holds=1, active=True):
 @pytest.mark.parametrize(("holds", "expected_holds", "active"), [(1, 2, True), (3, 0, False)])
 def test_retry_persists_age_and_release(tmp_path, writer, holds, expected_holds, active):
     gate, hold = _gate(holds)
+    gate.observe(AnchoredSample(
+        iteration=10, cur_w=13, prev_w=14,
+        cur_wdl_regret=0.12, prev_wdl_regret=0.34, regret_fit_slope=0.56,
+    ))
     hold.hold_path = tmp_path / "inert-anchor"
     path = tmp_path / "gate_state.json"
     trainable_phases._persist_gate_state(gate=gate, hold=hold, gate_match_idx=17, gate_state_path=path)
     before = json.loads(path.read_text())
     assert _retry_branch()(SimpleNamespace(should_retry=True), hold, gate, 17, path)
+    persisted = json.loads(path.read_text())
     state = trainable._startup_gate_state(gate_state_path=path, restore=RestoreResult(restored_gate_state={"matches": 999}))
     restored = PromotionGate(cfg=gate.cfg)
     restored.load_state_dict(state)
+    parsed = parse_gate_state(state)
     assert (restored.holds, restored.hold_active) == (expected_holds, active)
     assert (hold.hold_path is not None) == active
     assert state["matches"] == 17
+    assert persisted["matches"] == before["matches"] == 17
+    assert (persisted["holds"], persisted["hold_active"]) == (expected_holds, active)
+    assert persisted["samples"] == before["samples"]
     assert state["samples"] == before["samples"]
+    assert gate.state_dict()["samples"] == before["samples"]
+    assert len(state["samples"]) == len(restored.samples) == 2
+    # Startup transports raw JSON; the parser and loader install the live
+    # unknown sentinel, NaN. Explicitly prove unknowns are not backfilled.
+    for key in ("cur_wdl_regret", "prev_wdl_regret", "regret_fit_slope"):
+        assert before["samples"][0][key] is None
+        assert math.isnan(parsed["samples"][0][key])
+        assert math.isnan(getattr(restored.samples[0], key))
+    assert state["samples"][1] == before["samples"][1]
+    assert parsed["samples"][1] == before["samples"][1]
+    assert restored.state_dict()["samples"] == before["samples"]
     assert state["hold"] == before["hold"] == hold.state_dict()
     assert len(writer) == 2
 

@@ -248,10 +248,14 @@ def _startup_gate_state(*, gate_state_path: Path, restore: RestoreResult) -> dic
     -- hand this trial another lineage's window. Empty is the safe reading: the
     gate refills its window, which is what a corrupt file already meant.
     """
+    # Validate every consumed field, but preserve the valid transport object.
+    # Gate/controller loaders own normalization; startup must not add defaults
+    # or strip unknown nested metadata from otherwise usable persisted state.
     own = load_optional_json(gate_state_path)
     if own is not None:
         try:
-            return parse_gate_state(own)
+            parse_gate_state(own)
+            return own
         except (TypeError, ValueError, OverflowError) as exc:
             print(
                 f"[trial] malformed own promotion-gate state at {gate_state_path}: "
@@ -270,7 +274,8 @@ def _startup_gate_state(*, gate_state_path: Path, restore: RestoreResult) -> dic
     if restore.restored_gate_state is None:
         return {}
     try:
-        seeded = parse_gate_state(restore.restored_gate_state)
+        parse_gate_state(restore.restored_gate_state)
+        seeded = restore.restored_gate_state
     except (TypeError, ValueError, OverflowError) as exc:
         print(f"[trial] malformed pool promotion-gate state: {exc}; starting EMPTY", flush=True)
         return {}

@@ -75,3 +75,46 @@ def test_legacy_coercions_and_unknown_confound_roundtrip():
     restored = PromotionGate(cfg=gate.cfg)
     restored.load_state_dict(encoded)
     assert restored.state_dict() == gate.state_dict()
+
+
+@pytest.mark.parametrize("source", ["own", "pool"])
+@pytest.mark.parametrize("payload", [
+    {
+        "matches": 41, "holds": 2,
+        "window": [{"elo": 3.1}, {"elo": -1.2}],
+        "hold": {"active": True, "anchor_refresh_failures": 3},
+    },
+    {
+        "matches": "17", "holds": 1, "hold_active": True,
+        "samples": [{"iteration": 9, "cur_w": 11, "prev_w": 12,
+                     "cur_wdl_regret": None, "prev_wdl_regret": None,
+                     "regret_fit_slope": 0.56}],
+        "hold": {"anchor_refresh_failures": 2, "fallback_missing": 3,
+                 "future_metadata": {"note": "preserve transport only"}},
+    },
+])
+def test_startup_validates_without_rewriting_transport(tmp_path, source: str, payload: dict):
+    path = tmp_path / "gate_state.json"
+    if source == "own":
+        path.write_text(json.dumps(payload))
+    restore = RestoreResult(restored_gate_state=payload if source == "pool" else {"matches": 999})
+    state = _startup_gate_state(gate_state_path=path, restore=restore)
+    assert state == payload
+    assert int(state.get("matches", 0)) == int(payload["matches"])
+
+    # Consumers still normalize: nested legacy 'active' is not hold authority,
+    # opaque 'window' is not a samples alias, and null confounds remain unknown.
+    gate = PromotionGate()
+    gate.load_state_dict(state)
+    assert gate.hold_active == bool(payload.get("hold_active", False))
+    assert len(gate.samples) == len(payload.get("samples", []))
+    if gate.samples:
+        assert math.isnan(gate.samples[0].cur_wdl_regret)
+        assert math.isnan(gate.samples[0].prev_wdl_regret)
+    hold = GateHoldController.create(
+        gate, durable_dir=tmp_path, state=state.get("hold"), current_iteration=10,
+    )
+    assert not gate.hold_active  # No anchor exists; transport validation cannot authorize one.
+    assert hold.hold_path is None
+    assert hold.anchor_refresh_failures == payload["hold"]["anchor_refresh_failures"]
+    assert state == payload
