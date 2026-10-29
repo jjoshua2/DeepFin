@@ -25,9 +25,11 @@ from chess_anti_engine.tune._utils import (
     DURABLE_BEST_STATE,
     DURABLE_GATE_STATE,
     SIDECAR_HOLDOUT_ROWS,
+    SIDECAR_TRIAL_META,
 )
+from chess_anti_engine.tune.holdout_state import invalidate_holdout_restore
 from chess_anti_engine.tune.replay_exchange import _read_jsonl_rows
-from chess_anti_engine.utils.atomic import _fsync_dir, atomic_write_bytes, atomic_write_text
+from chess_anti_engine.utils.atomic import _fsync_dir, atomic_write, atomic_write_bytes, atomic_write_text
 
 # How far (in checkpoint-dir index units) the newest result row may lag the
 # newest on-disk ``checkpoint_*`` dir before we treat result.json as stale.
@@ -546,13 +548,17 @@ def _export_one_seed(
     replay_plan: _ReplayPlan,
 ) -> dict:
     seed_dir = seeds_dir / f"slot_{slot:03d}"
+    if seed_dir.resolve() == plan.ckpt_dir.resolve():
+        raise ValueError("salvage destination must differ from its source checkpoint")
     seed_dir.mkdir(parents=True, exist_ok=True)
+    invalidate_holdout_restore(ckpt_dir=seed_dir)
+    (seed_dir / SIDECAR_HOLDOUT_ROWS).unlink(missing_ok=True)
 
   # SIDECAR_HOLDOUT_ROWS carries the holdout ruler so a salvage restart
   # resumes measuring `test_loss` against the same rows instead of a fresh
   # post-restart sample; trial_meta.json carries its frozen/generation flags
   # and (audit T1) the opponent-strength EMA.
-    for fn in ("trainer.pt", "pid_state.json", "trial_meta.json", "rng_state.json",
+    for fn in ("trainer.pt", "pid_state.json", "rng_state.json",
                SIDECAR_HOLDOUT_ROWS):
         src = plan.ckpt_dir / fn
         if src.exists():
@@ -579,6 +585,17 @@ def _export_one_seed(
         copied_shards = _copy_replay_shards(
             replay_plan.source, seed_dir / "replay_shards")
         replay_source = str(replay_plan.source)
+
+    # Commit restore authority only after ALL copies succeed. An interrupted
+    # export into a reused slot keeps the zero marker, never an old ruler.
+    meta_src = plan.ckpt_dir / SIDECAR_TRIAL_META
+    meta_dst = seed_dir / SIDECAR_TRIAL_META
+    if meta_src.exists():
+        atomic_write(meta_dst, lambda tmp: shutil.copy2(meta_src, tmp))
+    else:
+        # A fully copied genuinely legacy checkpoint retains its legacy
+        # restore behavior; no incomplete export may take this branch.
+        meta_dst.unlink()
 
     return {
         "slot": int(slot),

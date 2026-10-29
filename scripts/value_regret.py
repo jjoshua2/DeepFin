@@ -301,6 +301,54 @@ def value_1ply_regret(
     return overall, per_phase, top1
 
 
+def _refuse_dump_input_aliases(
+    dump_path: str | Path | None,
+    *,
+    audit_set: str | Path,
+    matched_rows: Path | None,
+) -> None:
+    """A named report may replace a report, never the scoring set or index.
+
+    Check both resolved names and existing file identities: hardlinks do not
+    share a resolved name, and the writer opens with ``w`` through both kinds
+    of link. This protects stable aliases, not concurrent path swaps between
+    this check and the writer's open. Model files are outside this guard.
+    """
+    if not dump_path:
+        return
+    output = Path(dump_path)
+    protected = [("--audit-set", Path(audit_set))]
+    if matched_rows is not None:
+        protected.append(("--matched-rows", Path(matched_rows)))
+    try:
+        output_name = output.resolve()
+        for flag, path in protected:
+            if output_name == path.resolve():
+                raise SystemExit(
+                    f"--dump-per-position {output} aliases {flag} {path}; "
+                    "refusing to overwrite a consumed scoring input. "
+                    "Choose a separate report path."
+                )
+            input_stat = path.stat()
+            try:
+                output_stat = output.stat()
+            except FileNotFoundError:
+                continue  # A new output has no existing inode to compare.
+            if (output_stat.st_dev, output_stat.st_ino) == (
+                input_stat.st_dev, input_stat.st_ino
+            ):
+                raise SystemExit(
+                    f"--dump-per-position {output} aliases {flag} {path}; "
+                    "refusing to overwrite a consumed scoring input. "
+                    "Choose a separate report path."
+                )
+    except (OSError, RuntimeError) as exc:
+        raise SystemExit(
+            f"cannot establish --dump-per-position {output} is separate from "
+            f"the consumed scoring inputs: {exc}. Refusing to write."
+        ) from exc
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     add_net_source_args(
@@ -368,8 +416,20 @@ def main() -> None:
                          "behavior), required to reproduce historical full-set numbers "
                          "(e.g. the 70-76cp band / BT4=43cp ref were full-set).")
     args = ap.parse_args()
-    # Resolve the net BEFORE any audit-set or GPU work: a typo'd path or a
-    # graph with no 1858 policy head must fail here, not after the scoring
+    encoding = normalize_input_encoding(args.input_encoding)
+    matched_path = (
+        args.matched_rows
+        if args.matched_rows is not None
+        else default_matched_rows_path(args.audit_set)
+        if encoding == "stored"
+        else None
+    )
+    # Refuse input destruction before net resolution can acquire model resources.
+    _refuse_dump_input_aliases(
+        args.dump_per_position, audit_set=args.audit_set, matched_rows=matched_path,
+    )
+    # Resolve the net before loading audit contents or doing GPU work: a typo'd
+    # path or a graph with no 1858 policy head must fail here, not after the scoring
     # loop has produced a plausible-looking number for the wrong weights.
     net = net_source_from_args(args)
     # ...and the flag combination that cannot mean anything, before the
@@ -386,7 +446,6 @@ def main() -> None:
         tag="value-regret",
     )
 
-    encoding = normalize_input_encoding(args.input_encoding)
     if (
         encoding != "stored"
         and args.matched_rows is not None
@@ -429,13 +488,6 @@ def main() -> None:
     # same argument as `audit_set`); the DIGEST is the value compared.
     # (Codex inline review, #442.)
     matched_provenance: dict[str, str] = {}
-    matched_path = (
-        args.matched_rows
-        if args.matched_rows is not None
-        else default_matched_rows_path(args.audit_set)
-        if encoding == "stored"
-        else None
-    )
     if matched_path is not None:
         matched = MatchedAuditRows(
             matched_path
@@ -496,6 +548,10 @@ def main() -> None:
         gpu_mem_fraction=args.gpu_mem_fraction,
     )
     if args.dump_per_position:
+        # Recheck after scoring, without claiming to close the check/open race.
+        _refuse_dump_input_aliases(
+            args.dump_per_position, audit_set=args.audit_set, matched_rows=matched_path,
+        )
         # ⚑ STAMPED, via `write_audit_cache` rather than a bare `json.dumps`
         # loop. `paired_compare.require_same_stamp` short-circuits on
         # `if not a.stamp or not b.stamp`, so an UNSTAMPED dump takes the warn
@@ -507,7 +563,8 @@ def main() -> None:
         #
         # force=True for the same reason `audit_targets` uses it: this option
         # has no default path, so the operator always names the target and
-        # there is no silent-default clobber to guard against.
+        # there is no silent-default clobber to guard against. The separate
+        # input guard above still refuses to destroy the scoring set or index.
         stamp = write_audit_cache(
             Path(args.dump_per_position),
             (

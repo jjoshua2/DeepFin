@@ -36,28 +36,64 @@ write and 0.9 s to read. Against a ~40-minute iteration and a checkpoint whose
 `trainer.pt` is three orders of magnitude larger, that is free; six retained
 checkpoints (`tune_num_to_keep: 6`) cost ~13 MB in total.
 
-**Degradation.** Every failure here is non-fatal and lands on the old
-behaviour: an empty holdout that refills. A checkpoint written before this
-existed has no sidecar; a corrupt or truncated npz raises on read; and an
-input-plane or policy-width change makes the stored rows unusable against the
-current model. All three log and return 0 rows. The caller must then treat the
-holdout as new — see `restored_holdout_scalars`.
+**Degradation.** Row save/read failures remain non-fatal and permit an empty
+holdout that refills. The writer first records zero saved rows in existing
+checkpoint metadata, before mutating weights, then commits the actual row count
+with the new checkpoint identity. An interrupted write cannot authorize an old
+sidecar. Failure to invalidate metadata aborts BEFORE weights change; failure to
+write final metadata leaves restore invalidated. Salvage uses the same rule and
+commits metadata after its copies complete.
+
+Missing metadata or an absent row-count field retains genuinely legacy behavior.
+Existing unreadable/malformed metadata, an invalid count, or a zero count refuses
+the rows. Old readers do not understand this marker: rolling back code can restore
+a stale file when cleanup failed. This is not a multi-file checkpoint transaction,
+nor protection against deleting authoritative metadata or concurrent source writers.
+An absent/corrupt/shape-mismatched sidecar also returns zero rows. The caller then
+treats the holdout as new — see `restored_holdout_scalars`.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
 
 from chess_anti_engine.replay import ArrayReplayBuffer
 from chess_anti_engine.replay.shard import load_shard_arrays, save_npz_arrays
-from chess_anti_engine.tune._utils import SIDECAR_HOLDOUT_ROWS
+from chess_anti_engine.tune._utils import SIDECAR_HOLDOUT_ROWS, SIDECAR_TRIAL_META
+from chess_anti_engine.utils.atomic import atomic_write_text
 
   # `print`, not `logging`: this runs inside a Ray actor, whose stdout is what
   # train.sh captures. A `logging` call reaches only the Ray session logs --
   # the same reason `load_optional_json` prints. Every message here explains a
   # ruler that silently did not come back, which is exactly the class of thing
   # this audit found by reading the training log.
+
+
+def _holdout_checkpoint_meta(ckpt_dir: Path) -> dict:
+    try:
+        meta = json.loads((ckpt_dir / SIDECAR_TRIAL_META).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    if not isinstance(meta, dict):
+        raise ValueError("checkpoint metadata must be a JSON object")
+    return meta
+
+
+def invalidate_holdout_restore(*, ckpt_dir: Path) -> None:
+    """Refuse old rows before mutating a reused checkpoint or salvage slot.
+
+    Preserve existing identity fields: an interrupted save must not label old
+    weights with a new iteration. Failure propagates BEFORE weights change.
+    The checkpoint writer commits the new row count with its final metadata.
+    """
+    meta = _holdout_checkpoint_meta(Path(ckpt_dir))
+    meta["holdout_rows_saved"] = 0
+    atomic_write_text(
+        Path(ckpt_dir) / SIDECAR_TRIAL_META,
+        json.dumps(meta, sort_keys=True, indent=2),
+    )
 
 
 def save_holdout_rows(*, ckpt_dir: Path, holdout_buf: ArrayReplayBuffer) -> int:
@@ -68,26 +104,31 @@ def save_holdout_rows(*, ckpt_dir: Path, holdout_buf: ArrayReplayBuffer) -> int:
     stale file from before a drift reset would otherwise be restored as if it
     were the current ruler.
 
-    Never raises. A checkpoint that cannot carry the holdout is still a
-    perfectly good checkpoint, and failing the save would cost the run its
-    model state to protect an eval set.
+    Save failures remain non-fatal. The caller MUST record the returned count
+    in trial_meta.json: cleanup can fail, leaving a stale sidecar on disk.
+    Checkpoint writers invalidate that metadata before changing weights.
     """
     path = Path(ckpt_dir) / SIDECAR_HOLDOUT_ROWS
     try:
         rows = holdout_buf.export_arrays()
-        if not rows:
-            path.unlink(missing_ok=True)
-            return 0
-        save_npz_arrays(path, arrs=rows, meta=None, compress=True)
-        return int(np.asarray(rows["x"]).shape[0])
+        if rows:
+            save_npz_arrays(path, arrs=rows, meta=None, compress=True)
+            return int(np.asarray(rows["x"]).shape[0])
     except Exception as exc:
         print(
             f"[trial] failed to save the holdout sidecar to {path} ({exc}); "
-            f"the checkpoint is still valid, but a restart from it will start "
-            f"with an empty holdout",
+            f"checkpoint metadata must record zero saved holdout rows",
             flush=True,
         )
-        return 0
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        print(
+            f"[trial] could not remove stale holdout sidecar {path} ({exc}); "
+            f"checkpoint metadata must exclude it from restore",
+            flush=True,
+        )
+    return 0
 
 
 def load_holdout_rows(
@@ -101,7 +142,8 @@ def load_holdout_rows(
 
     Returns 0 — leaving the buffer untouched — when there is no sidecar, when
     it cannot be read, or when the stored rows do not match the model this
-    process is about to train.
+    process is about to train. New checkpoint metadata must authorize a positive
+    row count matching the file; absent legacy metadata remains supported.
 
     The shape checks are not defensive padding. A plane-count change (v1's 146
     to v2_threats' 175) or a policy-width change (az_4672 to lc0_1858) between
@@ -113,6 +155,23 @@ def load_holdout_rows(
         return 0
     path = Path(state_dir) / SIDECAR_HOLDOUT_ROWS
     if not path.exists():
+        return 0
+    try:
+        meta = _holdout_checkpoint_meta(Path(state_dir))
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(
+            f"[trial] cannot establish holdout sidecar identity from checkpoint "
+            f"metadata in {state_dir} ({exc}); starting from an empty holdout",
+            flush=True,
+        )
+        return 0
+    saved_rows = meta.get("holdout_rows_saved")
+    if "holdout_rows_saved" in meta and (type(saved_rows) is not int or saved_rows <= 0):
+        print(
+            f"[trial] checkpoint metadata in {state_dir} does not authorize "
+            f"holdout rows; starting from an empty holdout",
+            flush=True,
+        )
         return 0
     try:
         arrs, _meta = load_shard_arrays(path)
@@ -131,6 +190,13 @@ def load_holdout_rows(
             f"[trial] holdout sidecar {path} has unexpected array shapes "
             f"(x={x.shape} policy_target={policy.shape}); starting from an "
             f"empty holdout",
+            flush=True,
+        )
+        return 0
+    if saved_rows is not None and int(x.shape[0]) != saved_rows:
+        print(
+            f"[trial] holdout sidecar {path} row count does not match checkpoint "
+            f"metadata; starting from an empty holdout",
             flush=True,
         )
         return 0
