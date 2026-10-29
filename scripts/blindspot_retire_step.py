@@ -35,6 +35,7 @@ from pathlib import Path
 import re
 import stat
 import sys
+import uuid
 from typing import Any
 
 # Probation un-retire band (design: -0.2). Still-AWARE-ish (-0.4, -0.2] stays
@@ -199,6 +200,47 @@ def _write_seed_file(path: str, lines: list[str], *, note: str) -> None:
         fh.write(f"# {note}\n")
         for ln in lines:
             fh.write(ln + "\n")
+
+
+
+def _publish_seed_file(
+    out_dir: str, lines: list[str], *, note: str, tag: str = "",
+) -> str:
+    """Publish complete bytes at a fresh path; never replace a prior generation.
+
+    A same-directory hard link makes publication atomic and no-clobber. Staging
+    uses ordinary file permissions (0666 filtered by umask), like the old writer.
+    Published generations survive later validation/repoint failures for diagnosis.
+    This does not protect against arbitrary external edits or make YAML/state a
+    transaction. The output directory must already exist on a hard-link filesystem.
+    """
+    tag = tag or "auto"
+    if any(character in tag for character in ("/", "\\", "\0")):
+        raise ValueError("seed tag must be a single filename component")
+    directory = os.path.abspath(out_dir)
+    for _ in range(10):
+        token = uuid.uuid4().hex
+        final = os.path.join(directory, f"blindspot_fens_retire_{tag}_{token}.txt")
+        staging = os.path.join(directory, f".blindspot_fens_retire_{token}.tmp")
+        try:
+            fd = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        except FileExistsError:
+            continue
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(f"# {note}\n")
+                for ln in lines:
+                    fh.write(ln + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            try:
+                os.link(staging, final)
+            except FileExistsError:
+                continue
+            return final
+        finally:
+            os.unlink(staging)
+    raise FileExistsError("could not allocate a fresh seed generation")
 
 
 def _yaml_signature(info: os.stat_result) -> tuple[int, ...]:
@@ -398,8 +440,6 @@ def main() -> None:
             if args.dry_run:
                 did_change = True  # report intent
             else:
-                tag = args.tag or "auto"
-                new_path = os.path.join(args.out_dir, f"blindspot_fens_retire_{tag}.txt")
                 parts = []
                 if applied_retire:
                     parts.append(f"auto-retired {len(applied_retire)} seeds "
@@ -408,7 +448,7 @@ def main() -> None:
                     parts.append(f"re-fed {len(applied_refeed)} seeds "
                                  f"(probation net_q>{REFEED_ABOVE})")
                 note = f"{'; '.join(parts)} from {new_base}"
-                _write_seed_file(new_path, keep, note=note)
+                new_path = _publish_seed_file(args.out_dir, keep, note=note, tag=args.tag)
                 # only repoint if the new file loads and the yaml stays valid
                 from chess_anti_engine.selfplay.opening import _load_fen_list
                 n_loaded = len(_load_fen_list(new_path))
@@ -417,7 +457,7 @@ def main() -> None:
                 load_ok = n_loaded >= args.min_pool or (
                     not applied_retire and n_loaded >= len(keep) and n_loaded > 0)
                 if load_ok and _repoint_yaml(
-                    args.yaml, os.path.abspath(new_path), expected_seed_path=seed_path):
+                    args.yaml, new_path, expected_seed_path=seed_path):
                     # Only confirmed publication finalizes retirement bookkeeping;
                     # unconfirmed postcommit errors are not an old-YAML guarantee.
                     line_by_key = dict(zip(keys, lines))

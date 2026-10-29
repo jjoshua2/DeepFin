@@ -688,7 +688,10 @@ def render(report: Report) -> str:
             )
     lines += ["", "CONTRAST  lost - rest  (this is the number to read)"]
     for c in report.contrasts:
-        flag = "excludes 0" if c.excludes_zero else "CONTAINS 0"
+        if not all(np.isfinite(bound) for bound in c.ci):
+            flag = "CI unavailable"
+        else:
+            flag = "excludes 0" if c.excludes_zero else "CONTAINS 0"
         lines.append(
             f"{c.column:>12} {c.delta:>+10.4f}  95% CI [{c.ci[0]:+.4f}, {c.ci[1]:+.4f}]  {flag}"
         )
