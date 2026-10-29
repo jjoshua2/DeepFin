@@ -5,11 +5,12 @@ a checkpoint, tracks per-seed consecutive-AWARE reads in a state file, and RETIR
 seeds that read AWARE (net_q <= --resolved-below) TWICE IN A ROW — so a single-read
 fluke never drops a seed, and a seed that regresses resets its streak.
 
-Retiring writes a NEW versioned seed file (minus the retired seeds — required, since
+Retiring is intended to write a NEW versioned seed file (minus the retired seeds — required, since
 selfplay/opening.py::_load_fen_list is lru_cached by PATH, so an in-place edit is
-ignored), points the live yaml's opening_fen_list_path at it, and VALIDATES the
-strict reload — reverting the yaml on ANY error so a bad write can never freeze the
-live config. Prints one summary line for the monitor log. Fail-soft: never raises.
+ignored), validates a staged YAML replacement, then atomically publishes it.
+Participating feed/retire writers coordinate; arbitrary editors still need operator
+coordination. A postcommit error is unconfirmed publication, never a rollback.
+Prints one summary line for the monitor log. Fail-soft: never raises.
 
 Probation re-check (default ON; ``--no-probation`` opt-out): retired seeds are kept
 in the state file and re-scored every read with the active pool. Any retired seed
@@ -26,9 +27,13 @@ use. Off unless --yaml + --checkpoint are given; --dry-run scores + reports only
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import fcntl
 import json
 import os
+from pathlib import Path
 import re
+import stat
 import sys
 import uuid
 from typing import Any
@@ -238,28 +243,107 @@ def _publish_seed_file(
     raise FileExistsError("could not allocate a fresh seed generation")
 
 
-def _repoint_yaml(yaml_path: str, new_seed_path: str) -> bool:
-    """Point opening_fen_list_path at new_seed_path; validate the strict reload and
-    REVERT on any failure. Returns True only if the live yaml now loads cleanly."""
+def _yaml_signature(info: os.stat_result) -> tuple[int, ...]:
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+            info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _yaml_snapshot(path: Path) -> tuple[bytes, tuple[int, ...]]:
+    """Capture a regular non-link file; reject an observed in-place read race."""
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise ValueError("YAML target must be a regular non-symlink file")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as handle:
+        before = os.fstat(handle.fileno())
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("YAML target must be a regular file")
+        data = handle.read()
+        after = os.fstat(handle.fileno())
+    if _yaml_signature(before) != _yaml_signature(after):
+        raise ValueError("YAML changed while being captured")
+    return data, _yaml_signature(after)
+
+
+@contextmanager
+def _yaml_repoint_lock(path: Path):
+    """Stable private lock for this helper's writers, not arbitrary editors.
+
+    Never unlink this file: replacing it would split cooperating lock domains.
+    Existing linked/nonregular/nonempty or nonprivate control files refuse.
+    """
+    lock = path.with_name(f".{path.name}.seed-repoint.lock")
+    try:
+        existing = lock.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        if not stat.S_ISREG(existing.st_mode):
+            raise ValueError("YAML repoint lock must be regular")
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_size or info.st_nlink != 1
+                or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600):
+            raise ValueError("YAML repoint lock must be empty, private and owned")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        os.close(fd)
+
+
+def _repoint_yaml(
+    yaml_path: str, new_seed_path: str, *, expected_seed_path: str | None = None,
+) -> bool:
+    """Validate exact staged bytes before atomic publication; never roll back.
+
+    expected_seed_path binds a prepared list to the captured config's pointer,
+    not to seed-file contents. Current unrelated settings are preserved. A
+    final identity/bytes check detects observed edits, but is NOT atomic CAS
+    against a nonparticipating writer's check-to-replace race. The private lock
+    coordinates only calls through this helper (including feed and retire).
+
+    True confirms publication; False can also mean a post-replace durability
+    error, NOT proof the old file remains. Atomic replacement preserves mode,
+    not inode/hard-link identity, owner, ACL or extended metadata. Terminal
+    symlinks/nonregular files refuse; parent namespace must remain stable.
+    """
+    from chess_anti_engine.utils.atomic import atomic_write
     from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults, load_yaml_file
 
-    with open(yaml_path, encoding="utf-8") as fh:
-        original = fh.read()
-    pat = re.compile(r"^(\s*opening_fen_list_path:\s*)\S+.*$", re.MULTILINE)
-    if len(pat.findall(original)) != 1:
-        print("[retire] ABORT: opening_fen_list_path not uniquely found in yaml", file=sys.stderr)
-        return False
-    updated = pat.sub(lambda m: m.group(1) + new_seed_path, original, count=1)
-    with open(yaml_path, "w", encoding="utf-8") as fh:
-        fh.write(updated)
     try:
-        flat = flatten_run_config_defaults(load_yaml_file(yaml_path))  # strict validator
-        assert str(flat["opening_fen_list_path"]) == new_seed_path
+        path = Path(yaml_path)
+        path = path.parent.resolve(strict=True) / path.name
+        with _yaml_repoint_lock(path):
+            original, identity = _yaml_snapshot(path)
+            original_text = original.decode("utf-8")
+            pat = re.compile(r"^([ \t]*opening_fen_list_path:[ \t]*)\S+.*$", re.MULTILINE)
+            if len(pat.findall(original_text)) != 1:
+                raise ValueError("opening_fen_list_path not uniquely found in yaml")
+            updated = pat.sub(lambda m: m.group(1) + json.dumps(new_seed_path),
+                              original_text, count=1).encode("utf-8")
+
+            def write_validated(tmp: Path) -> None:
+                # Validate the captured original, not a second live-path read.
+                tmp.write_bytes(original)
+                current = flatten_run_config_defaults(load_yaml_file(tmp))
+                if (expected_seed_path is not None
+                        and str(current["opening_fen_list_path"]) != expected_seed_path):
+                    raise ValueError("seed pointer changed since list preparation")
+                tmp.write_bytes(updated)
+                candidate = flatten_run_config_defaults(load_yaml_file(tmp))
+                if str(candidate["opening_fen_list_path"]) != new_seed_path:
+                    raise ValueError("staged seed pointer did not round-trip")
+                latest, latest_identity = _yaml_snapshot(path)
+                if latest != original or latest_identity != identity:
+                    raise ValueError("YAML changed before publication")
+
+            # Existing helper creates private staging at the original mode.
+            # Its replace is the commit point; no exception causes rollback.
+            atomic_write(path, write_validated, mode=stat.S_IMODE(identity[2]))
         return True
-    except Exception as e:  # bad write -> restore so the live reload never freezes
-        with open(yaml_path, "w", encoding="utf-8") as fh:
-            fh.write(original)
-        print(f"[retire] ABORT: yaml validation failed ({type(e).__name__}); reverted", file=sys.stderr)
+    except Exception as exc:
+        print(f"[retire] ABORT: yaml publication unconfirmed ({type(exc).__name__}); "
+              "no rollback attempted", file=sys.stderr)
         return False
 
 
@@ -372,7 +456,10 @@ def main() -> None:
                 # already below min_pool (hand-trimmed) — require a full load.
                 load_ok = n_loaded >= args.min_pool or (
                     not applied_retire and n_loaded >= len(keep) and n_loaded > 0)
-                if load_ok and _repoint_yaml(args.yaml, new_path):
+                if load_ok and _repoint_yaml(
+                    args.yaml, new_path, expected_seed_path=seed_path):
+                    # Only confirmed publication finalizes retirement bookkeeping;
+                    # unconfirmed postcommit errors are not an old-YAML guarantee.
                     line_by_key = dict(zip(keys, lines))
                     for k in applied_retire:
                         # Move active line into the retired store (verbatim).
