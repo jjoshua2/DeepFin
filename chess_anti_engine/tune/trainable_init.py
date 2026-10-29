@@ -45,6 +45,7 @@ from chess_anti_engine.tune.holdout_state import (
     restored_holdout_scalars,
 )
 from chess_anti_engine.tune.recovery import (
+    _load_salvage_manifest,
     _load_salvage_manifest_entry,
     _merge_pid_state_from_result_row,
     _select_salvage_seed_slot,
@@ -224,8 +225,12 @@ def _restore_from_salvage_pool(
     if not seed_pool_dir.is_dir():
         raise RuntimeError(f"salvage_seed_pool_dir not found: {seed_pool_dir}")
 
+    # Slot path and donor metadata must come from the same publication, even
+    # if another export replaces the pool manifest while restore is running.
+    manifest = _load_salvage_manifest(seed_pool_dir)
     picked_dir, picked_slot, num_slots = _select_salvage_seed_slot(
         seed_pool_dir=seed_pool_dir, trial_dir=trial_dir, trial_id=trial_id,
+        manifest=manifest,
     )
     if picked_dir is None:
         raise RuntimeError(
@@ -277,6 +282,7 @@ def _restore_from_salvage_pool(
 
     seed_entry = _load_salvage_manifest_entry(
         seed_pool_dir=seed_pool_dir, slot=rr.seed_warmstart_slot,
+        manifest=manifest,
     )
     manifest_row: dict | None = (
         seed_entry.get("result_row") if isinstance(seed_entry, dict) else None

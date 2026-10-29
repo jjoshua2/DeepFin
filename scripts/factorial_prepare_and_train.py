@@ -113,6 +113,74 @@ def base_readiness(config):
     )
 
 
+def preparation_admission(config, plan, descriptor):
+    """Bind the supported registered preparation command to its requested plan."""
+    control = Path(config["preparation_control"])
+    plan_ref = config["preparation_plan"]
+    entrypoint = str(control / "run.py")
+    require(plan_ref["path"] == str(control / "plan.json"), "preparation plan path")
+    require(
+        config["preparation_complete"] == str(control / "complete.json"),
+        "preparation completion path",
+    )
+    require(
+        descriptor["argv"]
+        == [plan["python"], entrypoint, "--plan", plan_ref["path"],
+            "--sha256", plan_ref["sha256"], "--execute"]
+        and descriptor["cwd"] == plan["runtime"],
+        "preparation command differs",
+    )
+    require(
+        descriptor["completion"]
+        == {"path": config["preparation_complete"], "status_key": "status",
+            "expected": "COMPLETE_FACTORIAL58_TARGETS"},
+        "preparation completion contract",
+    )
+    require(plan_ref in descriptor["pins"], "preparation plan not registered")
+    entry_pins = [item for item in plan["pins"] if item["path"] == entrypoint]
+    require(len(entry_pins) == 1, "preparation entrypoint pin")
+    require(entry_pins[0] in descriptor["pins"], "preparation entrypoint not registered")
+    require(sha(entrypoint) == entry_pins[0]["sha256"], "preparation entrypoint changed")
+
+
+def preparation_receipt(config, plan, receipt):
+    """Check the existing producer's metadata without opening target corpora."""
+    require(
+        receipt["status"] == "COMPLETE_FACTORIAL58_TARGETS"
+        and receipt["plan"] == config["preparation_plan"]
+        and receipt["base_plan"] == plan["base_plan"]
+        and receipt["rows"] == plan["rows"]
+        and receipt["shards"] == plan["shards"],
+        "preparation receipt failed",
+    )
+    expected_roots = {
+        "A": [cohort["base"] for cohort in plan["cohorts"]],
+        **{arm: [str(Path(cohort["output"]) / arm) for cohort in plan["cohorts"]]
+           for arm in ("B", "C", "D")},
+    }
+    require(set(receipt["arms"]) == set(expected_roots), "preparation arms differ")
+    for arm, roots in expected_roots.items():
+        value = receipt["arms"][arm]
+        require(value["roots"] == roots, "preparation roots differ")
+        qualification = value["qualification"]
+        require(
+            qualification is None if arm == "A" else
+            isinstance(qualification, dict)
+            and set(qualification) == {"path", "sha256"}
+            and qualification["path"] == str(
+                Path(config["preparation_control"]) / "qualifications" / f"{arm}.json"
+            )
+            and isinstance(qualification["sha256"], str)
+            and len(qualification["sha256"]) == 64,
+            "preparation qualification differs",
+        )
+    require(
+        [item["path"] for item in receipt["cohorts"]]
+        == [str(Path(cohort["output"]) / "complete.json") for cohort in plan["cohorts"]],
+        "preparation cohorts differ",
+    )
+
+
 def death_signal(parent):
     """Linux child gets TERM if its owning coordinator dies, including SIGKILL."""
     libc = ctypes.CDLL(None, use_errno=True)
@@ -284,6 +352,7 @@ def run(config, config_ref):
     a_plan = pin(config["a_plan"])
     prep_desc = pin(config["preparation_descriptor"])
     a_desc = pin(config["a_descriptor"])
+    preparation_admission(config, prep_plan, prep_desc)
     require(
         a_plan["arm"] == "A"
         and a_plan["preparation_plan"] == config["preparation_plan"],
@@ -392,11 +461,7 @@ def run(config, config_ref):
                     if train.poll() == 0 and prep.poll() == 0:
                         break
                 time.sleep(2)
-            require(
-                read(config["preparation_complete"])["status"]
-                == "COMPLETE_FACTORIAL58_TARGETS",
-                "preparation receipt failed",
-            )
+            preparation_receipt(config, prep_plan, read(config["preparation_complete"]))
             a_receipt = read(config["a_complete"])
             require(
                 a_receipt["status"] == "PASS_FACTORIAL58_ARM"
