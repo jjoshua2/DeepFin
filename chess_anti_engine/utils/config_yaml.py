@@ -490,6 +490,8 @@ _RUN_BOOLEAN_KEYS = frozenset({
     "record_lc0_root_input", "history_rep_fix", "record_relations",
     "record_prior_top1", "record_dense_sf_policy", "record_sf_p0_policy",
     "record_sf_p0_regret", "record_fast_ply_value",
+    "use_qk_rmsnorm", "use_deepnorm", "use_dynamic_relations",
+    "policy_dynamic_relations", "categorical_head_coupled", "enable_policy_sf_head",
 })
 
 
