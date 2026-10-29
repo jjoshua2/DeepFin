@@ -29,13 +29,20 @@ from scripts.blindspot_continuation import (
 from scripts.blindspot_deepsf_calibrate import deep_verdict
 
 
-def load_ground_truth(path: str, budget: int | None) -> dict[tuple[int, float], str]:
-    """(game_id, round(sq,2)) -> deep verdict, from scaling or calib jsonl."""
-    gt: dict[tuple[int, float], str] = {}
+def load_ground_truth(path: str, budget: int | None) -> dict[tuple[int, int | None, str], str]:
+    """Capture-keyed truth; rounded scores must never identify a position.
+
+    Legacy rows retain ply=None. Rows without a seed body cannot be joined
+    safely, and contradictory duplicate truth is an error rather than last-win.
+    """
+    gt: dict[tuple[int, int | None, str], str] = {}
     with open(path, encoding="utf-8") as fh:
         for line in fh:
             r = json.loads(line)
-            key = (r["game"], round(r["sq"], 2))
+            body = r.get("line")
+            if not isinstance(body, str) or not body.strip():
+                continue
+            key = (int(r["game"]), r.get("ply"), body.strip())
             if isinstance(r.get("verdict"), dict) and r["verdict"]:
                 budgets = sorted(int(k) for k in r["verdict"])
                 use = budget if (budget in budgets) else budgets[-1]
@@ -43,8 +50,33 @@ def load_ground_truth(path: str, budget: int | None) -> dict[tuple[int, float], 
             else:
                 dv = r.get("deep")
             if dv in ("LOST", "MID", "FINE"):
+                if key in gt and gt[key] != dv:
+                    raise ValueError(f"conflicting ground truth for capture {key!r}")
                 gt[key] = dv
     return gt
+
+
+def build_ground_truth_index(gt: dict, seeds: list) -> dict:
+    """Resolve capture keys once; never guess among legacy body matches."""
+    captures: dict[tuple[int, str], set] = {}
+    truth: dict[tuple[int, str], list] = {}
+    for s in seeds:
+        key = (s.game_id, s.ply, s.line.strip())
+        captures.setdefault((key[0], key[2]), set()).add(key)
+    for key, verdict in gt.items():
+        truth.setdefault((key[0], key[2]), []).append((key, verdict))
+    joined = {}
+    for family, keys in captures.items():
+        matches = truth.get(family, [])
+        for key in keys:
+            if key[1] is not None and key in gt:
+                joined[key] = gt[key]
+            elif len(keys) == 1 and len(matches) == 1:
+                truth_key, verdict = matches[0]
+                # Two differing explicit plies are never a legacy match.
+                if key[1] is None or truth_key[1] is None:
+                    joined[key] = verdict
+    return joined
 
 
 def main() -> None:
@@ -62,6 +94,7 @@ def main() -> None:
 
     gt = load_ground_truth(args.deep_jsonl, args.deep_budget or None)
     seeds = parse_seeds(sorted(glob.glob(args.severe_glob)))
+    truth_by_capture = build_ground_truth_index(gt, seeds)
     wanted = {s.game_id for s in seeds}
     # Prefer the harvester's self-contained saved games; shard fallback for the
     # rest — so calibration works after the replay window ages out (Codex #125).
@@ -77,7 +110,7 @@ def main() -> None:
     for h in hs:
         agree = n = fp_tot = fp_caught = real_tot = real_dropped = 0
         for s in seeds:
-            d = gt.get((s.game_id, round(s.sq, 2)))
+            d = truth_by_capture.get((s.game_id, s.ply, s.line.strip()))
             if d is None:
                 continue
             v = classify(s, games.get(s.game_id), recover_to=args.recover_to,

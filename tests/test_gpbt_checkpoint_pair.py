@@ -48,13 +48,13 @@ def test_exploit_preserves_checkpoint_report_pair(kind: str) -> None:
     ds = scheduler._trial_state[donor]
     rs = scheduler._trial_state[recipient]
     ds.last_score, rs.last_score = 1.0, 0.0
-    old = _TrainingResult(checkpoint=cast(Any, "marker1"), metrics={"training_iteration": 1})
-    current = _TrainingResult(checkpoint=cast(Any, "marker2"), metrics={"training_iteration": 2})
+    old = _TrainingResult(checkpoint=cast(Any, "marker1"), metrics={"training_iteration": 1, "score": 0.5})
+    current = _TrainingResult(checkpoint=cast(Any, "marker2"), metrics={"training_iteration": 2, "score": 1.0})
     manager = donor.run_metadata.checkpoint_manager
     assert manager is not None
     manager._latest_checkpoint_result = old
-    ds.last_result = {"training_iteration": 2}
-    donor.run_metadata.last_result = {"training_iteration": 3}
+    ds.last_result = {"training_iteration": 2, "score": 1.0}
+    donor.run_metadata.last_result = {"training_iteration": 3, "score": 1.0}
     scheduled: list[dict] = []
 
     def save(trial: Trial, result: dict) -> _Ready:
@@ -71,9 +71,9 @@ def test_exploit_preserves_checkpoint_report_pair(kind: str) -> None:
     if kind in {"running", "paused_future", "paused_committed"}:
         scheduler._checkpoint_or_exploit(donor, controller, [donor], [recipient])
         if kind == "running":
-            assert scheduled == [{"training_iteration": 2}]
+            assert scheduled == [{"training_iteration": 2, "score": 1.0}]
         if kind != "paused_committed":
-            ds.last_result = {"training_iteration": 3}
+            ds.last_result = {"training_iteration": 3, "score": 1.0}
     elif kind == "empty_future":
         ds.last_checkpoint = _Ready(None)
     elif kind == "empty_checkpoint":

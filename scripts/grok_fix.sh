@@ -33,14 +33,13 @@ case "$DURATION" in
     *[1-9]*) ;;
     *) echo "timeout must be positive" >&2; exit 64 ;;
 esac
-for tool in grok timeout; do
+for tool in grok timeout python3; do
     command -v "$tool" >/dev/null || { echo "$tool is unavailable" >&2; exit 69; }
 done
 BASE_SHA="$(git rev-parse --verify "${BASE}^{commit}")"
 OUT="${GROK_FIX_OUT:-${TMPDIR:-/tmp}/grok_fix}"
-mkdir -p "$OUT"
-OUT="$(cd "$OUT" && pwd -P)"
-RUN_DIR="$(mktemp -d "$OUT/run.XXXXXXXX")"
+HELPER_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+RUN_DIR="$(python3 -S -B "$HELPER_DIR/grok_artifact_dir.py" "$OUT" run)"
 WT="$RUN_DIR/worktree"
 RAW="$RUN_DIR/raw.txt"
 PROMPT="$RUN_DIR/prompt.md"
