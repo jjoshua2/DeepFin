@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from io import BytesIO, TextIOWrapper
 from pathlib import Path
 from typing import Any
 
@@ -40,14 +41,17 @@ def strict_config_bool(value: Any, *, key: str, source: str) -> bool:
     )
 
 
-def load_yaml_file(path: str | Path) -> dict[str, Any]:
+def load_yaml_file(path: str | Path, *, raw_bytes: bytes | None = None) -> dict[str, Any]:
     """Load a YAML file into a dict.
 
     We keep this tiny so the rest of the codebase doesn't need to import YAML.
+    When supplied, ``raw_bytes`` is an already captured file snapshot; ``path``
+    names its source and is not checked or reopened. Decode it with the same
+    default encoding and universal-newline handling as ``Path.read_text()``.
     """
 
     p = Path(path)
-    if not p.exists():
+    if raw_bytes is None and not p.exists():
         raise FileNotFoundError(str(p))
 
     try:
@@ -55,7 +59,12 @@ def load_yaml_file(path: str | Path) -> dict[str, Any]:
     except Exception as e:  # pragma: no cover
         raise RuntimeError("PyYAML is required to load config files. Install pyyaml.") from e
 
-    data = yaml.safe_load(p.read_text())
+    if raw_bytes is None:
+        text = p.read_text()
+    else:
+        with TextIOWrapper(BytesIO(raw_bytes)) as stream:
+            text = stream.read()
+    data = yaml.safe_load(text)
     if data is None:
         return {}
     if not isinstance(data, dict):
@@ -478,6 +487,11 @@ _RUN_BOOLEAN_KEYS = frozenset({
     "phase_smolgen", "use_nla", "gradient_checkpointing",
     "sf_pid_enabled", "progressive_mcts", "no_amp",
     "use_compile", "syzygy_policy",
+    "record_lc0_root_input", "history_rep_fix", "record_relations",
+    "record_prior_top1", "record_dense_sf_policy", "record_sf_p0_policy",
+    "record_sf_p0_regret", "record_fast_ply_value",
+    "use_qk_rmsnorm", "use_deepnorm", "use_dynamic_relations",
+    "policy_dynamic_relations", "categorical_head_coupled", "enable_policy_sf_head",
 })
 
 

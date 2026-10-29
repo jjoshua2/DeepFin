@@ -833,33 +833,42 @@ def test_exec_guard_caps_child_before_python_watchdog() -> None:
     assert result.returncode == -signal.SIGALRM
 
 
-def _owned_child_exited(child_pid: int) -> bool:
+def _process_has_exited(pid: int) -> bool:
     try:
-        status = Path(f"/proc/{child_pid}/status").read_text()
+        status = Path(f"/proc/{pid}/status").read_text()
     except (FileNotFoundError, ProcessLookupError):
+        # Exit can remove /proc entries before open or during the read itself.
         return True
     return "State:\tZ" in status
 
 
-@pytest.mark.parametrize("status", ["State:\tS (sleeping)", "State:\tZ (zombie)"])
-def test_owned_child_status_state(monkeypatch: pytest.MonkeyPatch, status: str) -> None:
-    monkeypatch.setattr(Path, "read_text", lambda self: status)
-    assert _owned_child_exited(123) == ("State:\tZ" in status)
+@pytest.mark.parametrize(("status", "exited"), [("State:\tS (sleeping)", False),
+                                                ("State:\tZ (zombie)", True)])
+def test_process_exit_poll_distinguishes_live_and_zombie(
+    monkeypatch: pytest.MonkeyPatch, status: str, exited: bool,
+) -> None:
+    monkeypatch.setattr(Path, "read_text", lambda _self: status)
+    assert _process_has_exited(123) is exited
 
 
-@pytest.mark.parametrize("error", [FileNotFoundError, ProcessLookupError, PermissionError])
-def test_owned_child_status_read_race(
+@pytest.mark.parametrize("error", [FileNotFoundError, ProcessLookupError])
+def test_process_exit_poll_accepts_disappearing_proc_entry(
     monkeypatch: pytest.MonkeyPatch, error: type[OSError],
 ) -> None:
-    def read_status(_path: Path) -> str:
-        raise error("fixture status read")
+    def read_status(_self: Path) -> str:
+        raise error("process exited during status read")
 
     monkeypatch.setattr(Path, "read_text", read_status)
-    if error is PermissionError:
-        with pytest.raises(PermissionError, match="fixture status read"):
-            _owned_child_exited(123)
-    else:
-        assert _owned_child_exited(123)
+    assert _process_has_exited(123)
+
+
+def test_process_exit_poll_preserves_unexpected_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    def read_status(_self: Path) -> str:
+        raise PermissionError("status access denied")
+
+    monkeypatch.setattr(Path, "read_text", read_status)
+    with pytest.raises(PermissionError, match="status access denied"):
+        _process_has_exited(123)
 
 
 def test_exec_parent_kill_releases_inherited_lease(tmp_path: Path) -> None:
@@ -900,7 +909,7 @@ time.sleep(30)
         assert process.wait(timeout=5) == -signal.SIGKILL
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            if _owned_child_exited(child_pid):
+            if _process_has_exited(child_pid):
                 break
             time.sleep(.02)
         else:
@@ -952,7 +961,7 @@ time.sleep(30)
         assert process.wait(timeout=5) == -signal.SIGKILL
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            if _owned_child_exited(child_pid):
+            if _process_has_exited(child_pid):
                 break
             time.sleep(.02)
         else:

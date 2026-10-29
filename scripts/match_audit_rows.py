@@ -26,6 +26,26 @@ The index is a BUILD ARTIFACT and is not checked in, exactly like the audit set
 itself and the shallow-SF cache. It re-derives in ~1 minute from the named
 snapshot; the report it writes alongside is the evidence that it did.
 
+Validation precedes publication. Rejected builds write only a uniquely named
+JSON diagnostic (with captured-input hashes and at most four exact offending
+rows), never a consumer-loadable rejected NPZ. Valid builds use atomic NPZ
+replacement; a unique validated-candidate report is saved before that commit.
+`<out>.report.json` is a compatibility view updated afterwards, NOT an atomic
+pair with the NPZ. Its candidate hash/build ID detects a stale view. Failures
+after replacement may leave a valid new NPZ visible; no blind rollback occurs.
+Old invalid indexes produced before this guard need an explicit rebuild.
+
+Hashing binds decision inputs: all current-frame scans, ordered candidate indices
+and their full rows, plus identity columns. It does not hash unused full rows or
+claim whole-shard/file provenance. It reads the prior output/report and compressed
+staged output once, without rereading shard files or freezing a changing corpus.
+Rejected diagnostics reobserve final-output identities. All unique reports are
+retained privately (0600), with no automatic cleanup; raw rejected rows are not
+printed. Existing final mode bits are preserved from staging-file creation, but
+atomic replacement does not preserve inode/owner/ACL/xattrs/hard-link identity.
+Terminal output/report symlinks are explicitly refused, not followed/replaced;
+use a trusted output directory without concurrent permission/link mutation.
+
 Verification written into `<out>.report.json` and printed. The 2026-08-02 build
 over 1463 shards, 4000/4000 matched in 24 s:
 
@@ -75,8 +95,12 @@ current_live_20260602_202037_v2threats
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
+import stat
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +118,8 @@ from chess_anti_engine.eval.audit_history import (
     default_matched_rows_path,
 )
 from chess_anti_engine.replay.shard import load_shard_arrays
+from chess_anti_engine.utils import sha256_file
+from chess_anti_engine.utils.atomic import atomic_write, atomic_write_text
 
 PIECE_PLANES = 12
 _PIECE_SLOTS = ((0, chess.WHITE), (6, chess.BLACK))
@@ -240,6 +266,71 @@ def _shard_layout(group: dict[str, Any]) -> tuple[str, int] | None:
     return hist, int(arr.shape[1])
 
 
+def _array_identity(array: np.ndarray) -> dict[str, object]:
+    """Hash the consumed C-order values with bounded scratch, not shard rereads."""
+    header = {"dtype": array.dtype.str, "shape": list(array.shape)}
+    digest = hashlib.sha256(json.dumps(header, sort_keys=True).encode() + b"\0")
+    # external_loop buffers only a bounded chunk even for non-contiguous views.
+    with np.nditer([array], flags=["external_loop", "buffered", "zerosize_ok"],
+                   op_flags=[["readonly"]], order="C", buffersize=131072) as chunks:
+        for chunk in chunks:
+            digest.update(np.asarray(chunk).tobytes())
+    return {**header, "sha256": digest.hexdigest(), "nbytes": int(array.nbytes)}
+
+
+def _existing_file_identity(path: Path) -> dict[str, object]:
+    try:
+        return {"path": str(path), "sha256": sha256_file(path)}
+    except FileNotFoundError:
+        return {"path": str(path), "sha256": None}
+
+
+def _candidate_rows_identity(array: np.ndarray, indices: list[int]) -> dict[str, object]:
+    """Bind ordered decode candidates without copying/hashing unused full rows."""
+    header = {
+        "scheme": "ordered-index-and-row-digests-v1", "dtype": array.dtype.str,
+        "source_shape": list(array.shape), "selected_rows": len(indices),
+    }
+    digest = hashlib.sha256(json.dumps(header, sort_keys=True).encode() + b"\0")
+    for index in indices:
+        digest.update(int(index).to_bytes(8, "little", signed=True))
+        digest.update(bytes.fromhex(str(_array_identity(array[index])["sha256"])))
+    return {**header, "sha256": digest.hexdigest()}
+
+
+def _output_mode(path: Path) -> int | None:
+    """Observe ordinary mode bits; refuse terminal links before publication.
+
+    Atomic replacement creates a new inode: owner/ACL/xattrs/hard-link identity
+    are not preserved. This is not protection against hostile directory or
+    concurrent permission changes; callers must use a trusted output directory.
+    """
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        raise SystemExit(f"refusing non-regular or symlink output: {path}")
+    return stat.S_IMODE(info.st_mode)
+
+
+def _validation_errors(report: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if report["matched"] == 0:
+        return ["no audit rows matched the replay snapshot"]
+    if not report["legal_move_sets_identical"]:
+        errors.append(
+            "matched rows generate a different legal-move set than their audit FEN; "
+            "the audit set's key and fen disagree, so per-UCI labels belong to a "
+            "different position than the one being scored"
+        )
+    if not report["canonicalisation_current_frame_identical"]:
+        errors.append("recovered rows are not side-to-move canonical")
+    if not report["canonicalisation_castling_104_107_identical"]:
+        errors.append("recovered rows do not preserve castling-plane identity")
+    return errors
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -257,12 +348,19 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    out_path = args.out or default_matched_rows_path(args.audit_set)
+    requested_out = args.out or default_matched_rows_path(args.audit_set)
+    # Preserve NumPy's historical auto-appended .npz destination and the
+    # existing report name for callers passing --out without that suffix.
+    report_path = requested_out.with_suffix(requested_out.suffix + ".report.json")
+    out_path = requested_out if str(requested_out).endswith(".npz") else Path(str(requested_out) + ".npz")
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    out_mode, report_mode = (_output_mode(path) for path in (out_path, report_path))
+    prior_outputs = [_existing_file_identity(path) for path in (out_path, report_path)]
+    audit_bytes = args.audit_set.read_bytes()
     audit = [
         json.loads(line)
-        for line in args.audit_set.read_text(encoding="utf-8").splitlines()
+        for line in audit_bytes.decode("utf-8").splitlines()
         if line.strip()
     ]
     keys = [str(rec["key"]) for rec in audit]
@@ -296,6 +394,7 @@ def main() -> None:
     t0 = time.time()
     fp_hits = 0
     skipped_layout: dict[str, int] = {}
+    consumed_shards: list[dict[str, Any]] = []
     for si, path in enumerate(shards):
         group, _meta = load_shard_arrays(path, lazy=True)
         layout = _shard_layout(group)
@@ -313,6 +412,12 @@ def main() -> None:
             continue
         arr = group["x"]
         x12 = np.asarray(arr[:, :PIECE_PLANES], dtype=np.float32)
+        consumed: dict[str, Any] = {
+            "path": str(path), "resolved_path": str(path.resolve()),
+            "layout": {"history_encoding": hist, "planes": planes},
+            "current_frame_scan": _array_identity(x12),
+        }
+        consumed_shards.append(consumed)
         cand: list[tuple[int, int]] = []
         for r, fp in enumerate(shard_fingerprints(x12)):
             cand.extend((r, ai) for ai in fps.get(fp, ()))
@@ -328,8 +433,14 @@ def main() -> None:
                     "game_id", "has_game_id", "ply_index", "is_selfplay",
                 )
             }
+            candidate_rows = sorted({r for r, _ in cand})
+            consumed["candidate_row_decision_inputs"] = _candidate_rows_identity(xfull, candidate_rows)
+            consumed["identity_columns"] = {
+                name: None if value is None else _array_identity(value)
+                for name, value in cols.items()
+            }
             decoded: dict[int, str | None] = {}
-            for r in sorted({r for r, _ in cand}):
+            for r in candidate_rows:
                 board = decode_board_from_planes(
                     np.asarray(xfull[r], dtype=np.float32),
                     input_history_encoding=hist,
@@ -399,11 +510,15 @@ def main() -> None:
         for board in boards
     ])
 
-    def occupancy(x: np.ndarray, planes: slice) -> float:
+    def occupancy(x: np.ndarray, planes: slice) -> float | None:
+        if not found.any():
+            return None
         nz = np.abs(np.asarray(x[found], dtype=np.float32)).max(axis=(2, 3)) > 1e-9
         return float(nz[:, planes].mean())
 
-    def rows_differing(planes: slice) -> float:
+    def rows_differing(planes: slice) -> float | None:
+        if not found.any():
+            return None
         a = np.asarray(x_fen_only[found][:, planes], dtype=np.float32)
         b = np.asarray(x_stored[found][:, planes], dtype=np.float32)
         return float((a != b).any(axis=(1, 2, 3)).mean())
@@ -433,12 +548,12 @@ def main() -> None:
 
     per_plane_fen = (
         np.abs(np.asarray(x_fen_only[found], dtype=np.float32)).max(axis=(2, 3)) > 1e-9
-    ).mean(0)
+    ).mean(0) if found.any() else np.zeros(STORED_PLANES)
     per_plane_stored = (
         np.abs(np.asarray(x_stored[found], dtype=np.float32)).max(axis=(2, 3)) > 1e-9
-    ).mean(0)
+    ).mean(0) if found.any() else np.zeros(STORED_PLANES)
 
-    report: dict[str, object] = {
+    report: dict[str, Any] = {
         "audit_set": str(args.audit_set),
         "snapshot": str(args.snapshot),
         "input_history_encoding": STORED_HISTORY_ENCODING,
@@ -494,44 +609,104 @@ def main() -> None:
         "scan_seconds": scan_seconds,
     }
 
-    np.savez_compressed(
-        out_path,
-        x_stored=x_stored, x_fen_only=x_fen_only, found=found,
-        key=np.array(keys), phase=np.array([int(r["phase"]) for r in audit]),
-        source=np.array([int(r["source"]) for r in audit]),
-        src_shard=np.array(src_shard), src_row=src_row,
-        # The selected source row identifies the history-bearing x_stored row.
-        # It is not safe as a bootstrap cluster when a position has several
-        # source matches, so the conservative component is stored separately.
-        game_id=src_game, has_game_id=src_has_game,
-        game_cluster_id=game_cluster_id,
-        has_game_cluster_id=has_game_cluster_id,
-        game_cluster_kind=np.array([GAME_CLUSTER_KIND]),
-        ply_index=src_ply, is_selfplay=src_selfplay,
-        dup_count=dup_count,
-        per_plane_nonzero_fen_only=per_plane_fen,
-        per_plane_nonzero_stored=per_plane_stored,
-        input_history_encoding=np.array([STORED_HISTORY_ENCODING]),
-        input_extra_features=np.array([STORED_EXTRA_FEATURES]),
-        snapshot=np.array([str(args.snapshot)]),
-        audit_set=np.array([str(args.audit_set)]),
-    )
-    report_path = out_path.with_suffix(out_path.suffix + ".report.json")
-    report_path.write_text(json.dumps(report, indent=1), encoding="utf-8")
-    print(json.dumps(report, indent=1))
-    print(f"[match] index -> {out_path}\n[match] report -> {report_path}")
-    # An audit set whose `key` and `fen` disagree would attach every per-UCI
-    # label to the wrong position while still looking like a successful build,
-    # so this is an exit code, not a printed warning.
-    if legal_mismatch:
-        raise SystemExit(
-            f"{len(legal_mismatch)} matched rows generate a different legal-move "
-            "set than their audit FEN — the audit set's own 'key' and 'fen' "
-            "disagree on those rows, so the per-UCI deep-SF labels belong to a "
-            "different position than the one being scored"
+    errors = _validation_errors(report)
+    build_id = uuid.uuid4().hex
+    status = "rejected" if errors else "validated"
+    attempt_path = out_path.with_name(f"{out_path.name}.{status}.{build_id}.json")
+    # Bind the actual input snapshots, not a later reread of a mutable corpus.
+    report.update({
+        "build_id": build_id, "validation_status": status,
+        "validation_errors": errors, "attempt_report": str(attempt_path),
+        "audit_set_sha256": hashlib.sha256(audit_bytes).hexdigest(),
+        "consumed_shards": consumed_shards,
+        "consumed_hash_scope": "decision inputs: captured audit bytes, entire current-frame scans, ordered candidate indices/full rows and identity columns; not whole shard/full-file hashes",
+        "prior_outputs": prior_outputs,
+        "prior_outputs_scope": "observed before input capture; not necessarily the immediate predecessor under concurrency",
+        "requested_output": str(requested_out),
+        "working_directory": str(Path.cwd()),
+        "output_entry_path": str(out_path.parent.resolve() / out_path.name),
+        "report_entry_path": str(report_path.parent.resolve() / report_path.name),
+        "candidate_output": {"path": str(out_path), "sha256": None},
+        "publication": "not attempted" if errors else "validated candidate; publication not confirmed",
+    })
+    if errors:
+        report["observed_final_outputs"] = [
+            _existing_file_identity(path) for path in (out_path, report_path)
+        ]
+        offending = [int(i) for i in np.flatnonzero(found) if (
+            int(i) in legal_mismatch
+            or not np.array_equal(x_stored[i, :PIECE_PLANES], x_fen_only[i, :PIECE_PLANES])
+            or not np.array_equal(x_stored[i, 104:108], x_fen_only[i, 104:108])
+        )]
+        report["offending_rows_total"] = len(offending)
+        report["offending_rows_limit"] = 4
+        report["offending_rows"] = [{
+            "audit_row": i, "key": keys[i], "fen": str(audit[i]["fen"]),
+            "phase": int(audit[i]["phase"]), "source": int(audit[i]["source"]),
+            "src_shard": src_shard[i], "src_row": int(src_row[i]),
+            "arrays": {name: {
+                **_array_identity(array),
+                "base64_c_order": base64.b64encode(array.tobytes(order="C")).decode("ascii"),
+            } for name, array in (("stored", x_stored[i]), ("fen_only", x_fen_only[i]))},
+        } for i in offending[:4]]
+        # Evidence failure must never fall through to publishing invalid rows.
+        atomic_write_text(attempt_path, json.dumps(report, indent=1, allow_nan=False), mode=0o600)
+        # The bounded raw rows belong only in the private diagnostic, not logs.
+        print(f"[match] rejected: {'; '.join(errors)}; evidence -> {attempt_path}")
+        raise SystemExit("; ".join(errors) + f"; rejected evidence -> {attempt_path}")
+
+    def write_candidate(path: Path) -> None:
+        # The final destination above already preserves NumPy's suffix rule.
+        # A file handle binds serialization to the exact atomic staging file.
+        with path.open("wb") as stream:
+            np.savez_compressed(
+                stream,
+                build_id=np.asarray([build_id]),
+                x_stored=x_stored, x_fen_only=x_fen_only, found=found,
+                key=np.array(keys), phase=np.array([int(r["phase"]) for r in audit]),
+                source=np.array([int(r["source"]) for r in audit]),
+                src_shard=np.array(src_shard), src_row=src_row,
+                # The selected source row identifies the history-bearing x_stored row.
+                # It is not safe as a bootstrap cluster when a position has several
+                # source matches, so the conservative component is stored separately.
+                game_id=src_game, has_game_id=src_has_game,
+                game_cluster_id=game_cluster_id,
+                has_game_cluster_id=has_game_cluster_id,
+                game_cluster_kind=np.array([GAME_CLUSTER_KIND]),
+                ply_index=src_ply, is_selfplay=src_selfplay,
+                dup_count=dup_count,
+                per_plane_nonzero_fen_only=per_plane_fen,
+                per_plane_nonzero_stored=per_plane_stored,
+                input_history_encoding=np.array([STORED_HISTORY_ENCODING]),
+                input_extra_features=np.array([STORED_EXTRA_FEATURES]),
+                snapshot=np.array([str(args.snapshot)]),
+                audit_set=np.array([str(args.audit_set)]),
+            )
+        report["candidate_output"] = {"path": str(out_path), "sha256": sha256_file(path)}
+        # Save the attempt before the sole consumer-visible commit point. If this
+        # fails, atomic_write preserves the old NPZ and normal report.
+        atomic_write_text(attempt_path, json.dumps(report, indent=1, allow_nan=False), mode=0o600)
+        # Catch terminal links introduced during the scan/serialization as well.
+        # This check is not a lock against hostile output-directory mutation.
+        for target in (out_path, report_path):
+            _output_mode(target)
+
+    try:
+        atomic_write(out_path, write_candidate, preserve_suffix=True, mode=out_mode)
+        report["publication"] = "NPZ published; compatibility report is not an atomic pair"
+        _output_mode(report_path)
+        atomic_write_text(report_path, json.dumps(report, indent=1, allow_nan=False), mode=report_mode)
+    except BaseException:
+        # replace may have succeeded before directory fsync or report failure.
+        # Never restore an old artifact over a concurrent successful publisher.
+        print(
+            f"[match] publication did not confirm completion; inspect {out_path} "
+            f"and attempt {attempt_path}; a valid NPZ may already be visible",
+            flush=True,
         )
-    if not report["canonicalisation_current_frame_identical"]:
-        raise SystemExit("recovered rows are not side-to-move canonical")
+        raise
+    print(json.dumps(report, indent=1, allow_nan=False))
+    print(f"[match] index -> {out_path}\n[match] report -> {report_path}")
 
 
 if __name__ == "__main__":
