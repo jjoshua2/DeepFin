@@ -24,7 +24,7 @@ from chess_anti_engine.tune._utils import (
     SIDECAR_TRIAL_META,
     load_optional_json,
 )
-from chess_anti_engine.tune.holdout_state import save_holdout_rows
+from chess_anti_engine.tune.holdout_state import invalidate_holdout_restore, save_holdout_rows
 from chess_anti_engine.tune.promotion_gate import gate_metrics
 from chess_anti_engine.tune.trial_config import (
     DriftMetrics,
@@ -299,9 +299,10 @@ def _save_trial_checkpoint(
     here would create a second source of truth for the live config.
     """
     buf.flush()
+    invalidate_holdout_restore(ckpt_dir=ckpt_dir)
     trainer.save(ckpt_dir / "trainer.pt")
     _write_rng_state_sidecar(ckpt_dir=ckpt_dir, rng=rng)
-    save_holdout_rows(ckpt_dir=ckpt_dir, holdout_buf=holdout_buf)
+    holdout_rows_saved = save_holdout_rows(ckpt_dir=ckpt_dir, holdout_buf=holdout_buf)
     atomic_write_text(
         ckpt_dir / SIDECAR_TRIAL_META,
         json.dumps({
@@ -318,6 +319,7 @@ def _save_trial_checkpoint(
             "global_iter": int(iteration_idx),
             "current_window": int(current_window),
             "holdout_frozen": bool(holdout_frozen),
+            "holdout_rows_saved": int(holdout_rows_saved),
             "holdout_generation": int(holdout_generation),
             "holdout_ruler": str(holdout_ruler),
             "opp_strength_ema": float(opp_strength_ema),

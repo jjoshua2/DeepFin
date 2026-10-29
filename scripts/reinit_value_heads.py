@@ -12,6 +12,8 @@ warrants. A few iterations of cold momentum is a fine cost.
 
 Usage: python scripts/reinit_value_heads.py POOL_DIR [--dry-run]
 Writes POOL_DIR/seeds/slot_000/trainer.pt in place (keeps trainer.pt.bak).
+Only legacy fixed-slot pools are supported. Generation-selected pools must
+not be edited in place, even when an older seeds/slot_000 still exists.
 """
 from __future__ import annotations
 
@@ -72,13 +74,51 @@ def _checkpoint_model_config(ckpt: dict, ckpt_path: Path) -> ModelConfig:
     )
 
 
+def _legacy_pool_checkpoint(pool_dir: Path) -> Path:
+    """Refuse unsupported/ambiguous selection before loading or mutating weights."""
+    manifest_path = pool_dir / "manifest.json"
+    ckpt_path = pool_dir / "seeds" / "slot_000" / "trainer.pt"
+    try:
+        text = manifest_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        if not manifest_path.is_symlink():
+            return ckpt_path  # Pre-manifest legacy pools remain supported.
+        raise SystemExit("unreadable pool manifest; refusing to rewrite value heads") from None
+    except (OSError, UnicodeError):
+        raise SystemExit("unreadable pool manifest; refusing to rewrite value heads") from None
+    try:
+        manifest = json.loads(text)
+    except ValueError:
+        raise SystemExit("invalid pool manifest; refusing to rewrite value heads") from None
+    entries = manifest.get("entries") if isinstance(manifest, dict) else None
+    if not isinstance(entries, list) or not entries:
+        raise SystemExit("invalid pool manifest; refusing to rewrite value heads")
+    slots: set[int] = set()
+    for index, entry in enumerate(entries):
+        slot = entry.get("slot", index) if isinstance(entry, dict) else None
+        if type(slot) is not int or slot < 0 or slot in slots:
+            raise SystemExit("ambiguous pool manifest; refusing to rewrite value heads")
+        slots.add(slot)
+        legacy_dir = pool_dir / "seeds" / f"slot_{slot:03d}"
+        seed_dir = entry.get("seed_dir", str(Path("seeds") / f"slot_{slot:03d}"))
+        if (not isinstance(seed_dir, str) or not seed_dir.strip()
+                or (pool_dir / seed_dir).absolute() != legacy_dir.absolute()):
+            raise SystemExit(
+                "only legacy fixed-slot pools are supported; refusing to rewrite "
+                "generation-selected or custom-path pool value heads in place"
+            )
+    if 0 not in slots:
+        raise SystemExit("pool manifest has no slot zero; refusing to rewrite value heads")
+    return ckpt_path
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("pool_dir", type=Path)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    ckpt_path = args.pool_dir / "seeds" / "slot_000" / "trainer.pt"
+    ckpt_path = _legacy_pool_checkpoint(args.pool_dir)
     if not ckpt_path.exists():
         sys.exit(f"missing: {ckpt_path}")
 

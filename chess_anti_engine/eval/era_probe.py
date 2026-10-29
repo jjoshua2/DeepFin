@@ -192,9 +192,23 @@ def probe_set_digest(arrs: dict[str, np.ndarray]) -> str:
         if arr is None:
             h.update(f"{key}:absent".encode())
             continue
-        a = np.ascontiguousarray(arr)
+        a = np.asarray(arr)
+        if a.ndim == 0:
+            a = a.reshape(1)  # Preserve np.ascontiguousarray's scalar shape.
         h.update(f"{key}:{a.shape}:{a.dtype.str}".encode())
-        h.update(a.tobytes())
+        # Avoid an array-wide copy now that capped loads verify the full set.
+        # Empty multidimensional views cannot be cast, and add no data bytes.
+        if not a.size:
+            continue
+        if a.flags.c_contiguous:
+            h.update(a.data.cast("B"))
+        else:
+            # C-order chunks preserve the old contiguous-array byte encoding.
+            step = max(1, (1 << 20) // a.dtype.itemsize)
+            for start in range(0, a.size, step):
+                chunk = a.flat[start:start + step]
+                h.update(chunk.data.cast("B"))
+                del chunk
     return h.hexdigest()[:16]
 
 
@@ -234,6 +248,7 @@ def _row_count(arrs: dict[str, np.ndarray]) -> int:
 
 def _load_provenance(
     set_path: Path, *, label: str, digest: str, truncated: bool,
+    source_arrays: dict[str, np.ndarray],
 ) -> dict[str, Any]:
     """Read and CHECK the sidecar. Returns {} (loudly) when it cannot vouch.
 
@@ -247,11 +262,10 @@ def _load_provenance(
       * digest mismatch — the sidecar describes a DIFFERENT set of rows;
       * ok.
 
-    A digest mismatch is EXPECTED and benign when the row cap truncated the
-    set, since the sidecar's digest is over the whole file. That case is
-    reported as a truncation rather than as drift, and the provenance is still
-    honoured: the desync screen applied to every row of the file, including
-    the prefix that survived.
+    The sidecar binds the WHOLE file, even when the row cap keeps only a
+    prefix. Verify it against the already-loaded source arrays before claiming
+    its screening applies to that prefix. The prefix digest remains the ruler
+    identity; a different prefix digest alone cannot establish this binding.
     """
     sidecar = provenance_path(set_path)
     if not sidecar.exists():
@@ -271,23 +285,32 @@ def _load_provenance(
     if not isinstance(data, dict):
         print(f"[probe] {label}: {sidecar} is not a provenance object; ignoring", flush=True)
         return {}
-    recorded = str(data.get("digest", ""))
-    if recorded and recorded != digest and not truncated:
+    recorded = data.get("digest")
+    if not isinstance(recorded, str) or not recorded:
+        print(
+            f"[probe] {label}: {sidecar} has no usable digest; provenance unknown",
+            flush=True,
+        )
+        return {}
+    # Do not hash the full source when no recorded digest needs verification.
+    # Uncapped loads already computed this same digest for the ruler.
+    loaded_digest = probe_set_digest(source_arrays) if truncated else digest
+    if recorded != loaded_digest:
         print(
             f"[probe] {label}: WARNING {sidecar.name} records digest "
-            f"{recorded} but the loaded rows digest {digest}. The sidecar "
+            f"{recorded} but the loaded file digest {loaded_digest}. The sidecar "
             f"describes a DIFFERENT set; treat its desync screening and shard "
             f"list as unverified.",
             flush=True,
         )
         return {}
-    if recorded and truncated:
+    if truncated:
         print(
-            f"[probe] {label}: the row cap truncated the set, so the loaded "
-            f"digest {digest} differs from the file's {recorded} by "
-            f"construction. Provenance still applies (the screen ran over every "
+            f"[probe] {label}: the row cap truncated the set; the file digest "
+            f"{loaded_digest} matches its sidecar. Provenance still applies "
+            f"(the screen ran over every "
             f"row of the file), but the RULER is the truncated prefix — pin the "
-            f"cap for the life of the column.",
+            f"cap for the life of the column (digest {digest}).",
             flush=True,
         )
     return data
@@ -389,11 +412,13 @@ def load_probe_set(
         if k in arrs
     }
     n_rows = _row_count(rows)
-    # The digest identifies the FILE's rows, so it is taken BEFORE the
+    # The ruler digest identifies the SELECTED rows, so it is taken BEFORE the
     # eligibility intersection below — otherwise a set whose rows are all fine
     # would still have to match a digest computed from a modified copy.
     digest = probe_set_digest(rows)
-    provenance = _load_provenance(p, label=label, digest=digest, truncated=keep < n_all)
+    provenance = _load_provenance(
+        p, label=label, digest=digest, truncated=keep < n_all, source_arrays=arrs,
+    )
 
     # ⚑ PER-ROW, not just per-field. Requiring the `legal_mask` FIELD is not
     # enough: `apply_policy_mask_to_logits` multiplies the mask by the row's

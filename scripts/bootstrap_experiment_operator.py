@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -210,7 +211,8 @@ def start_wrapper(item: dict, wrapper: Path, out: Path):
 
 
 def launch_arena(item: dict) -> None:
-    out = Path(item["out"])
+    # The wrapper changes cwd; bind generated artifacts to their creation root.
+    out = Path(item["out"]).resolve()
     out.mkdir(parents=True, exist_ok=True)
     if (out / "arena.games.jsonl").exists():
         raise SystemExit(f"{item['id']} games already exist")
@@ -258,29 +260,38 @@ def launch_arena(item: dict) -> None:
     wrapper.write_text(
         f"""#!/bin/bash
 set -euo pipefail
-cd {RUNTIME}
+cd -- {shlex.quote(str(RUNTIME))}
 unset PYTHONOPTIMIZE PYTHONHOME LD_PRELOAD
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2
 export TORCHINDUCTOR_COMPILE_THREADS=2
-export PYTHONPATH={RUNTIME}${{PYTHONPATH:+:$PYTHONPATH}}
-mapfile -t CMD < <(python3 -c "import json; print('\\n'.join(json.load(open('{argv_path}'))['command']))")
+export PYTHONPATH={shlex.quote(str(RUNTIME))}"${{PYTHONPATH:+:$PYTHONPATH}}"
+mapfile -d '' -t CMD < <(python3 - {shlex.quote(str(argv_path))} <<'ARGV_PY'
+import json, os, sys
+with open(sys.argv[1]) as handle:
+    command = json.load(handle)["command"]
+if (not isinstance(command, list) or not command
+        or any(not isinstance(arg, str) or "\\0" in arg for arg in command)):
+    raise ValueError("command must be a nonempty list of NUL-free strings")
+sys.stdout.buffer.write(b"\\0".join(os.fsencode(arg) for arg in command) + b"\\0")
+ARGV_PY
+)
 set +e
-/usr/bin/timeout --signal=TERM --kill-after=30s {timeout_s}s "${{CMD[@]}}" > {out / 'arena.log'} 2>&1
+/usr/bin/timeout --signal=TERM --kill-after=30s {timeout_s}s "${{CMD[@]}}" > {shlex.quote(str(out / 'arena.log'))} 2>&1
 rc=$?
 set -e
-python3 - <<PY
-import json, time
+python3 - {shlex.quote(str(out))} "$rc" <<'TERMINAL_PY'
+import json, sys, time
 from pathlib import Path
-p = Path({str(out)!r})
+p = Path(sys.argv[1])
 started = json.loads((p / "parent_outer_started.json").read_text())
 term = {{
-    "returncode": {0}+int("$rc"),
+    "returncode": int(sys.argv[2]),
     "ended_unix": time.time(),
     "elapsed_seconds": time.time() - float(started["started_unix"]),
 }}
 (p / "parent_outer_terminal.json").write_text(json.dumps(term) + "\\n")
-PY
+TERMINAL_PY
 exit "$rc"
 """
     )
