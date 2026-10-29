@@ -8,9 +8,12 @@ rather than re-discovering it. See ``CLAUDE.md`` for the larger workflow.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import re
 import shutil
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -26,7 +29,7 @@ from chess_anti_engine.tune._utils import (
 )
 from chess_anti_engine.tune.holdout_state import invalidate_holdout_restore
 from chess_anti_engine.tune.replay_exchange import _read_jsonl_rows
-from chess_anti_engine.utils.atomic import atomic_write
+from chess_anti_engine.utils.atomic import _fsync_dir, atomic_write, atomic_write_bytes, atomic_write_text
 
 # How far (in checkpoint-dir index units) the newest result row may lag the
 # newest on-disk ``checkpoint_*`` dir before we treat result.json as stale.
@@ -625,8 +628,31 @@ def _export_one_seed(
     }
 
 
+def _publish_first_partial_manifest(path: Path, text: str) -> None:
+    """Publish a partial first export only if no other writer has published.
+
+    Use a separate inode, not the archived generation manifest: a legacy
+    writer may later mutate the root manifest in place. Unsupported hard-link
+    publication fails safely; never fall back to replacing a concurrent winner.
+    A directory-fsync error can occur after the link made the manifest visible.
+    """
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+    try:
+        atomic_write_text(tmp, text)
+        os.link(tmp, path)
+        _fsync_dir(path.parent)
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+
+
 def export_seed_pool(args: argparse.Namespace) -> None:
-    """Export top-N trial seeds (checkpoint + replay shards) for fresh restart."""
+    """Export top-N seeds into an immutable generation for fresh restart.
+
+    The manifest selects the generation. Re-exports retain old generations
+    and require every selected slot to succeed; first exports may be partial.
+    No automatic garbage collection or filesystem-wide durability is implied.
+    """
     tune_dir = Path(args.work_dir) / "tune"
     if not tune_dir.exists():
         raise SystemExit(f"Tune directory not found: {tune_dir}")
@@ -722,17 +748,31 @@ def export_seed_pool(args: argparse.Namespace) -> None:
         return
 
     out_dir = _resolve_seed_pool_out_dir(args, run_id)
-    seeds_dir = out_dir / "seeds"
+    # Never mutate a slot referenced by a published manifest. A re-export can
+    # change donor, omit sidecars or deliberately omit replay. Overlaying files
+    # would leave the preceding donor's missing files behind.
+    for replay_plan in replay_plans:
+        if (copy_replay and replay_plan.source is not None
+                and out_dir.resolve().is_relative_to(replay_plan.source.resolve())):
+            raise ValueError("salvage output must not be inside a replay source")
+    manifest_path = out_dir / "manifest.json"
+    try:
+        previous_manifest = manifest_path.read_bytes()
+    except FileNotFoundError:
+        previous_manifest = None
+    generation_dir = out_dir / "generations" / uuid.uuid4().hex
+    generation_dir.mkdir(parents=True, exist_ok=False)
+    if previous_manifest is not None:
+        atomic_write_bytes(generation_dir / "previous-manifest.json", previous_manifest)
+    seeds_dir = generation_dir / "seeds"
     seeds_dir.mkdir(parents=True, exist_ok=True)
 
     entries: list[dict] = []
     failed_slots: list[tuple[int, str]] = []
     for slot, (metric, it, td, row, rows) in enumerate(selected):
-  # Each slot is best-effort independently. A single slot's OSError
-  # (disk full, permission, source vanishes) or unanticipated failure
-  # must not abort the run after we've done expensive replay-shard
-  # copies for prior slots — we still want manifest.json to land
-  # covering the slots that succeeded.
+  # First publication remains best-effort per slot. A replacement, however,
+  # must finish every selected slot before replacing the existing manifest.
+  # Failed or superseded generations are retained, never implicitly deleted.
         try:
             plan = _plan_seed_export(td=td, rows=rows, row=row, metric_key=metric_key)
             entries.append(_export_one_seed(
@@ -745,9 +785,15 @@ def export_seed_pool(args: argparse.Namespace) -> None:
             failed_slots.append((int(slot), f"{type(exc).__name__}: {exc}"))
             print(
                 f"[salvage] ERROR: slot {slot:03d} from {td.name} failed "
-                f"({type(exc).__name__}: {exc}); manifest will skip this slot",
+                f"({type(exc).__name__}: {exc}); slot excluded from candidate manifest",
                 flush=True,
             )
+
+    if failed_slots and (previous_manifest is not None or manifest_path.exists()):
+        raise RuntimeError(
+            "salvage re-export failed; existing manifest and seed artifacts "
+            f"were not replaced. Incomplete generation retained at {generation_dir}"
+        )
 
     manifest = build_pool_manifest_dict(
         metric=metric_key,
@@ -757,9 +803,25 @@ def export_seed_pool(args: argparse.Namespace) -> None:
     )
     if failed_slots:
         manifest["failed_slots"] = [{"slot": s, "error": e} for s, e in failed_slots]
-    (out_dir / "manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8",
-    )
+    manifest_text = json.dumps(manifest, indent=2, sort_keys=True)
+    # Bank both generation manifests for inspection/explicit rollback. The
+    # root manifest is the only publication point, using existing seed_dir
+    # references; readers need not infer the directory layout.
+    atomic_write_text(generation_dir / "manifest.json", manifest_text)
+    try:
+        if failed_slots:
+            _publish_first_partial_manifest(manifest_path, manifest_text)
+        else:
+            atomic_write_text(manifest_path, manifest_text)
+    except BaseException:
+        # A directory-fsync failure can surface after atomic replacement.
+        # Do not overwrite a possibly published successor with a rollback.
+        print(
+            f"[salvage] manifest publication did not confirm success; inspect "
+            f"{manifest_path} and retained generation {generation_dir}",
+            flush=True,
+        )
+        raise
 
     print(
         f"[salvage] wrote {len(entries)} seeds from run_id={run_id} "
