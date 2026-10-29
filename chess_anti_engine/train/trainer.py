@@ -3935,7 +3935,8 @@ class Trainer:
         a restore that quietly does nothing is the failure mode this whole
         change is about.
 
-        ⚑ A non-finite `mean` or `var` is REFUSED rather than restored. Per
+        ⚑ A non-finite `mean` or `var`, or a negative `var`, is REFUSED
+        rather than restored. Per
         `_restore_zclip_stats`: one nan in the EMA is permanent, because every
         later `z = (norm - nan) / std` is nan, `nan > z_thresh` is False, and
         `_compute_clip_val` returns None for the rest of the run -- the
@@ -3987,6 +3988,13 @@ class Trainer:
                 "a nan here disables the adaptive clipper permanently while "
                 "the fixed cap keeps reporting normally. Starting a fresh EMA "
                 "warmup", mean, var,
+            )
+            return False
+
+        if var is not None and var < 0.0:
+            log.warning(
+                "zclip: REFUSING a negative checkpoint EMA variance (%r); "
+                "keeping the current adaptive state", var,
             )
             return False
 
