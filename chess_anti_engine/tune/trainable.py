@@ -59,10 +59,12 @@ from chess_anti_engine.tune.promotion_gate import (
     GateHoldController,
     PromotionGate,
     gate_config_from_dict,
+    parse_gate_state,
 )
 from chess_anti_engine.tune.trainable_metrics import _compute_drift_metrics
 from chess_anti_engine.tune.trainable_phases import (
     _finalize_iteration,
+    _persist_gate_state,
     _run_eval_games,
     _run_pid_and_eval,
     _run_selfplay_phase,
@@ -180,12 +182,14 @@ def _load_best_state(best_state_path: Path) -> tuple[float, float, str]:
     read and then overwritten by the restore result one line later.
     """
     d = load_optional_json(best_state_path) or {}
+    try:
+        loss = float(d.get("best_loss", d.get("loss", float("inf"))))
+        ema = float(d.get("opp_strength_ema", 0.0))
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(f"[trial] malformed best state at {best_state_path}: {exc}; using defaults", flush=True)
+        return float("inf"), 0.0, "train_loss"
     source = str(d.get("source", "train_loss"))
-    return (
-        float(d.get("best_loss", d.get("loss", float("inf")))),
-        float(d.get("opp_strength_ema", 0.0)),
-        source if source in ("test_loss", "train_loss") else "train_loss",
-    )
+    return loss, ema, source if source in ("test_loss", "train_loss") else "train_loss"
 
 
 def _startup_opp_strength_ema(*, restore: RestoreResult, best_json_ema: float) -> float:
@@ -246,7 +250,15 @@ def _startup_gate_state(*, gate_state_path: Path, restore: RestoreResult) -> dic
     """
     own = load_optional_json(gate_state_path)
     if own is not None:
-        return own
+        try:
+            return parse_gate_state(own)
+        except (TypeError, ValueError, OverflowError) as exc:
+            print(
+                f"[trial] malformed own promotion-gate state at {gate_state_path}: "
+                f"{exc}; starting from an EMPTY own window (no pool fallback)",
+                flush=True,
+            )
+            return {}
     if gate_state_path.exists():
         print(
             f"[trial] promotion-gate state at {gate_state_path} exists but did "
@@ -257,7 +269,11 @@ def _startup_gate_state(*, gate_state_path: Path, restore: RestoreResult) -> dic
         return {}
     if restore.restored_gate_state is None:
         return {}
-    seeded = restore.restored_gate_state
+    try:
+        seeded = parse_gate_state(restore.restored_gate_state)
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(f"[trial] malformed pool promotion-gate state: {exc}; starting EMPTY", flush=True)
+        return {}
     print(
         f"[trial] promotion-gate state seeded from the salvage pool: "
         f"matches={seeded.get('matches', 0)} holds={seeded.get('holds', 0)}. "
@@ -1146,7 +1162,15 @@ def train_trial(config: dict):
   # iteration -- but the fleet is still held. Age the hold anyway, or
   # a run stuck in retry during a hold holds forever with the release
   # counter frozen.
+                gate_was_held = gate.hold_active
                 gate_hold.on_aborted_iteration()
+                if gate_was_held:
+  # Persist both ageing and release before retrying. Otherwise a restart
+  # restores the old hold age/latch even though no match was judged here.
+                    _persist_gate_state(
+                        gate=gate, hold=gate_hold, gate_match_idx=gate_match_idx,
+                        gate_state_path=gate_state_path,
+                    )
                 continue
 
             holdout_frozen = _maybe_freeze_holdout(
