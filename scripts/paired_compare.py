@@ -760,11 +760,33 @@ def require_same_stamp(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
         distinguishable on the monitor line (`PARTIAL`), which it was not when
         this argument was first made.
 
-    An ABSENT stamp is warned about, not refused: dumps predating stamping are
-    legitimately unstamped, and `require_same_ruler` already refuses the
+    The blindspot panel scorer-version field is an explicit exception: if
+    either side declares it, both must declare the same nonempty string. This
+    is checked even when the other dump has no stamp, because the corrected
+    logit normalization is not comparable to the legacy heuristic. Legacy pairs
+    with neither declaration retain the existing behavior, not qualification.
+
+    Otherwise an ABSENT stamp is warned about, not refused: dumps predating
+    stamping are legitimately unstamped, and `require_same_ruler` already refuses the
     encoding mismatch that actually invalidates a join. A PRESENT-but-different
     value is refused.
     """
+    # This measurement transition cannot use the legacy one-sided warning:
+    # old panel logits could bypass softmax. Check before the unstamped return.
+    panel_scorer_key = "blindspot_panel_scorer_version"
+    if panel_scorer_key in a.stamp or panel_scorer_key in b.stamp:
+        version_a = a.stamp.get(panel_scorer_key)
+        version_b = b.stamp.get(panel_scorer_key)
+        if (not isinstance(version_a, str) or not version_a.strip()
+                or not isinstance(version_b, str) or not version_b.strip()
+                or version_a != version_b):
+            raise SystemExit(
+                f"{label_a} and {label_b} cannot verify the same blindspot panel "
+                f"scorer: '{panel_scorer_key}' is {version_a!r} vs {version_b!r}. "
+                "Legacy and corrected panel scores are not comparable. "
+                "Preserve old dumps; remeasure BOTH sides with the same "
+                "corrected scorer before comparing."
+            )
     if not a.stamp or not b.stamp:
         missing = label_a if not a.stamp else label_b
         print(
