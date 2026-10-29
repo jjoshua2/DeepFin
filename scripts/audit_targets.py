@@ -1507,7 +1507,7 @@ def search_param_stamp(
             play, "policy_temp", args.policy_temp,
         ),
         "rl_policy_temp": realized_gumbel_value(
-            train, "policy_temp", args.policy_temp,
+            train, "policy_temp", train.policy_temp,
         ),
         "gumbel_training_rows": bool(args.gumbel_training_rows),
     }
