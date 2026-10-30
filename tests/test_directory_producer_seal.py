@@ -8,6 +8,7 @@ including sparse omission, and are not claimed valid.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 import hashlib
 import json
 import math
@@ -43,6 +44,297 @@ from chess_anti_engine.replay.shard import (
 
 PLANES = 8
 TAIL = 512
+
+
+@pytest.mark.parametrize("auxiliary_count", [4, 12])
+@pytest.mark.parametrize("operation", ["writer", "lazy", "eager", "validate_false", "rowcount"])
+def test_inventory_key_visits_scale_with_listing_not_array_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, auxiliary_count: int, operation: str,
+) -> None:
+    path = _write(tmp_path, n=2)
+    group = zarr.open_group(str(path), mode="a")
+    for index in range(auxiliary_count):
+        group.create_dataset(
+            f"auxiliary_{index}", data=np.ones((2, 2), dtype=np.uint8),
+            chunks=(1, 1), dimension_separator="/",
+        )
+    write_directory_producer_seal(group)
+
+    class CountedKeys(list[str]):
+        visits = 0
+
+        def __iter__(self) -> Iterator[str]:
+            for key in super().__iter__():
+                self.visits += 1
+                yield key
+
+    listings: list[CountedKeys] = []
+    real_keys = directory_seal._store_keys
+
+    def counted_keys(store: Any) -> list[str]:
+        result = CountedKeys(real_keys(store))
+        listings.append(result)
+        return result
+
+    monkeypatch.setattr(directory_seal, "_store_keys", counted_keys)
+    if operation == "writer":
+        write_directory_producer_seal(group)
+    elif operation == "rowcount":
+        assert shard_positions(path) == 2
+    else:
+        arrays, _ = load_shard_arrays(
+            path, lazy=operation == "lazy", validate=operation != "validate_false",
+        )
+        assert arrays["x"].shape[0] == 2
+        assert "auxiliary_0" not in arrays
+    # The writer also consumes the listing for its projected final key count.
+    # Reading a listing per array would exceed this bound even at four extras.
+    assert listings
+    assert 0 < sum(keys.visits for keys in listings) <= 2 * sum(map(len, listings))
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "dangling", "directory"])
+def test_partitioned_auxiliary_slash_inventory_still_refuses_bad_files(
+    tmp_path: Path, mutation: str,
+) -> None:
+    path = _write(tmp_path, n=2)
+    group = zarr.open_group(str(path), mode="a")
+    group.create_dataset(
+        "auxiliary", data=np.ones((2, 2), dtype=np.uint8),
+        chunks=(1, 1), dimension_separator="/",
+    )
+    write_directory_producer_seal(group)
+    original = bytes(group.store[SEAL_FILENAME])
+    chunk = path / "auxiliary/0/0"
+    if mutation == "extra":
+        (path / "auxiliary/0/99").write_bytes(b"extra")
+    else:
+        chunk.unlink()
+        if mutation == "dangling":
+            try:
+                chunk.symlink_to("absent-chunk")
+            except OSError as exc:
+                pytest.skip(f"symlink creation unavailable: {exc}")
+        elif mutation == "directory":
+            chunk.mkdir()
+    with pytest.raises(ValueError, match=r"(missing|extra stored key)"):
+        load_shard_arrays(path, lazy=True)
+    assert shard_positions(path) == 0
+    with pytest.raises(ValueError, match=r"(omitted stored chunk|unexpected chunk keys)"):
+        write_directory_producer_seal(group)
+    assert bytes(group.store[SEAL_FILENAME]) == original
+
+
+def test_partitioned_inventory_preserves_priority_removal() -> None:
+    group = zarr.group(store=MemoryStore())
+    for name in ("x", "policy_target", "wdl_target", "has_policy", "priority", "auxiliary"):
+        group.create_dataset(
+            name, data=np.ones((2, 2), dtype=np.uint8),
+            chunks=(1, 1), dimension_separator="/",
+        )
+    write_directory_producer_seal(group)
+    verify_directory_producer_seal(group)
+    assert directory_seal.sealed_row_count(group, "x") == 2
+    del group["priority"]
+    assert directory_seal.sealed_row_count(group, "x") == 2
+    with pytest.raises(ValueError, match="array set does not match"):
+        verify_directory_producer_seal(group)
+
+
+def test_partitioned_inventory_preserves_nested_group_prefix() -> None:
+    root = zarr.group(store=MemoryStore())
+    group = root.create_group("nested")
+    root.create_dataset("unrelated", data=np.ones(1, dtype=np.uint8))
+    group.create_dataset(
+        "auxiliary", data=np.ones((2, 2), dtype=np.uint8),
+        chunks=(1, 1), dimension_separator="/",
+    )
+    write_directory_producer_seal(group)
+    verify_directory_producer_seal(group)
+
+
+def _restamp_declaration(path: Path, shape: list[int], chunks: list[int]) -> None:
+    """A new canonical producer statement, rather than a stale digest edit."""
+    group = zarr.open_group(str(path), mode="a")
+    raw = json.loads(bytes(group.store["x/.zarray"]))
+    raw.update(shape=shape, chunks=chunks)
+    declaration = json.dumps(raw).encode()
+    group.store["x/.zarray"] = declaration
+    doc = json.loads(bytes(group.store[SEAL_FILENAME]))
+    doc["arrays"]["x"]["zarray_sha256"] = hashlib.sha256(declaration).hexdigest()
+    payload = directory_seal._canonical_bytes(doc)
+    group.store[SEAL_FILENAME] = payload
+    for name in group.array_keys():
+        group[name].attrs[SEAL_ATTR] = hashlib.sha256(payload).hexdigest()
+
+
+@pytest.mark.parametrize("rank", [5, 512])
+@pytest.mark.parametrize(("lazy", "validate"), [(False, True), (True, True), (False, False), (True, False)])
+def test_seal_rank_refused_on_real_load_and_window_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rank: int, lazy: bool, validate: bool,
+) -> None:
+    path = _write(tmp_path, n=1)
+    _restamp_declaration(path, [100_000] + [1] * (rank - 1), [1] * rank)
+    calls = _forbid_fill_decode(monkeypatch)
+    with pytest.raises(ValueError, match="supported rank 4"):
+        load_shard_arrays(path, lazy=lazy, validate=validate)
+    assert shard_positions(path) == 0
+    assert calls == {"getitem": 0, "decode": 0}
+
+
+def test_real_zarr_writer_and_raw_grid_refuse_rank_before_product(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    group = zarr.group(store=MemoryStore())
+    arr = group.create_dataset("x", shape=(100_000,) + (1,) * 511, chunks=(1,) * 512, dtype="u1")
+
+    def forbid(*_args: object) -> None:
+        raise AssertionError("coordinate enumeration")
+
+    monkeypatch.setattr(directory_seal.itertools, "product", forbid)
+    with pytest.raises(ValueError, match="supported rank 4"):
+        directory_seal._declared_keys(arr)
+    with pytest.raises(ValueError, match="supported rank 4"):
+        directory_seal._grid_keys("x", bytes(group.store["x/.zarray"]))
+    with pytest.raises(ValueError, match="supported rank 4"):
+        write_directory_producer_seal(group)
+    assert SEAL_FILENAME not in group.store
+
+
+@pytest.mark.parametrize("separator", [".", "/"])
+@pytest.mark.parametrize("shape", [(1, 1, 1, 1), (11, 2), (0, 1_000_000_000), (1_000_000_000, 0)])
+def test_real_grid_compatibility_and_empty_axes(separator: str, shape: tuple[int, ...]) -> None:
+    group = zarr.group(store=MemoryStore())
+    arr = group.create_dataset("x", shape=shape, chunks=(1,) * len(shape), dtype="u1", dimension_separator=separator)
+    actual = directory_seal._declared_keys(arr)
+    raw = bytes(group.store["x/.zarray"])
+    assert directory_seal._grid_keys("x", raw) == actual
+    if 0 in shape:
+        assert actual == []
+    else:
+        arr[:] = 1
+        write_directory_producer_seal(group)
+        verify_directory_producer_seal(group)
+        assert json.loads(bytes(group.store[SEAL_FILENAME]))["arrays"]["x"]["stored"] == actual
+
+
+@pytest.mark.parametrize("count", [99_999, 100_000, 100_001])
+def test_real_grid_chunk_count_boundary(count: int) -> None:
+    group = zarr.group(store=MemoryStore())
+    arr = group.create_dataset("x", shape=(count,), chunks=(1,), dtype="u1")
+    raw = bytes(group.store["x/.zarray"])
+    for get_keys in (lambda: directory_seal._declared_keys(arr), lambda: directory_seal._grid_keys("x", raw)):
+        if count > directory_seal.MAX_DECLARED_CHUNKS:
+            with pytest.raises(ValueError, match="seal cap"):
+                get_keys()
+        else:
+            assert len(get_keys()) == count
+
+
+@pytest.mark.parametrize("separator", [".", "/"])
+def test_real_grid_aggregate_key_budget_before_enumeration(
+    monkeypatch: pytest.MonkeyPatch, separator: str,
+) -> None:
+    group = zarr.group(store=MemoryStore())
+    arr = group.create_dataset("long_name", shape=(11, 2), chunks=(1, 1), dtype="u1", dimension_separator=separator)
+    raw = bytes(group.store["long_name/.zarray"])
+    expected = directory_seal._declared_keys(arr)
+    cost = sum(len(json.dumps(key, ensure_ascii=True)) for key in expected)
+    monkeypatch.setattr(directory_seal, "MAX_GRID_KEY_BYTES", cost)
+    assert directory_seal._declared_keys(arr) == expected
+    assert directory_seal._grid_keys("long_name", raw) == expected
+    monkeypatch.setattr(directory_seal, "MAX_GRID_KEY_BYTES", cost - 1)
+
+    def forbid(*_args: object) -> None:
+        raise AssertionError("coordinate enumeration")
+
+    monkeypatch.setattr(directory_seal.itertools, "product", forbid)
+    with pytest.raises(ValueError, match="key representation"):
+        directory_seal._declared_keys(arr)
+    with pytest.raises(ValueError, match="key representation"):
+        directory_seal._grid_keys("long_name", raw)
+
+
+def test_manifest_cardinality_is_checked_before_coordinate_enumeration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _write(tmp_path, n=1)
+    _restamp_declaration(path, [100_000, 1, 8, 8], [1, 1, 8, 8])
+
+    product = directory_seal.itertools.product
+    large_calls = []
+
+    def bounded_product(*axes: range):
+        if any(len(axis) >= 100_000 for axis in axes):
+            large_calls.append(True)
+            raise AssertionError("large coordinate enumeration")
+        return product(*axes)
+
+    monkeypatch.setattr(directory_seal.itertools, "product", bounded_product)
+    with pytest.raises(ValueError, match="chunk grid"):
+        load_shard_arrays(path, lazy=True)
+    assert shard_positions(path) == 0
+    assert large_calls == []
+
+
+def test_store_key_byte_budget_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = MemoryStore()
+    store["a/0"] = b"a"
+    store["b/0"] = b"b"
+    expected = list(store)
+    cost = sum(len(json.dumps(key)) for key in expected)
+    monkeypatch.setattr(directory_seal, "MAX_STORE_KEY_BYTES", cost)
+    assert directory_seal._store_keys(store) == expected
+    monkeypatch.setattr(directory_seal, "MAX_STORE_KEY_BYTES", cost - 1)
+    with pytest.raises(ValueError, match="key representation"):
+        directory_seal._store_keys(store)
+
+
+def test_manifest_and_writer_aggregate_key_budget_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    group = zarr.group(store=MemoryStore())
+    for name in ("a", "b"):
+        group.create_dataset(name, data=np.ones(1, dtype=np.uint8), chunks=(1,))
+    cost = sum(len(json.dumps(f"{name}/0")) for name in ("a", "b"))
+    monkeypatch.setattr(directory_seal, "MAX_GRID_KEY_BYTES", cost)
+    write_directory_producer_seal(group)
+    verify_directory_producer_seal(group)
+    original = bytes(group.store[SEAL_FILENAME])
+    monkeypatch.setattr(directory_seal, "MAX_GRID_KEY_BYTES", cost - 1)
+    with pytest.raises(ValueError, match="key representation"):
+        write_directory_producer_seal(group)
+    assert bytes(group.store[SEAL_FILENAME]) == original
+    with pytest.raises(ValueError, match="key representation"):
+        verify_directory_producer_seal(group)
+
+
+@pytest.mark.parametrize("route", ["/v1/upload_shard", "/v1/trials/default/upload_shard"])
+def test_authenticated_real_zarr_upload_refuses_rank_and_accepts_dense_control(
+    tmp_path: Path, route: str,
+) -> None:
+    from tests.test_server_upload_security import (
+        _build_client, _build_valid_zarr_tar, _default_headers, _sample as upload_sample, _seed_user,
+    )
+    from chess_anti_engine.replay.shard import pack_shard_for_upload
+
+    root = tmp_path / "server"
+    root.mkdir()
+    _seed_user(root)
+    good = _build_valid_zarr_tar(tmp_path / "input", samples=[upload_sample(0)])
+    path = tmp_path / "input" / "valid.zarr"
+    _restamp_declaration(path, [100_000] + [1] * 511, [1] * 512)
+    _, bad = pack_shard_for_upload(path)
+    with _build_client(root) as client:
+        for payload, accepted in ((bad.getvalue(), False), (good, True)):
+            response = client.post(route, auth=("u", "p"), headers=_default_headers(),
+                                   files={"file": ("shard.zarr.tar", payload, "application/x-tar")})
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["stored"] is accepted, body
+            if not accepted:
+                assert body["rejected"] is True
+                assert "supported rank 4" in body["reason"]
 
 
 def _sample(row: int, *, tail_fill: bool) -> ReplaySample:

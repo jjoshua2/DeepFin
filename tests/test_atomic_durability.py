@@ -69,7 +69,12 @@ def test_durable_write_fsyncs_the_file_and_the_directory(
     # `os.replace` moves the directory entry, it does not copy the inode.
     assert spy.saw(dest), "tmp file was never fsynced before the rename"
     assert spy.saw(tmp_path), "containing directory was never fsynced after the rename"
-    assert len(spy) == 2, spy.inodes
+    # Existing directories may come from an interrupted earlier mkdir/sync.
+    # Their entries are synced on every durable call, not just first creation.
+    for ancestor in tmp_path.parents:
+        assert spy.saw(ancestor), f"ancestor directory not synced: {ancestor}"
+    # Whole hierarchy before writer, then file and containing directory.
+    assert len(spy) == len(tmp_path.parents) + 3, spy.inodes
 
 
 def test_durable_is_the_default_for_every_public_helper(
