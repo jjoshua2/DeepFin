@@ -102,6 +102,9 @@ from chess_anti_engine.utils.syzygy import SEPARATOR, default_syzygy_path
 from scripts.diagnostic_replay_utils import record_skipped_shard, select_shards
 from scripts.tail_censor_screen import N_BOOT, SF_OWN_REGRET_CAP_CP, Row, analyse
 
+# Corrected MultiPV-40 screen (2026-08-16); see docs/experiment_ledger.md.
+HISTORICAL_ALPHA = 0.1779
+
 # Live-yaml values. Defaults, not assumptions — every one is overridable, and
 # --prod-nodes defaults to the REALIZED median rather than the configured cap.
 PROD_MULTIPV = 6
@@ -331,6 +334,9 @@ def run_panel(
         deep_scored = regrets_from(d_res.pvs or [], board, enc)
         with done:
             scan["searched"] += 1
+            if not deep_scored:
+                scan["skipped_missing_deep"] = scan.get("skipped_missing_deep", 0) + 1
+                return
             if len(prod_scored) < 2 or len(matched_scored) <= len(prod_scored):
                 scan["skipped_no_tail"] += 1
                 return
@@ -507,8 +513,8 @@ def report(label: str, res: dict[str, Any]) -> None:
     # NOT a transfer verdict -- an earlier revision fired a pre-registered "does
     # not transfer" branch on 0.008 of a unit that a row-level bootstrap
     # manufactured.
-    verdict = "covers" if vlo <= 0.1759 <= vhi else "does NOT cover"
-    print(f"      -> {verdict} the historical screen's alpha = 0.1779 [0.1572, 0.2005]"
+    verdict = "covers" if vlo <= HISTORICAL_ALPHA <= vhi else "does NOT cover"
+    print(f"      -> {verdict} the historical screen's alpha = {HISTORICAL_ALPHA:.4f} [0.1572, 0.2005]"
           f"  ({N_BOOT} GAME-CLUSTER bootstrap draws)")
     print("      ⚑ a single arm failing to cover is NOT a regime shift; see the ledger.")
     for name in GRID:
@@ -558,7 +564,7 @@ def main() -> int:
         # full paths, not bare names: replay directories reuse shard filenames,
         # so `shard_000123.zarr` alone cannot name a multi-directory population.
         "shard_names": [str(p) for p in shards], "rows_scanned": 0, "searched": 0,
-        "skipped_narrow": 0, "skipped_no_tail": 0,
+        "skipped_narrow": 0, "skipped_no_tail": 0, "skipped_missing_deep": 0,
         "skipped_shards": [], "skipped_shards_omitted": 0,
         "git_sha": git_sha(),
     }
@@ -582,7 +588,8 @@ def main() -> int:
         workers=args.workers, nice=args.nice,
     )
     print(f"\nsearched {scan['searched']}   usable {len(results)}"
-          f"   ({scan['skipped_no_tail']} had no hidden tail)")
+          f"   ({scan['skipped_no_tail']} had no hidden tail; "
+          f"{scan['skipped_missing_deep']} missing scored DEEP arm)")
     if not results:
         raise SystemExit("no usable positions")
 
