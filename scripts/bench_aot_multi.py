@@ -6,6 +6,8 @@ import argparse
 import multiprocessing as mp
 import time
 
+from chess_anti_engine.aot_benchmark_contexts import ProducerContext
+
 
 def _worker_fn(worker_id, n_threads, batch_per_thread, sf_workers,
                mcts_sims, sf_nodes, aot_dir, stockfish_path, bootstrap_path,
@@ -36,8 +38,11 @@ def _worker_fn(worker_id, n_threads, batch_per_thread, sf_workers,
         ckpt = torch.load(bootstrap_path, map_location="cuda", weights_only=True)
         load_state_dict_tolerant(model, ckpt.get("model", ckpt))
 
-    evaluator = AOTEvaluator(aot_dir, device="cuda", max_batch=4096)
-    evaluator.load_weights(model_constant_source(model))
+    contexts = []
+    for _ in range(n_threads):
+        evaluator = AOTEvaluator(aot_dir, device="cuda", max_batch=4096)
+        evaluator.load_weights(model_constant_source(model))
+        contexts.append(ProducerContext(evaluator, torch.cuda))
     del model
 
     sf = StockfishPool(path=stockfish_path, num_workers=sf_workers, nodes=sf_nodes, multipv=1)
@@ -55,15 +60,15 @@ def _worker_fn(worker_id, n_threads, batch_per_thread, sf_workers,
     if n_threads > 1:
         from concurrent.futures import ThreadPoolExecutor
         def _warmup(tid):
-            return play_batch(None, device="cuda", rng=np.random.default_rng(tid + worker_id*100),
+            return contexts[tid].run(lambda evaluator: play_batch(None, device="cuda", rng=np.random.default_rng(tid + worker_id*100),
                               stockfish=sf, evaluator=evaluator, games=min(batch_per_thread, 4),
-                              opponent=opponent, temp=temp, search=search, opening=opening, game=game)
+                              opponent=opponent, temp=temp, search=search, opening=opening, game=game))
         with ThreadPoolExecutor(max_workers=n_threads) as pool:
             list(pool.map(_warmup, range(n_threads)))
     else:
-        play_batch(None, device="cuda", rng=rng, stockfish=sf, evaluator=evaluator,
+        contexts[0].run(lambda evaluator: play_batch(None, device="cuda", rng=rng, stockfish=sf, evaluator=evaluator,
                    games=min(total_batch, 4), opponent=opponent, temp=temp,
-                   search=search, opening=opening, game=game)
+                   search=search, opening=opening, game=game))
 
     barrier.wait()
 
@@ -72,17 +77,17 @@ def _worker_fn(worker_id, n_threads, batch_per_thread, sf_workers,
         from concurrent.futures import ThreadPoolExecutor
         seeds = [int(rng.integers(2**63)) for _ in range(n_threads)]
         def _bench(tid):
-            return play_batch(None, device="cuda", rng=np.random.default_rng(seeds[tid]),
+            return contexts[tid].run(lambda evaluator: play_batch(None, device="cuda", rng=np.random.default_rng(seeds[tid]),
                               stockfish=sf, evaluator=evaluator, games=batch_per_thread,
-                              opponent=opponent, temp=temp, search=search, opening=opening, game=game)
+                              opponent=opponent, temp=temp, search=search, opening=opening, game=game))
         with ThreadPoolExecutor(max_workers=n_threads) as pool:
             results = list(pool.map(_bench, range(n_threads)))
         total_positions = sum(s.positions for _, s in results)
         total_games = sum(s.games for _, s in results)
     else:
-        _, stats = play_batch(None, device="cuda", rng=rng, stockfish=sf, evaluator=evaluator,
+        _, stats = contexts[0].run(lambda evaluator: play_batch(None, device="cuda", rng=rng, stockfish=sf, evaluator=evaluator,
                               games=total_batch, opponent=opponent, temp=temp,
-                              search=search, opening=opening, game=game)
+                              search=search, opening=opening, game=game))
         total_positions = stats.positions
         total_games = stats.games
 
@@ -138,6 +143,7 @@ def main():
     ]
 
     print(f"AOT Multi-Worker Benchmark: {args.mcts_sims} sims, {args.sf_nodes} SF nodes")
+    print("Ownership: independent AOT evaluator + CUDA stream per thread; constants and staging memory replicated.")
     print("=" * 80)
 
     results = []

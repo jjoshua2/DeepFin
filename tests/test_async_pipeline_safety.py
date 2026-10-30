@@ -179,6 +179,8 @@ def test_public_backend_pre_receipt_failure(monkeypatch, kind, method, stage, fa
         ev._device_input = direct_input
     else:
         ev = object.__new__(inference.AOTEvaluator)
+        ev._ownership = threading.RLock()
+        ev._pending = set()
         ev.device, ev._max_batch, ev._n_slots = 'cuda:0', 2, 2
         ev._models, ev._sorted_buckets = {2: model}, [2]
         ev._slot_input_bf16 = [False, False]

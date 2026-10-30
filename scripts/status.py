@@ -3,64 +3,148 @@
 Usage:
     python3 scripts/status.py
     python3 scripts/status.py --run runs/pbt2_small
+
+Run/process association is observed metadata, not immutable runtime identity.
+Linux proc argv/cwd and readable supplied YAML enable automatic selection;
+ambiguous or unavailable observations require --run. External Ray trials need a
+matching params.json work_dir; relative metadata additionally needs one observed
+process cwd. Durable files below an explicit run remain available without Ray.
+The selected result directory also owns the displayed worker log: no global
+session or trial-ID fallback is used for throughput.
 """
 from __future__ import annotations
 
 import argparse
-import glob
 import json
-import os
 import subprocess
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _find_active_ray_session(active_pid: str | None = None) -> Path | None:
-    """Return the Ray session dir for the active process.
+class _ObservedRun(NamedTuple):
+    pid: str
+    config: str
+    run_dir: Path
+    cwd: Path
 
-    Prefers the session whose directory name ends with the active PID (Ray
-    embeds the head-node PID in the session name). Falls back to the most
-    recently modified session that has tune artifacts.
+
+def _running_pids() -> list[str]:
+    """Discover candidates only; ps text is not argv and cannot prove identity."""
+    try:
+        out = subprocess.check_output(["ps", "aux"], text=True)
+    except Exception:
+        return []
+    return sorted({
+        parts[1] for line in out.splitlines()
+        if "chess_anti_engine.run" in line and len(parts := line.split()) > 10
+        and parts[1].isdigit()
+    })
+
+
+def _observe_run(pid: str) -> _ObservedRun | None:
+    """Read Linux process metadata without guessing quoted/relative paths.
+
+    This is an observation, not an immutable copy of startup configuration:
+    YAML and cwd can change. Unsupported or unreadable metadata stays unknown.
+    Only these two root YAML keys affect run identity; run.py filters nulls and
+    applies CLI overrides after YAML, with work_dir="runs" and mode="train".
     """
-    sessions = sorted(
-        Path("/tmp/ray").glob("session_*/"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    # Primary: session name ends with the active PID.
-    if active_pid:
-        for s in sessions:
-            if s.name.endswith(f"_{active_pid}"):
-                return s
-    # Fallback: most recently modified session that has tune artifacts.
-    for s in sessions:
-        artifacts = s / "artifacts"
-        if not artifacts.exists():
-            continue
-        if any(True for _ in artifacts.rglob("progress.csv")):
-            return s
-    return sessions[0] if sessions else None
+    try:
+        proc = Path("/proc") / pid
+        argv = proc.joinpath("cmdline").read_bytes().decode().rstrip("\0").split("\0")
+        cwd = proc.joinpath("cwd").resolve(strict=True)
+        module_index = argv.index("-m")
+        if (not Path(argv[0]).name.startswith("python")
+                or argv[module_index + 1] != "chess_anti_engine.run"
+                or any(x not in {"-u", "-B", "-O", "-OO", "-E", "-s", "-S", "-I"}
+                       for x in argv[1:module_index])):
+            return None
+        options: dict[str, str] = {}
+        arguments = iter(argv[module_index + 2:])
+        names = {"--config", "--work-dir", "--mode"}
+        for arg in arguments:
+            name, sep, value = arg.partition("=")
+            if name in names:
+                options[name] = value if sep else next(arguments)
+                if not options[name] or (not sep and options[name].startswith("-")):
+                    return None
+            elif name == "--" or (name.startswith("--") and any(n.startswith(name) for n in names)):
+                # The real parser accepts abbreviations. Do not guess how an
+                # abbreviated option competes with its many other arguments.
+                return None
+        config = ""
+        defaults: dict[str, object] = {}
+        if "--config" in options:
+            import yaml
+            config_path = (cwd / options["--config"]).resolve()
+            loaded = yaml.safe_load(config_path.read_text())
+            if loaded is not None and not isinstance(loaded, dict):
+                return None
+            defaults = loaded or {}
+            config = str(config_path)
+        mode: object = options.get("--mode", defaults.get("mode", "train"))
+        if mode is None:
+            mode = "train"
+        work_dir: object = options.get("--work-dir", defaults.get("work_dir", "runs"))
+        if work_dir is None:
+            work_dir = "runs"
+        if mode not in ("train", "tune") or not isinstance(work_dir, str) or not work_dir:
+            return None
+        # run.py does not expand '~' in YAML/argv; resolve exactly like Path.
+        return _ObservedRun(pid, config, (cwd / work_dir).resolve(), cwd)
+    except (OSError, ValueError, IndexError, StopIteration, RuntimeError):
+        return None
+    except Exception:
+        # Includes malformed YAML; never print config content or full argv.
+        return None
 
 
-def _find_trial_result_jsons(run_dir: Path, active_pid: str | None = None) -> list[Path]:
-    """Find result.json files for the active session only, fall back to run_dir."""
-    session = _find_active_ray_session(active_pid=active_pid)
-    results = []
-    if session:
-        # Only search the most recently modified experiment subdir so we don't
-        # mix artifacts from a previous run that reused the same session.
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return float("-inf")
+
+
+def _ray_result_matches(path: Path, run_dir: Path, process_cwd: Path | None) -> bool:
+    """Ray writes params.json beside result.json from the actual trial config."""
+    try:
+        params = json.loads(path.with_name("params.json").read_text())
+        work_dir = params.get("work_dir")
+        if not isinstance(work_dir, str) or not work_dir:
+            return False
+        root = Path(work_dir)
+        if not root.is_absolute():
+            if process_cwd is None:
+                return False
+            root = process_cwd / root
+        return root.resolve() == (run_dir / "tune").resolve()
+    except (OSError, ValueError, AttributeError, RuntimeError):
+        return False
+
+
+def _find_trial_result_jsons(run_dir: Path, process_cwd: Path | None = None) -> list[Path]:
+    """Snapshot one matching Ray experiment, otherwise the selected durable root.
+
+    Session PID names and recency only order candidates: each external trial
+    must bind to the selected root via params.json. Relative metadata requires
+    an unambiguous observed driver cwd. Archives under --run remain usable even
+    without a process or Ray metadata (including moved durable run directories).
+    """
+    for session in sorted(Path("/tmp/ray").glob("session_*/"), key=_mtime, reverse=True):
         artifacts = session / "artifacts"
-        if artifacts.exists():
-            exp_dirs = sorted(artifacts.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
-            for exp_dir in exp_dirs:
-                if exp_dir.is_dir():
-                    results = sorted(exp_dir.rglob("result.json"), key=lambda p: p.stat().st_mtime)
-                    if results:
-                        break
-    if not results:
-        results = sorted(run_dir.rglob("result.json"), key=lambda p: p.stat().st_mtime)
-    return results
+        try:
+            experiments = sorted(artifacts.iterdir(), key=_mtime, reverse=True)
+        except OSError:
+            continue
+        for experiment in experiments:
+            results = [p for p in experiment.rglob("result.json")
+                       if _ray_result_matches(p, run_dir, process_cwd)]
+            if results:
+                return sorted(results, key=_mtime)
+    return sorted(run_dir.rglob("result.json"), key=_mtime)
 
 
 def _trial_id_from_result_path(path: Path) -> str:
@@ -75,46 +159,21 @@ def _trial_id_from_result_path(path: Path) -> str:
     return path.parent.name
 
 
-def _latest_worker_log_line(run_dir: Path, trial_id: str, active_pid: str | None = None) -> str:
-    """Get last 'batch done' line from any worker for the given trial."""
-    pattern = str(run_dir / "**" / f"*{trial_id}*" / "**" / "worker.log")
-    logs = glob.glob(pattern, recursive=True)
-    # Also search in active Ray session
-    session = _find_active_ray_session(active_pid=active_pid)
-    if session:
-        pattern2 = str(session / "**" / f"*{trial_id}*" / "**" / "worker.log")
-        logs += glob.glob(pattern2, recursive=True)
-    best_line = ""
-    best_time = 0.0
-    for log in logs:
+def _latest_worker_log_line(trial_dir: Path) -> str:
+    """Read only logs belonging to the exact selected result's trial directory."""
+    for log in sorted((trial_dir / "distributed_workers").rglob("worker.log"),
+                      key=_mtime, reverse=True):
         try:
-            mtime = os.path.getmtime(log)
-            if mtime < best_time:
-                continue
-            with open(log, errors="replace") as f:
-                for line in f:
+            latest = ""
+            with log.open(errors="replace") as stream:
+                for line in stream:
                     if "batch done" in line:
-                        best_line = line.strip()
-            best_time = mtime
-        except Exception:
+                        latest = line.strip()
+            if latest:
+                return latest
+        except OSError:
             pass
-    return best_line
-
-
-def _running_pids() -> dict[str, str]:
-    """Map config path substring → PID for running chess_anti_engine processes."""
-    try:
-        out = subprocess.check_output(["ps", "aux"], text=True)
-    except Exception:
-        return {}
-    result: dict[str, str] = {}
-    for line in out.splitlines():
-        if "chess_anti_engine.run" in line and "grep" not in line:
-            parts = line.split()
-            pid = parts[1]
-            cmd = " ".join(parts[10:])
-            result[cmd] = pid
-    return result
+    return ""
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -125,50 +184,40 @@ def main() -> None:
     ap.add_argument("--all", action="store_true", help="Show all trials, not just most recent per experiment")
     args = ap.parse_args()
 
-    # Find active run
     pids = _running_pids()
-    active_config = ""
-    active_pid = ""
-    for cmd, pid in pids.items():
-        if "--config" in cmd:
-            cfg_idx = cmd.split().index("--config") + 1
-            active_config = cmd.split()[cfg_idx]
-            active_pid = pid
-            break
-
+    observed = [run for pid in pids if (run := _observe_run(pid)) is not None]
     if args.run:
-        run_dir = Path(args.run)
-    elif active_config:
-        # Infer run_dir from config work_dir or config name
-        try:
-            import yaml
-            cfg = yaml.safe_load(Path(active_config).read_text())
-            run_dir = Path(cfg.get("work_dir", f"runs/{Path(active_config).stem}"))
-        except Exception:
-            run_dir = Path(f"runs/{Path(active_config).stem}")
+        run_dir = Path(args.run).expanduser().resolve()
+    elif len({run.run_dir for run in observed}) == 1 and len(observed) == len(pids):
+        run_dir = observed[0].run_dir
     else:
-        print("No active run found. Use --run to specify.")
+        print("No unambiguous observed run. Use --run to specify.")
         return
 
-    run_dir = run_dir.expanduser()
-
+    matching = [run for run in observed if run.run_dir == run_dir]
+    cwds = {run.cwd for run in matching}
+    process_cwd = next(iter(cwds)) if len(cwds) == 1 else None
     print(f"\n{'═'*72}")
-    if active_pid:
-        print(f"  Run:    {run_dir.name}   (PID {active_pid})")
-        print(f"  Config: {active_config}")
+    if len(matching) == 1:
+        print(f"  Run:    {run_dir.name}   (PID {matching[0].pid}; observed metadata)")
+        if matching[0].config:
+            print(f"  Config: {matching[0].config}")
+    elif matching:
+        print(f"  Run:    {run_dir.name}   (multiple matching drivers; observed metadata)")
     else:
-        print(f"  Run:    {run_dir.name}   (not currently running)")
+        print(f"  Run:    {run_dir.name}   (no matching driver observed)")
     print(f"  Time:   {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'═'*72}\n")
 
     # Load all result.json files
-    result_files = _find_trial_result_jsons(run_dir, active_pid=active_pid)
+    result_files = _find_trial_result_jsons(run_dir, process_cwd=process_cwd)
     if not result_files:
         print("  No result.json files found.")
         return
 
     # Group by trial_id, keep only latest result per trial
     by_trial: dict[str, dict] = {}
+    trial_dirs: dict[str, Path] = {}
     for rf in result_files:
         try:
             lines = rf.read_text().splitlines()
@@ -178,7 +227,9 @@ def main() -> None:
             tid = str(r.get("trial_id") or _trial_id_from_result_path(rf))
             existing = by_trial.get(tid)
             if existing is None or int(r.get("iter", 0)) >= int(existing.get("iter", 0)):
+                r["trial_id"] = tid
                 by_trial[tid] = r
+                trial_dirs[tid] = rf.parent
         except Exception:
             pass
 
@@ -265,7 +316,7 @@ def main() -> None:
         if tid in shown:
             continue
         shown.add(tid)
-        line = _latest_worker_log_line(run_dir, tid, active_pid=active_pid)
+        line = _latest_worker_log_line(trial_dirs[tid])
         if line:
             # Extract timestamp and key stats
             parts = line.split(" ", 3)

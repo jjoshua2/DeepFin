@@ -338,8 +338,8 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
 
 # NB: harness's ``work_dir`` is the run root, while the canonical
 # ``resolve_local_override_root`` in ``tune/_utils.py`` expects the *tune*
-# subdir and derives ``run_root = tune_dir.parent``. Pass ``work_dir/"tune"``
-# to bridge the conventions.
+# subdir and derives ``run_root = tune_dir.parent``. Resolve ``work_dir`` first:
+# the helper anchors relative tune directories against the repository for actors.
 
 
 def _load_trial_config_from_state_entry(entry: object) -> tuple[dict[str, object] | None, bool]:
@@ -446,7 +446,7 @@ def _launch_distributed_server(
     if server_root_override:
         server_root = resolve_local_override_root(
             raw_root=server_root_override,
-            tune_work_dir=work_dir / "tune",
+            tune_work_dir=work_dir.resolve() / "tune",
             suffix="server",
         ).resolve()
     else:
@@ -479,6 +479,10 @@ def _launch_distributed_server(
         str(int(base_config.get("distributed_upload_compact_shard_size", base_config.get("shard_size", 2000)))),
         "--upload-compact-max-age-seconds",
         str(float(base_config.get("distributed_upload_compact_max_age_seconds", 90.0))),
+        "--upload-compact-buffer-bytes",
+        str(int(base_config.get("distributed_upload_compact_buffer_bytes", 0))),
+        "--upload-compact-buffer-uploads",
+        str(int(base_config.get("distributed_upload_compact_buffer_uploads", 2000))),
     ]
   # Flag-gated volunteer registration. Baked into the server command line, so
   # it is DRIVER-LAUNCH-FIXED (classified in trainable_config_ops) and takes a

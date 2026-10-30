@@ -36,6 +36,10 @@ def main() -> None:
              "is restart-gated, so it detonates only after a full run.py "
              "restart. Default off.",
     )
+    ap.add_argument("--upload-compact-buffer-bytes", type=int, default=0,
+                    help="Opt-in retained compactor ndarray-payload budget; 0 disables.")
+    ap.add_argument("--upload-compact-buffer-uploads", type=int, default=2000,
+                    help="Maximum resident source uploads when the byte budget is enabled.")
     args = ap.parse_args()
 
     try:
@@ -67,6 +71,8 @@ def main() -> None:
         max_worker_delta_per_rebalance=int(args.max_worker_delta_per_rebalance),
         upload_compact_shard_size=int(args.upload_compact_shard_size),
         upload_compact_max_age_seconds=float(args.upload_compact_max_age_seconds),
+        upload_compact_buffer_bytes=int(args.upload_compact_buffer_bytes),
+        upload_compact_buffer_uploads=int(args.upload_compact_buffer_uploads),
     )
 
     uvicorn.run(app, host=str(args.host), port=int(args.port), log_level="info")
