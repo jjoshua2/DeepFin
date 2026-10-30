@@ -15,6 +15,35 @@ import pytest
 from scripts import common_input_batch as batch
 
 
+def _owned_child_state(pid: int) -> str | None:
+    try:
+        text = Path(f"/proc/{pid}/stat").read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    return text.rsplit(")", 1)[1].split()[0]
+
+
+@pytest.mark.parametrize("state", ["S", "Z"])
+def test_owned_child_stat_state(monkeypatch: pytest.MonkeyPatch, state: str) -> None:
+    monkeypatch.setattr(Path, "read_text", lambda self: f"123 (fixture child) {state} 0")
+    assert _owned_child_state(123) == state
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError, ProcessLookupError, PermissionError])
+def test_owned_child_stat_disappearance(
+    monkeypatch: pytest.MonkeyPatch, error: type[OSError],
+) -> None:
+    def read(_path: Path) -> str:
+        raise error("fixture stat read")
+
+    monkeypatch.setattr(Path, "read_text", read)
+    if error is PermissionError:
+        with pytest.raises(PermissionError, match="fixture stat read"):
+            _owned_child_state(123)
+    else:
+        assert _owned_child_state(123) is None
+
+
 @pytest.fixture(autouse=True)
 def metadata_cpu_availability(monkeypatch: pytest.MonkeyPatch) -> None:
     actual = set(os.sched_getaffinity(0))
@@ -465,16 +494,12 @@ q=p/'common_input_qualification.json';q.write_text('{}')
             assert env["pythonpath"].endswith(plan["checkout"])
             if (p / "grandchild.pid").exists():
                 pid = int((p / "grandchild.pid").read_text())
-                status = Path(f"/proc/{pid}/stat")
                 # SIGKILL delivery and orphan exit are asynchronous. Waiting
                 # for the lane leader does not wait for this grandchild.
                 deadline = time.monotonic() + 2
                 while True:
-                    try:
-                        state = status.read_text().rsplit(")", 1)[1].split()[0]
-                    except FileNotFoundError:
-                        break
-                    if state == "Z":
+                    state = _owned_child_state(pid)
+                    if state is None or state == "Z":
                         break
                     assert time.monotonic() < deadline, (
                         f"owned grandchild {pid} remained in state {state}"
@@ -622,16 +647,8 @@ b.lane(plan,pathlib.Path(sys.argv[1]),'f'*64,source,float(sys.argv[2]))
             pid = int((parent / "grandchild.pid").read_text())
             deadline = time.monotonic() + 2
             while True:
-                try:
-                    child_state = (
-                        Path(f"/proc/{pid}/stat")
-                        .read_text()
-                        .rsplit(")", 1)[1]
-                        .split()[0]
-                    )
-                except FileNotFoundError:
-                    break
-                if child_state == "Z":
+                child_state = _owned_child_state(pid)
+                if child_state is None or child_state == "Z":
                     break
                 assert time.monotonic() < deadline, (
                     "owned grandchild survived lane failure"
