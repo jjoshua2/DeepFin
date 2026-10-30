@@ -24,6 +24,10 @@ import numcodecs
 import numpy as np
 import pytest
 import zarr
+import zarr.core as zarr_core
+import zarr.errors as zarr_errors
+import zarr.meta as zarr_meta
+import zarr.storage as zarr_storage
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "chess_anti_engine/source/ceres_saved_game.py"
@@ -96,7 +100,7 @@ def _archive(
     missing: bool = False, subgroup: bool = False, compressor: Any = None,
 ) -> tuple[Path, dict[str, np.ndarray]]:
     arrays = _arrays()
-    store = zarr.storage.MemoryStore()
+    store = zarr_storage.MemoryStore()
     group = zarr.group(store=store)
     for name, array in arrays.items():
         group.create_dataset(name, data=array, chunks=(1, *array.shape[1:]),
@@ -131,7 +135,7 @@ def _no_decode(monkeypatch: pytest.MonkeyPatch) -> tuple[list[Any], list[Any]]:
         raise AssertionError("unsafe metadata reached array slicing")
 
     monkeypatch.setattr(numcodecs, "get_codec", codec)
-    monkeypatch.setattr(zarr.core, "get_codec", codec)
+    monkeypatch.setattr(zarr_core, "get_codec", codec)
     monkeypatch.setattr(zarr.Array, "__getitem__", sliced)
     return codec_calls, slice_calls
 
@@ -169,8 +173,8 @@ def test_structured_witness_reaches_codec_sentinel_without_preflight(
     with zipfile.ZipFile(path) as archive:
         raw = archive.read("x/.zarray")
     codecs, slices = _no_decode(monkeypatch)
-    with pytest.raises(zarr.errors.MetadataError, match="error decoding metadata") as caught:
-        zarr.meta.Metadata2.decode_array_metadata(raw)
+    with pytest.raises(zarr_errors.MetadataError, match="error decoding metadata") as caught:
+        zarr_meta.Metadata2.decode_array_metadata(raw)
     assert codecs == [{"id": "pickle"}]
     assert isinstance(caught.value.__cause__, AssertionError)
     assert "never construct or return a codec" in str(caught.value.__cause__)
@@ -304,7 +308,7 @@ def test_approved_metadata_reused_or_refused_if_source_mutates(
 
     monkeypatch.setattr(zarr, "ZipStore", ChangingStore)
     monkeypatch.setattr(numcodecs, "get_codec", codec)
-    monkeypatch.setattr(zarr.core, "get_codec", codec)
+    monkeypatch.setattr(zarr_core, "get_codec", codec)
     monkeypatch.setattr(zarr.Array, "__getitem__", track)
     monkeypatch.setitem(reader._arrays_from_zip.__globals__, "_approved_saved_game_metadata",
                         change_after_validation)
