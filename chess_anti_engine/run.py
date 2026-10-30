@@ -664,7 +664,8 @@ def main() -> None:
     ap.add_argument("--swa-start", type=int, default=0, help="Step to start SWA averaging (0=disabled)")
     ap.add_argument("--swa-freq", type=int, default=50, help="SWA update frequency in steps")
     ap.add_argument("--syzygy-path", type=str, default=None, help="Path to Syzygy tablebase directory")
-    ap.add_argument("--syzygy-policy", action="store_true",
+    ap.add_argument("--syzygy-rescore-policy", "--syzygy-policy",
+                    dest="syzygy_rescore_policy", action="store_true",
                     help="Also rescore policy targets with DTZ-optimal best move in TB positions")
     ap.add_argument(
         "--timeout-adjudication-threshold",
