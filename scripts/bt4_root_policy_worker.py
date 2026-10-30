@@ -30,6 +30,7 @@ import numpy as np
 
 from chess_anti_engine import tablebase
 from chess_anti_engine.encoding import _lc0_ext, rep_fix
+from chess_anti_engine.encoding.encode import input_plane_count
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
 from chess_anti_engine.teacher_dispatch import TeacherDispatcher
 from scripts.shared_teacher_generation import BT4GamePool, DurableWriter
@@ -499,7 +500,7 @@ def _game_payload(
         }
     else:
         arrays = {
-            "x": np.empty((0, 0, 8, 8), dtype=np.float32),
+            "x": np.empty((0, input_plane_count(INPUT_EXTRA_FEATURES), 8, 8), dtype=np.float32),
             "policy_t1": np.empty((0, COMPACT_POLICY_SIZE), dtype=np.float32),
             "wdl_raw": np.empty((0, 3), dtype=np.float32),
         }
