@@ -5,8 +5,8 @@ automatically). It is called by monitor_fen.sh after the deep-SF harvest gate
 and remains usable manually for ledgered one-off batches. It dedupes against
 the active pool AND the retired store, writes a NEW versioned list (cache keys
 are path-based, so in-place edits would be ignored), and repoints
-opening_fen_list_path in the live yaml via the same validated-or-reverted path
-the retire step uses. The path is live-reloaded, so no restart is needed.
+opening_fen_list_path in the live yaml via the same staged-validation/atomic-publication path
+the retire step uses (no rollback over another writer). The path is live-reloaded, so no restart is needed.
 
 Usage:
   PYTHONPATH=. python3 scripts/blindspot_feed_step.py --batch data/v4_batch.txt --tag fedv4_ck68
@@ -103,7 +103,10 @@ def main() -> None:
         print(f"[feed] ABORT: new list loads only {n_loaded} usable seeds "
               f"(< {len(active)} currently active) — not repointing", file=sys.stderr)
         sys.exit(1)
-    if not _repoint_yaml(args.yaml, os.path.abspath(new_path)):
+    if not _repoint_yaml(
+            args.yaml, os.path.abspath(new_path), expected_seed_path=seed_path):
+        # False can mean postcommit uncertainty: no LIVE/state-success claim,
+        # and never assume the prior YAML was restored.
         sys.exit(1)
     if unretired:
         # Re-load just before writing: the retire step runs on cadence against

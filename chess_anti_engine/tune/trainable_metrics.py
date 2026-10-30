@@ -304,11 +304,12 @@ def _compute_drift_metrics(
 
     dm.data_policy_entropy = _mean_entropy(train_batch)
 
-  # Unique positions (approximate via row-hash).
+    # Fraction of distinct encoded observation rows, not canonical board positions.
+    # Compare full float32 bit rows: sums collapse equal-popcount permutations.
     train_x = train_batch["x"]
-    x_flat = train_x.reshape(train_x.shape[0], -1)
-    row_sums = x_flat.view(np.uint32).reshape(x_flat.shape[0], -1).sum(axis=1)
-    dm.data_unique_positions = float(np.unique(row_sums).shape[0]) / float(max(1, train_x.shape[0]))
+    x_flat = np.ascontiguousarray(train_x).reshape(train_x.shape[0], -1)
+    row_bytes = x_flat.view(np.dtype((np.void, x_flat.shape[1] * x_flat.dtype.itemsize))).reshape(-1)
+    dm.data_unique_positions = float(np.unique(row_bytes).shape[0]) / float(max(1, train_x.shape[0]))
 
   # WDL balance: entropy of WDL distribution.
     p = _wdl_hist(train_batch)

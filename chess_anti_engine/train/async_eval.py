@@ -448,6 +448,8 @@ class AsyncTestEval:
                 )
                 with self._lock:
                     self._result = metrics
+                    # This completion supersedes any abandoned prior failure.
+                    self._exc = None
                     self._source_iter = work.source_iter
             except BaseException as exc:
                 log.exception("async test eval failed")
