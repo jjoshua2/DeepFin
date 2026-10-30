@@ -61,7 +61,7 @@ class Seed:
 
 def parse_seeds(paths: list[str]) -> list[Seed]:
     seeds: list[Seed] = []
-    seen: set[tuple[int, float, float]] = set()
+    seen: set[tuple[int, int | None, str]] = set()
     for p in paths:
         with open(p, encoding="utf-8") as fh:
             for raw in fh:
@@ -74,7 +74,9 @@ def parse_seeds(paths: list[str]) -> list[Seed]:
                     continue
                 nq, sq, gid = float(m[1]), float(m[2]), int(m[4])
                 ply = int(m[5]) if m[5] is not None else None
-                key = (gid, round(nq, 2), round(sq, 2))
+                # Scores are rounded measurements, not capture identity. Keep the full
+                # seed body (including history), and never infer a legacy ply.
+                key = (gid, ply, body.strip())
                 if key in seen:
                     continue
                 seen.add(key)
@@ -385,7 +387,8 @@ def main() -> None:
                 # SAME tag order as --dump-all so blindspot_deepsf_calibrate.parse_all
                 # (bucket..sq..outcome..game) can consume it as a recheck input (Codex #125).
                 fh.write(f"{s.line}  # bucket={v.bucket} nq={s.nq:.2f} sq={s.sq:.2f} "
-                         f"outcome={v.outcome} game={s.game_id}\n")
+                         f"outcome={v.outcome} game={s.game_id}"
+                         f"{'' if s.ply is None else f' ply={s.ply}'}\n")
         print(f"\n[continuation] wrote {len(notconf)} not-confirmed seeds -> {args.dump_refuted}")
 
     if args.dump_all:
@@ -394,7 +397,8 @@ def main() -> None:
                 if v.seed_ply is None:
                     continue  # unlocated / unrecoverable: nothing to recheck
                 fh.write(f"{s.line}  # bucket={v.bucket} nq={s.nq:.2f} sq={s.sq:.2f} "
-                         f"outcome={v.outcome} game={s.game_id}\n")
+                         f"outcome={v.outcome} game={s.game_id}"
+                         f"{'' if s.ply is None else f' ply={s.ply}'}\n")
         print(f"[continuation] wrote all located seeds -> {args.dump_all}")
 
 

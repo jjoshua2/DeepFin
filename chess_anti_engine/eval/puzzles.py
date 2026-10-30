@@ -19,6 +19,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from operator import index
 
 import chess
 import numpy as np
@@ -260,14 +261,24 @@ def _parse_setup_and_best(
     return board, best
 
 
+def _validate_solution_sequence(
+    board: chess.Board, sequence: tuple[chess.Move, ...],
+) -> None:
+    """Reject an illegal continuation without mutating the puzzle position."""
+    position = board.copy()
+    for step, move in enumerate(sequence):
+        if move not in position.legal_moves:
+            raise ValueError(f"illegal solution move {move.uci()} at step {step + 1}")
+        position.push(move)
+
+
 def _parse_solution_sequence(
-    move_tokens: list[str], best: chess.Move,
+    move_tokens: list[str], board: chess.Board,
 ) -> tuple[chess.Move, ...]:
-    """Parse the rest of the solution sequence; fall back to [best] on error."""
-    try:
-        return tuple(chess.Move.from_uci(tok) for tok in move_tokens[1:])
-    except (ValueError, chess.InvalidMoveError):
-        return (best,)
+    """Parse and validate every user move and forced opponent reply."""
+    sequence = tuple(chess.Move.from_uci(tok) for tok in move_tokens[1:])
+    _validate_solution_sequence(board, sequence)
+    return sequence
 
 
 def _row_to_puzzle(
@@ -296,6 +307,11 @@ def _row_to_puzzle(
     if parsed is None:
         return None
     board, best = parsed
+    try:
+        sequence = _parse_solution_sequence(move_tokens, board)
+    except ValueError as exc:
+        _log.warning("Skipping puzzle %s: invalid solution sequence (%s)", row.get("PuzzleId", ""), exc)
+        return None
 
     return Puzzle(
         board=board,
@@ -303,7 +319,7 @@ def _row_to_puzzle(
         puzzle_id=(row.get("PuzzleId") or "").strip(),
         rating=rating if rating > 0 else None,
         themes=themes,
-        solution_sequence=_parse_solution_sequence(move_tokens, best),
+        solution_sequence=sequence,
     )
 
 
@@ -323,8 +339,9 @@ def load_lichess_csv(
     The FEN is the position *before* the opponent's setup move; ``Moves`` is a
     space-separated UCI sequence whose first move is that setup. We apply the
     setup, then take the second move as the puzzle's expected best move (the
-    user's first reply). Multi-move puzzle continuations are ignored — top-1
-    accuracy on the post-setup position matches LC0's blog methodology.
+    user's first reply). The full alternating continuation is validated and
+    retained for policy-sequence scoring; value/MCTS scoring uses the first
+    move. Invalid continuations are skipped with a warning, not shortened.
     """
     p = Path(path)
     if not p.exists():
@@ -533,6 +550,15 @@ def run_policy_sequence_eval(
     # ~3.8s that every `from chess_anti_engine.eval import ...` would pay.
     from chess_anti_engine.eval.era_probe import eager_module
 
+    # Programmatic suites bypass CSV validation. Refuse the entire evaluation
+    # before model mutation rather than silently changing its denominator.
+    for puzzle in suite.puzzles:
+        if puzzle.solution_sequence:
+            try:
+                _validate_solution_sequence(puzzle.board, puzzle.solution_sequence)
+            except ValueError as exc:
+                raise ValueError(f"puzzle {puzzle.puzzle_id!r}: {exc}") from exc
+
     model.eval()
     module = eager_module(model)
     total = len(suite)
@@ -627,48 +653,64 @@ def run_value_head_puzzle_eval(
     # Local import: see run_policy_sequence_eval.
     from chess_anti_engine.eval.era_probe import eager_module
 
+    batch_size = index(batch_size)
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
     model.eval()
     module = eager_module(model)
     total = len(suite)
     correct_flags = [False] * total
+    best_moves: list[chess.Move | None] = [None] * total
+    best_scores = np.full(total, -np.inf, dtype=np.float32)
+    pending_x: list[np.ndarray] = []
+    pending_moves: list[chess.Move] = []
+    pending_groups: list[tuple[int, int]] = []  # puzzle index, batch start
 
-    # Flatten (puzzle_idx, candidate_move) pairs across the suite, then batch.
-    flat_idx: list[int] = []
-    flat_moves: list[chess.Move] = []
-    flat_x: list[np.ndarray] = []
-    flat_groups: list[tuple[int, int]] = []  # (puzzle_idx, # legal moves) — used to slice scores
-
-    legal_per_puzzle: list[list[chess.Move]] = []
-    for puzzle in suite.puzzles:
-        legal = list(puzzle.board.legal_moves)
-        legal_per_puzzle.append(legal)
-        for mv in legal:
-            puzzle.board.push(mv)
-            flat_x.append(encode_position_for_model(model, puzzle.board))
-            puzzle.board.pop()
-            flat_moves.append(mv)
-        flat_groups.append((len(flat_idx), len(legal)))
-        flat_idx.extend([len(legal_per_puzzle) - 1] * len(legal))
-
-    # Batched value-head forward.
-    pos_count = len(flat_x)
-    scores = np.empty(pos_count, dtype=np.float32)
-    for start in range(0, pos_count, batch_size):
-        end = min(start + batch_size, pos_count)
-        x = torch.from_numpy(np.stack(flat_x[start:end])).to(device, non_blocking=True)
+    def flush() -> None:
+        if not pending_x:
+            return
+        x = torch.from_numpy(np.stack(pending_x)).to(device, non_blocking=True)
         out = module(x)
         wdl_logits = out["wdl"] if isinstance(out, dict) else out[1]
         wdl_p = torch.softmax(wdl_logits, dim=-1).float().cpu().numpy()
-        # After-push board is opponent's POV: P_opp(L) - P_opp(W) = mover's signed value.
-        scores[start:end] = wdl_p[:, 2] - wdl_p[:, 0]
+        # After-push board is opponent's POV; retain the original signed value.
+        scores = wdl_p[:, 2] - wdl_p[:, 0]
+        for group_idx, (puzzle_idx, start) in enumerate(pending_groups):
+            end = (
+                pending_groups[group_idx + 1][1]
+                if group_idx + 1 < len(pending_groups) else len(pending_x)
+            )
+            best = start + int(np.argmax(scores[start:end]))
+            score = scores[best]
+            previous = best_scores[puzzle_idx]
+            # Strict comparison preserves first-argmax ties across batches.
+            # NumPy argmax also selects the first NaN, if one is present.
+            if (
+                best_moves[puzzle_idx] is None or score > previous
+                or (np.isnan(score) and not np.isnan(previous))
+            ):
+                best_scores[puzzle_idx] = score
+                best_moves[puzzle_idx] = pending_moves[best]
+        pending_x.clear()
+        pending_moves.clear()
+        pending_groups.clear()
 
-    for puzzle_idx, (slot_start, n_legal) in enumerate(flat_groups):
-        if n_legal == 0:
-            continue
-        slot = scores[slot_start:slot_start + n_legal]
-        best = int(np.argmax(slot))
-        chosen = flat_moves[slot_start + best]
-        if chosen in suite.puzzles[puzzle_idx].best_moves:
+    for puzzle_idx, puzzle in enumerate(suite.puzzles):
+        for move in list(puzzle.board.legal_moves):
+            if not pending_groups or pending_groups[-1][0] != puzzle_idx:
+                pending_groups.append((puzzle_idx, len(pending_x)))
+            puzzle.board.push(move)
+            try:
+                pending_x.append(encode_position_for_model(model, puzzle.board))
+            finally:
+                puzzle.board.pop()
+            pending_moves.append(move)
+            if len(pending_x) == batch_size:
+                flush()
+    flush()
+
+    for puzzle_idx, chosen in enumerate(best_moves):
+        if chosen is not None and chosen in suite.puzzles[puzzle_idx].best_moves:
             correct_flags[puzzle_idx] = True
 
     correct = sum(correct_flags)

@@ -21,19 +21,27 @@ def load(p: Path) -> dict[str, np.ndarray]:
 
 def paired(a: dict, b: dict, key: str, n_boot: int = 10000, seed: int = 0) -> dict:
     """b - a, averaged over rows, CI by resampling GAMES."""
+    if n_boot <= 0:
+        raise ValueError("n_boot must be positive")
     if not np.array_equal(a["game_id"], b["game_id"]):
         raise SystemExit("row order differs between dumps")
     m = (a["base"] > 0) & (b["base"] > 0)
     d = (b[key] - a[key])[m]
     g = a["game_id"][m]
     ug, inv = np.unique(g, return_inverse=True)
+    if ug.size == 0:
+        raise ValueError("no paired eligible games")
     # per-game sum and count so a bootstrap over games preserves the row-mean estimand
     s = np.bincount(inv, weights=d, minlength=ug.size)
     c = np.bincount(inv, minlength=ug.size).astype(np.float64)
     est = s.sum() / c.sum()
     rng = np.random.default_rng(seed)
-    idx = rng.integers(0, ug.size, size=(n_boot, ug.size))
-    boot = s[idx].sum(1) / c[idx].sum(1)
+    # Preserve the same RNG draw order and game-clustered row-mean estimand,
+    # without retaining an n_boot-by-n_games index matrix and gathered copies.
+    boot = np.empty(n_boot, dtype=np.float64)
+    for i in range(n_boot):
+        idx = rng.integers(0, ug.size, size=ug.size)
+        boot[i] = s[idx].sum() / c[idx].sum()
     lo, hi = np.percentile(boot, [2.5, 97.5])
     return {"delta": float(est), "lo": float(lo), "hi": float(hi),
             "n_rows": int(m.sum()), "n_games": int(ug.size), "sd_boot": float(boot.std())}

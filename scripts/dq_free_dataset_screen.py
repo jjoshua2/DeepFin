@@ -61,6 +61,7 @@ from scripts.tail_censor_screen import (
     check_invariants,
     collect,
     select_shards,
+    shard_source_key,
 )
 
 
@@ -127,38 +128,54 @@ def recover_search_moves(
     """
     from scripts.cast_probe import recover_played_move
 
-    want = {(r.game_id, r.ply + 1) for r in rows}
-    children: dict[tuple[int, int], np.ndarray] = {}
-    encodings: dict[str, str] = {}
+    want = {(r.source_key, r.game_id, r.ply + 1) for r in rows
+            if r.source_key is not None}
+    children: dict[tuple[tuple[str, str], int, int],
+                   tuple[np.ndarray, tuple[str, str]]] = {}
+    conflicts: set[tuple[tuple[str, str], int, int]] = set()
     for shard in shards:
         try:
-            arrs, _ = load_shard_arrays(shard)
+            arrs, metadata = load_shard_arrays(shard)
         except (OSError, ValueError, KeyError):
             continue
-        encodings.setdefault(
-            "hist", str(np.asarray(arrs["_input_history_encoding"]).item()))
-        encodings.setdefault(
-            "pol", str(np.asarray(arrs["_policy_encoding"]).item()))
+        source_key = shard_source_key(shard, metadata)
+        encodings = (str(np.asarray(arrs["_input_history_encoding"]).item()),
+                     str(np.asarray(arrs["_policy_encoding"]).item()))
         gid = np.asarray(arrs["game_id"])
         ply = np.asarray(arrs["ply_index"])
         x = np.asarray(arrs["x"])
         for i in range(gid.shape[0]):
-            key = (int(gid[i]), int(ply[i]))
-            if key in want:
-                children[key] = x[i]
+            key = (source_key, int(gid[i]), int(ply[i]))
+            if key not in want:
+                continue
+            previous = children.get(key)
+            if previous is not None:
+                if previous[1] != encodings or not np.array_equal(previous[0], x[i]):
+                    conflicts.add(key)
+            else:
+                children[key] = (x[i], encodings)
 
     stats = {"no_child": 0, "ambiguous": 0, "recovered": 0}
     out: list[int | None] = []
     for row, parent_x in zip(rows, planes):
-        child = children.get((row.game_id, row.ply + 1))
+        if row.source_key is None:
+            stats["no_child"] += 1
+            out.append(None)
+            continue
+        key = (row.source_key, row.game_id, row.ply + 1)
+        child = children.get(key)
         if child is None:
             stats["no_child"] += 1
             out.append(None)
             continue
+        if key in conflicts or row.encodings != child[1]:
+            stats["ambiguous"] += 1
+            out.append(None)
+            continue
         mv = recover_played_move(
-            parent_x, child,
-            input_history_encoding=encodings["hist"],
-            policy_encoding=encodings["pol"],
+            parent_x, child[0],
+            input_history_encoding=child[1][0],
+            policy_encoding=child[1][1],
         )
         if mv is None:
             stats["ambiguous"] += 1
@@ -290,6 +307,8 @@ def attrition_bias(
             float(int(row.legal[j]) in row.surfaced))
         bucket.setdefault("r_k", []).append(float(row.r_k))
         bucket.setdefault("ply", []).append(float(row.ply))
+    if not keep or not drop:
+        return []
     return [
         (name, float(np.mean(keep[name])), float(np.mean(drop[name])))
         for name in sorted(keep)
@@ -384,6 +403,9 @@ def main() -> int:
     print(f"    prior == search (nothing to adjudicate)  {pairs['same_move']:6d}"
           f"   {pairs['same_move']/u:.3f}")
     print(f"    DISAGREE                                 {dis:6d}   {dis/u:.3f}")
+    res["pairs"] = pairs
+    res["recovery"] = rec
+    res["confidence_curves"] = confidence_curves(obs)
     if dis:
         print(f"      both already in SF6 (ΔQ FREE)          {pairs['both_surfaced']:6d}"
               f"   {pairs['both_surfaced']/dis:.3f}")
@@ -395,7 +417,7 @@ def main() -> int:
               "      `searchmoves a_prior a_search` at MultiPV 2 returns both.\n"
               "      T×T is informationally harder, NOT 2x the query budget.\n")
 
-        curves = confidence_curves(obs)
+        curves = res["confidence_curves"]
         if curves:
             # ⚑ The denominator is printed IN the title. The previous revision's
             # table summed to a different n than the headline split directly
@@ -410,24 +432,38 @@ def main() -> int:
             print(f"    {'confidence':<14}{'n':>6}{'P(any)':>9}{'P(S×T)':>9}{'P(T×T)':>9}")
             for label, n, p_any, p_st, p_tt in curves:
                 print(f"    {label:<14}{n:>6}{p_any:>9.3f}{p_st:>9.3f}{p_tt:>9.3f}")
-        res["pairs"] = {k: v for k, v in pairs.items() if not isinstance(v, list)}
-        res["confidence_curves"] = curves
 
+    eligible = sum(row.prior is not None for row in rows)
+    recovered = sum(row.prior is not None and move is not None
+                    for row, move in zip(rows, search_moves))
+    dropped = eligible - recovered
+    status = ("no_eligible_rows" if not eligible else
+              "no_recovered_rows" if not recovered else
+              "no_dropped_rows" if not dropped else "comparison_available")
+    res["attrition_population"] = {
+        "eligible": eligible, "recovered": recovered, "dropped": dropped,
+        "prior_absent": len(rows) - eligible, "status": status,
+    }
     bias = attrition_bias(rows, search_moves)
+    res["attrition_bias"] = [
+        {"observable": n, "recovered": k, "dropped": d} for n, k, d in bias
+    ]
     if bias:
         print("\n⚑ STORED-CHILD SELECTION BIAS — recovered vs dropped rows.\n"
               "  All observables are computable BEFORE recovery, so a gap here is\n"
               "  a selection effect. 75% attrition is too large to assume random.")
         print(f"    {'observable':<16}{'recovered':>11}{'dropped':>10}{'ratio':>9}")
         for name, kept, dropped in bias:
-            ratio = kept / dropped if dropped else float("nan")
-            print(f"    {name:<16}{kept:>11.3f}{dropped:>10.3f}{ratio:>9.3f}")
-        res["attrition_bias"] = [
-            {"observable": n, "recovered": k, "dropped": d} for n, k, d in bias
-        ]
+            ratio = f"{kept / dropped:.3f}" if dropped else "n/a"
+            print(f"    {name:<16}{kept:>11.3f}{dropped:>10.3f}{ratio:>9}")
+    else:
+        print(f"\nSTORED-CHILD SELECTION BIAS unavailable: {status} "
+              f"(recovered={recovered}, dropped={dropped}, "
+              f"prior_absent={len(rows) - eligible}).")
 
     if args.json_out:
-        out = {k: v for k, v in res.items() if not isinstance(v, list)}
+        out = {k: v for k, v in res.items()
+               if k not in {"free_regret", "buyable_regret"}}
         out["free_regret_summary"] = _q(res["free_regret"])
         out["buyable_regret_summary"] = _q(res["buyable_regret"])
         out["k"] = args.k

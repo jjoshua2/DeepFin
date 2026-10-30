@@ -7,6 +7,8 @@ re-feed of original seed lines (including ``# weight=N`` markers).
 """
 from __future__ import annotations
 
+import pytest
+
 from scripts.blindspot_retire_step import (
     DEEP_BELOW,
     REFEED_ABOVE,
@@ -241,3 +243,94 @@ def test_probation_decision_end_to_end() -> None:
     assert applied_retire == {"x"}
     assert applied_refeed == {"r_blind"}
     assert keep == ["line-y", "line-z", "blind-fen w - - 0 1 # weight=7"]
+
+
+def test_duplicate_aware_rows_require_distinct_cadences() -> None:
+    state: dict[str, int] = {}
+    deep: dict[str, bool] = {}
+    for cadence in (1, 2):
+        retired, resolved = update_streaks(
+            ["same", "same"], [-0.6, -0.6], state,
+            resolved_below=-0.4, min_consecutive=2,
+            deep_seen=deep, require_deep_read=True,
+        )
+        assert resolved == 2  # Preserve the existing row-based report count.
+        assert state == {"same": cadence}
+        assert deep == {"same": True}
+        assert retired == ({"same"} if cadence == 2 else set())
+        # The existing persisted state format keeps a single counter per key.
+        state, _, deep = load_retire_state(dump_retire_state(state, {}, deep))
+
+
+@pytest.mark.parametrize("scores", [
+    [-0.1, -0.6, -0.6], [-0.6, -0.1, -0.6], [-0.6, -0.6, -0.1],
+    [float("nan"), -0.6, -0.6], [-0.6, -0.6, float("nan")],
+])
+def test_conflicting_duplicates_reset_one_streak(scores: list[float]) -> None:
+    state = {"same": 1, "untouched": 7}
+    deep = {"same": True, "untouched": True}
+    retired, resolved = update_streaks(
+        ["same"] * 3, scores, state, resolved_below=-0.4, min_consecutive=2,
+        deep_seen=deep, require_deep_read=True,
+    )
+    assert retired == set()
+    assert resolved == 2
+    assert state == {"same": 0, "untouched": 7}
+    assert deep == {"same": False, "untouched": True}
+
+
+@pytest.mark.parametrize("scores", [[-0.6, -0.41], [-0.41, -0.6]])
+def test_duplicate_deep_evidence_must_be_consistent(scores: list[float]) -> None:
+    state: dict[str, int] = {}
+    deep: dict[str, bool] = {}
+    for _ in range(2):
+        retired, resolved = update_streaks(
+            ["same", "same"], scores, state, resolved_below=-0.4,
+            min_consecutive=2, deep_seen=deep, require_deep_read=True,
+        )
+        assert retired == set()
+        assert resolved == 2
+        assert not deep.get("same", False)
+    assert state["same"] == 2
+    retired, _ = update_streaks(
+        ["same", "same"], [-0.6, -0.7], state, resolved_below=-0.4,
+        min_consecutive=2, deep_seen=deep, require_deep_read=True,
+    )
+    assert retired == {"same"}
+    assert state["same"] == 3
+    assert deep["same"] is True
+    # Established deep evidence remains sticky through an all-aware cadence.
+    retired, _ = update_streaks(
+        ["same", "same"], scores, state, resolved_below=-0.4,
+        min_consecutive=2, deep_seen=deep, require_deep_read=True,
+    )
+    assert retired == {"same"}
+    assert state["same"] == 4
+    assert deep["same"] is True
+
+
+def test_duplicate_keys_preserve_distinct_full_position_identity() -> None:
+    from scripts.blindspot_retire_step import _placement
+
+    white = _placement("8/8/8/8/8/8/K7/7k w - - 0 1")
+    black = _placement("8/8/8/8/8/8/K7/7k b - - 0 1")
+    assert white != black
+    state: dict[str, int] = {}
+    retired, resolved = update_streaks(
+        [white, white, black], [-0.6, -0.6, 0.1], state,
+        resolved_below=-0.4, min_consecutive=2,
+    )
+    assert retired == set()
+    assert resolved == 2
+    assert state == {white: 1, black: 0}
+
+
+def test_duplicate_streaks_without_deep_tracking_keep_row_counts() -> None:
+    state: dict[str, int] = {}
+    retired, resolved = update_streaks(
+        ["a", "b", "a", "b"], [-0.6, -0.41, -0.6, -0.42], state,
+        resolved_below=-0.4, min_consecutive=1,
+    )
+    assert retired == {"a", "b"}
+    assert state == {"a": 1, "b": 1}
+    assert resolved == 4
