@@ -3875,6 +3875,7 @@ def merge_search(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
     return {
         "positions_searched": positions,
         "searches": sum(int(r["search"]["searches"]) for r in results),
+        "engine_respawns": sum(int(r["search"]["engine_respawns"]) for r in results),
         "search_s": search_s,
         "s_per_position": (search_s / positions) if positions else math.nan,
         "anomalies": dict(anomalies),
