@@ -4,7 +4,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.blindspot_continuation import load_game_rows_from_jsonl
+import pytest
+
+from scripts.blindspot_continuation import GameRow, Seed, Verdict, classify, load_game_rows_from_jsonl
 
 
 # `wdl_target` convention: 0 = win / 1 = draw / 2 = loss, side-to-move POV.
@@ -82,3 +84,117 @@ def test_a_line_without_a_usable_root_fen_is_skipped(tmp_path: Path) -> None:
     games = load_game_rows_from_jsonl([str(path)])
 
     assert set(games) == {7}
+
+
+def _verdict(rows: list[GameRow] | None) -> Verdict:
+    seed = Seed("fixture", 0.1, -0.7, 1, "fixture", 10)
+    return classify(seed, rows, recover_to=-0.2, still_lost=-0.5,
+                    confirm_h=8, horizons=[2, 4, 8], tol=0.03)
+
+
+def _row(gap: int, sf_q: float, *, outcome: int = 2) -> GameRow:
+    return GameRow(10 + gap, 0.1, sf_q, outcome, False)
+
+
+@pytest.mark.parametrize("label", [-0.7, 0.1])
+@pytest.mark.parametrize("recorded_gap", [8, 40])
+def test_missing_horizon_labels_do_not_reuse_stale_verdict(label: float, recorded_gap: int) -> None:
+    verdict = _verdict([_row(0, -0.7), _row(2, label), _row(recorded_gap, float("nan"))])
+    assert verdict.bucket == "INCONCLUSIVE"
+    assert verdict.profile == {2: label, 4: None, 8: None}
+    assert verdict.reached_terminal is (recorded_gap <= 8)
+    assert verdict.outcome == 2
+
+
+@pytest.mark.parametrize(("early", "horizon", "expected"), [
+    (0.1, -0.7, "CONFIRMED_LOST"), (-0.7, 0.1, "REFUTED"),
+    (-0.7, -0.3, "INCONCLUSIVE"),
+])
+def test_fully_labelled_horizon_keeps_asof_and_transient_rules(
+    early: float, horizon: float, expected: str,
+) -> None:
+    verdict = _verdict([_row(0, -0.7), _row(2, early), _row(8, horizon), _row(40, float("nan"))])
+    assert verdict.bucket == expected
+    assert verdict.profile == {2: early, 4: early, 8: horizon}
+    assert verdict.reached_terminal is False
+
+
+@pytest.mark.parametrize(("label", "expected"), [(-0.7, "CONFIRMED_LOST"), (0.1, "REFUTED")])
+def test_short_recorded_game_retains_last_label_fallback(label: float, expected: str) -> None:
+    verdict = _verdict([_row(0, -0.7, outcome=0), _row(2, label, outcome=0)])
+    assert verdict.bucket == expected
+    assert verdict.profile == {2: label, 4: label, 8: label}
+    assert verdict.reached_terminal is True
+
+
+@pytest.mark.parametrize("gap", [4, 40])
+def test_all_unlabelled_forward_rows_stay_inconclusive(gap: int) -> None:
+    verdict = _verdict([_row(0, -0.7), _row(gap, float("nan"))])
+    assert verdict.bucket == "INCONCLUSIVE"
+    assert verdict.profile == {2: None, 4: None, 8: None}
+    assert verdict.reached_terminal is (gap <= 8)
+
+
+@pytest.mark.parametrize(("outcome", "expected"), [(2, "CONFIRMED_LOST"), (0, "INCONCLUSIVE")])
+def test_no_forward_rows_preserve_existing_terminal_fallback(outcome: int, expected: str) -> None:
+    verdict = _verdict([_row(0, -0.7, outcome=outcome)])
+    assert verdict.bucket == expected
+    assert verdict.profile == {2: None, 4: None, 8: None}
+    assert verdict.reached_terminal is False
+
+
+def test_odd_ply_label_keeps_seed_side_pov_without_filling_missing_horizon() -> None:
+    rows = [_row(0, -0.7), _row(1, 0.7), _row(8, float("nan"))]
+    verdict = _verdict(rows)
+    assert verdict.bucket == "INCONCLUSIVE"
+    assert verdict.profile == {2: None, 4: None, 8: None}
+    # A later actual label supplies coverage; the existing as-of/POV rule stays.
+    verdict = _verdict([*rows, _row(9, 0.7)])
+    assert verdict.bucket == "CONFIRMED_LOST"
+    assert verdict.profile == {2: -0.7, 4: -0.7, 8: -0.7}
+
+
+@pytest.mark.parametrize("rows", [None, []])
+def test_unrecoverable_rows_remain_unrecoverable(rows: list[GameRow] | None) -> None:
+    verdict = _verdict(rows)
+    assert verdict.bucket == "UNRECOVERABLE"
+    assert verdict.profile == {}
+
+
+def test_jsonl_null_label_is_unknown_at_classification_boundary(tmp_path: Path) -> None:
+    record = _record(_WHITE_ROOT_PLY_136, [136, 138, 144], "0-1")
+    record["plies"] = [
+        {"ply": 136, "nq": 0.1, "sq": -0.7},
+        {"ply": 138, "nq": 0.1, "sq": -0.7},
+        {"ply": 144, "nq": 0.1, "sq": None},
+    ]
+    path = _write(tmp_path, "fixture.jsonl", record)
+    rows = load_game_rows_from_jsonl([path])[7]
+    seed = Seed("fixture", 0.1, -0.7, 7, "fixture", 136)
+    verdict = classify(seed, rows, recover_to=-0.2, still_lost=-0.5,
+                       confirm_h=8, horizons=[2, 4, 8], tol=0.03)
+    assert verdict.bucket == "INCONCLUSIVE"
+    assert verdict.profile[8] is None
+
+
+def test_cli_depth_report_excludes_uncovered_profile(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    from scripts import blindspot_continuation as module
+
+    seed = Seed("fixture", 0.1, -0.7, 1, "fixture", 10)
+    rows = [_row(0, -0.7), _row(2, -0.7), _row(8, float("nan"))]
+    monkeypatch.setattr(module.glob, "glob", lambda _pattern: [])
+    monkeypatch.setattr(module, "parse_seeds", lambda _paths: [seed])
+    monkeypatch.setattr(module, "load_game_rows_from_jsonl", lambda _paths, _wanted: {1: rows})
+
+    def no_replay(*_args, **_kwargs):
+        pytest.fail("synthetic saved rows must not trigger replay reads")
+
+    monkeypatch.setattr(module, "load_game_rows", no_replay)
+    monkeypatch.setattr("sys.argv", ["blindspot_continuation.py", "--horizons", "2,4,8"])
+    module.main()
+    output = capsys.readouterr().out
+    assert "2pl" in output
+    assert "4pl" not in output
+    assert "8pl" not in output
+    assert "+8:--" in output
+    assert "--- INCONCLUSIVE" in output

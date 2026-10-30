@@ -206,8 +206,8 @@ class Verdict:
     outcome: int | None          # net-POV wdl_target at seed ply (terminal, most confounded)
     seed_ply: int | None
     # seed-side sf_q at each look-ahead horizon (plies); the per-horizon value is
-    # None where the game ended before it, and the whole dict is empty {} when the
-    # seed could not be located / recovered at all.
+    # None where labels do not cover it (short recorded games retain the last
+    # label fallback). The whole dict is empty when the seed was not located.
     profile: dict[int, float | None]
     reached_terminal: bool       # game ended within the deepest horizon
 
@@ -242,13 +242,16 @@ def classify(seed: Seed, rows: list[GameRow] | None, *,
             return Verdict("UNLOCATED", None, None, {}, False)
     t0 = best.ply
     fwd = _seed_side_forward(rows, t0)  # sorted by ply gap (rows are ply-sorted)
-    max_gap = fwd[-1][0] if fwd else 0
+    # Missing SF labels do not mean the recorded game ended at the last label.
+    max_gap = max((r.ply - t0 for r in rows if r.ply > t0), default=0)
+    last_gap = fwd[-1][0] if fwd else 0
     # profile[h] = seed-side sf_q at the deepest recorded ply <= t0+h (the eval
     # "as of h plies in"); falls back to the last value when the game ended early.
     profile: dict[int, float | None] = {}
     for h in horizons:
         upto = [q for g, q in fwd if g <= h]
-        profile[h] = upto[-1] if upto else None
+        covered = last_gap >= h or max_gap <= last_gap
+        profile[h] = upto[-1] if upto and covered else None
     reached_terminal = 0 < max_gap <= max(horizons)
 
     if not fwd:  # no SF-labeled forward rows
@@ -273,7 +276,6 @@ def classify(seed: Seed, rows: list[GameRow] | None, *,
     # is UNKNOWN -> inconclusive.
     upto_c = [q for g, q in fwd if g <= confirm_h]
     horizon_q = upto_c[-1] if upto_c else None
-    last_gap = fwd[-1][0]
     covered = last_gap >= confirm_h or max_gap <= last_gap
     if horizon_q is None or not covered:
         bucket = "INCONCLUSIVE"
