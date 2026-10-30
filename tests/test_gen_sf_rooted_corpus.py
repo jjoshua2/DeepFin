@@ -2815,6 +2815,25 @@ def test_g10_with_the_wrong_staircase_is_refused_before_output_exists(
     assert not out.exists()
 
 
+@pytest.mark.parametrize(
+    ("respawns", "expected"),
+    [((0,), 0), ((4,), 4), ((2, 0, 5), 7)],
+    ids=["single-zero", "single-nonzero", "multiple"],
+)
+def test_merge_search_preserves_engine_respawns(
+    respawns: tuple[int, ...], expected: int,
+) -> None:
+    workers = [
+        {"worker_id": worker_id,
+         "search": corpus.SearchStats(engine_respawns=count).summary()}
+        for worker_id, count in enumerate(respawns)
+    ]
+    merged = corpus.merge_search(workers)
+    assert merged["engine_respawns"] == expected
+    assert merged["positions_searched"] == 0
+    assert merged["searches"] == 0
+
+
 def test_the_summary_merges_workers_without_losing_a_counter() -> None:
     workers = [
         {
@@ -2841,6 +2860,7 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             },
             "search": {
                 "positions_searched": 8, "searches": 24, "search_s": 4.0,
+                "engine_respawns": 2,
                 "anomalies": {"re_emissions": 1, "duplicate_iteration_flushes": 2},
                 "staircase_gate": {
                     "evaluations": 0, "extended": 0, "stopped": 0,
@@ -2891,6 +2911,7 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             },
             "search": {
                 "positions_searched": 4, "searches": 12, "search_s": 2.0,
+                "engine_respawns": 3,
                 "anomalies": {"re_emissions": 0, "bound_lines": 3},
                 "staircase_gate": {
                     "evaluations": 0, "extended": 0, "stopped": 0,
@@ -2936,6 +2957,7 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
 
     # ⚑ CORPUS totals: this session's 8 rows / 3 games PLUS worker 1's adopted
     # 4 rows / 2 games. The session-scoped numbers keep their own names.
+    assert summary["search"]["engine_respawns"] == 5
     assert summary["rows"] == 12
     assert summary["games"] == 5
     assert summary["rows_this_session"] == 8
