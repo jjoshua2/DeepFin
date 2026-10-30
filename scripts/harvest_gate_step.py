@@ -341,7 +341,8 @@ def run_gate(
     # 17k backlog that starved the gate). Dropping it is self-healing — a hole
     # that still exists is re-emitted by the harvester on the next blunder.
     older_first = [(k, f"{body}  # pending") for k, body in reversed(overflow)]
-    combined = older_first + requeue
+    # Vetting collected failures newest-first; persist them oldest-first too.
+    combined = older_first + list(reversed(requeue))
     if pending_cap > 0 and len(combined) > pending_cap:
         # Trim to the newest `pending_cap` — but floor the kept count at
         # len(requeue) so the SF-failed re-queues (newest end) always survive.

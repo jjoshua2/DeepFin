@@ -146,7 +146,7 @@ import torch
 from chess_anti_engine.encoding import model_encoding_kwargs
 from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.inference import LocalModelEvaluator
-from chess_anti_engine.moves.encode import move_to_index_for_encoding
+from chess_anti_engine.moves.encode import POLICY_SIZE, move_to_index
 from chess_anti_engine.selfplay.opening import seed_board_from_line
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 from chess_anti_engine.utils.engine_discovery import (
@@ -173,6 +173,20 @@ def _q(info: chess.engine.InfoDict, pov: chess.Color) -> float:
     return (wdl.wins - wdl.losses) / 1000.0
 
 
+def _terminal_q(board: chess.Board, pov: chess.Color) -> float:
+    """Terminal win-minus-loss from the saved mover's side, not board.turn.
+
+    Use the same automatic-draw semantics as is_game_over(): claimable draws
+    remain nonterminal. Keep the board's move history for repetition detection.
+    """
+    outcome = board.outcome()
+    if outcome is None:
+        raise ValueError("terminal score requires a game-over board")
+    if outcome.winner is None:
+        return 0.0
+    return 1.0 if outcome.winner == pov else -1.0
+
+
 def _seed_lines(path: str) -> list[str]:
     """Seed bodies, comments stripped (the feed grammar the worker parses)."""
     out: list[str] = []
@@ -182,6 +196,26 @@ def _seed_lines(path: str) -> list[str]:
             if body:
                 out.append(body)
     return out
+
+
+def _full_policy_top_move(
+    board: chess.Board, legal: list[chess.Move], policy: np.ndarray,
+) -> chess.Move | None:
+    """Select from the evaluator's dense 4672 action ids, not model indices."""
+    if not legal:
+        return None
+    batch = np.asarray(policy, dtype=np.float64)
+    if batch.shape != (1, POLICY_SIZE):
+        raise ValueError(f"expected evaluator policy shape (1, {POLICY_SIZE}), got {batch.shape}")
+    pol = batch[0]
+    best, best_p = legal[0], -np.inf
+    for mv in legal:
+        idx = move_to_index(mv, board)
+        if idx < 0 or idx >= pol.size:
+            continue
+        if pol[idx] > best_p:
+            best, best_p = mv, float(pol[idx])
+    return best
 
 
 def _net_top_move(
@@ -201,17 +235,10 @@ def _net_top_move(
     rel = np.stack([cb.compute_relations()]) if use_rel else None
     with torch.no_grad():
         policy, _ = ev.evaluate_encoded(np.stack([x]), relations=rel)
-    pol = np.asarray(policy, dtype=np.float64)[0]
-    best, best_p = legal[0], -np.inf
-    for mv in legal:
-        idx = move_to_index_for_encoding(
-            mv, board, policy_encoding=policy_encoding,
-        )
-        if idx < 0 or idx >= pol.size:
-            continue
-        if pol[idx] > best_p:
-            best, best_p = mv, float(pol[idx])
-    return best
+    # evaluate_encoded expands compact checkpoints to full search/action ids.
+    # policy_encoding describes the model, not this public evaluator result.
+    del policy_encoding
+    return _full_policy_top_move(board, legal, policy)
 
 
 def main() -> None:
@@ -326,8 +353,7 @@ def main() -> None:
             # the denominator of a control on the event being measured.
             board.push(mv)
             after = _q(eng.analyse(board, chess.engine.Limit(nodes=args.screen_nodes)), mover) \
-                if not board.is_game_over() else (
-                    -1.0 if board.is_checkmate() else 0.0)
+                if not board.is_game_over() else _terminal_q(board, mover)
             board.pop()
             arm_blundered = after <= args.lost
 
@@ -359,7 +385,7 @@ def main() -> None:
             for cand in survey:
                 board.push(cand)
                 if board.is_game_over():
-                    cq = -1.0 if board.is_checkmate() else 0.0
+                    cq = _terminal_q(board, mover)
                 else:
                     cq = _q(eng.analyse(
                         board, chess.engine.Limit(nodes=args.safe_frac_nodes)), mover)
@@ -417,8 +443,7 @@ def main() -> None:
             d_before = _q(eng.analyse(board, chess.engine.Limit(nodes=args.deep_nodes)), mover)
             board.push(mv)
             d_after = _q(eng.analyse(board, chess.engine.Limit(nodes=args.deep_nodes)), mover) \
-                if not board.is_game_over() else (
-                    -1.0 if board.is_checkmate() else 0.0)
+                if not board.is_game_over() else _terminal_q(board, mover)
             board.pop()
 
             rec = {

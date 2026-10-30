@@ -129,3 +129,69 @@ def test_the_return_contract_is_unchanged_for_every_failure_mode(
     for p in cases:
         assert load_optional_json(p) is None
     assert load_optional_json(good) == {"a": 1}
+
+
+@pytest.mark.parametrize("raw", [b'\xff', b'{"name":"\xc3"}', b'{"name":"\xe2\x82'])
+def test_invalid_utf8_sidecar_reports_corruption(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], raw: bytes,
+) -> None:
+    path = tmp_path / SIDECAR_PID_STATE
+    path.write_bytes(raw)
+    assert load_optional_json(path) is None
+    out = capsys.readouterr().out
+    assert str(path) in out
+    assert "could not be read" in out
+    assert "WITHOUT it" in out
+    assert path.read_bytes() == raw
+
+
+@pytest.mark.parametrize("raw", [b'\xff', b'{"matches":\xff}', b'{"matches":'])
+def test_corrupt_own_gate_does_not_adopt_pool_window(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], raw: bytes,
+) -> None:
+    from chess_anti_engine.tune.trainable import _startup_gate_state
+    from chess_anti_engine.tune.trial_config import RestoreResult
+
+    path = tmp_path / "gate_state.json"
+    path.write_bytes(raw)
+    pool = {"matches": 41, "holds": 3}
+    restore = RestoreResult(restored_gate_state=pool)
+    assert _startup_gate_state(gate_state_path=path, restore=restore) == {}
+    assert restore.restored_gate_state == pool
+    out = capsys.readouterr().out
+    assert "EMPTY window" in out
+    assert "seeded from the salvage pool" not in out
+    assert path.read_bytes() == raw
+
+
+def test_valid_utf8_preserves_non_ascii_values(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = tmp_path / SIDECAR_PID_STATE
+    value = {"label": "échec ♟", "matches": 7}
+    path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+    assert load_optional_json(path) == value
+    assert capsys.readouterr().out == ""
+
+
+def test_mandatory_yaml_invalid_encoding_still_raises(tmp_path: Path) -> None:
+    from chess_anti_engine.utils.config_yaml import load_yaml_file
+
+    path = tmp_path / "config.yaml"
+    path.write_bytes(b'\xff')
+    with pytest.raises(UnicodeDecodeError):
+        load_yaml_file(path)
+
+
+def test_optional_json_does_not_hide_unrelated_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / SIDECAR_PID_STATE
+    path.write_text("{}")
+
+    def fail_read(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("unrelated failure")
+
+    monkeypatch.setattr(Path, "read_text", fail_read)
+    with pytest.raises(RuntimeError, match="unrelated failure"):
+        load_optional_json(path)
