@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import argparse
 import ast
+from collections.abc import Callable
 import functools
 import io
 import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
+from typing import Any, Protocol, cast
 import unittest
 
 import numpy as np
@@ -20,6 +22,12 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class PayloadFunction(Protocol):
+    def __call__(
+        self, game: SimpleNamespace, *, initial_fen: str,
+    ) -> tuple[dict[str, Any], dict[str, np.ndarray]]: ...
 
 
 def tree(relative):
@@ -53,7 +61,7 @@ def literal(relative, name):
     raise AssertionError(f"missing literal {name}")
 
 
-def load_plane_count():
+def load_plane_count() -> Callable[[str | None], int]:
     features = tree("chess_anti_engine/encoding/features.py")
     names = {"EXTRA_FEATURE_VERSIONS", "_EXTRA_FEATURE_PLANES"}
     constants = [node for node in features.body if isinstance(node, ast.Assign) and any(
@@ -67,12 +75,12 @@ def load_plane_count():
                if isinstance(node, ast.FunctionDef) and node.name == "input_plane_count"]
     assert len(functions) == 2
     assert len(encoder) == 1
-    namespace = {"functools": functools}
+    namespace: dict[str, Any] = {"functools": functools}
     execute([*constants, *functions, *encoder], namespace, {
         "functools.lru_cache", "str", "str(value).strip", "str(value).strip().lower",
         "ValueError", "normalize_extra_features_encoding", "extra_feature_plane_count",
     })
-    return namespace["input_plane_count"]
+    return cast(Callable[[str | None], int], namespace["input_plane_count"])
 
 
 class Discarded(SimpleNamespace):
@@ -89,11 +97,11 @@ def inert_popcount(occupied):
     return occupied
 
 
-def load_payload():
+def load_payload() -> PayloadFunction:
     nodes = [node for node in tree("scripts/bt4_root_policy_worker.py").body
              if isinstance(node, ast.FunctionDef) and node.name == "_game_payload"]
     assert len(nodes) == 1
-    namespace = {
+    namespace: dict[str, Any] = {
         "np": np, "SCHEMA": literal("scripts/bt4_root_policy_worker.py", "SCHEMA"),
         "OUTCOME_MODE": literal("scripts/bt4_root_policy_worker.py", "OUTCOME_MODE"),
         "COMPACT_POLICY_SIZE": literal("chess_anti_engine/moves/encode.py", "COMPACT_POLICY_SIZE"),
@@ -106,7 +114,7 @@ def load_payload():
         "teacher.source_key.hex", "played.move.uci", "rows.append", "len",
         "np.stack", "np.empty", "input_plane_count",
     })
-    return namespace["_game_payload"]
+    return cast(PayloadFunction, namespace["_game_payload"])
 
 
 def require(ok, message):
@@ -169,14 +177,12 @@ def roundtrip(meta, arrays):
 
 
 class PayloadContract(unittest.TestCase):
-    def setUp(self):
-        self.payload = load_payload()
-
     def test_completed_empty_contract_and_serialization(self):
+        payload = load_payload()
         for result in ("1-0", "0-1", "1/2-1/2"):
             with self.subTest(result=result):
                 game = completed(result=result)
-                meta, arrays = self.payload(game, initial_fen="inert-initial")
+                meta, arrays = payload(game, initial_fen="inert-initial")
                 assert meta == {
                     "schema": "bt4_root_policy_games_v1", "game_id": 7,
                     "initial_fen": "inert-initial", "status": "completed", "result": result,
@@ -189,8 +195,9 @@ class PayloadContract(unittest.TestCase):
                 consumer_layout(restored, 0)
 
     def test_nonempty_rows_unchanged(self):
+        payload = load_payload()
         records = (record(0), record(1))
-        meta, arrays = self.payload(completed(records), initial_fen="inert-initial")
+        meta, arrays = payload(completed(records), initial_fen="inert-initial")
         assert meta["status"] == "completed"
         assert meta["attempted_plies"] == 2
         assert meta["discarded_rows"] == 0
@@ -207,10 +214,11 @@ class PayloadContract(unittest.TestCase):
         consumer_layout(roundtrip(meta, arrays), 2)
 
     def test_discarded_unfinished_shape_and_accounting_unchanged(self):
+        payload = load_payload()
         game = Discarded(slot_id=8, termination="max_plies", detail="unfinished",
                          attempted_plies=2, discarded_rows=2,
                          outcome_provenance=SimpleNamespace(mode="rule50_match_v1"))
-        meta, arrays = self.payload(game, initial_fen="inert-initial")
+        meta, arrays = payload(game, initial_fen="inert-initial")
         assert meta["status"] == "discarded"
         assert meta["result"] is None
         assert meta["rows"] == []
@@ -222,13 +230,14 @@ class PayloadContract(unittest.TestCase):
         roundtrip(meta, arrays)
         game.discarded_rows = 1
         with pytest.raises(ValueError, match="discard must account"):
-            self.payload(game, initial_fen="inert-initial")
+            payload(game, initial_fen="inert-initial")
 
     def test_mode_rejection_preserved(self):
+        payload = load_payload()
         game = completed()
         game.outcome_provenance.mode = "unsupported"
         with pytest.raises(ValueError, match="outcome mode differs"):
-            self.payload(game, initial_fen="inert-initial")
+            payload(game, initial_fen="inert-initial")
 
     def test_consumer_rejects_wrong_empty_layouts(self):
         valid = {"x": np.empty((0, 175, 8, 8), np.float32),
