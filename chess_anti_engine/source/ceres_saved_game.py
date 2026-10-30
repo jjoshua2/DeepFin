@@ -13,8 +13,10 @@ import json
 import os
 import stat
 import zipfile
+from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, cast
 
 import chess
@@ -24,6 +26,10 @@ import zarr
 from numcodecs import Blosc
 
 from chess_anti_engine.encoding.encode import encode_position
+from chess_anti_engine.replay.codec_safety import (
+    _SAFE_SHARD_COMPRESSOR_IDS,
+    _reject_unsafe_shard_codecs,
+)
 from chess_anti_engine.selfplay.bt4_outcome import decide_bt4_outcome
 from chess_anti_engine.source.ceres_root_input import bind_undecided_ceres_root
 
@@ -83,33 +89,109 @@ def _zip_json(path: Path, name: str, *, compressed: bool) -> Any:
     return json.loads(payload)
 
 
+class _ApprovedSavedGameStore(MutableMapping[str, bytes]):
+    """Read-only metadata snapshot; chunks still stream from the ZIP store."""
+
+    def __init__(self, store: Any, metadata: dict[str, bytes]) -> None:
+        self._store = store
+        self._metadata = MappingProxyType(dict(metadata))
+        self._keys = frozenset(store)
+
+    def __getitem__(self, key: str) -> bytes:
+        if key in self._metadata:
+            return self._metadata[key]
+        if key not in self._keys or key.endswith("/.zarray"):
+            raise KeyError(key)
+        return self._store[key]
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._keys
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._keys)
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+    def __setitem__(self, _key: str, _value: bytes) -> None:
+        raise TypeError("approved saved-game store is read-only")
+
+    def __delitem__(self, _key: str) -> None:
+        raise TypeError("approved saved-game store is read-only")
+
+
+def _approved_saved_game_metadata(store: Any) -> dict[str, bytes]:
+    """Validate raw declarations before Zarr can construct any array proxy.
+
+    Structured-object fill values can invoke a codec even at proxy creation.
+    Keep the exact approved bytes for construction, not a later store re-read.
+    This binds metadata only; archive hashes and selected-span checks remain
+    the readers' existing controls, not a guarantee of chunk durability.
+    """
+    approved: dict[str, bytes] = {}
+    for name in ARRAY_NAMES:
+        key = f"{name}/.zarray"
+        try:
+            raw = bytes(store[key])
+            _need(len(raw) <= MAX_METADATA_BYTES, "archive array metadata exceeds cap")
+            doc = json.loads(raw.decode("utf-8"))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"archive array {name!r} has unreadable raw metadata") from exc
+        _need(isinstance(doc, dict) and doc.get("zarr_format") == 2
+              and f"{name}/.zgroup" not in store,
+              f"archive array {name!r} raw metadata is not a v2 array")
+        expected = (np.uint32 if name == "legal_offsets" else
+                    np.uint16 if name in ("legal_compact", "legal_leela") else np.float16)
+        raw_dtype = doc.get("dtype")
+        _need(isinstance(raw_dtype, str),
+              f"archive array {name!r} raw dtype must be primitive numeric")
+        try:
+            dtype = np.dtype(raw_dtype)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"archive array {name!r} has unreadable raw dtype") from exc
+        _need(dtype == expected, f"archive array {name!r} raw dtype differs")
+        _need("filters" in doc and (doc["filters"] is None or doc["filters"] == []),
+              f"archive array {name!r} raw filters are disallowed")
+        _need("compressor" in doc, f"archive array {name!r} raw compressor is missing")
+        compressor = doc["compressor"]
+        _need(compressor is None or (isinstance(compressor, dict)
+              and isinstance(compressor.get("id"), str)
+              and compressor["id"] in _SAFE_SHARD_COMPRESSOR_IDS),
+              f"archive array {name!r} raw compressor is disallowed")
+        approved[key] = raw
+    return approved
+
+
 def _arrays_from_zip(path: Path, start: int, end: int) -> dict[str, np.ndarray]:
     store = zarr.ZipStore(str(path), mode="r")
     try:
-        group = zarr.open_group(store=store, mode="r")
+        approved = _approved_saved_game_metadata(store)
+        group = zarr.open_group(store=_ApprovedSavedGameStore(store, approved), mode="r")
         _need(set(group.array_keys()) == set(ARRAY_NAMES), "archive array names differ")
-        source_rows = cast(int, group["x"].shape[0])
-        _need(group["x"].ndim == 4 and group["x"].shape[1:] == (175, 8, 8)
-              and group["x"].dtype == np.float16
+        proxies = {name: group[name] for name in ARRAY_NAMES}
+        _reject_unsafe_shard_codecs(proxies)
+        source_rows = cast(int, proxies["x"].shape[0])
+        _need(proxies["x"].ndim == 4 and proxies["x"].shape[1:] == (175, 8, 8)
+              and proxies["x"].dtype == np.float16
               and 0 <= start < end <= source_rows <= 8192
               and end - start <= MAX_ROWS
-              and group["legal_offsets"].shape == (source_rows + 1,)
-              and group["legal_offsets"].dtype == np.uint32
-              and all(group[key].shape == (source_rows, 3)
-                      and group[key].dtype == np.float16 for key in ("value", "value2")),
+              and proxies["legal_offsets"].shape == (source_rows + 1,)
+              and proxies["legal_offsets"].dtype == np.uint32
+              and all(proxies[key].shape == (source_rows, 3)
+                      and proxies[key].dtype == np.float16 for key in ("value", "value2")),
               "archive declared stored row shape/count differs")
-        offsets = np.asarray(group["legal_offsets"][start:end + 1], dtype=np.uint32)
+        offsets = np.asarray(proxies["legal_offsets"][start:end + 1], dtype=np.uint32)
         lo, hi = int(offsets[0]), int(offsets[-1])
         _need(0 <= lo < hi <= source_rows * 218,
               "archive legal span outside bounded row capacity")
-        _need(all(group[key].ndim == 1 and cast(int, group[key].shape[0]) >= hi
+        _need(all(proxies[key].ndim == 1 and cast(int, proxies[key].shape[0]) >= hi
                   for key in ("legal_compact", "legal_leela", "legal_logits")),
               "archive legal arrays shorter than selected game span")
-        arrays = {name: np.asarray(group[name][start:end]) for name in
+        arrays = {name: np.asarray(proxies[name][start:end]) for name in
                   ("x", "value", "value2")}
         arrays["legal_offsets"] = offsets - lo
         for name in ("legal_compact", "legal_leela", "legal_logits"):
-            arrays[name] = np.asarray(group[name][lo:hi])
+            arrays[name] = np.asarray(proxies[name][lo:hi])
         return arrays
     finally:
         store.close()
