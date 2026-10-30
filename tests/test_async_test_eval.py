@@ -659,13 +659,11 @@ def test_a_stale_evals_FAILURE_does_not_release_a_rearmed_barrier(cfg_and_builde
         "new-shape compile is now racing main-thread work"
     )
     assert done3_at_return, "start() returned before its own eval completed"
-    # The stale exception is still charged to whatever collect() reads next --
-    # pre-existing behaviour of the abandoned-prior-result path (start()'s
-    # drain comment), unchanged here and deliberately out of this fix's scope.
-    # The barrier's correctness does not depend on it: a lingering _exc only
-    # withholds the shape key, so the next start() with these shapes takes the
-    # barrier again. That is the fail-safe direction.
-    assert aer.collect(timeout=5.0) == (None, -1)
+    # The later successful completion owns both the metrics and error state.
+    # A stale failure must neither suppress its metrics nor force a redundant
+    # compile barrier for shapes that this successful eval already exercised.
+    assert aer.collect(timeout=5.0) == ("OURS", 3)
+    assert (1, 8) in aer._compiled_shape_keys
     aer.shutdown(timeout=5.0)
 
 
@@ -1120,3 +1118,80 @@ def test_worker_uses_the_objective_captured_at_start(cfg_and_builder):
         "the worker used the trainer's CURRENT objective, not the one captured "
         f"with the model snapshot: {seen['objective']!r}"
     )
+
+
+@pytest.mark.parametrize("prior_fails", [False, True])
+@pytest.mark.parametrize("successor_fails", [False, True])
+@pytest.mark.parametrize("collect_prior", [False, True])
+def test_successor_completion_owns_its_result_and_error(
+    cfg_and_builder, prior_fails, successor_fails, collect_prior,
+):
+    """A late abandoned outcome must not contaminate the next completed eval.
+
+    This uses the real single-worker queue. Once the successor enters metrics,
+    the prior completion has already been published; no scheduler sleeps or
+    out-of-order worker execution are needed to create the failing ordering.
+    """
+    entered_prior = threading.Event()
+    release_prior = threading.Event()
+    entered_successor = threading.Event()
+    release_successor = threading.Event()
+    calls = 0
+
+    def _eval(**_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return "WARMUP"
+        if calls == 2:
+            entered_prior.set()
+            assert release_prior.wait(timeout=5.0)
+            if prior_fails:
+                raise ValueError("abandoned prior failure")
+            return "PRIOR"
+        entered_successor.set()
+        assert release_successor.wait(timeout=5.0)
+        if successor_fails:
+            raise ValueError("successor failure")
+        return "SUCCESSOR"
+
+    trainer = MagicMock()
+    trainer.model = _StubChessNet(dim=4)
+    trainer._compute_metrics = _eval
+    aer = AsyncTestEval()
+
+    def _start(source_iter: int) -> None:
+        _start_bounded(
+            aer, source_iter=source_iter, trainer=trainer,
+            model_cfg=cfg_and_builder, holdout_buf="B",
+            batch_size=4, steps=2, device="cpu",
+        )
+
+    try:
+        _start(1)
+        assert aer.collect(timeout=5.0) == ("WARMUP", 1)
+        _start(2)
+        assert entered_prior.wait(timeout=5.0)
+        _start(3)
+        release_prior.set()
+        assert entered_successor.wait(timeout=5.0)
+        if collect_prior:
+            expected_prior = (None, -1) if prior_fails else ("PRIOR", 2)
+            assert aer.collect(timeout=5.0) == expected_prior
+        release_successor.set()
+        deadline = time.monotonic() + 5.0
+        while True:
+            with aer._lock:
+                successor_published = aer._source_iter == 3
+            if successor_published or time.monotonic() >= deadline:
+                break
+            time.sleep(0.001)
+        assert successor_published, "the successor never published its completion"
+        expected = (None, -1) if successor_fails else ("SUCCESSOR", 3)
+        assert aer.collect(timeout=5.0) == expected
+    finally:
+        release_prior.set()
+        release_successor.set()
+        thread = aer._thread
+        aer.shutdown(timeout=5.0)
+        assert thread is None or not thread.is_alive()

@@ -715,6 +715,11 @@ def tail_asymmetry_ci(
     Both tails are recomputed inside every resample from the SAME draw of games,
     so their correlation is preserved — resampling them independently would
     understate the width of a difference of two means over overlapping games.
+
+    Return None if any requested resample has an empty tail: its mean, and
+    therefore the statistic, is undefined. Filling it with zero invents an
+    observation; dropping or redrawing it conditions the bootstrap on coverage.
+    Sparse samples may therefore have a point estimate but no reported CI.
     """
     buckets = sf_eval_bucket_array(np.clip(rows.sf_cp, -cp_clamp, cp_clamp), edges)
     lo_mask = buckets == 0
@@ -730,9 +735,13 @@ def tail_asymmetry_ci(
     hi_s, hi_c = _game_tail_sums(diff, inv, n_games, hi_mask)
     rng = np.random.default_rng(seed)
     draws = rng.integers(0, n_games, size=(n_boot, n_games))
+    lo_counts = lo_c[draws].sum(axis=1)
+    hi_counts = hi_c[draws].sum(axis=1)
+    if np.any(lo_counts == 0) or np.any(hi_counts == 0):
+        return None
     boot = (
-        lo_s[draws].sum(axis=1) / np.clip(lo_c[draws].sum(axis=1), 1e-12, None)
-        + hi_s[draws].sum(axis=1) / np.clip(hi_c[draws].sum(axis=1), 1e-12, None)
+        lo_s[draws].sum(axis=1) / lo_counts
+        + hi_s[draws].sum(axis=1) / hi_counts
     )
     return (
         float(np.quantile(boot, alpha / 2.0)),

@@ -934,7 +934,7 @@ def _launch_distributed_worker(
     trial_id: str,
     worker_index: int,
 ) -> subprocess.Popen[bytes]:
-    worker_artifact_root = trial_dir / "distributed_workers" / f"worker_{worker_index:02d}"
+    worker_artifact_root = _distributed_worker_artifacts_root(trial_dir) / f"worker_{worker_index:02d}"
     worker_artifact_root.mkdir(parents=True, exist_ok=True)
     worker_log = worker_artifact_root / "worker.log"
     worker_out = worker_artifact_root / "worker.out"
@@ -2177,3 +2177,8 @@ def _ingest_distributed_selfplay(
                 break
 
     return summary
+
+
+def _distributed_worker_artifacts_root(trial_dir: Path) -> Path:
+    """Local launch artifacts, distinct from server-side worker replay roots."""
+    return trial_dir / "distributed_workers"

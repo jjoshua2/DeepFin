@@ -38,6 +38,7 @@ from chess_anti_engine.tune.distributed_runtime import (
     _stop_process,
     _stop_worker_processes,
     _trial_server_dirs,
+    _distributed_worker_artifacts_root,
 )
 from chess_anti_engine.tune.trainable_config_ops import (
     _reload_yaml_into_config,
@@ -59,10 +60,12 @@ from chess_anti_engine.tune.promotion_gate import (
     GateHoldController,
     PromotionGate,
     gate_config_from_dict,
+    parse_gate_state,
 )
 from chess_anti_engine.tune.trainable_metrics import _compute_drift_metrics
 from chess_anti_engine.tune.trainable_phases import (
     _finalize_iteration,
+    _persist_gate_state,
     _run_eval_games,
     _run_pid_and_eval,
     _run_selfplay_phase,
@@ -180,12 +183,14 @@ def _load_best_state(best_state_path: Path) -> tuple[float, float, str]:
     read and then overwritten by the restore result one line later.
     """
     d = load_optional_json(best_state_path) or {}
+    try:
+        loss = float(d.get("best_loss", d.get("loss", float("inf"))))
+        ema = float(d.get("opp_strength_ema", 0.0))
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(f"[trial] malformed best state at {best_state_path}: {exc}; using defaults", flush=True)
+        return float("inf"), 0.0, "train_loss"
     source = str(d.get("source", "train_loss"))
-    return (
-        float(d.get("best_loss", d.get("loss", float("inf")))),
-        float(d.get("opp_strength_ema", 0.0)),
-        source if source in ("test_loss", "train_loss") else "train_loss",
-    )
+    return loss, ema, source if source in ("test_loss", "train_loss") else "train_loss"
 
 
 def _startup_opp_strength_ema(*, restore: RestoreResult, best_json_ema: float) -> float:
@@ -244,9 +249,21 @@ def _startup_gate_state(*, gate_state_path: Path, restore: RestoreResult) -> dic
     -- hand this trial another lineage's window. Empty is the safe reading: the
     gate refills its window, which is what a corrupt file already meant.
     """
+    # Validate every consumed field, but preserve the valid transport object.
+    # Gate/controller loaders own normalization; startup must not add defaults
+    # or strip unknown nested metadata from otherwise usable persisted state.
     own = load_optional_json(gate_state_path)
     if own is not None:
-        return own
+        try:
+            parse_gate_state(own)
+            return own
+        except (TypeError, ValueError, OverflowError) as exc:
+            print(
+                f"[trial] malformed own promotion-gate state at {gate_state_path}: "
+                f"{exc}; starting from an EMPTY own window (no pool fallback)",
+                flush=True,
+            )
+            return {}
     if gate_state_path.exists():
         print(
             f"[trial] promotion-gate state at {gate_state_path} exists but did "
@@ -257,7 +274,12 @@ def _startup_gate_state(*, gate_state_path: Path, restore: RestoreResult) -> dic
         return {}
     if restore.restored_gate_state is None:
         return {}
-    seeded = restore.restored_gate_state
+    try:
+        parse_gate_state(restore.restored_gate_state)
+        seeded = restore.restored_gate_state
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(f"[trial] malformed pool promotion-gate state: {exc}; starting EMPTY", flush=True)
+        return {}
     print(
         f"[trial] promotion-gate state seeded from the salvage pool: "
         f"matches={seeded.get('matches', 0)} holds={seeded.get('holds', 0)}. "
@@ -478,14 +500,11 @@ def _avg_batch_from_worker_logs(distributed_dirs, offsets: dict[str, int]) -> fl
     in any new `gumbel profile (...)` line. Returns 0 if no new samples.
     Mutates ``offsets`` in place to record post-read positions per file.
     """
-  # distributed_dirs is a dict from _trial_server_dirs (key "workers_root").
-  # Pre-2026-04-29 this used getattr() and silently returned 0 every iter,
-  # killing the selfplay/avg_batch_size TB scalar.
-    workers_root = distributed_dirs.get("workers_root")
-    if workers_root is None:
+    worker_artifacts_root = distributed_dirs.get("worker_artifacts_root")
+    if worker_artifacts_root is None:
         return 0.0
     samples: list[float] = []
-    for log_path in Path(workers_root).glob("worker_*/worker.log"):
+    for log_path in Path(worker_artifacts_root).glob("worker_*/worker.log"):
         key = str(log_path)
         try:
             sz = log_path.stat().st_size
@@ -952,6 +971,7 @@ def train_trial(config: dict):
     )
     _set_active_run_prefix(server_root=distributed_server_root, trial_id=trial_id)
     distributed_dirs = _trial_server_dirs(server_root=distributed_server_root, trial_id=trial_id)
+    distributed_dirs["worker_artifacts_root"] = _distributed_worker_artifacts_root(trial_dir)
   # Share the trainer's torch.compile cache with selfplay workers so FX
   # graphs + autotuned Triton kernels survive restarts (otherwise the
   # trainer writes to /tmp and pays a fresh ~7min compile each restart).
@@ -1146,7 +1166,15 @@ def train_trial(config: dict):
   # iteration -- but the fleet is still held. Age the hold anyway, or
   # a run stuck in retry during a hold holds forever with the release
   # counter frozen.
+                gate_was_held = gate.hold_active
                 gate_hold.on_aborted_iteration()
+                if gate_was_held:
+  # Persist both ageing and release before retrying. Otherwise a restart
+  # restores the old hold age/latch even though no match was judged here.
+                    _persist_gate_state(
+                        gate=gate, hold=gate_hold, gate_match_idx=gate_match_idx,
+                        gate_state_path=gate_state_path,
+                    )
                 continue
 
             holdout_frozen = _maybe_freeze_holdout(
