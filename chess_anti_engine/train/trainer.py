@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import logging
+import stat
 import sys
 import math
 import threading
@@ -2829,6 +2830,29 @@ class ObjectiveSnapshot:
     loss_shape: Mapping[str, float]
 
 
+def _checkpoint_output_mode(path: Path) -> int | None:
+    """Preserve ordinary mode bits in a trusted, stable output directory.
+
+    Atomic replacement does not preserve owner/group, ACLs, xattrs or hard-link
+    identity. Refuse terminal links, non-regular files and special mode bits
+    rather than reinterpret them. Require owner read/write: the filename-based
+    writer reopens the temporary for writing, and durability reopens for reading.
+    Refuse unsupported modes before writing rather than temporarily broaden them.
+    """
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError(f"refusing non-regular or symlink checkpoint: {path}")
+    mode = stat.S_IMODE(info.st_mode)
+    if mode & ~0o777:
+        raise ValueError(f"refusing special mode bits on checkpoint: {path}")
+    if mode & 0o600 != 0o600:
+        raise ValueError(f"checkpoint requires owner read/write mode bits: {path}")
+    return mode
+
+
 class Trainer:
     def __init__(
         self,
@@ -3942,7 +3966,8 @@ class Trainer:
         a restore that quietly does nothing is the failure mode this whole
         change is about.
 
-        ⚑ A non-finite `mean` or `var` is REFUSED rather than restored. Per
+        ⚑ A non-finite `mean` or `var`, or a negative `var`, is REFUSED
+        rather than restored. Per
         `_restore_zclip_stats`: one nan in the EMA is permanent, because every
         later `z = (norm - nan) / std` is nan, `nan > z_thresh` is False, and
         `_compute_clip_val` returns None for the rest of the run -- the
@@ -3994,6 +4019,13 @@ class Trainer:
                 "a nan here disables the adaptive clipper permanently while "
                 "the fixed cap keeps reporting normally. Starting a fresh EMA "
                 "warmup", mean, var,
+            )
+            return False
+
+        if var is not None and var < 0.0:
+            log.warning(
+                "zclip: REFUSING a negative checkpoint EMA variance (%r); "
+                "keeping the current adaptive state", var,
             )
             return False
 
@@ -6365,7 +6397,16 @@ class Trainer:
             state["swa_model"] = strip_compile_prefix(self._swa_model.state_dict())
   # Atomic write so workers polling for new checkpoints never see a partial
   # file (matches the export_swa path; previously diverged).
-        atomic_write(path, lambda tmp: torch.save(state, str(tmp)))
+        mode = _checkpoint_output_mode(path)
+
+        def write_checkpoint(tmp: Path) -> None:
+            if mode is not None:
+                # atomic_write exclusively created this owned, empty temporary.
+                # Undo only umask filtering, never exceed the requested mode.
+                tmp.chmod(mode)
+            torch.save(state, str(tmp))
+
+        atomic_write(path, write_checkpoint, mode=mode)
 
     # `policy_embedding.*` belongs here for the same reason as the relation weights:
     # zero-init, function-preserving, ADDED params. Without it, enabling the shared

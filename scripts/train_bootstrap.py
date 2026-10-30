@@ -27,17 +27,21 @@ from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
 
 def _loader_thread(shard_paths: list[str], q: queue.Queue) -> None:
-    for path in shard_paths:
-        samples, _ = load_npz(path)
-        q.put(samples)
-    q.put(None)
+    try:
+        for path in shard_paths:
+            samples, _ = load_npz(path)
+            q.put(samples)
+    except Exception as exc:
+        q.put(exc)
+    finally:
+        q.put(None)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train bootstrap net on random game data")
     parser.add_argument("--config", type=str, required=True, help="YAML config file")
     parser.add_argument("--bootstrap-dir", type=str, default=None, help="Override bootstrap_dir from config")
-    parser.add_argument("--max-positions", type=int, default=0, help="Max positions to load (0=all)")
+    parser.add_argument("--max-positions", type=int, default=0, help="Max positions to load (0=all; memory grows with data)")
     parser.add_argument("--epochs", type=int, default=1, help="Number of epochs over the data")
     parser.add_argument("--batch-size", type=int, default=1024, help="Batch size")
     parser.add_argument("--loaders", type=int, default=16, help="Number of parallel loader threads")
@@ -100,7 +104,8 @@ def main() -> None:
 
     # ── Phase 1: threaded loading into buffer ──
     t0 = time.time()
-    buf_cap = max_pos if max_pos > 0 else 2_000_000  # ~120GB at 60KB/sample; fits in memory
+    # Uncapped loading extends this initial ceiling before each append.
+    buf_cap = max_pos if max_pos > 0 else 2_000_000
     buf = ReplayBuffer(buf_cap, rng=rng)
     total_loaded = 0
     shard_count = 0
@@ -118,10 +123,17 @@ def main() -> None:
         threads.append(t)
 
     done_count = 0
+    load_error: Exception | None = None
     while done_count < n_loaders:
         item = q.get()
         if item is None:
             done_count += 1
+            continue
+        if isinstance(item, Exception):
+            if load_error is None:
+                load_error = item
+            continue
+        if load_error is not None:
             continue
         if max_pos > 0 and total_loaded >= max_pos:
             del item
@@ -131,6 +143,8 @@ def main() -> None:
             item = item[:max_pos - total_loaded]
             n = len(item)
         if n:
+            if max_pos == 0:
+                buf.capacity = max(buf.capacity, total_loaded + n)
             buf.add_many(item)
         total_loaded += n
         shard_count += 1
@@ -140,6 +154,9 @@ def main() -> None:
 
     for t in threads:
         t.join(timeout=5)
+
+    if load_error is not None:
+        raise RuntimeError("bootstrap shard loading failed") from load_error
 
     load_time = time.time() - t0
     print(f"Loaded {total_loaded:,} positions from {shard_count} shards in {load_time:.0f}s", flush=True)
