@@ -33,6 +33,7 @@ from __future__ import annotations
 import contextlib
 import itertools
 import logging
+import math
 import os
 import threading
 import time
@@ -106,6 +107,13 @@ def pin_nvml_cuda_check(env: MutableMapping[str, str] | None = None) -> bool:
     return True
 
 
+def _threshold_seconds(value: float | str) -> float:
+    seconds = float(value)
+    if math.isnan(seconds):
+        raise ValueError("hang-abort threshold must not be NaN")
+    return seconds
+
+
 def resolve_hang_abort_seconds(
     cli_seconds: float,
     *,
@@ -115,8 +123,8 @@ def resolve_hang_abort_seconds(
     env_map = os.environ if env is None else env
     raw = env_map.get(HANG_ABORT_ENV)
     if raw is not None and str(raw).strip() != "":
-        return float(raw)
-    return float(cli_seconds)
+        return _threshold_seconds(raw)
+    return _threshold_seconds(cli_seconds)
 
 
 def resolve_boot_hang_abort_seconds(
@@ -140,13 +148,13 @@ def resolve_boot_hang_abort_seconds(
     them ends up without it. ``hang_abort_seconds`` is positional so a new
     caller cannot omit it.
     """
-    if float(hang_abort_seconds) <= 0.0:
+    if _threshold_seconds(hang_abort_seconds) <= 0.0:
         return 0.0
     env_map = os.environ if env is None else env
     raw = env_map.get(BOOT_HANG_ABORT_ENV)
     if raw is not None and str(raw).strip() != "":
-        return float(raw)
-    return float(default_seconds)
+        return _threshold_seconds(raw)
+    return _threshold_seconds(default_seconds)
 
 
 def resolve_worker_boot_hang_abort_seconds(
@@ -165,15 +173,15 @@ def resolve_worker_boot_hang_abort_seconds(
     env_map = os.environ if env is None else env
     raw = env_map.get(WORKER_HANG_ABORT_ENV)
     if raw is None or str(raw).strip() == "":
-        return float(default_seconds)
+        return _threshold_seconds(default_seconds)
     try:
-        seconds = float(raw)
+        seconds = _threshold_seconds(raw)
     except ValueError:
         log.warning(
             "%s=%r is not a number; using the %.0fs default",
             WORKER_HANG_ABORT_ENV, raw, float(default_seconds),
         )
-        return float(default_seconds)
+        return _threshold_seconds(default_seconds)
     if seconds > SERVER_LEASE_SECONDS:
         # ⚑ The recovery story depends on this ordering. A worker that aborts
         # while its lease is still ALIVE reclaims that same lease on respawn,
@@ -249,9 +257,9 @@ class BrokerHangWatchdog:
         # in the log line and the code in the exit status, nothing else.
         self._component = str(component)
         self._exit_code = int(exit_code)
-        self._threshold_s = float(threshold_s)
+        self._threshold_s = _threshold_seconds(threshold_s)
         self._boot_threshold_s = (
-            float(threshold_s) if boot_threshold_s is None else float(boot_threshold_s)
+            self._threshold_s if boot_threshold_s is None else _threshold_seconds(boot_threshold_s)
         )
         self._poll_interval_s = float(poll_interval_s)
         self._exit_fn: Callable[[int], None] = exit_fn if exit_fn is not None else os._exit
@@ -377,7 +385,8 @@ class BrokerHangWatchdog:
             if self._aborted:
                 return True
             armed = self._armed
-            oldest = min(self._inflight.values()) if self._inflight else None
+            oldest_entry = min(self._inflight.items(), key=lambda item: item[1]) if self._inflight else None
+            oldest = oldest_entry[1] if oldest_entry is not None else None
             threshold = self._threshold_s
             boot_threshold = self._boot_threshold_s
         if oldest is None:
@@ -397,6 +406,10 @@ class BrokerHangWatchdog:
         with self._lock:
             if self._aborted:
                 return True
+            # Completion/replacement or arming can invalidate the unlocked snapshot.
+            if (oldest_entry is None or self._inflight.get(oldest_entry[0]) != oldest
+                    or self._armed != armed):
+                return False
             self._aborted = True
         # ONE critical line then hard-exit — no cleanup (CUDA context is dead).
         log.critical(
