@@ -87,7 +87,7 @@ def peek_checkpoint_peak_lr(maybe: Path) -> float | None:
 
     ``mmap=True`` keeps the model/optimizer tensors on disk (same trick as
     :func:`peek_checkpoint_arch`) so this costs a scalar read, not a 685MB
-    materialization. Returns None for older checkpoints with no ``peak_lr``.
+    materialization. Returns None for absent or unusable optional ``peak_lr``.
     """
     try:
         ckpt = torch.load(str(maybe), map_location="cpu", mmap=True)
@@ -95,7 +95,11 @@ def peek_checkpoint_peak_lr(maybe: Path) -> float | None:
         return None
     try:
         raw = ckpt.get("peak_lr") if isinstance(ckpt, dict) else None
-        return float(raw) if raw is not None and float(raw) > 0.0 else None
+        try:
+            value = float(raw) if raw is not None else 0.0
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return value if math.isfinite(value) and value > 0.0 else None
     finally:
         del ckpt
 
