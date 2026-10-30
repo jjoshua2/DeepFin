@@ -135,6 +135,10 @@ minutes the same way.
   Appending would silently pool two runs. `scripts/daily_gate_ratchet.sh` passes
   `--resume` for exactly this reason: its same-day retry of a series is the same
   invocation, and it now continues that attempt instead of replaying it.
+  This includes header-only logs: zero finished games does not prove the writer
+  stopped. Automatic takeover never clears such a log. Choose a distinct output
+  path, or explicitly resume only after confirming the prior writer stopped and
+  continuing that run is authorized; a user-stopped run is not restart permission.
 - ⚑ A resumed PGN keeps the discarded orphan game (append-only). Its
   replacements carry `ResumeReplay "1"`, so for any `PairId` that has the tag,
   the games WITHOUT it are the stale ones — drop those before a pooled fit.

@@ -365,17 +365,12 @@ def refuse_existing_log_message(
 def take_over_header_only_log(
     path: str | Path, *, fingerprint: str,
 ) -> tuple[bool, str]:
-    """Clear a log that holds a header and ZERO games so a fresh run can use it.
+    """Refuse automatic takeover without changing the existing log.
 
-    A crash between the header write and the first finished game — checkpoint
-    load, a 4-minute ``torch.compile``, engine warmup — leaves exactly this,
-    and the "already exists" refusal then blocks the retry to protect games
-    that do not exist. Returns ``(taken_over, message)``: the message is a note
-    to print when the log was cleared, and an extra line for the refusal when
-    it was not.
-
-    Not taken over when the log holds games (the case the refusal is FOR), when
-    its fingerprint is another invocation's, or when it cannot be parsed.
+    A header with zero finished games can belong to a live writer loading a
+    checkpoint or warming up an engine, not only to a crashed run. Matching
+    settings do not establish exclusive ownership. Retain the legacy return
+    shape for callers, but never clear a log on this evidence alone.
     """
     p = Path(path)
     try:
@@ -390,12 +385,12 @@ def take_over_header_only_log(
             f"({log.fingerprint or '<absent>'}) is not this invocation's "
             f"({fingerprint}), so it belongs to a different run."
         )
-    p.write_text("", encoding="utf-8")
-    return True, (
-        f"note: {p} held a header and ZERO games (a crash before the first "
-        f"game finished — checkpoint load, compile, engine warmup). Its "
-        f"fingerprint is this invocation's, so there is nothing to mix: the "
-        f"header is rewritten and this run starts from scratch."
+    return False, (
+        f"  {p} holds a header and ZERO games with matching settings, but "
+        f"the prior writer may still be active. Automatic takeover is refused "
+        f"and the log is unchanged. Use a distinct output path, or explicitly "
+        f"resume only after confirming the prior writer has stopped and "
+        f"continuing that run is authorized."
     )
 
 

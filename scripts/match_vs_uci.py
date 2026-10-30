@@ -1125,9 +1125,8 @@ def main() -> None:
         # Decided BEFORE the engines are started: a refusal must not leave two
         # UCI subprocesses (and a compiled net) behind.
         if had_log and not args.resume:
-            # A crash between the header write and the first finished game
-            # (engine warmup, a slow checkpoint load inside engine A) leaves a
-            # log with zero games; refusing the retry then protects nothing.
+            # Zero finished games can mean an active writer is still warming
+            # up. Matching settings do not authorize clearing its header.
             taken_over, note = take_over_header_only_log(
                 game_log_path, fingerprint=fingerprint,
             )
