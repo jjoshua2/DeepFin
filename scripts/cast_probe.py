@@ -102,6 +102,7 @@ from chess_anti_engine.replay.shard import (
     sf_eval_pv_orphan_flags,
 )
 from scripts.diagnostic_replay_utils import (
+    bool_field,
     float_field,
     latest_replay_dir,
     record_skipped_shard,
@@ -272,6 +273,7 @@ def new_scan(replay_dir: Path | str, shards: list[Path]) -> dict[str, Any]:
         "replay_dir": str(replay_dir),
         "shards": len(shards),
         "rows_scanned": 0,
+        "rows_missing_join_metadata": 0,
         "rows_sf_wdl": 0,
         "rows_sf_p0_regret": 0,
         "cast_pairs": 0,
@@ -302,16 +304,21 @@ def collect(shards: list[Path], scan: dict[str, Any], rng: np.random.Generator) 
             continue
         n = int(np.asarray(arrs["policy_target"]).shape[0])
         scan["rows_scanned"] += n
+        has_p0r = bool_field(arrs, "has_sf_p0_regret", n)
+        has_raw = bool_field(arrs, "has_sf_multipv_raw", n)
+        has_wdl = bool_field(arrs, "has_sf_wdl", n)
+        has_legal = bool_field(arrs, "has_legal_mask", n)
+        scan["rows_sf_wdl"] += int(has_wdl.sum())
+        scan["rows_sf_p0_regret"] += int(has_p0r.sum())
+        # Storage prunes universally absent optional arrays AND their flags.
+        # An unknown game/ply is not game 0/ply 0 and must never enter a join.
+        has_join = bool_field(arrs, "has_game_id", n) & bool_field(arrs, "has_ply_index", n)
+        scan["rows_missing_join_metadata"] += int((~has_join).sum())
+        if not has_join.any():
+            record_skipped_shard(scan, shard, ValueError("no rows with game_id and ply_index"))
+            continue
         gid = np.asarray(arrs["game_id"]).astype(np.int64)
         ply = np.asarray(arrs["ply_index"]).astype(np.int64)
-        has_p0r = np.asarray(arrs["has_sf_p0_regret"]).astype(bool)
-        has_raw = np.asarray(arrs["has_sf_multipv_raw"]).astype(bool)
-        has_wdl = np.asarray(arrs["has_sf_wdl"]).astype(bool)
-        wdl = np.asarray(arrs["sf_wdl"]).astype(np.float64)
-        q = wdl[:, 0] - wdl[:, 2]
-        raw = np.asarray(arrs["sf_multipv_raw"])
-        reg = np.asarray(arrs["sf_p0_regret"]).astype(np.float64)
-        legal = np.asarray(arrs["legal_mask"]).astype(bool)
         pol = np.asarray(arrs["policy_target"]).astype(np.float64)
         planes = np.asarray(arrs["x"])
         hist_enc = str(np.asarray(arrs["_input_history_encoding"]).item())
@@ -330,11 +337,10 @@ def collect(shards: list[Path], scan: dict[str, Any], rng: np.random.Generator) 
         kl = float_field(arrs, "priority_policy_kl", n)
         qd = float_field(arrs, "priority_q_delta", n)
 
-        scan["rows_sf_wdl"] += int(has_wdl.sum())
-        scan["rows_sf_p0_regret"] += int(has_p0r.sum())
-
-        index = {(int(gid[i]), int(ply[i])): i for i in range(n)}
+        index = {(int(gid[i]), int(ply[i])): i for i in range(n) if has_join[i]}
         for i in range(n):
+            if not has_join[i]:
+                continue
             parent = index.get((int(gid[i]), int(ply[i]) - 1))
             if parent is None or not (has_wdl[i] and has_wdl[parent]):
                 continue
@@ -344,12 +350,17 @@ def collect(shards: list[Path], scan: dict[str, Any], rng: np.random.Generator) 
             # Every adjacency below is EXACT: ply_index - 1 in the same game.
             # A gap is never treated as consecutive.
             scan["cast_pairs"] += 1
-            a = advantage(float(q[i]), float(q[parent]))
-            if not has_p0r[i] or not has_raw[parent]:
+            wdl = np.asarray(arrs["sf_wdl"])
+            q_i = float(wdl[i, 0]) - float(wdl[i, 2])
+            q_parent = float(wdl[parent, 0]) - float(wdl[parent, 2])
+            a = advantage(q_i, q_parent)
+            if not has_p0r[i] or not has_raw[parent] or not has_legal[i]:
                 continue
-            mask = legal[i]
+            mask = np.asarray(arrs["legal_mask"][i], dtype=bool)
+            raw_parent = np.asarray(arrs["sf_multipv_raw"][parent])
+            reg = np.asarray(arrs["sf_p0_regret"][i], dtype=np.float64)
             width = int(mask.size)
-            covered_idx = scored_multipv_indices(raw[parent], width)
+            covered_idx = scored_multipv_indices(raw_parent, width)
             if covered_idx.size == 0:
                 continue
             covered = np.zeros((width,), dtype=bool)
@@ -382,18 +393,18 @@ def collect(shards: list[Path], scan: dict[str, Any], rng: np.random.Generator) 
             argmax_idx = int(np.argmax(probs))
             rows.played_is_argmax.append(played == argmax_idx)
             rows.ply.append(int(ply[i]))
-            reg_legal = reg[i][mask]
+            reg_legal = reg[mask]
             cov_legal = covered[mask]
             p_legal = probs[mask]
-            sf_best = int(covered_idx[int(np.argmin(reg[i][covered_idx]))])
+            sf_best = int(covered_idx[int(np.argmin(reg[covered_idx]))])
 
             scan["cast_pairs_with_p0"] += 1
             rows.adv.append(a)
-            rows.regret_played.append(float(reg[i][played]))
+            rows.regret_played.append(float(reg[played]))
             rows.in_multipv.append(bool(covered[played]))
             rows.is_sf_best.append(played == sf_best)
             rows.pmax.append(float(probs[argmax_idx]))
-            rows.abs_q_parent.append(abs(float(q[parent])))
+            rows.abs_q_parent.append(abs(q_parent))
             rows.n_legal.append(int(mask.sum()))
             rows.n_covered.append(int(cov_legal.sum()))
             rows.mass_covered.append(float(p_legal[cov_legal].sum()))
