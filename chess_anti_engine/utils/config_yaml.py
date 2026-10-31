@@ -488,6 +488,7 @@ _RUN_BOOLEAN_KEYS = frozenset({
     "phase_smolgen", "use_nla", "gradient_checkpointing",
     "sf_pid_enabled", "progressive_mcts", "no_amp",
     "use_compile", "syzygy_policy",
+    "diff_focus_enabled", "diff_focus_norm_enabled", "diff_focus_norm_shared",
     "record_lc0_root_input", "history_rep_fix", "record_relations",
     "record_prior_top1", "record_dense_sf_policy", "record_sf_p0_policy",
     "record_sf_p0_regret", "record_fast_ply_value",
