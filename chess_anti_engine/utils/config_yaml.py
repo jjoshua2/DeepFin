@@ -478,7 +478,7 @@ _RUN_BOOLEAN_KEYS = frozenset({
     "salvage_restore_pid_state", "salvage_restore_donor_config",
     "salvage_restore_full_trainer_state", "salvage_reinit_volatility_heads",
     "distributed_worker_use_compile", "distributed_worker_auto_tune",
-    "distributed_inference_broker_enabled", "pbt_synch",
+    "distributed_inference_broker_enabled", "distributed_inference_shared_broker", "pbt_synch",
     "search_smolgen", "search_nla", "search_optimizer",
     "asha_optimizer_only", "search_feature_dropout_p",
     "search_w_volatility", "search_volatility_source",
