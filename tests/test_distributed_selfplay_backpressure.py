@@ -547,16 +547,15 @@ def test_distributed_ingest_counts_stale_and_matching_positions_separately(
         rng=np.random.default_rng(2),
     )
 
-    assert summary["positions_replay_added"] == 122_000
+    assert summary["positions_replay_added"] == 4
+    assert len(buf) == 4
     assert summary["matching_positions"] == 2_000
     assert summary["stale_positions"] == 120_000
 
-    # The real loop divides by the INGESTED total, so a 6x gap between the two
-    # counters is a 6x gap in the step budget -- see
-    # tests/test_views_denominator.py::test_matching_denominator_reproduces_the_bug.
-    assert summary["positions_replay_added"] == (
-        summary["matching_positions"] + summary["stale_positions"]
-    )
+    # Game/backpressure metrics retain whole-shard metadata; replay accounting
+    # uses the four submitted array rows, including the stale-model rows.
+    assert summary["matching_games"] == summary["stale_games"] == 1
+    assert summary["matching_shards"] == summary["stale_shards"] == 1
 
 
 def test_train_step_budget_views_targeting_overrides_window_fraction() -> None:
