@@ -1080,7 +1080,8 @@ def _refuse_out_of_range_startup_value(
   # refuses `nan`; the day one is added without them, this early return would
   # reopen exactly the hole the `setoption` half had -- `nan` stored, reported
   # LIVE, and searched as if the knob were off.
-    if not math.isfinite(float(value)):
+    # Keep arbitrary-size spin integers in their native domain.
+    if isinstance(value, float) and not math.isfinite(value):
         raise SystemExit(
             f"--{dest.replace('_', '-')} {value!r}: {opt.name} must be finite. "
             "Every gate that reads it is a comparison, and a comparison against "
@@ -1089,7 +1090,7 @@ def _refuse_out_of_range_startup_value(
         )
     if opt.lo is None or opt.hi is None:
         return
-    if opt.lo <= float(value) <= opt.hi:
+    if opt.lo <= value <= opt.hi:
         return
     flag = "--" + dest.replace("_", "-")
     raise SystemExit(
