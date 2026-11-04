@@ -19,10 +19,18 @@ def apply_policy_temperature(probs: np.ndarray, temperature: float) -> np.ndarra
     if float(p.sum()) <= 0:
         return probs.astype(np.float32, copy=False)
     p = p / float(p.sum())
-    p = np.power(p, 1.0 / t)
-    s = float(p.sum())
+    powered = np.power(p, 1.0 / t)
+    s = float(powered.sum())
+    if s < np.finfo(np.float64).tiny and t > 0.0 and np.isfinite(t):
+        # Preserve the ratios while ensuring a maximum retains unit mass when
+        # small positive temperatures push unscaled powers below normal precision.
+        largest = float(np.max(p))
+        if largest > 0.0 and np.isfinite(largest):
+            powered = np.power(p / largest, 1.0 / t)
+            s = float(powered.sum())
     if s > 0:
-        p /= s
+        powered /= s
+    p = powered
     return p.astype(np.float32, copy=False)
 
 
