@@ -4,9 +4,10 @@ These are historical scientific artifacts, copied byte-for-byte from the recorde
 experiment state. They accompany the [experiment records](../../README.md).
 The [manifest](manifest.json) maps every repository-relative source to its published
 path, byte count and SHA256. Preserving originals keeps the hashes in preregistrations
-and reviews meaningful. Source `scratchpad/bt4_joint20/` paths are retained; training
-and data summaries are under `scratchpad/bt4_joint20/publication_originals/`, with
-original paths recorded in the manifest.
+and reviews meaningful. Original source paths and hashes remain in the frozen manifest. Most training/data
+summary copies now live at the same relative paths under the optional `research/`
+submodule; one directly linked small summary remains in main. The checksum reader
+below resolves both locations without rewriting original identities.
 
 Historical absolute paths, commands, PIDs, initial launch observations and committed
 configuration identities are provenance. They are neither portable execution
@@ -90,7 +91,11 @@ It distinguishes the accepted complete-bank result from the earlier training/lau
 
 ## Recompute without the original machine
 
-From the repository root, the following uses only Python's standard library. It
+Initialize the exact pinned research checkout before this historical audit:
+
+    git submodule update --init research
+
+From the DeepFin repository root, the following uses only Python's standard library. It
 verifies every cataloged file and recomputes the chosen complete bank's candidate
 score and nominal paired normal interval. Change `bank` to another complete bank
 from the table. Read its header for candidate/reference roles: direct opponents
@@ -103,7 +108,14 @@ from pathlib import Path
 
 catalog = json.loads(Path("docs/experiments/evidence/bt4-bootstrap/manifest.json").read_text())
 for item in catalog["files"]:
-    data = Path(item["published_path"]).read_bytes()
+    path = Path(item["published_path"])
+    if not path.exists():
+        path = Path("research") / path
+        if not path.exists():
+            raise FileNotFoundError(
+                f"{path}: initialize the pinned research submodule before this audit"
+            )
+    data = path.read_bytes()
     assert len(data) == item["bytes"]
     assert hashlib.sha256(data).hexdigest() == item["sha256"]
 
