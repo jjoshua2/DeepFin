@@ -54,15 +54,12 @@ def load_control_fens(dump: str, n: int) -> list[str]:
 
 
 def load_seed_lines(path: str, n: int) -> list[str]:
-    out: list[str] = []
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            body = line.partition("#")[0].strip()
-            if body:
-                out.append(body)
-            if len(out) >= n:
-                break
-    return out
+    """Limit usable seeds without discarding lost-terminal reconstruction data."""
+    from scripts.blindspot_resolution import load_seed_lines as load_resolution_seeds
+
+    if n <= 0:
+        raise ValueError("seed limit must be positive")
+    return load_resolution_seeds(path)[:n]
 
 
 def paired(a: np.ndarray, b: np.ndarray) -> tuple[float, float, float]:

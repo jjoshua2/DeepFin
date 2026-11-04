@@ -426,6 +426,18 @@ A corrupt or wrong-shaped `bans.json` **fails open** — nobody is banned — be
 fleet must not lose its server to a bad ban file. It now logs a WARNING saying so; an
 absent file stays silent, since that is the normal case.
 
+When present, `usernames` and `ips` must be JSON arrays. A non-array value in
+either field invalidates the whole ban list, with the same warning and fail-open
+behavior; the other field is not partially applied. Existing list-entry string
+conversion and optional `notes` handling are unchanged. Authentication and
+`list-bans` use this read fallback until the operator repairs the file.
+
+Modifying commands (`ban` and `unban`) instead refuse unreadable, corrupt or
+wrong-shaped existing policy with a nonzero exit, leaving its bytes untouched.
+They must not save an empty read fallback and permanently discard valid bans or
+notes from another field. Repair the file before retrying. An absent file remains
+a valid empty policy, so the first `ban` can create it normally.
+
 **Minimum 8 characters** (the same policy as `manage_users`, from the same
 `auth.check_new_password`). A shorter one is refused **400**, not 401 — the
 credential is not wrong, it is unacceptable, and a 401 would send the client

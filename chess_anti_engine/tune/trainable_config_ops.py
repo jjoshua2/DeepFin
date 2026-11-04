@@ -1424,6 +1424,34 @@ def _apply_lr_gamma_weights(trainer: Trainer, config: dict, *, rescale_current_l
             setattr(trainer.model, "resid_channel_balance_weight", weight)
 
 
+def _sync_feature_dropout(trainer: Trainer, config: dict) -> None:
+    """Push explicit live dropout settings without replacing startup defaults.
+
+    TrialConfig's absent-global default differs from Trainer construction, so
+    config presence matters here. The YAML overlay is add/update-only: removed
+    overrides remain in config until explicitly reset with a negative sentinel.
+    """
+    keys = (
+        "fdp_king_safety", "fdp_pins", "fdp_pawns",
+        "fdp_mobility", "fdp_outposts",
+    )
+    global_supplied = "feature_dropout_p" in config
+    global_p = float(config.get("feature_dropout_p", trainer.feature_dropout_p))
+    groups = []
+    for index, (offset, length, current_p) in enumerate(trainer._feature_group_dropout):
+        key = keys[index] if index < len(keys) else None
+        if key is not None and key in config:
+            value = config[key]
+            probability = global_p if value is None or value < 0 else float(value)
+        elif global_supplied:
+            probability = global_p
+        else:
+            probability = current_p
+        groups.append((offset, length, probability))
+    trainer.feature_dropout_p = global_p
+    trainer._feature_group_dropout = groups
+
+
 def _sync_trainer_weights(
     trainer: Trainer,
     config: dict,
@@ -1436,6 +1464,7 @@ def _sync_trainer_weights(
     take effect immediately.
     """
     _apply_lr_gamma_weights(trainer, config, rescale_current_lr=True)
+    _sync_feature_dropout(trainer, config)
 
     # The SF-policy floor's `tau_played` is DERIVED from `gumbel_topk`, which is
     # a LIVE selfplay key. Pushed here rather than left to the startup-only

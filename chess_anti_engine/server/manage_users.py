@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from .access import BANS_FILENAME, BanList
+from .access import BANS_FILENAME, BanList, BanListLoadError
 from .auth import (
     UserStats,
     WeakPassword,
@@ -171,7 +171,12 @@ def main() -> None:
         # Atomic replacement protects readers; the lock also protects one
         # operator's update from another operator's older snapshot.
         with users_db_lock(bans_path):
-            bans = BanList.load(bans_path)
+            try:
+                bans = BanList.load(bans_path, strict=True)
+            except BanListLoadError as exc:
+                raise SystemExit(
+                    f"refusing to modify ban list: {exc}; repair the file before retrying"
+                ) from exc
             for value, bucket in ((args.username, bans.usernames), (args.ip, bans.ips)):
                 if not value:
                     continue

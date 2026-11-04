@@ -24,11 +24,13 @@ def rank_cache_bytes(rows: int, raw_shards: int, top_k: int) -> int:
     return rows * (rank_identity_dtype(top_k).itemsize + 1) + raw_shards * 512
 
 
-def raw_identity_cache_bytes(rows: int, raw_shards: int) -> int:
+def raw_identity_cache_bytes(rows: int, raw_shards: int, *, used_rows: bool = True) -> int:
     """Conservative adapter reservation for every selected row/shard.
 
-    Each first shard access reserves its array plus 4096 bytes above accumulated
-    actual NPY sizes. Reserving that header allowance for every shard covers any
+    Each first shard access reserves its identity array, a uint8 used-row map,
+    and 4096 bytes for both NPY headers above accumulated actual sizes.
+    Reserving that header allowance for every shard covers any
     first-access order, including a shard whose rows are later all filtered out.
+    Non-adapting readers can omit the used-row map without changing their quota.
     """
-    return rows * RAW_IDENTITY_DTYPE.itemsize + raw_shards * 4096
+    return rows * (RAW_IDENTITY_DTYPE.itemsize + int(used_rows)) + raw_shards * 4096

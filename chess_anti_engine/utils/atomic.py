@@ -9,16 +9,21 @@ Two distinct guarantees, which are easy to conflate:
 
 * **Atomicity** — a concurrent reader sees either the old file or the new one,
   never a half-written mixture. Delivered by the rename, always, at no cost.
-* **Durability** — after the call returns, the new contents survive an unclean
-  shutdown (power loss, hard reset, VM kill). Delivered by ``durable=True``
-  (the default), which fsyncs the tmp file before the rename and the containing
-  directory after it. Without it, ext4 ``data=ordered`` usually saves the
+* **Durability** — on filesystems supporting the sync operations and with a
+  stable path namespace, ``durable=True`` (the default) fsyncs the parent
+  directory hierarchy before writing, the tmp file before rename, and the
+  containing directory after rename. The hierarchy is synced even when it
+  already exists: a previous attempt may have created it and failed to sync.
+  Without it, ext4 ``data=ordered`` usually saves the
   contents by a well-known heuristic, but that is a filesystem courtesy and not
   a guarantee — and this project has had unclean reboots.
 
 Durability is not free: measured on this project's ext4-on-WSL2 root, a 2.5 KB
 JSON write costs ~0.22 ms plain and ~11 ms durable (median), with a tail past
-1.8 s. Pass ``durable=False`` for files that are pure telemetry — content that
+1.8 s. Those historical numbers predate ancestor synchronization; a durable
+write now also pays one preflight directory sync per unique resolved directory
+in its parent-prefix/ancestor closure. Symlinks can expand that set. No live
+latency bound is implied. Pass ``durable=False`` for pure telemetry — content that
 a crash may discard because it is re-derived, not recovered from.
 """
 from __future__ import annotations
@@ -69,6 +74,39 @@ def _fsync_dir(path: Path) -> None:
             raise
     finally:
         os.close(fd)
+
+
+def _fsync_directory_chain(parent: Path) -> None:
+    """Persist every directory needed to reach ``parent`` before publication.
+
+    A lexical walk alone misses ancestors of symlink targets. Resolve each
+    lexical prefix and include its physical ancestors, also visiting targets
+    of intermediate links. Deduplicate barriers by resolved path (not inode)
+    and expand each link at most once by its resolved-parent/name identity.
+    Strict resolution rejects cycles before any barriers or writer invocation.
+    Do not infer durability from existence: an earlier failed mkdir/sync can
+    leave an unsynced directory behind. There is deliberately no process cache.
+
+    The namespace must remain stable while writing; this is not protection
+    against adversarial renames/symlink replacement. Unsupported-directory-sync
+    handling stays in _fsync_dir, so those filesystems retain its weaker promise.
+    """
+    pending = [parent.absolute()]
+    directories: set[Path] = set()
+    links: set[Path] = set()
+    while pending:
+        path = pending.pop()
+        for prefix in (path, *path.parents):
+            resolved = prefix.resolve(strict=True)
+            directories.update((resolved, *resolved.parents))
+            if prefix.is_symlink():
+                link = prefix.parent.resolve(strict=True) / prefix.name
+                if link not in links:
+                    links.add(link)
+                    target = link.readlink()
+                    pending.append(target if target.is_absolute() else link.parent / target)
+    for directory in sorted(directories, key=lambda p: (len(p.parts), str(p))):
+        _fsync_dir(directory)
 
 
 def _tmp_path_for(path: Path, *, preserve_suffix: bool = False) -> Path:
@@ -166,8 +204,12 @@ def atomic_write(
     does not already end in it. (``torch.save`` does NOT dispatch on
     extension, so it does not need this flag.)
 
-    ``durable=True`` (default) fsyncs the tmp file before the rename and the
-    containing directory after it, so the result survives an unclean shutdown.
+    ``durable=True`` (default) first syncs the parent-prefix/ancestor directory
+    closure, then the tmp file before rename and the containing directory after
+    it. Preflight sync failures do not invoke the writer or replace an old file;
+    a failure after replace can leave the new file visible with uncertain
+    durability. A successful retry repeats every ancestor barrier, even for
+    pre-existing directories. See the module's filesystem/namespace limits.
     Pass ``durable=False`` only for content a crash may simply discard — see
     the module docstring for the measured cost.
 
@@ -190,6 +232,8 @@ def atomic_write(
     ``preserve_suffix=True`` was missing.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    if durable:
+        _fsync_directory_chain(path.parent)
     tmp = _tmp_path_for(path, preserve_suffix=preserve_suffix)
     replaced = False
     try:

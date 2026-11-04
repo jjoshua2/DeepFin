@@ -31,6 +31,7 @@ def _make_checkout(root: Path) -> Path:
     scripts = root / "scripts"
     scripts.mkdir(parents=True, exist_ok=True)
     shutil.copy2(SCRIPT, scripts / SCRIPT.name)
+    shutil.copy2(SCRIPT.with_suffix(".py"), scripts / "bank_rolling_checkpoints.py")
     return scripts / SCRIPT.name
 
 
@@ -71,7 +72,7 @@ def test_the_checkpoint_is_banked_whatever_the_checkout_is_called(
 
     result = _run_one_pass(script)
 
-    banked = root / "data" / "salvage" / "rolling" / "checkpoint_000005"
+    banked = next((root / "data" / "salvage" / "rolling").glob("bank_*__checkpoint_000005"), root / "missing-bank")
     assert banked.is_dir(), (
         f"nothing banked from {dirname!r}. stdout={result.stdout!r} "
         f"stderr={result.stderr!r}"
@@ -88,7 +89,9 @@ def test_no_half_written_temp_dir_is_left_behind(tmp_path: Path) -> None:
     _run_one_pass(script)
 
     rolling = root / "data" / "salvage" / "rolling"
-    assert [p.name for p in rolling.iterdir()] == ["checkpoint_000005"]
+    banked = list(rolling.glob("bank_*__checkpoint_000005"))
+    assert len(banked) == 1
+    assert {p.name for p in rolling.iterdir()} == {banked[0].name, ".bank.lock"}
 
 
 def test_the_glob_is_expanded_at_the_point_of_use() -> None:
@@ -217,7 +220,7 @@ def test_TUNE_DIR_overrides_the_derived_location(tmp_path: Path) -> None:
              "ONCE": "1", "TUNE_DIR": str(root / "somewhere_else" / "tune")},
     )
     assert result.returncode == 0, f"stderr={result.stderr!r}"
-    banked = root / "data" / "salvage" / "rolling" / "checkpoint_000005"
+    banked = next((root / "data" / "salvage" / "rolling").glob("bank_*__checkpoint_000005"), root / "missing-bank")
     assert banked.is_dir(), (
         f"TUNE_DIR was accepted and ignored. stdout={result.stdout!r} "
         f"stderr={result.stderr!r}"

@@ -64,6 +64,10 @@ class RateLimited(RuntimeError):
     """Too many attempts from one address inside the window. Surfaces as 429."""
 
 
+class BanListLoadError(ValueError):
+    """An existing ban policy cannot safely be used for a modifying command."""
+
+
 _log = logging.getLogger("chess_anti_engine.server.access")
 
 
@@ -83,12 +87,19 @@ class BanList:
     notes: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
-    def load(path: str | Path) -> BanList:
+    def load(path: str | Path, *, strict: bool = False) -> BanList:
+        """Read with visible fail-open fallback, or reject invalid state for edits.
+
+        Missing files are valid empty policies in both modes. Modifying callers
+        must request strict mode so they never persist a fail-open snapshot.
+        """
         p = Path(path)
         out = BanList(path=p)
         try:
             raw = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
+            if strict and (not isinstance(exc, FileNotFoundError) or p.is_symlink()):
+                raise BanListLoadError(f"cannot read ban list {p}: {exc}") from exc
   # Absent is the normal case and means "nobody is banned", so it stays
   # silent. A file that EXISTS and will not parse is a different event with
   # the same consequence -- everybody unbanned -- and it used to be
@@ -109,12 +120,25 @@ class BanList:
                 )
             return out
         if not isinstance(raw, dict):
+            if strict:
+                raise BanListLoadError(f"ban list {p} must be an object")
             _log.warning(
                 "ban list %s parsed as %s, not an object; PROCEEDING WITH "
                 "NOBODY BANNED. Expected {\"usernames\": [...], \"ips\": [...]}.",
                 p, type(raw).__name__,
             )
             return out
+        for field_name in ("usernames", "ips"):
+            value = raw.get(field_name, [])
+            if not isinstance(value, list):
+                if strict:
+                    raise BanListLoadError(f"ban list {p} field {field_name} must be an array")
+                _log.warning(
+                    "ban list %s field %s is %s, not an array; PROCEEDING WITH "
+                    "NOBODY BANNED. Expected arrays for usernames and ips.",
+                    p, field_name, type(value).__name__,
+                )
+                return out
         out.usernames = {str(u) for u in raw.get("usernames", []) if str(u).strip()}
         out.ips = {str(i) for i in raw.get("ips", []) if str(i).strip()}
         notes = raw.get("notes")

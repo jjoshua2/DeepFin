@@ -305,24 +305,35 @@ def expected_blunder_rates(
     It is also the direct expression of collapse avoidance: the mass a policy
     prior puts on moves that lose the game outright.
 
-    Degenerate distributions follow ``expected_and_top1_regret``'s convention
-    (non-positive total ⇒ treat as uniform), so the two metrics never disagree
-    about what a row's distribution was.
+    Finite degenerate distributions follow ``expected_and_top1_regret``'s
+    convention (non-positive total ⇒ treat as uniform). Non-finite probability
+    entries, totals, normalized probabilities or subset masses raise
+    ``ValueError`` rather than becoming a favorable zero through the clamp.
     """
     if not taus:
         return ()
     p = np.asarray(probs, dtype=np.float64)
-    total = float(p.sum())
-    p = np.full_like(p, 1.0 / max(1, p.size)) if total <= 0.0 else p / total
+    if not np.all(np.isfinite(p)):
+        raise ValueError("blunder probabilities must be finite")
+    with np.errstate(over="ignore", invalid="ignore"):
+        total = float(p.sum())
+    if not np.isfinite(total):
+        raise ValueError("blunder probability total must be finite")
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        p = np.full_like(p, 1.0 / max(1, p.size)) if total <= 0.0 else p / total
+    if not np.all(np.isfinite(p)):
+        raise ValueError("normalized blunder probabilities must be finite")
     r = np.asarray(regrets, dtype=np.float64)
+    with np.errstate(over="ignore", invalid="ignore"):
+        masses = tuple(float(p[r > float(tau)].sum()) for tau in taus)
+    if not all(np.isfinite(mass) for mass in masses):
+        raise ValueError("blunder probability subset masses must be finite")
     # Clamped to [0, 1]: when EVERY listed move clears the threshold the subset
     # sum is the whole normalized vector, which lands 1 ulp above 1.0 often
     # enough to matter (3 of 50 random draws). These values are reported as
     # probabilities and joined by paired_compare, so returning 1.0000000000000002
     # would be a needlessly leaky invariant.
-    return tuple(
-        float(min(1.0, max(0.0, p[r > float(tau)].sum()))) for tau in taus
-    )
+    return tuple(float(min(1.0, max(0.0, mass))) for mass in masses)
 
 
 # Criticality = deep-SF cp gap between the best and 2nd-best listed move. Shared

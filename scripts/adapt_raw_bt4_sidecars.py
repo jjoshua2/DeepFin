@@ -69,7 +69,9 @@ def namespace(path: Path, config: str) -> str:
 class RawInputs:
     """Small bounded cache of verified row identities; policies remain on disk."""
 
-    def __init__(self, manifest: dict[str, Any], max_rows: int, max_index_bytes: int):
+    def __init__(self, manifest: dict[str, Any], max_rows: int, max_index_bytes: int,
+                 *, track_used_rows: bool = False):
+        self.track_used_rows = track_used_rows
         self.wdl = manifest.get('wdl')
         self.feed_cache: dict[tuple[str, str], tuple[Path, str]] = {}
         self.teacher = manifest['teacher']
@@ -145,7 +147,8 @@ class RawInputs:
         rows = int(receipt['positions'])
         require(0 < rows <= self.max_rows, 'raw shard exceeds bounded identity-cache row limit')
         feed_bytes = rows * 32 + 4096 if self.wdl is not None else 0
-        require(self.index_bytes + raw_identity_cache_bytes(rows, 1) + feed_bytes <= self.max_index_bytes,
+        require(self.index_bytes + raw_identity_cache_bytes(rows, 1, used_rows=self.track_used_rows)
+                + feed_bytes <= self.max_index_bytes,
                 'raw identity disk-cache budget exhausted')
         pending = raw.PendingShard(spec, spec.corpus_dir / key[1], rows, spec.out_dir / raw.sidecar_name(key[1]))
         before = {path: storage_identity(path) for path in (pending.path, pending.target)}
@@ -166,6 +169,14 @@ class RawInputs:
             np.save(stream, records, allow_pickle=False)
         self.index_bytes += index_path.stat().st_size
         self.disk_cache[key] = index_path, file_sha256(index_path)
+        if self.track_used_rows:
+            # As in the rank sidecar, disk-backed used rows span every output shard.
+            used_path = index_path.with_suffix('.used.npy')
+            used = np.lib.format.open_memmap(used_path, mode='w+', dtype=np.uint8, shape=(rows,))
+            used[:] = 0
+            used.flush()
+            del used
+            self.index_bytes += used_path.stat().st_size
         if feeds is not None:
             feed_path = index_path.with_suffix('.feeds.npy')
             with feed_path.open('xb') as stream:
@@ -198,7 +209,7 @@ def adapt(manifest_path: Path, *, expected_manifest_sha256: str, out: Path,
     paths = sorted(source.glob('shard_*.zarr'))
     written = {entry['path']: entry for entry in summary['shards']}
     require(bool(paths) and len(written) == len(summary['shards']) and set(written) == {path.name for path in paths}, 'derived shard inventory differs from summary')
-    inputs = RawInputs(manifest, max_raw_rows, max_index_bytes)
+    inputs = RawInputs(manifest, max_raw_rows, max_index_bytes, track_used_rows=True)
     out = out.resolve()
     protected = [source, manifest_path.resolve()] + [Path(value) for value in inputs.sources]
     protected += [spec.out_dir for spec, _receipts in inputs.sources.values()]
@@ -237,16 +248,14 @@ def adapt(manifest_path: Path, *, expected_manifest_sha256: str, out: Path,
         policy = np.empty((rows, mix.COMPACT_POLICY_SIZE), dtype=np.float32)
         values = np.empty((rows, 3), dtype=contract['dtype']) if contract else None
         feed_hashes = reused.canonical_hashes(x) if contract else None
-        seen: set[tuple[str, str, int]] = set()
         grouped: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
         for index, ref in enumerate(refs):
-            identity = (ref['source_namespace'], ref['source_shard'], ref['source_row'])
-            require(identity not in seen, 'duplicate source-qualified derived row')
-            seen.add(identity)
             grouped.setdefault((ref['source_dir'], ref['source_shard']), []).append((index, ref))
         for requests in grouped.values():
             first_ref = requests[0][1]
             raw_group, records = inputs.get(first_ref)
+            index_path, _digest = inputs.disk_cache[(str(first_ref['source_dir']), str(first_ref['source_shard']))]
+            used = np.load(index_path.with_suffix('.used.npy'), mmap_mode='r+', allow_pickle=False)
             output_rows, raw_rows = [], []
             for index, ref in requests:
                 require(ref['source_namespace'] == first_ref['source_namespace'] and
@@ -254,6 +263,7 @@ def adapt(manifest_path: Path, *, expected_manifest_sha256: str, out: Path,
                         'source namespace/config mismatch within raw shard')
                 offset = int(ref['source_row'])
                 require(0 <= offset < len(records), 'physical source row outside closed shard')
+                require(not used[offset], 'duplicate source-qualified derived row')
                 record = records[offset]
                 require(ref['input_key'] == record['input_key'].tobytes().hex(), 'raw full-history key mismatch')
                 require(ref['stored_input_key'] == record['stored_input_key'].tobytes().hex() == corpus.input_tensor_key(x[index]),
@@ -262,8 +272,11 @@ def adapt(manifest_path: Path, *, expected_manifest_sha256: str, out: Path,
                         'raw physical row/game/ply/worker identity mismatch')
                 require(int(game_ids[index]) == ref['game_id'] and int(ply_indices[index]) == ref['ply'],
                         'derived game/ply alignment mismatch')
+                used[offset] = 1
                 output_rows.append(index)
                 raw_rows.append(offset)
+            used.flush()
+            del used
             # Zarr groups requested rows by chunk, avoiding one decompression per row.
             policy[output_rows] = raw_group[raw.POLICY_FIELD].oindex[np.asarray(raw_rows), :]
             if contract is not None:

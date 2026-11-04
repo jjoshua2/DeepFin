@@ -70,6 +70,10 @@ command -v timeout >/dev/null 2>&1 || {
     echo "GROK UNAVAILABLE: the timeout command is not on PATH." >&2
     exit 69
 }
+command -v python3 >/dev/null 2>&1 || {
+    echo "GROK UNAVAILABLE: Python 3 is required for private artifact allocation." >&2
+    exit 69
+}
 case "$GROK_REVIEW_TIMEOUT_SECONDS" in
     ""|*[!0-9]*)
         echo "GROK_REVIEW_TIMEOUT_SECONDS must be a positive integer" >&2
@@ -101,13 +105,12 @@ git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
     exit 65
 }
 
-mkdir -p "$OUT_DIR"
-OUT_DIR="$(cd "$OUT_DIR" && pwd -P)"
-RUN_DIR="$(mktemp -d "$OUT_DIR/review.XXXXXXXX")"
+HELPER_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+RUN_DIR="$(python3 -S -B "$HELPER_DIR/grok_artifact_dir.py" "$OUT_DIR" review)"
 RAW="$RUN_DIR/raw.txt"
 PROMPT="$RUN_DIR/prompt.md"
 
-SNAP="$(mktemp -d)"
+SNAP="$(mktemp -d "$RUN_DIR/snapshot.XXXXXXXX")"
 TMP_ARCHIVE=""
 TMP_DIFF=""
 TMP_UNTRACKED=""
@@ -177,7 +180,7 @@ case "$MODE" in
                 exit 65
             }
         else
-            TMP_ARCHIVE="$(mktemp)"
+            TMP_ARCHIVE="$(mktemp "$RUN_DIR/archive.XXXXXXXX")"
             (cd "$REPO" && gh api "repos/$REPO_SLUG/tarball/$PR_HEAD") > "$TMP_ARCHIVE" || {
                 echo "could not download PR $TARGET head $PR_HEAD" >&2
                 exit 65
@@ -191,7 +194,7 @@ case "$MODE" in
             echo "could not initialize PR snapshot" >&2
             exit 65
         }
-        TMP_DIFF="$(mktemp)"
+        TMP_DIFF="$(mktemp "$RUN_DIR/diff.XXXXXXXX")"
         (cd "$REPO" && gh pr diff "$TARGET") > "$TMP_DIFF" || {
             echo "could not read PR $TARGET diff" >&2
             exit 65
@@ -225,7 +228,7 @@ case "$MODE" in
         BASE_REF="${TARGET%...*}"
         BASE_SHA="$(git -C "$REPO" rev-parse --verify "${BASE_REF}^{commit}")"
         HEAD_REF="$(git -C "$REPO" rev-parse --verify "${HEAD_REF}^{commit}")"
-        TMP_DIFF="$(mktemp)"
+        TMP_DIFF="$(mktemp "$RUN_DIR/diff.XXXXXXXX")"
         git -C "$REPO" diff "$BASE_SHA...$HEAD_REF" > "$TMP_DIFF" || {
             echo "could not read diff range $TARGET" >&2
             exit 65
@@ -255,7 +258,7 @@ case "$MODE" in
             echo "could not initialize worktree snapshot" >&2
             exit 65
         }
-        TMP_DIFF="$(mktemp)"
+        TMP_DIFF="$(mktemp "$RUN_DIR/diff.XXXXXXXX")"
         git -C "$REPO" diff --binary HEAD > "$TMP_DIFF" || {
             echo "could not read worktree diff" >&2
             exit 65
@@ -266,7 +269,7 @@ case "$MODE" in
                 exit 65
             }
         fi
-        TMP_UNTRACKED="$(mktemp)"
+        TMP_UNTRACKED="$(mktemp "$RUN_DIR/untracked.XXXXXXXX")"
         git -C "$REPO" ls-files --others --exclude-standard -z > "$TMP_UNTRACKED" || {
             echo "could not list untracked worktree files" >&2
             exit 65

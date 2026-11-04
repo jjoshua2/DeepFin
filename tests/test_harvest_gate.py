@@ -835,3 +835,97 @@ def test_the_derived_default_reaches_the_publishing_checkout(
     monkeypatch.setattr(syzygy, "main_checkout", lambda _root=None: None)
     lonely = syzygy.default_syzygy_path(worktree)
     assert syzygy.missing_tablebase_dirs(lonely) == lonely.split(syzygy.SEPARATOR)
+
+
+@pytest.mark.parametrize("pending_cap", [0, 1, 2, 10])
+def test_sf_failure_retries_keep_newest_first_order(tmp_path: Path, pending_cap: int) -> None:
+    state = GateState()
+    newest_first = [_key(fen) for fen in (_FEN_C, _FEN_B, _FEN_A)]
+    lines = [_line(fen) for fen in (_FEN_A, _FEN_B, _FEN_C)]
+    out = tmp_path / "unused-staging.txt"
+    calls: list[str] = []
+
+    def failed_score(fen: str) -> None:
+        calls.append(_key(fen))
+
+    for _ in range(3):
+        original = dump_gate_state(state)
+        calls.clear()
+
+        counts, staged, updated = run_gate(
+            new_lines=lines, state=state, exclude_keys=set(), sf_score=failed_score,
+            vet_lost_below=-0.8, max_vet_per_run=3, dry_run=False,
+            stamp=_STAMP, out_path=str(out), pending_cap=pending_cap,
+        )
+        assert calls == newest_first
+        assert counts.sf_failed == 3
+        assert counts.vetted_kept == counts.vetted_rejected == 0
+        assert staged == []
+        assert [key for key, _ in updated.pending] == list(reversed(newest_first))
+        assert not updated.emitted
+        assert not updated.rejected
+        assert dump_gate_state(state) == original
+        # Persistence preserves the ordering contract, including when every
+        # failure must survive a cap smaller than the retry set.
+        state = load_gate_state(json.loads(json.dumps(dump_gate_state(updated))))
+        lines = []
+    assert not out.exists()
+
+
+def test_failed_retry_order_with_overflow_fresh_captures_and_duplicates(tmp_path: Path) -> None:
+    state = GateState(pending=[(_key(f), _line(f)) for f in (_FEN_A, _FEN_B)])
+    original = dump_gate_state(state)
+    out = tmp_path / "unused-staging.txt"
+    first_calls: list[str] = []
+
+    def first_score(fen: str) -> None:
+        first_calls.append(_key(fen))
+
+    counts, _, updated = run_gate(
+        new_lines=[_line(_FEN_C), _line(_FEN_D), _line(_FEN_C)],
+        state=state, exclude_keys=set(), sf_score=first_score, vet_lost_below=-0.8,
+        max_vet_per_run=2, dry_run=False, stamp=_STAMP, out_path=str(out), pending_cap=3,
+    )
+    assert first_calls == [_key(_FEN_D), _key(_FEN_C)]
+    assert counts.sf_failed == 2
+    assert counts.capped == 2
+    assert [key for key, _ in updated.pending] == [_key(f) for f in (_FEN_B, _FEN_C, _FEN_D)]
+    assert dump_gate_state(state) == original
+    second_calls: list[str] = []
+
+    def second_score(fen: str) -> float | None:
+        second_calls.append(_key(fen))
+        return 0.9 if _key(fen) == _key(_FEN_E) else None
+
+    counts, staged, final = run_gate(
+        new_lines=[_line(_FEN_D), _line(_FEN_E)], state=updated, exclude_keys=set(),
+        sf_score=second_score, vet_lost_below=-0.8, max_vet_per_run=2,
+        dry_run=False, stamp=_STAMP, out_path=str(out), pending_cap=3,
+    )
+    assert second_calls == [_key(_FEN_E), _key(_FEN_D)]
+    assert counts.after_dedup == 4
+    assert counts.sf_failed == counts.vetted_rejected == 1
+    assert final.rejected == {_key(_FEN_E)}
+    assert [key for key, _ in final.pending] == [_key(f) for f in (_FEN_B, _FEN_C, _FEN_D)]
+    assert staged == []
+    assert not out.exists()
+
+
+def test_retry_order_dry_run_keeps_state_and_does_not_score(tmp_path: Path) -> None:
+    state = GateState(offsets={"fixture": 12}, pending=[(_key(f), _line(f)) for f in (_FEN_A, _FEN_B)])
+    original = dump_gate_state(state)
+    out = tmp_path / "unused-staging.txt"
+
+    def unexpected_score(_fen: str) -> None:
+        pytest.fail("dry run must not score retries")
+
+    counts, staged, updated = run_gate(
+        new_lines=[_line(_FEN_C)], state=state, exclude_keys=set(), sf_score=unexpected_score,
+        vet_lost_below=-0.8, max_vet_per_run=2, dry_run=True,
+        stamp=_STAMP, out_path=str(out), pending_cap=1, new_offsets={"fixture": 99},
+    )
+    assert counts.after_dedup == 3
+    assert dump_gate_state(state) == original
+    assert dump_gate_state(updated) == original
+    assert staged == []
+    assert not out.exists()

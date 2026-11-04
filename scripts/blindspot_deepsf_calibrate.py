@@ -74,7 +74,9 @@ def parse_all(path: str) -> list[dict]:
             if m is None:
                 continue
             rows.append({"line": body.strip(), "bucket": m[1],
-                         "sq": float(m[2]), "outcome": m[3], "game": int(m[4])})
+                         "sq": float(m[2]), "outcome": m[3], "game": int(m[4]),
+                         "ply": (int(pm[1]) if (pm := re.search(
+                             r"(?:^|\s)ply=(-?\d+)(?:\s|$)", comment)) else None)})
     return rows
 
 

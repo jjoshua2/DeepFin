@@ -3135,9 +3135,8 @@ def run_arena(
     had_log = log_path.exists() and log_path.stat().st_size > 0
     resumed: ArenaResume | None = None
     if had_log and not resume:
-        # A crash during the two ~700MB checkpoint loads or the ~4-minute
-        # compile leaves a log with a header and no games. Refusing the retry
-        # then protects games that do not exist.
+        # A header-only log may belong to an active loading/compiling writer.
+        # Matching settings are not evidence that automatic takeover is safe.
         taken_over, note = take_over_header_only_log(
             log_path, fingerprint=fingerprint,
         )

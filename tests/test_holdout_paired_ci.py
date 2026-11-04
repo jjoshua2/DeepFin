@@ -112,3 +112,66 @@ def test_row_order_mismatch_is_refused() -> None:
     b = _dump(np.zeros(20), gid[::-1])
     with pytest.raises(SystemExit):
         paired(a, b, "ce", n_boot=10, seed=0)
+
+
+@pytest.mark.parametrize("seed", [0, 17])
+@pytest.mark.parametrize("n_boot", [1, 11, 100])
+def test_streamed_replicates_match_original_finite_draws(seed: int, n_boot: int) -> None:
+    """Banked finite comparisons retain their exact game-clustered estimator."""
+    gid = np.array([1, 1, 1, 2, 3, 3, 3, 3, 3, 3])
+    a = _dump(np.arange(10) / 7, gid)
+    b = _dump(np.arange(10) / 5 + np.arange(10) % 3, gid)
+    a["base"][2] = 0
+    b["base"][7] = 0
+    mask = (a["base"] > 0) & (b["base"] > 0)
+    games, inv = np.unique(gid[mask], return_inverse=True)
+    sums = np.bincount(inv, weights=(b["ce"] - a["ce"])[mask])
+    counts = np.bincount(inv).astype(np.float64)
+    indices = np.random.default_rng(seed).integers(
+        0, games.size, size=(n_boot, games.size),
+    )
+    boot = sums[indices].sum(1) / counts[indices].sum(1)
+    lo, hi = np.percentile(boot, [2.5, 97.5])
+    assert paired(a, b, "ce", n_boot=n_boot, seed=seed) == {
+        "delta": float(sums.sum() / counts.sum()), "lo": float(lo),
+        "hi": float(hi), "n_rows": int(mask.sum()), "n_games": int(games.size),
+        "sd_boot": float(boot.std()),
+    }
+
+
+def test_bootstrap_draws_retain_only_one_replicate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refuse the old product-shaped allocation before it allocates anything."""
+    gid = np.array([0, 0, 1, 2, 2])
+    a = _dump(np.zeros(5), gid)
+    b = _dump(np.arange(5), gid)
+    rng = np.random.default_rng(7)
+    calls: list[int] = []
+
+    class BoundedGenerator:
+        def integers(self, low: int, high: int, *, size: int) -> np.ndarray:
+            assert size == 3, "bootstrap must allocate one game draw at a time"
+            calls.append(size)
+            return rng.integers(low, high, size=size)
+
+    monkeypatch.setattr(_MOD.np.random, "default_rng", lambda seed: BoundedGenerator())
+    result = paired(a, b, "ce", n_boot=13, seed=7)
+    assert calls == [3] * 13
+    assert result["n_rows"] == 5
+    assert result["n_games"] == 3
+
+
+@pytest.mark.parametrize("n_boot", [0, -1])
+def test_nonpositive_replicate_count_is_refused(n_boot: int) -> None:
+    a = _dump(np.zeros(2), np.array([0, 1]))
+    with pytest.raises(ValueError, match="n_boot must be positive"):
+        paired(a, a, "ce", n_boot=n_boot)
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_no_paired_eligible_games_is_refused(empty: bool) -> None:
+    n = 0 if empty else 3
+    a = _dump(np.zeros(n), np.arange(n))
+    b = _dump(np.ones(n), np.arange(n))
+    b["base"][:] = 0
+    with pytest.raises(ValueError, match="no paired eligible games"):
+        paired(a, b, "ce", n_boot=2)

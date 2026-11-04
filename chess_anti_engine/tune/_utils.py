@@ -60,7 +60,7 @@ def load_optional_json(path: Path) -> dict | None:
         return None
     try:
         obj = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         print(
             f"[trial] {path.name} exists but could not be read ({exc}); "
             f"continuing WITHOUT it, as if it were absent: {path}",

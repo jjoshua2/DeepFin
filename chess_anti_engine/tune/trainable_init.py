@@ -45,6 +45,7 @@ from chess_anti_engine.tune.holdout_state import (
     restored_holdout_scalars,
 )
 from chess_anti_engine.tune.recovery import (
+    _load_salvage_manifest,
     _load_salvage_manifest_entry,
     _merge_pid_state_from_result_row,
     _select_salvage_seed_slot,
@@ -86,7 +87,7 @@ def peek_checkpoint_peak_lr(maybe: Path) -> float | None:
 
     ``mmap=True`` keeps the model/optimizer tensors on disk (same trick as
     :func:`peek_checkpoint_arch`) so this costs a scalar read, not a 685MB
-    materialization. Returns None for older checkpoints with no ``peak_lr``.
+    materialization. Returns None for absent or unusable optional ``peak_lr``.
     """
     try:
         ckpt = torch.load(str(maybe), map_location="cpu", mmap=True)
@@ -94,7 +95,11 @@ def peek_checkpoint_peak_lr(maybe: Path) -> float | None:
         return None
     try:
         raw = ckpt.get("peak_lr") if isinstance(ckpt, dict) else None
-        return float(raw) if raw is not None and float(raw) > 0.0 else None
+        try:
+            value = float(raw) if raw is not None else 0.0
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return value if math.isfinite(value) and value > 0.0 else None
     finally:
         del ckpt
 
@@ -220,8 +225,12 @@ def _restore_from_salvage_pool(
     if not seed_pool_dir.is_dir():
         raise RuntimeError(f"salvage_seed_pool_dir not found: {seed_pool_dir}")
 
+    # Slot path and donor metadata must come from the same publication, even
+    # if another export replaces the pool manifest while restore is running.
+    manifest = _load_salvage_manifest(seed_pool_dir)
     picked_dir, picked_slot, num_slots = _select_salvage_seed_slot(
         seed_pool_dir=seed_pool_dir, trial_dir=trial_dir, trial_id=trial_id,
+        manifest=manifest,
     )
     if picked_dir is None:
         raise RuntimeError(
@@ -273,6 +282,7 @@ def _restore_from_salvage_pool(
 
     seed_entry = _load_salvage_manifest_entry(
         seed_pool_dir=seed_pool_dir, slot=rr.seed_warmstart_slot,
+        manifest=manifest,
     )
     manifest_row: dict | None = (
         seed_entry.get("result_row") if isinstance(seed_entry, dict) else None

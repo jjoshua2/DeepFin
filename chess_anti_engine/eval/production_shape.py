@@ -162,7 +162,8 @@ def load_config_file(
       # warning, which is the opposite of the loud-but-not-fatal behaviour this
       # module promises.
         raw_bytes = path.read_bytes()
-        flat = flatten_run_config_defaults(load_yaml_file(str(path)))
+        # Hash and parse the same snapshot, even if the path is replaced now.
+        flat = flatten_run_config_defaults(load_yaml_file(str(path), raw_bytes=raw_bytes))
     except OSError as exc:
         return None, f"{path} cannot be read: {type(exc).__name__}: {exc}"
     except Exception as exc:

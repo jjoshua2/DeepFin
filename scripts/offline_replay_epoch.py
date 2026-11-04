@@ -2450,7 +2450,9 @@ def main() -> None:
                         args=args,
                     )
                 else:
-                    eval_arrs = _load_eval_arrs(shard_paths=shard_paths, model_cfg=model_cfg, args=args)
+                    eval_arrs = _load_eval_arrs(
+                        shard_paths=_eval_shard_paths(args), model_cfg=model_cfg, args=args,
+                    )
                     row = _train_candidate(
                         candidate=candidate,
                         cfg=cfg,

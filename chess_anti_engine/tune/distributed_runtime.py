@@ -934,7 +934,7 @@ def _launch_distributed_worker(
     trial_id: str,
     worker_index: int,
 ) -> subprocess.Popen[bytes]:
-    worker_artifact_root = trial_dir / "distributed_workers" / f"worker_{worker_index:02d}"
+    worker_artifact_root = _distributed_worker_artifacts_root(trial_dir) / f"worker_{worker_index:02d}"
     worker_artifact_root.mkdir(parents=True, exist_ok=True)
     worker_log = worker_artifact_root / "worker.log"
     worker_out = worker_artifact_root / "worker.out"
@@ -1860,6 +1860,8 @@ def _ingest_train_arrays(
         return
     _record_replay_array_metrics(shard_arrs, train_mask, summary)
     buf.add_many_arrays(slice_array_batch(shard_arrs, np.flatnonzero(train_mask)))
+    # Count submitted training rows, excluding holdout and independent of eviction.
+    summary["positions_replay_added"] += int(np.count_nonzero(train_mask))
   # Per-sample is_selfplay tag count, training rows only. Shards written
   # before this field existed won't carry it — silently skip.
     if "has_is_selfplay" not in shard_arrs:
@@ -1926,7 +1928,6 @@ def _process_shard(
         holdout_frac=holdout_frac, holdout_frozen=holdout_frozen,
         rng=rng, summary=summary,
     )
-    summary["positions_replay_added"] += m["positions"]
 
     if model_sha in accepted_model_shas:
         for key, val in m.items():
@@ -2177,3 +2178,8 @@ def _ingest_distributed_selfplay(
                 break
 
     return summary
+
+
+def _distributed_worker_artifacts_root(trial_dir: Path) -> Path:
+    """Local launch artifacts, distinct from server-side worker replay roots."""
+    return trial_dir / "distributed_workers"

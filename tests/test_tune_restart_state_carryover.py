@@ -83,7 +83,7 @@ def test_the_checkpoint_carries_the_ema_and_the_restore_reads_it(
     """
     monkeypatch.setattr(
         "chess_anti_engine.tune.trainable_report.save_holdout_rows",
-        lambda **_kw: None,
+        lambda **_kw: 0,
     )
     ckpt_dir = tmp_path / "checkpoint_001985"
     _save_checkpoint(ckpt_dir, opp_strength_ema=327.1906)
@@ -100,7 +100,7 @@ def test_the_checkpoint_carries_the_ema_and_the_restore_reads_it(
 def test_failed_trial_meta_sidecar_prevents_checkpoint_publication(tmp_path: Path, monkeypatch) -> None:
     from chess_anti_engine.tune import trainable_report as report
 
-    monkeypatch.setattr(report, "save_holdout_rows", lambda **_kw: None)
+    monkeypatch.setattr(report, "save_holdout_rows", lambda **_kw: 0)
     original_atomic = report.atomic_write_text
 
     def fail_trial_meta(path, text):
@@ -416,7 +416,7 @@ def test_the_salvage_ema_follows_the_pid_state_switch(tmp_path: Path) -> None:
 
 def test_the_checkpoint_banks_the_yaml_key_set(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "chess_anti_engine.tune.trainable_report.save_holdout_rows", lambda **_kw: None,
+        "chess_anti_engine.tune.trainable_report.save_holdout_rows", lambda **_kw: 0,
     )
     ckpt_dir = tmp_path / "checkpoint_001985"
     _save_checkpoint(ckpt_dir, opp_strength_ema=1.0, yaml_keys=["batch_size", "lr"])

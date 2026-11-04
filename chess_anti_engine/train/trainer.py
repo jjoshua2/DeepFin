@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import logging
+import stat
 import sys
 import math
 import threading
@@ -2439,6 +2440,14 @@ def align_compile_prefix(
     }
 
 
+def _configured_zclip_max_norm(config: dict) -> Any:
+    return config.get("zclip_max_norm", config.get("grad_clip", 1.0))
+
+
+def _parse_zclip_max_norm(raw: Any) -> float | None:
+    return None if raw is None else float(raw)
+
+
 def resolve_zclip_max_norm(config: dict) -> float | None:
     """The one answer to "what fixed grad-norm cap does this config mean?".
 
@@ -2455,8 +2464,7 @@ def resolve_zclip_max_norm(config: dict) -> float | None:
     ``grad_clip`` is the argparse spelling in run.py. An explicit ``None``
     disables the fixed cap while leaving adaptive z-score clipping active.
     """
-    raw = config.get("zclip_max_norm", config.get("grad_clip", 1.0))
-    return None if raw is None else float(raw)
+    return _parse_zclip_max_norm(_configured_zclip_max_norm(config))
 
 
 # Construction-site bounds for the per-group optimizer scalars that reach the
@@ -2820,6 +2828,29 @@ class ObjectiveSnapshot:
     loss_kwargs: Mapping[str, Any]
     loss_weights: Mapping[str, float]
     loss_shape: Mapping[str, float]
+
+
+def _checkpoint_output_mode(path: Path) -> int | None:
+    """Preserve ordinary mode bits in a trusted, stable output directory.
+
+    Atomic replacement does not preserve owner/group, ACLs, xattrs or hard-link
+    identity. Refuse terminal links, non-regular files and special mode bits
+    rather than reinterpret them. Require owner read/write: the filename-based
+    writer reopens the temporary for writing, and durability reopens for reading.
+    Refuse unsupported modes before writing rather than temporarily broaden them.
+    """
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError(f"refusing non-regular or symlink checkpoint: {path}")
+    mode = stat.S_IMODE(info.st_mode)
+    if mode & ~0o777:
+        raise ValueError(f"refusing special mode bits on checkpoint: {path}")
+    if mode & 0o600 != 0o600:
+        raise ValueError(f"checkpoint requires owner read/write mode bits: {path}")
+    return mode
 
 
 class Trainer:
@@ -3935,7 +3966,8 @@ class Trainer:
         a restore that quietly does nothing is the failure mode this whole
         change is about.
 
-        ⚑ A non-finite `mean` or `var` is REFUSED rather than restored. Per
+        ⚑ A non-finite `mean` or `var`, or a negative `var`, is REFUSED
+        rather than restored. Per
         `_restore_zclip_stats`: one nan in the EMA is permanent, because every
         later `z = (norm - nan) / std` is nan, `nan > z_thresh` is False, and
         `_compute_clip_val` returns None for the rest of the run -- the
@@ -3987,6 +4019,13 @@ class Trainer:
                 "a nan here disables the adaptive clipper permanently while "
                 "the fixed cap keeps reporting normally. Starting a fresh EMA "
                 "warmup", mean, var,
+            )
+            return False
+
+        if var is not None and var < 0.0:
+            log.warning(
+                "zclip: REFUSING a negative checkpoint EMA variance (%r); "
+                "keeping the current adaptive state", var,
             )
             return False
 
@@ -5284,7 +5323,11 @@ class Trainer:
         else:
             pg["lr"] = float(scheduler_last_lr_for_group) if scheduler_last_lr_for_group is not None else new_base
 
-    def set_grad_clip_max_norm(self, max_norm: float | None) -> bool:
+    def set_grad_clip_from_config(self, config: dict) -> bool:
+        """Live config uses startup's key precedence but refuses malformed caps."""
+        return self.set_grad_clip_max_norm(_configured_zclip_max_norm(config))
+
+    def set_grad_clip_max_norm(self, max_norm: Any) -> bool:
         """Re-point zclip's fixed hard cap on a RUNNING trainer.
 
         ``ZClip`` reads ``max_grad_norm`` once in its constructor, so before
@@ -5311,17 +5354,22 @@ class Trainer:
         because erroring out would take down a running trial over a typo.
         """
         old = self.grad_clip_max_norm
-        if max_norm is None:
-            new = None
-        else:
-            new = float(max_norm)
-            if not math.isfinite(new) or new <= 0.0:
-                print(
-                    f"[trainer] REFUSING zclip_max_norm={max_norm!r} "
-                    f"(must be finite and > 0); keeping {old}",
-                    flush=True,
-                )
-                return False
+        try:
+            new = _parse_zclip_max_norm(max_norm)
+        except (TypeError, ValueError, OverflowError):
+            print(
+                f"[trainer] REFUSING zclip_max_norm={max_norm!r} "
+                f"(must be numeric, finite and > 0, or None); keeping {old}",
+                flush=True,
+            )
+            return False
+        if new is not None and (not math.isfinite(new) or new <= 0.0):
+            print(
+                f"[trainer] REFUSING zclip_max_norm={max_norm!r} "
+                f"(must be finite and > 0); keeping {old}",
+                flush=True,
+            )
+            return False
         if new == old:
             return False
         self.zclip.max_grad_norm = new  # pyright: ignore[reportAttributeAccessIssue]
@@ -6349,7 +6397,16 @@ class Trainer:
             state["swa_model"] = strip_compile_prefix(self._swa_model.state_dict())
   # Atomic write so workers polling for new checkpoints never see a partial
   # file (matches the export_swa path; previously diverged).
-        atomic_write(path, lambda tmp: torch.save(state, str(tmp)))
+        mode = _checkpoint_output_mode(path)
+
+        def write_checkpoint(tmp: Path) -> None:
+            if mode is not None:
+                # atomic_write exclusively created this owned, empty temporary.
+                # Undo only umask filtering, never exceed the requested mode.
+                tmp.chmod(mode)
+            torch.save(state, str(tmp))
+
+        atomic_write(path, write_checkpoint, mode=mode)
 
     # `policy_embedding.*` belongs here for the same reason as the relation weights:
     # zero-init, function-preserving, ADDED params. Without it, enabling the shared

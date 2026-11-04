@@ -13,21 +13,26 @@
 # its early checkpoints are the oldest and therefore already deleted. So bank
 # continuously and cheaply, rather than at the moment someone realises they care.
 #
-# Safe by construction: cp only, nice 19, never writes to the trial dir, never
-# constructs a DiskReplayBuffer (that deletes shards -- audit G12).
+# Never writes to the trial dir or constructs a DiskReplayBuffer. Completed
+# copies have source-qualified names/provenance; only managed bank entries may
+# be trimmed. Legacy entries are unvalidated, pinned and count against KEEP.
+# BANK_DIR explicitly selects a different bank; the default path is unchanged.
+# New and old versions must not share a bank concurrently: old writers ignore
+# identity, provenance, the lock and the global mixed-layout retention budget.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DST="$REPO_ROOT/data/salvage/rolling"
+DST=${BANK_DIR:-"$REPO_ROOT/data/salvage/rolling"}
 EVERY=${EVERY:-5}        # keep checkpoints whose index is a multiple of this
-KEEP=${KEEP:-24}         # cap on retained dirs (~656M each)
+KEEP=${KEEP:-24}         # GLOBAL cap, including pinned unidentified legacy entries
 SLEEP=${SLEEP:-900}
 # One pass, then exit. The loop is unbounded by design (this is a daemon), and a
 # test that has to wait for `timeout` to kill it pays the full duration on EVERY
 # case even though the work finished in the first millisecond -- ~80s per serial
 # suite run for four cases. A seam that ENDS the loop is cheaper than a shorter
 # timeout and, unlike one, it also proves the pass completed rather than that it
-# was cut short. Unset in production, where the daemon must never exit.
+# was cut short. Unset in production to keep polling. Established transient
+# new-source races retry next poll; unsafe bank/write failures require restart.
 ONCE=${ONCE:-0}
 
 # ⚑⚑ FAIL LOUDLY FROM THE WRONG TREE — #441 review N4.
@@ -65,39 +70,22 @@ if [ ! -d "$TUNE_DIR" ]; then
     exit 2
 fi
 
-mkdir -p "$DST"
-
 while :; do
-    for trial in "$TUNE_DIR"/train_trial_*; do
-        [ -d "$trial" ] || continue
-        for ck in "$trial"/checkpoint_0*; do
-            [ -d "$ck" ] || continue
-            name=$(basename "$ck")
-            idx=$((10#${name#checkpoint_}))
-            [ $((idx % EVERY)) -eq 0 ] || continue
-            [ -e "$DST/$name" ] && continue
-            # Copy to a temp name first so a prune mid-copy cannot leave a
-            # half-written dir that later reads as a complete banked checkpoint.
-            if nice -n 19 cp -r "$ck" "$DST/.tmp_$name" 2>/dev/null; then
-                mv "$DST/.tmp_$name" "$DST/$name"
-                echo "[bank] $(date '+%F %T') banked $name"
-            else
-                rm -rf "$DST/.tmp_$name"
-            fi
-        done
-    done
-
-    # Trim oldest by checkpoint index, not mtime -- mtime is the COPY time and
-    # would evict in arbitrary order.
-    mapfile -t have < <(ls "$DST" 2>/dev/null | grep '^checkpoint_' | sort -t_ -k2 -n)
-    n=${#have[@]}
-    if [ "$n" -gt "$KEEP" ]; then
-        for ((i=0; i<n-KEEP; i++)); do
-            echo "[bank] trimming ${have[$i]}"
-            rm -rf "${DST:?}/${have[$i]}"
-        done
+    # The helper ranks source-clock candidates before copying, so old evicted
+    # sources are not recopied on every poll. It never interprets checkpoint
+    # indices from independent trials as a global chronology. Copy time does
+    # not refresh an entry's priority. An immutable source location is required.
+    pass_status=0
+    nice -n 19 python3 "$REPO_ROOT/scripts/bank_rolling_checkpoints.py" \
+        --tune-dir "$TUNE_DIR" --destination "$DST" --every "$EVERY" --keep "$KEEP" || pass_status=$?
+    if [ "$pass_status" -ne 0 ]; then
+        # ONCE stays honest. Only a precommit source race with successful stage
+        # cleanup has status 75; committed/uncertain writes are never retried.
+        if [ "$ONCE" = 1 ] || [ "$pass_status" -ne 75 ]; then
+            exit "$pass_status"
+        fi
+        echo "[bank] source not ready; retrying at the next poll" >&2
     fi
-
     [ "$ONCE" = 1 ] && break
     sleep "$SLEEP"
 done

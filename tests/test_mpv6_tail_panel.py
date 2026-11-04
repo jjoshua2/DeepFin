@@ -21,6 +21,34 @@ panel = load_script_module("mpv6_tail_panel.py")
 CAP = panel.SF_OWN_REGRET_CAP_CP
 
 
+@pytest.mark.parametrize(
+    ("interval", "verdict"),
+    [
+        ((0.1750, 0.1765), "does NOT cover"),
+        ((0.1770, 0.1780), "covers"),
+        ((0.1779, 0.1800), "covers"),
+        ((0.1700, 0.1779), "covers"),
+        ((0.1780, 0.1800), "does NOT cover"),
+    ],
+    ids=["old-only", "corrected-only", "lower-inclusive", "upper-inclusive", "above"],
+)
+def test_report_compares_the_printed_historical_alpha(
+    interval: tuple[float, float], verdict: str, capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = {
+        "n_rows": 1, "true_cp": 100.0, "r_k_cp": 80.0, "midpoint_cp": 120.0,
+        "alpha_value_ci": interval, "alpha_grad_ci": (0.1, 0.3),
+        "alpha_value": 0.2, "alpha_grad_raw": 0.2, "true_pressure": 1.0,
+        "variants": {name: {"cos": 1.0, "rel_l2_pooled": 0.0, "tail_pressure": 1.0}
+                     for name in panel.GRID},
+    }
+    panel.report("synthetic", result)
+    assert (f"-> {verdict} the historical screen's alpha = 0.1779 [0.1572, 0.2005]"
+            in capsys.readouterr().out)
+    assert result["alpha_value_ci"] == interval
+    assert result["alpha_value"] == 0.2
+
+
 @dataclass
 class FakePV:
     move_uci: str
@@ -46,6 +74,54 @@ def test_score_of_mirrors_the_finalize_scorer() -> None:
     assert panel.score_of(FakePV("e2e4", mate=3)) > 30_000
     assert panel.score_of(FakePV("e2e4", mate=1)) > panel.score_of(FakePV("e2e4", mate=5))
     assert panel.score_of(FakePV("e2e4", mate=-3)) < -30_000
+
+
+@pytest.mark.parametrize("case", ["no-pvs", "no-scored", "mixed"])
+def test_run_panel_skips_missing_deep_before_analysis(
+    case: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    prod = [FakePV("e2e4", cp=30), FakePV("d2d4", cp=20)]
+    wide = [*prod, FakePV("g1f3", cp=10)]
+    closed: list[int] = []
+
+    class Engine:
+        def __init__(self, _path: str, *, nodes: int, **_kwargs: Any) -> None:
+            self.deep = nodes == 2
+            self.pvs = prod if _kwargs["multipv"] == panel.PROD_MULTIPV else wide
+
+        def search(self, fen: str, **_kwargs: Any) -> Any:
+            pvs = self.pvs
+            if self.deep and fen == "missing":
+                pvs = [FakePV("e7e5", cp=50)] if case == "no-scored" else []
+            return SimpleNamespace(pvs=pvs, depth=10)
+
+        def close(self) -> None:
+            closed.append(id(self))
+
+    monkeypatch.setattr(panel, "StockfishUCI", Engine)
+    positions = [
+        {"board": START, "fen": fen, "policy_encoding": ENC, "n_legal": 20}
+        for fen in (["missing", "valid"] if case == "mixed" else ["missing"])
+    ]
+    scan: dict[str, Any] = {"searched": 0, "skipped_no_tail": 0}
+    results = panel.run_panel(
+        positions, scan, stockfish="unused", prod_nodes=1, deep_nodes=2,
+        deep_hash_mb=1, workers=1, nice=19,
+    )
+    assert scan["skipped_missing_deep"] == 1
+    assert scan["skipped_no_tail"] == 0
+    assert scan["searched"] == len(results) + scan["skipped_missing_deep"]
+    assert len(closed) == len(set(closed)) == 3
+    if case == "mixed":
+        assert [row["fen"] for row in results] == ["valid"]
+        assert results[0]["deep_width"] == 3
+        check = panel.cross_arm_check(results, "matched_scored", "deep_scored")
+        assert check["n_rows"] == 1
+        assert check["n_moves"] == 3
+    else:
+        assert results == []
 
 
 def test_regrets_from_sorts_best_first_and_drops_unscored() -> None:

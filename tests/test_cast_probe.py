@@ -71,6 +71,9 @@ def _shard(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
         "sf_multipv_raw": np.full((n, 8, 5), -1, dtype=np.int16),
         "sf_wdl": np.zeros((n, 3), dtype=np.float32),
         "x": np.zeros((n, 146, 8, 8), dtype=np.float32),
+        "has_game_id": np.ones((n,), dtype=np.uint8),
+        "has_ply_index": np.ones((n,), dtype=np.uint8),
+        "has_legal_mask": np.ones((n,), dtype=np.uint8),
         "game_id": np.zeros((n,), dtype=np.int64),
         "ply_index": np.zeros((n,), dtype=np.int32),
         "has_sf_wdl": np.zeros((n,), dtype=np.uint8),
@@ -380,3 +383,113 @@ def test_price_the_tail_is_flat_when_the_tail_is_priced_correctly() -> None:
         arr, np.ones_like(inside), "all", np.random.default_rng(2),
     )
     assert res["overstatement"] == pytest.approx(1.0, abs=0.15)
+
+
+@pytest.mark.parametrize("omitted", ["game_id", "ply_index", "sf_wdl", "sf_p0_regret", "sf_multipv_raw", "legal_mask"])
+def test_collect_pruned_optional_arrays(tmp_path: Path, omitted: str) -> None:
+    """Real writer/validated loader must admit pruned optional storage."""
+    from chess_anti_engine.replay import ReplaySample
+    from chess_anti_engine.replay.shard import load_shard_arrays, samples_to_arrays, save_local_shard_arrays
+
+    samples = []
+    for i, board in enumerate(_line(["e4", "e5"])):
+        policy = np.full(WIDTH, 1.0 / WIDTH, dtype=np.float32)
+        sample = ReplaySample(x=_planes(board), policy_target=policy, wdl_target=1)
+        sample.input_history_encoding = ENC
+        sample.game_id = 7
+        sample.ply_index = i
+        sample.sf_wdl = np.array([0.2, 0.6, 0.2], dtype=np.float32)
+        samples.append(sample)
+    arrs = samples_to_arrays(samples)
+    arrs[f"has_{omitted}"] = np.zeros(3, dtype=np.uint8)
+    path = save_local_shard_arrays(tmp_path / "shard_000001.zarr", arrs=arrs, meta={"positions": 3})
+    loaded, _ = load_shard_arrays(path)
+    assert omitted not in loaded
+    scan = cast_probe.new_scan(tmp_path, [path])
+    result = cast_probe.collect([path], scan, np.random.default_rng(0))
+    assert scan["rows_scanned"] == 3
+    assert scan["rows_sf_wdl"] == (0 if omitted == "sf_wdl" else 3)
+    assert scan["rows_missing_join_metadata"] == (3 if omitted in {"game_id", "ply_index"} else 0)
+    assert scan["cast_pairs"] == (0 if omitted in {"game_id", "ply_index", "sf_wdl"} else 2)
+    assert scan["cast_pairs_with_p0"] == 0
+    assert result.adv == []
+
+
+def test_collect_partial_join_metadata_never_invents_adjacency(monkeypatch: pytest.MonkeyPatch) -> None:
+    boards = _line(["e4", "e5"])
+    arrs, meta = _shard([{"board": b, "ply_index": i} for i, b in enumerate(boards)])
+    arrs["has_game_id"][1] = 0
+    monkeypatch.setattr(cast_probe, "load_shard_arrays", lambda _: (arrs, meta))
+    scan = cast_probe.new_scan("fixture", [Path("fixture.zarr")])
+    cast_probe.collect([Path("fixture.zarr")], scan, np.random.default_rng(0))
+    assert scan["rows_scanned"] == 3
+    assert scan["rows_sf_wdl"] == 3
+    assert scan["rows_missing_join_metadata"] == 1
+    assert scan["cast_pairs"] == 0
+
+
+def test_collect_rejects_claimed_present_missing_array(tmp_path: Path) -> None:
+    from chess_anti_engine.replay import ReplaySample
+    from chess_anti_engine.replay.shard import samples_to_arrays
+
+    policy = np.full(WIDTH, 1.0 / WIDTH, dtype=np.float32)
+    arrs = samples_to_arrays([ReplaySample(x=_planes(chess.Board()), policy_target=policy, wdl_target=1)])
+    arrs["has_sf_wdl"] = np.ones(1, dtype=np.uint8)
+    arrs.pop("sf_wdl", None)
+    path = tmp_path / "shard_000001.npz"
+    np.savez(path, allow_pickle=False, **arrs)
+    scan = cast_probe.new_scan(tmp_path, [path])
+    result = cast_probe.collect([path], scan, np.random.default_rng(0))
+    assert scan["rows_scanned"] == 0
+    assert "has_sf_wdl is set but sf_wdl is missing" in scan["skipped_shards"][0]["reason"]
+    assert result.adv == []
+
+
+@pytest.mark.parametrize("omitted", [None, "sf_wdl", "sf_p0_regret", "sf_multipv_raw", "legal_mask"])
+def test_collect_only_reads_eligible_optional_fields(monkeypatch: pytest.MonkeyPatch, omitted: str | None) -> None:
+    boards = _line(["e4", "e5", "Nf3"])
+    covered = {_canon_index(boards[1], m): 0.05 for m in list(boards[1].legal_moves)[:2]}
+    arrs, meta = _shard([
+        {"board": b, "ply_index": i, "covered": covered, "regret": covered}
+        for i, b in enumerate(boards)
+    ])
+    if omitted is not None:
+        del arrs[omitted]
+        arrs[f"has_{omitted}"][:] = 0
+    monkeypatch.setattr(cast_probe, "load_shard_arrays", lambda _: (arrs, meta))
+    scan = cast_probe.new_scan("fixture", [Path("fixture.zarr")])
+    result = cast_probe.collect([Path("fixture.zarr")], scan, np.random.default_rng(0))
+    assert scan["cast_pairs"] == (0 if omitted == "sf_wdl" else 3)
+    if omitted is None:
+        assert scan["cast_pairs_with_p0"] > 0
+        assert result.adv
+    else:
+        assert scan["cast_pairs_with_p0"] == 0
+        assert result.adv == []
+
+
+def test_collect_mixed_shards_preserves_usable_rows_and_bounds_skip_details(monkeypatch: pytest.MonkeyPatch) -> None:
+    boards = _line(["e4", "e5", "Nf3"])
+    covered = {_canon_index(boards[1], m): 0.05 for m in list(boards[1].legal_moves)[:2]}
+    valid, meta = _shard([
+        {"board": b, "ply_index": i, "covered": covered, "regret": covered}
+        for i, b in enumerate(boards)
+    ])
+    absent = dict(valid)
+    del absent["game_id"]
+    del absent["has_game_id"]
+    good = Path("good.zarr")
+    monkeypatch.setattr(cast_probe, "load_shard_arrays", lambda p: (valid if p == good else absent, meta))
+    expected = cast_probe.collect([good], cast_probe.new_scan("fixture", [good]), np.random.default_rng(0))
+    paths = [Path(f"absent-{i}.zarr") for i in range(25)] + [good]
+    scan = cast_probe.new_scan("fixture", paths)
+    result = cast_probe.collect(paths, scan, np.random.default_rng(0))
+    for key, values in expected.arrays().items():
+        np.testing.assert_array_equal(result.arrays()[key], values)
+    assert result.adv
+    assert scan["rows_scanned"] == 104
+    assert scan["rows_missing_join_metadata"] == 100
+    assert scan["rows_sf_wdl"] == 104
+    assert scan["cast_pairs"] == 3
+    assert len(scan["skipped_shards"]) == 20
+    assert scan["skipped_shards_omitted"] == 5

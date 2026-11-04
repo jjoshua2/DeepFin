@@ -59,8 +59,12 @@ from chess_anti_engine.eval.audit_cache import (
 BUCKETS = list(CRITICALITY_BUCKET_NAMES)
 
 
-def bucket(gap: float) -> str:
-    """Bucket name for a precomputed best-vs-2nd cp gap (shared edges)."""
+def bucket(gap: object) -> str:
+    """Decode the producers' null (<2 moves) gap using the shared edges."""
+    if gap is None:
+        gap = float("inf")
+    elif isinstance(gap, bool) or not isinstance(gap, (int, float)):
+        raise ValueError("gap_cp must be a number or null for fewer than two moves")
     return CRITICALITY_BUCKET_NAMES[criticality_bucket(gap)]
 
 
@@ -129,7 +133,7 @@ def main() -> None:
 
     for key in keys:
         n, t = net[key], bt4[key]
-        b = bucket(float(n["gap_cp"]))
+        b = bucket(n["gap_cp"])
         nraw, nsrch = n["cand"]["raw"], n["cand"]["search"]
         a(b, "cnt", 1)
         a(b, "net_raw_exp", nraw["exp"])

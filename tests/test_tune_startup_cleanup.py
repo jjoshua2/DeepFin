@@ -1,6 +1,7 @@
 """Driver ownership starts when a sidecar launcher returns its handle."""
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -174,3 +175,59 @@ def test_real_numeric_configuration_error_releases_handles(
     with pytest.raises(ValueError, match="invalid"):
         harness.run_tune(base_config={key: "invalid"}, work_dir=tmp_path, num_samples=1)
     assert calls[-2:] == ["cleanup:broker", "cleanup:server"]
+
+
+@pytest.mark.parametrize("keep_last", [0, 1, 2])
+@pytest.mark.parametrize(("stage", "resume"), [
+    ("scheduler", False), ("retention", False), ("tuner", False),
+    ("fit", False), ("restore", True), ("fit", True),
+])
+def test_retention_and_sidecar_cleanup_keep_their_failure_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    keep_last: int, stage: str, resume: bool,
+) -> None:
+    """Cleanup releases handles, not a rollback of prior experiment pruning."""
+    real_retention = harness._cleanup_old_tune_experiments
+    failure = StartupFailure(stage)
+    calls, _ = _driver_stubs(monkeypatch, fail_at=stage, error=failure)
+    tune_dir = tmp_path / "run" / "tune"
+    tune_dir.mkdir(parents=True)
+    states, trials = [], []
+    for stamp in ["2026-01-01", "2026-02-01"]:
+        trial = tune_dir / f"train_trial_{stamp}_00000"
+        trial.mkdir()
+        (trial / "marker").write_text(stamp)
+        state = tune_dir / f"experiment_state-{stamp}.json"
+        state.write_text(json.dumps({"trial_data": [[json.dumps({
+            "relative_logdir": trial.name,
+        }), "{}"]]}))
+        states.append(state)
+        trials.append(trial)
+    unrelated = tune_dir / "not-a-trial"
+    unrelated.mkdir()
+    (unrelated / "marker").write_text("unrelated")
+    outside = tmp_path / "other-run" / "tune" / "train_trial_outside"
+    outside.mkdir(parents=True)
+    (outside / "marker").write_text("outside")
+
+    def prune(**kwargs: Any) -> None:
+        calls.append("retention")
+        real_retention(**kwargs)
+        if stage == "retention":
+            raise failure
+
+    monkeypatch.setattr(harness, "_cleanup_old_tune_experiments", prune)
+    with pytest.raises(StartupFailure) as caught:
+        harness.run_tune(
+            base_config={"tune_keep_last_experiments": keep_last},
+            work_dir=tune_dir.parent, num_samples=1, resume=resume,
+        )
+    assert caught.value is failure
+    assert calls[-2:] == ["cleanup:broker", "cleanup:server"]
+    pruned = not resume and stage != "scheduler" and keep_last > 0
+    expected = [False, keep_last > 1] if pruned else [True, True]
+    assert [state.exists() for state in states] == expected
+    assert [trial.exists() for trial in trials] == expected
+    assert ("retention" in calls) == (not resume and stage != "scheduler")
+    assert (unrelated / "marker").read_text() == "unrelated"
+    assert (outside / "marker").read_text() == "outside"

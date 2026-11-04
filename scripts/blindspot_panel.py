@@ -14,8 +14,9 @@ For each row the checkpoint's raw WDL evaluates the position AFTER the played
 move (DeepFin-POV score = P(loss)-P(win) of the side to move, flipped):
   BLIND  — net score > -0.2 while deep SF says clearly lost
   AWARE  — net score < -0.4
-Baseline: 21/35 BLIND at ckpt477/478. Success for a tail-targeting change is
-this count falling; the mean value_regret is judged separately.
+Legacy baseline (unrevalidated with corrected scorer): 21/35 BLIND at
+ckpt477/478. Success for a tail-targeting change is this count falling; the
+mean value_regret is judged separately.
 
 GPU-light, safe concurrent with training. See docs/experiment_ledger.md.
 """
@@ -88,10 +89,10 @@ def main() -> None:
         _, wdl = ev.evaluate_encoded(
             np.stack(encs), relations=np.stack(rels) if use_rel else None)
     wdl = np.asarray(wdl, dtype=np.float64)
-    if not np.allclose(wdl.sum(axis=1), 1.0, atol=1e-3):
-        w = wdl - wdl.max(axis=1, keepdims=True)
-        e = np.exp(w)
-        wdl = e / e.sum(axis=1, keepdims=True)
+    # LocalModelEvaluator returns logits, even when a row happens to sum to 1.
+    w = wdl - wdl.max(axis=1, keepdims=True)
+    e = np.exp(w)
+    wdl = e / e.sum(axis=1, keepdims=True)
 
     print(f"{'src':<12} {'rd':>3} {'ply':>4} {'sf_after':>8} {'net_after':>9}")
     blind = aware = 0
@@ -121,11 +122,11 @@ def main() -> None:
     # the matching baseline by panel filename; omit it for an unknown panel
     # rather than print a wrong anchor.
     _panel_baselines = {
-        "blindspot_panel_v1.jsonl": "baseline 21/35 @ckpt477",
-        "blindspot_panel_v2.jsonl": "baseline 54/113 @ckpt500",
+        "blindspot_panel_v1.jsonl": "21/35 @ckpt477",
+        "blindspot_panel_v2.jsonl": "54/113 @ckpt500",
     }
     base = _panel_baselines.get(os.path.basename(args.panel), "")
-    ann = f"   [{base}]" if base else ""
+    ann = f"   [legacy baseline {base}; unrevalidated with corrected scorer]" if base else ""
     print(f"\npanel {os.path.basename(args.panel)} n={n} (deep SF says all lost after our move)")
     print(f"BLIND (net > {BLIND_ABOVE}): {blind}/{n}{ann}")
     print(f"AWARE (net < {AWARE_BELOW}): {aware}/{n}")
@@ -148,6 +149,7 @@ def main() -> None:
         stamp = write_audit_cache(
             Path(args.dump_per_position), dump_recs, force=True,
             extra={"producer": "blindspot_panel.py --dump-per-position",
+                   "blindspot_panel_scorer_version": "wdl-logits-softmax-v1",
                    **audit_set_provenance(Path(args.panel))},
         )
         print(f"per-position dump -> {args.dump_per_position} "

@@ -594,6 +594,7 @@ import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 # Decision codes. Deliberately NOT booleans: the whole point of this module is
 # that "did not run" must be distinguishable from "passed" in the metrics, and
@@ -1191,6 +1192,67 @@ def _json_float(v: float) -> float | None:
     return f if math.isfinite(f) else None
 
 
+def _parse_gate_hold_state(state: object) -> dict[str, int]:
+    if state is None:
+        return {}
+    if not isinstance(state, Mapping):
+        raise ValueError("hold must be an object")
+    parsed = {}
+    for key in ("anchor_refresh_failures", "fallback_missing"):
+        raw = state.get(key)
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            parsed[key] = max(0, int(raw))
+    return parsed
+
+
+def parse_gate_state(state: object, *, startup: bool = True) -> dict:
+    """Validate optional persisted state completely before installing any field.
+
+    Missing fields retain legacy defaults. Confounds keep the historical
+    missing/null/non-numeric -> NaN interpretation (unknown, not zero).
+    Unknown top-level keys are retained; sample/hold fields follow their
+    existing consumers, which ignore unknown nested keys.
+    """
+    if state is None:
+        return {}
+    if not isinstance(state, Mapping):
+        raise ValueError("gate state must be an object")
+    if not state:
+        return {}
+    parsed = dict(state)
+    if startup:
+        # Deliberately fallible JSON conversion: unsupported scalar types must
+        # raise here, so startup can reject the whole optional state atomically.
+        matches: Any = state.get("matches", 0)
+        parsed["matches"] = int(matches)
+    holds = state.get("holds", 0)
+    parsed["holds"] = int(holds) if isinstance(holds, (int, float)) else 0
+    parsed["hold_active"] = bool(state.get("hold_active", False))
+    if startup and isinstance(state.get("hold"), dict):
+        parsed["hold"] = _parse_gate_hold_state(state["hold"])
+    raw = state.get("samples")
+    if not isinstance(raw, list):
+        return parsed
+    samples = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        sample: dict[str, object] = {}
+        for key in ("iteration", "cur_w", "cur_d", "cur_l", "prev_w", "prev_d", "prev_l"):
+            default = -1 if key == "iteration" else 0
+            value = row.get(key, default)
+            sample[key] = int(value) if isinstance(value, (int, float)) else default
+        for key in ("cur_wdl_regret", "prev_wdl_regret", "regret_fit_slope"):
+            value = row.get(key)
+            sample[key] = (
+                float(value) if isinstance(value, (int, float)) and not isinstance(value, bool)
+                else float("nan")
+            )
+        samples.append(sample)
+    parsed["samples"] = samples
+    return parsed
+
+
 @dataclass
 class PromotionGate:
     """Rolling anchored-delta gate over the games the loop already plays."""
@@ -1453,40 +1515,18 @@ class PromotionGate:
     def load_state_dict(self, state: dict[str, object] | None) -> None:
         if not state:
             return
-        holds_raw = state.get("holds", 0)
-        self.holds = int(holds_raw) if isinstance(holds_raw, (int, float)) else 0
-        self.hold_active = bool(state.get("hold_active", False))
-        raw = state.get("samples")
-        if not isinstance(raw, list):
-            return
-
-        def _i(d: dict[str, object], key: str, default: int = 0) -> int:
-            v = d.get(key, default)
-            return int(v) if isinstance(v, (int, float)) else default
-
-        def _f(d: dict[str, object], key: str) -> float:
-            # Missing, null, or non-numeric all mean "not measured" -> NaN.
-            # A state file written before the confound fields existed lands
-            # here, and NaN is exactly what the producer would have recorded.
-            v = d.get(key)
-            if isinstance(v, bool) or not isinstance(v, (int, float)):
-                return float("nan")
-            return float(v)
-
-        self.samples = [
-            AnchoredSample(
-                iteration=_i(d, "iteration", -1),
-                cur_w=_i(d, "cur_w"), cur_d=_i(d, "cur_d"), cur_l=_i(d, "cur_l"),
-                prev_w=_i(d, "prev_w"), prev_d=_i(d, "prev_d"), prev_l=_i(d, "prev_l"),
-                cur_wdl_regret=_f(d, "cur_wdl_regret"),
-                prev_wdl_regret=_f(d, "prev_wdl_regret"),
-                regret_fit_slope=_f(d, "regret_fit_slope"),
-            )
-            for d in raw if isinstance(d, dict)
-        ]
-        keep = max(1, int(self.cfg.window_iters))
-        if len(self.samples) > keep:
-            del self.samples[:-keep]
+        parsed = parse_gate_state(state, startup=False)
+        raw = parsed.get("samples")
+        samples = None
+        if isinstance(raw, list):
+            samples = [AnchoredSample(**row) for row in raw]
+            keep = max(1, int(self.cfg.window_iters))
+            samples = samples[-keep:]
+        # Every potentially failing conversion precedes every assignment.
+        self.holds = parsed["holds"]
+        self.hold_active = parsed["hold_active"]
+        if samples is not None:
+            self.samples = samples
 
 
 def gate_metrics(decision: GateDecision, *, strict: bool = True) -> dict[str, float]:
@@ -3098,6 +3138,8 @@ class GateHoldController:
         older than ``gate_max_hold_iters`` is refused here. It costs nothing:
         the next genuine promote rewrites both file and stamp.
         """
+        # Parse before anchor admission can release a restored gate hold.
+        state = _parse_gate_hold_state(state)
         promoted = (
             durable_dir / "gate_promoted_model.pt" if gate.cfg.mode != MODE_OFF else None
         )
@@ -3160,10 +3202,9 @@ class GateHoldController:
     def load_state_dict(self, state: Mapping[str, object] | None) -> None:
         if not state:
             return
-        for key in ("anchor_refresh_failures", "fallback_missing"):
-            raw = state.get(key)
-            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
-                setattr(self, key, max(0, int(raw)))
+        parsed = _parse_gate_hold_state(state)
+        for key, value in parsed.items():
+            setattr(self, key, value)
         if self.anchor_refresh_failures:
             log.warning(
                 "promotion-gate anchor refresh was failing when this trial last "

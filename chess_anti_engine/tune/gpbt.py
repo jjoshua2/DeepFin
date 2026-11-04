@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import math
 import os
 import random
 from collections import defaultdict
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING
 from ray.tune.experiment import Trial
 from ray.tune.schedulers import PopulationBasedTraining
 from ray.tune.schedulers.pbt import SafeFallbackEncoder, _FutureTrainingResult
+from ray.tune.utils import flatten_dict
 
 if TYPE_CHECKING:
     from ray.tune.execution.tune_controller import TuneController
@@ -30,9 +32,16 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
     Position update:
         theta_new = theta_recipient + v
 
-    where r1, r2 ~ Uniform[0,1] (re-sampled each update), and gap_scale is the
-    normalised performance gap between donor and recipient (dampens exploitation
-    when the gap is within noise).
+    where r1, r2 ~ Uniform[0,1] (re-sampled each update). gap_scale is the
+    donor-recipient score gap divided by the current score range of scored,
+    unfinished trials, clipped to [0,1]. A range <= 1e-12 (or fewer than two
+    scored trials) uses a denominator of 1.0 instead.
+
+    This is relative-range scaling of the donor-attraction term, not an estimate
+    of score uncertainty or statistical noise. With two finite scored trials
+    and a positive range > 1e-12, the stronger donor has gap_scale=1; the same
+    holds for a pair spanning the population's score extremes. Inertia,
+    resampling and checkpoint transfer are not gated by this scale.
 
     Based on the GPBT-PL paper (Pairwise Learning variant of Guided
     Population-Based Training).
@@ -55,6 +64,33 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
         self._winner_weight = float(trial_winner_weight)
         self._pairwise_velocity: dict[str, dict[str, float]] = defaultdict(dict)
         self._pending_pairwise_log: dict[str, dict] = {}
+        self._recipient_config_for_summary: dict | None = None
+
+    def _exploit(self, tune_controller, trial: Trial, trial_to_clone: Trial):
+        # Ray's lifecycle is unchanged, but its default summary starts at the
+        # donor. GPBT updates numeric parameters from the recipient instead.
+        self._recipient_config_for_summary = copy.deepcopy(trial.config)
+        try:
+            return super()._exploit(tune_controller, trial, trial_to_clone)
+        finally:
+            self._recipient_config_for_summary = None
+
+    def _summarize_hyperparam_changes(
+        self, old_params: dict, new_params: dict,
+        operations: dict | None = None, prefix: str = "",
+    ) -> str:
+        if not prefix and self._recipient_config_for_summary is not None:
+            old_params = dict(old_params)
+            for name, operation in (operations or {}).items():
+                if operation == "resample" or (
+                    isinstance(operation, str) and operation.startswith("pairwise(gap=")
+                ):
+                    # Only numeric updates originate at the recipient. Keep
+                    # Ray's donor-based clone summary and missing-key behavior.
+                    old_params[name] = self._recipient_config_for_summary[name]
+        return super()._summarize_hyperparam_changes(
+            old_params, new_params, operations, prefix,
+        )
 
     def on_trial_result(
         self, tune_controller: TuneController, trial: Trial, result: dict
@@ -272,22 +308,16 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
 
         donor_state = self._trial_state[donor]
         last_checkpoint = donor_state.last_checkpoint
+        checkpoint_result = donor_state.last_result
 
         donor_score = self._require_score(donor_state)
         state_score = self._require_score(state)
-        logger.info(
-            "[GPBT-PL] Pairwise exploit: recipient=%s donor=%s gap=%.6f",
-            trial.trial_id,
-            donor.trial_id,
-            donor_score - state_score,
-        )
 
         if isinstance(last_checkpoint, _FutureTrainingResult):
             training_result = last_checkpoint.resolve()
             if training_result:
-                donor_state.last_result = training_result.metrics
-                donor_state.last_checkpoint = training_result.checkpoint
-                last_checkpoint = donor_state.last_checkpoint
+                checkpoint_result = training_result.metrics
+                last_checkpoint = training_result.checkpoint
             else:
                 last_checkpoint = None
 
@@ -297,8 +327,7 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
             committed = donor.latest_checkpoint_result
             if committed:
                 last_checkpoint = committed.checkpoint
-                donor_state.last_checkpoint = last_checkpoint
-                donor_state.last_result = committed.metrics
+                checkpoint_result = committed.metrics
 
         if not last_checkpoint:
             logger.info(
@@ -308,6 +337,42 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
             )
             return
 
+        # Latest scores still drive the donor draw and numeric attraction. The
+        # weights actually transferred must independently beat the recipient's
+        # current report, using this checkpoint's paired objective. Ray passes
+        # flattened reports to schedulers but can retain nested checkpoint
+        # metrics, so use the same flattening convention here.
+        try:
+            checkpoint_score = float(self._metric_op * flatten_dict(checkpoint_result or {})[self._metric])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            logger.info(
+                "[gpbt_pl]: unusable checkpoint objective for donor %s. Skip exploit for %s",
+                donor.trial_id, trial.trial_id,
+            )
+            return
+        if not (
+            math.isfinite(checkpoint_score)
+            and math.isfinite(state_score)
+            and checkpoint_score > state_score
+        ):
+            logger.info(
+                "[gpbt_pl]: checkpoint gate rejected donor=%s recipient=%s "
+                "checkpoint_score=%s recipient_score=%s",
+                donor.trial_id, trial.trial_id, checkpoint_score, state_score,
+            )
+            return
+
+        # Keep resolution local until admission. In particular, rejecting a
+        # pending donor save must not replace its fresh score or paired state.
+        # Do not redraw: one rejected choice means one skipped perturbation.
+        donor_state.last_checkpoint = last_checkpoint
+        donor_state.last_result = checkpoint_result
+        logger.info(
+            "[GPBT-PL] Pairwise exploit: recipient=%s donor=%s "
+            "latest_gap=%.6f checkpoint_gap=%.6f",
+            trial.trial_id, donor.trial_id,
+            donor_score - state_score, checkpoint_score - state_score,
+        )
         score_span = self._live_score_span()
         score_gap = donor_score - state_score
         gap_scale = max(0.0, min(1.0, score_gap / score_span))
@@ -316,6 +381,8 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
             "donor_trial_id": str(donor.trial_id),
             "recipient_score": state_score,
             "donor_score": donor_score,
+            "checkpoint_score": checkpoint_score,
+            "checkpoint_score_gap": float(checkpoint_score - state_score),
             "score_gap": float(score_gap),
             "gap_scale": float(gap_scale),
             "inertia_weight": float(self._inertia_weight),
@@ -338,6 +405,7 @@ class GPBTPairwiseScheduler(PopulationBasedTraining):
             "donor_trial_name": str(new_state.orig_tag),
             "recipient_iter": int(trial.last_result.get("training_iteration", 0)),
             "donor_iter": int(trial_to_clone.last_result.get("training_iteration", 0)),
+            "recipient_config": trial.config,
             "donor_config": trial_to_clone.config,
             "new_config": new_config,
             **context,

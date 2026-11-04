@@ -97,7 +97,7 @@ DEFAULT_STAMP: dict[str, float | bool] = {
     "play_topk": 32,             # PLAY_SEARCH_DEFAULTS, via --gumbel-topk unset
     "rl_topk": 16,               # FLAT gumbel_topk
     "play_policy_temp": 1.5,     # --policy-temp
-    "rl_policy_temp": 1.5,       # --policy-temp, untouched by a PLAY-only override
+    "rl_policy_temp": 1.0,       # production default; FLAT omits the config key
     "gumbel_training_rows": False,
 }
 
@@ -190,8 +190,8 @@ def test_the_stamp_resolves_the_inherit_production_default() -> None:
 
 
 # Which stamp field(s) each CLI flag is allowed to move. `--policy-temp` feeds
-# BOTH profiles, because it is applied to every built GumbelConfig; a
-# `--gumbel policy_temp=` override is the PLAY-only one.
+# PLAY only; training rows inherit their production config temperature unless
+# --gumbel-training-rows explicitly extends a --gumbel policy_temp= override.
 MOVES: dict[str, tuple[str, ...]] = {
   # An EXPLICIT --vloss-weight / --target-batch feeds both profiles, so both
   # columns follow it. Only the unset (None) default splits them.
@@ -200,7 +200,7 @@ MOVES: dict[str, tuple[str, ...]] = {
     "target_batch": ("play_target_batch", "rl_target_batch"),
     "batch_size": ("batch_size",),
     "sims": ("sims",),
-    "policy_temp": ("play_policy_temp", "rl_policy_temp"),
+    "policy_temp": ("play_policy_temp",),
 }
 
 
@@ -243,6 +243,44 @@ def test_stamped_rl_sims_equals_the_profile_the_training_rows_are_searched_at(
     profiles, _ = at.profiles_for_audit(args, FLAT)
     assert profiles["train"].sims == expected
     assert at.search_param_stamp(args, profiles=profiles)["rl_sims"] == expected
+
+
+@pytest.mark.parametrize(
+    ("config_temp", "play_temp", "gumbel", "training_rows",
+     "expected_play", "expected_rl"),
+    [
+        (1.8, 1.0, None, False, 1.0, 1.8),
+        (1.8, 2.2, None, False, 2.2, 1.8),
+        (1.0, 1.0, None, False, 1.0, 1.0),
+        (1.8, 1.0, ["policy_temp=2.4"], False, 2.4, 1.8),
+        (1.8, 1.0, ["policy_temp=2.4"], True, 2.4, 2.4),
+        (1.8, 1.0, ["policy_temp=1.7", "policy_temp=2.2"], True, 2.2, 2.2),
+    ],
+    ids=["config-not-play-default", "play-cli-only", "matching-default-control",
+         "play-override-only", "training-override", "last-training-override-wins"],
+)
+def test_policy_temperature_stamp_tracks_the_production_base_and_override_scope(
+    config_temp: float, play_temp: float, gumbel: list[str] | None,
+    training_rows: bool, expected_play: float, expected_rl: float,
+) -> None:
+    """The mirrored train column comes from the cfg that realization retains."""
+    args = _args(
+        {"policy_temp": play_temp}, gumbel=gumbel,
+        gumbel_training_rows=training_rows,
+    )
+    profiles, _ = at.profiles_for_audit(
+        args, dict(FLAT) | {"gumbel_policy_temp": config_temp},
+    )
+    args_before, profiles_before = vars(args).copy(), dict(profiles)
+    for name in ("train", "train_fast"):
+        base = profiles[name].production_base
+        assert base is not None
+        assert base.cfg.policy_temp == profiles[name].policy_temp == config_temp
+    stamp = at.search_param_stamp(args, profiles=profiles)
+    assert stamp["play_policy_temp"] == expected_play
+    assert stamp["rl_policy_temp"] == expected_rl
+    assert vars(args) == args_before
+    assert profiles == profiles_before
 
 
 def test_stamped_play_topk_is_the_resolved_play_default_when_the_flag_is_absent() -> None:

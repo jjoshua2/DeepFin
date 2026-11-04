@@ -30,8 +30,9 @@ THE DERIVATION, and what it can and cannot see:
     scope.
 
 Two blind spots, both handled by the annotated residue below rather than
-pretended away: a key read through a CONSTANT (``for k in TRAINER_WEIGHT_KEYS:
-config[k]``) is invisible to a literal-key screen and shows up as a false
+pretended away: a computed key (constant iteration such as ``for k in
+TRAINER_WEIGHT_KEYS: config[k]``, or a prefix plus a registered field) is
+invisible to a literal-key screen and shows up as a false
 startup-only; and name-based call resolution merges same-named functions from
 different modules, which can only ever ADD reachability (a false LIVE), never
 remove it.
@@ -164,6 +165,90 @@ def derive_startup_only_keys() -> frozenset[str]:
     return frozenset((startup_keys - loop_keys) & _FLAT_ALLOWLIST)
 
 
+def _nodes_ease_route_sources() -> list[ast.Module]:
+    return [
+        ast.parse((_PKG_ROOT / path).read_text(encoding="utf-8"))
+        for path in ("stockfish/pid.py", "tune/trainable.py", "tune/trainable_phases.py")
+    ]
+
+
+def _assert_nodes_ease_live_route(modules: list[ast.Module]) -> None:
+    pid_module, train_module, phase_module = modules
+    live_fields = next(
+        node.value for node in pid_module.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "_LEVER_LIVE_FIELDS" for t in node.targets)
+    )
+    assert "ease_step_frac" in ast.literal_eval(live_fields), "node easing field removed"
+    pid_class = next(n for n in pid_module.body if isinstance(n, ast.ClassDef) and n.name == "DifficultyPID")
+    refresh = next(n for n in pid_class.body if isinstance(n, ast.FunctionDef) and n.name == "refresh_live_params")
+    assert any(
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        and n.func.id == "_refresh_lever_from_config" and len(n.args) == 3
+        and isinstance(n.args[0], ast.Attribute) and n.args[0].attr == "nodes_lever"
+        and isinstance(n.args[0].value, ast.Name) and n.args[0].value.id == "self"
+        and isinstance(n.args[1], ast.Name) and n.args[1].id == "config"
+        and isinstance(n.args[2], ast.Constant) and n.args[2].value == "sf_pid_nodes_"
+        for n in ast.walk(refresh)
+    ), "node lever refresh call/prefix changed"
+    phase = next(n for n in phase_module.body if isinstance(n, ast.FunctionDef) and n.name == "_run_pid_and_eval")
+    assert any(
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and isinstance(n.func.value, ast.Name) and n.func.value.id == "pid"
+        and n.func.attr == "refresh_live_params" and len(n.args) == 1
+        and isinstance(n.args[0], ast.Name) and n.args[0].id == "config"
+        for n in ast.walk(phase)
+    ), "PID phase no longer refreshes live config"
+    trial = next(n for n in train_module.body if isinstance(n, ast.FunctionDef) and n.name == "train_trial")
+    loop = next(n for n in ast.walk(trial) if isinstance(n, ast.While))
+    reachable = _reachable([loop], _function_index(modules))
+    assert {"_run_pid_and_eval", "refresh_live_params", "_refresh_lever_from_config"} <= reachable, "iteration loop lost PID refresh route"
+
+
+def test_nodes_ease_dynamic_read_has_a_live_iteration_route() -> None:
+    _assert_nodes_ease_live_route(_nodes_ease_route_sources())
+
+
+@pytest.mark.parametrize("mutation", [
+    "node_call", "node_prefix", "field_membership", "loop_phase", "phase_refresh",
+])
+def test_nodes_ease_live_route_guard_rejects_broken_consumers(mutation: str) -> None:
+    modules = _nodes_ease_route_sources()
+    changed = False
+    for module in modules:
+        for node in ast.walk(module):
+            if (
+                mutation == "field_membership" and isinstance(node, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == "_LEVER_LIVE_FIELDS" for t in node.targets)
+            ):
+                assert isinstance(node.value, ast.Tuple)
+                node.value.elts = [n for n in node.value.elts if not (isinstance(n, ast.Constant) and n.value == "ease_step_frac")]
+                changed = True
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Name):
+                if node.func.id == "_refresh_lever_from_config" and len(node.args) == 3:
+                    if isinstance(node.args[2], ast.Constant) and node.args[2].value == "sf_pid_nodes_":
+                        if mutation == "node_call":
+                            node.func.id = "_removed_node_refresh"
+                            changed = True
+                        elif mutation == "node_prefix":
+                            node.args[2].value = "wrong_prefix_"
+                            changed = True
+                elif mutation == "loop_phase" and node.func.id == "_run_pid_and_eval":
+                    node.func.id = "_removed_pid_phase"
+                    changed = True
+            elif (
+                mutation == "phase_refresh" and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "refresh_live_params"
+            ):
+                node.func.attr = "_removed_live_refresh"
+                changed = True
+    assert changed, "mutation did not touch its intended production AST"
+    with pytest.raises(AssertionError):
+        _assert_nodes_ease_live_route(modules)
+
+
 # Derived startup-only keys this PR does NOT classify, each group with the
 # reason. The test below pins the residue EXACTLY, so a key that becomes
 # startup-only tomorrow -- or one of these that gets a live consumer -- fails
@@ -214,6 +299,15 @@ _UNCLASSIFIED_STARTUP_ONLY: tuple[tuple[str, frozenset[str]], ...] = (
         "`TRAINER_WEIGHT_KEYS` instead of naming the key -- a literal-key AST "
         "read cannot see it. Freezing it would break a live knob.",
         frozenset({"w_sf_volatility"}),
+    ),
+    (
+        "FALSE POSITIVE of the literal-key screen: the iteration's PID phase "
+        "calls refresh_live_params, which refreshes nodes_lever through "
+        "_refresh_lever_from_config with the sf_pid_nodes_ prefix and the "
+        "registered ease_step_frac field. The live-route guard and its mutation "
+        "controls pin that dynamic consumer; freezing this key would "
+        "break an existing live knob.",
+        frozenset({"sf_pid_nodes_ease_step_frac"}),
     ),
     (
         "Startup RESTORE decisions: they choose what this process starts FROM, "

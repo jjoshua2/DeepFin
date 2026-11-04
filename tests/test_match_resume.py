@@ -28,6 +28,7 @@ from chess_anti_engine.utils.game_log import (
     latest_rows_by_key,
     read_game_log,
     settings_fingerprint,
+    take_over_header_only_log,
 )
 from tests.script_loading import load_script_module
 
@@ -1343,19 +1344,13 @@ def test_a_fully_complete_resume_does_not_re_append_the_aggregate(
 
 
 # ---------------------------------------------------------------------------
-# A log with a header and no games is not two runs
+# A header-only log does not establish that its writer has stopped
 # ---------------------------------------------------------------------------
 
-def test_a_header_only_log_does_not_block_a_fresh_run(
+def test_a_header_only_log_requires_explicit_resume(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """The crash window before the first game: checkpoint load, compile, warmup.
-
-    The header is written before the first game finishes, so a death in that
-    window leaves a log holding zero games. Refusing the retry there protects
-    games that do not exist — and the operator's way out was deleting a file,
-    which is the habit that loses real logs.
-    """
+    """A known stopped fixture can resume, but no fresh run may erase it."""
     import scripts.arena_standard as arena
 
     log_path = tmp_path / "headeronly.games.jsonl"
@@ -1379,10 +1374,15 @@ def test_a_header_only_log_does_not_block_a_fresh_run(
     parsed = read_game_log(log_path)
     assert parsed.games == [], "fixture: the log must hold a header and no games"
 
-    record = _run_arena(monkeypatch, tmp_path, log_path=log_path)
+    original = log_path.read_bytes()
+    with pytest.raises(SystemExit, match="prior writer may still be active"):
+        _run_arena(monkeypatch, tmp_path, log_path=log_path)
+    assert log_path.read_bytes() == original
+    record = _run_arena(monkeypatch, tmp_path, log_path=log_path, resume=True)
     assert record["pentanomial"] == _EXPECTED_PENTANOMIAL
     assert record["resumed_pairs"] == 0
     assert len(read_game_log(log_path).games) == 8
+    assert log_path.read_bytes().startswith(original)
 
 
 def test_a_header_only_log_from_another_run_is_still_refused(
@@ -1520,7 +1520,7 @@ def test_match_warns_when_the_resumed_pgn_lost_the_earlier_games(
     assert pgn.read_text().count("[Event ") == 3
 
 
-def test_match_header_only_log_does_not_block_a_fresh_run(
+def test_match_header_only_log_requires_explicit_resume(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     module = _load_match_module()
@@ -1538,10 +1538,15 @@ def test_match_header_only_log_does_not_block_a_fresh_run(
         module.main()
     assert read_game_log(log_path).games == []
 
+    original = log_path.read_bytes()
+    with pytest.raises(SystemExit, match="prior writer may still be active"):
+        _drive_match(monkeypatch, module, _match_argv(tmp_path, log_path, extra=[]))
+    assert log_path.read_bytes() == original
     played = _drive_match(
-        monkeypatch, module, _match_argv(tmp_path, log_path, extra=[]),
+        monkeypatch, module, _match_argv(tmp_path, log_path, extra=["--resume"]),
     )
     assert played == list(range(8))
+    assert log_path.read_bytes().startswith(original)
 
 
 # ---------------------------------------------------------------------------
@@ -1810,3 +1815,52 @@ def test_arena_resume_preserves_valid_results_and_legacy_draw(
     resumed = _run_arena(monkeypatch, tmp_path, log_path=log_path, resume=True)
     assert resumed["resumed_pairs"] == 4
     assert resumed["pentanomial"] == clean["pentanomial"]
+
+
+@pytest.mark.parametrize("games_before", [0, 1])
+def test_automatic_takeover_preserves_active_writer(tmp_path: Path, games_before: int) -> None:
+    path = tmp_path / "active.games.jsonl"
+    with GameLogWriter(path, driver="fixture", settings={"seed": 7}) as writer:
+        for i in range(games_before):
+            writer.write_game({"game_index": i, "result": "1-0"})
+        original = path.read_bytes()
+        taken_over, note = take_over_header_only_log(path, fingerprint=writer.fingerprint)
+        assert not taken_over
+        assert path.read_bytes() == original
+        if games_before == 0:
+            assert "prior writer may still be active" in note
+            assert "authorized" in note
+        writer.write_game({"game_index": games_before, "result": "0-1"})
+        parsed = read_game_log(path)
+        assert parsed.fingerprint == writer.fingerprint
+        assert len(parsed.games) == games_before + 1
+        assert path.read_bytes().startswith(original)
+
+
+def test_automatic_takeover_preserves_game_finished_after_inspection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from chess_anti_engine.utils import game_log
+
+    path = tmp_path / "interleaved.games.jsonl"
+    with GameLogWriter(path, driver="fixture", settings={"seed": 7}) as writer:
+        original_reader = game_log.read_game_log
+
+        def inspected_then_finished(p: str | Path) -> Any:
+            inspected = original_reader(p)
+            writer.write_game({"game_index": 0, "result": "1-0"})
+            return inspected
+
+        monkeypatch.setattr(game_log, "read_game_log", inspected_then_finished)
+        taken_over, _ = take_over_header_only_log(path, fingerprint=writer.fingerprint)
+        assert not taken_over
+        parsed = original_reader(path)
+        assert parsed.fingerprint == writer.fingerprint
+        assert len(parsed.games) == 1
+
+
+@pytest.mark.parametrize("contents", ["", "not-json\n", '{"kind":"game","result":"1-0"}\n'])
+def test_automatic_takeover_does_not_change_unparseable_logs(tmp_path: Path, contents: str) -> None:
+    path = tmp_path / "unparseable.games.jsonl"
+    path.write_text(contents, encoding="utf-8")
+    original = path.read_bytes()
+    assert take_over_header_only_log(path, fingerprint="fixture") == (False, "")
+    assert path.read_bytes() == original

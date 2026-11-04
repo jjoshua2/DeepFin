@@ -377,6 +377,32 @@ def _apply_salvage_step_caps(
     return steps
 
 
+def _persist_gate_state(
+    *, gate: PromotionGate, hold: GateHoldController | None,
+    gate_match_idx: int, gate_state_path: Path,
+) -> None:
+    """Snapshot gate state without inventing a match or a verdict.
+
+    Retry ageing uses the same counted, nonfatal write boundary as a normal
+    decision. The caller chooses the snapshot point; normal decisions retain
+    their existing pre-``on_decision`` actuator-counter ordering.
+    """
+    try:
+        atomic_write_text(
+            gate_state_path,
+            json.dumps(
+                {
+                    "matches": int(gate_match_idx),
+                    **gate.state_dict(),
+                    "hold": {} if hold is None else hold.state_dict(),
+                },
+                indent=2, sort_keys=True,
+            ),
+        )
+    except Exception as exc:  # counted and reported, never re-raised
+        gate.note_state_write_failed(exc, path=gate_state_path)
+
+
 def _run_net_gating(
     trainer, *,
     gate: PromotionGate,
@@ -439,25 +465,12 @@ def _run_net_gating(
   # non-serialisable field in ``state_dict`` lands here too) is deliberate. The
   # difference is that the breadth is now paid for by a counter and a log line
   # rather than by silence.
-    try:
-        atomic_write_text(
-            gate_state_path,
-            json.dumps(
-                {
-                    "matches": int(gate_match_idx),
-                    **gate.state_dict(),
-  # The actuator's counters, which used to die with the process: a
-  # restart reset ``anchor_refresh_failures`` to 0 and re-armed a stale
-  # anchor as trustworthy (audit G3-5). They are as of the last
-  # completed ``on_decision``, which is the previous iteration -- this
-  # write happens before this iteration's verdict is applied.
-                    "hold": {} if hold is None else hold.state_dict(),
-                },
-                indent=2, sort_keys=True,
-            ),
-        )
-    except Exception as exc:  # counted and reported, never re-raised
-        gate.note_state_write_failed(exc, path=gate_state_path)
+  # The actuator counters are still as of the last completed on_decision:
+  # this write happens before this iteration's verdict reaches the actuator.
+    _persist_gate_state(
+        gate=gate, hold=hold, gate_match_idx=gate_match_idx,
+        gate_state_path=gate_state_path,
+    )
     decision = dataclasses.replace(
         decision, state_write_failures=int(gate.state_write_failures),
     )

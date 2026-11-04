@@ -1232,3 +1232,57 @@ def test_the_producer_label_is_not_ruler_identity(tmp_path: Path) -> None:
     dc = pc.load_dump(str(c), join_key="key", field="exp")
     with pytest.raises(SystemExit):
         pc.require_same_stamp(da, dc, label_a="A", label_b="C")
+
+
+@pytest.mark.parametrize("single_move", [False, True])
+def test_compare_buckets_preserves_serialized_gap_and_joined_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], single_move: bool,
+) -> None:
+    """A producer's null second-move gap remains a decisive joined position."""
+    import scripts.audit_compare_buckets as acb
+
+    record: dict[str, Any] = {
+        "key": "joined", "fen": chess.STARTING_FEN, "phase": 2, "source": 0,
+        "multipv": [{"move": "e2e4", "cp": 50}], "bestmove": "e2e4",
+        "wdl": [500, 300, 200], "nodes": 1000000, "depth": 40,
+    }
+    if not single_move:
+        record["multipv"].append({"move": "d2d4", "cp": 40})
+    label = json.dumps(record)
+    real = _write_lines(tmp_path / "audit.jsonl", [label])
+    gap = audit.criticality_gap(audit.parse_audit_record(label).move_cp)
+    # Exact serialization contract used by both audit producers.
+    row = {
+        "key": "joined", "phase": 2,
+        "gap_cp": float(gap) if np.isfinite(gap) else None,
+        "cand": {name: {"exp": 12.0, "top1": 0.0, "move": "e2e4"}
+                 for name in ("raw", "search", "sf_soft")},
+    }
+    net, bt4 = tmp_path / "net.jsonl", tmp_path / "bt4.jsonl"
+    prov = dict(audit_set_provenance(real))
+    write_audit_cache(net, [row], extra=prov)
+    write_audit_cache(bt4, [{
+        "key": "joined", "exp_regret": 20.0, "top1_regret": 0.0,
+        "best_move": "e2e4", "wdl": [0.5, 0.3, 0.2],
+    }], extra=prov)
+    monkeypatch.setattr(sys, "argv", [
+        "audit_compare_buckets.py", "--net", str(net), "--bt4", str(bt4),
+        "--audit", str(real),
+    ])
+    acb.main()
+    output = capsys.readouterr().out
+    assert "joined 1 positions" in output
+    expected = "decisive(>=100)" if single_move else "quiet(<20)"
+    assert f"{expected} (n=1)" in output
+    assert "| overall | 0.0000 | 0.5000 | 1 |" in output
+    assert "| net raw E[regret] |" in output
+    assert output.count("| 12.0 |") >= 1
+
+
+@pytest.mark.parametrize("bad_gap", ["100", "Infinity", True, [], {}])
+def test_compare_buckets_refuses_malformed_gap(bad_gap: Any) -> None:
+    from scripts.audit_compare_buckets import bucket
+
+    with pytest.raises(ValueError, match="gap_cp must be a number or null"):
+        bucket(bad_gap)

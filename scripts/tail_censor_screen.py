@@ -103,13 +103,17 @@ def gradient(p: np.ndarray, r: np.ndarray) -> np.ndarray:
 class Row:
     """One analysed position: the wide truth, the surfaced set, and the prior."""
 
-    __slots__ = ("game_id", "hidden", "legal", "ply", "prior", "r_k", "regret", "surfaced")
+    __slots__ = ("encodings", "game_id", "hidden", "legal", "ply", "prior", "r_k",
+                 "regret", "source_key", "surfaced")
 
     def __init__(
         self, legal: np.ndarray, regret: dict[int, float],
         surfaced: list[int], hidden: list[int], r_k: float, game_id: int = -1,
-        ply: int = -1,
+        ply: int = -1, source_key: tuple[str, str] | None = None,
+        encodings: tuple[str, str] | None = None,
     ) -> None:
+        self.source_key = source_key
+        self.encodings = encodings
         self.game_id = int(game_id)
         # Carried so a consumer can locate this row's CHILD (game_id, ply+1) and
         # recover the played move. Not used by this screen's own analysis.
@@ -122,6 +126,11 @@ class Row:
         self.prior: np.ndarray | None = None
 
 
+def shard_source_key(shard: Path, metadata: dict[str, Any]) -> tuple[str, str]:
+    """Replay-directory and trial namespace; physical shards are not games."""
+    return str(shard.parent.resolve()), str(metadata.get("run_id") or "")
+
+
 def collect(
     shards: list[Path], scan: dict[str, Any], k: int,
 ) -> tuple[list[Row], list[np.ndarray]]:
@@ -130,7 +139,7 @@ def collect(
     planes: list[np.ndarray] = []
     for shard in shards:
         try:
-            arrs, _ = load_shard_arrays(shard)
+            arrs, metadata = load_shard_arrays(shard)
         except (OSError, ValueError, KeyError) as exc:
             record_skipped_shard(scan, shard, exc)
             continue
@@ -141,6 +150,12 @@ def collect(
         x = np.asarray(arrs["x"])
         gid = np.asarray(arrs["game_id"]).astype(np.int64)
         ply = np.asarray(arrs["ply_index"]).astype(np.int64)
+        encodings = (
+            (str(np.asarray(arrs["_input_history_encoding"]).item()),
+             str(np.asarray(arrs["_policy_encoding"]).item()))
+            if "_input_history_encoding" in arrs and "_policy_encoding" in arrs
+            else None
+        )
         n_rows_shard = int(raw.shape[0])
         # ⚑⚑ PRODUCTION ONLY BUILDS THIS LABEL ON SELFPLAY SLOTS.
         # `finalize.py:867` gates `want_sf_p0_regret` on `is_selfplay_slot`, so a
@@ -221,7 +236,8 @@ def collect(
             scan["unscored_mass_sum"] += unscored
             rows.append(Row(legal_idx, regret, surfaced, hidden,
                             max(regret[m] for m in surfaced), game_id=int(gid[i]),
-                            ply=int(ply[i])))
+                            ply=int(ply[i]), source_key=shard_source_key(shard, metadata),
+                            encodings=encodings))
             rows[-1].prior = p
             planes.append(x[i])
     return rows, planes

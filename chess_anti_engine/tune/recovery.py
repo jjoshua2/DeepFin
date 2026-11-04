@@ -22,29 +22,32 @@ def _trial_index_from_name(trial_dir: Path) -> int:
         return -1
 
 
+def _load_salvage_manifest(seed_pool_dir: Path) -> dict:
+    """Read one best-effort manifest snapshot for a complete restore decision."""
+    try:
+        manifest = json.loads((Path(seed_pool_dir) / "manifest.json").read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return manifest if isinstance(manifest, dict) else {}
+
+
 def _select_salvage_seed_slot(
     *,
     seed_pool_dir: Path,
     trial_dir: Path,
     trial_id: str,
+    manifest: dict | None = None,
 ) -> tuple[Path | None, int, int]:
     """Select deterministic salvage seed dir for a fresh trial."""
-    manifest_path = Path(seed_pool_dir) / "manifest.json"
-    if not manifest_path.exists():
-        return None, -1, 0
-
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except Exception:
-        return None, -1, 0
-    if not isinstance(manifest, dict):
-        return None, -1, 0
+    if manifest is None:
+        manifest = _load_salvage_manifest(seed_pool_dir)
 
     entries_raw = manifest.get("entries")
     if not isinstance(entries_raw, list):
         return None, -1, 0
 
     slots: list[tuple[int, Path]] = []
+    seen_slots: set[int] = set()
     for i, e in enumerate(entries_raw):
         if not isinstance(e, dict):
             continue
@@ -53,6 +56,12 @@ def _select_salvage_seed_slot(
             slot_i = int(slot_v) if isinstance(slot_v, (int, float)) else int(i)
         except Exception:
             slot_i = int(i)
+
+        # Metadata lookup uses the slot ID. Ambiguous legacy/manual entries
+        # must not select one directory and another entry's donor config/PID.
+        if slot_i in seen_slots:
+            raise ValueError(f"duplicate salvage slot in manifest: {slot_i}")
+        seen_slots.add(slot_i)
 
         seed_rel = e.get("seed_dir")
         if isinstance(seed_rel, str) and seed_rel.strip():
@@ -79,16 +88,10 @@ def _load_salvage_manifest_entry(
     *,
     seed_pool_dir: Path,
     slot: int,
+    manifest: dict | None = None,
 ) -> dict | None:
-    manifest_path = Path(seed_pool_dir) / "manifest.json"
-    if not manifest_path.exists():
-        return None
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    if not isinstance(manifest, dict):
-        return None
+    if manifest is None:
+        manifest = _load_salvage_manifest(seed_pool_dir)
     entries = manifest.get("entries")
     if not isinstance(entries, list):
         return None

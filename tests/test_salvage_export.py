@@ -78,9 +78,14 @@ def _dry_run(work_dir: Path, out_dir: Path, metric: str) -> str:
     return buf.getvalue()
 
 
+def _seed_dir(out_dir: Path) -> Path:
+    manifest = json.loads((out_dir / "manifest.json").read_text())
+    return out_dir / manifest["entries"][0]["seed_dir"]
+
+
 def _seed_pid(out_dir: Path) -> dict:
     return json.loads(
-        (out_dir / "seeds" / "slot_000" / "pid_state.json").read_text(encoding="utf-8"),
+        (_seed_dir(out_dir) / "pid_state.json").read_text(encoding="utf-8"),
     )
 
 
@@ -104,7 +109,7 @@ def test_happy_path_training_iteration(tmp_path: Path) -> None:
     assert entry["picked_row_training_iteration"] == 10
     assert entry["stale_result_rows"] is False
     assert entry["newest_disk_checkpoint"] == "checkpoint_000009"
-    exported = (out / "seeds" / "slot_000" / "trainer.pt").read_text(encoding="utf-8")
+    exported = (_seed_dir(out) / "trainer.pt").read_text(encoding="utf-8")
     assert exported == "weights-9"
   # pid_state aligned to the matching row's live values.
     assert _seed_pid(out)["nodes"] == 1000
@@ -135,7 +140,7 @@ def test_truncated_rows_export_newest_disk_checkpoint(tmp_path: Path) -> None:
     assert entry["training_iteration"] is None
     assert entry["result_row"] is None
     assert entry["picked_row_training_iteration"] == 5
-    exported = (out / "seeds" / "slot_000" / "trainer.pt").read_text(encoding="utf-8")
+    exported = (_seed_dir(out) / "trainer.pt").read_text(encoding="utf-8")
     assert exported == "weights-20"
   # pid_state must keep the checkpoint's own values, not stale row values.
     assert _seed_pid(out)["nodes"] == 7777
@@ -183,7 +188,7 @@ def test_training_iteration_top_n_uses_stale_trial_newest_disk_checkpoint(tmp_pa
     assert entry["checkpoint_source"] == "newest_disk_checkpoint"
     assert entry["checkpoint_dir_name"] == "checkpoint_000020"
     assert entry["stale_result_rows"] is True
-    exported = (out / "seeds" / "slot_000" / "trainer.pt").read_text(encoding="utf-8")
+    exported = (_seed_dir(out) / "trainer.pt").read_text(encoding="utf-8")
     assert exported == "weights-20"
 
 
@@ -475,7 +480,7 @@ def test_rerun_into_same_out_dir_is_idempotent(tmp_path: Path) -> None:
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["entries"], "slot was dropped from the manifest on re-run"
     assert manifest["entries"][0]["copied_replay_shards"] == 4
-    assert len(list((out / "seeds" / "slot_000" / "replay_shards").iterdir())) == 4
+    assert len(list((_seed_dir(out) / "replay_shards").iterdir())) == 4
 
 
 def test_dry_run_previews_the_replay_source(tmp_path: Path) -> None:

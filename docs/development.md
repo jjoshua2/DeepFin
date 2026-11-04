@@ -183,3 +183,42 @@ intentionally differ. Record each engine's actual paths and coverage; directory 
 alone do not prove which WDL/DTZ tables are installed.
 
 Overlay storage optimization and reuse boundaries are documented in [overlay qualification reuse](overlay_qualification_reuse.md).
+
+## Grok wrapper artifact directories
+
+`scripts/grok_fix.sh` and `scripts/grok_review.sh` require Python 3 in addition to
+Bash, Git, the existing Unix tools, GNU `timeout` and the authenticated Grok CLI.
+Their shared `grok_artifact_dir.py` allocator uses only the Python standard library
+and requires POSIX descriptor-relative operations with `O_NOFOLLOW`/`O_DIRECTORY`
+(the supported Linux environment). It does not install or import project packages.
+
+Artifact parents remain `${GROK_FIX_OUT:-${TMPDIR:-/tmp}/grok_fix}` and
+`${GROK_REVIEW_OUT:-${TMPDIR:-/tmp}/grok_review}`. Relative overrides and spaces are
+supported. Each call retains a distinct private-access-0700 run with its prompt and
+raw output. Review snapshots, downloaded archives, diffs and untracked-file lists
+are created inside that run, not independently under `TMPDIR`; the existing exit
+trap removes these ephemeral inputs while retaining the prompt and raw output.
+Fix worktrees and their existing branch/validation lifecycle are unchanged.
+
+Allocation refuses symlinks in every parent component, foreign-owned ancestry,
+and group/other-writable ancestry unless it is a root/effective-UID-owned sticky
+directory with independently admitted descendants. The final artifact parent must
+belong to the effective UID and must not be group/other writable; an existing
+owner-controlled 0755 parent is valid. Missing components are created privately
+and exclusively, and a creation collision is revalidated rather than repaired.
+Unsafe, symlinked, foreign-owned or writable legacy roots fail explicitly with no
+fallback: choose a safe override or arrange a separate authorized migration. The
+allocator never chmods, chowns, deletes or migrates a pre-existing path. A caller
+umask that prevents private access 0700 on a new run causes failure without widening modes;
+wrappers already set umask 077. Failed allocation can leave newly created private
+components for the owner to inspect.
+An admitted parent with SGID (for example, owner-controlled mode 02755) may pass
+SGID to its new run (mode 02700). This inherited bit is retained; group/other
+access remains zero. Other unexpected special bits are refused. This preserves
+filesystem group inheritance, not a change to the artifact-sharing policy.
+
+This is a boundary against other UIDs replacing artifact paths. Returning paths
+for later shell consumers relies on trusted owners preserving admitted ancestry;
+it does not protect against the same UID, root, or a trusted owner changing modes.
+The review snapshot remains working-copy isolation, not a security sandbox, and
+this change does not address prompt injection or authorize running a model.
