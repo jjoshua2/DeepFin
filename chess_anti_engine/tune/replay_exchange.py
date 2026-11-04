@@ -452,6 +452,8 @@ def _ingest_one_shard(
     sp: Path, *, buf: DiskReplayBuffer, share_fraction: float, summary: dict[str, int],
 ) -> bool:
     """Load one shard and add it to ``buf``. Returns True on success."""
+    if share_fraction == 0.0:
+        return False
     loaded = _load_shard_arrays_with_retry(sp, retries=5, sleep_s=0.12)
     if loaded is None:
         return False
@@ -493,20 +495,22 @@ def _share_top_replay_each_iteration(
     max_unseen_iters_per_source = max(1, int(max_unseen_iters_per_source))
     max_shards_per_source = max(0, int(max_shards_per_source))
 
+    summary = {
+        "source_trials_selected": 0,
+        "source_trials_ingested": 0,
+        "source_trials_skipped_repeat": 0,
+        "source_shards_loaded": 0,
+        "source_samples_ingested": 0,
+    }
+    if share_fraction == 0.0:
+        return summary
     source_snaps = _select_top_trial_snapshots(
         recipient_trial_dir=recipient_trial_dir,
         top_k_trials=int(top_k_trials),
         within_best_frac=float(within_best_frac),
         min_metric=float(min_metric),
     )
-
-    summary = {
-        "source_trials_selected": len(source_snaps),
-        "source_trials_ingested": 0,
-        "source_trials_skipped_repeat": 0,
-        "source_shards_loaded": 0,
-        "source_samples_ingested": 0,
-    }
+    summary["source_trials_selected"] = len(source_snaps)
     if not source_snaps:
         return summary
 
