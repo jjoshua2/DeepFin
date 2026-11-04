@@ -837,7 +837,8 @@ class Engine:
       # chained `lo <= v <= hi`, which refuses nan -- two halves of one guard,
       # sharing bounds and disagreeing on the one value that is silently
       # dropped rather than loudly wrong.
-        if not math.isfinite(value) or (
+        # Python integers are finite; converting a large spin to float can overflow.
+        if (isinstance(value, float) and not math.isfinite(value)) or (
             (lo is not None and value < lo) or (hi is not None and value > hi)
         ):
             _println(
