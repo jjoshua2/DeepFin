@@ -1,0 +1,168 @@
+{
+  "schema": "PR1110_BT4_DIAGNOSTIC60_RESULT_V1",
+  "disposition": "ACTIVE_DEADLINE_PARTIAL_WITH_DURABLE_DURING_WORK_TELEMETRY",
+  "native_exit_code": 1,
+  "native_wall_seconds": 62.9910455,
+  "parent_saved_elapsed_seconds": 61.594874044996686,
+  "active_seconds": 60,
+  "cleanup_ceiling_seconds": 180,
+  "source_preregistration_commit": "5c519c0dd809258e4f6902b38ddb31192a470025",
+  "runtime_closure_sha256": "a492d9ad8c7480957e28c1503eb6cba7316816c6aae1514892d8db0d0bd34d3f",
+  "packet_sha256": "a1844946ac5becad42350b0221e7f1f7f6eecb952b36faf1541300c14a420ec7",
+  "native_terminal_sha256": "d3a6aa5e8314d0179442c1aaf8e0e816ba950d72f5fed88134795ba9833b5d20",
+  "saved_readout_sha256": "d880a781100c0c2a22c42ee9dfd3e563be393c23a067fac3fdda51c5b91a65cb",
+  "saved_readout_review_sha256": "4058be7f38925169f80c371267ad0e4a9edd3170e39d9a21106674c802c22f7e",
+  "scientific_review_sha256": "a301fcd5d51472d1d7ea1da5a07c3da1a14c385b5254a5130cb9cd41c50cfa89",
+  "closure": {
+    "sha256": "2b1c954ff04894d7f4bea7946bd23b51c16042169aebc34498de076ded13dece",
+    "kernel_ECHILD": true,
+    "canonical_lock_rows": [],
+    "before": {
+      "ordinary_snapshot_sha256": "7bc24eb410a8672f519312da639385deedde1cf757f1f9a27faf7ab99b7e222a",
+      "control_count": 564,
+      "evaluation_stops": 6,
+      "stopped_units": 5,
+      "ordinary_state": "CLOSED_PAUSED"
+    },
+    "after": {
+      "ordinary_snapshot_sha256": "7bc24eb410a8672f519312da639385deedde1cf757f1f9a27faf7ab99b7e222a",
+      "control_count": 564,
+      "evaluation_stops": 6,
+      "stopped_units": 5,
+      "ordinary_state": "CLOSED_PAUSED"
+    },
+    "child_returncode": null,
+    "accounting": {
+      "samples": 505,
+      "conservative_family_cpu_seconds": 36.163058029999995,
+      "sampled_family_peak_rss_bytes": 1730060288,
+      "sampled_family_peak_pss_bytes": 1711351808,
+      "sampled_process_peak_as_bytes": 153822670848,
+      "sampled_peak_processes": 2,
+      "short_lived_memory_peaks_measured": false,
+      "family_hard_quota": false,
+      "verified_zero_userspace_zombie_samples": 0,
+      "gpu_as_limit_changed": false,
+      "inherited_as_limit": [
+        -1,
+        -1
+      ]
+    },
+    "scope": "Authenticated saved physical closure; no new live process/lock observation inferred"
+  },
+  "snapshots": [
+    {
+      "path": "<private-operations>/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-00.json",
+      "sha256": "509292fb0795a6263ca2f8c9a2dcfd643675ade22ab90c9fb4dfe746b97497d2",
+      "phase": "entered",
+      "snapshot_monotonic_seconds": 563234.092290273,
+      "age_at_read_seconds": 411.96741999394726,
+      "execute_attempts": 0,
+      "execute_returns": 0,
+      "execute_raises": 0,
+      "execute_wall_ns": 0,
+      "execute_attempt_batch_histogram": {},
+      "actors": 0,
+      "durable_writes": 0,
+      "owner_acks": 0
+    },
+    {
+      "path": "<private-operations>/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-01.json",
+      "sha256": "55ae438719e43640ede769376f78b7822046331a7864ef6cafe43782072e17fb",
+      "phase": "first_execute_pending",
+      "snapshot_monotonic_seconds": 563243.556135469,
+      "age_at_read_seconds": 402.5042112029623,
+      "execute_attempts": 1,
+      "execute_returns": 0,
+      "execute_raises": 0,
+      "execute_wall_ns": 0,
+      "execute_attempt_batch_histogram": {
+        "32": 1
+      },
+      "actors": 64,
+      "durable_writes": 0,
+      "owner_acks": 0
+    },
+    {
+      "path": "<private-operations>/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-02.json",
+      "sha256": "5a6fa872693a71209e578c46e14eff235a6df59a36b6bdcaed40b09cac9f9c1d",
+      "phase": "first_execute_post",
+      "snapshot_monotonic_seconds": 563244.19871653,
+      "age_at_read_seconds": 401.86232375598047,
+      "execute_attempts": 1,
+      "execute_returns": 1,
+      "execute_raises": 0,
+      "execute_wall_ns": 634382788,
+      "execute_attempt_batch_histogram": {
+        "32": 1
+      },
+      "actors": 64,
+      "durable_writes": 0,
+      "owner_acks": 0
+    },
+    {
+      "path": "<private-operations>/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-03.json",
+      "sha256": "4775184c576adbe0faedb6d29c5d9a0712a02ada47ebc225dceaefa5b941cb9a",
+      "phase": "during_work",
+      "snapshot_monotonic_seconds": 563267.803864467,
+      "age_at_read_seconds": 378.25746806699317,
+      "execute_attempts": 7,
+      "execute_returns": 6,
+      "execute_raises": 0,
+      "execute_wall_ns": 784542524,
+      "execute_attempt_batch_histogram": {
+        "32": 7
+      },
+      "actors": 64,
+      "durable_writes": 0,
+      "owner_acks": 0
+    },
+    {
+      "path": "<private-operations>/bt4-pr1110-correctness-private-20261021-v4/diagnostic-partial-60s.json.during-04.json",
+      "sha256": "4fa05948c21084cc931f626500c5630fd852c302d17adf6221bf1bc8ebc8b7b2",
+      "phase": "during_work",
+      "snapshot_monotonic_seconds": 563287.808182526,
+      "age_at_read_seconds": 358.2534441750031,
+      "execute_attempts": 12,
+      "execute_returns": 12,
+      "execute_raises": 0,
+      "execute_wall_ns": 965970989,
+      "execute_attempt_batch_histogram": {
+        "32": 12
+      },
+      "actors": 64,
+      "durable_writes": 0,
+      "owner_acks": 0
+    }
+  ],
+  "snapshot_result": "Five immutable entered/pre/post/during records survived. Final and quiescent records absent; slots05..16 absent.",
+  "same_saved_window": {
+    "elapsed_seconds": 53.715892253,
+    "completed_execute_wall_seconds": 0.965970989,
+    "completed_execute_wall_fraction": 0.017982964,
+    "meaning": "Most of this entered-to-last-saved interval lies outside the timed original evaluator execute boundaries. Not GPU utilization, guard CPU time, full-run timing or a unique cause."
+  },
+  "provider_saved_first_root": {
+    "proof_sha256": "6eb991f4cd83b57bbf7687e00b865dfc4742a416593e9b4e25fc017c93de625f",
+    "proof_raw_export_sha256": "96d8c8787bc3fca9d0bd4b001e5bf1cc4d2c1045a3526f685f9d1f887d0066fe",
+    "cuda_nodes": 644,
+    "cuda_neural_nodes": 195,
+    "cpu_nodes": 0,
+    "registered_providers": [
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "same_live_session": true,
+    "profile_sha256": "d412320d39c009b89b4966c213405a3ab2df0ff22237e83030834adbaa24bf85",
+    "launch_sha256": "7a3a8431af71a84b8b82d970d167db3f797f3268dd43ecee0072cf11a3e3d33e",
+    "scope": "Saved first-root metadata; graph-node counts are not inference-call counts. ORT profile payload was not read or recounted; no live-process claim."
+  },
+  "observed_writer_receipts": 0,
+  "database_ack_count": null,
+  "database_ack_reason": "Main/WAL/SHM present; all stat-only, SQLite never opened. Callback counts at saved timestamps remain distinct.",
+  "training_credit": 0,
+  "native_admission": false,
+  "full_unit_qualification": false,
+  "speed_claim": false,
+  "next_hypothesis": "Bounded inclusive timing and counts around unchanged owner-side guard/control/proof work, preserving every call/result/error. CPU fault tests and separate reviewed action required before another model attempt."
+}

@@ -1148,7 +1148,7 @@ def test_a_spill_file_that_lost_rows_is_refused(tmp_path: Path) -> None:
     save_local_shard_arrays(
         path,
         arrs={
-            "x": np.zeros((2, 4, 8, 8), dtype=np.float16),
+            "x": np.zeros((2, 112, 8, 8), dtype=np.float16),
             "policy_target": np.full(
                 (2, COMPACT_POLICY_SIZE), 1.0 / COMPACT_POLICY_SIZE,
                 dtype=np.float16,

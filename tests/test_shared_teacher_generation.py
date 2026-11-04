@@ -438,6 +438,20 @@ def test_foreign_or_incomplete_stage_is_preserved(tmp_path: Path) -> None:
     assert stage.read_bytes() == b"unknown incomplete science"
 
 
+def test_invalid_writer_geometry_is_rejected_before_dispatcher_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("invalid writer admission must not create a dispatcher")
+
+    monkeypatch.setattr(worker, "TeacherDispatcher", forbidden)
+    fixture = fixture_module()
+    spec = fixture.spec(tmp_path)
+    with pytest.raises(ValueError, match="writer_threads must be 1/2/4 within total max_writes"):
+        worker.run_worker(spec, fixture.FakeEvaluator(), fixture.fake_tablebase(), shared_dispatch=(2, 4, 1, 0))
+    assert not spec.out.exists()
+
+
 def test_invalid_consumer_geometry_closes_created_dispatcher(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     original = TeacherDispatcher.close
     closed = []
@@ -446,15 +460,31 @@ def test_invalid_consumer_geometry_closes_created_dispatcher(tmp_path: Path, mon
         assert not self._thread.is_alive()
         closed.append(self)
     monkeypatch.setattr(TeacherDispatcher, "close", close)
+    original_pool = worker.BT4GamePool
+    constructed = []
+
+    def invalid_pool(*args: Any, **kwargs: Any) -> Any:
+        # Admit valid outer geometry, then exercise an actual consumer
+        # constructor rejection after its dispatcher has been created. The
+        # invalid public writer geometry above correctly never reaches here.
+        assert kwargs["max_writes"] == 1
+        constructed.append(kwargs["dispatcher"])
+        kwargs["capacity"] = 0
+        return original_pool(*args, **kwargs)
+
+    monkeypatch.setattr(worker, "BT4GamePool", invalid_pool)
     fixture = fixture_module()
     spec = fixture.spec(tmp_path)
     with pytest.raises(ValueError, match="capacities"):
-        worker.run_worker(spec, fixture.FakeEvaluator(), fixture.fake_tablebase(), shared_dispatch=(2, 4, 1, 0))
+        worker.run_worker(spec, fixture.FakeEvaluator(), fixture.fake_tablebase(), shared_dispatch=(2, 4, 1, 1))
+    assert len(constructed) == 1
+    assert closed == constructed
     with pytest.raises(ValueError, match="bounded game label"):
         serve_ceres_stream(io.StringIO(), io.StringIO(), total_games=2, max_games=0,
                            target_rows=2, max_rows=4, batch_wait_ms=1, poll_seconds=0.001, deadline_seconds=5,
                            load_roots=lambda _message: (), infer=lambda roots: roots, publish=lambda _message, _values: {})
     assert len(closed) == 2
+    assert closed[0] is not closed[1]
 
 
 def test_broken_rpc_startup_output_closes_both_owners(monkeypatch: pytest.MonkeyPatch) -> None:

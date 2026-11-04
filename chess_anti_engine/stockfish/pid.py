@@ -9,6 +9,26 @@ def _clamp(val: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, val))
 
 
+def _positive_nodes(value: int | float | str, name: str) -> int:
+    """Reject budgets that int() would truncate or Stockfish could run unbounded."""
+    try:
+        result = int(value)
+        if (isinstance(value, bool) or result < 1
+                or (not isinstance(value, str) and value != result)
+                or not math.isfinite(float(result)) or float(result) != result):
+            raise ValueError
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{name} must be a positive finite integer representable by the node lever") from exc
+    return result
+
+
+def _node_bounds(minimum: int | float | str, maximum: int | float | str) -> tuple[int, int]:
+    lo = _positive_nodes(minimum, "min_nodes")
+    hi = _positive_nodes(maximum, "max_nodes")
+    # Keep the existing live-edit policy: the floor yields to the ceiling.
+    return min(lo, hi), hi
+
+
 # Floor on per-observation SE to prevent saturated (all-win/all-loss/all-draw)
 # batches from dominating the weighted fit with 1/SE^2 weights.
 _OBSERVATION_SE_FLOOR = 0.01
@@ -483,8 +503,9 @@ class DifficultyPID:
         nodes_crash_ease_z: float = 0.0,
         nodes_crash_ease_min_frac: float = 0.0,
     ):
-        init = int(initial_nodes)
-        nodes_clamped = int(_clamp(init, int(min_nodes), int(max_nodes)))
+        init = _positive_nodes(initial_nodes, "initial_nodes")
+        min_nodes, max_nodes = _node_bounds(min_nodes, max_nodes)
+        nodes_clamped = int(_clamp(init, min_nodes, max_nodes))
         self.target = float(target_winrate)
         self.alpha = float(ema_alpha)
         self.min_games_between_adjust = int(min_games_between_adjust)
@@ -609,7 +630,9 @@ class DifficultyPID:
 
     @nodes.setter
     def nodes(self, value: int) -> None:
-        self.nodes_lever.value = float(_clamp(int(value), self.min_nodes, self.max_nodes))
+        self.nodes_lever.value = float(_clamp(
+            _positive_nodes(value, "nodes"), self.min_nodes, self.max_nodes,
+        ))
 
     def refresh_live_params(self, config: dict) -> None:
         """Re-read live-reloadable knobs from a flat config dict.
@@ -626,6 +649,12 @@ class DifficultyPID:
         and unfreezes the regret lever — so that one edit both ramps nodes AND
         re-activates the regret knob (a deliberate dual-knob regime, not a bug).
         """
+        # Validate both proposed bounds before changing any live state. Parsing
+        # max_nodes must not fail after min_nodes/its lever have already moved.
+        new_min, new_max = _node_bounds(
+            config.get("sf_pid_min_nodes", self.min_nodes),
+            config.get("sf_pid_max_nodes", self.max_nodes),
+        )
         if "sf_pid_target_winrate" in config:
             self.target = float(config["sf_pid_target_winrate"])
         if "sf_pid_ema_alpha" in config:
@@ -652,26 +681,10 @@ class DifficultyPID:
         # re-clamping every iter would rewrite the nodes lever's fractional
         # accumulator through the ceil-based `nodes` property and defeat the
         # sub-integer float accumulation the nodes PID relies on.
-        nodes_bounds_changed = False
-        if "sf_pid_min_nodes" in config:
-            new_min = int(config["sf_pid_min_nodes"])
-            if new_min != self.min_nodes:
-                self.min_nodes = new_min
-                self.nodes_lever.min_value = float(self.min_nodes)
-                nodes_bounds_changed = True
-        if "sf_pid_max_nodes" in config:
-            new_max = int(config["sf_pid_max_nodes"])
-            if new_max != self.max_nodes:
-                self.max_nodes = new_max
-                self.nodes_lever.max_value = float(self.max_nodes)
-                nodes_bounds_changed = True
-        if nodes_bounds_changed:
-            # Normalize inverted live bounds (operator error: floor above ceiling)
-            # so the clamp can't strand nodes above max_nodes. Floor yields to the
-            # ceiling — the tightest valid range.
-            if self.min_nodes > self.max_nodes:
-                self.min_nodes = self.max_nodes
-                self.nodes_lever.min_value = float(self.min_nodes)
+        if (new_min, new_max) != (self.min_nodes, self.max_nodes):
+            self.min_nodes, self.max_nodes = new_min, new_max
+            self.nodes_lever.min_value = float(new_min)
+            self.nodes_lever.max_value = float(new_max)
             self.nodes = int(_clamp(int(self.nodes), self.min_nodes, self.max_nodes))
 
         _refresh_lever_from_config(self.regret_lever, config, "sf_pid_regret_")
@@ -709,7 +722,12 @@ class DifficultyPID:
 
     def load_state_dict(self, state: dict) -> None:
         """Restore controller state. Tolerates legacy ``inverse_history``."""
-        self.nodes = int(_clamp(int(state.get("nodes", self.nodes)), self.min_nodes, self.max_nodes))
+        restored_nodes = _positive_nodes(state.get("nodes", self.nodes), "nodes")
+        metric_min, metric_max = _node_bounds(
+            state.get("metric_min_nodes", self.metric_min_nodes),
+            state.get("metric_max_nodes", self.metric_max_nodes),
+        )
+        self.nodes = restored_nodes
 
         if self._regret_enabled:
             self.wdl_regret = _clamp(
@@ -724,8 +742,7 @@ class DifficultyPID:
         # them from the checkpoint keeps opponent_strength normalized against the
         # construction-time range across resumes (Codex review #2 follow-up).
         # Legacy checkpoints without these keys fall back to the just-built value.
-        self.metric_min_nodes = int(state.get("metric_min_nodes", self.metric_min_nodes))
-        self.metric_max_nodes = int(state.get("metric_max_nodes", self.metric_max_nodes))
+        self.metric_min_nodes, self.metric_max_nodes = metric_min, metric_max
 
         # `inverse_history` is the pre-2026-04-26-rename key. Drop the
         # fallback once no live training run still has a checkpoint with it
@@ -958,13 +975,13 @@ def _seed_lever_history(lever: _Lever, *, target_wr: float) -> None:
 def pid_from_config(config: dict) -> DifficultyPID:
     """Construct a DifficultyPID from a flat config dict (yaml-flattened)."""
     return DifficultyPID(
-        initial_nodes=int(config.get("sf_nodes", 500)),
+        initial_nodes=_positive_nodes(config.get("sf_nodes", 500), "sf_nodes"),
         target_winrate=float(config.get("sf_pid_target_winrate", 0.60)),
         ema_alpha=float(config.get("sf_pid_ema_alpha", 0.03)),
         min_games_between_adjust=int(config.get("sf_pid_min_games_between_adjust", 10)),
         min_games_for_adjust=int(config.get("sf_pid_min_games_for_adjust", 0)),
-        min_nodes=int(config.get("sf_pid_min_nodes", 100)),
-        max_nodes=int(config.get("sf_pid_max_nodes", 50000)),
+        min_nodes=_positive_nodes(config.get("sf_pid_min_nodes", 100), "sf_pid_min_nodes"),
+        max_nodes=_positive_nodes(config.get("sf_pid_max_nodes", 50000), "sf_pid_max_nodes"),
         initial_wdl_regret=float(config.get("sf_pid_wdl_regret_start", -1.0)),
         wdl_regret_min=float(config.get("sf_pid_wdl_regret_min", 0.01)),
         wdl_regret_max=float(config.get("sf_pid_wdl_regret_max", 1.0)),

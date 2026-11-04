@@ -14,7 +14,7 @@ _W = 4672
 
 def _sample(sf_p0: np.ndarray | None) -> ReplaySample:
     return ReplaySample(
-        x=np.zeros((1, 8, 8), dtype=np.float32),
+        x=np.zeros((112, 8, 8), dtype=np.float32),
         policy_target=np.zeros((_W,), dtype=np.float32),
         wdl_target=0,
         sf_p0_policy_target=sf_p0,
@@ -43,7 +43,7 @@ def test_sf_p0_policy_in_batch_dict() -> None:
 
 def test_legacy_sample_without_sf_p0_has_flag_zero() -> None:
     s = ReplaySample(
-        x=np.zeros((1, 8, 8), dtype=np.float32),
+        x=np.zeros((112, 8, 8), dtype=np.float32),
         policy_target=np.zeros((_W,), dtype=np.float32),
         wdl_target=0,
     )
@@ -59,7 +59,7 @@ def test_absent_sf_p0_allocates_no_dense_array() -> None:
 
     samples = [
         ReplaySample(
-            x=np.zeros((1, 8, 8), dtype=np.float32),
+            x=np.zeros((112, 8, 8), dtype=np.float32),
             policy_target=np.zeros((_W,), dtype=np.float32),
             wdl_target=0,
         )
@@ -75,7 +75,7 @@ def _valid_sample(sf_p0: np.ndarray | None) -> ReplaySample:
     policy = np.zeros((_W,), dtype=np.float32)
     policy[0] = 1.0  # valid distribution (passes prune validation)
     return ReplaySample(
-        x=np.zeros((1, 8, 8), dtype=np.float32),
+        x=np.zeros((112, 8, 8), dtype=np.float32),
         policy_target=policy,
         wdl_target=0,
         sf_p0_policy_target=sf_p0,

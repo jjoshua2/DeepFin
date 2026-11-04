@@ -1,0 +1,148 @@
+{
+  "schema": "pr1110_reconstructed_cpu_qualification_v1",
+  "status": "SCOPED_CPU_AND_WHOLE_STATIC_PASS_NOT_GPU_OR_ADOPTION",
+  "recovered_commit": "377e5d59662ea6051df5487bb1824fb0efcfd13e",
+  "focused_commit": "416a4189a35e731c1f864478787a3a1ec7f3b45d",
+  "final_code_commit": "1e459966b21dcccf3a88fc9d5e4da1af632f843a",
+  "old_v8_qualification_transferred": false,
+  "independent_saved_reconciliation": {
+    "findings": [],
+    "report_sha256": "7fba121cab99663e3809cd3b474c0e838ee85f03d3c3723535f558a60b03591f",
+    "private_complete_raw_receipts_sha256": "e1dcee53f80499ab60fc31b7528c1c4e790fb6879d2ad6d67668600383543df1"
+  },
+  "environment": {
+    "python": "3.13.15",
+    "uv": "0.12.10",
+    "torch": "2.14.0+cpu",
+    "torch_cuda_build": null,
+    "numpy": "2.2.6",
+    "pytest": "9.1.1",
+    "zarr": "2.18.7",
+    "native_backend": "magic",
+    "affinity": [
+      29,
+      30
+    ],
+    "numeric_threads": 2,
+    "fresh_local_extension_preflight": "PASS"
+  },
+  "focused": {
+    "tests": 625,
+    "passed": 616,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 9,
+    "junit_seconds": 83.737,
+    "stdout_sha256": "09f9c22a9806ee553f8c96e36c3c0a0bd609b49bf161029ce445e726a082cbd4",
+    "junit_sha256": "99f3b43dddc1cdbc8a1e31a3678a0e6998e14aabda89195ac5ac4ae898efe647",
+    "skip_reason": "Stockfish not found: eight resume cases and the Gumbel e2e smoke",
+    "historical_accepted_case_ledger_incremented": false
+  },
+  "final_type_fix_retest": {
+    "tests": 3,
+    "passed": 3,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "junit_seconds": 0.226,
+    "junit_sha256": "beadc5f75992b9bad5145511c26f875cb10d029eb852eddfeb47b9ed6ea3636e",
+    "stdout_sha256": "d8ddab52f8ae78679a24273f439b98fa7cecf436e3bde9455a51a4ffc0ed2cff",
+    "relationship": "Three affected cases repeat cases in the 616 passes; do not sum them as new coverage. Final code delta from focused commit changes only two test files."
+  },
+  "whole_static": {
+    "ruff": "PASS",
+    "basedpyright_errors": 0,
+    "basedpyright_warnings": 0,
+    "vulture": "PASS",
+    "seconds": 112.96,
+    "complete_log_sha256": "159140085c46dc989c5c5abc17bef5ef098ae3798b23c944942ae1deea12aed2"
+  },
+  "recovered_negative_controls": {
+    "source_commit": "377e5d59662ea6051df5487bb1824fb0efcfd13e",
+    "tests": 2,
+    "intended_failures": 2,
+    "errors": 0,
+    "causes": [
+      "TeacherSession_0 guard instead of TeacherDispatcher",
+      "Next execute raced unaccepted finish"
+    ],
+    "same_controls_pass_in_reconstructed_candidate": true,
+    "stderr_sha256": "622a81e07f0b5c201d0b5fbc5a5ec3687f463d97ceab1067f46344032f86587b",
+    "stdout_sha256": "47ada50218e35536391dc2770d9bb95cb7656f588afb990abe46bb445e0233a0",
+    "test_source_comparison": "Same source after LF/CRLF normalization; raw frozen Windows test bytes are not claimed identical to Linux Git bytes."
+  },
+  "retained_failures": [
+    "First focused run: 624 tests, 608 passed, 7 failed, 9 skipped",
+    "First static run: 87 Ruff and 38 type errors",
+    "Second static run: Ruff clear, 2 test-only type errors",
+    "First negative-control launcher: Git packing thread creation failed before Python/tests; distinct worktree launcher used afterward without raising bounds"
+  ],
+  "whole_ordinary_cpu": {
+    "status": "UNRUN_DEFERRED",
+    "reason": "Automatic host fixtures would reach a present historical runtime and installed unbound Bend toolchain. Neither was executed, removed or hidden.",
+    "host_overlap_case": "tests/test_host_overlap_pair.py::test_cpu_producer_uses_frozen_runtime_overlap_path",
+    "bend_cases": [
+      "tests/test_bend_aoti_probe.py::test_bend_can_run_native_aoti_package",
+      "tests/test_bend_chess_probe.py::test_bend_chess_probe_matches_existing_cboard",
+      "tests/test_bend_cuda_parity_harness.py::test_cuda_parity_binary_compiles_without_python_runtime",
+      "tests/test_bend_gumbel_halving_probe.py::test_bend_gumbel_halving_matches_deepfin_reference",
+      "tests/test_bend_mcts_tree_probe.py::test_bend_two_ply_mcts_matches_production_c_tree"
+    ],
+    "cpu31_or_live_http_violation_observed": false
+  },
+  "actual_bt4_gpu": "UNRUN",
+  "native_pext_variant": "UNRUN",
+  "merge_or_live_adoption": false,
+  "training_or_data_admission_credit": 0,
+  "latest_code_commit": "e964def51baa2b10d6b99f0aaacab1b9165f95c0",
+  "production_python310_timeout_correction": {
+    "schema": "pr1110_python310_future_timeout_actual_v1",
+    "source_commit": "e964def51baa2b10d6b99f0aaacab1b9165f95c0",
+    "source_review_commit": "33b33157714874e678fdfa546f44ee63d24830cb",
+    "independent_source_findings": [],
+    "probe_sha256": "07671dea85c43e0ae610665d63568cb8f9ea6befbdab795985c998f593592895",
+    "old": {
+      "source_commit": "1e459966b21dcccf3a88fc9d5e4da1af632f843a",
+      "observed_sticky_refusal": false,
+      "guard_calls_before_service": 1,
+      "tool_chunk": "20a131",
+      "tool_exit_code": 0,
+      "seconds": 0.280940521,
+      "actual_module_sha256": "0b1df721a7f0406fb028e15efd809713a85cf42218742ebe3bd37a77858faea9"
+    },
+    "fixed": {
+      "observed_sticky_refusal": true,
+      "guard_calls_before_service": 0,
+      "tool_chunk": "3adc1a",
+      "tool_exit_code": 0,
+      "seconds": 0.3756674,
+      "actual_crlf_module_sha256": "f319819e3386032f5daa32a3141e850d568f0abffee9ea44b4e99a0aa5bbdc0f",
+      "canonical_git_module_sha256": "a02bc7eb86efde6910d6852056ef5414728885e9da733bbed41e1a17da6508f2"
+    },
+    "interpreter": "Python3.10.12",
+    "future_timeout_is_builtin": false,
+    "requester_thread_joined": true,
+    "same_exception_identity": true,
+    "torch_numpy_ort_imported": false,
+    "gpu_model_live_actions": false,
+    "cpu313_retest": {
+      "tests": 102,
+      "passed": 102,
+      "skipped": 0,
+      "failures": 0,
+      "errors": 0,
+      "junit_seconds": 60.038,
+      "relationship": "Overlaps original616; no new distinct-case total",
+      "junit_sha256": "9ae26ecd290c593b5091b3ed02c91afa081533b7f2f05517e0c3b3268ad913f7"
+    },
+    "whole_static": {
+      "ruff": "PASS",
+      "basedpyright_errors": 0,
+      "basedpyright_warnings": 0,
+      "vulture": "PASS",
+      "seconds": 117.44,
+      "log_sha256": "285b0137bf413c9f09df722618b933e39dc10385514133831a0eb1e41c2a2755"
+    },
+    "raw_receipt_export_sha256": "6e167fe734f5ca385a357da63e50f26baf1d5e4123930688845771ddcebf55e4"
+  }
+}

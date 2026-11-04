@@ -1,0 +1,151 @@
+{
+  "schema": "PR1110_BT4_COHERENT_320_ENDSTATE_INDEPENDENT_SOURCE_ASSESSMENT_V1",
+  "status": "SOURCE_GROUNDED_OPTIONS_ONLY_NOT_IMPLEMENTATION_OR_CPU_MODEL_ADMISSION",
+  "findings": [],
+  "source_pins": [
+    {
+      "path": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/scripts/shared_teacher_generation.py",
+      "bytes": 26911,
+      "sha256": "32e6dbc5f2cbd9b698f2a380891af81e50410f528ac43e1141d3971e30f729f2"
+    },
+    {
+      "path": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/producer_executor.py",
+      "bytes": 6842,
+      "sha256": "1bbd86f857a37a90ed7e3184a840e02781df313812889ea35863ea21510f466a"
+    },
+    {
+      "path": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/teacher_dispatch.py",
+      "bytes": 11013,
+      "sha256": "ce928614666c79075e1e69b9c174d26064b45bb0100d419eac792d963f91c15c"
+    },
+    {
+      "path": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/generation_runtime.py",
+      "bytes": 6555,
+      "sha256": "119cd832c1cdd43e6398b59a3276f78067b961fd2692e60bfc5a259f928a5222"
+    },
+    {
+      "path": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/staged_execution.py",
+      "bytes": 15931,
+      "sha256": "a02bc7eb86efde6910d6852056ef5414728885e9da733bbed41e1a17da6508f2"
+    },
+    {
+      "path": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/request_routing.py",
+      "bytes": 5123,
+      "sha256": "6a656cffe5a503bd0c0ed7f2b93291fa0cfc44c9f90ba7aa112a874f26827e46"
+    },
+    {
+      "path": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/scripts/bt4_root_policy_worker.py",
+      "bytes": 80041,
+      "sha256": "47569f622270735c9565a5e2e0bc1a5a2b5773c6036d1c8ada705e590fa27e37"
+    },
+    {
+      "path": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/moves/encode.py",
+      "bytes": 31682,
+      "sha256": "4c3227adfc74d9911d1db66e4abf7cb27e19d6fcd9006069f638f53966e7ac6f"
+    },
+    {
+      "path": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/scripts/bt4_root_policy_stepper.py",
+      "sha256": "e06eae6b1dd48c8d78f8688d13ce8345daa35f25f908e5f4368d63e8c6783a49"
+    }
+  ],
+  "actual_owner_source": {
+    "distinction": "Raw Git LF bytes equal runtime closure. Canonical working26944/affinity14b007/selfplay331f9/backlog4c4f are different postimages and are not substituted as actual runtime source.",
+    "bytes": 32212,
+    "native_raw_git_stdout_independently_hashed": true,
+    "sha256": "a77c2d9c05a60eddfb44dfb7604ea31c7c85d965bf8da82d452aa0e1104a153f",
+    "git_object": "42027482a7091ddbd2c8bc98e266b3ac3afbb744:scripts/shared_teacher_owner.py"
+  },
+  "evidence_refs": {
+    "phase_actual_review_sha256": "9f08fff6b2700ca8926cd56038b1eea9b7a2442aa645919dc141d8527cedf842",
+    "windows_native_supplement_sha256": "1fd2142e9ba4fe1d1096b7f185649a149e768f49e629ea118b9e88d9a09eba5f",
+    "runtime_closure_sha256": "9d30112a802059feb4c177ca4efbabd280ebc6e6941eb75f8cb11d3cdfc24bc4",
+    "static_cpu_actual_review_sha256": "407ae121b50166dcf27e56d029b6b4b07edb7647487572b79dd5c50efbbe0cf7",
+    "guard_options_sha256": "b754799ad2ef04b7253f51c8db2376359b644fa10bf3bbba695763126bd6f9d5"
+  },
+  "conclusion": "No source-grounded fully optimized320 configuration or throughput result is established. Existing cross-unit ownership/FIFO pipeline is a credible base, not an absent architecture. The missing approved supply/row-credit/memory/caller plan and qualification cannot be replaced by target_rows alone. Current unchanged guards remain a measured potential bottleneck; this failed lexical optimization supplies no GPU justification.",
+  "source_flow": [
+    "BT4GamePool creates one game/one-board stepper per lane with RNG SeedSequence([unit seed, local game ID]); unit namespace remains in request key. _fill reserves whole-trajectory credit before actor creation and appends ready identities.",
+    "BT4GenerationDriver owns ready/inference/publication registries and ExclusiveLaneRegistry. _advance_games owns its leased games until completed Future settlement, applies validated prior outputs then prepares next roots. _settle_cpu alone releases CPU leases and routes finalized versus inference-ready games.",
+    "advance submits the current inference-ready prefix before admitting more ready CPU tasks. ProducerExecutor.capacity counts running+queued jobs; worker wires both max_workers and capacity to producer_threads. Native microbatch bounds game count per job,not dispatcher target.",
+    "TeacherDispatcher.submit_many validates full request list and admits only bounded FIFO prefix; max_rows counts queued AND running owned rows. _take_batch takes at most target_rows, not max_rows. Returned per-request Future publishes only complete ordered outputs.",
+    "TwoSlotPump can prepare next slot before retiring pending output. StagedHostBackend has one prepare executor, serial execution/finish on dispatcher owner, and at most two owned receipts. It claims no CUDA/DMA overlap.",
+    "GamePool holds finalized/raw receipt/writer/owner-ACK state. Driver only releases lane/trajectory/live credit and refills game after accepted receipt/ACK removes active entry; writer or ACK failure must retain outcome and ownership."
+  ],
+  "caller_correction": {
+    "claim": "_fill _observe_stop is not a full564-control guard scan per actor in this caller.",
+    "actual": "Exact runtime worker47569 run_pooled_units.should_stop checks producer.stop_event plus coordinator STOP and each spec.out STOP. _fill invokes these private STOP checks per actor; _make_pooled_unit.make constructs the one-board stepper without control().",
+    "scaling_risk": "Startup _fill has O(live actors x unit count) private STOP-path checks and allocations; multi-unit backend verifies per-unit provider/launch artifacts each batch. Do not invent320 full mounted-roster scans at startup or claim these costs vanish.",
+    "full_guard_boundaries": "GenerationSessionRunner.run invokes control before every advance. Actual ownera77 control marshals off-owner calls through OwnerThreadCallbacks, services owner rendezvous and then original guard; backend staged prepare waits/execute/proof boundaries and writer/ACK callbacks add control invocations. Preserve these existing calls and detection boundaries."
+  },
+  "supply_constraints": [
+    {
+      "constraint": "Current diagnostic cannot supply320 simultaneous independent rows.",
+      "basis": "One unit128 total games/64 live actors; each _make_pooled_unit stepper has one board and at most one outstanding root. Current producer1/capacity1/native32 gives32-game waves; target/max64/wait0 can promptly execute partial32 rather than accumulate."
+    },
+    {
+      "constraint": "320target with wait0 is not a320 supply mechanism.",
+      "basis": "Dispatcher does not synthesize rows. Increase independent ready supply and arrange producer completion accumulation or a separately bounded coalescing wait. Tail flush and ready/unknown-completion retirement must remain prompt."
+    },
+    {
+      "constraint": "Two full320 slots require more than a320 row capacity.",
+      "basis": "Pending320 rows remain owned until retirement; max_rows>=640 is necessary for another full320 queued/preparing slot. At least640 independent actors are needed for two simultaneous full per-game root groups; nonready/finalized/writer/ACK-held lanes reduce ready supply,so additional reservoir may be needed.640 is a necessary steady dual-slot lower bound,not performance guarantee."
+    },
+    {
+      "constraint": "CPU job size/workers/admitted capacity are distinct.",
+      "basis": "Native_microbatch accepted1..256,not320. Larger microbatch alone cannot create a single320-job. Existing worker only exposes producer_threads controlling both workers and capacity; one worker/capacity1 cannot queue multiple32 jobs. Increasing worker count/microbatch/coalescing is configuration plus new resource/science qualification; exposing bounded queued job capacity independently of worker width is a real optional source-wiring change."
+    }
+  ],
+  "coherent_endstate": [
+    "One actual model/session and dispatcher execution owner; independently namespaced per-unit games/seeds/checkpoints with one lane owner per pending generation. No duplicate actor work or RNG draw from concurrent/replayed outputs.",
+    "Approved bounded multi-unit live reservoir sufficient for chosen target and two-slot occupancy, independent bounded producer job credits, queued+running row capacity, and trajectory/progress/writer reserves. Configuration derives from explicit resource authority and source closure,not borrowed one-unit diagnostic settings.",
+    "FIFO prefix admission/scatter and completion readiness, real native prepare/apply identity/history validation, canonical writer receipt then owner SQLite ACK then refill remain one end-to-end contract. No early refill on backend return or writer Future alone.",
+    "Owner-affine current guard/STOP/parent-custody/resource checks continue before advance and at existing backend/writer/ACK boundaries; failures/unknown joins retain dependencies/custody until qualified settlement. Current mutable mounted-path observations cannot be removed by an equivalent static-cache optimization.",
+    "Measure whole accepted-work throughput and semantic equivalence only after supply and ownership controls, actual model/native/provider contracts and bounded memory/session/custody qualification. Model-call histogram or logical fake320 route alone is not this end-state."
+  ],
+  "options": [
+    {
+      "assessment": "Credible source-supported route using existing APIs,not a validated performance configuration. Needs new roster/actors/rowcaps/coalescing/producer and memory budgets. Increased rows may amortize some backend control/proof cost per root but does not eliminate mounted checks and may increase per-unit work.",
+      "option": "Keep current strict guard and existing cross-unit architecture; research larger approved supply geometry."
+    },
+    {
+      "assessment": "Specific optional architecture gap in worker caller wiring,not ProducerExecutor itself. Could permit completion aggregation with fewer CPU workers; requires bounded task/reservation accounting and STOP/lease/FIFO/failure tests. No benefit yet measured; do not implement merely because source allows capacity>workers.",
+      "option": "Separate bounded admitted producer jobs from worker thread count."
+    },
+    {
+      "assessment": "Async observer,control migration,Windows verifier,bulk/path cache or changed poll rate is not equivalent under currentmutable-path/alias/error/race semantics. Reportsb754/1fd identify substantial new authority/interface/provenance obligations. No supported implementation or action follows.",
+      "option": "Change guard/control observation contract."
+    }
+  ],
+  "memory_and_deadline": {
+    "live64_reservation_bytes": 1551663104,
+    "source_formula": "row_bytes=175*8*8*4+1858*4+3*8+8192=60448; per-game400ply reservation=400*60448+65536=24244736. Progress reserve additionally2*writer_threads*max(game reserve)+(producer_threads*native_microbatch*3+max_rows*4)*60448+1MiB.",
+    "live320_reservation_bytes": 7758315520,
+    "live640_reservation_bytes": 15516631040,
+    "deadline": "Current finite60 active+180cleanup authority covers one128game64actor diagnostic only. Preimport/model/startup consume active clock. No source proof320 startup/refill or steady dual-slot work fits60s; no timer reset or300s repeat authorized.",
+    "meaning": "Whole-trajectory schema reservation,not observed RSS/PSS/model/native/GPU allocation guarantee.320 live alone~7.225GiB before progress/model/interpreter;640~14.451GiB. Current familyRSS8GiB/PSS6GiB/sampledlimits and inheritedAS cannot be assumed adequate or silently widened."
+  },
+  "minimum_credible_cpu_proof": {
+    "cases": [
+      "Controlled readiness showing one320 FIFO batch under sufficient independent lanes; wait0 undersupply stillpartial; configured finitewait/flush drains tail,ready/unknown pending completion does not starve.",
+      "Two full320 outstanding routes with>=640 actors/rowcredits,versus max_rows320 refusing secondprefix; queued+running credit never exceeds cap,requestFuture completion/scatter/keyuniqueness preserved.",
+      "Producer capacity running+queued accounting with workers and admitted jobs separately exercised,one active lease pergame,STOP no newadmission,all queued/running failures retain/join honestly.",
+      "Namespace/localID/generation/root output identity and initial pergame seed streams stable under reordered completion. Fullnative trajectory RNG/output equivalence remains separate unless actual native path tested.",
+      "Delayed/failing writer and ownerACK retain active lane/reservation/outcome;only ACK accepted releases/refills;STOP prevents newcompanion admissions,duplicate ACK/replay/recovery cannot double-refill.",
+      "Finite joined threads and stale/unknown failure custody,exactcallbackowner affinity,unchanged control calls counted with explicitdoubles;no liveproduction/canonical locks/SQL/model."
+    ],
+    "logical_target": "Actual pinned driver/executor/dispatcher/pump/runner classes with explicit deterministic fake producer body/backend/clock/ACK seams. If native _advance_games is replaced, state clearly it proves controller routing only,not canonical native encoding/chess/RNG arithmetic. No counterfeit package/module aliases or copied original algorithm.",
+    "not_proved": [
+      "Actual320 ORT/native module imports or numerical/model/provider validity",
+      "Host/GPU memory fit or throughput/latency/production guard cost",
+      "Real filesystem control races/latency or meaningful fullunit ACK/refill throughput",
+      "Authority to use320/640 actors or multiple real units"
+    ],
+    "status": "CONCEPTUAL_SCOPE_NOT_READY_OR_ADMITTED",
+    "import_resource_prerequisite": "Freeze exact selected source/import closure and budget before action. Full run_pooled_units fake_cpu is not an import-isolation guarantee; historical full normal imports failed tight AS. Do not claim Torch/native-free or fit under unchanged limits without source closure proof. No added runtime packet layer necessary to conclude current nonreadiness."
+  },
+  "authority": "No existing one-unit128/64actor grant or completed CPU lexical screen authorizes320/multi-unit/GPU/resource changes. Source options only; exact future CPU proposal and model scope need separate current review/admission.",
+  "author_coordination": "Requested selfplay author batch-supply assessment; independent conclusions frozen without assuming unseen author artifact acceptance.",
+  "execution_performed": false,
+  "implementation_performed": false,
+  "tests_imports_guest_actions": false
+}

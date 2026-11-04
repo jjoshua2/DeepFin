@@ -1,0 +1,63 @@
+{
+  "schema": "phase-diagnostic60-source-preregistration-v1",
+  "status": "SOURCE_ONLY_MODEL_UNRUN_NO_RUNNABLE_GRANT",
+  "scope": "Eight author-confirmed frozen sources only. No constructor/entry/input/date-decision files or old proposals. Existing embedded source expiry/provenance fields preserved as historical source metadata, not current authority. No model, GPU, test, full-unit or performance credit.",
+  "archive": {
+    "readback_verified": true,
+    "file": "2026-10-21-phase-diagnostic60-preregistration-v1.zip",
+    "bytes": 44810,
+    "member_count": 8,
+    "sha256": "7bf8f200bd8996083de8e079599216d074b9c7d19facb09dd6a73cd41c969cce",
+    "fixed_member_timestamp": "2026-10-21T00:00:00Z"
+  },
+  "members": [
+    {
+      "bytes": 41698,
+      "sha256": "39a3d45ba6297eeb44a2ab62f20ee9cfb299c7d94262b2b06ced09de68cda833",
+      "member": "source/parent_phase_diagnostic60_v1.py",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-phase-diagnostic60-draft-v1/parent_phase_diagnostic60_v1.py"
+    },
+    {
+      "bytes": 2615,
+      "sha256": "81dac439e2178f5b391e864b2d21d8156ce222798be1d3215d5d5337ccd19b31",
+      "member": "source/mechanical_binding_runtime_v6.py",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-phase-diagnostic60-draft-v1/mechanical_binding_runtime_v6.py"
+    },
+    {
+      "bytes": 11708,
+      "sha256": "2c451c1ac41cd293d304b0933bd8f3faa1dd942ec59086136262835f0d60f38a",
+      "member": "source/finite_all_three_custody_runtime_v6_v1.py",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-phase-diagnostic60-draft-v1/finite_all_three_custody_runtime_v6_v1.py"
+    },
+    {
+      "bytes": 9484,
+      "sha256": "0c6d4d872581b1a7b5853aa99a0cfd079e698538936382e537193cfbcb832244",
+      "member": "source/finite_phase_diagnostic_adapter_60s_v2.py",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-phase-diagnostic60-draft-v1/finite_phase_diagnostic_adapter_60s_v2.py"
+    },
+    {
+      "bytes": 27726,
+      "sha256": "689b878c62647155247f7c5d04b467df3abaf53f3baf9c8c878589c7edef22f3",
+      "member": "source/finite_phase_diagnostic_child_60s_v2.py",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-phase-diagnostic60-draft-v1/finite_phase_diagnostic_child_60s_v2.py"
+    },
+    {
+      "bytes": 14251,
+      "sha256": "d6e0f56867209dbdf3be80e5351f660f8b7ae65347a5433c8fbb6d799480684c",
+      "member": "source/export_saved_phase_diagnostic60_v2.py",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-phase-diagnostic60-draft-v1/export_saved_phase_diagnostic60_v2.py"
+    },
+    {
+      "bytes": 10879,
+      "sha256": "1931ce9f6adcd71f8138db9c4c9d0dde2848cf3a0b7efabe46e5247d470ef915",
+      "member": "source/ACTUAL-PHASE-BINDING-MANIFEST-v3.json",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-phase-diagnostic60-draft-v1/ACTUAL-PHASE-BINDING-MANIFEST-v3.json"
+    },
+    {
+      "bytes": 14275,
+      "sha256": "3d4ec3392ec9c5e5a26fec6017d50e51fd2fe2bafe30342268e41320b8f009ee",
+      "member": "source/PHASE-DIAGNOSTIC60-PREPARATION-SCOPE-v1.json",
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-phase-diagnostic60-draft-v1/PHASE-DIAGNOSTIC60-PREPARATION-SCOPE-v1.json"
+    }
+  ]
+}

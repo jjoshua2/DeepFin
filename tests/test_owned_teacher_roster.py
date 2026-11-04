@@ -41,8 +41,17 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, ...]:
     relative_paths += ["scripts/dual_companion_config.json"]
     relative_paths += ["scripts/shared_teacher_owner.py", "scripts/shared_teacher_generation.py",
                        "chess_anti_engine/teacher_dispatch.py", "scripts/bt4_root_policy_worker.py",
-                       "scripts/bt4_generation_evaluator.py", "scripts/ceres_shared_game_service.py",
+                       "scripts/bt4_generation_evaluator.py", "scripts/bt4_model_arithmetic.py",
+                       "scripts/ceres_shared_game_service.py",
                        "scripts/ceres_pipelined_client.py", "scripts/ceres_raw_backend.py"]
+    # The recovered owner validates these actual imported implementations too.
+    # Materialize and hash their real candidate bytes, never dummy stand-ins.
+    relative_paths += ["chess_anti_engine/completion.py", "chess_anti_engine/producer_executor.py",
+                       "chess_anti_engine/generation_runtime.py", "chess_anti_engine/staged_execution.py",
+                       "chess_anti_engine/async_safety.py", "chess_anti_engine/request_routing.py",
+                       "chess_anti_engine/fixed_domain_supervision.py", "scripts/bt4_root_policy_stepper.py",
+                       "scripts/bt4_prepared_root.py", "scripts/bt4_policy_dump.py",
+                       "chess_anti_engine/encoding/cboard_encode.py"]
     for relative in relative_paths:
         destination = overlay / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -121,6 +130,7 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, ...]:
     evaluator = fixture.FakeEvaluator()
     def startup(*_args: Any) -> tuple[Any, ...]:
         seen.append(("startup",))
+        assert worker.rep_fix.current() is True
         for value in descriptors.values():
             with sqlite3.connect(value["checkpoint_path"]) as db:
                 assert db.execute("SELECT state FROM attempts ORDER BY id DESC LIMIT 1").fetchone() == ("RUNNING",)
@@ -143,12 +153,80 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, ...]:
     monkeypatch.setattr(worker, "run_pooled_units", pool)
     resume = worker.validate_resume_contract
     monkeypatch.setattr(worker, "validate_resume_contract", lambda spec: resume(cpu_spec(spec)))
-    worker.rep_fix.apply(True, boards_discarded=True)
     options = {"entry": entry, "consumer": consumer, "recovery": recovery, "guard": guard, "parent": {}, "leases": {}, "priority_module": priority,
         "out": campaign / "controller-00", "authorize": lambda roster, _out: seen.append(("authorize", tuple(roster))),
         "max_units": 2, "max_live_games": 32, "target_rows": 8, "max_rows": 32, "batch_wait_ms": 1, "max_writes": 2,
         "deadline_seconds": 30}
     return descriptors, options, seen, evaluator, loaded, closure_path
+
+
+@pytest.mark.parametrize("initial_mode", [None, False, True])
+def test_owner_installs_rep_fix_before_recovery_and_actual_evaluator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, initial_mode: bool | None,
+) -> None:
+    from scripts.bt4_generation_evaluator import BT4OnnxEvaluator
+
+    previous = worker.rep_fix.current()
+    apply_mode = worker.rep_fix.apply
+    events: list[str] = []
+    try:
+        descriptors, options, seen, _evaluator, loaded, _closure = setup(tmp_path, monkeypatch)
+        # No native board is alive. Model a fresh process (None), an off
+        # process, and an already configured process using the real setter.
+        worker.rep_fix._current = None
+        apply_mode(bool(initial_mode), boards_discarded=True)
+        if initial_mode is None:
+            worker.rep_fix._current = None
+
+        def configure(enabled: bool, *, boards_discarded: bool = False) -> None:
+            assert seen == [("authorize", ("u7", "u9")), ("custody", "all_three")]
+            assert enabled is True
+            assert boards_discarded is True
+            events.append("configure")
+            apply_mode(enabled, boards_discarded=boards_discarded)
+
+        checkpoint_type = loaded["bt4_longblock_checkpoint_v2"].Checkpoint
+        recover = checkpoint_type.recover
+
+        def recover_after_mode(checkpoint: Any, alive: Any) -> Any:
+            assert worker.rep_fix.current() is True
+            events.append("recover")
+            return recover(checkpoint, alive)
+
+        class StartupObserved(Exception):
+            pass
+
+        def actual_evaluator_startup(*_args: Any) -> None:
+            session = SimpleNamespace(get_outputs=lambda: [
+                SimpleNamespace(name="policy", shape=["batch", 1858], type="tensor(float)"),
+                SimpleNamespace(name="wdl", shape=["batch", 3], type="tensor(float)"),
+            ])
+            evaluator = BT4OnnxEvaluator(
+                session, input_name="planes", input_dtype=np.dtype("float32"),
+                policy_output="policy", wdl_output="wdl", wdl_kind="probabilities",
+                input_history_encoding="lc0_root_legacy_meta", input_extra_features="v2_threats",
+                model_sha256="a" * 64, history_rep_fix=True,
+            )
+            assert evaluator.history_rep_fix is True
+            events.append("evaluator")
+            raise StartupObserved
+
+        monkeypatch.setattr(worker.rep_fix, "apply", configure)
+        monkeypatch.setattr(checkpoint_type, "recover", recover_after_mode)
+        monkeypatch.setattr(options["consumer"], "fixed_bt4_startup", actual_evaluator_startup)
+        with pytest.raises(StartupObserved):
+            run_owned_roster(descriptors, **options)
+        assert events == ["configure", "recover", "recover", "evaluator"]
+        assert worker.rep_fix.current() is True
+        for descriptor in descriptors.values():
+            with sqlite3.connect(descriptor["checkpoint_path"]) as db:
+                assert db.execute("SELECT state FROM attempts").fetchone() == ("FAILED_RETAINED_ZERO_CREDIT",)
+    finally:
+        # Restore the sentinel AND compiled globals, including the unset state.
+        worker.rep_fix._current = None
+        apply_mode(bool(previous), boards_discarded=True)
+        if previous is None:
+            worker.rep_fix._current = None
 
 
 def test_actual_owner_descriptor_runtime_checkpoint_and_finite_controller(
@@ -244,6 +322,9 @@ def test_actual_owned_dual_roster_uses_retained_child_and_controller_sqlite_ack(
         "prior_roots": value["prior_roots"]} for name, value in descriptors.items()], "max_games": 4,
         "target_rows": 4, "max_rows": 400, "batch_wait_ms": 1, "poll_seconds": 0.001, "deadline_seconds": 60, "physical_batch": 512,
         "source_pins": {relative: digest(candidate / relative) for relative in (
+            "chess_anti_engine/completion.py", "chess_anti_engine/producer_executor.py",
+            "chess_anti_engine/generation_runtime.py", "chess_anti_engine/staged_execution.py",
+            "chess_anti_engine/async_safety.py", "chess_anti_engine/request_routing.py",
             "chess_anti_engine/teacher_dispatch.py", "scripts/ceres_shared_game_service.py",
             "scripts/ceres_raw_backend.py", "scripts/shared_teacher_generation.py")},
         "retained_service_source": {"path": str(reference / "scripts/ceres_dynamic_game_service.py"),
@@ -305,7 +386,7 @@ def test_actual_owned_dual_roster_uses_retained_child_and_controller_sqlite_ack(
     assert service_result["successful_validated_physical_accounting"].get("calls", 0) == 0
 
 
-@pytest.mark.parametrize("failure", ["geometry", "roster_geometry", "scope", "external_root", "duplicate", "source", "native", "stop_coverage", "authorize", "yield"])
+@pytest.mark.parametrize("failure", ["geometry", "roster_geometry", "scope", "external_root", "duplicate", "source", "arithmetic_missing", "arithmetic_stale", "native", "stop_coverage", "authorize", "yield"])
 def test_owner_preflight_rejects_or_defers_before_custody_and_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
 ) -> None:
@@ -328,6 +409,10 @@ def test_owner_preflight_rejects_or_defers_before_custody_and_session(
         descriptors["u9"]["unit"] = 7
     elif failure == "source":
         descriptors["u7"]["source_pins"]["scripts/shared_teacher_owner.py"] = "0" * 64
+    elif failure == "arithmetic_missing":
+        del descriptors["u7"]["source_pins"]["scripts/bt4_model_arithmetic.py"]
+    elif failure == "arithmetic_stale":
+        descriptors["u7"]["source_pins"]["scripts/bt4_model_arithmetic.py"] = "0" * 64
     elif failure == "native":
         record = json.loads(closure.read_text())
         key = next(iter(record["runtime_files"]))
@@ -347,7 +432,8 @@ def test_owner_preflight_rejects_or_defers_before_custody_and_session(
         assert run_owned_roster(descriptors, **options)["status"] == "PRIORITY_DEFERRED_BEFORE_CUDA"
     else:
         message = {"geometry": "geometry", "roster_geometry": "roster", "scope": "scope", "external_root": "scope", "duplicate": "roster",
-                   "source": "source pin", "native": "runtime file pin", "stop_coverage": "STOP",
+                   "source": "source pin", "arithmetic_missing": "shared owner source closure",
+                   "arithmetic_stale": "source pin", "native": "runtime file pin", "stop_coverage": "STOP",
                    "authorize": "authority"}[failure]
         with pytest.raises(ValueError, match=message):
             run_owned_roster(descriptors, **options)
@@ -509,7 +595,8 @@ def test_poststartup_yield_after_committed_game_recovers_without_duplicate(
 
 
 @pytest.mark.parametrize("relative", ["scripts/shared_teacher_owner.py", "scripts/shared_teacher_generation.py",
-                                     "chess_anti_engine/teacher_dispatch.py", "scripts/ceres_pipelined_client.py"])
+                                     "chess_anti_engine/teacher_dispatch.py", "scripts/bt4_model_arithmetic.py",
+                                     "scripts/ceres_pipelined_client.py"])
 def test_owner_rejects_pinned_overlay_different_from_executing_shared_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: str,
 ) -> None:

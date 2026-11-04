@@ -142,6 +142,18 @@ review services are optional. For requested Grok reviews, use an available Grok
 review Skill and its disposable-snapshot wrapper, preserve the raw result, and verify
 its findings. Report checks and material limitations accurately.
 
+## Execution cadence
+
+For delegated or long-running work, follow [execution cadence](docs/agent_execution.md).
+The owning agent must handle a returned terminal or worker result by taking the next
+already-authorized action, assigning the next bounded task, or recording the exact
+blocker. Do not wait for another user prompt to collect a routine authorized prerequisite.
+A completed worker needs a follow-up task to run again; a message alone is not a restart.
+Prepare success, startup-failure and timeout branches before a scarce-resource test,
+and keep independent CPU, review and productive-fallback preparation moving in parallel.
+These rules change agent procedure, not platform event delivery or action authority;
+existing review, custody, STOP, security and resource gates remain in force.
+
 ## Optional workflows
 
 Repository Skills live in `.agents/skills/`; `.claude/skills` links to the same files.

@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+import threading
 from typing import Any, cast
 
 import pytest
@@ -310,6 +311,7 @@ class _WatchdogStub:
     def __init__(self) -> None:
         self._stall_watchdog_started = False
         self._model_watch_started = False
+        self._model_watch_stop = threading.Event()
         self.log = logging.getLogger("test_watchdog_stub")
 
 

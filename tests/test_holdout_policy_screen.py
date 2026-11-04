@@ -53,7 +53,7 @@ assert _SPEC.loader is not None
 _MOD = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MOD)
 
-_PLANES = 8
+_PLANES = 112  # Exercise screen invariants with shards the production reader admits.
 
 
 def _write_shard(path: Path, *, n: int, game_ids: list[int],

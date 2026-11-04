@@ -1,0 +1,10 @@
+{
+  "url": "https://github.com/jjoshua2/DeepFin/pull/1097",
+  "head_sha": "3fc568d4a34ad4b520d102c7331602dec8ab8a36",
+  "state": "open",
+  "merged": false,
+  "draft": true,
+  "title": "Move independent research records and historical summaries to a pinned living submodule",
+  "claude_hunk": "@@ -0,0 +1,3 @@\n+[submodule \"research\"]\n+\tpath = research\n+\turl = https://github.com/jjoshua2/DeepFin-research.git\n@@ -77,11 +77,15 @@ two torch threads for this reason; keep that default on a shared machine.\n \n ## Experiments and evidence\n \n-Use [experiment records](docs/experiments/README.md) as the primary index. Each new\n-experiment gets `docs/experiments/YYYY-MM-DD-slug.md`, with its preregistration and\n-subsequent readouts together, plus a link in the index. Publish completed records\n-and their compact supporting evidence on `main`, with locations and identities for\n-external bulk artifacts; do not leave the only useful record in a local scratchpad.\n+Use [experiment records](docs/experiments/README.md) as the primary index. New research\n+prose belongs in [DeepFin-research](https://github.com/jjoshua2/DeepFin-research), under\n+`docs/experiments/YYYY-MM-DD-slug.md`, with preregistration, subsequent readouts and\n+negative results together. DeepFin pins that repository at the optional `research/`\n+submodule; initialize it only when needed. Keep reusable executable tools, essential\n+contracts and machine-read qualification evidence with their consumers until a reviewed\n+path migration proves otherwise. Bulk artifacts remain external, recorded by source\n+identity, hash and restore location. Do not add new one-off research payloads to main's\n+`scratchpad/` or copy private/live operational receipts into the public research repo.\n The old [ledger](docs/experiment_ledger.md) is frozen historical evidence: search relevant\n entries and gotchas, without loading the whole file or appending new work there.\n \n",
+  "diff_sha_not_computed": true
+}

@@ -6,7 +6,6 @@ dispatcher thread touches CUDA, so torch.compile cudagraphs stay valid.
 """
 from __future__ import annotations
 
-import collections
 import concurrent.futures
 import logging
 import threading
@@ -17,6 +16,7 @@ from typing import Any, cast
 import numpy as np
 import torch
 
+from chess_anti_engine.async_safety import completion_readiness, poison
 from chess_anti_engine.inference import (
     DirectGPUEvaluator,
     _COMPILED_BATCH_BUCKETS,
@@ -25,6 +25,8 @@ from chess_anti_engine.inference import (
 )
 from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.model.transformer import TransformerConfig
+from chess_anti_engine.request_routing import ControlRoute, FifoRequestQueue, RoutedBatch
+from chess_anti_engine.staged_execution import TwoSlotPump
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +174,7 @@ class ThreadedDispatcher:
   # these too if the loop dies between submit and scatter.
         self._inflight_items: list[QueueItem] = []
 
-        self._queue: collections.deque[QueueItem] = collections.deque()
+        self._queue: FifoRequestQueue[QueueItem] = FifoRequestQueue()
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
         self._stop = False
@@ -218,9 +220,17 @@ class ThreadedDispatcher:
         future: concurrent.futures.Future = concurrent.futures.Future()
         with self._cond:
             self._raise_if_poisoned()
-            self._queue.append(_EvalRequest(x, future))
+            self._enqueue_eval(_EvalRequest(x, future))
             self._cond.notify()
         return future
+
+    def _enqueue_eval(self, item: _EvalRequest) -> None:
+        # Caller holds the admission condition. A compact request and a full
+        # request (or different input dtype) can never share a routed batch.
+        compact = item.legal_flat is not None and item.legal_counts is not None
+        self._queue.enqueue_request(
+            item, int(item.encoded.shape[0]), (compact, item.encoded.dtype),
+        )
 
     def _raise_if_poisoned(self) -> None:
         """Caller must hold ``self._cond``/``self._lock``."""
@@ -228,6 +238,8 @@ class ThreadedDispatcher:
             raise RuntimeError(
                 "ThreadedDispatcher thread died"
             ) from self._fatal_exc
+        if self._stop:
+            raise RuntimeError("ThreadedDispatcher is shut down")
 
     def _wait_result(self, future: concurrent.futures.Future):
   # No-timeout result() hangs forever if the dispatcher thread died
@@ -272,7 +284,7 @@ class ThreadedDispatcher:
         future: concurrent.futures.Future = concurrent.futures.Future()
         with self._cond:
             self._raise_if_poisoned()
-            self._queue.append(_EvalRequest(
+            self._enqueue_eval(_EvalRequest(
                 x, future,
                 np.asarray(legal_flat, dtype=np.int32),
                 np.asarray(legal_counts, dtype=np.int32),
@@ -354,7 +366,7 @@ class ThreadedDispatcher:
         result: dict[str, BaseException] = {}
         with self._cond:
             self._raise_if_poisoned()
-            self._queue.append(_ModelUpdateRequest(model, done, result))
+            self._queue.enqueue_control(_ModelUpdateRequest(model, done, result))
             self._cond.notify()
         while not done.wait(timeout=5.0):
             if not self._thread.is_alive():
@@ -364,81 +376,35 @@ class ThreadedDispatcher:
         if "error" in result:
             raise RuntimeError("dispatcher model update failed") from result["error"]
 
-    @staticmethod
-    def _event_ready(event: Any) -> bool:
-        if event is None:
-            return True
-        query = getattr(event, "query", None)
-        if query is None:
-            return False
-        try:
-            return bool(query())
-        except Exception:
-            return False
-
-    def _drain_batch(
+    def _take_route(
         self, *, blocking: bool = True, coalesce_wait: bool = False,
-    ) -> list[QueueItem]:
-        """Pop up to max_batch leaves from the queue.
-
-        ``blocking=True`` waits indefinitely for the first item to arrive
-        (used at idle, when no pipeline submit is in flight). ``blocking=
-        False`` normally returns promptly with whatever's already queued.
-        When an in-flight GPU forward is known not to be ready yet,
-        ``coalesce_wait`` can wait up to ``batch_wait_ms`` to gather a
-        larger next batch without delaying scatter.
-        """
+    ) -> RoutedBatch[QueueItem] | ControlRoute[QueueItem] | None:
+        """Take one FIFO route without waiting behind ready/unknown output."""
         t0 = time.perf_counter()
         with self._cond:
             if blocking:
                 while not self._queue and not self._stop:
                     self._cond.wait(timeout=0.01)
-                if self._stop and not self._queue:
-                    return []
-                if self._batch_wait_s > 0 and self._queue:
-                    self._cond.wait(timeout=self._batch_wait_s)
-            else:
-                if coalesce_wait and self._batch_wait_s > 0:
-                    self._cond.wait(timeout=self._batch_wait_s)
                 if not self._queue:
-                    return []
-
-            first = self._queue[0]
-            if isinstance(first, _ModelUpdateRequest):
-                self._lifetime_drain_s += time.perf_counter() - t0
-                return [self._queue.popleft()]
-
+                    return None
+                if self._batch_wait_s > 0:
+                    self._cond.wait(timeout=self._batch_wait_s)
+            elif coalesce_wait and self._batch_wait_s > 0:
+                self._cond.wait(timeout=self._batch_wait_s)
             queue_depth = len(self._queue)
-            self._lifetime_queue_depth_samples += 1
-            self._lifetime_queue_depth_sum += queue_depth
-            self._lifetime_queue_depth_max = max(self._lifetime_queue_depth_max, queue_depth)
-            items: list[QueueItem] = []
-            total = 0
-            first_compact = (
-                first.legal_flat is not None
-                and first.legal_counts is not None
+            route = self._queue.take_batch(
+                target_rows=self._target_batch, max_batch_rows=self._max_batch,
+                split_requests=False,
             )
-            first_dtype = first.encoded.dtype
-            while self._queue:
-                item = self._queue[0]
-                if isinstance(item, _ModelUpdateRequest):
-                    break
-                item_compact = item.legal_flat is not None and item.legal_counts is not None
-                if item_compact != first_compact:
-                    break
-                if item.encoded.dtype != first_dtype:
-                    break
-                n_rows = int(item.encoded.shape[0])
-                if total + n_rows > self._target_batch and items:
-                    break
-                if n_rows > self._max_batch:
-                    raise ValueError(
-                        f"queued item has {n_rows} rows > max_batch={self._max_batch}"
-                    )
-                items.append(self._queue.popleft())
-                total += n_rows
+            if isinstance(route, RoutedBatch):
+                self._lifetime_queue_depth_samples += 1
+                self._lifetime_queue_depth_sum += queue_depth
+                self._lifetime_queue_depth_max = max(self._lifetime_queue_depth_max, queue_depth)
+                self._inflight_items.extend(span.payload for span in route.spans)
+            elif isinstance(route, ControlRoute):
+                self._inflight_items.append(route.payload)
             self._lifetime_drain_s += time.perf_counter() - t0
-            return items
+            return route
 
     def _compile_model_on_dispatcher(self, model: torch.nn.Module) -> torch.nn.Module:
         model.eval()
@@ -515,98 +481,95 @@ class ThreadedDispatcher:
         """Record the fatal error and fail all queued + in-flight requests."""
         with self._cond:
             self._fatal_exc = exc
-            stranded = list(self._queue)
-            self._queue.clear()
+            stranded = list(self._queue.drain_queued())
             inflight = self._inflight_items
             self._inflight_items = []
             self._cond.notify_all()
         for item in stranded + inflight:
             if isinstance(item, _EvalRequest):
-                if not item.future.done():
-                    item.future.set_exception(exc)
+                self._settle_future(item.future, error=exc)
             else:
                 item.result["error"] = exc
                 item.done.set()
 
+    @staticmethod
+    def _settle_future(
+        future: concurrent.futures.Future, result: Any = None,
+        *, error: BaseException | None = None,
+    ) -> None:
+        if future.done():
+            return
+        try:
+            if error is None:
+                future.set_result(result)
+            else:
+                future.set_exception(error)
+        except concurrent.futures.InvalidStateError:
+            # Cancellation may win between done() and publication. It must
+            # not strand other requests sharing this owned completion.
+            if not future.cancelled():
+                raise
+
     def _dispatch_loop_inner(self) -> None:
+        # Compile/capture and all forwards/model barriers remain on this one
+        # dispatcher thread. The common pump owns the two-slot lease ordering.
         self._evaluator.model = self._compile_model_on_dispatcher(self._evaluator.model)
+        pump = TwoSlotPump(
+            take=self._take_route, submit=self._submit_route,
+            retire=self._retire_handle,
+            readiness=lambda handle: completion_readiness(handle.event),
+            failed=self._pipeline_failed, control=self._control_route,
+            tick=self._compile_probe, abort=self._abort_pipeline,
+        )
+        pump.run()
 
-  # Two-slot async pipeline. While the GPU runs forward K (slot s),
-  # the dispatcher drains the queue and writes batch K+1 into slot
-  # 1-s's pinned input. Forward K+1 fires before K finishes, so CPU
-  # batch-build / scatter and GPU compute fully overlap. Mirrors
-  # PucvChunker's pattern from chess_anti_engine/mcts/puct_vl.py.
-        ev = self._evaluator
-        slot = 0
-        pending: _DispatchHandle | None = None
+    def _submit_route(self, route: RoutedBatch[QueueItem], slot: int) -> _DispatchHandle:
+        items = [span.payload for span in route.spans]
+        if not all(isinstance(item, _EvalRequest) for item in items):
+            raise TypeError("evaluation route contains a model barrier")
+        return self._submit_batch(cast(list[_EvalRequest], items), slot, self._evaluator)
 
-        while not self._stop or self._queue or pending is not None:
-  # Block (cond-wait) only when the pipeline is idle. With pending
-  # in flight, the dispatcher MUST return promptly so we can scatter
-  # the result whose future the producer is awaiting; otherwise the
-  # producer's evaluate_encoded() call deadlocks.
-            blocking = pending is None
-            coalesce_wait = (
-                pending is not None
-                and not self._event_ready(pending.event)
-            )
-            items = self._drain_batch(
-                blocking=blocking,
-                coalesce_wait=coalesce_wait,
-            )
+    def _forget_inflight(self, items: list[QueueItem]) -> None:
+        identities = {id(item) for item in items}
+        with self._cond:
+            self._inflight_items = [
+                item for item in self._inflight_items if id(item) not in identities
+            ]
 
-            next_handle: _DispatchHandle | None = None
-            model_update = items[0] if len(items) == 1 and isinstance(items[0], _ModelUpdateRequest) else None
-            if items and model_update is None:
-                eval_items = [item for item in items if isinstance(item, _EvalRequest)]
-                try:
-                    next_handle = self._submit_batch(eval_items, slot, ev)
-                    slot = 1 - slot
-                except Exception as exc:
-                    logger.exception("dispatcher submit failed: %s", exc)
-                    for item in eval_items:
-                        if not item.future.done():
-                            item.future.set_exception(exc)
+    def _retire_handle(self, handle: _DispatchHandle) -> None:
+        self._scatter_pending(handle)
+        self._forget_inflight(list(handle.items))
 
-  # One-shot cudagraph probe. After the warmup window (50 batches) has
-  # passed compile + capture, the dynamo counters' delta tells us
-  # whether cudagraphs are actually firing on this thread. The
-  # alternative is silent eager fallback, in which case the
-  # ``set_device`` workaround claim is folklore.
-            if (
-                not self._compile_probe_logged
-                and self._compile_baseline is not None
-                and self._lifetime_batches >= self._compile_probe_after_batches
-            ):
-                d = _delta_dynamo_counters(self._compile_baseline)
-                if d is not None:
-                    logger.info(
-                        "dispatcher cudagraph probe: frames_ok=%d cudagraphify_called=%d "
-                        "cudagraph_skips=%d recompiles=%d graph_breaks=%d",
-                        d["frames_ok"], d["cudagraphify_called"],
-                        d["cudagraph_skips"], d["recompiles"], d["graph_breaks"],
-                    )
-                self._compile_probe_logged = True
+    def _control_route(self, item: QueueItem) -> None:
+        if not isinstance(item, _ModelUpdateRequest):
+            raise TypeError("unknown dispatcher control")
+        self._apply_model_update(item)
+        self._forget_inflight([item])
 
-            if pending is not None:
-                try:
-                    self._scatter_pending(pending)
-                except Exception as exc:
-                    logger.exception("dispatcher scatter failed: %s", exc)
-                    for item in pending.items:
-                        if not item.future.done():
-                            item.future.set_exception(exc)
+    @staticmethod
+    def _pipeline_failed(_owned: Any, error: BaseException, _phase: str) -> None:
+        # A failed launch/scatter does not prove reusable pinned storage. Stop
+        # admission and retain custody rather than submit into unknown buffers.
+        raise error
 
-            if model_update is not None:
-                self._apply_model_update(model_update)
+    def _abort_pipeline(self, handles: tuple[Any, ...], error: BaseException) -> None:
+        poison(self, self._evaluator, *handles, error)
 
-            pending = next_handle
-            self._inflight_items = (
-                list(pending.items) if pending is not None else []
-            )
-
-            if self._stop and not self._queue and pending is None:
-                return
+    def _compile_probe(self) -> None:
+        if (
+            not self._compile_probe_logged
+            and self._compile_baseline is not None
+            and self._lifetime_batches >= self._compile_probe_after_batches
+        ):
+            d = _delta_dynamo_counters(self._compile_baseline)
+            if d is not None:
+                logger.info(
+                    "dispatcher cudagraph probe: frames_ok=%d cudagraphify_called=%d "
+                    "cudagraph_skips=%d recompiles=%d graph_breaks=%d",
+                    d["frames_ok"], d["cudagraphify_called"],
+                    d["cudagraph_skips"], d["recompiles"], d["graph_breaks"],
+                )
+            self._compile_probe_logged = True
 
     @property
     def supports_input_bf16_bits(self) -> bool:
@@ -706,13 +669,13 @@ class ThreadedDispatcher:
             if item.legal_counts is not None:
                 assert item.legal_flat is not None
                 n_pol = int(item.legal_flat.size)
-                item.future.set_result((
+                self._settle_future(item.future, (
                     pol_copy[pol_offset : pol_offset + n_pol],
                     wdl_copy[row_offset : row_offset + n],
                 ))
                 pol_offset += n_pol
             else:
-                item.future.set_result((
+                self._settle_future(item.future, (
                     pol_copy[row_offset : row_offset + n],
                     wdl_copy[row_offset : row_offset + n],
                 ))

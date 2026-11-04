@@ -1,0 +1,157 @@
+{
+  "all_member_hashes_read_back": true,
+  "scope_limits": [
+    "Source escrow and saved-evidence preservation only; archive not installed or activated",
+    "Five new adapter controls, not real roster/full128/model/GPU/speed/product qualification",
+    "No aggregation into prior failed eight observations or distinct strict two cases",
+    "No lost-v8 qualification transfer; no training/product/adoption/merge/deployment authority",
+    "Historical source README UNRUN labels retained byte-for-byte; manifest records later scoped evidence",
+    "No new tests/actions: native archive creation, source hashes and ZIP member readbacks only"
+  ],
+  "archive": "2026-10-21-finite-adapter-five-source-v1.zip",
+  "member_count": 19,
+  "schema": "PR1110_FINITE_ADAPTER_FIVE_DURABLE_SOURCE_V1",
+  "provenance_privacy": "Member/source names in this manifest are workspace-relative. Raw source/proposal/reviews/terminal streams are preserved byte-for-byte, including original local paths/process identities needed for provenance; no path sanitization or fabricated canonical replacement. Root reviews destination visibility before publication.",
+  "separate_prior_evidence": {
+    "published_source_manifest": "2026-10-21-targeted-diagnostics.json",
+    "published_source_manifest_sha256": "c4781ae4208a955ef0d81d776bc43fe303f8f3f71340eb1b03db79059d90a2f1",
+    "strict_two_v5": "Distinct two-case PASS; separate from the five adapter cases",
+    "mixed_ten_v4": "FAILED_RETAINED: eight observations, one failed, one unrun; not a strict gate PASS",
+    "lost_v8_transfer": false
+  },
+  "all_original_sources_rehashed": true,
+  "archive_bytes": 39515,
+  "archive_sha256": "a2457a913502daf805e82bf0a0c0d9a20d1b2b004e4360ef444e6d191d78f541",
+  "cpu_five": {
+    "training_credit": 0,
+    "model_loaded": false,
+    "passed": 5,
+    "peak_rss_bytes": 641114112,
+    "native_exit": 0,
+    "cuda_initialized": false,
+    "actual_review_sha256": "a27fbc5b683b08c2248e140ce1fc4a6648031d3fe9cdb2bd6370437a56c35738",
+    "skipped": 0,
+    "native_seconds": 3.6799888,
+    "cpu_seconds": 3.00906,
+    "product_credit": 0,
+    "status": "ACCEPT_DISTINCT_FIVE_CASE_CPU_PASS_ONLY",
+    "guest_seconds": 3.2121209000470117
+  },
+  "members": [
+    {
+      "bytes": 9421,
+      "path": "diagnostics/targeted_diagnostics_v1.py",
+      "sha256": "48dc44768aabdc4e18c4314abeeaefdb255e65ea54150c6b0d04285d36332a22",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/targeted_diagnostics_v1.py"
+    },
+    {
+      "bytes": 2616,
+      "path": "diagnostics/targeted_diagnostics_v2.py",
+      "sha256": "444bf23fcd1850efcacd55bb888e7d275e3a02bde3846c80bf0813cecc336bb3",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/targeted_diagnostics_v2.py"
+    },
+    {
+      "bytes": 13479,
+      "path": "diagnostics/finite_roster_adapter_v3.py",
+      "sha256": "e9eef16db86884dc7399566b094ae00a272580cdd390b2a397f231bcd5a5e3f1",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/finite_roster_adapter_v3.py"
+    },
+    {
+      "bytes": 4031,
+      "path": "diagnostics/finite_roster_adapter_v4.py",
+      "sha256": "6b7632488c6c079bb287d4887937c212ad024dce757b3e6a6c4821eb1eabaa5a",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/finite_roster_adapter_v4.py"
+    },
+    {
+      "bytes": 2737,
+      "path": "diagnostics/test_finite_roster_adapter_v3.py",
+      "sha256": "38be93e5ac0b027b599047ddc62508207a6fb82213caf2bcf030c51ee740d889",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/test_finite_roster_adapter_v3.py"
+    },
+    {
+      "bytes": 3453,
+      "path": "diagnostics/test_finite_roster_adapter_v4.py",
+      "sha256": "43ad36b446e542cfec138e12770a2b41927f8df5b89cc3d98a47e1c8a1e32f08",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/test_finite_roster_adapter_v4.py"
+    },
+    {
+      "bytes": 2573,
+      "path": "diagnostics/README-finite-adapter-v4.md",
+      "sha256": "260b947bbb4fb51490cba46d4f73799efd9b96e64570e2f7934b6417ea026277",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/README-finite-adapter-v4.md"
+    },
+    {
+      "bytes": 16915,
+      "path": "cpu-five/qualify_finite_adapter_five_v1.py",
+      "sha256": "7d01e96771cf1d13d2ee519a87e8d797c70d31d993fa6b8e5b3f659d2a8658ec",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-targeted-diagnostics-cpu-v1/qualify_finite_adapter_five_v1.py"
+    },
+    {
+      "bytes": 665,
+      "path": "cpu-five/qualify_finite_adapter_five_v1.sh",
+      "sha256": "6f9c55ba1c2e5df7af8b94badcbaef55cdc47af4fcf6feec7048315bd1586f3a",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-targeted-diagnostics-cpu-v1/qualify_finite_adapter_five_v1.sh"
+    },
+    {
+      "bytes": 4916,
+      "path": "cpu-five/CPU-ADAPTER-CAPSULE-PLAN-v1.json",
+      "sha256": "4bcd22c13841a02e4eca1b7a098b44e6bf705d3d660a4ac10111c3b8932df4eb",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-targeted-diagnostics-cpu-v1/CPU-ADAPTER-CAPSULE-PLAN-v1.json"
+    },
+    {
+      "bytes": 8951,
+      "path": "cpu-five/FINITE-ADAPTER-FIVE-CPU-PROPOSAL-v1.json",
+      "sha256": "9f1165719f0ead52f3ceefe894f44cded51f64ba9780071415f63f1cdf2fb7db",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-targeted-diagnostics-cpu-v1/FINITE-ADAPTER-FIVE-CPU-PROPOSAL-v1.json"
+    },
+    {
+      "bytes": 2930,
+      "path": "reviews/FINITE-ROSTER-ADAPTER-v3-INDEPENDENT-SOURCE-REVIEW-v1.json",
+      "sha256": "e7139c4d39598e54ea2c40252ed32f99bbdcbf0b367f862c69dda988b55a7b11",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/FINITE-ROSTER-ADAPTER-v3-INDEPENDENT-SOURCE-REVIEW-v1.json"
+    },
+    {
+      "bytes": 3264,
+      "path": "reviews/FINITE-ROSTER-ADAPTER-v4-INDEPENDENT-SOURCE-REVIEW-v1.json",
+      "sha256": "1a0342d0a6f4411e192e9ee9a1155f7fe9084d08e585be78ba05443b1186ecc4",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/FINITE-ROSTER-ADAPTER-v4-INDEPENDENT-SOURCE-REVIEW-v1.json"
+    },
+    {
+      "bytes": 3803,
+      "path": "reviews/FINITE-ADAPTER-FIVE-CPU-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json",
+      "sha256": "9e6ee20269959f4ff0c954419c04531fbf61c803c65cdf4d1721206505b0f296",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/FINITE-ADAPTER-FIVE-CPU-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json"
+    },
+    {
+      "bytes": 1963,
+      "path": "reviews/FINITE-ADAPTER-FIVE-CPU-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "sha256": "a27fbc5b683b08c2248e140ce1fc4a6648031d3fe9cdb2bd6370437a56c35738",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/FINITE-ADAPTER-FIVE-CPU-INDEPENDENT-ACTUAL-REVIEW-v1.json"
+    },
+    {
+      "bytes": 491,
+      "path": "raw/FINITE-ADAPTER-FIVE-CPU-ACTUAL-v1-INTENT.json",
+      "sha256": "d9d416fa481d520a532eaf8d7e5640b7d293496da960bd64a7220203170245a6",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/FINITE-ADAPTER-FIVE-CPU-ACTUAL-v1-INTENT.json"
+    },
+    {
+      "bytes": 448,
+      "path": "raw/FINITE-ADAPTER-FIVE-CPU-ACTUAL-v1-TERMINAL.json",
+      "sha256": "813f4cf34c59d171a87f673a0f11bbde4cb373067d82c74b6ac0a94b4ab297fe",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/FINITE-ADAPTER-FIVE-CPU-ACTUAL-v1-TERMINAL.json"
+    },
+    {
+      "bytes": 19656,
+      "path": "raw/FINITE-ADAPTER-FIVE-CPU-ACTUAL-v1-stdout.txt",
+      "sha256": "55dce0c0034d73c191b755b0b63d6f865dced8317873b0bb85464512b42e2941",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/FINITE-ADAPTER-FIVE-CPU-ACTUAL-v1-stdout.txt"
+    },
+    {
+      "bytes": 243,
+      "path": "raw/FINITE-ADAPTER-FIVE-CPU-ACTUAL-v1-stderr.txt",
+      "sha256": "57d36de05fcade4c175ae41cf6c23b6aa8e3ed99147d297634f2a166d4cdb1c6",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/FINITE-ADAPTER-FIVE-CPU-ACTUAL-v1-stderr.txt"
+    }
+  ],
+  "status": "PREPARED_SOURCE_ARCHIVE_SCOPED_FIVE_CPU_PASS_ONLY_NOT_PUBLISHED"
+}

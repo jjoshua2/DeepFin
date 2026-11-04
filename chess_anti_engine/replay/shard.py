@@ -1269,6 +1269,10 @@ def validate_array_declarations(
         raise ValueError(f"x must be (N,C,8,8); got {x_shape}")
     if x_shape[-2:] != (8, 8):
         raise ValueError(f"x must end with (8,8); got {x_shape}")
+    # Feature extensions may vary, but every replay input retains the complete
+    # 112-plane LC0 base. Check declarations before any lazy array is decoded.
+    if x_shape[1] < 112:
+        raise ValueError(f"x must have at least 112 input planes; got {x_shape[1]}")
     if len(policy_shape) != 2:
         raise ValueError(f"policy_target must be (N,A); got {policy_shape}")
     if policy_shape[0] != x_shape[0]:

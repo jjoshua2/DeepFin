@@ -21,7 +21,9 @@ from typing import Any, Protocol, cast
 import numpy as np
 import torch
 
-from chess_anti_engine.async_safety import CompletionEvent, ensure_usable, guarded_event, launch_guard
+from chess_anti_engine.async_safety import (
+    CompletionEvent, Readiness, completion_readiness, ensure_usable, guarded_event, launch_guard,
+)
 from chess_anti_engine.broker_hang import (
     BOOT_HANG_ABORT_ENV as _BOOT_HANG_ABORT_ENV,
     DEFAULT_BOOT_HANG_ABORT_S as _DEFAULT_BOOT_HANG_ABORT_S,
@@ -1218,6 +1220,9 @@ class _AOTCompletion:
     def __init__(self, owner: AOTEvaluator, event: CompletionEvent) -> None:
         self._owner = owner
         self._event = event
+
+    def readiness(self) -> Readiness:
+        return completion_readiness(self._event)
 
     def synchronize(self) -> None:
         with self._owner._ownership:

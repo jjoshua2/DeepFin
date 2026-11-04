@@ -1,0 +1,45 @@
+{
+  "schema": "launch_validated_control_partition_contract_v1",
+  "status": "SOURCE_ONLY_GENERIC_MECHANISM_NOT_LIVE_INTEGRATION",
+  "api": "make_guard_type(original_namespace) -> subclass actual ParentDeadlineGuard, inherited actual charge unchanged; constructor(retained,claim,controls,partition=None,active_paths=())",
+  "partition": {
+    "fields": [
+      "runtime_paths",
+      "preservation_only"
+    ],
+    "default": "All original preservation paths runtime; zero exemptions",
+    "coverage": "runtime paths and exemption paths distinct, disjoint, exact full original preservation universe, no unknown or omission",
+    "exemption_fields": [
+      "path",
+      "reason",
+      "source_ref",
+      "review_ref"
+    ],
+    "evidence": "Hash-check source/review bytes at launch via actual Reads.checked(metadata=True); metadata/hash checks DO NOT establish semantic approval. Reviewed launch packet must separately bind and approve each classification; unclassified remains runtime."
+  },
+  "launch": "Call actual original controls_unchanged once, freeze validated schema/path/state snapshot <=2MiB, immutable runtime records and active tuple; fresh bounded evidence reads <=2MiB. Actual immutable source/path/schema pins remain existing launch caller responsibility.",
+  "runtime": "Frozen monotonic deadline first, retained object/stop-path binding, fresh actual Reads(2MiB) per call verifying runtime presentbytes/absentlexists in original record order, live extra active STOP/PAUSE/CANCEL/YIELD existence check, unchanged actual retained OwnerGuard.check. No dynamic state cache.",
+  "retained_unchanged": [
+    "actual parent PID/birth/boot and live inherited OFD custody",
+    "active retained STOP/drain paths and wall deadline",
+    "physicalIO observations, memory/RSS/cgroup/PSS observations/enforcement, measuredoutput/disk",
+    "existing current owner priority requested/yield and checkpoint/data-integrity caller controls remain mandatory and unchanged"
+  ],
+  "closure": "MANDATORY eventual adapter finally/settlement full original controls_unchanged sweep over frozen launch snapshot after authenticated owned-work quiescence. Preserve primary failure; missing/failed closure sweep means unknown/incomplete, never scientific/action credit. No live adapter integration is present or admitted by this generic mechanism.",
+  "declared_contract_changes": [
+    "Legacy mutable current aliases/schema/path rerouting per call replaced by launch-frozen schema/path/deadline. Not equivalent to old lexical refactor.",
+    "Only explicitly reviewed per-path preservation-only changes are invisible during work and detected at closure. This weakens immediate historical-marker mutation detection and must be reported as changed coverage.",
+    "No concrete operational exemptions are approved here; current source owner564 behavior unchanged.",
+    "Sourcecode instrumentation/type binding for eventual actual wrapper must be separately updated/reviewed; generic class is not an admitted replacement."
+  ],
+  "cpu_scope": "13 pure mechanism observations using original pinned wrapper/validator code and explicit fake IO/retained seams. No actual marker/custody/project imports, concrete roster classification, performance or GPU authority.",
+  "publish_files": [
+    "launch_validated_controls_v1.py",
+    "test_launch_validated_controls_v1.py",
+    "LIGHTWEIGHT-CONTRACT-v1.json"
+  ],
+  "exclude_from_generic_publication": [
+    "private authority/provenance path map",
+    "private CPU controller/argv/intent/proposal with operational paths"
+  ]
+}

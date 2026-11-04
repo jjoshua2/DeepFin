@@ -1,0 +1,153 @@
+{
+  "schema": "bounded-phase-cpu-actual-v2-evidence",
+  "scope": "One CPU gate PASS, 3 groups/13 observations, exactly2 owned terminated/reaped children. Full6 synthetic overhead rows preserved. No model/full-runtime/product/speed/generalized performance credit or rerun authority. Historical source escrow untouched.",
+  "actual_review_sha256": "a292723874828f1205992ccf32fe8b478fe409d5f7235556040661507cac5572",
+  "archive": {
+    "file": "2026-10-21-bounded-phase-cpu-actual-v2.zip",
+    "fixed_member_timestamp": "2026-10-21T00:00:00Z",
+    "readback_verified": true,
+    "member_count": 23,
+    "sha256": "3ea46d1c4456446a355794b36b8c49f6500fde84bec66432eff695b47f7b3ea7",
+    "bytes": 59547
+  },
+  "members": [
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/bounded-phase-cpu-v1/qualify_bounded_phase_timing_v2.py",
+      "bytes": 32439,
+      "sha256": "f0ce73840d1bbd147418627ba21852f4df45cfc1ca0f3a72fa05a9e28db92647",
+      "member": "controller/qualify_bounded_phase_timing_v2.py"
+    },
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/bounded-phase-cpu-v1/PHASE-CPU-PROPOSAL-v2.json",
+      "bytes": 12540,
+      "sha256": "9d399b105002df2cc3ae775b22230199087d04943dfa776d0afbb08e6e9ca0d3",
+      "member": "controller/PHASE-CPU-PROPOSAL-v2.json"
+    },
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/bounded-phase-cpu-v1/FULL-ARGV-v2.json",
+      "bytes": 776,
+      "sha256": "6fb3a8e8042ae6632466e482a676cf92af15af6bac21f58be64d2fb6aa303aca",
+      "member": "controller/FULL-ARGV-v2.json"
+    },
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/bounded-phase-cpu-v1/CAPSULE-SOURCE-PINS-v2.json",
+      "bytes": 3481,
+      "sha256": "2033866c0de19d22bd304c6b3654340da447d2ace9970e471eabf74f339c4483",
+      "member": "controller/CAPSULE-SOURCE-PINS-v2.json"
+    },
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/bounded-phase-cpu-v1/FINAL-FREEZE-v2.json",
+      "bytes": 741,
+      "sha256": "75902ffaaba34453526779960bc82d24de33a40c6888ac0ae7dc171e8e21437c",
+      "member": "controller/FINAL-FREEZE-v2.json"
+    },
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/targeted_diagnostics_v1.py",
+      "bytes": 9421,
+      "sha256": "48dc44768aabdc4e18c4314abeeaefdb255e65ea54150c6b0d04285d36332a22",
+      "member": "source/targeted_diagnostics_v1.py"
+    },
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/targeted_diagnostics_v2.py",
+      "bytes": 2616,
+      "sha256": "444bf23fcd1850efcacd55bb888e7d275e3a02bde3846c80bf0813cecc336bb3",
+      "member": "source/targeted_diagnostics_v2.py"
+    },
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-bounded-phase-timing-v1/bounded_phase_timer_v1.py",
+      "bytes": 9531,
+      "sha256": "868384f4179625eea5af5b84861b5867d7604a4ab4c6dd628f6a55328449babd",
+      "member": "source/bounded_phase_timer_v1.py"
+    },
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-bounded-phase-timing-v1/targeted_diagnostics_v5.py",
+      "bytes": 18941,
+      "sha256": "46b951d0e0517491fd26849dc93e9ab9fa1c5b4cf195ae200e21c1b1344fb14d",
+      "member": "source/targeted_diagnostics_v5.py"
+    },
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-bounded-phase-timing-v1/test_phase_timing_v1.py",
+      "bytes": 14145,
+      "sha256": "823351a95a42a4e10feef870d2c6779f875e073048501e6d0bc53c6ffe168abb",
+      "member": "source/test_phase_timing_v1.py"
+    },
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-bounded-phase-timing-v1/phase_termination_child_v1.py",
+      "bytes": 1819,
+      "sha256": "8c44cc6130b60e9772fe9687304a671c85e8719a3b6306f23315a82d8afe8ae7",
+      "member": "source/phase_termination_child_v1.py"
+    },
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/__init__.py",
+      "bytes": 199,
+      "sha256": "36d2d5d42f1b8f07957b14e420a5e9a18c09acb9caeb32eb63252d335bc36d50",
+      "member": "source/chess_anti_engine/__init__.py"
+    },
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/async_safety.py",
+      "bytes": 4889,
+      "sha256": "72d2db150d1ff4522e30cd6d586340cb0a93cd181e15240645b7ed7a7da8f70c",
+      "member": "source/chess_anti_engine/async_safety.py"
+    },
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/request_routing.py",
+      "bytes": 5123,
+      "sha256": "6a656cffe5a503bd0c0ed7f2b93291fa0cfc44c9f90ba7aa112a874f26827e46",
+      "member": "source/chess_anti_engine/request_routing.py"
+    },
+    {
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/chess_anti_engine/staged_execution.py",
+      "bytes": 15931,
+      "sha256": "a02bc7eb86efde6910d6852056ef5414728885e9da733bbed41e1a17da6508f2",
+      "member": "source/chess_anti_engine/staged_execution.py"
+    },
+    {
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/BOUNDED-PHASE-CPU-V2-ACTUAL-stdout.json",
+      "bytes": 15062,
+      "sha256": "c387540ba192c243050080e1a96b7be1f96ce459af8879d9423164693d160418",
+      "member": "evidence/BOUNDED-PHASE-CPU-V2-ACTUAL-stdout.json"
+    },
+    {
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/BOUNDED-PHASE-CPU-V2-ACTUAL-stderr.txt",
+      "bytes": 1273,
+      "sha256": "a4a03d040ae1a0f862bd9de7f422e90ae0c61b5db9ce53afa2e9200fe0b5ac32",
+      "member": "evidence/BOUNDED-PHASE-CPU-V2-ACTUAL-stderr.txt"
+    },
+    {
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/BOUNDED-PHASE-CPU-V2-NATIVE-TERMINAL-v1.json",
+      "bytes": 483,
+      "sha256": "8d1f09d67087134207d1b9f75878a2f1e116eb0e944e85de2b545e01c133fbf2",
+      "member": "evidence/BOUNDED-PHASE-CPU-V2-NATIVE-TERMINAL-v1.json"
+    },
+    {
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/BOUNDED-PHASE-CPU-V2-ONE-USE-INTENT-v1.json",
+      "bytes": 567,
+      "sha256": "38537844f21fbc9c18ddf5177b34bee1f24be7016990299aae4018e1ddf1ddf7",
+      "member": "evidence/BOUNDED-PHASE-CPU-V2-ONE-USE-INTENT-v1.json"
+    },
+    {
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/BOUNDED-PHASE-TIMING-CPU-V2-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json",
+      "bytes": 9151,
+      "sha256": "99e78f9f73c26dca4ad3e69d0a46ef890806777753265fff90632eebffa95136",
+      "member": "evidence/BOUNDED-PHASE-TIMING-CPU-V2-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json"
+    },
+    {
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/BOUNDED-PHASE-TIMING-V1-INDEPENDENT-SOURCE-REVIEW-v1.json",
+      "bytes": 5592,
+      "sha256": "02e7566fd25317851610336e0aba1d1c788549eed7888afcbbdd0479071482fa",
+      "member": "evidence/BOUNDED-PHASE-TIMING-V1-INDEPENDENT-SOURCE-REVIEW-v1.json"
+    },
+    {
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/BOUNDED-PHASE-CPU-V2-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "bytes": 10853,
+      "sha256": "a292723874828f1205992ccf32fe8b478fe409d5f7235556040661507cac5572",
+      "member": "evidence/BOUNDED-PHASE-CPU-V2-INDEPENDENT-ACTUAL-REVIEW-v1.json"
+    },
+    {
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/BOUNDED-PHASE-CPU-V2-PUBLICATION-SUMMARY-v1.md",
+      "bytes": 1328,
+      "sha256": "9186b5a1af52224ec3e7e048cbc99ef6821fc5a6b42316c502c74414466392a9",
+      "member": "evidence/BOUNDED-PHASE-CPU-V2-PUBLICATION-SUMMARY-v1.md"
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "schema": "bounded-phase-timing-source-escrow-v1",
+  "scope": "SOURCE-ONLY escrow; independent source review accepted. Nine source controls, two termination controls and six overhead rows UNRUN at escrow. No CPU execution/model grant, product, speed or full-unit credit.",
+  "archive": {
+    "fixed_member_timestamp": "2026-10-21T00:00:00Z",
+    "readback_verified": true,
+    "member_count": 6,
+    "file": "2026-10-21-bounded-phase-timing-source-v1.zip",
+    "sha256": "235a9e32895304aee505b66ffe1c34a47313a1894f11683e5e6b6bc55c967255",
+    "bytes": 19270
+  },
+  "members": [
+    {
+      "member": "source/bounded_phase_timer_v1.py",
+      "bytes": 9531,
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-bounded-phase-timing-v1/bounded_phase_timer_v1.py",
+      "sha256": "868384f4179625eea5af5b84861b5867d7604a4ab4c6dd628f6a55328449babd"
+    },
+    {
+      "member": "source/targeted_diagnostics_v5.py",
+      "bytes": 18941,
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-bounded-phase-timing-v1/targeted_diagnostics_v5.py",
+      "sha256": "46b951d0e0517491fd26849dc93e9ab9fa1c5b4cf195ae200e21c1b1344fb14d"
+    },
+    {
+      "member": "source/test_phase_timing_v1.py",
+      "bytes": 14145,
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-bounded-phase-timing-v1/test_phase_timing_v1.py",
+      "sha256": "823351a95a42a4e10feef870d2c6779f875e073048501e6d0bc53c6ffe168abb"
+    },
+    {
+      "member": "source/phase_termination_child_v1.py",
+      "bytes": 1819,
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-bounded-phase-timing-v1/phase_termination_child_v1.py",
+      "sha256": "8c44cc6130b60e9772fe9687304a671c85e8719a3b6306f23315a82d8afe8ae7"
+    },
+    {
+      "member": "source/SOURCE-AND-CPU-FAULT-PLAN-v1.md",
+      "bytes": 7410,
+      "source_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-bounded-phase-timing-v1/SOURCE-AND-CPU-FAULT-PLAN-v1.md",
+      "sha256": "6141df201b6d801115ea94f03d288d8d8bfc361428eb0c295cda5be73d9c3a4d"
+    },
+    {
+      "member": "review/BOUNDED-PHASE-TIMING-V1-INDEPENDENT-SOURCE-REVIEW-v1.json",
+      "bytes": 5592,
+      "source_relative": "bt4-qualification-intake-root-20261021-v1/BOUNDED-PHASE-TIMING-V1-INDEPENDENT-SOURCE-REVIEW-v1.json",
+      "sha256": "02e7566fd25317851610336e0aba1d1c788549eed7888afcbbdd0479071482fa"
+    }
+  ]
+}

@@ -1,0 +1,194 @@
+{
+  "schema": "PR1110_POST60_BATCHING_AND_TIMING_SOURCE_MAP_V1",
+  "status": "SOURCE_ONLY_NO_CODE_GEOMETRY_OR_EXECUTION_CHANGE",
+  "runtime_closure_sha256": "a492d9ad8c7480957e28c1503eb6cba7316816c6aae1514892d8db0d0bd34d3f",
+  "source_read_semantics": "Native canonical source bytes read only. CRLF->LF computed in memory solely to compare accepted guest source pins; no source rewrite/import/test/AST/WSL/model access.",
+  "pins": [
+    {
+      "relative": "scripts/shared_teacher_owner.py",
+      "native_path": "C:\\Users\\jjosh\\Documents\\Codex\\2026-10-13\\task-5\\bt4-pr1110-recovery-20261021-v1\\source\\scripts\\shared_teacher_owner.py",
+      "native_sha256": "26944c9c592e1358d5a17ed6c28a1a01f5df1e2edc67bb75769fa811fd114f22",
+      "runtime_lf_sha256": "a77c2d9c05a60eddfb44dfb7604ea31c7c85d965bf8da82d452aa0e1104a153f",
+      "accepted_closure_pin": "a77c2d9c05a60eddfb44dfb7604ea31c7c85d965bf8da82d452aa0e1104a153f",
+      "matches": true
+    },
+    {
+      "relative": "scripts/bt4_root_policy_worker.py",
+      "native_path": "C:\\Users\\jjosh\\Documents\\Codex\\2026-10-13\\task-5\\bt4-pr1110-recovery-20261021-v1\\source\\scripts\\bt4_root_policy_worker.py",
+      "native_sha256": "bc28e7f2fad7ed6c7ede16d36d3be3e222db7b294841d44d003f81104eb1018f",
+      "runtime_lf_sha256": "47569f622270735c9565a5e2e0bc1a5a2b5773c6036d1c8ada705e590fa27e37",
+      "accepted_closure_pin": "47569f622270735c9565a5e2e0bc1a5a2b5773c6036d1c8ada705e590fa27e37",
+      "matches": true
+    },
+    {
+      "relative": "scripts/shared_teacher_generation.py",
+      "native_path": "C:\\Users\\jjosh\\Documents\\Codex\\2026-10-13\\task-5\\bt4-pr1110-recovery-20261021-v1\\source\\scripts\\shared_teacher_generation.py",
+      "native_sha256": "32e6dbc5f2cbd9b698f2a380891af81e50410f528ac43e1141d3971e30f729f2",
+      "runtime_lf_sha256": "32e6dbc5f2cbd9b698f2a380891af81e50410f528ac43e1141d3971e30f729f2",
+      "accepted_closure_pin": "32e6dbc5f2cbd9b698f2a380891af81e50410f528ac43e1141d3971e30f729f2",
+      "matches": true
+    },
+    {
+      "relative": "scripts/bt4_root_policy_stepper.py",
+      "native_path": "C:\\Users\\jjosh\\Documents\\Codex\\2026-10-13\\task-5\\bt4-pr1110-recovery-20261021-v1\\source\\scripts\\bt4_root_policy_stepper.py",
+      "native_sha256": "2267b0ea6d42abb18f975a765caa43b2d4fdde2fdafe5f0e7c694735422e2cc2",
+      "runtime_lf_sha256": "e06eae6b1dd48c8d78f8688d13ce8345daa35f25f908e5f4368d63e8c6783a49",
+      "accepted_closure_pin": "e06eae6b1dd48c8d78f8688d13ce8345daa35f25f908e5f4368d63e8c6783a49",
+      "matches": true
+    },
+    {
+      "relative": "scripts/bt4_generation_evaluator.py",
+      "native_path": "C:\\Users\\jjosh\\Documents\\Codex\\2026-10-13\\task-5\\bt4-pr1110-recovery-20261021-v1\\source\\scripts\\bt4_generation_evaluator.py",
+      "native_sha256": "dcb88636239d2cf8eace28d138a6e565ba3a6185b9d708695e445cec1665ccd6",
+      "runtime_lf_sha256": "847700c4cc798d24528c2489bdcb0bed0547f320440b2de8a9699cc7a3e5e298",
+      "accepted_closure_pin": "847700c4cc798d24528c2489bdcb0bed0547f320440b2de8a9699cc7a3e5e298",
+      "matches": true
+    },
+    {
+      "relative": "chess_anti_engine/generation_runtime.py",
+      "native_path": "C:\\Users\\jjosh\\Documents\\Codex\\2026-10-13\\task-5\\bt4-pr1110-recovery-20261021-v1\\source\\chess_anti_engine\\generation_runtime.py",
+      "native_sha256": "119cd832c1cdd43e6398b59a3276f78067b961fd2692e60bfc5a259f928a5222",
+      "runtime_lf_sha256": "119cd832c1cdd43e6398b59a3276f78067b961fd2692e60bfc5a259f928a5222",
+      "accepted_closure_pin": "119cd832c1cdd43e6398b59a3276f78067b961fd2692e60bfc5a259f928a5222",
+      "matches": true
+    },
+    {
+      "relative": "chess_anti_engine/teacher_dispatch.py",
+      "native_path": "C:\\Users\\jjosh\\Documents\\Codex\\2026-10-13\\task-5\\bt4-pr1110-recovery-20261021-v1\\source\\chess_anti_engine\\teacher_dispatch.py",
+      "native_sha256": "88795e79d85dcfc108a8bd25a58282b19d3d86135ffd47f024b53fda70c5684c",
+      "runtime_lf_sha256": "ce928614666c79075e1e69b9c174d26064b45bb0100d419eac792d963f91c15c",
+      "accepted_closure_pin": "ce928614666c79075e1e69b9c174d26064b45bb0100d419eac792d963f91c15c",
+      "matches": true
+    },
+    {
+      "relative": "chess_anti_engine/request_routing.py",
+      "native_path": "C:\\Users\\jjosh\\Documents\\Codex\\2026-10-13\\task-5\\bt4-pr1110-recovery-20261021-v1\\source\\chess_anti_engine\\request_routing.py",
+      "native_sha256": "6a656cffe5a503bd0c0ed7f2b93291fa0cfc44c9f90ba7aa112a874f26827e46",
+      "runtime_lf_sha256": "6a656cffe5a503bd0c0ed7f2b93291fa0cfc44c9f90ba7aa112a874f26827e46",
+      "accepted_closure_pin": "6a656cffe5a503bd0c0ed7f2b93291fa0cfc44c9f90ba7aa112a874f26827e46",
+      "matches": true
+    },
+    {
+      "relative": "chess_anti_engine/staged_execution.py",
+      "native_path": "C:\\Users\\jjosh\\Documents\\Codex\\2026-10-13\\task-5\\bt4-pr1110-recovery-20261021-v1\\source\\chess_anti_engine\\staged_execution.py",
+      "native_sha256": "f319819e3386032f5daa32a3141e850d568f0abffee9ea44b4e99a0aa5bbdc0f",
+      "runtime_lf_sha256": "a02bc7eb86efde6910d6852056ef5414728885e9da733bbed41e1a17da6508f2",
+      "accepted_closure_pin": "a02bc7eb86efde6910d6852056ef5414728885e9da733bbed41e1a17da6508f2",
+      "matches": true
+    },
+    {
+      "relative": "chess_anti_engine/producer_executor.py",
+      "native_path": "C:\\Users\\jjosh\\Documents\\Codex\\2026-10-13\\task-5\\bt4-pr1110-recovery-20261021-v1\\source\\chess_anti_engine\\producer_executor.py",
+      "native_sha256": "d05461f54c155a9762d76dd3eebbd018a8c8257e20acbc21f5c45b401af0611e",
+      "runtime_lf_sha256": "1bbd86f857a37a90ed7e3184a840e02781df313812889ea35863ea21510f466a",
+      "accepted_closure_pin": "1bbd86f857a37a90ed7e3184a840e02781df313812889ea35863ea21510f466a",
+      "matches": true
+    },
+    {
+      "relative": "chess_anti_engine/encoding/cboard_encode.py",
+      "native_path": "C:\\Users\\jjosh\\Documents\\Codex\\2026-10-13\\task-5\\bt4-pr1110-recovery-20261021-v1\\source\\chess_anti_engine\\encoding\\cboard_encode.py",
+      "native_sha256": "9fe7123de8c3ce74d328dc92200b8d5018a1bd4a6d3ed2dc21204c9b95e373b7",
+      "runtime_lf_sha256": "9fe7123de8c3ce74d328dc92200b8d5018a1bd4a6d3ed2dc21204c9b95e373b7",
+      "accepted_closure_pin": "9fe7123de8c3ce74d328dc92200b8d5018a1bd4a6d3ed2dc21204c9b95e373b7",
+      "matches": true
+    }
+  ],
+  "observed": {
+    "source": "POST60-SCIENTIFIC-READOUT-INDEPENDENT-REVIEW-v1.json",
+    "histogram": {
+      "32": 12
+    },
+    "registered_actors": 64,
+    "window_seconds": 53.71589225297794,
+    "completed_execute_boundary_seconds": 0.965970989,
+    "unassigned_elapsed_seconds": 52.74992126397794,
+    "last_saved_writer_callbacks": 0,
+    "last_saved_owner_ack_callbacks": 0,
+    "meaning": "Historical last-saved state only. No clean startup/playing partition, moved-ply count, full128, speed, or exclusive-CPU attribution."
+  },
+  "batching_chain": [
+    "shared_teacher_owner.run_owned_roster(153..): native_microbatch32 forwarded at470..476; GEOMETRY producer_threads1,target64,max64,wait0,64actors from consumed private descriptor.",
+    "BT4GenerationDriver._fill309..340 registers up to64 actors before any CPU root lease completes; registration is not ready inference.",
+    "advance474..482 admits only min(ready,native_microbatch) keys per task; ProducerExecutor capacity1 admits one32-key task. _advance_games347..379 applies old results then prepares those games together.",
+    "_settle_cpu381..403 moves only completed task results to inference; advance451..469 submits that bounded ready prefix via submit_many before admitting next CPU task. Each stepper has onegame, so at mostone currentroot pergame.",
+    "TeacherDispatcher.submit_many89..126 queues each game request without dtype/compact group_key; all use defaultNone. Targeted Torch compact/dtype grouping is not active in this TeacherDispatcher path.",
+    "_take_batch155..181 target64 is a fill target, not minimum. With wait0 the deadline expires immediately, so available32 rows may dispatch rather than wait for other32 CPU preparation. FifoRequestQueue.take_batch83..136 can split at64, not fixed32.",
+    "Native prepare_many384..489 invokes encode_cboard_batch for available cboards. Python encode_cboard_batch131..166 calls native encode_full_batch with N boards, no32 constant. The32 limit originates CPU microbatch policy, not evidence of ORT/native model batch32 cap.",
+    "TwoSlotPump/StagedHostBackend overlap preparation slots and preserve execution/finish order; they do not create additional readygame rows or force64."
+  ],
+  "inferences": [
+    "Singleproducer32-chunk preparation plus zero fillwait is a source-supported explanation consistent with twelve32-row calls, not proof of every runtime queue occupancy/arrival race.",
+    "64 registrations do not imply64 simultaneous ready requests. No rows were shown discarded; no dtype or compact-policy split explains32 in this actual branch.",
+    "Changing actors/native_microbatch/wait before timing would confound the current outside-execute gap. Preserve geometry until measured."
+  ],
+  "timing_targets": [
+    {
+      "label": "guard_total",
+      "target": "actual supplied guard.check",
+      "location": "finite_diagnostic_child_60s_v1.py nested ParentDeadlineGuard.check",
+      "semantics": "Includes controls_unchanged full564 preservation and retainedguard.check. Wrap exact supplied guard/class, retain methodidentity/origin, arguments/return/error, restorefinally. No extra/skippedcalls."
+    },
+    {
+      "label": "owner_callback_wait",
+      "target": "OwnerThreadCallbacks.__call__",
+      "location": "staged_execution100..122",
+      "semantics": "Offowner Future.result wait versus owner invocation must classified by actual thread. Inclusive wait overlaps owner service on another thread; never subtract cross-thread wall."
+    },
+    {
+      "label": "owner_service",
+      "target": "OwnerThreadCallbacks.service and _invoke",
+      "location": "staged_execution124..150,88..98",
+      "semantics": "service includes queued owner guard invokes; same-thread nesting can yield exclusive time. shared_teacher_owner.control347..359 includes service,directcheck,optionalpipelinepoll."
+    },
+    {
+      "label": "cpu_transition_prepare",
+      "target": "BT4GenerationDriver._advance_games; BT4RootPolicyStepper.apply_many/prepare_many",
+      "location": "generation347..379;stepper384..489",
+      "semantics": "Aggregate producer work; separately count application and preparation to distinguish outcome/legal/nativefullhistoryencoding/fingerprint/immutablepayload overhead. prepare_many includes tablebase outcome decisions."
+    },
+    {
+      "label": "evaluator_prepare_finish",
+      "target": "BT4OnnxEvaluator.prepare/_prepare_roots/finish",
+      "location": "evaluator prepare,_prepare_roots,finish",
+      "semantics": "prepare independently reconstructs CBoards+second fullhistoryencoding, equality checks,FEN,keys,fingerprints,LC0 conversion/feedhashes. finish validates shapes/WDL/legalpolicy and copiesimmutableoutputs. Both outside existingexecute timer."
+    },
+    {
+      "label": "backend_boundary",
+      "target": "_SharedBT4Backend.execute",
+      "location": "worker606..622",
+      "semantics": "Includes control before/after, evaluator call, provider JSON/profile/launch hash validation. Existing narrow evaluator timer excludes these. Preserve checks unchanged."
+    },
+    {
+      "label": "writer_commit",
+      "target": "BT4GamePool._commit",
+      "location": "generation179..186 / actual worker commit680..686",
+      "semantics": "Includes owner-control handoff, rawreconcile/write/hash,checkpointJSON+directoryfsync. Do not read NPZ for timing; originalwriter operation only."
+    },
+    {
+      "label": "owner_ack",
+      "target": "actual entry.Checkpoint.record_game plus BT4GamePool.drain_writes",
+      "location": "ownerack118..133, generation188..231",
+      "semantics": "Writer receipt is not ownercommit. record_game includes actual transactionCOMMIT; active release after acceptedack then _publish _fill418 permitsreplacement. Preserve originalackreturn/Future/counters."
+    },
+    {
+      "label": "wait_envelopes",
+      "target": "GenerationSessionRunner.run; TeacherDispatcher._take_batch; StagedHostBackend.release",
+      "location": "runtime56..90;teacher155..181;staged321..338",
+      "semantics": "Runner.wait_seconds already records ownEvent wait but notcontrol/advance. release includes control/preparedwait/execute/finish; _take_batch includes conditionwait. Avoid globalEvent/Future/Condition monkeypatch; source-bound localcall boundaries only."
+    }
+  ],
+  "measurement_rules": [
+    "Use bounded aggregate perthread stacks/counters, same-thread directchild subtraction only; overlapping threads are nonadditive.",
+    "No global profiler, watcher, arbitrarymodulehooks, percallfilesystemwrites, extra guardcalls, RNG/seed/state/control/STOP/custody weakening.",
+    "Record completed/raised/openframes, threadidentity, snapshotage, count saturation, timingerrors. Report inclusive/exclusive scope, IO excluded from measured originals; do not mask primaryerrors.",
+    "Measured outside-evaluator53s residual is walltime difference, not hostCPU, guardexclusive cost, GPUutilization or throughput.",
+    "Provider/model evidence separate. Mostrecent providerquantitative review shouldbe used, not omittedvalues from firstselector."
+  ],
+  "unknowns": [
+    "Exact percall queue readyrows/arrival distribution, CPUlease timestamps and nativeprepare cost are absent.",
+    "No clean startup-vs-playing boundary or actual peractorply advancement exported. Firstexecute began~9.46s afterentered snapshot; initialimport/model startup beforeentered alsooutsidewindow.",
+    "No measured attribution of52.75s to guard/FS checks, nativeprepare, outputfinish, ownercallback/scheduling, providerhash or telemetryIO; each remains candidate.",
+    "Lastsaved zero writer/ACKcallbacks doesnotprove whole-run zero; checkpoint sidecars prevent unqualifiedSQLrowcount."
+  ],
+  "actions": "Design/source map only; helperauthor owns new boundedtiming source, root owns review/CPU/finite decisions. No code or geometry change."
+}

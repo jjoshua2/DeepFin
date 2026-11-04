@@ -1,0 +1,280 @@
+{
+  "schema": "PR1110_DIAGNOSTIC_60_RESULT_SOURCE_EVIDENCE_V1",
+  "status": "SAVED_DIAGNOSTIC_PARTIAL_DEADLINE_LAST_SAVED_PROGRESS_NO_QUALIFICATION",
+  "archive": "2026-10-21-diagnostic-60-result-source-evidence-v1.zip",
+  "archive_sha256": "8d7a3dbe3457b0db1b148ce1a2cc5ed043bcf0f337b4bc49b52b2fc068688ab7",
+  "archive_bytes": 144037,
+  "member_count": 26,
+  "all_member_hashes_read_back": true,
+  "all_original_sources_rehashed": true,
+  "determinism": "Explicit sorted fixed roster; fixed1980UTC timestamps/externalattributes0/compressionOptimal; source/raw bytes preserved.",
+  "members": [
+    {
+      "path": "consumed-model-action/ACTION-REVIEW-v1.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/prepared-finite-diagnostic60-20261021-v1/ACTION-REVIEW-v1.json",
+      "bytes": 7256,
+      "sha256": "2b0827725bc4bf8f17d914331c0e3cc46b1cb6bc117095248895102a9f37e4a3"
+    },
+    {
+      "path": "consumed-model-action/CHILD-PACKET.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/prepared-finite-diagnostic60-20261021-v1/CHILD-PACKET.json",
+      "bytes": 239321,
+      "sha256": "5f70b9213182168b13feba72ec5fb0f0ab5637ece5c3a0dfe5a1e780cb6d7e7c"
+    },
+    {
+      "path": "consumed-model-action/NATIVE-stderr-v1.txt",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/prepared-finite-diagnostic60-20261021-v1/NATIVE-stderr-v1.txt",
+      "bytes": 1296,
+      "sha256": "dd37b0109440e8d9143419d504d0d9b76c3988c93c212232cc7e84a6cca0c5a7"
+    },
+    {
+      "path": "consumed-model-action/NATIVE-stdout-v1.txt",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/prepared-finite-diagnostic60-20261021-v1/NATIVE-stdout-v1.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "consumed-model-action/NATIVE-TERMINAL-v1.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/prepared-finite-diagnostic60-20261021-v1/NATIVE-TERMINAL-v1.json",
+      "bytes": 533,
+      "sha256": "d3a6aa5e8314d0179442c1aaf8e0e816ba950d72f5fed88134795ba9833b5d20"
+    },
+    {
+      "path": "consumed-model-action/PARENT-PACKET.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/prepared-finite-diagnostic60-20261021-v1/PARENT-PACKET.json",
+      "bytes": 160915,
+      "sha256": "a1844946ac5becad42350b0221e7f1f7f6eecb952b36faf1541300c14a420ec7"
+    },
+    {
+      "path": "provider-reader/export_post60_provider_proof_v1.py",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/post60-provider-proof-export-v1/export_post60_provider_proof_v1.py",
+      "bytes": 2778,
+      "sha256": "7c064737932311d08e4b887efd187de491643ce645da07ee44456d32d70dba71"
+    },
+    {
+      "path": "provider-reader/FULL-ARGV-v1.json",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/post60-provider-proof-export-v1/FULL-ARGV-v1.json",
+      "bytes": 688,
+      "sha256": "8d8d04b6505fb460790ec84dc8ca6389cc7f0d49f01b14e2be1bececd64d0bc6"
+    },
+    {
+      "path": "provider-reader/PROVIDER-PROOF-EXPORT-PROPOSAL-v1.json",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/post60-provider-proof-export-v1/PROVIDER-PROOF-EXPORT-PROPOSAL-v1.json",
+      "bytes": 3147,
+      "sha256": "69977d9c1d497787483cbb1f96993b02396847b49e7547c82cc54d38502ae989"
+    },
+    {
+      "path": "raw/POST60-PROVIDER-PROOF-RAW-ACTUAL-stderr.txt",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/POST60-PROVIDER-PROOF-RAW-ACTUAL-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/POST60-PROVIDER-PROOF-RAW-ACTUAL-stdout.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/POST60-PROVIDER-PROOF-RAW-ACTUAL-stdout.json",
+      "bytes": 1342,
+      "sha256": "96d8c8787bc3fca9d0bd4b001e5bf1cc4d2c1045a3526f685f9d1f887d0066fe"
+    },
+    {
+      "path": "raw/POST60-PROVIDER-PROOF-RAW-NATIVE-TERMINAL-v1.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/POST60-PROVIDER-PROOF-RAW-NATIVE-TERMINAL-v1.json",
+      "bytes": 258,
+      "sha256": "308e57d30ab36c0c5d7f2e00a9be303e61ab9ebaaeb5183a7da0b42fd02b112a"
+    },
+    {
+      "path": "raw/POST60-SAVED-READOUT-ACTUAL-stderr.txt",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/POST60-SAVED-READOUT-ACTUAL-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/POST60-SAVED-READOUT-ACTUAL-stdout.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/POST60-SAVED-READOUT-ACTUAL-stdout.json",
+      "bytes": 58207,
+      "sha256": "d880a781100c0c2a22c42ee9dfd3e563be393c23a067fac3fdda51c5b91a65cb"
+    },
+    {
+      "path": "raw/POST60-SAVED-READOUT-NATIVE-TERMINAL-v1.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/POST60-SAVED-READOUT-NATIVE-TERMINAL-v1.json",
+      "bytes": 379,
+      "sha256": "0d142155ea4115f55bd9b2e4b71c0af1aa13fbe3ec0f5f1a0c1994342a13b3ed"
+    },
+    {
+      "path": "reviews/POST60-PROVIDER-PROOF-RAW-EXPORT-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/POST60-PROVIDER-PROOF-RAW-EXPORT-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json",
+      "bytes": 2959,
+      "sha256": "63d7aac304e3eb087a83c92ff80ec09948ea33c446380690a3f40c205f8caa25"
+    },
+    {
+      "path": "reviews/POST60-PROVIDER-PROOF-RAW-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/POST60-PROVIDER-PROOF-RAW-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "bytes": 3003,
+      "sha256": "4d1adb0557f3e617672cddca33fcebe447573a46e307b16615982672b8eb1545"
+    },
+    {
+      "path": "reviews/POST60-SAVED-READOUT-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/POST60-SAVED-READOUT-INDEPENDENT-ACTUAL-REVIEW-v1.json",
+      "bytes": 5585,
+      "sha256": "4058be7f38925169f80c371267ad0e4a9edd3170e39d9a21106674c802c22f7e"
+    },
+    {
+      "path": "reviews/POST60-SAVED-READOUT-V2-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/POST60-SAVED-READOUT-V2-INDEPENDENT-SOURCE-ARGV-REVIEW-v1.json",
+      "bytes": 3558,
+      "sha256": "18dc3d9d93ce305ff3f3b6aaba8ac2559b8708539d3cb982bc5a8dda3385ac34"
+    },
+    {
+      "path": "reviews/POST60-SCIENTIFIC-READOUT-INDEPENDENT-REVIEW-v1.json",
+      "source_workspace_relative": "bt4-qualification-intake-root-20261021-v1/POST60-SCIENTIFIC-READOUT-INDEPENDENT-REVIEW-v1.json",
+      "bytes": 11292,
+      "sha256": "a301fcd5d51472d1d7ea1da5a07c3da1a14c385b5254a5130cb9cd41c50cfa89"
+    },
+    {
+      "path": "saved-reader/export_post60_saved_readout_v2.py",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/post60-readout-v1/export_post60_saved_readout_v2.py",
+      "bytes": 12800,
+      "sha256": "207d2545501a79bcffb71b7f44cdc01be6c66a3da0d58b40a539bca6f5a52606"
+    },
+    {
+      "path": "saved-reader/FULL-ARGV-v2.json",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/post60-readout-v1/FULL-ARGV-v2.json",
+      "bytes": 673,
+      "sha256": "3d9221e91e42746a5aea54d4571ced11bc7cf817f089321744f7f127344ea52e"
+    },
+    {
+      "path": "saved-reader/POST60-READOUT-PROPOSAL-v2.json",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-backlog/docs/intake/pr1110-diagnostic-runtime-copy-v4/post60-readout-v1/POST60-READOUT-PROPOSAL-v2.json",
+      "bytes": 5421,
+      "sha256": "dd4ccc3831272668b7cf54965c83c7366e7c206ce98c7db711416ea64868df8d"
+    },
+    {
+      "path": "summary/DIAGNOSTIC-60-CLOSED-PAUSED-RAW-v1.json",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/DIAGNOSTIC-60-CLOSED-PAUSED-RAW-v1.json",
+      "bytes": 1878,
+      "sha256": "2b1c954ff04894d7f4bea7946bd23b51c16042169aebc34498de076ded13dece"
+    },
+    {
+      "path": "summary/DIAGNOSTIC-60-RESULT-PUBLICATION-PARAGRAPH-v1.md",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/DIAGNOSTIC-60-RESULT-PUBLICATION-PARAGRAPH-v1.md",
+      "bytes": 1140,
+      "sha256": "26e81ce6b70b2b7b55a70a60c988e4677ebb84ebb297662f85ed18f5ba02efc4"
+    },
+    {
+      "path": "summary/DIAGNOSTIC-60-RESULT-SAVED-SUMMARY-v1.json",
+      "source_workspace_relative": "bt4-pr1110-recovery-20261021-v1/worktree-affinity/docs/intake/pr1110-targeted-diagnostics-v1/DIAGNOSTIC-60-RESULT-SAVED-SUMMARY-v1.json",
+      "bytes": 3421,
+      "sha256": "4e778991ed27a8bfbb895121c75a1087a09b2d0dd10f216d81aebd5335dc1e99"
+    }
+  ],
+  "accepted_refs": {
+    "readout_actual_sha256": "d880a781100c0c2a22c42ee9dfd3e563be393c23a067fac3fdda51c5b91a65cb",
+    "readout_actual_review_sha256": "4058be7f38925169f80c371267ad0e4a9edd3170e39d9a21106674c802c22f7e",
+    "scientific_review_sha256": "a301fcd5d51472d1d7ea1da5a07c3da1a14c385b5254a5130cb9cd41c50cfa89",
+    "provider_actual_sha256": "96d8c8787bc3fca9d0bd4b001e5bf1cc4d2c1045a3526f685f9d1f887d0066fe",
+    "provider_actual_review_sha256": "4d1adb0557f3e617672cddca33fcebe447573a46e307b16615982672b8eb1545",
+    "provider_raw_sha256": "6eb991f4cd83b57bbf7687e00b865dfc4742a416593e9b4e25fc017c93de625f",
+    "closure_raw_sha256": "2b1c954ff04894d7f4bea7946bd23b51c16042169aebc34498de076ded13dece"
+  },
+  "observed": {
+    "parent_deadline_failure": true,
+    "parent_elapsed_seconds": 61.594874045,
+    "native_elapsed_seconds": 62.9910455,
+    "saved_snapshot_count": 5,
+    "snapshot_hashes_and_summaries": [
+      {
+        "sha256": "509292fb0795a6263ca2f8c9a2dcfd643675ade22ab90c9fb4dfe746b97497d2",
+        "slot": 0,
+        "phase": "entered",
+        "age_at_read_seconds": 411.96741999394726,
+        "capture_monotonic_seconds": 563234.092290273,
+        "bytes": 951
+      },
+      {
+        "sha256": "55ae438719e43640ede769376f78b7822046331a7864ef6cafe43782072e17fb",
+        "slot": 1,
+        "phase": "first_execute_pending",
+        "age_at_read_seconds": 402.5042112029623,
+        "capture_monotonic_seconds": 563243.556135469,
+        "bytes": 8826
+      },
+      {
+        "sha256": "5a6fa872693a71209e578c46e14eff235a6df59a36b6bdcaed40b09cac9f9c1d",
+        "slot": 2,
+        "phase": "first_execute_post",
+        "age_at_read_seconds": 401.86232375598047,
+        "capture_monotonic_seconds": 563244.19871653,
+        "bytes": 8831
+      },
+      {
+        "sha256": "4775184c576adbe0faedb6d29c5d9a0712a02ada47ebc225dceaefa5b941cb9a",
+        "slot": 3,
+        "phase": "during_work",
+        "age_at_read_seconds": 378.25746806699317,
+        "capture_monotonic_seconds": 563267.803864467,
+        "bytes": 8825
+      },
+      {
+        "sha256": "4fa05948c21084cc931f626500c5630fd852c302d17adf6221bf1bc8ebc8b7b2",
+        "slot": 4,
+        "phase": "during_work",
+        "age_at_read_seconds": 358.2534441750031,
+        "capture_monotonic_seconds": 563287.808182526,
+        "bytes": 8829
+      }
+    ],
+    "last_saved_snapshot": {
+      "errors": [],
+      "dropped": 0,
+      "read_observed_monotonic_seconds": 563646.061626701,
+      "attempt_histogram": {
+        "32": 12
+      },
+      "writer_callbacks": 0,
+      "execute_wall_ns": 965970989,
+      "entered_to_last_capture_seconds": 53.71589225297794,
+      "execute_attempts": 12,
+      "execute_returns": 12,
+      "execute_inflight_at_publication": 0,
+      "actors": 64,
+      "slot": 4,
+      "execute_raises": 0,
+      "age_at_closure_seconds": null,
+      "age_at_read_seconds": 358.2534441750031,
+      "execute_calls_entered": 12,
+      "owner_ack_callbacks": 0,
+      "capture_monotonic_seconds": 563287.808182526
+    },
+    "execute_return_count_at_last_capture": 12,
+    "execute_attempt_batch_histogram": {
+      "32": 12
+    },
+    "execute_boundary_wall_seconds_at_last_capture": 0.965970989,
+    "entry_to_last_capture_seconds": 53.71589225297794,
+    "writer_receipt_JSON_objects_observed": 0,
+    "owner_database_ACK_count": null,
+    "owner_database_ACK_unknown_reason": "WAL/SHM present, STATONLY; noSQLiteopen/hash/query.",
+    "saved_kernel_ECHILD": true,
+    "saved_canonical_lock_rows": [],
+    "saved_before_after_preservation_equal": true,
+    "training_credit": 0,
+    "product_credit": 0,
+    "full128_qualification": false,
+    "speed_claim": false
+  },
+  "provider_proof_scope": "Saved first_root_inference_in_this_session profiled-node claims:644CUDA nodes195neural0CPU; source/launch/PID join verified by4d1a. Not12callprofile recount, noORTprofilepayloadread or currentliveness.",
+  "excluded": [
+    "Model/weights/NPZ/rawgame/data payloads",
+    "SQLite/WAL/SHM/journal binary payloads",
+    "ORT profile payload",
+    "One-use model/reader decisions and intentfiles",
+    "New execution/grant/retry/runtimeadoption"
+  ],
+  "limits": [
+    "Five snapshot guestfiles have full recordedhashes but only bounded selectedsummaries exported, notfullrawsnapshotbodyaudit",
+    "Savedpending/progress state describes capturetime only, notcurrentclosurestate/no laterwork; closureageunknown",
+    "Execute boundary walltime isnotGPUkernel/utilization/throughput orcausalguardshare; no unique residualcauseassigned",
+    "Consumed parent/child/action packets are archival evidence, not runnableorrenewedauthority; previousattempts/preregistration/CPUresults remainseparate",
+    "No model/GPU/guest/process/lockaction or test duringpackaging; source/evidence reads/hashes/ZIPonly"
+  ],
+  "provenance_privacy": "Archive/source names workspace-relative; original local paths/process/source/modelhashreferences preserved in rawprovenance. No secret/model/data payload observed; destinationvisibility root-owned."
+}

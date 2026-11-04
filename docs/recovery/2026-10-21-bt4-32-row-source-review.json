@@ -1,0 +1,109 @@
+{
+  "schema": "PR1110_POST60_BATCHING_TIMING_MAP_INDEPENDENT_SOURCE_REVIEW_V1",
+  "reviewer": "/root/pr1110_readout_and_diagnostics_review",
+  "disposition": "ACCEPT_SOURCE_BATCHING_EXPLANATION_AND_TIMING_GROUP_PLAN_EXACT_BINDINGS_PENDING",
+  "findings": [],
+  "map_ref": {
+    "bytes": 14386,
+    "sha256": "206ed1ba74e915c0125ce82c0435319e3402319a0899fa1e9d37d7450eb1a08f",
+    "path": "bt4-pr1110-recovery-20261021-v1/worktree-selfplay/docs/intake/pr1110-post60-batching-and-timing-source-v1/SOURCE-AND-TIMING-MAP-v1.json"
+  },
+  "source_pin_readback": [
+    {
+      "runtime_lf_sha256": "a77c2d9c05a60eddfb44dfb7604ea31c7c85d965bf8da82d452aa0e1104a153f",
+      "relative": "scripts/shared_teacher_owner.py",
+      "matches": true,
+      "native_sha256": "26944c9c592e1358d5a17ed6c28a1a01f5df1e2edc67bb75769fa811fd114f22"
+    },
+    {
+      "runtime_lf_sha256": "47569f622270735c9565a5e2e0bc1a5a2b5773c6036d1c8ada705e590fa27e37",
+      "relative": "scripts/bt4_root_policy_worker.py",
+      "matches": true,
+      "native_sha256": "bc28e7f2fad7ed6c7ede16d36d3be3e222db7b294841d44d003f81104eb1018f"
+    },
+    {
+      "runtime_lf_sha256": "32e6dbc5f2cbd9b698f2a380891af81e50410f528ac43e1141d3971e30f729f2",
+      "relative": "scripts/shared_teacher_generation.py",
+      "matches": true,
+      "native_sha256": "32e6dbc5f2cbd9b698f2a380891af81e50410f528ac43e1141d3971e30f729f2"
+    },
+    {
+      "runtime_lf_sha256": "e06eae6b1dd48c8d78f8688d13ce8345daa35f25f908e5f4368d63e8c6783a49",
+      "relative": "scripts/bt4_root_policy_stepper.py",
+      "matches": true,
+      "native_sha256": "2267b0ea6d42abb18f975a765caa43b2d4fdde2fdafe5f0e7c694735422e2cc2"
+    },
+    {
+      "runtime_lf_sha256": "847700c4cc798d24528c2489bdcb0bed0547f320440b2de8a9699cc7a3e5e298",
+      "relative": "scripts/bt4_generation_evaluator.py",
+      "matches": true,
+      "native_sha256": "dcb88636239d2cf8eace28d138a6e565ba3a6185b9d708695e445cec1665ccd6"
+    },
+    {
+      "runtime_lf_sha256": "119cd832c1cdd43e6398b59a3276f78067b961fd2692e60bfc5a259f928a5222",
+      "relative": "chess_anti_engine/generation_runtime.py",
+      "matches": true,
+      "native_sha256": "119cd832c1cdd43e6398b59a3276f78067b961fd2692e60bfc5a259f928a5222"
+    },
+    {
+      "runtime_lf_sha256": "ce928614666c79075e1e69b9c174d26064b45bb0100d419eac792d963f91c15c",
+      "relative": "chess_anti_engine/teacher_dispatch.py",
+      "matches": true,
+      "native_sha256": "88795e79d85dcfc108a8bd25a58282b19d3d86135ffd47f024b53fda70c5684c"
+    },
+    {
+      "runtime_lf_sha256": "6a656cffe5a503bd0c0ed7f2b93291fa0cfc44c9f90ba7aa112a874f26827e46",
+      "relative": "chess_anti_engine/request_routing.py",
+      "matches": true,
+      "native_sha256": "6a656cffe5a503bd0c0ed7f2b93291fa0cfc44c9f90ba7aa112a874f26827e46"
+    },
+    {
+      "runtime_lf_sha256": "a02bc7eb86efde6910d6852056ef5414728885e9da733bbed41e1a17da6508f2",
+      "relative": "chess_anti_engine/staged_execution.py",
+      "matches": true,
+      "native_sha256": "f319819e3386032f5daa32a3141e850d568f0abffee9ea44b4e99a0aa5bbdc0f"
+    },
+    {
+      "runtime_lf_sha256": "1bbd86f857a37a90ed7e3184a840e02781df313812889ea35863ea21510f466a",
+      "relative": "chess_anti_engine/producer_executor.py",
+      "matches": true,
+      "native_sha256": "d05461f54c155a9762d76dd3eebbd018a8c8257e20acbc21f5c45b401af0611e"
+    },
+    {
+      "runtime_lf_sha256": "9fe7123de8c3ce74d328dc92200b8d5018a1bd4a6d3ed2dc21204c9b95e373b7",
+      "relative": "chess_anti_engine/encoding/cboard_encode.py",
+      "matches": true,
+      "native_sha256": "9fe7123de8c3ce74d328dc92200b8d5018a1bd4a6d3ed2dc21204c9b95e373b7"
+    }
+  ],
+  "reviewer_execution": false,
+  "canonical_edits": false,
+  "batching_conclusion": [
+    "One ProducerExecutor worker and capacity1, native_microbatch32; driver initial_fill registers64actors before root CPUtasks. Each task admits<=32readykeys and canonical stepper onegame yields at mostone currentroot pergame.",
+    "_settle_cpu sends only completed task roots to _inference; advance submits that readyprefix before admitting another CPUtask. Zero dispatcherwait makes target64 a fill target, not requiredminimum; available32 may dispatch while second32prepares.",
+    "TeacherDispatcher FIFO path does not choose compact/dtype grouping; sameNone group. Native encoding takes availableN and no32constant establishes hard ORT/nativecap.",
+    "Observed12x32 is consistent with this scheduling/readiness mechanism, not proof of every runtimequeue arrival.64actorregistration does not imply64simultaneouslyreadyrows; no rowdiscard inferred. Preserve geometry for next attribution experiment."
+  ],
+  "timing_semantics": [
+    "Map contains9groupedtargets, not a closed16label binding manifest. Highlevel target groups accepted; exact16source bindings and wrapper implementation require separate review.",
+    "Measure inclusivewall plus same-thread thread_time_ns CPU deltas; exclusivewall/CPU subtract direct instrumented same-thread child intervals only. Cross-thread ownercallbackwait/service/producer/dispatcher overlap, so no global sum or subtraction against53s as if disjoint.",
+    "Completed/raised/open counters and finite perthread stacks, thread identity, saturating counts, depth/label bounds and errors must be explicit. Open calls at snapshot need current-time elapsed labeled separately from completed aggregates; no fabricated final totals.",
+    "Existing runnerEventwait_seconds is localwaitonly; stagedrelease and callback__call__ envelopes include nested work/waits. Exclusive means excluding only instrumented children, not automatically all guard/IO/nativecost.",
+    "Instrumentation must perform clock/counter work and durable checkpoint IO outside the timed original operation where specified; any unmeasured observer cost remains confound. Original results/exceptions/kwargs/descriptors/affinity unchanged; no extra/skipped guardcall, globalprofiler, globalEvent/Future hooks, newwatcher or percallFS logging."
+  ],
+  "precise_binding_risks": [
+    "BT4RootPolicyStepper.apply_many and prepare_many are staticmethod descriptors: use raw cls.__dict__ descriptor preserving call semantics and staticmethod restoration, not plainboundinstance wrapper.",
+    "Actual entry.Checkpoint.record_game vs transaction origin differs under cohort checkpoint bridge and constructor closures; bind actual supplied class and authenticated methods after real normal entry load, including any instance-bound transaction, without assuming archived3e source for every method.",
+    "Guard target is actual supplied ParentDeadlineGuard.check and retained guard beneath it; preserve exact bound-instance identity, thread-owner behavior and nested attribution; source origin/hash separately authenticated.",
+    "OwnerThreadCallbacks.__call__ has ownerdirect_invoke and offownerFuturewait branches. Classify by actualthread/owner; service catches errors to publish futures by design. Do not change that error propagation while wrapping.",
+    "_SharedBT4Backend.execute nests guarded controls, evaluatorcall and providerfile/profilerehash. Wrapping wholebackend plus narrowexecute/guard yields same-thread nesting only where actualthreadmatches; providercheck cost is candidate not measured untilnewdata.",
+    "Snapshot/quiescence/custody integration must keep active timingwrappers for nonquiescent ProducerJoinTimeout and allow durable entered/precall snapshots before originalwork; bounded timingerrors must not mask primaryerrors."
+  ],
+  "eventual_gates": [
+    "Exact16labels/bindingmanifest and timinghelper/API source review including restorationconflicts/callabledescriptors and authenticated runtime closure.",
+    "CPU controls: nested/reentrant/samethreadexclusive, overlappingthreads/nonadditivewait, return/exceptionidentity, staticmethod and boundguard semantics, clockfault/overflow/openframe snapshot and identityconditionalrestore.",
+    "Actual source-bound runtime caller CPU coverage plus termination durability/streamfailure controls, without relabeling doubles as model or custody proof.",
+    "New copied runtime/actualclosure/readback, wholepacket/action/resource/sourcepins and original STOP/custody/deadlines before any model qualification. No geometry or authority change follows mapreview."
+  ],
+  "activity": "Native source/JSON read/hash and in-memory CRLF->LF hash comparisons only; no import/test/AST/WSL/model action."
+}

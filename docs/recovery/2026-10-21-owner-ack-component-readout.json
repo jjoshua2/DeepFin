@@ -1,0 +1,549 @@
+{
+  "schema": "PR1110_OWNER_ACK_COMPONENT_PUBLIC_READOUT_V3",
+  "status": "ACCEPT_FOUR_DISTINCT_COMPONENT_CASES_AND_SEPARATE_STYLE_AND_TYPED_SAME_FOUR_RETESTS",
+  "base_commit": "03ccc80d12c96c6bde4b19aed26d0a4e849b6dfd",
+  "test": {
+    "current_sha256": "e32a17edcd5c2fea6a3b57a339527e25019b01d07caf20b0d594d7a19fc7be93",
+    "historical_UNRUN_docstring_retained_unchanged": true,
+    "path": "tests/test_bt4_owner_ack_ordering_unittest.py",
+    "original_sha256": "1146180e30c25421ef430ec239c3aab782272c5c924814a8be46d8f9dd7a3efc"
+  },
+  "distinct_component_cases": 4,
+  "style_successor_retest_cases": 4,
+  "additional_distinct_cases_from_retest": 0,
+  "runs": [
+    {
+      "id": "V3_original",
+      "test_sha256": "1146180e30c25421ef430ec239c3aab782272c5c924814a8be46d8f9dd7a3efc",
+      "source_bindings": [
+        {
+          "relative": "chess_anti_engine/__init__.py",
+          "sha256": "36d2d5d42f1b8f07957b14e420a5e9a18c09acb9caeb32eb63252d335bc36d50",
+          "bytes": 199,
+          "module": "chess_anti_engine"
+        },
+        {
+          "relative": "chess_anti_engine/async_safety.py",
+          "sha256": "8b40a5defd1f960daccf981f9c859a1741eb952452b7a24fd996bbe3c435e4d0",
+          "bytes": 5036,
+          "module": "chess_anti_engine.async_safety"
+        },
+        {
+          "relative": "chess_anti_engine/request_routing.py",
+          "sha256": "3bb13412032ff3c258a0347abf8a98f13967c841ef31567ae6acd78ddb468bb3",
+          "bytes": 5266,
+          "module": "chess_anti_engine.request_routing"
+        },
+        {
+          "relative": "chess_anti_engine/staged_execution.py",
+          "sha256": "f319819e3386032f5daa32a3141e850d568f0abffee9ea44b4e99a0aa5bbdc0f",
+          "bytes": 16303,
+          "module": "chess_anti_engine.staged_execution"
+        },
+        {
+          "relative": "chess_anti_engine/teacher_dispatch.py",
+          "sha256": "88795e79d85dcfc108a8bd25a58282b19d3d86135ffd47f024b53fda70c5684c",
+          "bytes": 11259,
+          "module": "chess_anti_engine.teacher_dispatch"
+        },
+        {
+          "relative": "chess_anti_engine/completion.py",
+          "sha256": "788822c9d2e267445a8a4c74856a168746d6d292f15a4e727795eb4522ba3de7",
+          "bytes": 1924,
+          "module": "chess_anti_engine.completion"
+        },
+        {
+          "relative": "chess_anti_engine/producer_executor.py",
+          "sha256": "d05461f54c155a9762d76dd3eebbd018a8c8257e20acbc21f5c45b401af0611e",
+          "bytes": 6998,
+          "module": "chess_anti_engine.producer_executor"
+        },
+        {
+          "relative": "chess_anti_engine/generation_runtime.py",
+          "sha256": "2b1ea0f4a3406878dd643170148dcaebbb78c07125861edb9dedd89ca6a2642a",
+          "bytes": 6714,
+          "module": "chess_anti_engine.generation_runtime"
+        },
+        {
+          "relative": "scripts/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0,
+          "module": "scripts"
+        },
+        {
+          "relative": "scripts/shared_teacher_generation.py",
+          "sha256": "903fff5a0711bc36ac41828120d7e97bdc65d07d8a0fd53f550691e33746c239",
+          "bytes": 27498,
+          "module": "scripts.shared_teacher_generation"
+        },
+        {
+          "relative": "scripts/shared_teacher_owner.py",
+          "sha256": "26944c9c592e1358d5a17ed6c28a1a01f5df1e2edc67bb75769fa811fd114f22",
+          "bytes": 32729,
+          "module": "scripts.shared_teacher_owner"
+        },
+        {
+          "relative": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0,
+          "module": "tests"
+        },
+        {
+          "relative": "tests/test_bt4_owner_ack_ordering_unittest.py",
+          "sha256": "1146180e30c25421ef430ec239c3aab782272c5c924814a8be46d8f9dd7a3efc",
+          "bytes": 11903,
+          "module": "tests.test_bt4_owner_ack_ordering_unittest"
+        },
+        {
+          "relative": "tests/fixtures/teacher_reference/manifest.json",
+          "sha256": "ddeac70a12cf517667a33dc431a5d54494663c4daf6f6dfd267adfdae2f0e5ca",
+          "bytes": 9275
+        },
+        {
+          "relative": "tests/fixtures/teacher_reference/scripts/bt4_longblock_checkpoint_v2.py.txt",
+          "sha256": "3e340183934fc06437979898b968d2555cf4931254daafa05c317680b75b9ae9",
+          "bytes": 7788
+        },
+        {
+          "relative": "tests/fixtures/teacher_reference/scripts/bt4_raw_recovery_v2.py.txt",
+          "sha256": "78845b83d4c4de4f244305332df1ccddda7430eb0f1baaf10d6072ea037037b0",
+          "bytes": 3841
+        }
+      ],
+      "methods": [
+        {
+          "id": "test_receipt_then_actual_checkpoint_ack_then_refill",
+          "run": 1,
+          "errors": 0,
+          "failures": 0,
+          "skips": 0
+        },
+        {
+          "id": "test_failed_writer_has_no_ack_or_replacement",
+          "run": 1,
+          "errors": 0,
+          "failures": 0,
+          "skips": 0
+        },
+        {
+          "id": "test_mismatched_immutable_receipt_has_no_ack_or_replacement",
+          "run": 1,
+          "errors": 0,
+          "failures": 0,
+          "skips": 0
+        },
+        {
+          "id": "test_stop_during_pending_writer_retains_slot_and_durable_raw",
+          "run": 1,
+          "errors": 0,
+          "failures": 0,
+          "skips": 0
+        }
+      ],
+      "evidence": {
+        "bound_module_origins_before_after": 119,
+        "input_inventory_unique_bytes": 61361300,
+        "stdout_eof": true,
+        "inventory_ELF_maps": 22,
+        "input_inventory_files_hashed_twice": 277,
+        "stderr_eof": true,
+        "native_seconds": 1.8349155,
+        "raw_stdout_sha256": "764d20a69c60fedf333f333a13bd08d28fbc0a9d7e18a448286efa3afb4c7271",
+        "native_terminal_sha256": "83cdd7466b73f6c80331bc2ef3ac711c07c6c8b8f90a9975ed89a7102c2a61a0",
+        "native_exit": 0,
+        "guest_seconds": 1.4077564820181578,
+        "raw_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "raw_stdout_bytes": 71519,
+        "independent_actual_review_sha256": "b0ee8f084ebab78c41f89a8e0e128d93dc9e3d862b5140925d54767fca118ca8",
+        "source_argv_review_sha256": "8d67fa92c900a51ec7d521af48b9b0ae7e02613e98b78e0ca846ad72afe29f6a",
+        "explicit_named_read_bytes": 123435280,
+        "raw_stderr_bytes": 0
+      },
+      "cleanup": {
+        "final_files": 16,
+        "owned_python_threads_joined_asserted": true,
+        "final_bytes": 146733,
+        "separate_numeric_retention_counter_in_success_receipt": false,
+        "final_directories": 8,
+        "same_as_sourcecopy_baseline": true,
+        "wholeprocess_or_ECHILD_proof": false,
+        "retained_ownership_empty_asserted_after_each_method": true,
+        "created_path_identities_cumulative": 23
+      }
+    },
+    {
+      "id": "V5_style_successor_retest",
+      "test_sha256": "b2ee4a50e579b77f4b1c9327f46854623dcc2cdc69d63a152608edf7d4a0afbe",
+      "source_bindings": [
+        {
+          "relative": "chess_anti_engine/__init__.py",
+          "sha256": "36d2d5d42f1b8f07957b14e420a5e9a18c09acb9caeb32eb63252d335bc36d50",
+          "bytes": 199,
+          "module": "chess_anti_engine"
+        },
+        {
+          "relative": "chess_anti_engine/async_safety.py",
+          "sha256": "8b40a5defd1f960daccf981f9c859a1741eb952452b7a24fd996bbe3c435e4d0",
+          "bytes": 5036,
+          "module": "chess_anti_engine.async_safety"
+        },
+        {
+          "relative": "chess_anti_engine/request_routing.py",
+          "sha256": "3bb13412032ff3c258a0347abf8a98f13967c841ef31567ae6acd78ddb468bb3",
+          "bytes": 5266,
+          "module": "chess_anti_engine.request_routing"
+        },
+        {
+          "relative": "chess_anti_engine/staged_execution.py",
+          "sha256": "f319819e3386032f5daa32a3141e850d568f0abffee9ea44b4e99a0aa5bbdc0f",
+          "bytes": 16303,
+          "module": "chess_anti_engine.staged_execution"
+        },
+        {
+          "relative": "chess_anti_engine/teacher_dispatch.py",
+          "sha256": "88795e79d85dcfc108a8bd25a58282b19d3d86135ffd47f024b53fda70c5684c",
+          "bytes": 11259,
+          "module": "chess_anti_engine.teacher_dispatch"
+        },
+        {
+          "relative": "chess_anti_engine/completion.py",
+          "sha256": "788822c9d2e267445a8a4c74856a168746d6d292f15a4e727795eb4522ba3de7",
+          "bytes": 1924,
+          "module": "chess_anti_engine.completion"
+        },
+        {
+          "relative": "chess_anti_engine/producer_executor.py",
+          "sha256": "d05461f54c155a9762d76dd3eebbd018a8c8257e20acbc21f5c45b401af0611e",
+          "bytes": 6998,
+          "module": "chess_anti_engine.producer_executor"
+        },
+        {
+          "relative": "chess_anti_engine/generation_runtime.py",
+          "sha256": "2b1ea0f4a3406878dd643170148dcaebbb78c07125861edb9dedd89ca6a2642a",
+          "bytes": 6714,
+          "module": "chess_anti_engine.generation_runtime"
+        },
+        {
+          "relative": "scripts/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0,
+          "module": "scripts"
+        },
+        {
+          "relative": "scripts/shared_teacher_generation.py",
+          "sha256": "903fff5a0711bc36ac41828120d7e97bdc65d07d8a0fd53f550691e33746c239",
+          "bytes": 27498,
+          "module": "scripts.shared_teacher_generation"
+        },
+        {
+          "relative": "scripts/shared_teacher_owner.py",
+          "sha256": "26944c9c592e1358d5a17ed6c28a1a01f5df1e2edc67bb75769fa811fd114f22",
+          "bytes": 32729,
+          "module": "scripts.shared_teacher_owner"
+        },
+        {
+          "relative": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0,
+          "module": "tests"
+        },
+        {
+          "relative": "tests/test_bt4_owner_ack_ordering_unittest.py",
+          "sha256": "b2ee4a50e579b77f4b1c9327f46854623dcc2cdc69d63a152608edf7d4a0afbe",
+          "bytes": 12051,
+          "module": "tests.test_bt4_owner_ack_ordering_unittest"
+        },
+        {
+          "relative": "tests/fixtures/teacher_reference/manifest.json",
+          "sha256": "ddeac70a12cf517667a33dc431a5d54494663c4daf6f6dfd267adfdae2f0e5ca",
+          "bytes": 9275
+        },
+        {
+          "relative": "tests/fixtures/teacher_reference/scripts/bt4_longblock_checkpoint_v2.py.txt",
+          "sha256": "3e340183934fc06437979898b968d2555cf4931254daafa05c317680b75b9ae9",
+          "bytes": 7788
+        },
+        {
+          "relative": "tests/fixtures/teacher_reference/scripts/bt4_raw_recovery_v2.py.txt",
+          "sha256": "78845b83d4c4de4f244305332df1ccddda7430eb0f1baaf10d6072ea037037b0",
+          "bytes": 3841
+        }
+      ],
+      "methods": [
+        {
+          "id": "test_receipt_then_actual_checkpoint_ack_then_refill",
+          "run": 1,
+          "errors": 0,
+          "failures": 0,
+          "skips": 0
+        },
+        {
+          "id": "test_failed_writer_has_no_ack_or_replacement",
+          "run": 1,
+          "errors": 0,
+          "failures": 0,
+          "skips": 0
+        },
+        {
+          "id": "test_mismatched_immutable_receipt_has_no_ack_or_replacement",
+          "run": 1,
+          "errors": 0,
+          "failures": 0,
+          "skips": 0
+        },
+        {
+          "id": "test_stop_during_pending_writer_retains_slot_and_durable_raw",
+          "run": 1,
+          "errors": 0,
+          "failures": 0,
+          "skips": 0
+        }
+      ],
+      "evidence": {
+        "independent_actual_review_sha256": "98d4363082cc7f51de41847d6dca7fd5fa3c96a18fb55f5449892e96f377e85f",
+        "source_argv_review_sha256": "6b6f5ae138b737b5159f0dc5db0d8245257416926299756e4e1270f832e53562",
+        "native_terminal_sha256": "fee658ee33761e3627a12d0ca11d34b946924338d3099df65e75305fe61e108a",
+        "stdout_eof": true,
+        "guest_seconds": 1.4672882549930364,
+        "stderr_eof": true,
+        "bound_module_origins_before_after": 119,
+        "raw_stdout_bytes": 71519,
+        "raw_stdout_sha256": "9a1a09e14f4dd9d10527f20b9235aac26393b488325893aab90444eca8c03ab2",
+        "input_inventory_files_hashed_twice": 277,
+        "native_seconds": 1.9130471,
+        "raw_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "input_inventory_unique_bytes": 61361300,
+        "raw_stderr_bytes": 0,
+        "explicit_named_read_bytes": 123436093,
+        "native_exit": 0,
+        "inventory_ELF_maps": 22
+      },
+      "cleanup": {
+        "retained_ownership_empty_asserted_after_each_method": true,
+        "final_bytes": 146881,
+        "final_files": 16,
+        "same_as_sourcecopy_baseline": true,
+        "owned_python_threads_joined_asserted": true,
+        "separate_numeric_retention_counter_in_success_receipt": false,
+        "final_directories": 8,
+        "created_path_identities_cumulative": 23,
+        "wholeprocess_or_ECHILD_proof": false
+      }
+    },
+    {
+      "id": "V6_typed_successor_retest",
+      "test_sha256": "e32a17edcd5c2fea6a3b57a339527e25019b01d07caf20b0d594d7a19fc7be93",
+      "source_bindings": [
+        {
+          "relative": "chess_anti_engine/__init__.py",
+          "sha256": "36d2d5d42f1b8f07957b14e420a5e9a18c09acb9caeb32eb63252d335bc36d50",
+          "bytes": 199,
+          "module": "chess_anti_engine"
+        },
+        {
+          "relative": "chess_anti_engine/async_safety.py",
+          "sha256": "8b40a5defd1f960daccf981f9c859a1741eb952452b7a24fd996bbe3c435e4d0",
+          "bytes": 5036,
+          "module": "chess_anti_engine.async_safety"
+        },
+        {
+          "relative": "chess_anti_engine/request_routing.py",
+          "sha256": "3bb13412032ff3c258a0347abf8a98f13967c841ef31567ae6acd78ddb468bb3",
+          "bytes": 5266,
+          "module": "chess_anti_engine.request_routing"
+        },
+        {
+          "relative": "chess_anti_engine/staged_execution.py",
+          "sha256": "f319819e3386032f5daa32a3141e850d568f0abffee9ea44b4e99a0aa5bbdc0f",
+          "bytes": 16303,
+          "module": "chess_anti_engine.staged_execution"
+        },
+        {
+          "relative": "chess_anti_engine/teacher_dispatch.py",
+          "sha256": "88795e79d85dcfc108a8bd25a58282b19d3d86135ffd47f024b53fda70c5684c",
+          "bytes": 11259,
+          "module": "chess_anti_engine.teacher_dispatch"
+        },
+        {
+          "relative": "chess_anti_engine/completion.py",
+          "sha256": "788822c9d2e267445a8a4c74856a168746d6d292f15a4e727795eb4522ba3de7",
+          "bytes": 1924,
+          "module": "chess_anti_engine.completion"
+        },
+        {
+          "relative": "chess_anti_engine/producer_executor.py",
+          "sha256": "d05461f54c155a9762d76dd3eebbd018a8c8257e20acbc21f5c45b401af0611e",
+          "bytes": 6998,
+          "module": "chess_anti_engine.producer_executor"
+        },
+        {
+          "relative": "chess_anti_engine/generation_runtime.py",
+          "sha256": "2b1ea0f4a3406878dd643170148dcaebbb78c07125861edb9dedd89ca6a2642a",
+          "bytes": 6714,
+          "module": "chess_anti_engine.generation_runtime"
+        },
+        {
+          "relative": "scripts/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0,
+          "module": "scripts"
+        },
+        {
+          "relative": "scripts/shared_teacher_generation.py",
+          "sha256": "903fff5a0711bc36ac41828120d7e97bdc65d07d8a0fd53f550691e33746c239",
+          "bytes": 27498,
+          "module": "scripts.shared_teacher_generation"
+        },
+        {
+          "relative": "scripts/shared_teacher_owner.py",
+          "sha256": "26944c9c592e1358d5a17ed6c28a1a01f5df1e2edc67bb75769fa811fd114f22",
+          "bytes": 32729,
+          "module": "scripts.shared_teacher_owner"
+        },
+        {
+          "relative": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0,
+          "module": "tests"
+        },
+        {
+          "relative": "tests/test_bt4_owner_ack_ordering_unittest.py",
+          "sha256": "e32a17edcd5c2fea6a3b57a339527e25019b01d07caf20b0d594d7a19fc7be93",
+          "bytes": 13579,
+          "module": "tests.test_bt4_owner_ack_ordering_unittest"
+        },
+        {
+          "relative": "tests/fixtures/teacher_reference/manifest.json",
+          "sha256": "ddeac70a12cf517667a33dc431a5d54494663c4daf6f6dfd267adfdae2f0e5ca",
+          "bytes": 9275
+        },
+        {
+          "relative": "tests/fixtures/teacher_reference/scripts/bt4_longblock_checkpoint_v2.py.txt",
+          "sha256": "3e340183934fc06437979898b968d2555cf4931254daafa05c317680b75b9ae9",
+          "bytes": 7788
+        },
+        {
+          "relative": "tests/fixtures/teacher_reference/scripts/bt4_raw_recovery_v2.py.txt",
+          "sha256": "78845b83d4c4de4f244305332df1ccddda7430eb0f1baaf10d6072ea037037b0",
+          "bytes": 3841
+        }
+      ],
+      "methods": [
+        {
+          "id": "test_receipt_then_actual_checkpoint_ack_then_refill",
+          "run": 1,
+          "errors": 0,
+          "failures": 0,
+          "skips": 0
+        },
+        {
+          "id": "test_failed_writer_has_no_ack_or_replacement",
+          "run": 1,
+          "errors": 0,
+          "failures": 0,
+          "skips": 0
+        },
+        {
+          "id": "test_mismatched_immutable_receipt_has_no_ack_or_replacement",
+          "run": 1,
+          "errors": 0,
+          "failures": 0,
+          "skips": 0
+        },
+        {
+          "id": "test_stop_during_pending_writer_retains_slot_and_durable_raw",
+          "run": 1,
+          "errors": 0,
+          "failures": 0,
+          "skips": 0
+        }
+      ],
+      "evidence": {
+        "inventory_ELF_maps": 22,
+        "native_seconds": 1.7664801,
+        "raw_stdout_sha256": "f89a257655f12ca232b3751d03113638e61a123569e0487ee26af4e019770c31",
+        "stderr_eof": true,
+        "native_exit": 0,
+        "explicit_named_read_bytes": 123440870,
+        "source_argv_review_sha256": "689d394576cadf752bfbcbd5a2b5d47214935e6d289ee8d7554458dd70b53a22",
+        "native_terminal_sha256": "397570eaa63111cdf8ee9cc7b296e3154465c268b968610f4efdaa56ae97f72b",
+        "raw_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "raw_stdout_bytes": 71521,
+        "independent_actual_review_sha256": "40f6fa332246c3ba4d10b9f2a8f0fa5cdce1531680cbe8dc310592432b4fbd9e",
+        "guest_seconds": 1.3817276529734954,
+        "bound_module_origins_before_after": 119,
+        "input_inventory_files_hashed_twice": 277,
+        "raw_stderr_bytes": 0,
+        "stdout_eof": true,
+        "input_inventory_unique_bytes": 61361300
+      },
+      "cleanup": {
+        "wholeprocess_or_ECHILD_proof": false,
+        "retained_ownership_empty_asserted_after_each_method": true,
+        "final_bytes": 148409,
+        "same_as_sourcecopy_baseline": true,
+        "separate_numeric_retention_counter_in_success_receipt": false,
+        "final_files": 16,
+        "created_path_identities_cumulative": 23,
+        "owned_python_threads_joined_asserted": true,
+        "final_directories": 8
+      }
+    }
+  ],
+  "style_delta": [
+    "Unittest assertion methods replaced by plain assertions under the same optimize0 controller",
+    "Stdlib contextmanager expected_error preserves expectedexceptiontype, regexsearch, one body invocation and otherexception propagation; regexassert outsideexcept",
+    "Three keyworddict constructors replaced by samekeyorder dictliterals",
+    "No pytest dependency, suppression, unsafeautofix, runtime/core or game semantics change"
+  ],
+  "fixtures": [
+    "Synthetic actor and STOP callback state; no chess moves or native stepper",
+    "Synthetic zero-row discarded NPZ fixture publisher using actual DurableWriter; production serializer not qualified",
+    "Actual retained original Checkpoint.record_game and raw verifier; synthetic custody identity and owner-thread guard",
+    "Direct production pool/driver publication and refill methods; run_owned_roster admission and model startup not exercised"
+  ],
+  "binding_precision": [
+    "Exact copied native-checkout bytes pinned; no assumption of canonical-LF byteidentity",
+    "shared_teacher_generation.py, generation_runtime.py and retained fixture manifest differ from canonical checkout only by CRLF/LF; explicit normalizedtext equality checked, rawhashes recorded separately",
+    "Retained original checkpoint/recovery bodies are byteidentical to canonical source fixtures",
+    "Three optional dependency import attempts were denied and recorded; no new dependency allowance"
+  ],
+  "limits": [
+    "Four distinct component controls only, no earlier count aggregation or lost-v8 transfer",
+    "No realserializer/native/gameplay/model/GPU, full128, five-unit roster/admission, memoryfit/performance, training or adoption credit",
+    "Unique temporary SQLite/NPZ fixtures cleaned after proven owned Python joins; unknown join is source-defined failclosed retention, not an exercised stuck-thread claim",
+    "No operational helpers, absolute paths, process/boot identities, controller, intent or raw receipt payload included in public artifact"
+  ],
+  "versions": "V1,V2,V4 remained unrun source versions; V3original,V5style,V6typed same4 each ran once under distinct source/intent/output identities; retests add0distinctcases.",
+  "typed_successor_retest_cases": 4,
+  "additional_distinct_cases_from_all_retests": 0,
+  "typing_delta": [
+    "Resource-free constructor defaults and precise ordinary field types; actual resources still created in setUp in original order",
+    "Checked typed accessors preserve actual pool/driver/game objects",
+    "Any/cast limited to dynamic retained module/checkpoint and explicitly inert actor/dispatcher/finalized fixture boundaries; no suppressions or config changes"
+  ],
+  "static_checks": {
+    "ruff": {
+      "status": "PASS",
+      "native_terminal_sha256": "53eb123b21acaf0972cb1bcfd1bc23c1b6699b4e9c64812a677b5007fc1a5ffd",
+      "exit": 0,
+      "scope": "Twelve explicitly selected native integration production/test files including this exact test; not whole repository",
+      "both_eof": true,
+      "stdout_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    "basedpyright": {
+      "status": "PASS_0_ERRORS_0_WARNINGS_0_NOTES",
+      "native_terminal_sha256": "cb8b787fb3226ca0577de4e8140634c95fd7c606a6e2403c0dbf4256842196c6",
+      "exit": 0,
+      "scope": "This exact test under existing project configuration, not whole repository",
+      "both_eof": true,
+      "stdout_sha256": "56882e01cb80173ef053c4096e4ee43e3123a15f5c0a06715f96988d48fbd91c"
+    },
+    "current_test_sha256": "e32a17edcd5c2fea6a3b57a339527e25019b01d07caf20b0d594d7a19fc7be93"
+  },
+  "transport_note": {
+    "prelaunch_failure_sha256": "fef93a9e380dcc83a75ccb450bb0bde498c737ca30b964081be887e32f7f7104",
+    "scope": "Transport refusal before native process; separate saved intent/output absence established still-unstarted source. Preserved separately from one subsequent confirmed V6 execution.",
+    "test_retry_claim": false
+  }
+}

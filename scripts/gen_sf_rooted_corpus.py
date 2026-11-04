@@ -291,6 +291,7 @@ from chess_anti_engine.utils.engine_discovery import (
 from scripts import audit_label_candidates as gate
 from scripts import audit_targets
 from scripts import gen_random_selfplay_shards as gen
+from scripts.bt4_root_contracts import input_tensor_key as input_tensor_key
 
 _LOG = logging.getLogger("gen_sf_rooted_corpus")
 
@@ -1778,20 +1779,6 @@ def search_key(board: chess.Board) -> str:
         (h, min(c, _SEARCH_KEY_REPEAT_CAP)) for h, c in counts.items() if c >= 2
     )
     return f"{dedup_key(board)}|{','.join(f'{h:016x}:{c}' for h, c in repeats)}"
-
-
-def input_tensor_key(planes: np.ndarray) -> str:
-    """The identity of one encoded input: blake2b-128 over its float32 bytes.
-
-    Spelled once and called from BOTH ends of the chain: the generator hashes
-    the tensor live play would encode (:func:`row_key`) and the deriver hashes
-    the tensor it reconstructed from the banked window, and a row whose two
-    hashes differ is refused there.  ``float32`` and C order are forced so the
-    bytes are the same whichever encoder produced the array.
-    """
-    return hashlib.blake2b(
-        np.ascontiguousarray(planes, dtype=np.float32).tobytes(), digest_size=16,
-    ).hexdigest()
 
 
 def apply_history_rep_fix() -> None:

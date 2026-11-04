@@ -1,0 +1,18 @@
+{
+  "schema": "PR1110_GUARD_CONTROL_WINDOWS_NATIVE_SOURCE_ASSESSMENT_V1",
+  "status": "NEGATIVE_CURRENT_EQUIVALENCE_ASSESSMENT_NOT_SUPPORTED_IMPLEMENTATION",
+  "parent_review_sha256": "b754799ad2ef04b7253f51c8db2376359b644fa10bf3bbba695763126bd6f9d5",
+  "supported_conclusion": "Keep current synchronous authoritative checks. Pure static compilation cannot remove their filesystem observations; numeric screen failed.",
+  "windows_native_proposal": [
+    "A Windows-native synchronous verifier might avoid WSL-to-Windows crossings for /mnt/c paths, but no reviewed verifier/interface/rendezvous exists. This is a proposal requiring material contract and provenance work, not a presently supported equivalent option.",
+    "Must explicitly prove mapping of each exact WSL path to Windows target, case/encoding semantics, reparse/symlink/dangling-link/canonical resolution, open flags/sharing, inode/file identity and replacement detection, read bytes/hash/stamp precision and error/errno equivalence. Windows existence APIs are not automatically lexists.",
+    "Must retain current call frequency and original mutable alias access/first-failure order, synchronously bind every reply to exact requested path/hash/state and invocation, bound reply/host failure, and avoid stale/replayed evidence. Capturing a full batch before callbacks changes current per-record mutation semantics.",
+    "Existing canonical WSL owner PID/birth/boot/lease/lock/STOP/deadline/resource guard must remain; host verifier cannot establish WSL custody. Moving observation to another process/thread has a new provenance and detection boundary even with synchronous rendezvous."
+  ],
+  "not_equivalent_now": [
+    "Mirror, event watcher, async snapshot, bulk stat, control migration or mount/security configuration changes cannot be presented as equivalent. They alter authoritative path, freshness, race/error/link semantics or control ownership.",
+    "Increasing actor geometry to320 does not remove per-call owner/control filesystem checks or establish useful scaling. This is a separate geometry/qualification change and cannot be inferred from the CPU result."
+  ],
+  "next_decision": "No new execution or additional packet layers required to conclude this candidate failed. Any future interface proposal should first state the intentional contract change and expected mechanism of benefit, before qualification work.",
+  "execution_performed": false
+}

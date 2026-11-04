@@ -12,6 +12,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding import rep_fix
+from chess_anti_engine.generation_runtime import AdvanceResult, GenerationSessionRunner
 from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.selfplay.config import (
@@ -203,8 +204,13 @@ def _finalize_completed_slots(
     continuous: bool,
     target: int,
     defer_pending_labels: bool = False,
+    allow_recycle: bool = True,
 ) -> None:
-    """Finalize done-but-not-yet-finalized games; recycle slots while target allows."""
+    """Finalize once; only scheduling continuations may replace completed slots.
+
+    Teardown passes allow_recycle=False without changing state.continuous,
+    which still controls callback/sample accumulation inside finalize_game.
+    """
     for i in range(batch_size):
         if state.done_arr[i] and not state.finalized_arr[i]:
             if (
@@ -215,7 +221,7 @@ def _finalize_completed_slots(
             finalize_game(state, i, all_samples, on_game_complete)
             state.finalized_arr[i] = 1
             state.games_completed += 1
-            if continuous or state.games_started < target:
+            if allow_recycle and (continuous or state.games_started < target):
                 state.recycle_slot(i)
 
 
@@ -234,6 +240,230 @@ def _wait_for_starved_sf(
             timeout=timeout_s,
             return_when=FIRST_COMPLETED,
         )
+
+
+class SelfplayDomain:
+    """One owner-thread self-play advance; scheduling belongs to the runner.
+
+    This owns the former play_batch step, including its SF starvation waits,
+    pause polling, STOP/suspend ordering and finite safety bound. It does not
+    spawn producers or transfer native board ownership to another thread.
+    """
+
+    def __init__(
+        self, state: SelfplayState, *, stockfish: StockfishUCI | StockfishPool,
+        all_samples: list[ReplaySample], batch_size: int, continuous: bool,
+        target: int, max_steps: int,
+        on_game_complete: Callable[[CompletedGameBatch], None] | None = None,
+        on_timing: Callable[[str, float], None] | None = None,
+        on_step: Callable[[], None] | None = None,
+        on_suspend: Callable[[SelfplayState], None] | None = None,
+        stop_fn: Callable[[], bool] | None = None,
+        pause_fn: Callable[[], bool] | None = None,
+    ) -> None:
+        self.state, self.stockfish, self.all_samples = state, stockfish, all_samples
+        self.batch_size, self.continuous, self.target = batch_size, continuous, target
+        self.max_steps, self.steps = max_steps, 0
+        self.on_game_complete, self.on_timing = on_game_complete, on_timing
+        self.on_step, self.on_suspend = on_step, on_suspend
+        self.stop_fn, self.pause_fn = stop_fn, pause_fn
+        self.t_net = 0.0
+        self.t_sf = 0.0
+        self._terminal = False
+
+    def advance(self) -> AdvanceResult:
+        if self._terminal or self.steps >= self.max_steps:
+            self._terminal = True
+            return AdvanceResult(terminal=True)
+        self.steps += 1
+        result = self._advance_step()
+        self._terminal = result.terminal
+        return result
+
+    def _advance_step(self) -> AdvanceResult:
+        state, stockfish, all_samples = self.state, self.stockfish, self.all_samples
+        batch_size, continuous, target = self.batch_size, self.continuous, self.target
+        on_game_complete, on_timing = self.on_game_complete, self.on_timing
+        on_step, on_suspend = self.on_step, self.on_suspend
+        stop_fn, pause_fn = self.stop_fn, self.pause_fn
+        if on_step is not None:
+            t0 = time.perf_counter()
+            on_step()
+            if on_timing is not None:
+                on_timing("check_model", time.perf_counter() - t0)
+        if stop_fn is not None and stop_fn():
+            # Continuous scheduling may have deferred a completed game while
+            # its label was still running. Preserve those finished games at a
+            # true teardown; only genuinely in-flight boards remain abandoned.
+            t0 = time.perf_counter()
+            if state.pending_sf_labels:
+                poll_async_sf_labels(state)
+            _finalize_completed_slots(
+                state,
+                all_samples=all_samples,
+                on_game_complete=on_game_complete,
+                batch_size=batch_size,
+                continuous=continuous,
+                target=target,
+                defer_pending_labels=False,
+                allow_recycle=False,
+            )
+            if on_timing is not None:
+                on_timing("finalize", time.perf_counter() - t0)
+            # Whatever is still in flight here is what a teardown historically
+            # threw away — the games, their plies, and above all the ~698k-node
+            # SF labels already bought for them. The hook gets its chance after
+            # the finished games are finalized, so it only ever sees genuinely
+            # in-flight boards.
+            if on_suspend is not None:
+                t0 = time.perf_counter()
+                on_suspend(state)
+                if on_timing is not None:
+                    on_timing("suspend_inflight", time.perf_counter() - t0)
+            return AdvanceResult(terminal=True)
+
+        if pause_fn is not None and pause_fn():
+            t0 = time.perf_counter()
+            while pause_fn() and not (stop_fn is not None and stop_fn()):
+                if on_step is not None:
+                    on_step()
+                time.sleep(0.25)
+            if on_timing is not None:
+                on_timing("pause_hold", time.perf_counter() - t0)
+            return AdvanceResult(progress=True)  # re-check STOP before scheduling
+
+        if state.pending_sf_labels:
+            t0 = time.perf_counter()
+            poll_async_sf_labels(state)
+            if on_timing is not None:
+                on_timing("sf_label_poll", time.perf_counter() - t0)
+
+        if state.pending_sf_moves:
+            t0 = time.perf_counter()
+            finish_pending_curriculum_moves(state, block=False)
+            if on_timing is not None:
+                on_timing("sf_finish_curriculum", time.perf_counter() - t0)
+
+        # Tablebase adjudication before classify_active_slots. Any TB-eligible
+        # game gets marked done; classify then skips it and finalize uses the
+        # stashed TB result. Runs at most once per game (state.tb_result_arr
+        # is the idempotency key).
+        # state.game (not closed-over session-start ``game``) — matches recycle.
+        if state.tb_probe is not None and state.game.syzygy_adjudicate:
+            t0 = time.perf_counter()
+            _tb_adjudicate_active_games(state)
+            if on_timing is not None:
+                on_timing("tb_adjudicate", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        net_idxs, sp_opp_idxs, cur_opp_idxs, all_done = state.classify_active_slots()
+        # Finish recovered requests before this game's next net/SF turn. This
+        # bounds recovery admission and keeps its backlog from crowding out a
+        # newly-created label. Other slots continue while the pool works.
+        recovering = {
+            p.slot for p in state.pending_sf_labels if getattr(p, "resumed", False)
+            and p.record in state.samples_per_game[p.slot]
+        }
+        net_idxs = [i for i in net_idxs if i not in recovering]
+        sp_opp_idxs = [i for i in sp_opp_idxs if i not in recovering]
+        cur_opp_idxs = [i for i in cur_opp_idxs if i not in recovering]
+        next_labels = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
+        if recovering and len(state.pending_sf_labels) + next_labels > state.batch_size * 8:
+            # Reserve admission for the entire next turn, including other
+            # games. Near-full recovery must not crowd out their new rows.
+            net_idxs, sp_opp_idxs, cur_opp_idxs = [], [], []
+        classified_count = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
+        if state.pending_sf_moves:
+            # Pending moves originate in cur_opp_idxs, and their boards do not
+            # advance into another partition until the future is removed.
+            cur_opp_idxs = [idx for idx in cur_opp_idxs if idx not in state.pending_sf_moves]
+        if on_timing is not None:
+            pending_excluded = (
+                classified_count - len(net_idxs) - len(sp_opp_idxs) - len(cur_opp_idxs)
+            )
+            runnable_count = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
+            on_timing("classify", time.perf_counter() - t0)
+            on_timing("slot_observations", 1.0)
+            on_timing("runnable_net_sum", float(len(net_idxs)))
+            on_timing("runnable_sp_opp_sum", float(len(sp_opp_idxs)))
+            on_timing("runnable_cur_opp_sum", float(len(cur_opp_idxs)))
+            on_timing(
+                "sf_pending_excluded_sum",
+                float(pending_excluded),
+            )
+            if pending_excluded > 0 and runnable_count > 0:
+                on_timing("sf_pending_with_runnable_steps", 1.0)
+            on_timing(
+                "games_in_flight_sum",
+                float(max(0, state.games_started - state.games_completed)),
+            )
+        if all_done:
+            return AdvanceResult(terminal=True)
+        if (
+            not net_idxs
+            and not sp_opp_idxs
+            and not cur_opp_idxs
+            and (state.pending_sf_moves or state.pending_sf_labels)
+        ):
+            t0 = time.perf_counter()
+            _wait_for_starved_sf(state, control_poll=on_step is not None)
+            if on_timing is not None:
+                on_timing("sf_block_starved", time.perf_counter() - t0)
+            t0 = time.perf_counter()
+            if state.pending_sf_labels:
+                poll_async_sf_labels(state)
+            _finalize_completed_slots(
+                state, all_samples=all_samples,
+                on_game_complete=on_game_complete,
+                batch_size=batch_size, continuous=continuous, target=target,
+                defer_pending_labels=continuous,
+            )
+            if on_timing is not None:
+                on_timing("finalize", time.perf_counter() - t0)
+            return AdvanceResult(progress=True)
+
+        net_dt, sf_dt = _run_step(
+            state, net_idxs=net_idxs, sp_opp_idxs=sp_opp_idxs,
+            cur_opp_idxs=cur_opp_idxs, stockfish=stockfish,
+            on_timing=on_timing, witness_stop_fn=stop_fn,
+        )
+        self.t_net += net_dt
+        self.t_sf += sf_dt
+
+        t0 = time.perf_counter()
+        if state.pending_sf_labels:
+            poll_async_sf_labels(state)
+        _finalize_completed_slots(
+            state, all_samples=all_samples,
+            on_game_complete=on_game_complete,
+            batch_size=batch_size, continuous=continuous, target=target,
+            defer_pending_labels=continuous,
+        )
+        if on_timing is not None:
+            on_timing("finalize", time.perf_counter() - t0)
+
+        # Reset tree when it grows unbounded. Live root_ids can't be preserved
+        # across reset, but the next ply's MCTS root-init rebuilds them with no
+        # algorithmic loss — only the few-ply tree-reuse window vanishes.
+        # Without this, continuous selfplay leaks tree nodes for the lifetime
+        # of the worker (the prior `all(rid < 0)` guard never fired with
+        # >1 slot since at least one root_id stays >= 0 at all times).
+        if (
+            state.mcts_tree is not None
+            and state.mcts_tree.node_count() > 500_000
+        ):
+            t0 = time.perf_counter()
+            reset_compact = getattr(state.mcts_tree, "reset_compact", None)
+            if reset_compact is not None:
+                reset_compact()
+            else:  # pragma: no cover - compatibility with old extension builds
+                state.mcts_tree.reset()
+            for _i in range(len(state.root_ids)):
+                state.root_ids[_i] = -1
+            if on_timing is not None:
+                on_timing("tree_reset", time.perf_counter() - t0)
+
+        return AdvanceResult(progress=True)
 
 
 def play_batch(
@@ -375,185 +605,15 @@ def play_batch(
     max_steps = (
         2**62 if continuous else int(target) * (int(game.max_plies) // 2 + 2)
     )
-    t_net = 0.0
-    t_sf = 0.0
-
-    for _step in range(max_steps):  # skylos: ignore (loop var unused by convention)
-        if on_step is not None:
-            t0 = time.perf_counter()
-            on_step()
-            if on_timing is not None:
-                on_timing("check_model", time.perf_counter() - t0)
-        if stop_fn is not None and stop_fn():
-            # Continuous scheduling may have deferred a completed game while
-            # its label was still running. Preserve those finished games at a
-            # true teardown; only genuinely in-flight boards remain abandoned.
-            t0 = time.perf_counter()
-            if state.pending_sf_labels:
-                poll_async_sf_labels(state)
-            _finalize_completed_slots(
-                state,
-                all_samples=all_samples,
-                on_game_complete=on_game_complete,
-                batch_size=batch_size,
-                continuous=continuous,
-                target=target,
-                defer_pending_labels=False,
-            )
-            if on_timing is not None:
-                on_timing("finalize", time.perf_counter() - t0)
-            # Whatever is still in flight here is what a teardown historically
-            # threw away — the games, their plies, and above all the ~698k-node
-            # SF labels already bought for them. The hook gets its chance after
-            # the finished games are finalized, so it only ever sees genuinely
-            # in-flight boards.
-            if on_suspend is not None:
-                t0 = time.perf_counter()
-                on_suspend(state)
-                if on_timing is not None:
-                    on_timing("suspend_inflight", time.perf_counter() - t0)
-            break
-
-        if pause_fn is not None and pause_fn():
-            t0 = time.perf_counter()
-            while pause_fn() and not (stop_fn is not None and stop_fn()):
-                if on_step is not None:
-                    on_step()
-                time.sleep(0.25)
-            if on_timing is not None:
-                on_timing("pause_hold", time.perf_counter() - t0)
-            continue  # re-check stop_fn before scheduling any work
-
-        if state.pending_sf_labels:
-            t0 = time.perf_counter()
-            poll_async_sf_labels(state)
-            if on_timing is not None:
-                on_timing("sf_label_poll", time.perf_counter() - t0)
-
-        if state.pending_sf_moves:
-            t0 = time.perf_counter()
-            finish_pending_curriculum_moves(state, block=False)
-            if on_timing is not None:
-                on_timing("sf_finish_curriculum", time.perf_counter() - t0)
-
-        # Tablebase adjudication before classify_active_slots. Any TB-eligible
-        # game gets marked done; classify then skips it and finalize uses the
-        # stashed TB result. Runs at most once per game (state.tb_result_arr
-        # is the idempotency key).
-        # state.game (not closed-over session-start ``game``) — matches recycle.
-        if state.tb_probe is not None and state.game.syzygy_adjudicate:
-            t0 = time.perf_counter()
-            _tb_adjudicate_active_games(state)
-            if on_timing is not None:
-                on_timing("tb_adjudicate", time.perf_counter() - t0)
-
-        t0 = time.perf_counter()
-        net_idxs, sp_opp_idxs, cur_opp_idxs, all_done = state.classify_active_slots()
-        # Finish recovered requests before this game's next net/SF turn. This
-        # bounds recovery admission and keeps its backlog from crowding out a
-        # newly-created label. Other slots continue while the pool works.
-        recovering = {
-            p.slot for p in state.pending_sf_labels if getattr(p, "resumed", False)
-            and p.record in state.samples_per_game[p.slot]
-        }
-        net_idxs = [i for i in net_idxs if i not in recovering]
-        sp_opp_idxs = [i for i in sp_opp_idxs if i not in recovering]
-        cur_opp_idxs = [i for i in cur_opp_idxs if i not in recovering]
-        next_labels = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
-        if recovering and len(state.pending_sf_labels) + next_labels > state.batch_size * 8:
-            # Reserve admission for the entire next turn, including other
-            # games. Near-full recovery must not crowd out their new rows.
-            net_idxs, sp_opp_idxs, cur_opp_idxs = [], [], []
-        classified_count = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
-        if state.pending_sf_moves:
-            # Pending moves originate in cur_opp_idxs, and their boards do not
-            # advance into another partition until the future is removed.
-            cur_opp_idxs = [idx for idx in cur_opp_idxs if idx not in state.pending_sf_moves]
-        if on_timing is not None:
-            pending_excluded = (
-                classified_count - len(net_idxs) - len(sp_opp_idxs) - len(cur_opp_idxs)
-            )
-            runnable_count = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
-            on_timing("classify", time.perf_counter() - t0)
-            on_timing("slot_observations", 1.0)
-            on_timing("runnable_net_sum", float(len(net_idxs)))
-            on_timing("runnable_sp_opp_sum", float(len(sp_opp_idxs)))
-            on_timing("runnable_cur_opp_sum", float(len(cur_opp_idxs)))
-            on_timing(
-                "sf_pending_excluded_sum",
-                float(pending_excluded),
-            )
-            if pending_excluded > 0 and runnable_count > 0:
-                on_timing("sf_pending_with_runnable_steps", 1.0)
-            on_timing(
-                "games_in_flight_sum",
-                float(max(0, state.games_started - state.games_completed)),
-            )
-        if all_done:
-            break
-        if (
-            not net_idxs
-            and not sp_opp_idxs
-            and not cur_opp_idxs
-            and (state.pending_sf_moves or state.pending_sf_labels)
-        ):
-            t0 = time.perf_counter()
-            _wait_for_starved_sf(state, control_poll=on_step is not None)
-            if on_timing is not None:
-                on_timing("sf_block_starved", time.perf_counter() - t0)
-            t0 = time.perf_counter()
-            if state.pending_sf_labels:
-                poll_async_sf_labels(state)
-            _finalize_completed_slots(
-                state, all_samples=all_samples,
-                on_game_complete=on_game_complete,
-                batch_size=batch_size, continuous=continuous, target=target,
-                defer_pending_labels=continuous,
-            )
-            if on_timing is not None:
-                on_timing("finalize", time.perf_counter() - t0)
-            continue
-
-        net_dt, sf_dt = _run_step(
-            state, net_idxs=net_idxs, sp_opp_idxs=sp_opp_idxs,
-            cur_opp_idxs=cur_opp_idxs, stockfish=stockfish,
-            on_timing=on_timing, witness_stop_fn=stop_fn,
-        )
-        t_net += net_dt
-        t_sf += sf_dt
-
-        t0 = time.perf_counter()
-        if state.pending_sf_labels:
-            poll_async_sf_labels(state)
-        _finalize_completed_slots(
-            state, all_samples=all_samples,
-            on_game_complete=on_game_complete,
-            batch_size=batch_size, continuous=continuous, target=target,
-            defer_pending_labels=continuous,
-        )
-        if on_timing is not None:
-            on_timing("finalize", time.perf_counter() - t0)
-
-        # Reset tree when it grows unbounded. Live root_ids can't be preserved
-        # across reset, but the next ply's MCTS root-init rebuilds them with no
-        # algorithmic loss — only the few-ply tree-reuse window vanishes.
-        # Without this, continuous selfplay leaks tree nodes for the lifetime
-        # of the worker (the prior `all(rid < 0)` guard never fired with
-        # >1 slot since at least one root_id stays >= 0 at all times).
-        if (
-            state.mcts_tree is not None
-            and state.mcts_tree.node_count() > 500_000
-        ):
-            t0 = time.perf_counter()
-            reset_compact = getattr(state.mcts_tree, "reset_compact", None)
-            if reset_compact is not None:
-                reset_compact()
-            else:  # pragma: no cover - compatibility with old extension builds
-                state.mcts_tree.reset()
-            for _i in range(len(state.root_ids)):
-                state.root_ids[_i] = -1
-            if on_timing is not None:
-                on_timing("tree_reset", time.perf_counter() - t0)
+    domain = SelfplayDomain(
+        state, stockfish=stockfish, all_samples=all_samples,
+        batch_size=batch_size, continuous=continuous, target=target,
+        max_steps=max_steps, on_game_complete=on_game_complete,
+        on_timing=on_timing, on_step=on_step, on_suspend=on_suspend,
+        stop_fn=stop_fn, pause_fn=pause_fn,
+    )
+    GenerationSessionRunner().run(domain.advance)
+    t_net, t_sf = domain.t_net, domain.t_sf
 
     logging.getLogger("chess_anti_engine.worker").info(
         "play_batch timing: net=%.1fs sf=%.1fs (net %.0f%%, sf %.0f%%)",

@@ -463,6 +463,49 @@ def do_apply(shard_dir: Path, quar_dir: Path, verdicts: list[ShardVerdict],
     return 0
 
 
+def _restore_path(root: Path, name: Any) -> Path:
+    """One shard basename directly under the selected root, never an alias.
+
+    Restore is an offline operation: roots and entries must remain quiescent
+    throughout it. This preflight is not a lock against concurrent renames.
+    """
+    if (not isinstance(name, str) or not name.startswith("shard_")
+            or not name.endswith(LOCAL_SHARD_SUFFIX)
+            or any(char in name for char in ("/", "\\", ":", "\0"))):
+        raise ManifestError(f"invalid restore shard name: {name!r}")
+    path = root / name
+    try:
+        if path.is_symlink() or path.resolve().parent != root.resolve():
+            raise ManifestError(f"restore entry escapes or aliases its root: {path}")
+    except (OSError, ValueError) as exc:
+        raise ManifestError(f"cannot resolve restore entry {path}: {exc}") from exc
+    return path
+
+
+def _validate_restore_manifest(man: dict[str, Any], shard_dir: Path, quar_dir: Path) -> None:
+    """Validate the WHOLE journal before any move or reservation removal."""
+    records = man["shards"]
+    if not isinstance(records, list):
+        raise ManifestError("restore manifest 'shards' must be a list")
+    names: set[str] = set()
+    for rec in records:
+        if not isinstance(rec, dict):
+            raise ManifestError("restore shard record must be an object")
+        name = rec.get("name")
+        if not isinstance(name, str):
+            raise ManifestError(f"invalid restore shard name: {name!r}")
+        _restore_path(shard_dir, name)
+        _restore_path(quar_dir, name)
+        if name in names:
+            raise ManifestError(f"duplicate restore shard name: {name!r}")
+        names.add(name)
+    reserve_name = man.get("reservation_name")
+    if reserve_name is not None:
+        _restore_path(shard_dir, reserve_name)
+        if reserve_name not in names:
+            raise ManifestError("restore reservation must name a recorded shard")
+
+
 def _move_back(rec: dict[str, Any], shard_dir: Path, quar_dir: Path) -> str:
     """Restore one shard. Returns 'moved', 'skip', or a 'REFUSE: ...' reason.
 
@@ -470,8 +513,11 @@ def _move_back(rec: dict[str, Any], shard_dir: Path, quar_dir: Path) -> str:
     already correctly in place is skipped, while one whose bytes do not match
     the manifest stops the run rather than being silently accepted.
     """
-    name = str(rec["name"])
-    src, dest = quar_dir / name, shard_dir / name
+    try:
+        src = _restore_path(quar_dir, rec.get("name"))
+        dest = _restore_path(shard_dir, rec.get("name"))
+    except ManifestError as exc:
+        return f"REFUSE: {exc}"
     want = str(rec.get("sha256", ""))
     if dest.exists():
         got = digest(dest)
@@ -499,6 +545,7 @@ def do_restore(shard_dir: Path, quar_dir: Path) -> int:
     """
     try:
         man = read_manifest(quar_dir, shard_dir)
+        _validate_restore_manifest(man, shard_dir, quar_dir)
     except ManifestError as e:
         print(f"ERROR: {e}")
         return 2
@@ -518,7 +565,7 @@ def do_restore(shard_dir: Path, quar_dir: Path) -> int:
         skipped += res == "skip"
 
     if reserve_name:
-        dest = shard_dir / str(reserve_name)
+        dest = _restore_path(shard_dir, reserve_name)
         want = next((str(r.get("sha256", "")) for r in tail), "")
         if dest.exists():
             rows = shard_positions(dest)

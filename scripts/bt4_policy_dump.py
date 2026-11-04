@@ -682,19 +682,26 @@ def legal_move_probabilities(
     if int((idx < 0).sum()):
         missing = [move.uci() for move, i in zip(moves, idx.tolist(), strict=True) if i < 0]
         raise RuntimeError(f"{board.fen()}: no LC0 policy slot for {missing}")
-    logits = policy_row[idx].astype(np.float64)
+    return moves, _legal_probabilities_from_indices(board.fen(), policy_row, idx)
+
+
+def _legal_probabilities_from_indices(
+    fen: str, policy_row: np.ndarray, indices: np.ndarray,
+) -> np.ndarray:
+    """Canonical float64 legal softmax, also used by owned root snapshots."""
+    logits = policy_row[indices].astype(np.float64)
     # -inf is an intentional mask; NaN/+inf must not become plausible labels.
     if (
         np.isnan(logits).any()
         or np.isposinf(logits).any()
         or not np.isfinite(logits).any()
     ):
-        raise RuntimeError(f"{board.fen()}: invalid legal policy logits")
+        raise RuntimeError(f"{fen}: invalid legal policy logits")
     probs = np.exp(logits - logits.max())
     total = probs.sum()
     if not np.isfinite(total) or total <= 0.0:
-        raise RuntimeError(f"{board.fen()}: degenerate policy row (sum={total})")
-    return moves, probs / total
+        raise RuntimeError(f"{fen}: degenerate policy row (sum={total})")
+    return probs / total
 
 
 
@@ -738,9 +745,20 @@ def compact_legal_policy(
     indices = np.asarray(
         [compact_index_for_move(board, move) for move in moves], dtype=np.int64,
     )
+    dense = _dense_legal_policy(
+        probabilities, indices, row_label=row_label, dense_out=dense_out,
+    )
+    return moves, probabilities, dense
+
+
+def _dense_legal_policy(
+    probabilities: np.ndarray, indices: np.ndarray, *, row_label: str = "position",
+    dense_out: np.ndarray | None = None,
+) -> np.ndarray:
+    """Canonical float32 compact scatter for both public and prepared roots."""
     if (
-        len(indices) != len(moves)
-        or len(set(indices.tolist())) != len(moves)
+        len(indices) != len(probabilities)
+        or len(set(indices.tolist())) != len(indices)
         or bool(np.any(indices < 0))
         or bool(np.any(indices >= COMPACT_POLICY_SIZE))
     ):
@@ -758,7 +776,7 @@ def compact_legal_policy(
         dense = dense_out
         dense.fill(0.0)
     dense[indices] = probabilities
-    return moves, probabilities, dense
+    return dense
 
 
 def entropy_nats(probs: np.ndarray) -> float:

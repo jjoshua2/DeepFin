@@ -33,7 +33,7 @@ from chess_anti_engine.replay import buffer as buffer_mod
 from chess_anti_engine.replay.buffer import ArrayReplayBuffer
 from chess_anti_engine.replay.shard import history_rep_fix_from_arrays
 
-PLANES = 8
+PLANES = 112  # Storage admission width; marker identities remain in the same planes.
 POLICY = 1858
 
 

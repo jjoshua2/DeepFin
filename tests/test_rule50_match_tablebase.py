@@ -134,7 +134,7 @@ class FakeOpenTablebase:
 
 def test_strict_open_capacity_components_and_close(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     FakeOpenTablebase.instances.clear()
-    monkeypatch.setattr(tbmod.chess.syzygy, "Tablebase", FakeOpenTablebase)
+    monkeypatch.setattr(tbmod, "StrictMatchTablebase", FakeOpenTablebase)
     wdl, dtz, empty, broken = (tmp_path / name for name in ("wdl", "dtz", "empty", "broken"))
     for directory in (wdl, dtz, empty, broken):
         directory.mkdir()

@@ -422,11 +422,11 @@ def test_prepare_failure_retains_earlier_terminal_event_for_retry(
 ) -> None:
     checkmated = chess.Board("7k/6Q1/5K2/8/8/8/8/8 b - - 0 1")
     stepper, _rngs = make_theoretical_stepper({0: checkmated, 1: chess.Board()}, max_plies=1)
-    original_encode = policy.encode_cboard
+    original_encode = policy.encode_cboard_batch
     calls = 0
 
     def fail_once(
-        cb: CBoard, *, input_history_encoding: str | None = None,
+        boards: list[CBoard], *, input_history_encoding: str | None = None,
         input_extra_features: str | None = None,
     ) -> np.ndarray:
         nonlocal calls
@@ -434,17 +434,18 @@ def test_prepare_failure_retains_earlier_terminal_event_for_retry(
         if calls == 1:
             raise RuntimeError("injected later encode failure")
         return original_encode(
-            cb, input_history_encoding=input_history_encoding,
+            boards, input_history_encoding=input_history_encoding,
             input_extra_features=input_extra_features,
         )
 
-    monkeypatch.setattr(policy, "encode_cboard", fail_once)
+    monkeypatch.setattr(policy, "encode_cboard_batch", fail_once)
     with pytest.raises(RuntimeError, match="injected later encode failure"):
         stepper.prepare_roots()
     assert stepper.counts.games_completed == 0
     assert stepper.counts.rows_emitted == 0
 
     batch, finalized = stepper.prepare_roots()
+    assert calls == 2
     assert batch is not None
     assert [root.slot_id for root in batch.roots] == [1]
     assert finalized == (

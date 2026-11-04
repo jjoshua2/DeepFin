@@ -34,6 +34,7 @@ import chess.syzygy
 import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.strict_match_tablebase import StrictMatchTablebase
 import contextlib
 
 _log = logging.getLogger(__name__)
@@ -94,7 +95,7 @@ def open_strict_match_tablebase(
         if directory in resolved:
             raise MatchTablebaseError(f"duplicate match Syzygy directory: {part}")
         resolved.append(directory)
-    tablebase = chess.syzygy.Tablebase()
+    tablebase = StrictMatchTablebase()
     try:
         for directory in resolved:
             before = len(tablebase.wdl) + len(tablebase.dtz)
@@ -144,8 +145,13 @@ def rule50_match_status(
     if chess.popcount(board.occupied) > max_pieces or board.castling_rights:
         return None
     try:
-        wdl = int(tablebase.probe_wdl(board))
-        dtz = int(tablebase.probe_dtz(board))
+        if isinstance(tablebase, StrictMatchTablebase):
+            wdl, dtz = tablebase.probe_wdl_dtz(board)
+        else:
+            # Existing caller-owned test/legacy handles retain their interface;
+            # only the strict opener supplies the shared serialized contract.
+            wdl = int(tablebase.probe_wdl(board))
+            dtz = int(tablebase.probe_dtz(board))
     except (KeyError, IndexError, chess.syzygy.MissingTableError) as exc:
         raise MatchTablebaseError(f"missing eligible match Syzygy probe: {board.fen()}") from exc
     if wdl not in (-2, -1, 0, 1, 2):
