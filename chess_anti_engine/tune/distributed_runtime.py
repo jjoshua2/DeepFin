@@ -1860,6 +1860,8 @@ def _ingest_train_arrays(
         return
     _record_replay_array_metrics(shard_arrs, train_mask, summary)
     buf.add_many_arrays(slice_array_batch(shard_arrs, np.flatnonzero(train_mask)))
+    # Count submitted training rows, excluding holdout and independent of eviction.
+    summary["positions_replay_added"] += int(np.count_nonzero(train_mask))
   # Per-sample is_selfplay tag count, training rows only. Shards written
   # before this field existed won't carry it — silently skip.
     if "has_is_selfplay" not in shard_arrs:
@@ -1926,7 +1928,6 @@ def _process_shard(
         holdout_frac=holdout_frac, holdout_frozen=holdout_frozen,
         rng=rng, summary=summary,
     )
-    summary["positions_replay_added"] += m["positions"]
 
     if model_sha in accepted_model_shas:
         for key, val in m.items():
