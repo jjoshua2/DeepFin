@@ -25,9 +25,18 @@ BUN=bun python -m native.bend_engine.standalone.proofs.generator_contract.qualif
 ```
 
 The new GitHub workflow uses the existing compiler installer and pin checker.
-The complete hosted qualifier runs in a transient cgroup limited to two CPU
-cores of quota, 6 GiB RAM, no swap and 1,100 seconds. The positive compiler child
-has a 600-second wall limit; each of two controls has 180 seconds.
+The positive compiler child defaults to an 86,400-second (24-hour) wall limit.
+Use `--consumer-timeout-seconds` for an explicit job override. A time-based warning
+is emitted after one hour; it reports elapsed time only and does not imply semantic
+progress. The checker log is retained as an artifact; exceeding the 16 MiB output
+threshold terminates qualification. The report includes the last 1 MiB and captured-output digest, and refuses to classify truncated output as success or semantic rejection.
+Each of two semantic controls retains its explicit 180-second wall limit.
+
+The hosted workflow retains its existing 22-minute job limit and 1,100-second
+cgroup runtime ceiling, with 200% CPU quota, 6 GiB RAM and no swap. These outer
+limits bind before the positive child's 24-hour default; a longer child timeout
+does not extend the hosted job. Any separately admitted local run remains subject
+to its own outer CPU, memory and wall limits. No larger retry follows automatically.
 These are qualification resource bounds, not theorem premises. Timeout,
 out-of-memory, signals, unsafe output, parser/import/ownership errors or a missing
 report are failures, never a proof or a successful negative control.
@@ -59,3 +68,55 @@ checker output. Its receipt is NOT_COMPLETED: zero accepted laws and neither
 semantic control executed. See the [dated failure record](../../../../../docs/experiments/2026-10-01-bend-generator-contract.md).
 A timeout is not a theorem rejection or proof of falsehood. No larger retry or
 checker/runtime change follows automatically.
+
+## Source reconstruction boundary (2026-10-14)
+
+This four-file wrapper reconstruction changes no Bend theorem, table, count or
+training source. The default and explicit integer override reach the positive
+checker call; the controls retain 180 seconds and compiler identity calls retain
+30 seconds. A parsed nonpositive override invalidates an earlier PASS report
+before rejection, and the direct invoke API rejects nonfinite wall bounds before
+opening a log or creating a child. The integer CLI parser does not admit NaN or
+infinity strings. Host propagation and boundary regression sources use inert
+child receipts; they are not compiler qualification or evidence of a new theorem.
+No long proof or runtime validation was run while preparing this source packet.
+The hosted runner ceiling is documented at
+https://docs.github.com/en/actions/reference/limits.
+
+## Shared capture failure envelope
+
+`process_exit_code` retains the unmodified child return code. `exit_code` is
+qualification status: it is `None` for an elapsed timeout, output-limit breach
+or a truncated report tail. The separate `timed_out`, `output_limit_exceeded`
+and `output_truncated` fields preserve the actual reasons; a capture failure
+is not falsely labelled a timeout. Full retained logs and the observed-output
+digest remain available. This extends the existing timeout envelope so unchanged
+callers requiring exact exit 0 or 1 cannot credit an incomplete diagnostic.
+
+The tracked shared callers are the closed-builder wrapper, castle projection,
+king-away, bitboard inventory, destination factorization and forward attacks.
+The inert regression sources call their real unchanged acceptance functions with
+clean receipts, greater-than-1-MiB diagnostics that hide a forbidden prefix, and
+output-limit failures. This does not carry forward historical proof/count source
+qualification: their helper-source bindings changed and remain tied to the old
+revision. No castling, count, theorem or unpublished owner source is adopted.
+
+## Persistent log ownership and completion
+
+Each main invocation creates a private directory under its report parent and
+records its actual persistent checker log path before starting the child. Distinct
+report files in the same directory remain safe to run concurrently. Supplied
+invoke log paths are created exclusively; existing evidence is never overwritten.
+Temporary logs keep their original owned descriptor. Tail and retained-size
+classification read the same open descriptor after the drain reaches EOF and
+joins, never by reopening a potentially replaced pathname.
+
+A parent that exits while another writer retains stdout has not sealed its output.
+If the pipe completion grace expires, cleanup is forced and `output_incomplete`
+is true; qualification `exit_code` is `None`, even if the parent exited cleanly.
+The actual parent status remains in `process_exit_code`; `timed_out` is only set
+when the wall deadline elapsed. An uncloseable pipe or failed capture raises and
+never produces a successful qualification. Process and reader cleanup waits are
+bounded; a failed drain cannot keep the interpreter alive by a non-daemon thread.
+The inert host-pipe control and distinct-report control do not create proof
+children or send real signals. Runtime tests remain unexecuted in this packet.

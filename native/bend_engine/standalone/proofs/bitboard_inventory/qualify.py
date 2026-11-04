@@ -41,7 +41,7 @@ def check_inherited_destination(compiler: Path, report_path: Path, report: dict)
     try:
         try:
             result = subprocess.run(
-                [sys.executable, "-m",
+                [sys.executable, "-S", "-m",
                  "native.bend_engine.standalone.proofs.destination_factorization.qualify",
                  str(compiler.resolve()), "--report", str(receipt)],
                 cwd=REPO, capture_output=True, text=True, timeout=900, check=False,
@@ -179,7 +179,7 @@ def main() -> None:
         before = identities()
         report["source_sha256s"] = before
         report["source_identity_count"] = len(before)
-        prior_path = REPO / "docs/experiments/evidence/bend-king-away/source.json"
+        prior_path = REPO / "docs/experiments/evidence/bend-king-away-pr994-v1/source.json"
         prior = json.loads(prior_path.read_text())
         inherited = prior["source_sha256s"]
         report["prior_king_away_receipt_sha256"] = hashlib.sha256(prior_path.read_bytes()).hexdigest()
