@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Repair a schema-1 corpus (bare-FEN rows) to schema 2 (rows with their history).
 
+INPUT SCOPE. This tool accepts legacy manifest + progress inputs without a
+``summary.json`` only. Summary-bearing inputs are refused in every mode rather
+than replacing their authoritative inventory with a possibly stale progress subset.
+
 WHY.  A schema-1 row is a bare FEN.  The deriver encodes it with history slot 0
 filled and slots 1..7 plus every repetition plane ZERO, an input distribution
 live play never produces (ledger 2026-09-01: the champion flips 46.5% of its
@@ -375,6 +379,16 @@ def opening_config_from_manifest(
 # -- shard inventory ------------------------------------------------------------
 
 
+def refuse_summary_input(in_dir: Path) -> None:
+    """This legacy repair cannot replace a completed corpus's authoritative inventory."""
+    summary_path = in_dir / corpus.SUMMARY_NAME
+    if summary_path.exists():
+        raise RepairError(
+            f"{summary_path} exists; this tool repairs legacy manifest + progress "
+            "inputs without summary.json only, in both production and audit modes",
+        )
+
+
 def corpus_inventory(
     in_dir: Path,
 ) -> tuple[tuple[tuple[str, int], ...], tuple[str, ...], derive.ProgressInventory]:
@@ -390,6 +404,7 @@ def corpus_inventory(
     exists for is manifest + progress files (none ended with a
     ``summary.json``), and the deriver reads them the same way.
     """
+    refuse_summary_input(in_dir)
     try:
         inventory = derive.read_progress_inventory(in_dir)
     except derive.CorpusIntegrityError as exc:
@@ -1783,12 +1798,13 @@ def run(
     """The whole repair.  ``searcher_factory`` is the test seam: a scripted
     engine in place of Stockfish, which also skips the binary's sha256 and
     tablebase checks (there is no binary) and runs in-process."""
-    # ⚑ FIRST, before the book warm and before any CBoard exists: the
+    in_dir = Path(args.in_dir)
+    refuse_summary_input(in_dir)
+    # After input admission, before the book warm and before any CBoard exists: the
     # generator's own regime switch and its precondition (KEY_HISTORY_REP_FIX).
     corpus.apply_history_rep_fix()
     corpus.require_history_rep_fix()
     refuse_in_production(args)
-    in_dir = Path(args.in_dir)
     manifest_path = in_dir / corpus.MANIFEST_NAME
     if not manifest_path.exists():
         raise RepairError(f"{manifest_path} does not exist; the repair reads the run's config from it")
