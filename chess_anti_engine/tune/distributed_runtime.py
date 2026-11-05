@@ -511,16 +511,6 @@ def _seed_dole_generation_for_iteration(
     gate_path = Path(server_root) / "seed_dole_gate.json"
     winners_path = gate_path.with_suffix(gate_path.suffix + ".winners.json")
 
-    def _find(mapping: dict, tid: str) -> tuple[str | None, object | None]:
-        if tid in mapping:
-            return tid, mapping.get(tid)
-        if tid:
-            for k, v in mapping.items():
-                ks = str(k)
-                if ks == tid or ks.endswith(tid) or tid.endswith(ks):
-                    return ks, v
-        return None, None
-
     def _stored_int(value: object) -> int | None:
         if not isinstance(value, (str, int, float)):
             return None
@@ -535,11 +525,13 @@ def _seed_dole_generation_for_iteration(
         gate = json.loads(gate_path.read_text(encoding="utf-8"))
         winners = json.loads(winners_path.read_text(encoding="utf-8"))
         tid = str(trial_id or "").strip()
-        gate_key, last = _find(dict(gate), tid)
+        # The server keys both files by this exact normalized trial ID.
+        # The empty key is the default lane, never an alias for a named trial.
+        last = dict(gate).get(tid)
         if _stored_int(last) != int(training_iteration):
             return None
-        winner_key, winner = _find(dict(winners), str(gate_key or tid))
-        if winner_key is None or not isinstance(winner, dict):
+        winner = dict(winners).get(tid)
+        if not isinstance(winner, dict):
             return None
         if _stored_int(winner.get("iteration")) != int(training_iteration):
             return None
