@@ -107,9 +107,13 @@ class EncodedEvalCacheStats:
 def _coerce_encoded_batch(x: np.ndarray) -> np.ndarray:
     if x.ndim != 4:
         raise ValueError(f"expected encoded batch shape (B,C,H,W), got {x.shape!r}")
-    if x.dtype is np.dtype(np.float32) and x.flags["C_CONTIGUOUS"]:
+    # uint16 encodes BF16 bits on the dense transport too. Numeric conversion
+    # would turn BF16 1.0 (0x3f80) into float32 16256.0 and collide with that
+    # distinct numeric input in the cache key.
+    dtype = np.uint16 if x.dtype == np.uint16 else np.float32
+    if x.dtype == dtype and x.flags["C_CONTIGUOUS"]:
         return x
-    return np.ascontiguousarray(x, dtype=np.float32)
+    return np.ascontiguousarray(x, dtype=dtype)
 
 
 def _encoded_row_key(
@@ -128,9 +132,8 @@ def _encoded_row_key(
 def _coerce_compact_batch(x: np.ndarray) -> np.ndarray:
     """Contiguity-only coercion: the compact transport also carries bf16 bits.
 
-    ``_coerce_encoded_batch``'s float32 cast would silently reinterpret a
-    uint16 bf16-bits batch, so the compact path keeps the caller's dtype and
-    puts it in the key instead.
+    The compact path keeps the caller's dtype and puts it in the key, just
+    as the dense path preserves uint16 BF16 bits.
     """
     if x.ndim != 4:
         raise ValueError(f"expected encoded batch shape (B,C,H,W), got {x.shape!r}")
@@ -265,7 +268,7 @@ class EncodedEvalCache:
 
         miss_values: dict[_CacheKey, _CacheValue] = {}
         if miss_rows:
-            miss_batch = np.ascontiguousarray(np.stack(miss_rows, axis=0), dtype=np.float32)
+            miss_batch = np.ascontiguousarray(np.stack(miss_rows, axis=0), dtype=xb.dtype)
             if miss_rels:
                 pol_miss, wdl_miss = self._inner.evaluate_encoded(
                     miss_batch,
