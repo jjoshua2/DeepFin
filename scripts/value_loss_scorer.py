@@ -570,7 +570,10 @@ def contrast(
     """``mean(column | lost) - mean(column | rest)``, bootstrapped over GAMES.
 
     Both strata are resampled in the same bootstrap draw, so the CI is on the
-    difference rather than on two independently-resampled means.
+    difference rather than on two independently-resampled means. Return an
+    unavailable CI when fewer than two games or draws exist, or any draw
+    lacks a stratum. Dropping undefined draws conditions the interval on
+    coverage; it does not estimate the declared game-bootstrap uncertainty.
     """
     rng = np.random.default_rng(seed)
     a, _, _ = _per_row_errors(lost, q_lost, slope=slope, draw_width_cp=draw_width_cp)
@@ -593,15 +596,17 @@ def contrast(
     # bootstrap is one matrix index. Grouping the rows per draw instead is
     # O(n_boot x games x rows) and turns a full-window read into minutes.
     games = np.unique(np.concatenate([ga, gb]))
+    if games.size < 2 or n_boot < 2:
+        return Contrast(column=column, delta=delta, ci=(float("nan"), float("nan")))
     sum_a, cnt_a = _per_game_sums(va, ga, games)
     sum_b, cnt_b = _per_game_sums(vb, gb, games)
-    draws = rng.integers(0, games.size, size=(max(1, n_boot), games.size))
-    with np.errstate(invalid="ignore", divide="ignore"):
-        mean_a = sum_a[draws].sum(axis=1) / cnt_a[draws].sum(axis=1)
-        mean_b = sum_b[draws].sum(axis=1) / cnt_b[draws].sum(axis=1)
-    boot = mean_a - mean_b
-    boot = boot[np.isfinite(boot)]
-    if boot.size < 2:
+    draws = rng.integers(0, games.size, size=(n_boot, games.size))
+    count_a = cnt_a[draws].sum(axis=1)
+    count_b = cnt_b[draws].sum(axis=1)
+    if np.any(count_a == 0) or np.any(count_b == 0):
+        return Contrast(column=column, delta=delta, ci=(float("nan"), float("nan")))
+    boot = sum_a[draws].sum(axis=1) / count_a - sum_b[draws].sum(axis=1) / count_b
+    if not np.isfinite(boot).all():
         return Contrast(column=column, delta=delta, ci=(float("nan"), float("nan")))
     return Contrast(
         column=column, delta=delta,
