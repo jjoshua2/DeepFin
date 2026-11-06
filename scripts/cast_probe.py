@@ -505,23 +505,24 @@ def price_the_tail(
     # ⚑ Bootstrap: resample rows and REBUILD the calibration on every draw, so
     # the interval carries bucket sampling noise and monotone-segment selection
     # -- not merely the outside-set mean against knots treated as exact.
+    # Preserve replacement multiplicities in both estimates. This remains a
+    # row bootstrap, not a game-clustered uncertainty estimate.
     idx_all = np.flatnonzero(sel)
     draws: list[float] = []
     for _ in range(N_BOOT):
         pick = rng.integers(0, idx_all.size, idx_all.size)
-        sub = np.zeros_like(sel)
         chosen = idx_all[pick]
-        sub[chosen] = True
-        bx, by, _t = calibration(arr, sub)
+        sample = {name: arr[name][chosen] for name in ("regret_played", "adv", "in_multipv")}
+        bx, by, _t = calibration(sample, np.ones(chosen.size, dtype=bool))
         if bx.size < 2:
             continue
         bxm, bym = monotone_prefix(bx, by)
         if bxm.size < 2:
             continue
-        b_out = sub & ~arr["in_multipv"]
+        b_out = ~sample["in_multipv"]
         if int(b_out.sum()) < MIN_BUCKET:
             continue
-        draws.append(invert(bxm, bym, float(arr["adv"][b_out].mean())) * SF_OWN_REGRET_CAP_CP)
+        draws.append(invert(bxm, bym, float(sample["adv"][b_out].mean())) * SF_OWN_REGRET_CAP_CP)
     if len(draws) >= N_BOOT // 4:
         lo_cp = float(np.percentile(draws, 2.5))
         hi_cp = float(np.percentile(draws, 97.5))
