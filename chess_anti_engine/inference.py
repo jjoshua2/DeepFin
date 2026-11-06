@@ -3058,13 +3058,10 @@ class SlotInferenceClient:
         mismatch is NOT in that class: magic is written last and is the publish
         barrier, so seeing valid magic means the layout id beside it is final.
 
-        The size branch is marked settling too, but note it does NOT actually
-        cover the ``ftruncate`` window: ``SharedMemory(name=..., create=False)``
-        mmaps the fd and raises ``ValueError: cannot mmap an empty file`` before
-        this function runs, and ``_connect`` only catches ``FileNotFoundError``
-        (unchanged from before this guard existed). In practice the size branch
-        fires only for a genuinely undersized segment -- an OLD broker serving a
-        NEW client -- where retrying to the deadline is merely slow, not wrong.
+        The zero-length ``shm_open`` -> ``ftruncate`` window raises from the
+        SharedMemory constructor before validation; ``_connect`` retries that
+        specific empty-map error within the same deadline. The size branch
+        below handles a nonempty undersized segment, which still cannot be read.
         """
         want = self._layout.total_bytes
         if int(shm.size) < want:
@@ -3104,7 +3101,12 @@ class SlotInferenceClient:
                 return slot
             try:
                 shm = SharedMemory(name=self._slot_name, create=False)
-            except FileNotFoundError:
+            except (FileNotFoundError, ValueError) as exc:
+                # POSIX publishes the name before the creator sizes the segment.
+                # Only that empty-map ValueError is transient; preserve unrelated
+                # ValueErrors and all access/resource errors instead of hiding them.
+                if isinstance(exc, ValueError) and str(exc) != "cannot mmap an empty file":
+                    raise
                 self._disconnect()
                 if time.monotonic() >= deadline:
                     raise TimeoutError(
