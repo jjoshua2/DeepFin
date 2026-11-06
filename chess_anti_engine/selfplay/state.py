@@ -224,6 +224,7 @@ class _NetRecord:
         "relations",
         "sample_weight",
         "search_wdl_est",
+        "sf_eval_witness",
         "sf_label_meta",
         "sf_legal_mask",
         "sf_move_index",
@@ -279,6 +280,7 @@ class _NetRecord:
     sf_wdl_original: np.ndarray | None
     sf_multipv_raw: np.ndarray | None
     sf_label_meta: np.ndarray | None
+    sf_eval_witness: np.ndarray | None
     sf_played_move_index: int | None
     sf_played_rank: int | None
     sf_played_regret: float | None
@@ -347,6 +349,7 @@ class _NetRecord:
         self.sf_wdl_original = None
         self.sf_multipv_raw = None
         self.sf_label_meta = None
+        self.sf_eval_witness = None
         self.sf_played_move_index = None
         self.sf_played_rank = None
         self.sf_played_regret = None

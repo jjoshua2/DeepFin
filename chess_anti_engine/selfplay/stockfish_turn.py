@@ -37,6 +37,7 @@ from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.wdl import cp_to_wdl as _cp_to_wdl
 from chess_anti_engine.stockfish.wdl import mate_to_effective_cp as _mate_to_effective_cp
 from chess_anti_engine.replay.shard import SF_CP_SENTINEL, SF_MULTIPV_RAW_MAX
+from chess_anti_engine.replay.sf_eval_provenance import make_sf_eval_witness, sf_eval_witness_mismatch
 
 
 from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax_np
@@ -186,14 +187,17 @@ def _sf_wdl_is_wellformed(wdl: np.ndarray | None) -> bool:
 
 
 def _sf_eval_pv_orphaned(rec) -> bool:
-    """Does the record's stored SF eval disagree with its stored top PV?
+    """Does the stored SF eval disagree with its evidence or fail integrity?
 
     Reads the STORED ``sf_label_meta`` / ``sf_multipv_raw``, never a
     recomputation — the same rule ``no_legal_pv`` follows, so this live counter
     and ``TrainMetrics.sf_eval_pv_orphan_frac`` are one measurement rather than
     two descriptions that can drift. False when either block is absent: an
     unmeasurable row is not a clean one, and the count of measurable rows is
-    reported next to the rate for exactly that reason.
+    reported next to the rate for exactly that reason. New records use the
+    separate exact-root witness, allowing legitimate bounded reranking while
+    checking scalar, identity and policy-row integrity. Older records retain
+    the top-PV comparison unchanged.
     """
     raw = getattr(rec, "sf_multipv_raw", None)
     meta = getattr(rec, "sf_label_meta", None)
@@ -205,6 +209,9 @@ def _sf_eval_pv_orphaned(rec) -> bool:
         return False
     if meta_arr.ndim != 1 or meta_arr.shape[0] < 4 or int(raw_arr[0, 0]) < 0:
         return False
+    witness = getattr(rec, "sf_eval_witness", None)
+    if witness is not None:
+        return sf_eval_witness_mismatch(np.asarray(witness), meta_arr, raw_arr)
     return (
         int(raw_arr[0, 1]) != int(meta_arr[2])
         or int(raw_arr[0, 2]) != int(meta_arr[3])
@@ -263,7 +270,7 @@ def _report_sf_label_health(
     counter and the offline shard check are the same measurement by
     construction rather than by agreement between two descriptions of one.
     ``eval_pv_orphan`` follows the same rule against the STORED
-    ``sf_label_meta`` / ``sf_multipv_raw`` pair.
+    ``sf_label_meta`` / ``sf_multipv_raw`` pair and optional root witness.
 
     ``failed`` participates in the escalation deliberately: post-fix an
     abandoned search is the incident itself, and the whole point of the repair
@@ -337,9 +344,9 @@ def _report_sf_label_health(
         "checked) wdl_degenerate=%d wdl_orphaned=%d — no_legal_pv above %.3f "
         "means Stockfish is answering a DIFFERENT position than the one "
         "queried (a desynced engine), so the whole SF label block on those "
-        "rows is detached from its row; eval_pv_orphan above %.3f says the "
-        "same thing about the VALUE half (sf_wdl, 0.45 of the value target) "
-        "on rows the no_legal_pv check PASSES",
+        "rows is detached from its row; eval_pv_orphan above %.3f signals "
+        "inconsistent or invalid VALUE-half evidence on rows the no_legal_pv "
+        "check PASSES (legacy rows may include benign reranks)",
         counts["calls"], counts["labelled"], counts["no_legal_pv"], no_pv_rate,
         counts["bestmove_illegal"], illegal_rate, counts["failed"],
         counts["eval_pv_orphan"], orphan_rate, counts["eval_pv_checked"],
@@ -1033,9 +1040,29 @@ def _collect_sf_label_meta(res) -> np.ndarray:
     )
 
 
+def _collect_sf_eval_witness(
+    res, *, turn: bool, legal_set: set[int], raw: np.ndarray | None,
+) -> np.ndarray | None:
+    witness = getattr(res, "eval_witness", None)
+    if witness is None:
+        return None
+    try:
+        action = uci_to_policy_index(witness.move_uci, turn)
+    except (IndexError, ValueError):
+        action = -1
+    if action not in legal_set:
+        action = -1
+    # Preserve invalid identity as evidence of an orphan, rather than dropping
+    # the field and permitting a coincidental legacy top-PV score match.
+    return make_sf_eval_witness(action, witness.cp, witness.mate, raw)
+
+
 def _stamp_sparse_sf_labels(rec, res, *, turn: bool, legal_set: set[int]) -> None:
     rec.sf_multipv_raw = _collect_sparse_pv_rows(res, turn=turn, legal_set=legal_set)
     rec.sf_label_meta = _collect_sf_label_meta(res)
+    rec.sf_eval_witness = _collect_sf_eval_witness(
+        res, turn=turn, legal_set=legal_set, raw=rec.sf_multipv_raw,
+    )
 
 
 def _collect_sf_pv_candidates(

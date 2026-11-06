@@ -86,6 +86,7 @@ class ReplaySample:
     sf_policy_target: np.ndarray | None = None  # (POLICY_SIZE,) float32 SF reply distribution
     sf_multipv_raw: np.ndarray | None = None  # (SF_MULTIPV_RAW_MAX, 5) int16 raw MultiPV rows
     sf_label_meta: np.ndarray | None = None   # (6,) int32 record-level SF eval metadata
+    sf_eval_witness: np.ndarray | None = None  # (8,) int32 exact root and policy provenance v1
     search_wdl: np.ndarray | None = None  # (3,) float32 — MCTS-improved value head prediction
     future_sf_regret_sum: float | None = None  # cumulative future SF reply regret in expected-score units
     future_sf_regret_d95: float | None = None

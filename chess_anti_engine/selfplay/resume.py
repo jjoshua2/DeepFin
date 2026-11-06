@@ -43,6 +43,7 @@ import json
 import logging
 import time
 import uuid
+import zlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -54,6 +55,7 @@ import numpy as np
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.moves import POLICY_SIZE, index_to_move
 from chess_anti_engine.selfplay.state import SelfplayState, _NetRecord
+from chess_anti_engine.replay.sf_eval_provenance import SF_EVAL_WITNESS_LEN, copy_sf_eval_witness
 
 if TYPE_CHECKING:
     from chess_anti_engine.encoding._lc0_ext import CBoard
@@ -350,15 +352,31 @@ def _pending_original_payload(res: Any) -> dict[str, Any]:
             "cp": row.cp, "mate": row.mate,
         }
 
+    witness = getattr(res, "eval_witness", None)
+    witness_data = None if witness is None else {
+        "move_uci": witness.move_uci, "cp": witness.cp, "mate": witness.mate,
+    }
+    pvs = [{**score(pv), "move_uci": pv.move_uci} for pv in res.pvs]
+    if witness_data is not None:
+        witness_data["checksum"] = _pending_witness_checksum(witness_data, pvs)
     return {
+        "eval_witness": witness_data,
         **score(res), "bestmove_uci": res.bestmove_uci,
         "nodes": res.nodes, "depth": res.depth,
-        "pvs": [{**score(pv), "move_uci": pv.move_uci} for pv in res.pvs],
+        "pvs": pvs,
     }
 
 
+def _pending_witness_checksum(data: dict[str, Any], pvs: list[dict[str, Any]]) -> int:
+    values = {key: data[key] for key in ("move_uci", "cp", "mate")}
+    # Otherwise a changed resumed PV can receive a fresh policy CRC when the
+    # restored result is attached to its record.
+    values["pvs"] = pvs
+    return zlib.crc32(json.dumps(values, sort_keys=True, separators=(",", ":")).encode("utf-8")) & 0x7FFFFFFF
+
+
 def _pending_original_result(data: dict[str, Any]) -> Any:
-    from chess_anti_engine.stockfish.uci import StockfishPV, StockfishResult
+    from chess_anti_engine.stockfish.uci import StockfishEvalWitness, StockfishPV, StockfishResult
 
     def wdl(row: dict[str, Any]) -> np.ndarray | None:
         arr = row["wdl"]
@@ -369,7 +387,22 @@ def _pending_original_result(data: dict[str, Any]) -> Any:
             raise ResumeStateError("bad_pending_labels", "invalid shallow WDL")
         return vec
 
+    witness_data = data.get("eval_witness")
+    witness = None
+    if witness_data is not None:
+        if not isinstance(witness_data, dict) or not isinstance(witness_data.get("move_uci"), str):
+            raise ResumeStateError("bad_pending_labels", "invalid evaluation witness")
+        cp, mate = witness_data.get("cp"), witness_data.get("mate")
+        if (cp is None) == (mate is None) or any(type(v) is not int for v in (cp, mate) if v is not None):
+            raise ResumeStateError("bad_pending_labels", "invalid evaluation witness score")
+        if (cp, mate) != (data["cp"], data["mate"]):
+            raise ResumeStateError("bad_pending_labels", "evaluation witness disagrees with root")
+        if (type(witness_data.get("checksum")) is not int
+                or witness_data["checksum"] != _pending_witness_checksum(witness_data, data["pvs"])):
+            raise ResumeStateError("bad_pending_labels", "evaluation witness integrity failure")
+        witness = StockfishEvalWitness(witness_data["move_uci"], cp, mate)
     return StockfishResult(
+        eval_witness=witness,
         bestmove_uci=data["bestmove_uci"], wdl=wdl(data),
         cp=data["cp"], mate=data["mate"], nodes=data["nodes"], depth=data["depth"],
         pvs=[StockfishPV(pv["move_uci"], wdl(pv), cp=pv["cp"], mate=pv["mate"])
@@ -492,6 +525,11 @@ def _game_payload(state: SelfplayState, i: int) -> dict[str, Any]:
         width=_SF_LABEL_META_LEN, dtype=np.dtype(np.int32),
     )
     arrays["sf_label_meta_present"], arrays["sf_label_meta"] = pres, vals
+    pres, vals = _opt_fixed(
+        [copy_sf_eval_witness(getattr(r, "sf_eval_witness", None), r.sf_multipv_raw) for r in records],
+        width=SF_EVAL_WITNESS_LEN, dtype=np.dtype(np.int32),
+    )
+    arrays["sf_eval_witness_present"], arrays["sf_eval_witness"] = pres, vals
 
     for name, rows, dtype in (
         ("policy_probs", [r.policy_probs for r in records], f32),
@@ -775,6 +813,40 @@ def _record_fields(npz: Any, n: int) -> list[dict[str, Any]]:
         }
         return _unpack_sparse(blocks, n=n, width=POLICY_SIZE, dtype=dtype)
 
+    # Old resume payloads have neither new key. Partial new payloads remain
+    # errors rather than silently discarding explicitly claimed provenance.
+    if "sf_eval_witness" not in npz and "sf_eval_witness_present" not in npz:
+        sf_eval_witness = [None] * n
+    else:
+        if "sf_eval_witness" not in npz or "sf_eval_witness_present" not in npz:
+            raise ResumeStateError("bad_record_fields", "incomplete evaluation witness storage")
+        witness_presence = np.asarray(npz["sf_eval_witness_present"])
+        if (witness_presence.shape != (n,)
+                or not (np.issubdtype(witness_presence.dtype, np.integer)
+                        or np.issubdtype(witness_presence.dtype, np.bool_))
+                or not np.isin(witness_presence, [0, 1]).all()):
+            raise ResumeStateError("bad_record_fields", "invalid evaluation witness presence")
+        witness_values = np.asarray(npz["sf_eval_witness"])
+        if (not np.issubdtype(witness_values.dtype, np.integer)
+                or np.any(witness_values < -(2**31)) or np.any(witness_values > 2**31 - 1)):
+            raise ResumeStateError("bad_record_fields", "invalid evaluation witness storage")
+        if witness_presence.any():
+            # Inspect original arrays before the generic narrowing copies below. A float
+            # or overflowing integer must not become the old valid checksum's
+            # input merely because resume casts it into the storage dtype.
+            for key, lower, upper in (
+                ("sf_multipv_raw_values", -(2**15), 2**15 - 1),
+                ("sf_label_meta", -(2**31), 2**31 - 1),
+                ("sf_multipv_raw_counts", 0, 2**31 - 1),
+                ("sf_multipv_raw_present", 0, 1),
+                ("sf_label_meta_present", 0, 1),
+            ):
+                original = np.asarray(npz[key])
+                if (not np.issubdtype(original.dtype, np.integer)
+                        or np.any(original < lower) or np.any(original > upper)):
+                    raise ResumeStateError("bad_record_fields", f"invalid evaluation witness input {key}")
+        sf_eval_witness = opt_fixed("sf_eval_witness", SF_EVAL_WITNESS_LEN, np.dtype(np.int32))
+
     policy_probs = sparse("policy_probs", f32)
     sf_policy_target = sparse("sf_policy_target", f32)
     sf_legal_mask = sparse("sf_legal_mask", np.dtype(np.uint8))
@@ -824,6 +896,7 @@ def _record_fields(npz: Any, n: int) -> list[dict[str, Any]]:
             "sf_wdl": sf_wdl[r],
             "sf_wdl_original": sf_wdl_original[r],
             "sf_label_meta": sf_label_meta[r],
+            "sf_eval_witness": sf_eval_witness[r],
             "priority_policy_kl": priority_kl[r],
             "priority_q_delta": priority_qd[r],
             "sf_played_regret": sf_played_regret[r],
@@ -1078,6 +1151,7 @@ def _rebuild_record(
     rec.sf_wdl_original = f["sf_wdl_original"]
     rec.sf_multipv_raw = f["sf_multipv_raw"]
     rec.sf_label_meta = f["sf_label_meta"]
+    rec.sf_eval_witness = f["sf_eval_witness"]
     rec.sf_played_move_index = f["sf_played_move_index"]
     rec.sf_played_rank = f["sf_played_rank"]
     rec.sf_played_regret = f["sf_played_regret"]

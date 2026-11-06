@@ -38,6 +38,8 @@ from chess_anti_engine.utils.atomic import atomic_write
 
 from .sample import ReplaySample
 
+from .sf_eval_provenance import SF_EVAL_WITNESS_LEN, copy_sf_eval_witness, sf_eval_witness_mismatch
+
 SHARD_VERSION = 2  # v2: sparse MultiPV label storage (sf_multipv_raw/sf_label_meta)
 
 # Sparse MultiPV raw-label layout. Per SF-labeled sample we keep the exact
@@ -56,6 +58,10 @@ SHARD_VERSION = 2  # v2: sparse MultiPV label storage (sf_multipv_raw/sf_label_m
 #   sf_label_meta: (6,) int32 for the record-level eval:
 #       [nodes (-1 unknown), depth (-1 unknown), eval_cp (SF_CP_SENTINEL),
 #        eval_mate (0 = none), eval_wdl_w (-1), eval_wdl_d (-1)]
+#   sf_eval_witness: optional (8,) int32, versioned exact root evidence plus
+#     root/policy integrity checks; layout in replay/sf_eval_provenance.py.
+#     New readers preserve the legacy detector when this field is absent.
+#     Old readers do not use it and may conservatively reject reranked bounds.
 SF_MULTIPV_RAW_MAX = 48   # production sf_multipv is 40; cap with headroom
 SF_MULTIPV_RAW_COLS = 5
 SF_LABEL_META_LEN = 6
@@ -64,9 +70,9 @@ SF_MULTIPV_PAD_ROW = (-1, SF_CP_SENTINEL, 0, -1, -1)
 LOCAL_SHARD_SUFFIX = ".zarr"
 LEGACY_SHARD_SUFFIX = ".npz"
 
-# Field names `sf_eval_pv_orphan_flags` reads and the two it publishes. Named
-# once so the trainer's payload prune, the collate spec and the offline readers
-# cannot disagree about which columns the check consumes.
+# Required legacy inputs and the two published fields. Optional provenance
+# (`sf_eval_witness`, `has_sf_eval_witness`) is consumed when present without
+# making older rows unmeasured.
 SF_EVAL_PV_ORPHAN_INPUT_FIELDS: tuple[str, ...] = (
     "sf_multipv_raw", "sf_label_meta", "has_sf_multipv_raw",
     "has_sf_label_meta", "has_sf_wdl",
@@ -184,6 +190,7 @@ _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     _OptFieldSpec("sf_multipv_raw",       "has_sf_multipv_raw",
                   (SF_MULTIPV_RAW_MAX, SF_MULTIPV_RAW_COLS), np.dtype(np.int16)),
     _OptFieldSpec("sf_label_meta",        "has_sf_label_meta",     (SF_LABEL_META_LEN,), _I32_DT),
+    _OptFieldSpec("sf_eval_witness",      "has_sf_eval_witness",   (SF_EVAL_WITNESS_LEN,), _I32_DT),
     _OptFieldSpec("moves_left",           "has_moves_left",        (),            _F16),
     _OptFieldSpec("is_network_turn",      "has_is_network_turn",   (),            _U8_DT),
     _OptFieldSpec("is_selfplay",          "has_is_selfplay",       (),            _U8_DT),
@@ -551,13 +558,25 @@ def sf_eval_pv_orphan_flags(
 ) -> tuple[np.ndarray, np.ndarray]:
     """(orphaned, checked) per row — the SF-desync fingerprint on the VALUE half.
 
-    **What it tests.** ``sf_wdl`` — realized 0.45 of the trained value target —
+    New records may carry an independently stored exact-root witness. The root
+    score can legitimately precede the latest per-move policy scores after a
+    bounded rerank. For those records, compare the scalar to its actual witness
+    and verify the witness identity, encoding and raw-policy integrity. Invalid
+    claimed evidence rejects; genuinely absent evidence uses the legacy check.
+    The checks detect accidental corruption, not authenticity: a coordinated
+    copy of a valid witness/policy pair, or a wrong-position response whose
+    witness move is coincidentally legal, is outside their proof. WDL is not
+    covered. The historical checked population is unchanged.
+
+    **Legacy fallback.** ``sf_wdl`` — realized 0.45 of the trained value target —
     is built by ``selfplay/stockfish_turn.py::_sf_result_wdl_for_record`` from
     ``res.cp`` / ``res.mate``. Those two fields are literally
     ``_SearchInfoAccumulator.cp_pv1`` / ``mate_pv1``, and the same accumulator
     files the rank-1 line into ``res.pvs[0]``, so on a healthy row the stored
     ``sf_label_meta`` eval and the stored ``sf_multipv_raw`` row 0 carry the
-    SAME (cp, mate) pair BY CONSTRUCTION — not by empirical agreement.
+    same (cp, mate) pair in the ordinary exact-root case. It is not a universal
+    invariant after move-identity repair; that is why new producers retain a
+    separate witness rather than weakening this legacy rejection rule.
 
     They differ when rank 1's line was dropped by ``_collect_sparse_pv_rows``,
     leaving a lower-ranked line at row 0. That is a Stockfish answering a
@@ -598,7 +617,8 @@ def sf_eval_pv_orphan_flags(
     pre-episode ids 33118:33387 (474,278 lab.)      0.000000      0.000000
     ==========================================  ============  ============
 
-    **Floor.** Exactly 0.000000, and structurally so per the paragraph above.
+    **Historical floor.** Exactly 0.000000 in the cited pre-episode sample,
+    not a universal guarantee for every parser/provenance version.
     The 3.0e-5 on the policy-clean subset is 34 rows in 25 shards, and it is
     burst-edge RESIDUE rather than a background: those 25 shard ids sit a median
     of 25 from the nearest quarantined id against 49.7 +/- 15.0 for a uniform
@@ -653,6 +673,21 @@ def sf_eval_pv_orphan_flags(
   # `_collect_sparse_pv_rows` / `_collect_sf_label_meta` (+/-32000 cp, +/-127
   # mate), so equality after a widening cast is exact, not approximate.
     orphaned = checked & ((top[:, 1] != meta_i[:, 2]) | (top[:, 2] != meta_i[:, 3]))
+    # Additive provenance: absent fields retain the exact historical predicate.
+    # Explicitly claimed but malformed evidence fails closed on checked rows.
+    if "sf_eval_witness" in arrs or "has_sf_eval_witness" in arrs:
+        witness = np.asarray(arrs.get("sf_eval_witness", ()))
+        has_witness = np.asarray(arrs.get("has_sf_eval_witness", ()))
+        if has_witness.shape == (n,) and not has_witness.any() and "sf_eval_witness" not in arrs:
+            pass
+        elif witness.shape != (n, SF_EVAL_WITNESS_LEN) or has_witness.shape != (n,):
+            orphaned[checked] = True
+        else:
+            width = int(np.asarray(arrs["policy_target"]).shape[1]) if "policy_target" in arrs else 4672
+            invalid_flags = ~np.isin(has_witness, [0, 1])
+            orphaned[checked & invalid_flags] = True
+            for i in np.flatnonzero(checked & has_witness.astype(bool) & ~invalid_flags):
+                orphaned[i] = sf_eval_witness_mismatch(witness[i], meta[i], raw[i], policy_width=width)
     return orphaned.astype(np.float32), checked.astype(np.float32)
 
 
@@ -1130,6 +1165,7 @@ _VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
 _INT_VECTOR_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("sf_multipv_raw", "sf_multipv_raw", "has_sf_multipv_raw"),
     ("sf_label_meta",  "sf_label_meta",  "has_sf_label_meta"),
+    ("sf_eval_witness", "sf_eval_witness", "has_sf_eval_witness"),
 )
 
 _VECTOR_EXPLICIT_HAS_ATTRS: dict[str, str] = {
@@ -1219,6 +1255,15 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
                 arrs[has][i] = 1
         for src, target, has in _INT_VECTOR_FIELDS:
             v = getattr(s, src, None)
+            if src == "sf_eval_witness":
+                v = copy_sf_eval_witness(v, getattr(s, "sf_multipv_raw", None))
+                if v is not None and sf_eval_witness_mismatch(
+                    v, np.asarray(getattr(s, "sf_label_meta", None)),
+                    getattr(s, "sf_multipv_raw", None), policy_width=policy_size,
+                ):
+                    # Compare the original metadata, not its narrowed output
+                    # array, so serialization cannot erase scalar corruption.
+                    v = np.zeros(SF_EVAL_WITNESS_LEN, dtype=np.int32)
             if v is not None:
                 arrs[target][i] = np.asarray(v, dtype=arrs[target].dtype)
                 arrs[has][i] = 1
@@ -1310,6 +1355,8 @@ def validate_array_declarations(
         if spec.flag in arrs and _shape_of(arrs[spec.flag]) != (n,):
             raise ValueError(f"{spec.flag} must be (N,) matching x")
         if spec.arr in arrs:
+            if spec.arr == "sf_eval_witness" and not np.issubdtype(_dtype_of(arrs[spec.arr]), np.integer):
+                raise ValueError("sf_eval_witness must have integer storage")
             if spec.arr == "x_lc0_root":
                 expected_tail: tuple[int, ...] = (int(x_shape[1]), 8, 8)
             elif spec.arr in POLICY_SIZED_FIELDS:
@@ -1534,9 +1581,18 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
             flag = np.asarray(arrs[spec.flag])
             if flag.ndim != 1 or flag.shape[0] != n:
                 raise ValueError(f"{spec.flag} must be (N,) matching x")
+            if spec.arr == "sf_eval_witness" and (
+                not (np.issubdtype(flag.dtype, np.integer) or np.issubdtype(flag.dtype, np.bool_))
+                or not np.isin(flag, [0, 1]).all()
+            ):
+                raise ValueError("has_sf_eval_witness must contain integer zero/one flags")
 
         if value_present:
             value = np.asarray(arrs[spec.arr])
+            if spec.arr == "sf_eval_witness" and not flag_present:
+                raise ValueError("sf_eval_witness requires its presence flag")
+            if spec.arr == "sf_eval_witness" and (np.any(value < -(2**31)) or np.any(value > 2**31 - 1)):
+                raise ValueError("sf_eval_witness cannot be represented as int32")
             if spec.arr == "x_lc0_root":
                 expected_tail: tuple[int, ...] = (int(x.shape[1]), 8, 8)
             elif spec.arr in POLICY_SIZED_FIELDS:
@@ -1632,6 +1688,8 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
             s.sf_multipv_raw = _copy_row(opt["sf_multipv_raw"], i)
         if opt["has_sf_label_meta"][i]:
             s.sf_label_meta = _copy_row(opt["sf_label_meta"], i)
+        if opt["has_sf_eval_witness"][i]:
+            s.sf_eval_witness = _copy_row(opt["sf_eval_witness"], i)
         if opt["has_sf_move"][i]:
             s.sf_move_index = int(opt["sf_move_index"][i])
         if opt["has_sf_played_move"][i]:
