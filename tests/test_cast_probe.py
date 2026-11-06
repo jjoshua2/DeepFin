@@ -385,6 +385,53 @@ def test_price_the_tail_is_flat_when_the_tail_is_priced_correctly() -> None:
     assert res["overstatement"] == pytest.approx(1.0, abs=0.15)
 
 
+@pytest.mark.parametrize(("chosen", "expected_cp"), [
+    # Multiplicities change both calibration medians/means and the tail mean.
+    ([0, 0, 1, 3, 3, 4, 6, 6, 8], 1000 * 0.011 * (0.16 / 0.36)),
+    # Repeated draws still count toward the two-row calibration/tail minimum.
+    ([0, 0, 3, 3, 6, 6, 6, 6, 6], 1000 * 0.011 * (0.03 / 0.09)),
+    # Negative control: without repeated draws, the estimate is unchanged.
+    (list(range(9)), 1000 * (0.001 + 0.019 * (0.06 / 0.18))),
+])
+def test_tail_bootstrap_preserves_sample_multiplicities(
+    monkeypatch: pytest.MonkeyPatch, chosen: list[int], expected_cp: float,
+) -> None:
+    """A boolean membership mask loses replacement counts and changes the CI."""
+    monkeypatch.setattr(cast_probe, "MIN_BUCKET", 2)
+    monkeypatch.setattr(cast_probe, "N_BOOT", 4)
+    sel = np.zeros(18, dtype=bool)
+    sel[1::2] = True
+    arr = {
+        "regret_played": np.full(18, 999.0),
+        "adv": np.full(18, 999.0),
+        "in_multipv": np.zeros(18, dtype=bool),
+    }
+    arr["regret_played"][sel] = [0.0, 0.001, 0.0015, 0.011, 0.02, 0.025, 0.55, 0.55, 0.55]
+    arr["adv"][sel] = [-0.01, -0.02, -0.03, -0.10, -0.20, -0.30, -0.04, -0.08, -0.12]
+    arr["in_multipv"][sel] = [True] * 6 + [False] * 3
+    original = {key: value.copy() for key, value in arr.items()}
+
+    class FixedDraws:
+        calls = 0
+
+        def integers(self, low: int, high: int, size: int) -> np.ndarray:
+            assert (low, high, size) == (0, 9, 9)
+            self.calls += 1
+            return np.asarray(chosen)
+
+    rng = FixedDraws()
+    result = cast_probe.price_the_tail(arr, sel, "selected", rng)
+    assert rng.calls == 4
+    assert result["n_bootstrap"] == 4
+    assert result["implied_cp_lo"] == pytest.approx(expected_cp)
+    assert result["implied_cp_hi"] == pytest.approx(expected_cp)
+    assert result["implied_cp"] == pytest.approx(1000 * (0.001 + 0.019 * (0.06 / 0.18)))
+    assert result["n"] == 9
+    assert result["n_outside"] == 3
+    for key, value in original.items():
+        np.testing.assert_array_equal(arr[key], value)
+
+
 @pytest.mark.parametrize("omitted", ["game_id", "ply_index", "sf_wdl", "sf_p0_regret", "sf_multipv_raw", "legal_mask"])
 def test_collect_pruned_optional_arrays(tmp_path: Path, omitted: str) -> None:
     """Real writer/validated loader must admit pruned optional storage."""
