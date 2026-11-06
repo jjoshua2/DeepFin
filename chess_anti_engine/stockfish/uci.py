@@ -271,6 +271,11 @@ class _SearchInfoAccumulator:
         int,
         tuple[str, tuple[int, int, int] | None, int | None, int | None],
     ] = field(default_factory=dict)
+    # Rank is mutable between snapshots; exact evidence belongs to the move.
+    _exact_pvs: dict[
+        str,
+        tuple[str, tuple[int, int, int] | None, int | None, int | None],
+    ] = field(default_factory=dict, init=False, repr=False)
 
     def consume(self, parts: list[str]) -> None:
         # The string field consumes the rest of the line as opaque debug text.
@@ -291,6 +296,13 @@ class _SearchInfoAccumulator:
         # line; keeping it would replace the last exact snapshot the logistic
         # value and policy targets read. Nodes and depth still advance.
         if "lowerbound" in parts or "upperbound" in parts:
+            if pv_move is not None:
+                # A reranked bound must not leave the previous move at this
+                # rank. Reuse only this move's own earlier exact evidence.
+                self.pvs.pop(mpv, None)
+                previous = self._exact_pvs.get(pv_move)
+                if previous is not None:
+                    self.pvs[mpv] = previous
             return
         if mpv == 1:
             if wdl_counts is not None:
@@ -302,18 +314,25 @@ class _SearchInfoAccumulator:
                 self.mate_pv1 = mate
                 self.cp_pv1 = None
         if pv_move is not None:
-            self.pvs[mpv] = (pv_move, wdl_counts, cp, mate)
+            exact = (pv_move, wdl_counts, cp, mate)
+            self.pvs[mpv] = exact
+            self._exact_pvs[pv_move] = exact
 
     def result(self, bestmove: str | None) -> StockfishResult:
-        pv_list = [
-            StockfishPV(
-                move_uci=self.pvs[k][0],
-                wdl=_normalize_wdl_counts(self.pvs[k][1]),
-                cp=self.pvs[k][2],
-                mate=self.pvs[k][3],
-            )
-            for k in sorted(self.pvs)
-        ]
+        pv_list = []
+        seen = set()
+        for k in sorted(self.pvs):
+            move = self.pvs[k][0]
+            if move in seen:
+                continue
+            seen.add(move)
+            exact = self._exact_pvs.get(move, self.pvs[k])
+            pv_list.append(StockfishPV(
+                move_uci=move,
+                wdl=_normalize_wdl_counts(exact[1]),
+                cp=exact[2],
+                mate=exact[3],
+            ))
         return StockfishResult(
             bestmove_uci=bestmove or "0000",
             wdl=_normalize_wdl_counts(self.wdl_pv1_counts),
