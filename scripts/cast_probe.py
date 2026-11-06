@@ -330,6 +330,9 @@ def collect(shards: list[Path], scan: dict[str, Any], rng: np.random.Generator) 
         # (losses.sf_multipv_presence_counts) fires on rows with NO MultiPV
         # block, a population this probe already excludes by construction, so
         # the two must not be summed onto a shared denominator.
+        # New provenance-aware rows verify their actual earlier exact-root
+        # witness and policy integrity, not equality with the latest rank-1
+        # policy score. This keeps legitimate bounded reranks in the sample.
         orphan_f, checked_f = sf_eval_pv_orphan_flags(arrs)
         orphaned = np.asarray(orphan_f).astype(bool)
         scan["desync_checked"] += int(np.asarray(checked_f).sum())
@@ -588,9 +591,9 @@ def report(arr: dict[str, np.ndarray], scan: dict[str, Any], rng: np.random.Gene
     print(f"   rows checked {checked}   orphaned {orph}"
           f"   rate {orph / max(checked, 1):.6f}"
           f"   -> CAST pairs rejected {scan['desync_rows_rejected']}")
-    print("   `sf_eval_pv_orphan_flags`: the stored eval disagreeing with its own rank-1")
-    print("   PV means Stockfish answered a DIFFERENT position, so the advantage would")
-    print("   span two unrelated roots. Healthy is exactly 0.000000. ⚑ Do NOT add this to")
+    print("   `sf_eval_pv_orphan_flags`: present provenance checks the stored root eval")
+    print("   and its paired policy evidence; absent provenance uses the legacy rank-1")
+    print("   comparison, which can reject benign reranks. ⚑ Do NOT add this to")
     print("   the policy-half rate (losses.sf_multipv_presence_counts): that one fires on")
     print("   rows with NO MultiPV block, which this probe already excludes -- disjoint")
     print("   populations, different denominators.")

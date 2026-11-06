@@ -33,6 +33,7 @@ from chess_anti_engine.encoding._lc0_ext import (
     prepare_sf_multipv as _prepare_sf_multipv_c,  # pyright: ignore[reportAttributeAccessIssue]
 )
 from chess_anti_engine.replay.buffer import ReplaySample
+from chess_anti_engine.replay.sf_eval_provenance import remap_sf_eval_witness
 from chess_anti_engine.selfplay.blindspot_harvest import (
     HarvestConfig,
     run_harvest as run_blindspot_harvest,
@@ -1122,6 +1123,9 @@ def _build_replay_samples(
                 sf_wdl=rec.sf_wdl,
                 sf_multipv_raw=sf_multipv_padded,
                 sf_label_meta=getattr(rec, "sf_label_meta", None),
+                sf_eval_witness=_prepare_sf_eval_witness_for_finalize(
+                    rec, sf_multipv_padded, policy_encoding=state.game.policy_encoding,
+                ),
                 sf_move_index=(
                     None if rec.sf_move_index is None else
                     policy_index_for_encoding(
@@ -1410,6 +1414,17 @@ def _padded_sparse_multipv(
             int(rows[j, 0]), policy_encoding=policy_encoding,
         )
     return out
+
+
+def _prepare_sf_eval_witness_for_finalize(
+    rec, raw_after: np.ndarray | None, *, policy_encoding: str,
+) -> np.ndarray | None:
+    return remap_sf_eval_witness(
+        getattr(rec, "sf_eval_witness", None),
+        lambda action: policy_index_for_encoding(action, policy_encoding=policy_encoding),
+        getattr(rec, "sf_multipv_raw", None), raw_after,
+        target_width=policy_size_for_encoding(policy_encoding),
+    )
 
 
 def _prepare_sf_multipv_python(

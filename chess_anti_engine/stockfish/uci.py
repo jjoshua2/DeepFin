@@ -172,6 +172,15 @@ class StockfishPV:
     mate: int | None = None  # raw mate-in-N (None if cp / unknown)
 
 
+@dataclass(frozen=True)
+class StockfishEvalWitness:
+    """Actual unbounded rank-1 score observation from this search only."""
+
+    move_uci: str
+    cp: int | None
+    mate: int | None
+
+
 @dataclass
 class StockfishResult:
     bestmove_uci: str
@@ -181,6 +190,7 @@ class StockfishResult:
     mate: int | None = None  # PV1 raw mate-in-N
     nodes: int | None = None  # nodes searched (last info line)
     depth: int | None = None  # depth reached (last info line)
+    eval_witness: StockfishEvalWitness | None = None
 
 
 def _normalize_wdl_counts(counts: tuple[int, int, int] | None) -> np.ndarray | None:
@@ -267,6 +277,7 @@ class _SearchInfoAccumulator:
     mate_pv1: int | None = None
     nodes_seen: int | None = None
     depth_seen: int | None = None
+    eval_witness: StockfishEvalWitness | None = None
     pvs: dict[
         int,
         tuple[str, tuple[int, int, int] | None, int | None, int | None],
@@ -305,6 +316,13 @@ class _SearchInfoAccumulator:
                     self.pvs[mpv] = previous
             return
         if mpv == 1:
+            if cp is not None or mate is not None:
+                # A score without a PV cannot inherit a different observation's
+                # identity. Bounds returned above never create this witness.
+                self.eval_witness = (
+                    StockfishEvalWitness(pv_move, cp, mate)
+                    if pv_move is not None else None
+                )
             if wdl_counts is not None:
                 self.wdl_pv1_counts = wdl_counts
             if cp is not None:
@@ -341,6 +359,7 @@ class _SearchInfoAccumulator:
             mate=self.mate_pv1,
             nodes=self.nodes_seen,
             depth=self.depth_seen,
+            eval_witness=self.eval_witness,
         )
 
 

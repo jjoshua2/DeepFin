@@ -13,6 +13,7 @@ from chess_anti_engine.moves.encode import (
 )
 
 from .buffer import ReplaySample
+from .sf_eval_provenance import remap_sf_eval_witness
 from .shard import (
     LEGAL_MASK_FIELDS,
     POLICY_DENSE_VALUE_FIELDS,
@@ -213,6 +214,12 @@ def mirror_sample(s: ReplaySample, *, input_history_encoding: str | None = None)
         )[0]
     meta = getattr(s, "sf_label_meta", None)
     out.sf_label_meta = None if meta is None else np.array(meta, copy=True)
+    mirror_map = _mirror_map_for_policy_width(policy_width)
+    out.sf_eval_witness = remap_sf_eval_witness(
+        getattr(s, "sf_eval_witness", None),
+        lambda action: int(mirror_map[action]),
+        getattr(s, "sf_multipv_raw", None), out.sf_multipv_raw, source_width=policy_width,
+    )
 
     return out
 
@@ -288,6 +295,21 @@ def maybe_mirror_batch_arrays(
         out["sf_multipv_raw"] = _mirror_sparse_multipv(
             np.asarray(arrs["sf_multipv_raw"]), mask, policy_width=policy_width,
         )
+
+    if "sf_eval_witness" in arrs:
+        witness = np.array(arrs["sf_eval_witness"], copy=True)
+        mirror_map = _mirror_map_for_policy_width(policy_width)
+        for i in np.flatnonzero(mask):
+            remapped = remap_sf_eval_witness(
+                witness[i], lambda action: int(mirror_map[action]),
+                np.asarray(arrs["sf_multipv_raw"])[i] if "sf_multipv_raw" in arrs else None,
+                np.asarray(out["sf_multipv_raw"])[i] if "sf_multipv_raw" in out else None,
+                source_width=policy_width,
+            )
+            if remapped is not None:
+                witness[i] = remapped
+        out["sf_eval_witness"] = witness
+
 
     return out
 
