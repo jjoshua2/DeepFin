@@ -25,7 +25,7 @@ _PACKAGE = "chess_anti_engine"
 
 @pytest.fixture(autouse=True)
 def _no_ambient_ci(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("GITHUB_EVENT_NAME", "GITHUB_BASE_REF", validate.CHANGED_FILES_ENV):
+    for name in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_BASE_REF", validate.CHANGED_FILES_ENV):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -161,7 +161,7 @@ def _fake_git(monkeypatch: pytest.MonkeyPatch, outputs: dict[str, list[str]] | E
 
 def test_pull_request_change_set_is_the_diff_against_the_fetched_base(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _fake_git(monkeypatch, {"diff": ["scripts/a.py", "docs/x.md"]})
-    env = {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_BASE_REF": "main"}
+    env = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "pull_request", "GITHUB_BASE_REF": "main"}
     assert validate.changed_files(None, env) == (["docs/x.md", "scripts/a.py"], "ok")
     assert calls[0][0] == "fetch"
     assert calls[0][-2:] == ("origin", "main")
@@ -177,7 +177,9 @@ def test_local_opt_in_adds_uncommitted_and_untracked_files(monkeypatch: pytest.M
 
 
 @pytest.mark.parametrize("env", [
-    {}, {"GITHUB_EVENT_NAME": "push", "GITHUB_BASE_REF": "main"}, {"GITHUB_EVENT_NAME": "pull_request"},
+    {}, {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "push", "GITHUB_BASE_REF": "main"},
+    {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "pull_request"},
+    {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_BASE_REF": "main"},
 ])
 def test_no_pull_request_means_no_scoping(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> None:
     calls = _fake_git(monkeypatch, {"diff": ["docs/x.md"]})
@@ -192,6 +194,7 @@ def test_change_detection_failure_runs_everything(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path,
     failure: Exception | dict[str, list[str]],
 ) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.setenv("GITHUB_BASE_REF", "main")
     monkeypatch.setenv(validate.CHANGED_FILES_ENV, "docs/x.md")  # inherited; must not leak
@@ -216,6 +219,7 @@ def test_change_detection_failure_runs_everything(
 def test_an_emptied_phase_passes_only_when_scoping_emptied_it(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path, scoped: bool,
 ) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.setenv("GITHUB_BASE_REF", "main")
     _fake_git(monkeypatch, {"diff": ["docs/x.md" if scoped else f"{_PACKAGE}/config.py"]})

@@ -199,7 +199,9 @@ def changed_files(changed_vs: str | None, environ: Mapping[str, str]) -> tuple[l
             files = _git("diff", "--name-only", "--no-renames", f"{changed_vs}...HEAD")
             files += _git("diff", "--name-only", "--no-renames", "HEAD")
             files += _git("ls-files", "--others", "--exclude-standard")
-        elif environ.get("GITHUB_EVENT_NAME") == "pull_request" and environ.get("GITHUB_BASE_REF"):
+        elif (environ.get("GITHUB_ACTIONS") == "true" and environ.get("GITHUB_EVENT_NAME") == "pull_request"
+              and environ.get("GITHUB_BASE_REF")):
+            # GITHUB_ACTIONS too: a shallow fetch would make a local full clone shallow.
             _git("fetch", "--no-tags", "--depth=1", "origin", environ["GITHUB_BASE_REF"])
             files = _git("diff", "--name-only", "--no-renames", "FETCH_HEAD", "HEAD")
         else:
