@@ -179,42 +179,33 @@ SERIAL_TEST_FILES = frozenset({
     "test_server_lease_assign_lock_multiwaiter.py",
 })
 _serial_by_path: dict[str, bool] = {}
-_source_by_path: dict[str, str] = {}
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-
-
-def _source(path: str | os.PathLike[str]) -> str:
-    """Each file's text, read once per process for every source-based rule here."""
-    key = os.fspath(path)
-    if key not in _source_by_path:
-        with open(key, encoding="utf-8", errors="replace") as handle:
-            _source_by_path[key] = handle.read()
-    return _source_by_path[key]
 
 
 def runs_in_serial_phase(path: os.PathLike[str]) -> bool:
     key = os.fspath(path)
     if key not in _serial_by_path:
         name = os.path.basename(key)
-        _serial_by_path[key] = name in SERIAL_TEST_FILES or bool(_SERIAL_SOURCE.search(_source(key)))
+        with open(key, encoding="utf-8") as handle:
+            _serial_by_path[key] = name in SERIAL_TEST_FILES or bool(_SERIAL_SOURCE.search(handle.read()))
     return _serial_by_path[key]
 
 
 def change_scoped_deselection(items: list[pytest.Item]) -> list[pytest.Item]:
-    """Items of script-only test files that the change set cannot affect.
+    """Items of the test files ``scripts/validate.py`` listed for deselection.
 
-    Active only when ``scripts/validate.py`` passed a pull request's change set
-    in ``CAE_CHANGED_FILES`` (xdist workers inherit it); unset selects nothing,
-    so a direct or local run is unchanged. The rule itself lives in
-    ``validate.script_test_deselection`` so the runner can print the same count.
+    The runner decides once (see ``validate.script_test_deselection``) and
+    passes a file of repo-relative test paths in ``CAE_DESELECT_LIST``; xdist
+    workers inherit it. Unset, missing or unreadable deselects nothing, so a
+    direct or local run is unchanged.
     """
-    raw = os.environ.get("CAE_CHANGED_FILES")
-    if raw is None:
+    listing = os.environ.get("CAE_DESELECT_LIST")
+    if not listing:
         return []
-    from scripts.validate import script_test_deselection
-
-    deselected, _reason = script_test_deselection(raw.splitlines(), _REPO_ROOT, read=_source)
-    if not deselected:
+    try:
+        with open(listing, encoding="utf-8") as handle:
+            deselected = {line.strip() for line in handle if line.strip()}
+    except OSError:
         return []
     paths = {path: Path(path).resolve() for path in {item.path for item in items}}
     selected = {path for path, real in paths.items()

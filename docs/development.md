@@ -87,20 +87,24 @@ routed by `tests/conftest.py` to a second, one-process phase, reported in
 the pure-computation files.
 
 On a pull request, `validate.py cpu` skips script-only test files the PR cannot
-affect, and prints how many it skipped. A script-only file names an existing
+affect, and prints how many it skipped. The change set is the PR's merge commit
+diffed against its first parent; a HEAD that is not a two-parent merge, a push
+build or any git failure runs everything. A script-only file names an existing
 `scripts/` module (`scripts.X`, `from scripts import X`, or an `X.py`/`X.sh` file
 name) and never mentions `chess_anti_engine`. Files that read `docs/`, `tests/` or a
 top-level `*.md`, or that scan `scripts/`, never count as script-only. Skipping
 happens only when every changed path is a top-level `scripts/*.py`/`*.sh`, a
 `tests/test_*.py`, something under `docs/`, or a top-level `*.md`. Any other path
 runs everything: the package, C sources, configs, `tests/conftest.py`, other test
-helpers, dependency files, `.github/`, or any other `scripts/` file. A script-only
-file still runs when it changed, or when a script or test file it references
-changed, followed transitively through references. Push builds and failed change
-detection also run everything. Locally, nothing is skipped unless you pass
+helpers, dependency files, `.github/`, any other `scripts/` file, and
+`scripts/validate.py` itself, which holds the rule. A script-only file still runs
+when it changed, or when a script or test file it references changed, followed
+transitively; any quoted script or test name counts as a reference, so dynamic
+imports are followed too. Locally, nothing is skipped unless you pass
 `--changed-vs REF`, which compares against the merge base with REF and also counts
-uncommitted and untracked files. The change set reaches `tests/conftest.py` as
-`CAE_CHANGED_FILES`.
+uncommitted and untracked files. `validate.py` decides once and hands pytest the
+list of files to skip through `CAE_DESELECT_LIST`; a missing or unreadable list
+skips nothing.
 
 The shared validator prints the interpreter, Torch build, requested thread count,
 native backend, elapsed time and failing command. Test suites print their 20 slowest

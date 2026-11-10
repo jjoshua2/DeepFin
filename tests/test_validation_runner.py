@@ -20,7 +20,7 @@ from scripts import validate
 def _no_change_scoping(monkeypatch: pytest.MonkeyPatch) -> None:
     # On a CI pull request these are set, and main() would shell out to git
     # through the subprocess.run fakes below; scoping has its own test file.
-    for name in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_BASE_REF", validate.CHANGED_FILES_ENV):
+    for name in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_BASE_REF", validate.DESELECT_LIST_ENV):
         monkeypatch.delenv(name, raising=False)
 
 
