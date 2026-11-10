@@ -70,10 +70,14 @@ A bad live value fails in one of three ways, which code comments cite by letter:
 - **(a) Key not in the schema** (`utils/config_yaml.py`): mid-run the whole reload is
   rejected and the old config kept; at launch it is fatal. Before a restart, compare
   the live YAML's keys with the target revision's schema.
-- **(b) Validated by `TrialConfig.from_dict`, value out of range**: the reload
-  succeeds, `from_dict` raises inside the iteration loop and the trial dies.
+- **(b) In the schema, rejected by a validator that runs inside the iteration loop**
+  (chiefly `TrialConfig.from_dict`): the reload succeeds, the validator raises and
+  the trial dies.
 - **(c) In the schema but not range-checked**: applied raw and silently. `lr` is one
-  such key.
+  such key (LR above 0.003 has destroyed the model).
+
+Some value checks run in the loader instead (`flatten_run_config_defaults`, e.g.
+strict booleans); a bad value there behaves like (a).
 
 Respect intentional-stop and pause markers. Before a change whose effects survive a
 config revert, preserve enough state to recover: weights, optimizer, PID and replay,
@@ -124,9 +128,12 @@ themselves establish playing strength.
 - Higher PID `wdl_regret` permits worse Stockfish moves and makes the opponent weaker.
   Best-move-based labels are distinct from the handicapped move actually played.
 - `wdl_regret` measures the agent (network plus search), not the network. The PID
-  holds winrate at its target, so a search-setting change, an `sf_nodes` change or a
-  restart that restores older PID state moves regret without any change in the
-  weights. Compare regret across iterations only where those are unchanged.
+  holds winrate at `sf_pid_target_winrate` by moving regret and, in its second stage,
+  `sf_nodes`, so difficulty is regret *and* nodes. A search change
+  (`gumbel_c_scale`, `gumbel_policy_temp`, `mcts_simulations`, `gumbel_topk`, root
+  transform), a target-winrate change or a restart that restores older PID state
+  moves them without any change in the weights. Read regret as a network signal only
+  while those are frozen, and always together with `sf_nodes`.
 - Search action IDs and network policy indices are different spaces. Use shared
   mappings in `moves/torch_maps.py`; preserve encoding and history metadata across
   checkpoints, replay and evaluation.
