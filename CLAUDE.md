@@ -154,6 +154,13 @@ Delegate bounded independent work when useful, with clear ownership and enough
 context to judge it. Inherit the selected model unless the task warrants another;
 there is no fixed worker count or requirement to predesign every implementation.
 
+Finish what you find. When work is identified and nothing blocks it — a review
+finding outside the PR's scope, a cleanup, a follow-up — do it in the same session, in
+a new PR or through a delegated implementer if that is cleaner. "Later" is acceptable
+only with a named, real blocker (a live run that must not move, a destructive step
+awaiting the owner's go-ahead — and then ask at once). Before a final report, close
+every thread opened earlier in the session or state its blocker.
+
 Open PRs ready for review unless requested otherwise. Use a separate reviewer for
 consequential changes; the author is not an independent review. If independent review
 is unavailable, label the self-review and its limits. Address findings or explain why
