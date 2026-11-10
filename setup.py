@@ -15,6 +15,7 @@ Environment variables:
   CAE_EXT_WERROR=1     — promote warnings to errors (strict builds)
 """
 import os
+import platform
 
 from setuptools import setup, Extension
 import numpy as np
@@ -57,12 +58,39 @@ def _sanitizer_flags() -> tuple[list[str], list[str]]:
     return flags, flags
 
 
+def _portable_arch_args(*, native: bool, machine: str, cflags: str) -> list[str]:
+    """Pin a portable x86-64 build to the baseline ISA.
+
+    A distro compiler may default above the baseline: Ubuntu 26.04's GCC is
+    configured with -march=x86-64-v3, so a build that passes no -march at all
+    already defines __BMI2__/__AVX2__. That makes the "portable" build
+    non-portable and silently selects the PEXT slider arm. Naming the baseline
+    removes the dependence on the compiler's default.
+
+    An explicit feature flag in CFLAGS (the PEXT CI leg uses -mbmi2) survives a
+    later -march=x86-64; an explicit -march in CFLAGS is the builder's choice
+    and is left alone.
+    """
+    if native or machine.lower() not in {"x86_64", "amd64"}:
+        return []
+    if any(tok.startswith("-march=") for tok in cflags.split()):
+        return []
+    return ["-march=x86-64"]
+
+
+def _arch_args() -> list[str]:
+    if _env_enabled("CAE_EXT_NATIVE"):
+        return ["-march=native"]
+    return _portable_arch_args(
+        native=False, machine=platform.machine(), cflags=os.environ.get("CFLAGS", ""),
+    )
+
+
 def _ext_compile_args() -> list[str]:
     args = ["-O3", *_warning_flags()]
     # Keep default wheels/source builds portable across machines. Opt in to
     # host-specific tuning only when the builder explicitly requests it.
-    if _env_enabled("CAE_EXT_NATIVE"):
-        args.append("-march=native")
+    args += _arch_args()
     if _env_enabled("CAE_EXT_LTO"):
         args.append("-flto")
     if _env_enabled("CAE_EXT_NATIVE") and _env_enabled("CAE_EXT_LTO"):
@@ -82,8 +110,7 @@ def _mcts_compile_args() -> list[str]:
     _ext_compile_args).
     """
     args = ["-O3", *_warning_flags(), "-fopenmp"]
-    if _env_enabled("CAE_EXT_NATIVE"):
-        args.append("-march=native")
+    args += _arch_args()
     if _env_enabled("CAE_EXT_LTO"):
         args.append("-flto")
     if _env_enabled("CAE_EXT_NATIVE") and _env_enabled("CAE_EXT_LTO"):
