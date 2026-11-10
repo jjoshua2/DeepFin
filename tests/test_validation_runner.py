@@ -311,3 +311,10 @@ def test_one_process_cpu_run_keeps_a_single_unsplit_command(
     assert validate.main(["cpu", "--threads", "2", "--report-dir", str(tmp_path)]) == 0
     (command,) = seen
     assert command[command.index("-m", 3) + 1] == "not slow"
+
+
+def test_every_serial_file_exists() -> None:
+    from tests.conftest import SERIAL_TEST_FILES
+
+    missing = sorted(name for name in SERIAL_TEST_FILES if not (validate.ROOT / "tests" / name).is_file())
+    assert not missing

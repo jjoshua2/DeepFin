@@ -16,10 +16,6 @@ import zarr
 from scripts import bt4_raw_corpus_sidecar as tool
 from tests.test_bt4_raw_wdl import REMAP, Session, source3
 
-# Serial phase of the CPU suite: this file sends the process a real SIGINT and so
-# depends on the handler no other file has replaced.
-pytestmark = pytest.mark.serial
-
 
 def label(pending, session, *, prefetch: bool, dtype="float32", batch_size=2):
     return tool.label_shard(

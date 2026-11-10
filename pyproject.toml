@@ -168,7 +168,7 @@ filterwarnings = [
 ]
 markers = [
     "slow: stress / long-running tests (e.g. mcts thread-safety hammer); not in the default run",
-    "serial: depends on process-wide state or an unloaded host; validate.py runs these outside the xdist phase",
+    "serial: applied by tests/conftest.py to SERIAL_TEST_FILES; validate.py runs these outside the xdist phase",
 ]
 
 [tool.coverage.run]
