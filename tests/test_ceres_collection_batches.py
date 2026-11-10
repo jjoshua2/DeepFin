@@ -159,6 +159,21 @@ def _plenty_disk(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tool, "disk_free_bytes", lambda _path: 200 * 2**30)
 
 
+# Scaled-down cleanup clock: the same TERM -> grace -> KILL sequence and the
+# same timeout arithmetic, at sub-second granularity instead of 30 s/2 s.
+FAST_POLL = 0.05
+FAST_CLEANUP = 1.0
+FAST_MIN_CHUNK = int(FAST_CLEANUP + FAST_POLL) + 1
+FAST_TIMEOUT = FAST_MIN_CHUNK + 1
+
+
+@pytest.fixture
+def _fast_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tool, "POLL_SECONDS", FAST_POLL)
+    monkeypatch.setattr(tool, "CLEANUP_SECONDS", FAST_CLEANUP)
+    monkeypatch.setattr(tool, "MIN_CHUNK_SECONDS", FAST_MIN_CHUNK)
+
+
 def sha(path: Path) -> str:
     return tool.sha256_file(path)
 
@@ -386,7 +401,7 @@ def test_nonfinite_plan_number_is_rejected(tmp_path: Path) -> None:
 
 
 @pytest.mark.usefixtures("_plenty_disk")
-@pytest.mark.parametrize("pause_seconds", [0, 30])
+@pytest.mark.parametrize("pause_seconds", [0, 1])
 def test_successful_two_chunks_and_evidence(tmp_path: Path, pause_seconds: int) -> None:
     path, digest, _worker = two_chunk_plan(tmp_path, pause_between_chunks_seconds=pause_seconds)
     before = time.monotonic()
@@ -418,10 +433,10 @@ def test_successful_two_chunks_and_evidence(tmp_path: Path, pause_seconds: int) 
     second = json.loads((state / "chunks" / "c18" / "receipt.json").read_text(encoding="utf-8"))
     gap = second["started_unix"] - first["ended_unix"]
     if pause_seconds:
-        assert gap >= pause_seconds - 0.5
-        assert time.monotonic() - before >= pause_seconds - 0.5
+        assert gap >= pause_seconds - 0.05
+        assert time.monotonic() - before >= pause_seconds - 0.05
     else:
-        assert gap < 5, "zero-pause plan must reach the real next launch without a fixed delay"
+        assert gap < 1.5, "zero-pause plan must reach the real next launch without a fixed delay"
     assert (state / "actual_start.json").is_file()
     assert not (state / "failed.json").exists()
     assert not (state / "STOP").exists()
@@ -519,14 +534,15 @@ def test_zero_exit_missing_or_mismatched_completion_is_refused(
     assert not (tmp_path / "outs" / "c18").exists()
 
 
-@pytest.mark.usefixtures("_plenty_disk")
+@pytest.mark.usefixtures("_plenty_disk", "_fast_cleanup")
 def test_timeout_kills_hung_process_group_and_skips_rest(
     tmp_path: Path
 ) -> None:
     hang = write_script(tmp_path / "hang.py", WORKER_HANG_KILL)
     ok = write_script(tmp_path / "ok.py", WORKER)
     ready = tmp_path / "ready"
-    hang_chunk = chunk_record(tmp_path, "c16", 16, 2, 32, 0, hang, timeout_seconds=33)
+    hang_chunk = chunk_record(tmp_path, "c16", 16, 2, 32, 0, hang,
+                              timeout_seconds=FAST_TIMEOUT)
     hang_chunk["argv"] = [sys.executable, str(hang), str(ready)]
     chunks = [hang_chunk, chunk_record(tmp_path, "c18", 18, 2, 32, 0, ok)]
     path, digest, _plan = make_plan(
@@ -538,7 +554,9 @@ def test_timeout_kills_hung_process_group_and_skips_rest(
     )
     elapsed = time.monotonic() - started
     assert code == 1
-    assert elapsed < 45
+    # The child ignores SIGTERM: it dies only via the post-grace SIGKILL,
+    # which must land inside the chunk's own timeout bound.
+    assert elapsed < FAST_TIMEOUT + 1
     state = tmp_path / "state"
     receipt = json.loads((state / "chunks" / "c16" / "receipt.json").read_text(encoding="utf-8"))
     assert receipt["complete"] is False
@@ -551,7 +569,7 @@ def test_timeout_kills_hung_process_group_and_skips_rest(
     assert manifest["completed_chunks"] == []
 
 
-@pytest.mark.usefixtures("_plenty_disk")
+@pytest.mark.usefixtures("_plenty_disk", "_fast_cleanup")
 def test_stop_kills_running_chunk_and_skips_rest(
     tmp_path: Path
 ) -> None:
@@ -749,7 +767,7 @@ def test_external_sigterm_cleans_owned_child_and_releases_lock(
             driver.wait(timeout=5)
 
 
-@pytest.mark.usefixtures("_plenty_disk")
+@pytest.mark.usefixtures("_plenty_disk", "_fast_cleanup")
 def test_stop_kills_same_group_descendant_after_leader_exits(
     tmp_path: Path
 ) -> None:
@@ -757,7 +775,8 @@ def test_stop_kills_same_group_descendant_after_leader_exits(
     ok = write_script(tmp_path / "ok.py", WORKER)
     lock_path = tmp_path / "dummy.lock"
     ready = tmp_path / "ready"
-    hang = chunk_record(tmp_path, "c16", 16, 2, 32, 0, wrapper, timeout_seconds=33)
+    hang = chunk_record(tmp_path, "c16", 16, 2, 32, 0, wrapper,
+                        timeout_seconds=FAST_TIMEOUT)
     hang["argv"] = [sys.executable, str(wrapper), str(lock_path), str(ready)]
     chunks = [hang, chunk_record(tmp_path, "c18", 18, 2, 32, 0, ok)]
     path, digest, _plan = make_plan(tmp_path, chunks, overall_seconds=90)
@@ -766,7 +785,7 @@ def test_stop_kills_same_group_descendant_after_leader_exits(
         ["--plan", str(path), "--expected-plan-sha256", digest, "--execute"]
     )
     assert code == 1
-    assert time.monotonic() - started < 45
+    assert time.monotonic() - started < FAST_TIMEOUT + 1
     descendant = int(ready.read_text(encoding="utf-8"))
     assert not Path(f"/proc/{descendant}").exists()
     assert lock_is_free(lock_path)
@@ -841,7 +860,7 @@ def test_first_external_signal_during_timeout_cleanup_cannot_skip_kill(
     assert now[0] < 1030.0
 
 
-@pytest.mark.usefixtures("_plenty_disk")
+@pytest.mark.usefixtures("_plenty_disk", "_fast_cleanup")
 def test_successful_leader_cannot_leave_lock_holding_descendant(
     tmp_path: Path,
 ) -> None:
@@ -867,7 +886,10 @@ while not Path(sys.argv[5]).exists():
     second = chunk_record(tmp_path, "c18", 18, 2, 32, 0, ok)
     path, digest, _plan = make_plan(tmp_path, [first, second])
     try:
+        started = time.monotonic()
         assert tool.main(["--plan", str(path), "--expected-plan-sha256", digest, "--execute"]) == 1
+        # TERM is ignored by the descendant; only the post-grace KILL frees the lock.
+        assert time.monotonic() - started < FAST_CLEANUP + 2
         assert lock_is_free(lock_path)
         receipt = json.loads((tmp_path / "state/chunks/c16/receipt.json").read_text())
         assert receipt["complete"] is False

@@ -58,6 +58,13 @@ def test_process_stop_during_cleanup_reaps_owned_child_with_unblocked_thread(
             wait_stop_sent = True
             os.kill(os.getpid(), chosen)
             time.sleep(0.1)
+        if signal.SIGKILL not in sent:
+            # The post-TERM grace wait. The fixture child ignores SIGTERM, so
+            # this wait can only time out; a short real wait takes the same
+            # TimeoutExpired -> SIGKILL path as stop_owned's 3 s one, whose
+            # length test_ignored_stop_and_all_dispositions_remain_unchanged pins.
+            assert kwargs.get("timeout") == 3, (args, kwargs)
+            kwargs = {**kwargs, "timeout": 0.2}
         return actual_wait(*args, **kwargs)
     calls = 0
     def guard():
@@ -152,12 +159,18 @@ while not ready.exists() and time.monotonic()<limit:
     time.sleep(.01)
 assert ready.exists()
 killpg, wait = os.killpg, child.wait
+sent = []
 def send(group, sig):
     assert group == child.pid
+    sent.append(sig)
     killpg(group,sig)
     if sig == signal.SIGTERM:
         os.kill(os.getpid(), signal.SIGTERM)
 def reap(*args, **kwargs):
+    if signal.SIGKILL not in sent:
+        # TERM grace wait on a TERM-ignoring child: it can only time out, so a
+        # short real wait takes the same path as stop_owned's pinned 3 s one.
+        kwargs = {**kwargs, 'timeout': 0.2}
     value=wait(*args, **kwargs)
     if child.returncode == -signal.SIGKILL:
         try:
