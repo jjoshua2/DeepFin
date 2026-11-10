@@ -73,6 +73,8 @@ dev = [
   "zstandard>=0.21",
   "pytest>=7.0",
   "pytest-cov>=5.0",
+  # Spreads the full CPU suite across processes in CI (scripts/validate.py).
+  "pytest-xdist>=3.6",
   "diff-cover>=8.0",
   # Static analysis — EXACT pins so lint results are deterministic across
   # local and CI (a floating basedpyright/ruff/numpy release can flip a green
@@ -166,6 +168,7 @@ filterwarnings = [
 ]
 markers = [
     "slow: stress / long-running tests (e.g. mcts thread-safety hammer); not in the default run",
+    "serial: applied by tests/conftest.py to process-, signal- and thread-state test files; validate.py runs these outside the xdist phase",
 ]
 
 [tool.coverage.run]
