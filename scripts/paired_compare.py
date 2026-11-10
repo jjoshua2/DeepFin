@@ -89,6 +89,11 @@ from chess_anti_engine.utils.audit_cache_format import (
 
 PHASE_NAMES = ("endgame", "middlegame", "opening")
 
+# Bound each index/gather matrix, except that one complete draw must fit.
+# Retaining the final n_boot scalar means still makes memory O(n + n_boot),
+# rather than O(n * n_boot). Chunking preserves the seeded draw order.
+_BOOTSTRAP_MAX_ELEMENTS = 1_000_000
+
 
 def paired_bootstrap_ci(
     deltas: np.ndarray, *, n_boot: int = 10_000, alpha: float = 0.05, seed: int = 0,
@@ -97,9 +102,16 @@ def paired_bootstrap_ci(
     n = deltas.shape[0]
     if n < 2:
         raise ValueError("paired bootstrap needs at least two paired positions")
+    if n_boot <= 0:
+        raise ValueError("n_boot must be positive")
     rng = np.random.default_rng(seed)
-    idx = rng.integers(0, n, size=(n_boot, n))
-    means = deltas[idx].mean(axis=1)
+    chunk = max(1, _BOOTSTRAP_MAX_ELEMENTS // n)
+    # Preserve NumPy's mean dtype (including float32) for percentile arithmetic.
+    means = np.empty(n_boot, dtype=deltas[:1].mean().dtype)
+    for start in range(0, n_boot, chunk):
+        stop = min(start + chunk, n_boot)
+        idx = rng.integers(0, n, size=(stop - start, n))
+        means[start:stop] = deltas[idx].mean(axis=1)
     lo, hi = np.percentile(means, [100 * alpha / 2, 100 * (1 - alpha / 2)])
     return float(lo), float(hi)
 
@@ -114,11 +126,17 @@ def paired_cluster_bootstrap_ci(
     unique, inverse = np.unique(clusters, return_inverse=True)
     if len(unique) < 2:
         raise ValueError("cluster bootstrap needs at least two clusters")
+    if n_boot <= 0:
+        raise ValueError("n_boot must be positive")
     sums = np.bincount(inverse, weights=deltas)
     counts = np.bincount(inverse)
     rng = np.random.default_rng(seed)
-    sampled = rng.integers(0, len(unique), size=(n_boot, len(unique)))
-    means = sums[sampled].sum(axis=1) / counts[sampled].sum(axis=1)
+    chunk = max(1, _BOOTSTRAP_MAX_ELEMENTS // len(unique))
+    means = np.empty(n_boot, dtype=np.float64)
+    for start in range(0, n_boot, chunk):
+        stop = min(start + chunk, n_boot)
+        sampled = rng.integers(0, len(unique), size=(stop - start, len(unique)))
+        means[start:stop] = sums[sampled].sum(axis=1) / counts[sampled].sum(axis=1)
     lo, hi = np.percentile(means, [100 * alpha / 2, 100 * (1 - alpha / 2)])
     return float(lo), float(hi)
 
