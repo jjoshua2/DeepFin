@@ -51,6 +51,32 @@ def suite_command(suite: str) -> list[str]:
     return [sys.executable, "-m", "pytest", "-m", "not slow", "--tb=short", "--durations=20", *paths]
 
 
+def parallel_args(suite: str, workers: str) -> list[str]:
+    """pytest-xdist arguments for the full CPU suite.
+
+    Only the ``cpu`` suite is spread across processes: ``capped`` and ``pext``
+    are short and ``capped`` exists to observe one process's thread setting.
+    ``loadfile`` keeps every test of a file in one worker, so module-scoped
+    fixtures and file-local shared state behave as they do serially.
+    """
+    if suite != "cpu" or workers == "1":
+        return []
+    return ["-n", workers, "--dist", "loadfile"]
+
+
+def split_serial_phase(command: list[str]) -> tuple[list[str], list[str]]:
+    """Split a pytest command into its xdist phase and its one-process phase.
+
+    Tests marked ``serial`` read process-wide state (live threads, the SIGALRM
+    handler) or assume an unloaded host, so they run afterwards in one process.
+    """
+    marker = command.index("-m", 3) + 1
+    parallel, serial = list(command), list(command)
+    parallel[marker] = f"({command[marker]}) and not serial"
+    serial[marker] = f"({command[marker]}) and serial"
+    return parallel, serial
+
+
 def validation_environment(suite: str, threads: str, backend: str) -> dict[str, str]:
     env = dict(os.environ)
     # lint.sh resolves command-line tools from PATH when there is no local venv.
@@ -63,6 +89,19 @@ def validation_environment(suite: str, threads: str, backend: str) -> dict[str, 
         for name in THREAD_VARS:
             env[name] = env["CAE_TEST_THREADS"]
     return env
+
+
+def parallel_environment(env: dict[str, str]) -> dict[str, str]:
+    """One compute thread per xdist worker: the workers are the parallelism.
+
+    Uncapped workers would each start a thread per core and starve the tests
+    that measure wall-clock time.
+    """
+    out = dict(env)
+    out["CAE_TEST_THREADS"] = "1"
+    for name in THREAD_VARS:
+        out[name] = "1"
+    return out
 
 
 def configure_compile_environment(env: dict[str, str], cache_root: Path) -> None:
@@ -124,6 +163,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("suite", choices=("cpu", "pext", "capped", "lint"))
     parser.add_argument("--threads", default=os.environ.get("CAE_TEST_THREADS", "2"),
                         help="Positive count or auto; defaults to CAE_TEST_THREADS or 2. capped always uses 2.")
+    parser.add_argument("--workers", default=os.environ.get("CAE_TEST_WORKERS"),
+                        help="pytest-xdist processes for the cpu suite: a positive count or auto. Defaults to "
+                             "CAE_TEST_WORKERS, else auto when threads is auto (CI) and 1 otherwise, so a "
+                             "capped local run stays in one process.")
     parser.add_argument("--expect-backend", choices=("magic", "pext"),
                         default=os.environ.get("CAE_EXPECT_SLIDER_BACKEND"),
                         help="Defaults to magic, or pext for the pext suite.")
@@ -133,14 +176,22 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.threads != "auto" and (not args.threads.isdecimal() or int(args.threads) < 1):
         parser.error("--threads must be a positive integer or auto")
+    workers = args.workers or ("auto" if args.threads == "auto" else "1")
+    if workers != "auto" and (not workers.isdecimal() or int(workers) < 1):
+        parser.error("--workers must be a positive integer or auto")
     backend = args.expect_backend or ("pext" if args.suite == "pext" else "magic")
     if args.suite == "pext" and backend != "pext":
         parser.error("the pext suite requires --expect-backend pext")
     env = validation_environment(args.suite, args.threads, backend)
     command = suite_command(args.suite)
+    xdist = parallel_args(args.suite, workers)
+    serial_command: list[str] | None = None
+    if xdist:
+        command, serial_command = split_serial_phase(command)
+        command += xdist
     started = time.monotonic()
     print(f"suite={args.suite} root={ROOT}\npython={sys.executable} {platform.python_version()} "
-          f"platform={platform.platform()}\nthreads={env['CAE_TEST_THREADS']} "
+          f"platform={platform.platform()}\nthreads={env['CAE_TEST_THREADS']} workers={workers} "
           f"expected_backend={backend} CUDA_VISIBLE_DEVICES={env['CUDA_VISIBLE_DEVICES']!r}", flush=True)
     try:
         with ExitStack() as stack:
@@ -151,14 +202,25 @@ def main(argv: list[str] | None = None) -> int:
                 report.unlink(missing_ok=True)
                 command.append(f"--junitxml={report}")
                 print(f"junit_report={report}", flush=True)
+                # Removed even when this run has no serial phase: a stale one
+                # from an earlier run must not sit beside a fresh report.
+                serial_report = report.with_name(f"{args.suite}-serial.xml")
+                serial_report.unlink(missing_ok=True)
+                if serial_command is not None:
+                    serial_command.append(f"--junitxml={serial_report}")
                 cache_root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="deepfin-validate-")))
                 configure_compile_environment(env, cache_root)
                 print(f"compile_cache={cache_root} CXX={env.get('CXX', 'PATH default')} "
                       "compile_threads=1 MAX_JOBS=1", flush=True)
             preflight(args.suite, backend, args.require_cpu_wheel)
             print(f"executing: {shlex.join(command)}", flush=True)
-            result = subprocess.run(command, cwd=ROOT, env=env, check=False)
+            result = subprocess.run(command, cwd=ROOT, env=parallel_environment(env) if xdist else env, check=False)
             code = result.returncode
+            if serial_command is not None:
+                # Always run it: a failure in one phase must not hide the other's.
+                print(f"executing: {shlex.join(serial_command)}", flush=True)
+                serial_code = subprocess.run(serial_command, cwd=ROOT, env=env, check=False).returncode
+                code = code or serial_code
     except (ImportError, OSError, RuntimeError) as exc:
         print(f"validation preflight/launch failed: {exc}", file=sys.stderr, flush=True)
         code = 1
