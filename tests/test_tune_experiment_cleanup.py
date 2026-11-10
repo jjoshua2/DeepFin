@@ -171,6 +171,7 @@ def test_keep_last_zero_disables_cleanup_entirely(tmp_path: Path) -> None:
 
 def test_a_missing_tune_dir_is_not_an_error(tmp_path: Path) -> None:
     _cleanup_old_tune_experiments(tune_dir=tmp_path / "nope", keep_last=2)
+    assert not (tmp_path / "nope").exists()
 
 
 def test_a_state_file_naming_several_trials_protects_all_of_them(
