@@ -74,6 +74,18 @@ the regime, including under `-q`. Use `CAE_TEST_THREADS=auto` only on a dedicate
 runner or during a confirmed pause with no competing work; an explicit thread count
 is also supported. Invalid values retain the cap. In CI YAML, quote string values.
 
+`validate.py cpu` spreads the suite across `pytest-xdist` processes when the thread
+setting is `auto`, as in CI, and stays in one process under the default cap. Override
+with `--workers N` or `CAE_TEST_WORKERS`. Files are the unit of distribution, so a
+test may share state with its own file but not with another.
+Each xdist worker gets one compute thread, so `CAE_TEST_THREADS=auto` starts one
+process per core: keep it for stopped-training windows.
+
+A test file that starts processes, uses signals or asserts on live threads is
+routed by `tests/conftest.py` to a second, one-process phase, reported in
+`cpu-serial.xml`. That is most of the suite's time, so parallelism mainly helps
+the pure-computation files.
+
 The shared validator prints the interpreter, Torch build, requested thread count,
 native backend, elapsed time and failing command. Test suites print their 20 slowest
 phases and write per-test JUnit timings/results to `artifacts/validation/<suite>.xml`.
