@@ -65,6 +65,20 @@ Validate a copy first and verify the realized value after adoption. Some keys ar
 restart-only, and removing an override may leave the old value in memory. The live
 run Skill and operations document cover the mechanics.
 
+A bad live value fails in one of three ways, which code comments cite by letter:
+
+- **(a) Key not in the schema** (`utils/config_yaml.py`): mid-run the whole reload is
+  rejected and the old config kept; at launch it is fatal. Before a restart, compare
+  the live YAML's keys with the target revision's schema.
+- **(b) In the schema, rejected by a validator that runs inside the iteration loop**
+  (chiefly `TrialConfig.from_dict`): the reload succeeds, the validator raises and
+  the trial dies.
+- **(c) In the schema but not range-checked**: applied raw and silently. `lr` is one
+  such key (LR above 0.003 has destroyed the model).
+
+Some value checks run in the loader instead (`flatten_run_config_defaults`, e.g.
+strict booleans); a bad value there behaves like (a).
+
 Respect intentional-stop and pause markers. Before a change whose effects survive a
 config revert, preserve enough state to recover: weights, optimizer, PID and replay,
 plus their provenance. Ray can prune checkpoints, so copy long-lived evaluation
@@ -113,6 +127,13 @@ themselves establish playing strength.
 - MCTS uses the `wdl` value head; `sf_eval` and `categorical` are auxiliary.
 - Higher PID `wdl_regret` permits worse Stockfish moves and makes the opponent weaker.
   Best-move-based labels are distinct from the handicapped move actually played.
+- `wdl_regret` measures the agent (network plus search), not the network. The PID
+  holds winrate at `sf_pid_target_winrate` by moving regret and, in its second stage,
+  `sf_nodes`, so difficulty is regret *and* nodes. A search change
+  (`gumbel_c_scale`, `gumbel_policy_temp`, `mcts_simulations`, `gumbel_topk`, root
+  transform), a target-winrate change or a restart that restores older PID state
+  moves them without any change in the weights. Read regret as a network signal only
+  while those are frozen, and always together with `sf_nodes`.
 - Search action IDs and network policy indices are different spaces. Use shared
   mappings in `moves/torch_maps.py`; preserve encoding and history metadata across
   checkpoints, replay and evaluation.
@@ -132,6 +153,13 @@ change scope; avoid repeated full suites after checks pass without a new reason.
 Delegate bounded independent work when useful, with clear ownership and enough
 context to judge it. Inherit the selected model unless the task warrants another;
 there is no fixed worker count or requirement to predesign every implementation.
+
+Finish what you find. When work is identified and nothing blocks it — a review
+finding outside the PR's scope, a cleanup, a follow-up — do it in the same session, in
+a new PR or through a delegated implementer if that is cleaner. "Later" is acceptable
+only with a named, real blocker (a live run that must not move, a destructive step
+awaiting the owner's go-ahead — and then ask at once). Before a final report, close
+every thread opened earlier in the session or state its blocker.
 
 Open PRs ready for review unless requested otherwise. Use a separate reviewer for
 consequential changes; the author is not an independent review. If independent review

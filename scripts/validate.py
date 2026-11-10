@@ -8,11 +8,13 @@ PEXT requires a separately built BMI2 extension set; this command never rebuilds
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import ExitStack
 import importlib
 import os
 from pathlib import Path
 import platform
+import re
 import shlex
 import subprocess
 import sys
@@ -20,6 +22,8 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+# Path of a file listing, one per line, the test files tests/conftest.py deselects.
+DESELECT_LIST_ENV = "CAE_DESELECT_LIST"
 PEXT_TESTS = (
     "tests/test_slider_tables.py",
     "tests/test_perft.py",
@@ -51,6 +55,186 @@ def suite_command(suite: str) -> list[str]:
     return [sys.executable, "-m", "pytest", "-m", "not slow", "--tb=short", "--durations=20", *paths]
 
 
+def parallel_args(suite: str, workers: str) -> list[str]:
+    """pytest-xdist arguments for the full CPU suite.
+
+    Only the ``cpu`` suite is spread across processes: ``capped`` and ``pext``
+    are short and ``capped`` exists to observe one process's thread setting.
+    ``loadfile`` keeps every test of a file in one worker, so module-scoped
+    fixtures and file-local shared state behave as they do serially.
+    """
+    if suite != "cpu" or workers == "1":
+        return []
+    return ["-n", workers, "--dist", "loadfile"]
+
+
+def split_serial_phase(command: list[str]) -> tuple[list[str], list[str]]:
+    """Split a pytest command into its xdist phase and its one-process phase.
+
+    Tests marked ``serial`` read process-wide state (live threads, the SIGALRM
+    handler) or assume an unloaded host, so they run afterwards in one process.
+    """
+    marker = command.index("-m", 3) + 1
+    parallel, serial = list(command), list(command)
+    parallel[marker] = f"({command[marker]}) and not serial"
+    serial[marker] = f"({command[marker]}) and serial"
+    return parallel, serial
+
+
+# Change-scoped selection of script-only test files. Any doubt runs everything:
+# an unmappable or unsafe changed path, a git failure, or no pull request at all.
+_SCRIPT_FILE = re.compile(r"scripts/([\w-]+)\.(?:py|sh)")
+_TEST_FILE = re.compile(r"tests/(test_\w*)\.py")
+# `scripts.X` (imports, importlib strings, `-m`), a `X.py`/`X.sh` file name in
+# any spelling of its path, and the bare imports a script run by filename uses.
+_SCRIPT_REF = re.compile(
+    r"\bscripts\.(\w+)|([\w-]+)\.(?:py|sh)\b|^[ \t]*(?:from[ \t]+\.?|import[ \t]+)(\w+)(?![\w.])", re.MULTILINE,
+)
+_SCRIPTS_FROM_IMPORT = re.compile(r"\bfrom\s+scripts\s+import\s+(\([^)]*\)|[^\n]*)")
+_TESTS_FROM_IMPORT = re.compile(r"\bfrom\s+(?:tests|\.)\s+import\s+(\([^)]*\)|[^\n]*)")
+# Any quoted name: catches dynamic imports such as import_module("scripts." + NAME).
+# It only adds dependency edges, never makes a file script-only.
+_QUOTED_NAME = re.compile(r"[\"']([\w-]+)[\"']")
+_TEST_REF = re.compile(r"\b(?:tests\.|from\s+\.)(test_\w+)|\b(test_\w+)\.py\b")
+_PACKAGE_REF = re.compile(r"\bchess_anti_engine\b")
+# A test that reads docs/, tests/ or scans scripts/ depends on files no
+# reference names, so it is never treated as script-only.
+_TREE_READ = re.compile(
+    r"[\"'](?:docs|tests)[\"']|\bdocs/|\btests/(?!test_\w*\.py)"
+    r"|[\"']scripts[\"']\s*\)?\s*\.\s*(?:r?glob|iterdir)\(|(?:glob|listdir|walk|scandir)\(\s*[\"'][^\"']*scripts"
+)
+
+
+def _script_refs(text: str) -> set[str]:
+    refs = {name for match in _SCRIPT_REF.finditer(text) for name in match.groups() if name}
+    for match in _SCRIPTS_FROM_IMPORT.finditer(text):
+        refs.update(re.findall(r"\w+", match.group(1)))
+    return refs
+
+
+def _test_refs(text: str) -> set[str]:
+    refs = {name for match in _TEST_REF.finditer(text) for name in match.groups() if name}
+    for match in _TESTS_FROM_IMPORT.finditer(text):
+        refs.update(re.findall(r"\w+", match.group(1)))
+    return refs
+
+
+def _read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def script_test_deselection(
+    changed: Iterable[str], root: Path, read: Callable[[Path], str] = _read_text,
+) -> tuple[frozenset[str] | None, str]:
+    """Script-only test files (``tests/test_*.py``) the change set cannot affect.
+
+    Returns ``(None, reason)`` when scoping is not permitted, so everything runs.
+    A script-only file references an existing ``scripts/`` module and never
+    mentions ``chess_anti_engine``. Scoping is permitted only when every changed
+    path is under ``scripts/`` (as a top-level ``.py``/``.sh`` module), is a
+    ``tests/test_*.py`` file, is under ``docs/`` or is a top-level ``*.md``;
+    anything else may reach every test, and so does a change to this file,
+    which must not judge its own edit. A file is affected when it, or any
+    script or test file it references transitively, changed.
+    """
+    paths = {path.strip().replace("\\", "/") for path in changed if path.strip()}
+    if not paths:
+        return None, "no changed files"
+    seeds: set[str] = set()
+    for path in sorted(paths):
+        if path == "scripts/validate.py":
+            return None, f"{path} defines this rule"
+        if path.startswith("docs/") or ("/" not in path and path.endswith(".md")):
+            continue
+        if match := _TEST_FILE.fullmatch(path):
+            seeds.add(f"t:{match[1]}")
+        elif path.startswith("scripts/"):
+            match = _SCRIPT_FILE.fullmatch(path)
+            if match is None or match[1] == "__init__":
+                return None, f"cannot map {path} to a script module"
+            seeds.add(f"s:{match[1]}")
+        else:
+            return None, f"{path} may affect any test"
+    try:
+        scripts = sorted(path for path in (root / "scripts").iterdir()
+                         if path.is_file() and path.suffix in (".py", ".sh") and path.stem != "__init__")
+        tests = sorted((root / "tests").glob("test_*.py"))
+        # A deleted top-level md still counts: a test reading it must run.
+        top_md = sorted({path.name for path in root.glob("*.md")}
+                        | {path for path in paths if "/" not in path and path.endswith(".md")})
+        sources = {path: read(path) for path in (*scripts, *tests)}
+    except OSError as exc:
+        return None, f"cannot read the tree: {exc}"
+    existing = {path.stem for path in scripts}
+    script_names = existing | {seed[2:] for seed in seeds if seed.startswith("s:")}
+    test_names = {path.stem for path in tests} | {seed[2:] for seed in seeds if seed.startswith("t:")}
+    top_md_read = re.compile("|".join(rf"[\"'/]{re.escape(name)}\b" for name in top_md) or r"(?!)")
+    dependents: dict[str, set[str]] = {}
+    candidates: list[Path] = []
+    script_paths = set(scripts)
+    for path in (*scripts, *tests):
+        text = sources[path]
+        node = f"{'s' if path in script_paths else 't'}:{path.stem}"
+        script_refs = _script_refs(text)
+        quoted = set(_QUOTED_NAME.findall(text))
+        for ref in {f"s:{name}" for name in (script_refs | quoted) & script_names} | {
+                f"t:{name}" for name in (_test_refs(text) | quoted) & test_names}:
+            dependents.setdefault(ref, set()).add(node)
+        if (node.startswith("t:") and script_refs & existing and not _PACKAGE_REF.search(text)
+                and not _TREE_READ.search(text) and not top_md_read.search(text)):
+            candidates.append(path)
+    affected, frontier = set(seeds), list(seeds)
+    while frontier:
+        for node in dependents.get(frontier.pop(), ()):
+            if node not in affected:
+                affected.add(node)
+                frontier.append(node)
+    deselected = frozenset(f"tests/{path.name}" for path in candidates if f"t:{path.stem}" not in affected)
+    return deselected, f"{len(paths)} changed files; {len(candidates)} script-only test files"
+
+
+def _git(*args: str) -> list[str]:
+    out = subprocess.run(["git", *args], cwd=ROOT, check=True, capture_output=True, text=True, timeout=300).stdout
+    return [line for line in out.splitlines() if line.strip()]
+
+
+def changed_files(changed_vs: str | None, environ: Mapping[str, str]) -> tuple[list[str] | None, str]:
+    """The change set to scope script-only tests by, or ``(None, reason)``.
+
+    ``--changed-vs REF`` diffs a local branch from its merge base with REF and
+    adds uncommitted and untracked files. On a GitHub pull request the checkout
+    is the PR's merge commit at depth 1: its parents are fetched and it is
+    diffed against its first parent, the base it was merged onto, which is
+    exactly the PR's change set. Diffing against the base branch's current tip
+    instead would drop any file the base later changed identically. A HEAD that
+    is not a two-parent merge, any other run, or any git failure returns None
+    so that everything runs.
+    """
+    try:
+        if changed_vs:
+            files = _git("diff", "--name-only", "--no-renames", f"{changed_vs}...HEAD")
+            files += _git("diff", "--name-only", "--no-renames", "HEAD")
+            files += _git("ls-files", "--others", "--exclude-standard")
+        elif environ.get("GITHUB_ACTIONS") == "true" and environ.get("GITHUB_EVENT_NAME") == "pull_request":
+            # GITHUB_ACTIONS too: a --depth fetch would make a local full clone shallow.
+            (head,) = _git("rev-parse", "HEAD")
+            # GITHUB_SHA is the PR's test merge. Any other two-parent HEAD (a PR
+            # head that merged main in) would diff as what main brought, not the PR.
+            if head != environ.get("GITHUB_SHA"):
+                return None, "HEAD is not the pull request's merge commit"
+            _git("fetch", "--no-tags", "--depth=2", "origin", head)
+            if len(_git("rev-list", "--parents", "-n1", "HEAD")[0].split()) != 3:
+                return None, "HEAD is not a two-parent merge commit"
+            files = _git("diff", "--name-only", "--no-renames", "HEAD^1", "HEAD")
+        else:
+            return None, "not a pull request (use --changed-vs REF to opt in locally)"
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError) as exc:
+        return None, f"change detection failed: {exc}"
+    if not files:
+        return None, "no changed files detected"
+    return sorted(set(files)), "ok"
+
+
 def validation_environment(suite: str, threads: str, backend: str) -> dict[str, str]:
     env = dict(os.environ)
     # lint.sh resolves command-line tools from PATH when there is no local venv.
@@ -59,10 +243,25 @@ def validation_environment(suite: str, threads: str, backend: str) -> dict[str, 
     env["CUDA_VISIBLE_DEVICES"] = ""
     env["CAE_TEST_THREADS"] = "2" if suite == "capped" else threads
     env["CAE_EXPECT_SLIDER_BACKEND"] = backend
+    # Only main() may scope a run; an inherited change set must not.
+    env.pop(DESELECT_LIST_ENV, None)
     if env["CAE_TEST_THREADS"] != "auto":
         for name in THREAD_VARS:
             env[name] = env["CAE_TEST_THREADS"]
     return env
+
+
+def parallel_environment(env: dict[str, str]) -> dict[str, str]:
+    """One compute thread per xdist worker: the workers are the parallelism.
+
+    Uncapped workers would each start a thread per core and starve the tests
+    that measure wall-clock time.
+    """
+    out = dict(env)
+    out["CAE_TEST_THREADS"] = "1"
+    for name in THREAD_VARS:
+        out[name] = "1"
+    return out
 
 
 def configure_compile_environment(env: dict[str, str], cache_root: Path) -> None:
@@ -119,28 +318,67 @@ def preflight(suite: str, backend: str, require_cpu_wheel: bool) -> None:
             raise RuntimeError(f"{name}: expected {backend}, found {actual}; rebuild the intended slider arm")
 
 
+def apply_change_scope(env: dict[str, str], changed_vs: str | None, workdir: Path) -> None:
+    """Compute the deselection once and hand pytest its file list; print the outcome.
+
+    Every pytest process (each xdist worker and the serial phase) only reads
+    the list, so the rule runs once per validation.
+    """
+    files, reason = changed_files(changed_vs, os.environ)
+    deselected = None
+    if files is not None:
+        deselected, reason = script_test_deselection(files, ROOT)
+    if files is None or deselected is None:
+        print(f"change scoping: off ({reason}); running every test file", flush=True)
+        return
+    print(f"change scoping: on ({reason}); deselecting {len(deselected)} unaffected script-only "
+          "test files", flush=True)
+    if deselected:
+        listing = workdir / "deselected-test-files.txt"
+        listing.write_text("".join(f"{path}\n" for path in sorted(deselected)), encoding="utf-8")
+        env[DESELECT_LIST_ENV] = str(listing)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("suite", choices=("cpu", "pext", "capped", "lint"))
     parser.add_argument("--threads", default=os.environ.get("CAE_TEST_THREADS", "2"),
                         help="Positive count or auto; defaults to CAE_TEST_THREADS or 2. capped always uses 2.")
+    parser.add_argument("--workers", default=os.environ.get("CAE_TEST_WORKERS"),
+                        help="pytest-xdist processes for the cpu suite: a positive count or auto. Defaults to "
+                             "CAE_TEST_WORKERS, else auto when threads is auto (CI) and 1 otherwise, so a "
+                             "capped local run stays in one process.")
     parser.add_argument("--expect-backend", choices=("magic", "pext"),
                         default=os.environ.get("CAE_EXPECT_SLIDER_BACKEND"),
                         help="Defaults to magic, or pext for the pext suite.")
     parser.add_argument("--require-cpu-wheel", action="store_true")
     parser.add_argument("--report-dir", type=Path, default=Path("artifacts/validation"),
                         help="JUnit XML directory, relative to the checkout unless absolute; one file per suite.")
+    parser.add_argument("--changed-vs", metavar="REF",
+                        help="cpu suite: skip script-only test files that the changes since the merge base "
+                             "with REF (plus uncommitted and untracked files) cannot affect, as CI does on a "
+                             "pull request. See docs/development.md.")
     args = parser.parse_args(argv)
+    if args.changed_vs and args.suite != "cpu":
+        parser.error("--changed-vs applies only to the cpu suite")
     if args.threads != "auto" and (not args.threads.isdecimal() or int(args.threads) < 1):
         parser.error("--threads must be a positive integer or auto")
+    workers = args.workers or ("auto" if args.threads == "auto" else "1")
+    if workers != "auto" and (not workers.isdecimal() or int(workers) < 1):
+        parser.error("--workers must be a positive integer or auto")
     backend = args.expect_backend or ("pext" if args.suite == "pext" else "magic")
     if args.suite == "pext" and backend != "pext":
         parser.error("the pext suite requires --expect-backend pext")
     env = validation_environment(args.suite, args.threads, backend)
     command = suite_command(args.suite)
+    xdist = parallel_args(args.suite, workers)
+    serial_command: list[str] | None = None
+    if xdist:
+        command, serial_command = split_serial_phase(command)
+        command += xdist
     started = time.monotonic()
     print(f"suite={args.suite} root={ROOT}\npython={sys.executable} {platform.python_version()} "
-          f"platform={platform.platform()}\nthreads={env['CAE_TEST_THREADS']} "
+          f"platform={platform.platform()}\nthreads={env['CAE_TEST_THREADS']} workers={workers} "
           f"expected_backend={backend} CUDA_VISIBLE_DEVICES={env['CUDA_VISIBLE_DEVICES']!r}", flush=True)
     try:
         with ExitStack() as stack:
@@ -151,14 +389,28 @@ def main(argv: list[str] | None = None) -> int:
                 report.unlink(missing_ok=True)
                 command.append(f"--junitxml={report}")
                 print(f"junit_report={report}", flush=True)
+                # Removed even when this run has no serial phase: a stale one
+                # from an earlier run must not sit beside a fresh report.
+                serial_report = report.with_name(f"{args.suite}-serial.xml")
+                serial_report.unlink(missing_ok=True)
+                if serial_command is not None:
+                    serial_command.append(f"--junitxml={serial_report}")
                 cache_root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="deepfin-validate-")))
                 configure_compile_environment(env, cache_root)
                 print(f"compile_cache={cache_root} CXX={env.get('CXX', 'PATH default')} "
                       "compile_threads=1 MAX_JOBS=1", flush=True)
             preflight(args.suite, backend, args.require_cpu_wheel)
+            if args.suite == "cpu":
+                scope_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="deepfin-scope-")))
+                apply_change_scope(env, args.changed_vs, scope_dir)
             print(f"executing: {shlex.join(command)}", flush=True)
-            result = subprocess.run(command, cwd=ROOT, env=env, check=False)
+            result = subprocess.run(command, cwd=ROOT, env=parallel_environment(env) if xdist else env, check=False)
             code = result.returncode
+            if serial_command is not None:
+                # Always run it: a failure in one phase must not hide the other's.
+                print(f"executing: {shlex.join(serial_command)}", flush=True)
+                serial_code = subprocess.run(serial_command, cwd=ROOT, env=env, check=False).returncode
+                code = code or serial_code
     except (ImportError, OSError, RuntimeError) as exc:
         print(f"validation preflight/launch failed: {exc}", file=sys.stderr, flush=True)
         code = 1
