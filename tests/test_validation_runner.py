@@ -236,3 +236,37 @@ def test_ci_invokes_shared_suites_and_canary_keeps_same_lint_scope() -> None:
     canary: dict[str, Any] = yaml.safe_load((validate.ROOT / ".github/workflows/lint-canary.yml").read_text())
     assert any("scripts/validate.py lint --require-cpu-wheel" in step.get("run", "")
                for step in canary["jobs"]["canary"]["steps"])
+
+
+def test_only_the_cpu_suite_is_spread_across_processes() -> None:
+    assert validate.parallel_args("cpu", "auto") == ["-n", "auto", "--dist", "loadfile"]
+    assert validate.parallel_args("cpu", "3") == ["-n", "3", "--dist", "loadfile"]
+    assert validate.parallel_args("cpu", "1") == []
+    for suite in ("capped", "pext", "lint"):
+        assert validate.parallel_args(suite, "auto") == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["--threads", "auto"], ["-n", "auto", "--dist", "loadfile"]),
+        (["--threads", "2"], []),
+        (["--threads", "2", "--workers", "4"], ["-n", "4", "--dist", "loadfile"]),
+        (["--threads", "auto", "--workers", "1"], []),
+    ],
+)
+def test_worker_default_follows_the_thread_regime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, argv: list[str], expected: list[str],
+) -> None:
+    monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
+    monkeypatch.setattr(validate, "preflight", lambda *_args: None)
+    seen: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(validate.subprocess, "run", fake_run)
+    assert validate.main(["cpu", *argv, "--report-dir", str(tmp_path)]) == 0
+    extra = [arg for arg in seen[0] if arg in {"-n", "--dist", "loadfile"} or arg in {"auto", "4"}]
+    assert extra == expected

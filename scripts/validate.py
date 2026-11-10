@@ -51,6 +51,19 @@ def suite_command(suite: str) -> list[str]:
     return [sys.executable, "-m", "pytest", "-m", "not slow", "--tb=short", "--durations=20", *paths]
 
 
+def parallel_args(suite: str, workers: str) -> list[str]:
+    """pytest-xdist arguments for the full CPU suite.
+
+    Only the ``cpu`` suite is spread across processes: ``capped`` and ``pext``
+    are short and ``capped`` exists to observe one process's thread setting.
+    ``loadfile`` keeps every test of a file in one worker, so module-scoped
+    fixtures and file-local shared state behave as they do serially.
+    """
+    if suite != "cpu" or workers == "1":
+        return []
+    return ["-n", workers, "--dist", "loadfile"]
+
+
 def validation_environment(suite: str, threads: str, backend: str) -> dict[str, str]:
     env = dict(os.environ)
     # lint.sh resolves command-line tools from PATH when there is no local venv.
@@ -124,6 +137,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("suite", choices=("cpu", "pext", "capped", "lint"))
     parser.add_argument("--threads", default=os.environ.get("CAE_TEST_THREADS", "2"),
                         help="Positive count or auto; defaults to CAE_TEST_THREADS or 2. capped always uses 2.")
+    parser.add_argument("--workers", default=os.environ.get("CAE_TEST_WORKERS"),
+                        help="pytest-xdist processes for the cpu suite: a positive count or auto. Defaults to "
+                             "CAE_TEST_WORKERS, else auto when threads is auto (CI) and 1 otherwise, so a "
+                             "capped local run stays in one process.")
     parser.add_argument("--expect-backend", choices=("magic", "pext"),
                         default=os.environ.get("CAE_EXPECT_SLIDER_BACKEND"),
                         help="Defaults to magic, or pext for the pext suite.")
@@ -133,14 +150,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.threads != "auto" and (not args.threads.isdecimal() or int(args.threads) < 1):
         parser.error("--threads must be a positive integer or auto")
+    workers = args.workers or ("auto" if args.threads == "auto" else "1")
+    if workers != "auto" and (not workers.isdecimal() or int(workers) < 1):
+        parser.error("--workers must be a positive integer or auto")
     backend = args.expect_backend or ("pext" if args.suite == "pext" else "magic")
     if args.suite == "pext" and backend != "pext":
         parser.error("the pext suite requires --expect-backend pext")
     env = validation_environment(args.suite, args.threads, backend)
     command = suite_command(args.suite)
+    command += parallel_args(args.suite, workers)
     started = time.monotonic()
     print(f"suite={args.suite} root={ROOT}\npython={sys.executable} {platform.python_version()} "
-          f"platform={platform.platform()}\nthreads={env['CAE_TEST_THREADS']} "
+          f"platform={platform.platform()}\nthreads={env['CAE_TEST_THREADS']} workers={workers} "
           f"expected_backend={backend} CUDA_VISIBLE_DEVICES={env['CUDA_VISIBLE_DEVICES']!r}", flush=True)
     try:
         with ExitStack() as stack:
