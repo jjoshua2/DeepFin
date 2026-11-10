@@ -37,6 +37,7 @@ import threading
 import time
 import weakref
 from collections.abc import Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -178,6 +179,7 @@ SERIAL_TEST_FILES = frozenset({
     "test_server_lease_assign_lock_multiwaiter.py",
 })
 _serial_by_path: dict[str, bool] = {}
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def runs_in_serial_phase(path: os.PathLike[str]) -> bool:
@@ -189,7 +191,34 @@ def runs_in_serial_phase(path: os.PathLike[str]) -> bool:
     return _serial_by_path[key]
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+def change_scoped_deselection(items: list[pytest.Item]) -> list[pytest.Item]:
+    """Items of the test files ``scripts/validate.py`` listed for deselection.
+
+    The runner decides once (see ``validate.script_test_deselection``) and
+    passes a file of repo-relative test paths in ``CAE_DESELECT_LIST``; xdist
+    workers inherit it. Unset, missing or unreadable deselects nothing, so a
+    direct or local run is unchanged.
+    """
+    listing = os.environ.get("CAE_DESELECT_LIST")
+    if not listing:
+        return []
+    try:
+        with open(listing, encoding="utf-8") as handle:
+            deselected = {line.strip() for line in handle if line.strip()}
+    except (OSError, ValueError):  # ValueError: undecodable bytes
+        return []
+    paths = {path: Path(path).resolve() for path in {item.path for item in items}}
+    selected = {path for path, real in paths.items()
+                if real.is_relative_to(_REPO_ROOT) and real.relative_to(_REPO_ROOT).as_posix() in deselected}
+    return [item for item in items if item.path in selected]
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    drop = change_scoped_deselection(items)
+    if drop:
+        dropped = set(map(id, drop))
+        items[:] = [item for item in items if id(item) not in dropped]
+        config.hook.pytest_deselected(items=drop)
     for item in items:
         if runs_in_serial_phase(item.path):
             item.add_marker(pytest.mark.serial)
