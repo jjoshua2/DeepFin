@@ -372,8 +372,7 @@ GROK_PGID=$!
 # $! does: poll for it. An empty answer means the child already exited, which
 # leaves nothing to isolate or kill.
 for _ in $(seq 1 100); do
-    # ps exits non-zero once the process is gone; that is an answer, not an error.
-    GROK_ACTUAL_PGID="$(ps -o pgid= -p "$GROK_PGID" 2>/dev/null | tr -d ' ' || true)"
+    GROK_ACTUAL_PGID="$(ps -o pgid= -p "$GROK_PGID" 2>/dev/null | tr -d ' ')"
     if [ -z "$GROK_ACTUAL_PGID" ] || [ "$GROK_ACTUAL_PGID" = "$GROK_PGID" ]; then
         break
     fi

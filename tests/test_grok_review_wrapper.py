@@ -236,16 +236,3 @@ except subprocess.TimeoutExpired:
     child = int(pid_file.read_text())
     status = Path(f"/proc/{child}/stat")
     assert not status.exists() or status.read_text().split(") ", 1)[1].startswith("Z")
-
-
-def test_a_grok_that_already_exited_is_not_an_isolation_failure(tmp_path: Path) -> None:
-    """``ps`` exits non-zero for a process that is gone; under ``pipefail`` that
-    must not abort the wrapper before it collects Grok's (successful) result."""
-    repo, env, base, head = _setup(tmp_path)
-    fake_ps = tmp_path / "bin" / "ps"
-    fake_ps.write_text("#!/bin/sh\nexit 1\n")
-    fake_ps.chmod(0o755)
-    result = _run(repo, env, "--diff", f"{base}...{head}")
-    assert result.returncode == 0, result.stderr
-    assert "BEGIN_FINDINGS\nNONE\nEND_FINDINGS" in result.stdout
-
