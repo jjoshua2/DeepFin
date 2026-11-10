@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from io import BytesIO, TextIOWrapper
 from pathlib import Path
@@ -636,6 +637,16 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
         _apply_tune_section(out, tune)
 
     flat = {k: v for k, v in out.items() if v is not None}
+    # Validate the effective LR before a live reload can mutate config or its
+    # key baseline. Keep the original value: numeric strings and nonpositive
+    # finite values retain their existing consumer behavior.
+    if "lr" in flat:
+        try:
+            lr = float(flat["lr"])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("YAML 'lr' must be a finite number") from exc
+        if not math.isfinite(lr):
+            raise ValueError("YAML 'lr' must be a finite number")
     _check_sparse_sf_policy_flags(flat)
     _check_volatility_search_unsupported(flat)
     _check_target_only_knobs_require_zero_temperature(flat)
