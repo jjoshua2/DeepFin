@@ -165,6 +165,10 @@ _SERIAL_SOURCE = re.compile(
     r"|threading\.enumerate\(|threading\.active_count\("
     # A real Stockfish started through production code rather than in the test.
     r"|StockfishUCI|stockfish_binary|find_stockfish"
+    # Wall-clock dependence: short timeouts, measured durations, sleeps and
+    # threads raced against a deadline all assume an unloaded host.
+    r"|timeout(_s|_seconds)?\s*=\s*0?\.\d|time\.(monotonic|perf_counter|time|sleep)\("
+    r"|threading\.Thread\(|ThreadPoolExecutor|elapsed\s*[<>]"
 )
 # Load-sensitive files the rule does not reach: they race threads against
 # wall-clock deadlines without touching processes or signals.

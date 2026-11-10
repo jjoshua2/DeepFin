@@ -368,7 +368,17 @@ setsid timeout --kill-after=5s "${GROK_REVIEW_TIMEOUT_SECONDS}s" \
     grok --prompt-file "$PROMPT" --cwd "$SNAP" --max-turns 25 \
         --no-subagents --output-format plain > "$RAW" 2>&1 &
 GROK_PGID=$!
-if [ "$(ps -o pgid= -p "$GROK_PGID" 2>/dev/null | tr -d ' ')" != "$GROK_PGID" ]; then
+# setsid runs in the child after the fork, so the group appears a moment after
+# $! does: poll for it. An empty answer means the child already exited, which
+# leaves nothing to isolate or kill.
+for _ in $(seq 1 100); do
+    GROK_ACTUAL_PGID="$(ps -o pgid= -p "$GROK_PGID" 2>/dev/null | tr -d ' ')"
+    if [ -z "$GROK_ACTUAL_PGID" ] || [ "$GROK_ACTUAL_PGID" = "$GROK_PGID" ]; then
+        break
+    fi
+    sleep 0.05
+done
+if [ -n "$GROK_ACTUAL_PGID" ] && [ "$GROK_ACTUAL_PGID" != "$GROK_PGID" ]; then
     kill -KILL "$GROK_PGID" 2>/dev/null || true
     GROK_PGID=""
     echo "GROK FAILED: could not isolate the Grok process group" >&2
