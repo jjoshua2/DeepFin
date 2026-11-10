@@ -360,11 +360,22 @@ fi
 # started. Which processes `timeout` signals is implementation-specific: GNU
 # signals the whole group, while the timeout shipped with Ubuntu 26.04 left a
 # TERM-ignoring grandchild alive. The background child is not a group leader,
-# so setsid makes it one without forking and $! is the group id.
+# so setsid makes it one without forking and $! is the group id. That needs
+# job control off (with it on, the job already leads a group, setsid forks and
+# returns at once), so turn it off and verify the result rather than assume it.
+set +m
 setsid timeout --kill-after=5s "${GROK_REVIEW_TIMEOUT_SECONDS}s" \
     grok --prompt-file "$PROMPT" --cwd "$SNAP" --max-turns 25 \
         --no-subagents --output-format plain > "$RAW" 2>&1 &
 GROK_PGID=$!
+# An empty answer means it already exited: nothing left to isolate or kill.
+GROK_ACTUAL_PGID="$(ps -o pgid= -p "$GROK_PGID" 2>/dev/null | tr -d ' ')"
+if [ -n "$GROK_ACTUAL_PGID" ] && [ "$GROK_ACTUAL_PGID" != "$GROK_PGID" ]; then
+    kill -KILL "$GROK_PGID" 2>/dev/null || true
+    GROK_PGID=""
+    echo "GROK FAILED: could not isolate the Grok process group" >&2
+    exit 70
+fi
 if wait "$GROK_PGID"; then
     GROK_STATUS=0
 else

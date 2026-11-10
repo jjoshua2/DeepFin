@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import platform
+import runpy
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -45,6 +46,45 @@ def test_both_compile_arg_builders_use_the_arch_helper() -> None:
     source = (REPO_ROOT / "setup.py").read_text()
     assert source.count("args += _arch_args()") == 2
     assert source.count('"-march=native"') == 1
+
+
+def _extension_compile_args(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """Run setup.py with setup() captured: the flags every extension really gets."""
+    import setuptools
+
+    captured: dict[str, list[object]] = {}
+    monkeypatch.setattr(setuptools, "setup", lambda **kw: captured.update(kw))
+    monkeypatch.setattr(platform, "machine", lambda: "x86_64")
+    runpy.run_path(str(REPO_ROOT / "setup.py"))
+    extensions = captured["ext_modules"]
+    assert len(extensions) == 5
+    return [list(getattr(ext, "extra_compile_args")) for ext in extensions]
+
+
+def _clear_build_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("CAE_EXT_NATIVE", "CFLAGS"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_every_extension_is_compiled_with_the_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_build_env(monkeypatch)
+    for args in _extension_compile_args(monkeypatch):
+        assert "-march=x86-64" in args
+        assert "-march=native" not in args
+
+
+def test_native_build_keeps_march_native_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_build_env(monkeypatch)
+    monkeypatch.setenv("CAE_EXT_NATIVE", "1")
+    for args in _extension_compile_args(monkeypatch):
+        assert [a for a in args if a.startswith("-march=")] == ["-march=native"]
+
+
+def test_a_march_in_cflags_is_not_overridden(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_build_env(monkeypatch)
+    monkeypatch.setenv("CFLAGS", "-O2 -march=x86-64-v3")
+    for args in _extension_compile_args(monkeypatch):
+        assert not [a for a in args if a.startswith("-march=")]
 
 
 def _defines_bmi2(*flags: str) -> bool:
