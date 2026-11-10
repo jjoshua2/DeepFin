@@ -74,6 +74,38 @@ the regime, including under `-q`. Use `CAE_TEST_THREADS=auto` only on a dedicate
 runner or during a confirmed pause with no competing work; an explicit thread count
 is also supported. Invalid values retain the cap. In CI YAML, quote string values.
 
+`validate.py cpu` spreads the suite across `pytest-xdist` processes when the thread
+setting is `auto`, as in CI, and stays in one process under the default cap. Override
+with `--workers N` or `CAE_TEST_WORKERS`. Files are the unit of distribution, so a
+test may share state with its own file but not with another.
+Each xdist worker gets one compute thread, so `CAE_TEST_THREADS=auto` starts one
+process per core: keep it for stopped-training windows.
+
+A test file that starts processes, uses signals or asserts on live threads is
+routed by `tests/conftest.py` to a second, one-process phase, reported in
+`cpu-serial.xml`. That is most of the suite's time, so parallelism mainly helps
+the pure-computation files.
+
+On a pull request, `validate.py cpu` skips script-only test files the PR cannot
+affect, and prints how many it skipped. The change set is the PR's merge commit
+diffed against its first parent; a HEAD that is not a two-parent merge, a push
+build or any git failure runs everything. A script-only file names an existing
+`scripts/` module (`scripts.X`, `from scripts import X`, or an `X.py`/`X.sh` file
+name) and never mentions `chess_anti_engine`. Files that read `docs/`, `tests/` or a
+top-level `*.md`, or that scan `scripts/`, never count as script-only. Skipping
+happens only when every changed path is a top-level `scripts/*.py`/`*.sh`, a
+`tests/test_*.py`, something under `docs/`, or a top-level `*.md`. Any other path
+runs everything: the package, C sources, configs, `tests/conftest.py`, other test
+helpers, dependency files, `.github/`, any other `scripts/` file, and
+`scripts/validate.py` itself, which holds the rule. A script-only file still runs
+when it changed, or when a script or test file it references changed, followed
+transitively; any quoted script or test name counts as a reference, so dynamic
+imports are followed too. Locally, nothing is skipped unless you pass
+`--changed-vs REF`, which compares against the merge base with REF and also counts
+uncommitted and untracked files. `validate.py` decides once and hands pytest the
+list of files to skip through `CAE_DESELECT_LIST`; a missing or unreadable list
+skips nothing.
+
 The shared validator prints the interpreter, Torch build, requested thread count,
 native backend, elapsed time and failing command. Test suites print their 20 slowest
 phases and write per-test JUnit timings/results to `artifacts/validation/<suite>.xml`.

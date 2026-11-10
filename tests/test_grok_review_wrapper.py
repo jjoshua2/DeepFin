@@ -205,3 +205,34 @@ def test_timeout_kills_term_resistant_process_group(tmp_path: Path) -> None:
     status = Path(f"/proc/{child}/stat")
     # A terminated orphan can briefly remain as a zombie pending its parent's reaper.
     assert not status.exists() or status.read_text().split(") ", 1)[1].startswith("Z")
+
+
+def test_wrapper_kills_descendants_a_child_only_timeout_leaves_behind(tmp_path: Path) -> None:
+    """The wrapper, not ``timeout``, owns the kill of Grok's process group.
+
+    Whether ``timeout`` signals the whole group is implementation-specific, so
+    this substitutes one that kills only its direct child.
+    """
+    repo, env, base, head = _setup(tmp_path)
+    fake_timeout = tmp_path / "bin" / "timeout"
+    fake_timeout.write_text('''#!/usr/bin/env python3
+import subprocess, sys
+args = sys.argv[1:]
+while args[0].startswith("--"):
+    args.pop(0)
+child = subprocess.Popen(args[1:])
+try:
+    raise SystemExit(child.wait(timeout=float(args[0].rstrip("s"))))
+except subprocess.TimeoutExpired:
+    child.kill()
+    child.wait()
+    raise SystemExit(124)
+''')
+    fake_timeout.chmod(0o755)
+    pid_file = tmp_path / "child.pid"
+    env.update(RESIST_TERM="1", CHILD_PID=str(pid_file), GROK_REVIEW_TIMEOUT_SECONDS="3")
+    result = _run(repo, env, "--diff", f"{base}...{head}")
+    assert result.returncode == 70, result.stderr
+    child = int(pid_file.read_text())
+    status = Path(f"/proc/{child}/stat")
+    assert not status.exists() or status.read_text().split(") ", 1)[1].startswith("Z")
