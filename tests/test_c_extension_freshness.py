@@ -397,6 +397,10 @@ def test_command_line_without_march_is_rejected_cleanly(tmp_path: Path) -> None:
     [
         (b"GNU C23 15.3.0 -march=znver3 -march=x86-64 -O3 -flto\x00", False),
         (b"GNU C23 15.3.0 -march=x86-64 -march=znver3 -O3 -flto\x00", True),
+        # The recording switch also reached the link: a second, link-time record.
+        (b"GNU C23 15.3.0 -march=znver3 -O3 -flto\x00GNU GIMPLE 15.3.0 -march=znver3 -O3 -fltrans\x00", True),
+        (b"GNU C23 15.3.0 -march=znver3 -O3 -flto\x00GNU GIMPLE 15.3.0 -march=x86-64 -O3 -fltrans\x00", False),
+        (b"GNU C23 15.3.0 -march=znver3 -O3 -flto\x00GNU C23 15.3.0 -march=znver3 -O3\x00", False),
     ],
 )
 def test_last_recorded_march_is_the_effective_one(

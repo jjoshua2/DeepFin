@@ -164,8 +164,6 @@ def _elf_section(data: bytes, name: str) -> bytes | None:
 
         def section_bytes(sec: tuple[int, ...]) -> bytes:
             offset, size = sec[4], sec[5]
-            if sec[1] == 8:  # SHT_NOBITS occupies no file bytes
-                return b""
             if offset + size > len(data):
                 raise _ElfFormatError("section runs past end of file")
             return data[offset:offset + size]
@@ -249,7 +247,9 @@ def production_recipe_problem(path: Path) -> str | None:
             return f"recorded command line has no -march=: {line[:120]!r}"
         if marches[-1] in _GENERIC_MARCH:
             return f"recorded -march={marches[-1]} is a generic ISA baseline, not a host-tuned build"
-        if not any(tok == "-flto" or tok.startswith("-flto=") for tok in tokens):
+        # A link-time record (GNU GIMPLE ... -fltrans) is LTO evidence too; it
+        # appears when the recording switch also reaches the link step.
+        if not any(tok in ("-flto", "-fltrans") or tok.startswith("-flto=") for tok in tokens):
             return "recorded command line has no -flto"
     if not re.search(rb"GNU GIMPLE [^\x00]*-fltrans", data):
         return "no LTO translation (-fltrans) producer record"
