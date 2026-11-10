@@ -162,11 +162,15 @@ def thread_cap_regime_line() -> str:
 _SERIAL_SOURCE = re.compile(
     r"\bsubprocess\b|\bsignal\.|\bmultiprocessing\b|ProcessPoolExecutor|os\.fork\("
     r"|threading\.enumerate\(|threading\.active_count\("
+    # A real Stockfish started through production code rather than in the test.
+    r"|StockfishUCI|stockfish_binary|find_stockfish"
 )
 # Load-sensitive files the rule does not reach: they race threads against
 # wall-clock deadlines without touching processes or signals.
 SERIAL_TEST_FILES = frozenset({
     "test_cross_unit_teacher_generation.py",
+    "test_lc0_control_drivers.py",
+    "test_selfplay_label_overlap.py",
     "test_server_lease_assign_lock_multiwaiter.py",
 })
 _serial_by_path: dict[str, bool] = {}
