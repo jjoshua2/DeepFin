@@ -37,6 +37,9 @@ ACTUAL_1388_TERMINAL_KEYS = frozenset({
     "source_strict_receipt_sha256", "terminal_replayed", "termination",
 })
 
+# Serial phase of the CPU suite: this file requires an untouched process-wide SIGALRM handler and timer.
+pytestmark = pytest.mark.serial
+
 
 def _identity(rows: int = 2) -> unit.GameIdentity:
     return unit.GameIdentity(MANIFEST, f"bt4_run11:{MANIFEST}", "root-0", 7,

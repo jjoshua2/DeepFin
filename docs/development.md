@@ -78,6 +78,9 @@ is also supported. Invalid values retain the cap. In CI YAML, quote string value
 setting is `auto`, as in CI, and stays in one process under the default cap. Override
 with `--workers N` or `CAE_TEST_WORKERS`. Files are the unit of distribution, so a
 test may share state with its own file but not with another.
+A file that reads process-wide state or needs an unloaded host carries
+`pytestmark = pytest.mark.serial`; the validator runs those afterwards in one process
+and reports them in `cpu-serial.xml`.
 
 The shared validator prints the interpreter, Torch build, requested thread count,
 native backend, elapsed time and failing command. Test suites print their 20 slowest

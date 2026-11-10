@@ -270,3 +270,44 @@ def test_worker_default_follows_the_thread_regime(
     assert validate.main(["cpu", *argv, "--report-dir", str(tmp_path)]) == 0
     extra = [arg for arg in seen[0] if arg in {"-n", "--dist", "loadfile"} or arg in {"auto", "4"}]
     assert extra == expected
+
+
+def test_parallel_cpu_run_adds_a_one_process_serial_phase(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
+    monkeypatch.setattr(validate, "preflight", lambda *_args: None)
+    seen: list[list[str]] = []
+    codes = iter((0, 3))
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        return subprocess.CompletedProcess(command, next(codes))
+
+    monkeypatch.setattr(validate.subprocess, "run", fake_run)
+    # The serial phase's failure is the run's result even though xdist passed.
+    assert validate.main(["cpu", "--threads", "auto", "--report-dir", str(tmp_path)]) == 3
+    parallel, serial = seen
+    assert parallel[parallel.index("-m", 3) + 1] == "(not slow) and not serial"
+    assert serial[serial.index("-m", 3) + 1] == "(not slow) and serial"
+    assert "-n" in parallel
+    assert "-n" not in serial
+    assert f"--junitxml={tmp_path / 'cpu.xml'}" in parallel
+    assert f"--junitxml={tmp_path / 'cpu-serial.xml'}" in serial
+
+
+def test_one_process_cpu_run_keeps_a_single_unsplit_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
+    monkeypatch.setattr(validate, "preflight", lambda *_args: None)
+    seen: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(validate.subprocess, "run", fake_run)
+    assert validate.main(["cpu", "--threads", "2", "--report-dir", str(tmp_path)]) == 0
+    (command,) = seen
+    assert command[command.index("-m", 3) + 1] == "not slow"

@@ -64,6 +64,19 @@ def parallel_args(suite: str, workers: str) -> list[str]:
     return ["-n", workers, "--dist", "loadfile"]
 
 
+def split_serial_phase(command: list[str]) -> tuple[list[str], list[str]]:
+    """Split a pytest command into its xdist phase and its one-process phase.
+
+    Tests marked ``serial`` read process-wide state (live threads, the SIGALRM
+    handler) or assume an unloaded host, so they run afterwards in one process.
+    """
+    marker = command.index("-m", 3) + 1
+    parallel, serial = list(command), list(command)
+    parallel[marker] = f"({command[marker]}) and not serial"
+    serial[marker] = f"({command[marker]}) and serial"
+    return parallel, serial
+
+
 def validation_environment(suite: str, threads: str, backend: str) -> dict[str, str]:
     env = dict(os.environ)
     # lint.sh resolves command-line tools from PATH when there is no local venv.
@@ -158,7 +171,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("the pext suite requires --expect-backend pext")
     env = validation_environment(args.suite, args.threads, backend)
     command = suite_command(args.suite)
-    command += parallel_args(args.suite, workers)
+    xdist = parallel_args(args.suite, workers)
+    serial_command: list[str] | None = None
+    if xdist:
+        command, serial_command = split_serial_phase(command)
+        command += xdist
     started = time.monotonic()
     print(f"suite={args.suite} root={ROOT}\npython={sys.executable} {platform.python_version()} "
           f"platform={platform.platform()}\nthreads={env['CAE_TEST_THREADS']} workers={workers} "
@@ -172,6 +189,10 @@ def main(argv: list[str] | None = None) -> int:
                 report.unlink(missing_ok=True)
                 command.append(f"--junitxml={report}")
                 print(f"junit_report={report}", flush=True)
+                if serial_command is not None:
+                    serial_report = report.with_name(f"{args.suite}-serial.xml")
+                    serial_report.unlink(missing_ok=True)
+                    serial_command.append(f"--junitxml={serial_report}")
                 cache_root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="deepfin-validate-")))
                 configure_compile_environment(env, cache_root)
                 print(f"compile_cache={cache_root} CXX={env.get('CXX', 'PATH default')} "
@@ -180,6 +201,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"executing: {shlex.join(command)}", flush=True)
             result = subprocess.run(command, cwd=ROOT, env=env, check=False)
             code = result.returncode
+            if serial_command is not None:
+                # Always run it: a failure in one phase must not hide the other's.
+                print(f"executing: {shlex.join(serial_command)}", flush=True)
+                serial_code = subprocess.run(serial_command, cwd=ROOT, env=env, check=False).returncode
+                code = code or serial_code
     except (ImportError, OSError, RuntimeError) as exc:
         print(f"validation preflight/launch failed: {exc}", file=sys.stderr, flush=True)
         code = 1

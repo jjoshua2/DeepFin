@@ -21,6 +21,9 @@ from chess_anti_engine.uci import __main__ as main
 from chess_anti_engine.uci import root_parallel_gumbel as rpg
 from tests.test_gumbel_pipeline_receipts import ZeroModel, run_pipeline_case
 
+# Serial phase of the CPU suite: this file asserts no pool threads exist anywhere in the process.
+pytestmark = pytest.mark.serial
+
 
 class Owner(CUDAOwnerDispatcher):
     def __init__(self, fail_close: bool = False):

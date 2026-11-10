@@ -13,6 +13,9 @@ import pytest
 
 from scripts import bt4_root_policy_worker as worker
 
+# Serial phase of the CPU suite: this file's stop/restart timing assumes an unloaded host.
+pytestmark = pytest.mark.serial
+
 
 @pytest.fixture(autouse=True)
 def native_history() -> Any:
