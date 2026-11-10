@@ -1047,7 +1047,7 @@ def test_live_reload_refuses_optimizer_group_value_knobs(
 def test_lr_rejected_reload_preserves_config_and_baseline(tmp_path, nested, searched, token):
     path = tmp_path / "lr.yaml"
     path.write_text("lr: 0.001\ntrain_steps: 25\n", encoding="utf-8")
-    config = {"lr": 0.001, "train_steps": 25}
+    config: dict[str, object] = {"lr": 0.001, "train_steps": 25}
     if searched:
         config["pb2_bounds_lr"] = [0.0001, 0.01]
     _reload_yaml_into_config(config, str(path), live_reload=True)
