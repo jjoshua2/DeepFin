@@ -83,6 +83,22 @@ routed by `tests/conftest.py` to a second, one-process phase, reported in
 `cpu-serial.xml`. That is most of the suite's time, so parallelism mainly helps
 the pure-computation files.
 
+On a pull request, `validate.py cpu` skips script-only test files the PR cannot
+affect, and prints how many it skipped. A script-only file names an existing
+`scripts/` module (`scripts.X`, `from scripts import X`, or an `X.py`/`X.sh` file
+name) and never mentions `chess_anti_engine`. Files that read `docs/`, `tests/` or a
+top-level `*.md`, or that scan `scripts/`, never count as script-only. Skipping
+happens only when every changed path is a top-level `scripts/*.py`/`*.sh`, a
+`tests/test_*.py`, something under `docs/`, or a top-level `*.md`. Any other path
+runs everything: the package, C sources, configs, `tests/conftest.py`, other test
+helpers, dependency files, `.github/`, or any other `scripts/` file. A script-only
+file still runs when it changed, or when a script or test file it references
+changed, followed transitively through references. Push builds and failed change
+detection also run everything. Locally, nothing is skipped unless you pass
+`--changed-vs REF`, which compares against the merge base with REF and also counts
+uncommitted and untracked files. The change set reaches `tests/conftest.py` as
+`CAE_CHANGED_FILES`.
+
 The shared validator prints the interpreter, Torch build, requested thread count,
 native backend, elapsed time and failing command. Test suites print their 20 slowest
 phases and write per-test JUnit timings/results to `artifacts/validation/<suite>.xml`.

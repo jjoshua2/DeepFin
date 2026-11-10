@@ -16,6 +16,14 @@ import torch
 from scripts import validate
 
 
+@pytest.fixture(autouse=True)
+def _no_change_scoping(monkeypatch: pytest.MonkeyPatch) -> None:
+    # On a CI pull request these are set, and main() would shell out to git
+    # through the subprocess.run fakes below; scoping has its own test file.
+    for name in ("GITHUB_EVENT_NAME", "GITHUB_BASE_REF", validate.CHANGED_FILES_ENV):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.mark.parametrize("suite", ["cpu", "pext", "capped"])
 def test_each_test_run_isolates_inherited_caches_and_cleans_up_after_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, suite: str,
