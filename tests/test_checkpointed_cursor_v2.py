@@ -34,10 +34,32 @@ def _archive(game: int) -> bytes:
     return wave.canonical(["synthetic-archive", game])
 
 
+# The crossing case runs against a scaled segment boundary. Crossing the
+# shipped 8,192 rows spent ~30 s on per-row JSON canonicalisation and proved
+# nothing the boundary arithmetic does not prove at 64. Every module constant
+# that defines the boundary (segment, frame and sort-run sizes) is patched
+# together, only inside the owned child processes of that case;
+# test_shipped_segment_constants_are_pinned keeps the real values pinned and
+# every other case runs on them.
+_SCALED_SEGMENT_ROWS = 64
+_SCALED_FRAME_ROWS = 32  # 32 rows * row_bytes 32 = zstd's 1 KiB minimum window
+_SCALED_RUN_ROWS = 16
+_GAME_ROWS = 8  # _SCALED_SEGMENT_ROWS // _GAME_ROWS full-size games fill a segment
+
+
+def _scale_segment_boundary() -> None:
+    wave.SEGMENT_ROWS = _SCALED_SEGMENT_ROWS
+    wave.FRAME_ROWS = _SCALED_FRAME_ROWS
+    sort.MAX_SEGMENT_ROWS = _SCALED_SEGMENT_ROWS
+    sort.MAX_RUN_ROWS = _SCALED_RUN_ROWS
+
+
 def _locators(*, large: bool = False) -> tuple[cursor.GameLocator, ...]:
-    # 31*256 + 255 = 8,191. A 2-row game crosses 8,192, then two
+    # 7*8 + 7 = 63. A 2-row game crosses the 64-row boundary midgame, then two
     # independent games prove that the stored midgame hash is not reused.
-    sizes = [256] * 31 + [255, 2, 1, 1] if large else [2, 2]
+    full = _SCALED_SEGMENT_ROWS // _GAME_ROWS - 1
+    sizes = ([_GAME_ROWS] * full + [_GAME_ROWS - 1, 2, 1, 1] if large
+             else [2, 2])
     return tuple(cursor.GameLocator(
         "BT4-v9", MANIFEST, NAMESPACE, f"root-{index}", index,
         size, wave.sha(_archive(index)), STRICT, len(PREFIX), PREFIX)
@@ -51,6 +73,8 @@ def _pipeline(root: Path, *, large: bool = False,
               locators: tuple[cursor.GameLocator, ...] | None = None
               ) -> tuple[cursor.CursorPipeline, cursor.SourceCursor]:
     locators = locators or _locators(large=large)
+    store_rows = ({"segment_rows": wave.SEGMENT_ROWS,
+                   "frame_rows": wave.FRAME_ROWS} if large else {})
 
     def snapshot(loc: cursor.GameLocator) -> bytes:
         return (_archive(loc.game_id) + b"changed" if tamper_archive
@@ -104,17 +128,21 @@ def _pipeline(root: Path, *, large: bool = False,
                               source_sha256=SOURCE, config_sha256=CONFIG,
                               roster=source.roster, strict_receipt_sha256=STRICT,
                               syzygy_inventory_sha256=SYZYGY,
-                              route_code_sha256=ROUTE_CODE, row_bytes=32)
+                              route_code_sha256=ROUTE_CODE, row_bytes=32,
+                              **store_rows)
     return cursor.CursorPipeline(root / "pipeline", source, store), source
 
 
-def _sort(root: Path, source: cursor.SourceCursor) -> sort.CheckpointedSort:
+def _sort(root: Path, source: cursor.SourceCursor, *,
+          large: bool = False) -> sort.CheckpointedSort:
     return sort.CheckpointedSort(root / "sort", source_sha256=source.identity,
                                  config_sha256=CONFIG, kind="digest",
-                                 row_cap=2048, byte_cap=256 << 10, fanin=4)
+                                 row_cap=_SCALED_RUN_ROWS if large else 2048,
+                                 byte_cap=256 << 10, fanin=4)
 
 
 def _run_child(root: str, hook: str) -> None:
+    _scale_segment_boundary()
     pipeline, _ = _pipeline(Path(root), large=True)
     def kill(_: int) -> None:
         os.kill(os.getpid(), signal.SIGKILL)
@@ -148,7 +176,9 @@ def _case_literal_uid_paired_candidate_and_sort(tmp_path: Path) -> None:
     assert wave.file_sha(pipeline.root / "candidate_00000000" / "RECEIPT.json") == before
 
 
-def _case_8195_midgame_two_crash_boundaries_resume_and_noop(tmp_path: Path) -> None:
+def _case_boundary_midgame_two_crash_boundaries_resume_and_noop(
+        tmp_path: Path) -> None:
+    _scale_segment_boundary()
     script = ("import runpy,sys; "
               "runpy.run_path(sys.argv[1])['_run_child'](sys.argv[2],sys.argv[3])")
     exit_code = sort.run_owned_cpu(
@@ -177,17 +207,21 @@ def _case_8195_midgame_two_crash_boundaries_resume_and_noop(tmp_path: Path) -> N
     assert wave.file_sha(comparison) == compare_hash
     assert comparison.stat().st_mtime_ns == compare_mtime
     first_cursor = json.loads(first.read_bytes())
-    assert first_cursor["end"][:2] == [32, 1]
+    # The first segment ends one row into game 8, the game crossing the boundary.
+    assert first_cursor["end"][:2] == [_SCALED_SEGMENT_ROWS // _GAME_ROWS, 1]
     assert first_cursor["end"][2] is not None
     sealed_hash = wave.file_sha(first)
     sealed_mtime = first.stat().st_mtime_ns
-    runs = pipeline.wave2_metadata_sort(_sort(tmp_path, source))
-    assert len(runs) == 5
-    assert sum(_sort(tmp_path, source).verify_run(run)["rows"] for run in runs) == 8195
+    runs = pipeline.wave2_metadata_sort(_sort(tmp_path, source, large=True))
+    # Four full runs from segment 0, one 3-row run from segment 1.
+    assert len(runs) == _SCALED_SEGMENT_ROWS // _SCALED_RUN_ROWS + 1
+    assert sum(_sort(tmp_path, source, large=True).verify_run(run)["rows"]
+               for run in runs) == _SCALED_SEGMENT_ROWS + 3
     assert first.stat().st_mtime_ns == sealed_mtime
     assert wave.file_sha(first) == sealed_hash
     pipeline.wave1()
-    assert pipeline.wave2_metadata_sort(_sort(tmp_path, source)) == runs
+    assert pipeline.wave2_metadata_sort(
+        _sort(tmp_path, source, large=True)) == runs
     assert first.stat().st_mtime_ns == sealed_mtime
 
 
@@ -378,7 +412,7 @@ def _case_direct_wave2_refuses_valid_sealed_truncated_last_segment(
 # Every actual case still uses SegmentStore's unchanged absolute 1-GiB RSS cap.
 _CURSOR_CASES = (
     _case_literal_uid_paired_candidate_and_sort,
-    _case_8195_midgame_two_crash_boundaries_resume_and_noop,
+    _case_boundary_midgame_two_crash_boundaries_resume_and_noop,
     _case_source_namespace_native_and_receipt_tamper_refusal,
     _case_valid_but_false_presealed_sort_run_refused,
     _case_comparison_without_cursor_rechecks_source_bytes,
@@ -405,6 +439,25 @@ def test_cursor_contract_in_owned_process(
         log_path=tmp_path / "supervisor.log", timeout_seconds=600)
     assert code == 0, "\n".join(
         f"{path.name}:\n{path.read_text()}" for path in tmp_path.glob("*.log"))
+
+
+def test_shipped_segment_constants_are_pinned(tmp_path: Path) -> None:
+    # The crossing case scales these down in its own processes; the shipped
+    # recipe, and the store's refusal of any other one, stay pinned here.
+    assert wave.SEGMENT_ROWS == sort.MAX_SEGMENT_ROWS == 8192
+    assert wave.FRAME_ROWS == 512
+    assert sort.MAX_RUN_ROWS == 2048
+    pipeline, _ = _pipeline(tmp_path)
+    assert pipeline.store.claim["segment_rows"] == 8192
+    assert pipeline.store.claim["frame_rows"] == 512
+    for rows in ({"segment_rows": _SCALED_SEGMENT_ROWS},
+                 {"frame_rows": _SCALED_FRAME_ROWS}):
+        with pytest.raises(wave.Hold, match="bounded segment recipe"):
+            wave.SegmentStore(
+                tmp_path / "other", input_sha256=SOURCE, source_sha256=SOURCE,
+                config_sha256=CONFIG, roster=pipeline.source.roster,
+                strict_receipt_sha256=STRICT, syzygy_inventory_sha256=SYZYGY,
+                route_code_sha256=ROUTE_CODE, row_bytes=32, **rows)
 
 
 def test_segment_budget_keeps_absolute_default_rss_cap(
