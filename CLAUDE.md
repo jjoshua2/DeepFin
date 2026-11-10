@@ -65,6 +65,16 @@ Validate a copy first and verify the realized value after adoption. Some keys ar
 restart-only, and removing an override may leave the old value in memory. The live
 run Skill and operations document cover the mechanics.
 
+A bad live value fails in one of three ways, which code comments cite by letter:
+
+- **(a) Key not in the schema** (`utils/config_yaml.py`): mid-run the whole reload is
+  rejected and the old config kept; at launch it is fatal. Before a restart, compare
+  the live YAML's keys with the target revision's schema.
+- **(b) Validated by `TrialConfig.from_dict`, value out of range**: the reload
+  succeeds, `from_dict` raises inside the iteration loop and the trial dies.
+- **(c) In the schema but not range-checked**: applied raw and silently. `lr` is one
+  such key.
+
 Respect intentional-stop and pause markers. Before a change whose effects survive a
 config revert, preserve enough state to recover: weights, optimizer, PID and replay,
 plus their provenance. Ray can prune checkpoints, so copy long-lived evaluation
@@ -113,6 +123,10 @@ themselves establish playing strength.
 - MCTS uses the `wdl` value head; `sf_eval` and `categorical` are auxiliary.
 - Higher PID `wdl_regret` permits worse Stockfish moves and makes the opponent weaker.
   Best-move-based labels are distinct from the handicapped move actually played.
+- `wdl_regret` measures the agent (network plus search), not the network. The PID
+  holds winrate at its target, so a search-setting change, an `sf_nodes` change or a
+  restart that restores older PID state moves regret without any change in the
+  weights. Compare regret across iterations only where those are unchanged.
 - Search action IDs and network policy indices are different spaces. Use shared
   mappings in `moves/torch_maps.py`; preserve encoding and history metadata across
   checkpoints, replay and evaluation.
