@@ -400,7 +400,9 @@ def test_nonfinite_plan_number_is_rejected(tmp_path: Path) -> None:
         tool.load_plan(path, sha(path))
 
 
-@pytest.mark.usefixtures("_plenty_disk")
+# _fast_cleanup: at POLL 0.05 s the 1 s pause spans ~20 polls of
+# interruptible_wait's loop, as production's 30 s pause does at POLL 2 s.
+@pytest.mark.usefixtures("_plenty_disk", "_fast_cleanup")
 @pytest.mark.parametrize("pause_seconds", [0, 1])
 def test_successful_two_chunks_and_evidence(tmp_path: Path, pause_seconds: int) -> None:
     path, digest, _worker = two_chunk_plan(tmp_path, pause_between_chunks_seconds=pause_seconds)
@@ -557,6 +559,9 @@ def test_timeout_kills_hung_process_group_and_skips_rest(
     # The child ignores SIGTERM: it dies only via the post-grace SIGKILL,
     # which must land inside the chunk's own timeout bound.
     assert elapsed < FAST_TIMEOUT + 1
+    # The child writes `ready` only after installing SIG_IGN, so TERM could not
+    # have stopped it and the post-grace KILL was really needed.
+    assert ready.exists()
     state = tmp_path / "state"
     receipt = json.loads((state / "chunks" / "c16" / "receipt.json").read_text(encoding="utf-8"))
     assert receipt["complete"] is False
@@ -786,6 +791,8 @@ def test_stop_kills_same_group_descendant_after_leader_exits(
     )
     assert code == 1
     assert time.monotonic() - started < FAST_TIMEOUT + 1
+    # `ready` is written after the descendant installed SIG_IGN (see above).
+    assert ready.exists()
     descendant = int(ready.read_text(encoding="utf-8"))
     assert not Path(f"/proc/{descendant}").exists()
     assert lock_is_free(lock_path)

@@ -130,6 +130,12 @@ def _run(work: Path, bin_dir: Path, *cmd: str, timeout: int = 90, **kw: str):
     )
 
 
+# Several poll intervals (CAE_PAUSE_POLL_SECONDS=1), not one: an ack landing
+# exactly one poll after the marker lets a script that polls ONCE and then
+# proceeds without the ack pass the ordering tests by luck.
+ORDERING_ACK_DELAY = 3.0
+
+
 def _after_marker(tune: Path, delay: float, body: str) -> str:
     """Shell that runs ``body`` ``delay`` seconds after the window's marker lands.
 
@@ -144,15 +150,16 @@ def _after_marker(tune: Path, delay: float, body: str) -> str:
     polls = int(ACK_WAIT / 0.05)
     return (
         f'i=0; while [ ! -e "{marker}" ] && [ "$i" -lt {polls} ]; do '
-        f'sleep 0.05; i=$((i + 1)); done; sleep {delay}; {body}'
+        f'sleep 0.05; i=$((i + 1)); done; [ -e "{marker}" ] || exit 0; '
+        f'sleep {delay}; {body}'
     )
 
 
 def _ack_after(tune: Path, delay: float = 0.0) -> subprocess.Popen[bytes]:
     """Write the trial's ack ``delay`` seconds after the marker, as the trial would.
 
-    Ordering cases pass a nonzero delay so that a drain fired without waiting
-    for the park lands visibly BEFORE the ack.
+    Ordering cases pass ORDERING_ACK_DELAY so that a drain fired without
+    waiting for the park lands visibly BEFORE the ack.
     """
     ack = tune / f".paused_{TRIAL_ID}.ack"
     return subprocess.Popen(
@@ -200,7 +207,7 @@ def test_the_drain_never_starts_before_the_trial_has_parked(tmp_path: Path) -> N
     contended machine while reporting success.
     """
     work, bin_dir, calls = _sandbox(tmp_path, workers=True)
-    proc = _ack_after(work / "tune", 1.0)
+    proc = _ack_after(work / "tune", ORDERING_ACK_DELAY)
     try:
         r = _run(work, bin_dir, "true")
     finally:
@@ -221,7 +228,7 @@ def test_a_stale_ack_from_a_DIFFERENT_trial_does_not_satisfy_the_wait(
     """
     work, bin_dir, calls = _sandbox(tmp_path, workers=True)
     (work / "tune" / ".paused_dead99_00000.ack").write_text("trial=dead99_00000\n")
-    proc = _ack_after(work / "tune", 1.0)
+    proc = _ack_after(work / "tune", ORDERING_ACK_DELAY)
     try:
         r = _run(work, bin_dir, "true")
     finally:
@@ -248,7 +255,7 @@ def test_a_preexisting_ack_for_this_trial_is_ignored_until_it_is_refreshed(
     """
     work, bin_dir, calls = _sandbox(tmp_path, workers=True)
     (work / "tune" / f".paused_{TRIAL_ID}.ack").write_text("trial=old next_iter=1\n")
-    proc = _ack_after(work / "tune", 1.0)
+    proc = _ack_after(work / "tune", ORDERING_ACK_DELAY)
     try:
         r = _run(work, bin_dir, "true")
     finally:
@@ -392,16 +399,42 @@ def test_it_does_not_leave_the_marker_behind_when_interrupted(tmp_path: Path) ->
     p.terminate()
     rc = p.wait(timeout=30)
     assert not (work / "tune" / "pause.txt").exists(), "interrupted while holding the marker"
-  # ⚑ 130, NOT the wrapper-failure code. This is the ONE path where the EXIT
-  # trap is still armed while a status other than a setup failure is in flight,
-  # so it is the only place the `PHASE=job` guard is observable -- deleting
-  # `PHASE=job` SURVIVED every other test, because the normal path disarms the
-  # trap with `trap - EXIT` before exiting. An interrupt reported as "the
-  # wrapper failed" would be counted against CAE_RATCHET_PAUSE_MAX_FAILS and
-  # would disable the window for the rest of the day, for an operator Ctrl-C.
+  # ⚑ 130, NOT the wrapper-failure code. An interrupt reported as "the wrapper
+  # failed" would be counted against CAE_RATCHET_PAUSE_MAX_FAILS and would
+  # disable the window for the rest of the day, for an operator Ctrl-C. This
+  # does NOT observe `PHASE=job`: `remap_setup_failure` whitelists 130 in every
+  # phase, so deleting `PHASE=job` passes here. The test after this one is the
+  # one that pins it.
     assert rc == 130, (
         f"an interrupt exited {rc}; 130 is the documented interrupt status and "
         "anything else is read by the loop as a wrapper failure"
+    )
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores the read-only directory")
+def test_a_failure_after_the_job_ran_is_not_remapped_to_a_wrapper_failure(
+    tmp_path: Path,
+) -> None:
+    """⚑ THE ONE PLACE `PHASE=job` IS OBSERVABLE.
+
+    After the job, `release` runs with the EXIT trap still armed. If its
+    `rm -f "$MARKER"` fails (here: the job left the tune dir read-only), `set -e`
+    exits 1 through `release_then_remap`. Once the job has run that status must
+    pass through as-is; only a death during SETUP is remapped to
+    WRAPPER_FAILED_RC (7), which the ratchet loop counts against its daily fail
+    cap. Delete `PHASE=job` and this exits 7.
+    """
+    work, bin_dir, _ = _sandbox(tmp_path, workers=False)
+    tune = work / "tune"
+    proc = _ack_after(tune)
+    try:
+        r = _run(work, bin_dir, "chmod", "a-w", str(tune))
+    finally:
+        proc.wait()
+        tune.chmod(0o755)
+    assert r.returncode == 1, (
+        f"a post-job failure exited {r.returncode}; 7 means it was remapped to "
+        f"a wrapper failure although the job had already run\n{r.stderr}"
     )
 
 

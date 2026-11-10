@@ -52,6 +52,7 @@ def test_process_stop_during_cleanup_reaps_owned_child_with_unblocked_thread(
             time.sleep(0.1)  # let the unblocked thread receive while main's OS mask is blocked
     actual_wait = child.wait
     wait_stop_sent = False
+    grace_timeouts = []
     def wait(*args, **kwargs):
         nonlocal wait_stop_sent
         if stop_point == "wait" and signal.SIGKILL in sent and not wait_stop_sent:
@@ -63,7 +64,9 @@ def test_process_stop_during_cleanup_reaps_owned_child_with_unblocked_thread(
             # this wait can only time out; a short real wait takes the same
             # TimeoutExpired -> SIGKILL path as stop_owned's 3 s one, whose
             # length test_ignored_stop_and_all_dispositions_remain_unchanged pins.
-            assert kwargs.get("timeout") == 3, (args, kwargs)
+            # Recorded, not asserted here: an assertion raised inside the
+            # deferred-cleanup block is replaced by the redelivered stop.
+            grace_timeouts.append(kwargs.get("timeout"))
             kwargs = {**kwargs, "timeout": 0.2}
         return actual_wait(*args, **kwargs)
     calls = 0
@@ -87,6 +90,7 @@ def test_process_stop_during_cleanup_reaps_owned_child_with_unblocked_thread(
             with pytest.raises(RuntimeError, match="process-directed cleanup stop"):
                 stage.run_stage(["already owned fixture child"], cwd=tmp_path, env=dict(os.environ),
                     log=tmp_path / "child.log", guard=guard, **kwargs)
+        assert grace_timeouts == [3]
         assert delivered == [(chosen, -signal.SIGKILL)]
         assert signal.getsignal(chosen) is interrupted
         assert signal.pthread_sigmask(signal.SIG_BLOCK, set()) == original_mask
@@ -105,6 +109,36 @@ def test_process_stop_during_cleanup_reaps_owned_child_with_unblocked_thread(
             child.wait(timeout=3)
         assert not thread.is_alive()
 
+
+
+def test_a_child_that_exits_on_term_within_the_grace_is_not_killed(tmp_path):
+    """The TERM grace exists so a stage can finish its own cleanup. A child that
+    exits 0 shortly after SIGTERM must be reaped with ITS status, not SIGKILLed
+    the moment TERM is sent."""
+    from scripts import run_packed_trainer_preparation as preparation
+    ready = tmp_path / "ready"
+    child = subprocess.Popen([sys.executable, "-c",
+        "import pathlib,signal,sys,time\n"
+        "def on_term(*_):\n"
+        "    time.sleep(0.3)\n"
+        "    sys.exit(0)\n"
+        "signal.signal(signal.SIGTERM, on_term)\n"
+        "pathlib.Path(sys.argv[1]).write_text('ready')\n"
+        "time.sleep(30)\n", str(ready)],
+        start_new_session=True)
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists()
+        preparation.stop_owned(child)
+        assert child.returncode == 0, (
+            f"the child was not given its TERM grace: returncode {child.returncode}"
+        )
+    finally:
+        if child.poll() is None:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.wait(timeout=3)
 
 
 def test_ignored_stop_and_all_dispositions_remain_unchanged(monkeypatch):
