@@ -122,20 +122,29 @@ def _gcc_major(path: Path) -> int | None:
     return int(match.group(1)) if match is not None else None
 
 
+class _ElfFormatError(ValueError):
+    """The file is not a well-formed ELF image this reader can trust."""
+
+
 def _elf_section(data: bytes, name: str) -> bytes | None:
-    """Return the contents of ELF section ``name``, or None if absent/not ELF.
+    """Return the contents of ELF section ``name``, or None if it is absent.
 
     A deliberately small reader (section headers + the section-name string
     table only) so the production gate does not need binutils or pyelftools.
+    Every offset is bounds-checked against the file before it is used, and any
+    malformed header raises ``_ElfFormatError`` -- a corrupt or truncated file
+    is a clean rejection, never a traceback out of the startup gate.
     """
-    if len(data) < 64 or data[:4] != b"\x7fELF":
-        return None
+    if len(data) < 0x34 or data[:4] != b"\x7fELF":
+        raise _ElfFormatError("not an ELF file")
     elf_class, elf_data = data[4], data[5]
     if elf_class not in (1, 2) or elf_data not in (1, 2):
-        return None
+        raise _ElfFormatError(f"unknown ELF class/data bytes {elf_class}/{elf_data}")
     end = "<" if elf_data == 1 else ">"
     try:
         if elf_class == 2:
+            if len(data) < 0x40:
+                raise _ElfFormatError("truncated ELF header")
             shoff = struct.unpack_from(end + "Q", data, 0x28)[0]
             shentsize, shnum, shstrndx = struct.unpack_from(end + "HHH", data, 0x3A)
             header = end + "IIQQQQIIQQ"
@@ -143,22 +152,41 @@ def _elf_section(data: bytes, name: str) -> bytes | None:
             shoff = struct.unpack_from(end + "I", data, 0x20)[0]
             shentsize, shnum, shstrndx = struct.unpack_from(end + "HHH", data, 0x2E)
             header = end + "IIIIIIIIII"
-        if shoff == 0 or shnum == 0 or shstrndx >= shnum:
-            return None
+        header_size = struct.calcsize(header)
+        if shoff == 0 or shnum == 0:
+            raise _ElfFormatError("no section header table")
+        if shentsize < header_size:
+            raise _ElfFormatError(f"section header entry size {shentsize} < {header_size}")
+        if shstrndx >= shnum:
+            raise _ElfFormatError(f"section-name table index {shstrndx} >= {shnum}")
+        if shoff + (shnum - 1) * shentsize + header_size > len(data):
+            raise _ElfFormatError("section header table runs past end of file")
+
+        def section_bytes(sec: tuple[int, ...]) -> bytes:
+            offset, size = sec[4], sec[5]
+            if sec[1] == 8:  # SHT_NOBITS occupies no file bytes
+                return b""
+            if offset + size > len(data):
+                raise _ElfFormatError("section runs past end of file")
+            return data[offset:offset + size]
+
         sections = [
             struct.unpack_from(header, data, shoff + i * shentsize) for i in range(shnum)
         ]
         # Fields: name, type, flags, addr, offset, size, ...
-        names_off, names_size = sections[shstrndx][4], sections[shstrndx][5]
-        names = data[names_off:names_off + names_size]
+        names = section_bytes(sections[shstrndx])
         wanted = name.encode()
         for sec in sections:
             start = sec[0]
+            if start >= len(names):
+                continue
             stop = names.find(b"\x00", start)
+            if stop < 0:
+                stop = len(names)
             if names[start:stop] == wanted:
-                return data[sec[4]:sec[4] + sec[5]]
-    except struct.error:
-        return None
+                return section_bytes(sec)
+    except (struct.error, OverflowError) as exc:
+        raise _ElfFormatError(f"malformed ELF headers: {exc}") from exc
     return None
 
 
@@ -169,27 +197,46 @@ _GENERIC_MARCH = frozenset({"x86-64", "x86-64-v2", "x86-64-v3", "x86-64-v4"})
 
 
 def production_recipe_problem(path: Path) -> str | None:
-    """Why ``path`` is not a native+LTO production build, or None if it is.
+    """Why ``path`` fails the production recipe gate, or None if it passes.
+
+    What passes is a NON-BASELINE -march RECORDED WITH LTO -- not, strictly,
+    "native": an explicit ``-march=haswell`` with recorded switches passes by
+    design. The gate exists to catch the portable build (setup.py pins
+    ``-march=x86-64``) or a distro ``x86-64-vN`` default reaching production.
 
     ⚑ The evidence is the ``.GCC.command.line`` SECTION, never a byte search of
     the file. With ``-g`` every object carries DWARF producer strings, and a
     plain portable LTO build's LTO-translation producer reads
-    ``GNU GIMPLE ... -march=x86-64 ... -fltrans`` — so "-march=" and "-fltrans"
+    ``GNU GIMPLE ... -march=x86-64 ... -fltrans`` -- so "-march=" and "-fltrans"
     both occur in a build that is neither native nor recorded. (The deployed
     native build's GIMPLE producer ALSO says -march=x86-64: the ltrans stage
     records its own default and carries the real ISA as per-function target
     options, so producer strings cannot discriminate in either direction.)
 
     The section exists only under -frecord-gcc-switches, which setup.py adds
-    only when CAE_EXT_NATIVE and CAE_EXT_LTO are both set. GCC writes it at
-    compile time with -march=native expanded to the resolved host CPU (e.g.
-    -march=znver3), so we require: the section, -flto in every recorded
-    command line, and a final -march= that is not a generic x86-64 baseline.
+    only when CAE_EXT_NATIVE and CAE_EXT_LTO are both set. The GCC driver
+    expands -march=native before cc1 records it (e.g. ``-march=znver3`` plus
+    explicit ``-m`` ISA flags and ``--param=l1-cache-size=...``), and when the
+    same command line repeats -march the driver keeps only the last, so the
+    LAST recorded -march is the effective one.
+
+    Unknown-CPU fallback (why a newer-than-GCC host is not falsely rejected):
+    GCC 15's ``host_detect_local_cpu`` (gcc/config/i386/driver-i386.cc) never
+    substitutes an ``x86-64-vN`` level. An unrecognised Intel model is mapped
+    to the nearest named core by feature probing (skylake-avx512, alderlake,
+    haswell, ...); an unrecognised vendor/family falls to ``core2`` /
+    ``nocona`` with every detected ISA flag appended explicitly. Plain
+    ``x86-64`` is chosen only for a 64-bit CPU without SSSE3 *and* SSE3 (an
+    emulator), where native and baseline are the same code anyway.
+
     The LTO-translation marker (-fltrans in a GNU GIMPLE producer) is kept as
     proof the link actually ran LTO code generation.
     """
     data = path.read_bytes()
-    section = _elf_section(data, ".GCC.command.line")
+    try:
+        section = _elf_section(data, ".GCC.command.line")
+    except _ElfFormatError as exc:
+        return f"unreadable ELF ({exc})"
     if section is None:
         return "no .GCC.command.line section (not built with -frecord-gcc-switches)"
     lines = [raw.decode("utf-8", "replace") for raw in section.split(b"\x00") if raw.strip()]
@@ -201,7 +248,7 @@ def production_recipe_problem(path: Path) -> str | None:
         if not marches:
             return f"recorded command line has no -march=: {line[:120]!r}"
         if marches[-1] in _GENERIC_MARCH:
-            return f"recorded -march={marches[-1]} is a generic baseline, not the native host"
+            return f"recorded -march={marches[-1]} is a generic ISA baseline, not a host-tuned build"
         if not any(tok == "-flto" or tok.startswith("-flto=") for tok in tokens):
             return "recorded command line has no -flto"
     if not re.search(rb"GNU GIMPLE [^\x00]*-fltrans", data):
@@ -260,7 +307,7 @@ def main() -> int:
         "--require-production-recipe", action="store_true",
         help=(
             "Require a .GCC.command.line record with -flto and a non-baseline "
-            "(host-resolved) -march, plus an LTO translation producer record."
+            "-march (recorded with LTO), plus an LTO translation producer record."
         ),
     )
     args = parser.parse_args()

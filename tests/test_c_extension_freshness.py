@@ -5,6 +5,7 @@ import os
 import platform
 import re
 import shutil
+import struct
 import subprocess
 from pathlib import Path
 
@@ -12,6 +13,7 @@ import pytest
 
 from scripts.check_c_extensions_fresh import (
     EXTENSION_SPECS,
+    _elf_section,
     check_extensions,
     production_recipe_problem,
 )
@@ -297,8 +299,8 @@ def test_portable_lto_artifact_carries_the_strings_the_old_gate_grepped(
     ("recipe", "reason"),
     [
         ("portable_lto", "no .GCC.command.line section"),
-        ("portable_lto_recorded", "-march=x86-64 is a generic baseline"),
-        ("portable_v3_lto_recorded", "-march=x86-64-v3 is a generic baseline"),
+        ("portable_lto_recorded", "-march=x86-64 is a generic ISA baseline"),
+        ("portable_v3_lto_recorded", "-march=x86-64-v3 is a generic ISA baseline"),
         ("native_recorded_no_lto", "no -flto"),
         ("native_fat_lto_linked_without_lto", "no LTO translation"),
     ],
@@ -328,6 +330,139 @@ def test_check_extensions_applies_the_recipe_gate_to_real_artifacts(
         assert issues == []
     else:
         assert len([i for i in issues if "native+LTO production recipe" in i]) == len(ALL_MODULES)
+
+
+# ----------------------------------------------------------------------
+# Synthetic ELF images: exact control over the recorded command line, so the
+# branches real GCC cannot produce (GCC's driver keeps only the last -march;
+# it never writes an empty record) are still pinned. No compiler needed.
+# ----------------------------------------------------------------------
+
+_GIMPLE_LTRANS = b"GNU GIMPLE 15.3.0 -mtune=generic -march=x86-64 -g -O3 -fltrans\x00"
+
+
+def _elf64(sections: list[tuple[str, bytes]], *, names_trailing_nul: bool = True) -> bytes:
+    """A minimal little-endian ELF64 image holding ``sections`` (+ .shstrtab)."""
+    names = b"\x00"
+    name_offsets: list[int] = []
+    for sec_name in [".shstrtab", *(n for n, _ in sections)]:
+        name_offsets.append(len(names))
+        names += sec_name.encode() + b"\x00"
+    if not names_trailing_nul:
+        names = names[:-1]
+    payloads = [names, *(c for _, c in sections)]
+    body = bytearray(64)
+    data_offsets: list[int] = []
+    for payload in payloads:
+        data_offsets.append(len(body))
+        body += payload
+    shoff = len(body)
+    body += b"\x00" * 64  # SHN_UNDEF entry
+    for idx, (payload, off) in enumerate(zip(payloads, data_offsets)):
+        sh_type = 3 if idx == 0 else 1  # SHT_STRTAB / SHT_PROGBITS
+        body += struct.pack("<IIQQQQIIQQ", name_offsets[idx], sh_type, 0, 0, off, len(payload), 0, 0, 1, 0)
+    header = b"\x7fELF\x02\x01\x01" + b"\x00" * 9 + struct.pack(
+        "<HHIQQQIHHHHHH", 3, 62, 1, 0, 0, shoff, 0, 64, 0, 0, 64, len(payloads) + 1, 1,
+    )
+    body[:64] = header
+    return bytes(body)
+
+
+def _recorded(tmp_path: Path, command_line: bytes, *, name: str = "synthetic.so") -> Path:
+    out = tmp_path / name
+    out.write_bytes(_elf64([(".GCC.command.line", command_line), (".debug_str", _GIMPLE_LTRANS)]))
+    return out
+
+
+def test_synthetic_native_record_passes(tmp_path: Path) -> None:
+    """Pins the builder: a well-formed recorded native+LTO image is accepted."""
+    path = _recorded(tmp_path, b"GNU C23 15.3.0 -march=znver3 -mavx2 -O3 -flto\x00")
+    assert production_recipe_problem(path) is None
+
+
+def test_empty_command_line_section_is_rejected(tmp_path: Path) -> None:
+    problem = production_recipe_problem(_recorded(tmp_path, b""))
+    assert problem is not None
+    assert "empty .GCC.command.line" in problem
+
+
+def test_command_line_without_march_is_rejected_cleanly(tmp_path: Path) -> None:
+    problem = production_recipe_problem(_recorded(tmp_path, b"GNU C23 15.3.0 -O3 -flto\x00"))
+    assert problem is not None
+    assert "no -march=" in problem
+
+
+@pytest.mark.parametrize(
+    ("command_line", "accepted"),
+    [
+        (b"GNU C23 15.3.0 -march=znver3 -march=x86-64 -O3 -flto\x00", False),
+        (b"GNU C23 15.3.0 -march=x86-64 -march=znver3 -O3 -flto\x00", True),
+    ],
+)
+def test_last_recorded_march_is_the_effective_one(
+    tmp_path: Path, command_line: bytes, accepted: bool,
+) -> None:
+    assert (production_recipe_problem(_recorded(tmp_path, command_line)) is None) is accepted
+
+
+def test_section_name_without_terminating_nul_is_still_found() -> None:
+    image = _elf64([(".GCC.command.line", b"payload")], names_trailing_nul=False)
+    assert _elf_section(image, ".GCC.command.line") == b"payload"
+
+
+def _corrupt(data: bytes, how: str) -> bytes:
+    buf = bytearray(data)
+    if how == "flipped_endianness":
+        buf[5] = 2
+    elif how == "huge_shoff":
+        struct.pack_into("<Q", buf, 0x28, 0xFFFF_FFFF_FFFF_0000)
+    elif how == "shstrndx_out_of_range":
+        struct.pack_into("<H", buf, 0x3E, 0xFFFF)
+    elif how == "tiny_shentsize":
+        struct.pack_into("<H", buf, 0x3A, 4)
+    elif how == "truncated_header":
+        del buf[40:]
+    elif how == "truncated_tail":
+        del buf[len(buf) // 2:]
+    elif how == "section_past_eof":
+        shoff = struct.unpack_from("<Q", buf, 0x28)[0]
+        shnum = struct.unpack_from("<H", buf, 0x3C)[0]
+        for i in range(1, shnum):
+            struct.pack_into("<Q", buf, shoff + i * 64 + 0x18, len(buf) + 4096)
+    else:
+        raise AssertionError(how)
+    return bytes(buf)
+
+
+_CORRUPTIONS = (
+    "flipped_endianness", "huge_shoff", "shstrndx_out_of_range", "tiny_shentsize",
+    "truncated_header", "truncated_tail", "section_past_eof",
+)
+
+
+@pytest.mark.parametrize("how", _CORRUPTIONS)
+def test_corrupt_elf_is_a_clean_rejection_not_a_traceback(tmp_path: Path, how: str) -> None:
+    good = _recorded(tmp_path, b"GNU C23 15.3.0 -march=znver3 -O3 -flto\x00", name="good.so")
+    bad = tmp_path / "bad.so"
+    bad.write_bytes(_corrupt(good.read_bytes(), how))
+
+    problem = production_recipe_problem(bad)
+
+    assert problem is not None
+    assert problem.startswith("unreadable ELF"), problem
+
+
+@pytest.mark.parametrize("how", _CORRUPTIONS)
+def test_corrupt_real_artifact_is_a_clean_rejection(
+    tmp_path: Path, recipe_artifacts: dict[str, Path], how: str,
+) -> None:
+    bad = tmp_path / "bad.so"
+    bad.write_bytes(_corrupt(recipe_artifacts["native_lto"].read_bytes(), how))
+
+    problem = production_recipe_problem(bad)
+
+    assert problem is not None
+    assert problem.startswith("unreadable ELF"), problem
 
 
 # ======================================================================
