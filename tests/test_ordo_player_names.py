@@ -127,6 +127,6 @@ def test_a_player_missing_from_the_fit_fails_the_report(
         "ordo_pooled_fit.py", str(pgn), "--ordo", str(binary),
         "--bootstrap", "2", "--ordo-sims", "0",
     ])
-    with pytest.raises(SystemExit, match="no rating for .*Model B"):
+    with pytest.raises(SystemExit, match=r"no rating for .*Model B"):
         fit.main()
 
