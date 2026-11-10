@@ -280,22 +280,31 @@ def test_worker_default_follows_the_thread_regime(
     assert extra == expected
 
 
+@pytest.mark.parametrize(
+    ("phase_codes", "expected"),
+    [((0, 0), 0), ((0, 3), 3), ((3, 0), 3), ((1, 2), 1)],
+)
 def test_parallel_cpu_run_adds_a_one_process_serial_phase(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase_codes: tuple[int, int], expected: int,
 ) -> None:
     monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
     monkeypatch.setattr(validate, "preflight", lambda *_args: None)
     seen: list[list[str]] = []
-    codes = iter((0, 3))
+    envs: list[dict[str, str]] = []
+    codes = iter(phase_codes)
 
-    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def fake_run(command: list[str], *, env: dict[str, str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         seen.append(command)
+        envs.append(env)
         return subprocess.CompletedProcess(command, next(codes))
 
     monkeypatch.setattr(validate.subprocess, "run", fake_run)
-    # The serial phase's failure is the run's result even though xdist passed.
-    assert validate.main(["cpu", "--threads", "auto", "--report-dir", str(tmp_path)]) == 3
+    # Either phase's failure is the run's result, and both phases always run.
+    assert validate.main(["cpu", "--threads", "auto", "--report-dir", str(tmp_path)]) == expected
     parallel, serial = seen
+    # Workers are the parallelism in the xdist phase; the serial phase is uncapped.
+    assert envs[0]["CAE_TEST_THREADS"] == envs[0]["OMP_NUM_THREADS"] == "1"
+    assert envs[1]["CAE_TEST_THREADS"] == "auto"
     assert parallel[parallel.index("-m", 3) + 1] == "(not slow) and not serial"
     assert serial[serial.index("-m", 3) + 1] == "(not slow) and serial"
     assert "-n" in parallel
@@ -340,3 +349,19 @@ def test_serial_phase_rule_and_explicit_list(tmp_path: Path) -> None:
     listed = tmp_path / sorted(SERIAL_TEST_FILES)[0]
     listed.write_text("x = 1\n")
     assert runs_in_serial_phase(listed)
+
+
+@pytest.mark.parametrize("argv", [["--threads", "auto"], ["--threads", "2"]])
+def test_a_failed_preflight_leaves_no_earlier_serial_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, argv: list[str],
+) -> None:
+    monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
+    stale = tmp_path / "cpu-serial.xml"
+    stale.write_text("earlier PASS")
+
+    def failing_preflight(*_args: object) -> None:
+        raise RuntimeError("no cpu wheel")
+
+    monkeypatch.setattr(validate, "preflight", failing_preflight)
+    assert validate.main(["cpu", *argv, "--report-dir", str(tmp_path)]) == 1
+    assert not stale.exists()

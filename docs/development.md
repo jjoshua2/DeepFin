@@ -78,6 +78,9 @@ is also supported. Invalid values retain the cap. In CI YAML, quote string value
 setting is `auto`, as in CI, and stays in one process under the default cap. Override
 with `--workers N` or `CAE_TEST_WORKERS`. Files are the unit of distribution, so a
 test may share state with its own file but not with another.
+Each xdist worker gets one compute thread, so `CAE_TEST_THREADS=auto` starts one
+process per core: keep it for stopped-training windows.
+
 A test file that starts processes, uses signals or asserts on live threads is
 routed by `tests/conftest.py` to a second, one-process phase, reported in
 `cpu-serial.xml`. That is most of the suite's time, so parallelism mainly helps

@@ -229,6 +229,19 @@ def validation_environment(suite: str, threads: str, backend: str) -> dict[str, 
     return env
 
 
+def parallel_environment(env: dict[str, str]) -> dict[str, str]:
+    """One compute thread per xdist worker: the workers are the parallelism.
+
+    Uncapped workers would each start a thread per core and starve the tests
+    that measure wall-clock time.
+    """
+    out = dict(env)
+    out["CAE_TEST_THREADS"] = "1"
+    for name in THREAD_VARS:
+        out[name] = "1"
+    return out
+
+
 def configure_compile_environment(env: dict[str, str], cache_root: Path) -> None:
     """Keep test compilation away from live artifacts and compiler overrides."""
     env["DEEPFIN_COMPILE_CACHE"] = str(cache_root)
@@ -358,9 +371,11 @@ def main(argv: list[str] | None = None) -> int:
                 report.unlink(missing_ok=True)
                 command.append(f"--junitxml={report}")
                 print(f"junit_report={report}", flush=True)
+                # Removed even when this run has no serial phase: a stale one
+                # from an earlier run must not sit beside a fresh report.
+                serial_report = report.with_name(f"{args.suite}-serial.xml")
+                serial_report.unlink(missing_ok=True)
                 if serial_command is not None:
-                    serial_report = report.with_name(f"{args.suite}-serial.xml")
-                    serial_report.unlink(missing_ok=True)
                     serial_command.append(f"--junitxml={serial_report}")
                 cache_root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="deepfin-validate-")))
                 configure_compile_environment(env, cache_root)
@@ -369,7 +384,8 @@ def main(argv: list[str] | None = None) -> int:
             preflight(args.suite, backend, args.require_cpu_wheel)
             scoped = args.suite == "cpu" and apply_change_scope(env, args.changed_vs)
             print(f"executing: {shlex.join(command)}", flush=True)
-            code = phase_code(subprocess.run(command, cwd=ROOT, env=env, check=False).returncode, scoped)
+            result = subprocess.run(command, cwd=ROOT, env=parallel_environment(env) if xdist else env, check=False)
+            code = phase_code(result.returncode, scoped)
             if serial_command is not None:
                 # Always run it: a failure in one phase must not hide the other's.
                 print(f"executing: {shlex.join(serial_command)}", flush=True)
