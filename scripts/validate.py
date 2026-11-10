@@ -218,6 +218,10 @@ def changed_files(changed_vs: str | None, environ: Mapping[str, str]) -> tuple[l
         elif environ.get("GITHUB_ACTIONS") == "true" and environ.get("GITHUB_EVENT_NAME") == "pull_request":
             # GITHUB_ACTIONS too: a --depth fetch would make a local full clone shallow.
             (head,) = _git("rev-parse", "HEAD")
+            # GITHUB_SHA is the PR's test merge. Any other two-parent HEAD (a PR
+            # head that merged main in) would diff as what main brought, not the PR.
+            if head != environ.get("GITHUB_SHA"):
+                return None, "HEAD is not the pull request's merge commit"
             _git("fetch", "--no-tags", "--depth=2", "origin", head)
             if len(_git("rev-list", "--parents", "-n1", "HEAD")[0].split()) != 3:
                 return None, "HEAD is not a two-parent merge commit"

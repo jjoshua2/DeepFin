@@ -26,7 +26,7 @@ _CI_PR = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "pull_request"}
 
 @pytest.fixture(autouse=True)
 def _no_ambient_ci(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_BASE_REF", validate.DESELECT_LIST_ENV):
+    for name in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_BASE_REF", "GITHUB_SHA", validate.DESELECT_LIST_ENV):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -248,6 +248,13 @@ def upstream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return repo
 
 
+def _ci_pr(clone: Path) -> dict[str, str]:
+    """The environment GitHub gives a pull_request job checked out at ``clone``."""
+    head = subprocess.run(["git", "-C", str(clone), "rev-parse", "HEAD"],
+                          check=True, capture_output=True, text=True).stdout.strip()
+    return {**_CI_PR, "GITHUB_SHA": head}
+
+
 def _clone(upstream: Path, branch: str, monkeypatch: pytest.MonkeyPatch) -> Path:
     clone = upstream.parent / f"clone-{branch}"
     _run_git(upstream.parent, "clone", "-q", "--depth=1", "--branch", branch, upstream.as_uri(), clone.name)
@@ -258,14 +265,28 @@ def _clone(upstream: Path, branch: str, monkeypatch: pytest.MonkeyPatch) -> Path
 def test_pull_request_change_set_is_the_merge_commit_against_its_first_parent(
     upstream: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _clone(upstream, "merge", monkeypatch)
+    clone = _clone(upstream, "merge", monkeypatch)
     # Against main's current tip scripts/a.py would vanish; it is the PR's change.
-    assert validate.changed_files(None, _CI_PR) == (["docs/x.md", "scripts/a.py"], "ok")
+    assert validate.changed_files(None, _ci_pr(clone)) == (["docs/x.md", "scripts/a.py"], "ok")
+
+
+def test_a_merge_head_that_is_not_the_test_merge_disables_scoping(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clone = _clone(upstream, "merge", monkeypatch)
+    # A PR head that merged main in is also a two-parent commit; its first-parent
+    # diff is what main brought in, not the PR's change.
+    files, reason = validate.changed_files(None, {**_CI_PR, "GITHUB_SHA": "0" * 40})
+    assert files is None
+    assert "merge commit" in reason
+    files, reason = validate.changed_files(None, _CI_PR)
+    assert files is None
+    assert _ci_pr(clone)["GITHUB_SHA"] != ""
 
 
 def test_a_non_merge_head_disables_scoping(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _clone(upstream, "main", monkeypatch)
-    files, reason = validate.changed_files(None, _CI_PR)
+    clone = _clone(upstream, "main", monkeypatch)
+    files, reason = validate.changed_files(None, _ci_pr(clone))
     assert files is None
     assert "merge" in reason
 
@@ -273,7 +294,7 @@ def test_a_non_merge_head_disables_scoping(upstream: Path, monkeypatch: pytest.M
 def test_a_failed_parent_fetch_disables_scoping(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     clone = _clone(upstream, "merge", monkeypatch)
     _run_git(clone, "remote", "set-url", "origin", (upstream.parent / "missing").as_uri())
-    files, reason = validate.changed_files(None, _CI_PR)
+    files, reason = validate.changed_files(None, _ci_pr(clone))
     assert files is None
     assert "change detection failed" in reason
 
@@ -297,13 +318,14 @@ def _fake_pytest_runs(monkeypatch: pytest.MonkeyPatch, codes: tuple[int, ...]) -
 
 @pytest.mark.parametrize("failure", [
     subprocess.CalledProcessError(128, ["git", "fetch"]), OSError("no git"), {"diff": []},
-    {"rev-parse": ["m" * 40], "rev-list": ["m p1"], "diff": ["docs/x.md"]},
+    {"rev-list": ["m p1"], "diff": ["docs/x.md"]},          # not a two-parent merge
+    {"rev-parse": ["f" * 40], "diff": ["docs/x.md"]},      # not the PR's test merge
 ])
 def test_change_detection_failure_runs_everything(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path,
     failure: Exception | dict[str, list[str]],
 ) -> None:
-    for name, value in _CI_PR.items():
+    for name, value in {**_CI_PR, "GITHUB_SHA": _MERGE["rev-parse"][0]}.items():
         monkeypatch.setenv(name, value)
     inherited = tmp_path / "inherited.txt"
     inherited.write_text(f"{SCRIPT_ONLY_PROBE}\n")
@@ -318,7 +340,7 @@ def test_change_detection_failure_runs_everything(
 def test_scoped_run_hands_both_phases_one_list_and_still_fails_an_empty_phase(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path,
 ) -> None:
-    for name, value in _CI_PR.items():
+    for name, value in {**_CI_PR, "GITHUB_SHA": _MERGE["rev-parse"][0]}.items():
         monkeypatch.setenv(name, value)
     _fake_git(monkeypatch, {**_MERGE, "diff": ["docs/x.md"]})
     seen = _fake_pytest_runs(monkeypatch, (0, 5))

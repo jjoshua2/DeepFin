@@ -205,7 +205,7 @@ def change_scoped_deselection(items: list[pytest.Item]) -> list[pytest.Item]:
     try:
         with open(listing, encoding="utf-8") as handle:
             deselected = {line.strip() for line in handle if line.strip()}
-    except OSError:
+    except (OSError, ValueError):  # ValueError: undecodable bytes
         return []
     paths = {path: Path(path).resolve() for path in {item.path for item in items}}
     selected = {path for path, real in paths.items()
