@@ -101,3 +101,32 @@ def test_multiword_names_reach_ratings_bootstrap_and_contrast(
     assert "Model B" in bootstrap
     assert "Model A - Model B" in contrasts
     assert "+10.0" in contrasts
+
+
+def test_a_player_missing_from_the_fit_fails_the_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    pgn = tmp_path / "paired.pgn"
+    fit.write_pgn(pgn, [
+        fit.Game("Model A", "Model B", "1-0", "0", None, None, 0),
+        fit.Game("Model B", "Model A", "0-1", "0", None, None, 1),
+    ])
+    binary = tmp_path / "not-executed-ordo"
+    binary.write_text("")
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        Path(cmd[cmd.index("-o") + 1]).write_text(
+            "# PLAYER : RATING ERROR POINTS PLAYED (%)\n"
+            "1 Model A : 10.0 2.0 60.0 100 60\n"
+        )
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(fit.tempfile, "mkdtemp", lambda **_kwargs: str(tmp_path))
+    monkeypatch.setattr("sys.argv", [
+        "ordo_pooled_fit.py", str(pgn), "--ordo", str(binary),
+        "--bootstrap", "2", "--ordo-sims", "0",
+    ])
+    with pytest.raises(SystemExit, match="no rating for .*Model B"):
+        fit.main()
+

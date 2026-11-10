@@ -675,6 +675,12 @@ def main() -> int:
             "Ordo did not return a fit (timeout or error). If it hung, that is "
             "the -D auto-draw-rate non-convergence — this wrapper already passes "
             "-M, so report the input.")
+    lost = sorted(set(players) - set(point))
+    if lost:
+        # A player the games contain but the fit does not would otherwise just
+        # be absent from every table below, with exit 0.
+        raise SystemExit(f"Ordo's output has no rating for {lost}; "
+                         "its table format was not parsed completely.")
 
     flagged = completion_bias_report(by_matchup, rng=rng)
 
