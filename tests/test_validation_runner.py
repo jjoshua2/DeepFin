@@ -313,8 +313,22 @@ def test_one_process_cpu_run_keeps_a_single_unsplit_command(
     assert command[command.index("-m", 3) + 1] == "not slow"
 
 
-def test_every_serial_file_exists() -> None:
-    from tests.conftest import SERIAL_TEST_FILES
+def test_serial_phase_rule_and_explicit_list(tmp_path: Path) -> None:
+    from tests.conftest import SERIAL_TEST_FILES, runs_in_serial_phase
 
     missing = sorted(name for name in SERIAL_TEST_FILES if not (validate.ROOT / "tests" / name).is_file())
     assert not missing
+    cases = {
+        "test_a.py": ("import subprocess\n", True),
+        "test_b.py": ("import signal\nsignal.alarm(1)\n", True),
+        "test_c.py": ("import threading\nassert threading.enumerate()\n", True),
+        "test_d.py": ("import threading\nthreading.Event()\n", False),
+        "test_e.py": ("x = 1\n", False),
+    }
+    for name, (source, expected) in cases.items():
+        path = tmp_path / name
+        path.write_text(source)
+        assert runs_in_serial_phase(path) is expected, name
+    listed = tmp_path / sorted(SERIAL_TEST_FILES)[0]
+    listed.write_text("x = 1\n")
+    assert runs_in_serial_phase(listed)

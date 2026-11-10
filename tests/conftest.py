@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import sys
 import threading
 import time
@@ -150,37 +151,39 @@ def thread_cap_regime_line() -> str:
     return line
 
 
-# Files that run in the validator's one-process phase instead of under xdist.
-# Each asserts on, or drives, state that belongs to the whole process: the set
-# of live threads, a signal handler or timer, or a real signal sent to itself.
-# Sharing a worker with another file makes those depend on what that file left
-# behind. The last entry instead needs an unloaded host for its stop timing.
+# Which files run in the validator's one-process phase instead of under xdist.
+#
+# A file that starts processes, installs or sends signals, or asserts on the set
+# of live threads depends on state that belongs to the whole process and on the
+# host not being saturated. Under xdist such files failed in a different place
+# on every run: a neighbour's leftover thread or SIGINT handler, or a kill
+# timeout missed on a loaded runner. The rule is read off the source so a new
+# file of that kind is covered without anyone remembering a list.
+_SERIAL_SOURCE = re.compile(
+    r"\bsubprocess\b|\bsignal\.|\bmultiprocessing\b|ProcessPoolExecutor|os\.fork\("
+    r"|threading\.enumerate\(|threading\.active_count\("
+)
+# Load-sensitive files the rule does not reach: they race threads against
+# wall-clock deadlines without touching processes or signals.
 SERIAL_TEST_FILES = frozenset({
-    "test_bt4_cpu_prefetch.py",
-    "test_bt4_npz_unit_v1.py",
-    "test_ceres_collection_batches.py",
-    "test_checkpointed_cursor_v2.py",
-    "test_checkpointed_sort.py",
-    "test_checkpointed_uci_frames.py",
-    "test_exact_host_overlap.py",
-    "test_packed_signal_cleanup.py",
-    "test_packed_trainer_pair.py",
-    "test_perft_cli.py",
-    "test_prefetch_byte_budget.py",
-    "test_replay_prefetch_thread_lifecycle.py",
-    "test_rpg_resource_failures.py",
-    "test_sf_dlite_pack_audit.py",
-    "test_uci_evaluator_replacement_ownership.py",
-    "test_uci_search_options.py",
-    "test_worker_model_update.py",
-    "test_worker_shutdown_signal.py",
     "test_cross_unit_teacher_generation.py",
+    "test_server_lease_assign_lock_multiwaiter.py",
 })
+_serial_by_path: dict[str, bool] = {}
+
+
+def runs_in_serial_phase(path: os.PathLike[str]) -> bool:
+    key = os.fspath(path)
+    if key not in _serial_by_path:
+        name = os.path.basename(key)
+        with open(key, encoding="utf-8") as handle:
+            _serial_by_path[key] = name in SERIAL_TEST_FILES or bool(_SERIAL_SOURCE.search(handle.read()))
+    return _serial_by_path[key]
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
-        if item.path.name in SERIAL_TEST_FILES:
+        if runs_in_serial_phase(item.path):
             item.add_marker(pytest.mark.serial)
 
 
