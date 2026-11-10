@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import importlib.machinery
 import os
+import platform
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
-from scripts.check_c_extensions_fresh import EXTENSION_SPECS, check_extensions
+from scripts.check_c_extensions_fresh import (
+    EXTENSION_SPECS,
+    check_extensions,
+    production_recipe_problem,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -184,15 +191,143 @@ def test_check_extensions_rejects_unrecorded_production_recipe(tmp_path: Path) -
     assert len([i for i in issues if "native+LTO production recipe" in i]) == len(ALL_MODULES)
 
 
-def test_check_extensions_accepts_recorded_production_recipe(tmp_path: Path) -> None:
+def test_check_extensions_rejects_recipe_strings_outside_the_command_line_section(
+    tmp_path: Path,
+) -> None:
+    """Loose "-march=" / "-fltrans" bytes are what a portable -g build carries.
+
+    This used to be the ACCEPT fixture: the gate grepped the whole file, and a
+    portable LTO build's DWARF producer string supplies both substrings.
+    """
     _write_all_sources(tmp_path, mtime_ns=10)
     _write_all_extensions(tmp_path, mtime_ns=20)
     for module in ALL_MODULES:
         output = _extension_output(tmp_path, module)
-        output.write_bytes(b"ELF\x00-march=znver3\x00-fltrans\x00")
+        output.write_bytes(b"ELF\x00GNU GIMPLE 15.3.0 -march=znver3 -flto -fltrans\x00")
         os.utime(output, ns=(20, 20))
 
-    assert check_extensions(tmp_path, require_production_recipe=True) == []
+    issues = check_extensions(tmp_path, require_production_recipe=True)
+
+    assert len([i for i in issues if "native+LTO production recipe" in i]) == len(ALL_MODULES)
+
+
+# ----------------------------------------------------------------------
+# Real GCC artifacts: the recipe gate is judged on what GCC actually writes.
+# setup.py builds with Python's CFLAGS (which carry -g) plus -O3/-flto, and
+# adds -frecord-gcc-switches only when CAE_EXT_NATIVE and CAE_EXT_LTO are both
+# set; the portable build pins -march=x86-64 explicitly.
+# ----------------------------------------------------------------------
+
+_GCC = shutil.which("gcc")
+
+_RECIPES: dict[str, list[str]] = {
+    # build_production_extensions.py: CAE_EXT_NATIVE=1 CAE_EXT_LTO=1
+    "native_lto": ["-march=native", "-flto", "-frecord-gcc-switches"],
+    # CAE_EXT_LTO=1 alone: the defect — this passed the old byte-grep gate.
+    "portable_lto": ["-march=x86-64", "-flto"],
+    # Portable LTO where the builder also recorded switches (e.g. via CFLAGS):
+    # the section exists but names the generic baseline.
+    "portable_lto_recorded": ["-march=x86-64", "-flto", "-frecord-gcc-switches"],
+    "portable_v3_lto_recorded": ["-march=x86-64-v3", "-flto", "-frecord-gcc-switches"],
+    # Native with recorded switches but no LTO.
+    "native_recorded_no_lto": ["-march=native", "-frecord-gcc-switches"],
+    # Native, compiled -flto with fat objects but linked WITHOUT LTO: the
+    # recorded compile line says -flto, yet no LTO code generation ran.
+    "native_fat_lto_linked_without_lto": [
+        "-march=native", "-flto", "-ffat-lto-objects", "-frecord-gcc-switches",
+    ],
+}
+
+_LINK_FLAGS: dict[str, list[str]] = {
+    "native_fat_lto_linked_without_lto": ["-fno-lto"],
+}
+
+
+def _build_shared_object(out_dir: Path, recipe: str) -> Path:
+    if _GCC is None:
+        pytest.skip("gcc is not available")
+    if platform.machine().lower() not in {"x86_64", "amd64"}:
+        pytest.skip("recipe fixtures name x86-64 -march levels")
+    src = out_dir / "probe.c"
+    src.write_text(
+        "int probe_sum(const int *xs, int n) {\n"
+        "    int s = 0;\n"
+        "    for (int i = 0; i < n; ++i) s += xs[i] * 3;\n"
+        "    return s;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    out = out_dir / f"{recipe}.so"
+    flags = _RECIPES[recipe]
+    lto_link = _LINK_FLAGS.get(recipe, ["-flto"] if "-flto" in flags else [])
+    obj = out_dir / f"{recipe}.o"
+    subprocess.run(
+        [_GCC, "-g", "-O3", "-fPIC", *flags, "-c", str(src), "-o", str(obj)],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        [_GCC, "-shared", "-g", *lto_link, str(obj), "-o", str(out)],
+        check=True, capture_output=True,
+    )
+    return out
+
+
+@pytest.fixture(scope="module")
+def recipe_artifacts(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+    out_dir = tmp_path_factory.mktemp("recipes")
+    return {recipe: _build_shared_object(out_dir, recipe) for recipe in _RECIPES}
+
+
+def test_native_lto_artifact_passes_the_production_recipe_gate(
+    recipe_artifacts: dict[str, Path],
+) -> None:
+    assert production_recipe_problem(recipe_artifacts["native_lto"]) is None
+
+
+def test_portable_lto_artifact_carries_the_strings_the_old_gate_grepped(
+    recipe_artifacts: dict[str, Path],
+) -> None:
+    """Pins the fixture's faithfulness: the defect's preconditions really hold."""
+    data = recipe_artifacts["portable_lto"].read_bytes()
+    assert b"-march=" in data
+    assert b"-fltrans" in data
+
+
+@pytest.mark.parametrize(
+    ("recipe", "reason"),
+    [
+        ("portable_lto", "no .GCC.command.line section"),
+        ("portable_lto_recorded", "-march=x86-64 is a generic baseline"),
+        ("portable_v3_lto_recorded", "-march=x86-64-v3 is a generic baseline"),
+        ("native_recorded_no_lto", "no -flto"),
+        ("native_fat_lto_linked_without_lto", "no LTO translation"),
+    ],
+)
+def test_non_production_artifacts_fail_the_production_recipe_gate(
+    recipe_artifacts: dict[str, Path], recipe: str, reason: str,
+) -> None:
+    problem = production_recipe_problem(recipe_artifacts[recipe])
+    assert problem is not None
+    assert reason in problem
+
+
+@pytest.mark.parametrize("recipe", ["native_lto", "portable_lto"])
+def test_check_extensions_applies_the_recipe_gate_to_real_artifacts(
+    tmp_path: Path, recipe_artifacts: dict[str, Path], recipe: str,
+) -> None:
+    _write_all_sources(tmp_path, mtime_ns=10)
+    for module in ALL_MODULES:
+        output = _extension_output(tmp_path, module)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(recipe_artifacts[recipe], output)
+        os.utime(output, ns=(20, 20))
+
+    issues = check_extensions(tmp_path, require_production_recipe=True)
+
+    if recipe == "native_lto":
+        assert issues == []
+    else:
+        assert len([i for i in issues if "native+LTO production recipe" in i]) == len(ALL_MODULES)
 
 
 # ======================================================================

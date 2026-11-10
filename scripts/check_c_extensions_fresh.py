@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib.machinery
 import re
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -121,13 +122,91 @@ def _gcc_major(path: Path) -> int | None:
     return int(match.group(1)) if match is not None else None
 
 
-def _has_production_recipe(path: Path) -> bool:
+def _elf_section(data: bytes, name: str) -> bytes | None:
+    """Return the contents of ELF section ``name``, or None if absent/not ELF.
+
+    A deliberately small reader (section headers + the section-name string
+    table only) so the production gate does not need binutils or pyelftools.
+    """
+    if len(data) < 64 or data[:4] != b"\x7fELF":
+        return None
+    elf_class, elf_data = data[4], data[5]
+    if elf_class not in (1, 2) or elf_data not in (1, 2):
+        return None
+    end = "<" if elf_data == 1 else ">"
+    try:
+        if elf_class == 2:
+            shoff = struct.unpack_from(end + "Q", data, 0x28)[0]
+            shentsize, shnum, shstrndx = struct.unpack_from(end + "HHH", data, 0x3A)
+            header = end + "IIQQQQIIQQ"
+        else:
+            shoff = struct.unpack_from(end + "I", data, 0x20)[0]
+            shentsize, shnum, shstrndx = struct.unpack_from(end + "HHH", data, 0x2E)
+            header = end + "IIIIIIIIII"
+        if shoff == 0 or shnum == 0 or shstrndx >= shnum:
+            return None
+        sections = [
+            struct.unpack_from(header, data, shoff + i * shentsize) for i in range(shnum)
+        ]
+        # Fields: name, type, flags, addr, offset, size, ...
+        names_off, names_size = sections[shstrndx][4], sections[shstrndx][5]
+        names = data[names_off:names_off + names_size]
+        wanted = name.encode()
+        for sec in sections:
+            start = sec[0]
+            stop = names.find(b"\x00", start)
+            if names[start:stop] == wanted:
+                return data[sec[4]:sec[4] + sec[5]]
+    except struct.error:
+        return None
+    return None
+
+
+# A -march value that names the ISA baseline rather than the build host. The
+# portable build pins -march=x86-64 explicitly (setup.py), and distro GCCs may
+# default to a -v2/-v3 level; neither is the host tuning production relies on.
+_GENERIC_MARCH = frozenset({"x86-64", "x86-64-v2", "x86-64-v3", "x86-64-v4"})
+
+
+def production_recipe_problem(path: Path) -> str | None:
+    """Why ``path`` is not a native+LTO production build, or None if it is.
+
+    ⚑ The evidence is the ``.GCC.command.line`` SECTION, never a byte search of
+    the file. With ``-g`` every object carries DWARF producer strings, and a
+    plain portable LTO build's LTO-translation producer reads
+    ``GNU GIMPLE ... -march=x86-64 ... -fltrans`` — so "-march=" and "-fltrans"
+    both occur in a build that is neither native nor recorded. (The deployed
+    native build's GIMPLE producer ALSO says -march=x86-64: the ltrans stage
+    records its own default and carries the real ISA as per-function target
+    options, so producer strings cannot discriminate in either direction.)
+
+    The section exists only under -frecord-gcc-switches, which setup.py adds
+    only when CAE_EXT_NATIVE and CAE_EXT_LTO are both set. GCC writes it at
+    compile time with -march=native expanded to the resolved host CPU (e.g.
+    -march=znver3), so we require: the section, -flto in every recorded
+    command line, and a final -march= that is not a generic x86-64 baseline.
+    The LTO-translation marker (-fltrans in a GNU GIMPLE producer) is kept as
+    proof the link actually ran LTO code generation.
+    """
     data = path.read_bytes()
-    # GCC's -frecord-gcc-switches survives the LTO link as a
-    # .GCC.command.line string. With native compilation GCC records the
-    # resolved host architecture (for example -march=znver3); the LTO
-    # translation stage records -fltrans.
-    return b"-march=" in data and b"-fltrans" in data
+    section = _elf_section(data, ".GCC.command.line")
+    if section is None:
+        return "no .GCC.command.line section (not built with -frecord-gcc-switches)"
+    lines = [raw.decode("utf-8", "replace") for raw in section.split(b"\x00") if raw.strip()]
+    if not lines:
+        return "empty .GCC.command.line section"
+    for line in lines:
+        tokens = line.split()
+        marches = [tok.split("=", 1)[1] for tok in tokens if tok.startswith("-march=")]
+        if not marches:
+            return f"recorded command line has no -march=: {line[:120]!r}"
+        if marches[-1] in _GENERIC_MARCH:
+            return f"recorded -march={marches[-1]} is a generic baseline, not the native host"
+        if not any(tok == "-flto" or tok.startswith("-flto=") for tok in tokens):
+            return "recorded command line has no -flto"
+    if not re.search(rb"GNU GIMPLE [^\x00]*-fltrans", data):
+        return "no LTO translation (-fltrans) producer record"
+    return None
 
 
 def check_extensions(
@@ -152,10 +231,12 @@ def check_extensions(
                     f"{spec.module} was built with GCC {compiler_major}; "
                     f"production requires GCC >= {int(min_gcc_major)}",
                 )
-        if require_production_recipe and not _has_production_recipe(output):
-            issues.append(
-                f"{spec.module} does not record the native+LTO production recipe",
-            )
+        if require_production_recipe:
+            problem = production_recipe_problem(output)
+            if problem is not None:
+                issues.append(
+                    f"{spec.module} does not record the native+LTO production recipe: {problem}",
+                )
         output_mtime = output.stat().st_mtime_ns
         for dep_rel in spec.dependencies:
             dep = root / dep_rel
@@ -177,7 +258,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--require-production-recipe", action="store_true",
-        help="Require recorded native architecture and LTO translation flags.",
+        help=(
+            "Require a .GCC.command.line record with -flto and a non-baseline "
+            "(host-resolved) -march, plus an LTO translation producer record."
+        ),
     )
     args = parser.parse_args()
 
