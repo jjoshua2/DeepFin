@@ -103,7 +103,9 @@ def test_fresh_start_reserves_room_for_the_new_experiment(
             )
         after = {p.relative_to(tune_dir): p.read_bytes() for p in tune_dir.rglob("*") if p.is_file()}
         assert after == before
-        assert old_dir.is_dir() and previous_dir.is_dir() and unrelated.is_dir()
+        assert old_dir.is_dir()
+        assert previous_dir.is_dir()
+        assert unrelated.is_dir()
         assert not (tune_dir / current_trial).exists()
         return
 
