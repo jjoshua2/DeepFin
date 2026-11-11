@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sys
 from typing import Any, cast
@@ -16,6 +17,15 @@ from chess_anti_engine.replay.shard import local_shard_path, save_local_shard_ar
 from chess_anti_engine.train.trainer import Trainer
 from scripts import offline_replay_epoch as driver
 from scripts.offline_epoch_resume import candidate_lock
+
+
+@pytest.fixture(autouse=True)
+def _no_fsync(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every interruption here is an in-process exception, never a power loss, so
+    # the fsync barriers on each per-step commit (a directory-chain fsync per
+    # file) only cost wall time. Crash durability of atomic_write is pinned by
+    # tests/test_atomic_io.py.
+    monkeypatch.setattr(os, "fsync", lambda _fd: None)
 
 
 def _source(tmp_path: Path) -> tuple[Path, Path]:
@@ -98,17 +108,33 @@ def test_candidate_lock_refuses_concurrent_resume(tmp_path: Path) -> None:
         pass
 
 
+@pytest.fixture(scope="module")
+def uninterrupted_runs(tmp_path_factory: pytest.TempPathFactory) -> dict[bool, Path]:
+    """One uninterrupted reference epoch per soft_mask, shared by every interrupt point.
+
+    The reference is independent of where the interrupted run stops, so it is
+    trained once per mask instead of once per parametrized case.
+    """
+    root = tmp_path_factory.mktemp("uninterrupted")
+    config, source = _source(root)
+    runs: dict[bool, Path] = {}
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(os, "fsync", lambda _fd: None)
+        for soft_mask in (False, True):
+            out = root / f"soft_{soft_mask}"
+            _run(mp, config=config, source=source, out=out, soft_mask=soft_mask)
+            runs[soft_mask] = out / "adamw" / "trainer.pt"
+    return runs
+
+
 @pytest.mark.parametrize("interrupt_at", [2, 4, 7, 8])
 @pytest.mark.parametrize("soft_mask", [False, True])
 def test_resume_restores_real_optimizer_schedule_dropout_and_cursor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    interrupt_at: int, soft_mask: bool,
+    interrupt_at: int, soft_mask: bool, uninterrupted_runs: dict[bool, Path],
 ) -> None:
     config, source = _source(tmp_path)
-    uninterrupted = tmp_path / "uninterrupted"
     restarted = tmp_path / "restarted"
-    _run(monkeypatch, config=config, source=source, out=uninterrupted,
-         soft_mask=soft_mask)
 
     real_train = Trainer.train_steps
     calls = 0
@@ -133,7 +159,7 @@ def test_resume_restores_real_optimizer_schedule_dropout_and_cursor(
     (restarted / "adamw" / "resume-trainer-999999999999-orphan.pt").write_bytes(b"orphan")
     _run(monkeypatch, config=config, source=source, out=restarted, resume=True,
          soft_mask=soft_mask)
-    a = torch.load(uninterrupted / "adamw" / "trainer.pt", map_location="cpu", weights_only=False)
+    a = torch.load(uninterrupted_runs[soft_mask], map_location="cpu", weights_only=False)
     b = torch.load(restarted / "adamw" / "trainer.pt", map_location="cpu", weights_only=False)
     for key in ("model", "opt", "scheduler", "step", "peak_lr", "zclip"):
         _same_state(a[key], b[key])
