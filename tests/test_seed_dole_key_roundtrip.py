@@ -51,6 +51,10 @@ TRIAL_ID = "4c17c_00000"
 SIBLING_ID = "4c17c_00001"
 NAME_FORM = "train_x_4c17c_00000"
 ITERATION = 12
+# Distinct from ITERATION on purpose: with the two equal, a server that keyed
+# the gate by the manifest's trainer_step instead of training_iteration
+# would round-trip just as well and the test could not tell them apart.
+TRAINER_STEP = ITERATION * 88 + 7
 
 
 def _publish(server_root: Path, trial_id: str) -> None:
@@ -63,7 +67,7 @@ def _publish(server_root: Path, trial_id: str) -> None:
         server_root=server_root,
         trial_id=trial_id,
         training_iteration=ITERATION,
-        trainer_step=ITERATION,
+        trainer_step=TRAINER_STEP,
         sf_nodes=1000,
         mcts_simulations=64,
     )
