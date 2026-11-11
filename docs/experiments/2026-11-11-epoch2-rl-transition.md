@@ -108,8 +108,9 @@ After a failed startup, preserve the actual error and process outcome, fix only
 the established cause and independently qualify the changed path before retrying.
 After timeout/resource abort, reconcile owned descendants and custody before any
 new conflicting stage. After a clean pilot, evaluate before expanding training;
-at most one further adjustment is justified by the first pilot's evidence unless
-the user changes the budget or scope. Record the readout against its rule in this
+Further bounded adjustments within the authorized 48-hour window require a
+recorded readout and a new preregistered hypothesis; the final independent
+confirmation remains limited to one selected candidate. Record the readout against its rule in this
 file, including negative/inconclusive verdicts and returned resource custody.
 
 ## November 11 qualification readout and CPU wiring preregistration
@@ -243,3 +244,91 @@ insufficient. The old proposal's maximum 8,192 sample views would also weakly te
 the RL idea after 348,107,734 delivered supervised rows. A bounded dose increase
 needs its own precommitted limit and realized-step check. Freeze disjoint paired
 screening and confirmation opening panels before inspecting candidate play.
+
+
+### Sequential restart audit and corrective qualification
+
+The original CPU bank has 128 rows but only 64 byte-identical unique inputs.
+Exact producer joins show the same two trajectories in both cycles, caused by
+reusing the trial/worker seed at every restart. This is a pipeline defect.
+Audit: `/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cpu-shard-audit-v1/readout.json`.
+
+Independently accepted correction `2eba488ab6e9624aaf4e1b493b1233e7f0bcc973`
+varies seeds by global collection iteration and publishes current weights before
+starting sequential workers; health revival retains the collection seed.
+Default streaming behavior is preserved.
+
+Successor preregistration: `/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cpu-wiring-config-v2/manifest.json`,
+config SHA256 `38900afe4ee63165a7b3271e8aba59905e09296fbdfa7760c7f0d1acdd9e43d4`, source `2da5c6054ae54a6daee024eef79d2cc0413fb1b7`.
+Two CPU-only collections, one selfplay game each, 24-ply cap, 8 simulations,
+batch 4, one update cap each, 360-second ceiling. Require actual completion,
+distinct observed worker seeds, finite updates, step-1 publication consumed next
+and owned closure. Compare trajectories; shared opening positions are legitimate
+and changed seeds alone do not prove independence. This uses smoke loss settings
+for wiring only, with no Elo claim. Failure/timeout preserves evidence for
+diagnosis and reconciles owned closure before any successor. Existing controls
+and CUDA-hidden child command remain required.
+
+
+### Frozen conditional search-mechanism screen
+
+Before scientific training or candidate play, freeze 64 roots sampled with seed
+20261111 from 334 unique nonterminal roots with at least two legal moves and
+complete direct nonmate SF centipawn labels. Source audit SHA256:
+`d8e26efa0b010450abf9374693afc45027db6d146571785ab897af5061144df2`;
+selected panel SHA256:
+`87fd7a5c0f324e661f86f0bb7290f27a0734634be059ff4eb1885614aea22598`.
+Manifest: `~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/search-mechanism-config-v1/manifest.json`.
+Use readonly epoch-2 donor, main linear selfplay shape (topk16, c_scale0.1,
+policy_temp1, vloss1), no root noise, 64 and256 simulations on the same roots,
+batch16, CPU2threads, 1200-second owned-stage ceiling, CUDA hidden.
+
+Deciding metric is expected capped-at-1000cp SF regret(prior) minus regret(actual
+native improved-policy target), over all legal moves. Use 10000 root-paired
+bootstrap resamples, seed20261112, percentile95% intervals. A rung's positive
+lower bound supports its conditional mechanism; select256 over64 only when its
+paired incremental lower bound is positive, otherwise retain a healthy cheaper
+rung. If neither passes, report inconclusive and inspect the bank before further
+compute. Require exactly64 complete paired roots, actual native policies, full
+labels, finite normalized probabilities, matching prior vectors and the independent
+UCI-index control. Counterfactual reconstructed policies are not scored.
+
+This is a FEN-only frozen historical-SF subset, potentially biased toward endgames;
+it establishes neither historical-input fidelity nor Elo. Timeout/incomplete
+outputs are partial, not a passed screen. Preserve raw root observations and
+reconcile owned closure before any successor.
+
+Disjoint evaluation panels were frozen before candidate play from the production
+weighted opening book: 128 screen pairs (256games), SHA256
+`ae09af5d6fd6cf5dce16e802248b817d82099c6b6049b5418eef1516d6f5c2f6`,
+and500 confirmation pairs (1000games), SHA256
+`fe1d02ec6e7af621753209ca5bcc96a435d71b1ad103e64a765b53af3a1a3ad7`.
+Actual legal move histories survive the arena reload. Panel manifest:
+`~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/evaluation-openings-v1/manifest.json`.
+A fixed screen score above0.5 permits at most one preselected candidate into the
+unseen confirmation; only a confirmation95% pair-level score interval above0.5
+can establish gain. Partial or null-crossing results stay inconclusive. Exact
+arena runtime/search commands remain to be frozen before scientific training.
+
+
+### Corrected sequential runtime readout
+
+Successor completed in203.041seconds with owned processes closed. Observed worker
+seeds were3576761918 and3458919155 with CUDA hidden. Two completed24-ply
+adjudicated games produced41retainedrows (19/22),38byte-unique inputs,3shared
+opening inputs, different content-derived game IDs and distinct final trajectories.
+Two additional inflight games were abandoned. All41rows reached six replay
+shards. Default distributed diff-focus thinning remained active despite the smoke
+YAML's false flag: those original fields are intentionally pinned to worker defaults
+and not forwarded. The scientific config must describe the actual sampler as true.
+
+Two actual updates had finite losses5.620818138 and5.283257961,494finite model
+tensors and486changedtensors. Step1 SHA256
+`fbb69c37c6f5950b5cec48db1eb71662fa2ae862b645b3c722c2a97dffff00ac`
+was published and is declared by the next producer. Step2 was checkpointed, not
+published, SHA256
+`b78f5d6876927f94d8aec3cf020bcdf666b7a2dcd2489b18e5aa90ee38befc2e`.
+Independent review checked logs/CSV/producer metadata and exact PID/birth closure;
+it did not repeat the parent tensor comparison or prove statistical independence.
+Readout and raw bank: `~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cpu-wiring-diversity-v2/result.json`
+and `cpu-wiring-readout-v2.json` under the same artifact root. No strength claim.
