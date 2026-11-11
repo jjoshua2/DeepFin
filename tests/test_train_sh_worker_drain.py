@@ -74,7 +74,7 @@ def _worker_pattern() -> str:
 def _poll_definition() -> str:
     """The single `local dpoll=...` definition and its guard, read out of the
     real file so the orphan-only harness gets production's, not a copy."""
-    found = re.findall(r"^[ \t]*local dpoll=.*?^[ \t]*esac$", TRAIN_SH.read_text(),
+    found = re.findall(r"^[ \t]*local dpoll=.*?# dpoll: end$", TRAIN_SH.read_text(),
                        re.M | re.S)
     assert len(found) == 1, f"expected exactly one dpoll definition, got {found}"
     return found[0]
@@ -425,48 +425,90 @@ rm -f "$POOL_FILE"
 # ---------------------------------------------------------------------------
 
 
-def _timed_ignore_drain(poll: str | None, *, orphan: bool = False) -> tuple[
+def _timed_ignore_drain(poll: str | None, *, orphan: bool = False,
+                        grace: int = _TIMEOUT_GRACE) -> tuple[
         subprocess.CompletedProcess[str], float]:
-    """One SIGTERM-ignoring victim, one nominal 2-second poll, timed in bash
-    from after the victim is ready to the end of the pass under test."""
+    """One SIGTERM-ignoring victim, timed in bash from after the victim is
+    ready to the end of the pass under test. A grace of G runs G/2 polls."""
     victim = _victim(1, action="ignore") + "\nT0=$(date +%s%N)\n"
     stamp = 'echo "PASS_NS=$(( $(date +%s%N) - T0 ))"'
     if orphan:
-        script = _orphan_harness(victim, grace=_TIMEOUT_GRACE, poll=poll).replace(
+        script = _orphan_harness(victim, grace=grace, poll=poll).replace(
             'echo "REACHED_END_OF_STOP"', f'{stamp}\necho "REACHED_END_OF_STOP"', 1)
     else:
-        script = _harness(victim, grace=_TIMEOUT_GRACE, poll=poll, post_drain=stamp)
+        script = _harness(victim, grace=grace, poll=poll, post_drain=stamp)
     r = _run(script, timeout=40)
     assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     return r, int(r.stdout.split("PASS_NS=")[1].split()[0]) / 1e9
 
 
 def test_the_drain_poll_defaults_to_two_seconds() -> None:
-    """Unset is production: each poll really sleeps 2s."""
+    """Unset is production: the one poll a 2s grace allows really sleeps 2s.
+    The upper bound catches a grace counted in smaller steps (a second poll)."""
     r, elapsed = _timed_ignore_drain(None)
     assert f"still running after {_TIMEOUT_GRACE}s" in r.stdout, r.stdout + r.stderr
-    assert elapsed >= 2.0, elapsed
+    assert 2.0 <= elapsed < 3.5, elapsed
     assert "CAE_DRAIN_POLL_SLEEP" not in r.stderr, r.stderr
 
 
 @pytest.mark.parametrize("orphan", [False, True], ids=["first_pass", "orphan_pass"])
 def test_the_poll_seam_reaches_both_drain_loops(orphan: bool) -> None:
-    """The consumer's own wall time, not the exported variable: each pass's
-    single nominal 2-second poll takes the seam's 0.5s, not 2s."""
-    r, elapsed = _timed_ignore_drain(_FAST_POLL, orphan=orphan)
+    """The consumer's own wall time, not the exported variable: a 4s grace is
+    exactly two polls of the seam's 0.5s -- not two of 2s, and not four (a
+    grace counted in 1s steps) -- and the shortened grace is announced."""
+    r, elapsed = _timed_ignore_drain(_FAST_POLL, orphan=orphan, grace=4)
     assert ("Force killing orphaned workers" if orphan else
-            f"still running after {_TIMEOUT_GRACE}s") in r.stdout, r.stdout + r.stderr
-    assert float(_FAST_POLL) <= elapsed < 1.5, elapsed
+            "still running after 4s") in r.stdout, r.stdout + r.stderr
+    assert 2 * float(_FAST_POLL) <= elapsed < 1.9, elapsed
+    assert f"NOTE: CAE_DRAIN_POLL_SLEEP={_FAST_POLL}:" in r.stderr, r.stderr
 
 
-def test_a_malformed_poll_is_refused_loudly_for_the_default() -> None:
-    """`sleep abc` would abort stop() under set -e; the guard refuses it on
-    stderr and keeps production's 2s poll, and the teardown completes."""
+def test_a_refused_poll_keeps_the_two_second_drain() -> None:
+    """End to end through the real loop: a refused value polls every 2s and
+    the teardown completes (`sleep 0.5s` would have aborted stop())."""
     r, elapsed = _timed_ignore_drain("0.5s")
     assert "ignoring CAE_DRAIN_POLL_SLEEP='0.5s'" in r.stderr, r.stderr
-    assert elapsed >= 2.0, elapsed
+    assert 2.0 <= elapsed < 3.5, elapsed
     assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
     assert r.returncode == 0, r.stderr
+
+
+# What the guard makes of each value: (dpoll it runs with, stderr kind). Zero,
+# tiny and >2s values would silently collapse or stretch a 90s grace (graces
+# are counted in polls), so only 0.5..2 is accepted; 0.5 is what these tests
+# use. Values equal to 2 run as exactly 2; other accepted values print a NOTE.
+_GUARD_CASES = {
+    None: ("2", None), "": ("2", None), "2": ("2", None), "2.0": ("2", None),
+    "02": ("2", None), "0.5": ("0.5", "NOTE"), ".5": (".5", "NOTE"),
+    "1.999": ("1.999", "NOTE"), "0.5s": ("2", "WARNING"), "1.2.3": ("2", "WARNING"),
+    ".": ("2", "WARNING"), "abc": ("2", "WARNING"), "0": ("2", "WARNING"),
+    "00": ("2", "WARNING"), "0.0": ("2", "WARNING"), ".0": ("2", "WARNING"),
+    "0.": ("2", "WARNING"), "0.001": ("2", "WARNING"), "0.499": ("2", "WARNING"),
+    "2.5": ("2", "WARNING"), "2.001": ("2", "WARNING"), "999999": ("2", "WARNING"),
+    "1.0000": ("2", "WARNING"),
+}
+
+
+@pytest.mark.parametrize("value", list(_GUARD_CASES), ids=repr)
+def test_the_poll_guard_accepts_only_half_to_two_seconds(value: str | None) -> None:
+    """The real definition, run under `set -e` in a function as in stop()."""
+    want, kind = _GUARD_CASES[value]
+    r = _run(f"""
+set -e
+{_poll_env(value)}
+probe() {{
+{_poll_definition()}
+echo "DPOLL=$dpoll"
+}}
+probe
+""")
+    assert r.returncode == 0, r.stderr
+    assert f"DPOLL={want}\n" in r.stdout, r.stdout + r.stderr
+    if kind is None:
+        assert r.stderr == "", r.stderr
+    else:
+        assert r.stderr.startswith(f"{kind}: "), r.stderr
+        assert r.stderr.count("\n") == 1, r.stderr
 
 
 # ---------------------------------------------------------------------------
