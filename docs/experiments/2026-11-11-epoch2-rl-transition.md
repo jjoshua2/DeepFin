@@ -52,9 +52,10 @@ qualification. Raw receipts are under
 
 ## First pilot: deciding questions and resource rule
 
-The first experiment asks whether search-improved targets from newly generated
-positions can improve the donor while retaining SF value support. This is
-Stockfish-assisted RL. It is not outcome-only AlphaZero. Settings, sample/update
+The first scientific experiment will ask whether search-improved targets from
+newly generated positions can improve the donor. The proposed SF value component
+is a new intervention for this donor, not preservation of its supervised recipe;
+see the lineage correction below. This is not outcome-only AlphaZero. Settings, sample/update
 budget and exact launch commands will be appended **before** its launch, after
 measuring the qualified generator's throughput. No production template is adopted
 wholesale: it still names an older donor and enables policy-head reset.
@@ -177,3 +178,68 @@ game horizon supports no playing-strength claim.
   Do not resume it as an exact RL recovery. After success, qualify the real CUDA
   handoff when the GPU is available, then preregister the scientific pilot and its
   fixed paired evaluation budgets before observing playing results.
+
+## CPU wiring verdict
+
+**Pass for wiring only.** The supervised stage returned zero and closed all exact
+owned PID/birth identities in 455.27 seconds. Independent review verified four
+completed games and 128 stored positions: two completed games per cycle, one
+selfplay and one curriculum. All four were SF-adjudicated at 48 plies; four
+additional in-flight games were abandoned with resume disabled.
+
+The actual learner reached steps 1 and 2, with finite losses 5.117904 and 5.009705.
+All 494 final model tensors remain finite with donor shapes/dtypes; 486 changed on
+each update. Both local producer-stop barriers ran. The initial cached worker
+weights match all donor tensors. The step-1 publication
+`865a8a4dc47ca19e4dde90c0552791c87d560104f4af369f0f50bee4ab552739`
+matches the step-1 checkpoint exactly and supported the next collection. **Final
+step 2 was checkpointed, not published or served.** Its checkpoint SHA-256 is
+`dc01bf952de9aa8d9c2e152c2228cb8cdc7e41ced5e6b5180c38ec29afd809c4`.
+A readonly diagnostic candidate copy is retained under
+`rl-transition-preflight-20261111-local-v1/wiring-candidate/`, outside Ray storage.
+
+CPU-only execution is supported by the explicit child CUDA mask, CPU worker and
+learner settings, and zero Ray GPU allocation; this is not independent GPU
+allocator telemetry. The source's local tests, synthetic CUDA checks, and real
+CPU wiring establish different gates. No strength comparison has run, and the
+loss decrease is not evidence of Elo improvement.
+
+## Donor lineage correction before scientific training
+
+The preliminary `first-pilot.yaml` proposal imports several old online defaults
+and **is not qualified for strength training**. The retained supervised training
+YAML is
+`/mnt/c/Users/jjosh/Documents/Codex/2026-10-13/task-5/all-accumulated-raw-training-launch-v1/ALL-ACCUMULATED-THREE-EPOCH-CONFIG-v1.yaml`,
+SHA-256 `d5b00c177e0d454f82053eac6f22d0aba6f6a2e9b146fe43fc59634135c231d8`.
+Its WDL recipe is SF fraction 0/search fraction 1, consuming stored neural-teacher
+values, rather than the proposed live SF/search/outcome blend 0.5/0.2/0.3. The
+historical online SF-blend result is conditional on its older donor and data; it
+does not establish the best blend for epoch two.
+
+| Setting | Retained supervised recipe | Preliminary proposal |
+| --- | ---: | ---: |
+| Soft policy weight | 1.0 | 0.5 |
+| Future policy weight | 0.01 | 0.15 |
+| Opponent policy weight | 0.05 | 0.15 |
+| P0 policy floor weight | 0.8 | 0 |
+| SF-value auxiliary weight | 0 | 0.15 |
+| Categorical weight | 1.0 | 0.1 |
+| Volatility weight | 0.1 | 0.05 |
+| Hard clipping cap | 6.5 | 1.0 |
+
+The donor also used Aurora `polar_express`, eight polar steps, three PP iterations,
+PP beta 0.25 and FP16 polar arithmetic. These differ from the preliminary
+proposal's inherited optimizer defaults. Preserve unaffected settings where
+possible. The policy floor needs actual P0 labels; retaining its numeric weight
+without compatible labels would silently remove its effect. Any necessary target,
+loss or teacher-source change must be explicit in the scientific preregistration.
+
+Next, audit the exact stored wiring inputs and target-information fields, including
+legal policy mass, entropy, SF/search-value availability and disagreement, and
+adjudication/provenance limits. Use the frozen observations when correcting a
+readout. A same-root 64/256-search mechanism screen can justify a larger search
+budget only if its quality improvement and cost warrant it; target KL alone is
+insufficient. The old proposal's maximum 8,192 sample views would also weakly test
+the RL idea after 348,107,734 delivered supervised rows. A bounded dose increase
+needs its own precommitted limit and realized-step check. Freeze disjoint paired
+screening and confirmation opening panels before inspecting candidate play.
