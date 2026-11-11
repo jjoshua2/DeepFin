@@ -14,6 +14,38 @@ from scripts import bt4_direct_screen as owned
 from scripts import bt4_recipe_readout as reader
 from tests.test_bt4_recipe_readout import make as make, panel as panel, put
 
+#: Owned stages poll their child every STAGE_POLL_SECONDS (production 1 s), so
+#: every stage here cost at least a second of sleep. The fixture child stages
+#: finish in milliseconds; STOP and guard checks still run on every poll.
+_FAST_STAGE_POLL = 0.05
+
+
+@pytest.fixture(autouse=True)
+def _fast_stage_poll(monkeypatch):
+    monkeypatch.setattr(owned, "STAGE_POLL_SECONDS", _FAST_STAGE_POLL)
+
+
+def _stage_seconds(tmp_path, monkeypatch) -> float:
+    monkeypatch.setattr(owned, "disk_guard", lambda out: None)
+    receipt = owned.run_owned_stage(
+        [sys.executable, "-c", "pass"], tmp_path / "poll", 35, None, "probe", {},
+        manifest={}, cwd=tmp_path, env=dict(os.environ),
+    )
+    assert receipt["process_complete"] is True
+    return receipt["stage_seconds"]
+
+
+def test_owned_stage_polls_every_second_by_default(tmp_path, monkeypatch):
+    monkeypatch.undo()  # drop the autouse fast poll: this pins the shipped value
+    # Read off the consumer's own receipt: an instant child still waits one poll.
+    assert owned.STAGE_POLL_SECONDS == 1
+    assert _stage_seconds(tmp_path, monkeypatch) >= 1.0
+
+
+def test_owned_stage_reads_the_poll_seam(tmp_path, monkeypatch):
+    assert owned.STAGE_POLL_SECONDS == _FAST_STAGE_POLL
+    assert _stage_seconds(tmp_path, monkeypatch) < 0.9
+
 
 @pytest.mark.parametrize("explicit", [False, True])
 def test_owned_stage_forwards_runtime_and_environment(tmp_path, monkeypatch, explicit):
