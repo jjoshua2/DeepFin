@@ -272,10 +272,10 @@ def _guard_fresh_retention_one(*, tune_dir: Path, keep_last: int | str) -> None:
     Include orphan state, trial and policy artifacts, not just readable states.
     This is a preflight check, not a backup or protection against concurrent
     writers. The way out is a larger retention count or a separate work
-    directory -- not --resume: a resumed trial restores its Ray checkpoint and
-    `_restore_checkpoint_or_salvage` reads `salvage_seed_pool_dir` only when
-    there is no checkpoint, so a salvage restart under --resume silently drops
-    the salvage pool.
+    directory -- not --resume: `_restore_checkpoint_or_salvage` reads
+    `salvage_seed_pool_dir` only when the resumed trial has no Ray checkpoint
+    (`if ckpt is not None ... elif salvage ...`), so a salvage restart under
+    --resume of a checkpointed trial silently drops the salvage pool.
     """
     try:
         count = int(keep_last)
@@ -295,11 +295,12 @@ def _guard_fresh_retention_one(*, tune_dir: Path, keep_last: int | str) -> None:
                 "Fresh Tune startup with tune_keep_last_experiments=1 "
                 f"would delete the existing experiment in {tune_dir} before the "
                 "new one exists. Set tune_keep_last_experiments >= 2 to keep "
-                "the previous experiment, or pass a new --work-dir. --resume "
-                "continues the existing trial from its Ray checkpoint and "
-                "ignores --salvage-seed-pool-dir, so it is not a way to start a "
-                "salvage restart. No artifacts have been pruned and no sidecars "
-                "have been launched."
+                "the previous experiment, or use a new work directory "
+                "(--work-dir; TRAIN_WORK_DIR for scripts/train.sh). --resume is "
+                "not a way to start a salvage restart: when the resumed trial "
+                "has a Ray checkpoint it restores that checkpoint and ignores "
+                "--salvage-seed-pool-dir. No artifacts have been pruned and no "
+                "sidecars have been launched."
             )
 
 
@@ -330,26 +331,36 @@ def _cleanup_old_tune_experiments(
     includes the new experiment the caller is about to create, so one retains
     no old experiments rather than disabling cleanup.
 
-    Retention unit: one `experiment_state-*.json` file (a resume writes a new
-    one, so a resumed experiment is several). Walking newest first, each state
-    file is retained; it uses up a retention slot only if a trial dir it
-    references holds a checkpoint (`_trial_dir_holds_checkpoint`). The walk
-    stops once the slots are used, so the newest `keep_last` checkpoint-bearing
+    Retention unit: one `experiment_state-*.json` file, NOT one experiment.
+    Every launch and every resume writes its own state file, so an experiment
+    resumed twice is three state files and can fill three slots. Walking
+    newest first, each state file is retained; it uses up a retention slot
+    only if a trial dir it references holds a checkpoint
+    (`_trial_dir_holds_checkpoint`). A state file that references no trial
+    dir at all -- `trial_data: []`, or `relative_logdir: null` as Ray leaves
+    it for a trial that was never scheduled -- uses no slot. The walk stops
+    once the slots are used, so the newest `keep_last` checkpoint-bearing
     state files are kept together with every checkpoint-less one newer than
     them. Older state files are deleted, then every trial dir that no retained
     state file references, then policy logs whose trial dir is gone.
 
-    Why checkpoint-less ones do not count: a fresh launch that fails after
-    `Tuner.fit` wrote its experiment_state leaves a newer state file pointing
-    at an errored trial with no checkpoint. Counting it let it displace the
-    real experiment -- two failed salvage-restart attempts in a row under
-    `keep_last=2` deleted every checkpoint of the run. Why they are kept
-    rather than deleted: an experiment without a checkpoint can still be the
-    one the operator means to inspect (error.txt, logs), and anything older
-    than a retained checkpoint-bearing experiment is pruned in due course. A
-    state file that cannot be read counts as checkpoint-less and, if retained,
+    What this guarantees: launches that die before writing their first
+    checkpoint never displace an older checkpoint-bearing state file. What it
+    does not: a launch that lives long enough to write one checkpoint (about
+    one iteration) does use a slot. Around salvage restarts use
+    `keep_last >= 3`; the salvaged weights are also in the salvage pool.
+
+    Why checkpoint-less state files do not count: a fresh launch that fails
+    after `Tuner.fit` wrote its experiment_state leaves a newer state file
+    pointing at an errored trial with no checkpoint. Counting it let it
+    displace the real run -- two failed salvage-restart attempts in a row
+    under `keep_last=2` deleted every checkpoint of the run. Why they are kept
+    rather than deleted: a failed launch's state file and trial dir are what
+    the operator inspects (error.txt, logs), and anything older than a
+    retained checkpoint-bearing state file is pruned in due course. A state
+    file that cannot be read counts as checkpoint-less and, if retained,
     stops all trial-dir deletion for the pass (see below). With healthy
-    experiments only, this is exactly "keep the newest `keep_last` files".
+    state files only, this is exactly "keep the newest `keep_last` files".
 
     The reference has to be read out of the state files. It CANNOT be derived
     from the filenames, which is what this used to do: a trial directory is

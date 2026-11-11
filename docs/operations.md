@@ -53,16 +53,21 @@ random-init one. To abandon the current trial's state, pass `--fresh` or use
 
 **Fresh-start pruning (`tune_keep_last_experiments`).** A fresh start (`--fresh`,
 `salvage-restart`; never `--resume`) prunes `$WORK_DIR/tune` before Ray starts. The
-count includes the experiment about to be created, so `2` keeps one prior experiment.
-Only experiments whose trial dir holds a Ray checkpoint (`checkpoint_NNNNNN/trainer.pt`)
-use a slot: a launch that failed before its first checkpoint never displaces the run
-it was meant to replace, however many such launches there were. Those checkpoint-less
-experiments are kept while they are newer than the oldest retained checkpointed one
-and pruned once they are older. `0` or less disables pruning; `1` refuses a fresh start
-over any existing artifacts — raise it or use a new work dir. `--resume` is not a way
-out for a salvage restart: a resumed trial restores its Ray checkpoint and ignores
-`--salvage-seed-pool-dir`. Pruning is by experiment-state file (each resume writes one)
-and also removes trial dirs that no retained state file references.
+retention unit is an `experiment_state-*.json` file, not an experiment: every launch
+and every resume writes one, so with `3` two resume state files of one experiment can
+fill two slots. The count includes the state file the new launch is about to write, so
+`2` keeps one prior state file. Only a state file that references a trial dir holding a
+Ray checkpoint (`checkpoint_NNNNNN/trainer.pt`) uses a slot. State files from launches
+that died before their first checkpoint (errored trial, empty `trial_data`, or a trial
+never scheduled) use none, however many there are, and are kept while newer than the
+oldest retained checkpointed one. What this does not cover: a launch that survives long
+enough to write one checkpoint (about one iteration) does use a slot, so around salvage
+restarts use `3` or more (the salvaged weights are also in the salvage pool). `0` or less
+disables pruning; `1` refuses a fresh start over any existing artifacts — raise it or
+use a new work dir (`--work-dir`, or `TRAIN_WORK_DIR` for `train.sh`). `--resume` is not
+a way out for a salvage restart: when the resumed trial has a Ray checkpoint it
+restores that and ignores `--salvage-seed-pool-dir`. Pruning also removes trial dirs
+that no retained state file references.
 
 **`$CHESS_ANTI_ENGINE_LIVE_CONFIG` — which yaml the offline instruments treat as
 production.** `train.sh` exports it (absolute path to `$TRAIN_CONFIG`, default

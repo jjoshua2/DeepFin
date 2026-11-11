@@ -257,7 +257,11 @@ def test_fresh_retention_one_rejects_existing_artifacts_before_sidecars(
         )
     message = str(caught.value)
     assert "--work-dir" in message
-    assert "ignores --salvage-seed-pool-dir" in message
+    assert "TRAIN_WORK_DIR" in message
+    assert (
+        "when the resumed trial has a Ray checkpoint it restores that checkpoint "
+        "and ignores --salvage-seed-pool-dir"
+    ) in message
     assert calls == ["sync_patch"]
     assert existing.read_text() == "preserve even malformed or orphan artifacts"
 

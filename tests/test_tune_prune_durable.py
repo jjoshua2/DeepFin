@@ -17,7 +17,11 @@ dir, `error.txt`/`error.pkl` in an errored trial, one
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import os
+import random
 import re
 import shutil
 from collections.abc import Callable
@@ -386,3 +390,171 @@ def test_checkpoint_definition_matches_salvage(tmp_path: Path) -> None:
     assert harness._trial_dir_holds_checkpoint(healthy)
     assert not harness._trial_dir_holds_checkpoint(partial)
 
+
+
+def _write_raw_state(tune_dir: Path, ts: str, trial_data: list) -> None:
+    (tune_dir / f"experiment_state-{ts}.json").write_text(json.dumps({
+        "trial_data": trial_data, "runner_data": {}, "stats": {},
+    }))
+    (tune_dir / f"basic-variant-state-{ts}.json").write_text("{}")
+
+
+@pytest.mark.parametrize("trial_data", [
+    # Ray leaves relative_logdir null until the trial is scheduled, so a launch
+    # that dies before scheduling writes exactly this.
+    [[json.dumps({"trainable_name": "train_trial", "relative_logdir": None}), "{}"]],
+    [],
+], ids=["relative_logdir_null", "empty_trial_data"])
+def test_a_state_file_referencing_no_trial_dir_uses_no_slot(
+    tmp_path: Path, trial_data: list,
+) -> None:
+    tune_dir = tmp_path / "tune"
+    tune_dir.mkdir()
+    _reviewer_layout(tune_dir, failed=0)
+    _write_raw_state(tune_dir, "2026-11-11_09-00-00", trial_data)
+
+    _cleanup_old_tune_experiments(tune_dir=tune_dir, keep_last=2, reserve_new=True)
+
+    a_trial = tune_dir / _trial_name("dea5e", A_TS)
+    assert (a_trial / "checkpoint_000250" / "trainer.pt").is_file()
+    assert (tune_dir / "experiment_state-2026-08-20_16-13-10.json").is_file()
+    assert (tune_dir / "pbt_policy_dea5e_00000.txt").is_file()
+    assert (tune_dir / "experiment_state-2026-11-11_09-00-00.json").is_file()
+
+
+def test_a_population_with_one_checkpointed_trial_uses_a_slot(tmp_path: Path) -> None:
+    """PBT: one trial errored, its sibling holds a checkpoint -> the state file
+    is checkpoint-bearing, so it fills the slot and the older run goes."""
+    tune_dir = tmp_path / "tune"
+    tune_dir.mkdir()
+    _experiment(tune_dir, "c0001", "2026-07-01_00-00-00", healthy=True)
+    ts = "2026-07-05_00-00-00"
+    errored = _failed_trial(tune_dir, _trial_name("p0001", ts))
+    healthy = _healthy_trial(tune_dir, _trial_name("p0002", ts))
+    _write_state(tune_dir, ts, trials=[errored.name, healthy.name], status="RUNNING")
+
+    _cleanup_old_tune_experiments(tune_dir=tune_dir, keep_last=2, reserve_new=True)
+
+    assert errored.is_dir()
+    assert (healthy / "checkpoint_000250" / "trainer.pt").is_file()
+    _assert_experiment_gone(tune_dir, "c0001", "2026-07-01_00-00-00")
+
+
+# -- property test: random experiment sequences, new rule vs main's ---------
+
+_KINDS = ("healthy", "healthy", "failed", "staging_only", "no_trainer",
+          "corrupt", "nullref", "population")
+
+
+def _random_layout(root: Path, outside: Path, rng: random.Random) -> dict:
+    """Random launches/resumes in the production layout. Returns, per state
+    file name, the trial dirs it references (None if unreadable)."""
+    refs_by_state: dict[str, list[str] | None] = {}
+    t = counter = 0
+    prev: list[str] = []
+    kinds: list[str] = []
+    for _ in range(rng.randint(1, 6)):
+        kind = rng.choice(_KINDS)
+        kinds.append(kind)
+        pop = rng.randint(2, 3) if kind == "population" or rng.random() < 0.2 else 1
+        trials = []
+        for _ in range(pop):
+            counter += 1
+            name = _trial_name(f"{counter:05x}", f"T{t:04d}")
+            trials.append(name)
+            target = root / name
+            if rng.random() < 0.1:
+                (outside / name).mkdir(parents=True)
+                target.symlink_to(outside / name, target_is_directory=True)
+                target = outside / name
+            else:
+                target.mkdir()
+            sub = "failed" if kind == "population" and rng.random() < 0.3 else kind
+            if sub in ("healthy", "population", "corrupt", "nullref"):
+                (target / "checkpoint_000003").mkdir()
+                (target / "checkpoint_000003" / "trainer.pt").write_bytes(b"w")
+            elif sub == "failed":
+                (target / "error.txt").write_text("boom")
+            elif sub == "staging_only":
+                (target / "ckpt").mkdir()
+                (target / "ckpt" / "trainer.pt").write_bytes(b"w")
+            elif sub == "no_trainer":
+                (target / "checkpoint_000001").mkdir()
+                (target / "checkpoint_000001" / "pid_state.json").write_text("{}")
+            (root / f"pbt_policy_{counter:05x}_00000.txt").write_text("x")
+        n_states = rng.randint(1, 3)
+        for s in range(n_states):
+            t += rng.randint(1, 3)
+            ts = f"2026-08-{10 + t // 1440:02d}_{(t // 60) % 24:02d}-{t % 60:02d}-00"
+            refs = trials + (prev if prev and rng.random() < 0.15 else [])
+            if kind == "corrupt" and s == n_states - 1:
+                (root / f"experiment_state-{ts}.json").write_text("{tru ncated")
+                (root / f"basic-variant-state-{ts}.json").write_text("{}")
+                refs_by_state[f"experiment_state-{ts}.json"] = None
+                continue
+            _write_raw_state(root, ts, [
+                [json.dumps({"relative_logdir": None if kind == "nullref" else r}), "{}"]
+                for r in refs
+            ])
+            refs_by_state[f"experiment_state-{ts}.json"] = [] if kind == "nullref" else refs
+        prev = trials
+    if rng.random() < 0.2:
+        counter += 1
+        orphan = root / f"train_trial_{counter:05x}_00000_0_orphan"
+        (orphan / "checkpoint_000009").mkdir(parents=True)
+        (orphan / "checkpoint_000009" / "trainer.pt").write_bytes(b"w")
+    return {"refs": refs_by_state, "healthy_only": set(kinds) == {"healthy"}}
+
+
+def _tree(root: Path) -> set[str]:
+    out = set()
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        for n in dirnames + filenames:
+            out.add(os.path.relpath(os.path.join(dirpath, n), root))
+    return out
+
+
+def _has_checkpoint(d: Path) -> bool:
+    return any(d.glob("checkpoint_*/trainer.pt"))
+
+
+@pytest.mark.parametrize("block", range(4))
+def test_property_random_sequences_against_main(tmp_path: Path, block: int) -> None:
+    """(a) the newest prior checkpoint-bearing state file's checkpointed trial
+    dirs always survive; (b) nothing main keeps is deleted; (c) healthy-only
+    layouts have identical survivors. 4 x 75 seeded cases."""
+    rules: dict[str, Callable[..., None]] = {
+        "main": _main_cleanup, "new": _cleanup_old_tune_experiments,
+    }
+    for seed in range(block * 75, (block + 1) * 75):
+        rng = random.Random(seed)
+        keep = rng.choice([-1, 0, 1, 2, 2, 3, 4])
+        reserve = rng.random() < 0.7
+        link_root = rng.random() < 0.15
+        trees: dict[str, set[str]] = {}
+        healthy_only = False
+        for label, rule in rules.items():
+            base = tmp_path / f"{seed}-{label}"
+            outside, root = base / "outside", base / "tune"
+            outside.mkdir(parents=True)
+            root.mkdir()
+            meta = _random_layout(root, outside, random.Random(seed * 7919 + 1))
+            healthy_only = meta["healthy_only"]
+            newest = None
+            for name in sorted(meta["refs"]):
+                refs = meta["refs"][name]
+                ck = [r for r in refs or [] if _has_checkpoint(root / r)]
+                if ck:
+                    newest = ck
+            call_root = root
+            if link_root:
+                call_root = base / "tune_link"
+                call_root.symlink_to(root, target_is_directory=True)
+            with contextlib.redirect_stdout(io.StringIO()):
+                rule(tune_dir=call_root, keep_last=keep, reserve_new=reserve)
+            trees[label] = _tree(root) | {"OUT:" + x for x in _tree(outside)}
+            if label == "new" and keep - int(reserve) >= 1 and newest is not None:
+                assert all(_has_checkpoint(root / r) for r in newest), (seed, newest)
+        assert trees["main"] <= trees["new"], (seed, sorted(trees["main"] - trees["new"])[:5])
+        if healthy_only:
+            assert trees["main"] == trees["new"], seed
