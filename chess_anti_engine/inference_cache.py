@@ -185,8 +185,45 @@ class EncodedEvalCache:
     def max_entries(self) -> int:
         return self._max_entries
 
+    # Dense evaluation entry points this cache does not implement. Forwarding
+    # them through ``__getattr__`` would let a search call the inner evaluator
+    # directly and bypass the cache while stats() reported a clean 0/0: Gumbel
+    # takes its 2-group pipeline whenever ``evaluate_encoded_async`` exists, and
+    # the volatility search prefers ``evaluate_encoded_with_volatility``. Hiding
+    # them sends the search to ``evaluate_encoded``, which is cached (or, for
+    # volatility, fails loudly instead of running uncached).
+    _UNCACHED_EVAL_ATTRS: frozenset[str] = frozenset({
+        "evaluate_encoded_async",
+        "evaluate_encoded_with_volatility",
+    })
+
     def __getattr__(self, name: str) -> object:
+        if name in EncodedEvalCache._UNCACHED_EVAL_ATTRS:
+            raise AttributeError(
+                f"{type(self).__name__} does not forward {name!r}: it would bypass "
+                "the cache; use evaluate_encoded"
+            )
         return getattr(self._inner, name)
+
+    @property
+    def supports_inplace_api(self) -> bool:
+        """Never: the dense pinned-slot path would bypass this cache.
+
+        ``supports_inplace_api()`` reads this explicit flag before any hasattr
+        probe, and Gumbel picks the pinned ``get_input_buffer`` /
+        ``evaluate_inplace_async`` path on it. Through ``__getattr__`` the flag
+        used to be the inner dispatcher's ``True``, so single-walker,
+        non-coalesced UCI wrote every root and leaf straight into the inner
+        evaluator's slots and this cache saw zero requests. Declaring False
+        sends Gumbel through ``evaluate_encoded`` (cached) at the cost of one
+        staging copy per batch, paid only when the cache is enabled.
+
+        The slot methods themselves stay forwarded: the PUCV searchers
+        (``puct_vl`` / the PUCV pools) are handed this wrapper, require
+        ``evaluate_inplace_async`` and cache through their own
+        ``PucvEvalCache`` keyed by C-emitted leaf keys.
+        """
+        return False
 
     @property
     def async_backend(self) -> BatchEvaluator:
