@@ -177,7 +177,7 @@ def test_real_numeric_configuration_error_releases_handles(
     assert calls[-2:] == ["cleanup:broker", "cleanup:server"]
 
 
-@pytest.mark.parametrize("keep_last", [0, 1, 2])
+@pytest.mark.parametrize("keep_last", [-1, 0, 2, 3])
 @pytest.mark.parametrize(("stage", "resume"), [
     ("scheduler", False), ("retention", False), ("tuner", False),
     ("fit", False), ("restore", True), ("fit", True),
@@ -225,9 +225,73 @@ def test_retention_and_sidecar_cleanup_keep_their_failure_boundaries(
     assert caught.value is failure
     assert calls[-2:] == ["cleanup:broker", "cleanup:server"]
     pruned = not resume and stage != "scheduler" and keep_last > 0
-    expected = [False, keep_last > 1] if pruned else [True, True]
+    expected = [keep_last > 2, True] if pruned else [True, True]
     assert [state.exists() for state in states] == expected
     assert [trial.exists() for trial in trials] == expected
     assert ("retention" in calls) == (not resume and stage != "scheduler")
     assert (unrelated / "marker").read_text() == "unrelated"
     assert (outside / "marker").read_text() == "outside"
+
+
+@pytest.mark.parametrize("artifact", [
+    "experiment_state-old.json", "basic-variant-state-old.json",
+    "train_trial_old", "pbt_policy_old.txt",
+])
+@pytest.mark.parametrize("keep_last", [1, "1"])
+def test_fresh_retention_one_rejects_existing_artifacts_before_sidecars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, artifact: str, keep_last: int | str,
+) -> None:
+    calls, _ = _driver_stubs(monkeypatch)
+    tune_dir = tmp_path / "tune"
+    tune_dir.mkdir()
+    existing = tune_dir / artifact
+    if artifact.startswith("train_trial_"):
+        existing.mkdir()
+        existing = existing / "checkpoint-marker"
+    existing.write_text("preserve even malformed or orphan artifacts")
+    with pytest.raises(ValueError, match="Use a new work directory"):
+        harness.run_tune(
+            base_config={"tune_keep_last_experiments": keep_last},
+            work_dir=tmp_path, num_samples=1,
+        )
+    assert calls == ["sync_patch"]
+    assert existing.read_text() == "preserve even malformed or orphan artifacts"
+
+
+@pytest.mark.parametrize("layout", ["absent", "empty", "unrelated"])
+def test_fresh_retention_one_without_existing_artifacts_can_fit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layout: str,
+) -> None:
+    calls, answer = _driver_stubs(monkeypatch)
+    tune_dir = tmp_path / "tune"
+    if layout != "absent":
+        tune_dir.mkdir()
+    if layout == "unrelated":
+        (tune_dir / "notes.txt").write_text("keep")
+        (tune_dir / "unrelated").mkdir()
+    assert harness.run_tune(
+        base_config={"tune_keep_last_experiments": 1},
+        work_dir=tmp_path, num_samples=1,
+    ) is answer
+    assert "retention" in calls
+    assert calls[-2:] == ["cleanup:broker", "cleanup:server"]
+    if layout == "unrelated":
+        assert (tune_dir / "notes.txt").read_text() == "keep"
+        assert (tune_dir / "unrelated").is_dir()
+
+
+def test_resume_retention_one_keeps_existing_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, answer = _driver_stubs(monkeypatch)
+    tune_dir = tmp_path / "tune"
+    tune_dir.mkdir()
+    state = tune_dir / "experiment_state-old.json"
+    state.write_text("preserve")
+    assert harness.run_tune(
+        base_config={"tune_keep_last_experiments": 1},
+        work_dir=tmp_path, num_samples=1, resume=True,
+    ) is answer
+    assert "restore" in calls
+    assert "retention" not in calls
+    assert state.read_text() == "preserve"
