@@ -266,6 +266,43 @@ def _prune_orphan_pb2_policy_logs(*, tune_dir: Path) -> None:
             p.unlink()
 
 
+def _guard_fresh_retention_one(*, tune_dir: Path, keep_last: int | str) -> None:
+    """Refuse to discard the only recovery artifacts before fresh startup.
+
+    Include orphan state, trial and policy artifacts, not just readable states.
+    This is a preflight check, not a backup or protection against concurrent
+    writers. The way out is a larger retention count or a separate work
+    directory -- not --resume: a resumed trial restores its Ray checkpoint and
+    `_restore_checkpoint_or_salvage` reads `salvage_seed_pool_dir` only when
+    there is no checkpoint, so a salvage restart under --resume silently drops
+    the salvage pool.
+    """
+    try:
+        count = int(keep_last)
+    except (TypeError, ValueError, OverflowError):
+        # Leave invalid configuration to the existing startup validation path.
+        return
+    if count != 1 or not tune_dir.exists():
+        return
+    for path in tune_dir.iterdir():
+        if (
+            path.match("experiment_state-*.json")
+            or path.match("basic-variant-state-*.json")
+            or path.match("pbt_policy_*.txt")
+            or (path.match("train_trial_*") and path.is_dir())
+        ):
+            raise ValueError(
+                "Fresh Tune startup with tune_keep_last_experiments=1 "
+                f"would delete the existing experiment in {tune_dir} before the "
+                "new one exists. Set tune_keep_last_experiments >= 2 to keep "
+                "the previous experiment, or pass a new --work-dir. --resume "
+                "continues the existing trial from its Ray checkpoint and "
+                "ignores --salvage-seed-pool-dir, so it is not a way to start a "
+                "salvage restart. No artifacts have been pruned and no sidecars "
+                "have been launched."
+            )
+
+
 def _cleanup_old_tune_experiments(
     *, tune_dir: Path, keep_last: int, reserve_new: bool = False,
 ) -> None:
@@ -996,6 +1033,12 @@ def run_tune(
     mode = str(mode)
     if mode not in ("min", "max"):
         raise ValueError(f"mode must be 'min' or 'max', got {mode!r}")
+
+    if not resume:
+        _guard_fresh_retention_one(
+            tune_dir=work_dir.resolve() / "tune",
+            keep_last=base_config.get("tune_keep_last_experiments", 2),
+        )
 
     # Own each returned sidecar before any later startup step can fail.
     # ExitStack also attempts both cleanups if one termination raises.

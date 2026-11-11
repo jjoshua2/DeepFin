@@ -147,7 +147,9 @@ start() {
     if [ "$fresh" = "0" ] && [ "$has_resume" = "0" ] && [ "$has_salvage" = "0" ]; then
         if ls "$WORK_DIR"/tune/experiment_state-*.json >/dev/null 2>&1; then
             echo "Detected prior tune state under $WORK_DIR/tune — auto-resuming."
-            echo "  To start fresh instead, pass --fresh or rm -rf $WORK_DIR/tune."
+            echo "  To start fresh instead, pass --fresh (needs tune_keep_last_experiments >= 2;"
+            echo "  with 1, a fresh start over existing artifacts is refused) or use a new"
+            echo "  TRAIN_WORK_DIR. --resume ignores --salvage-seed-pool-dir."
             extra_args+=("--resume")
         fi
     fi
