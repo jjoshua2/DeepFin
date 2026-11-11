@@ -632,6 +632,22 @@ def leaf_buffer_rows(n_boards: int, *, topk: int, pipelined: bool) -> int:
     return max(256, n_boards * max(2, int(topk))) * 2
 
 
+def _noninplace_leaf_rows(eval_impl: object, single_leaf_rows: int) -> int:
+    """Leaf encode-buffer rows on the copying (non-in-place) single path.
+
+    Unchanged (``single_leaf_rows``) unless the evaluator advertises
+    ``search_leaf_row_cap``: ``EncodedEvalCache`` declines the in-place path
+    so that it sees every request, and reports the ``_max_batch`` cap its inner
+    in-place evaluator would have imposed, so enabling the cache does not
+    change which leaves are evaluated vs absorbed (see ``leaf_buffer_rows``)
+    nor hand the inner a batch above its max.
+    """
+    cap = getattr(eval_impl, "search_leaf_row_cap", None)
+    if isinstance(cap, bool) or not isinstance(cap, int):
+        return single_leaf_rows
+    return min(single_leaf_rows, cap)
+
+
 def _realized_candidate_width(game_budget: int, topk: int, n_legal: int) -> int:
     """Root candidates sequential halving will actually rank for one board.
 
@@ -1741,9 +1757,16 @@ def run_gumbel_root_many_c(
         else:
             _enc_dtype = np.uint16 if _use_input_bf16 else np.float32
             _enc_buf = np.empty(
-                (_single_leaf_rows, input_plane_count(cfg.input_extra_features), 8, 8),
+                (_noninplace_leaf_rows(eval_impl, _single_leaf_rows),
+                 input_plane_count(cfg.input_extra_features), 8, 8),
                 dtype=_enc_dtype,
             )
+  # EncodedEvalCache opts in: rows past n_leaves are stale/uninitialised
+  # padding it would hash, evaluate and store. Every other evaluator keeps
+  # receiving the bucket-padded slice it always has.
+        _submit_live_rows_only = (
+            not _inplace and getattr(eval_impl, "wants_unpadded_leaf_rows", False) is True
+        )
         _root_ids_arr = np.array(root_ids, dtype=np.int32)
         _budget_arr = np.array(budget_remaining, dtype=np.int32)
         _root_qs_arr = np.array(root_qs, dtype=np.float64)
@@ -1808,10 +1831,11 @@ def run_gumbel_root_many_c(
                 pol_all = pol_t[:n_leaves].numpy()
                 wdl_all = wdl_t[:n_leaves].numpy()
             else:
+                _rows = n_leaves if _submit_live_rows_only else padded
                 pol_all, wdl_all = (
-                    eval_impl.evaluate_encoded(_enc_buf[:padded], relations=_rel_buf[:padded])
+                    eval_impl.evaluate_encoded(_enc_buf[:_rows], relations=_rel_buf[:_rows])
                     if _rel_buf is not None
-                    else eval_impl.evaluate_encoded(_enc_buf[:padded])
+                    else eval_impl.evaluate_encoded(_enc_buf[:_rows])
                 )
                 pol_all = pol_all[:n_leaves]
                 wdl_all = wdl_all[:n_leaves]
