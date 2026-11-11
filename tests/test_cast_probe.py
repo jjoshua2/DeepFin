@@ -677,3 +677,22 @@ def test_report_runs_the_real_tail_pricing_with_survival_fields(
         assert r["n_bootstrap_attempted"] == cast_probe.N_BOOT
         assert r["bootstrap_survival_frac"] == pytest.approx(r["n_bootstrap"] / cast_probe.N_BOOT)
         assert f"boot {r['n_bootstrap']}/{cast_probe.N_BOOT}" in text
+
+
+@pytest.mark.parametrize(("n_kept", "reliable"), [
+    (20, True),
+    (19, True),    # exactly BOOT_RELIABLE_MIN_SURVIVAL (0.95): reliable
+    (18, False),   # 0.90, just below
+])
+def test_tail_bootstrap_reliability_boundary_is_inclusive_at_095(
+    monkeypatch: pytest.MonkeyPatch, n_kept: int, reliable: bool,
+) -> None:
+    assert cast_probe.BOOT_RELIABLE_MIN_SURVIVAL == 0.95
+    monkeypatch.setattr(cast_probe, "MIN_BUCKET", 2)
+    monkeypatch.setattr(cast_probe, "N_BOOT", 20)
+    arr, sel = _fixed_draw_tail_fixture()
+    picks = [_SURVIVES] * n_kept + [_DROPPED] * (20 - n_kept)
+    res = cast_probe.price_the_tail(arr, sel, "selected", _ScriptedDraws(picks))
+    assert res["n_bootstrap"] == n_kept
+    assert res["bootstrap_survival_frac"] == pytest.approx(n_kept / 20)
+    assert res["ci_reliable"] is reliable
