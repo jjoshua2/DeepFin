@@ -311,6 +311,14 @@ class _CappedInner:
         )
 
 
+def test_no_leaf_cap_is_advertised_for_an_inner_without_the_inplace_path() -> None:
+    # ``_CappedInner`` has ``_max_batch`` but no slot API: without this cache
+    # Gumbel would have taken the copying branch, which is uncapped, so the
+    # cache must not introduce a cap of its own.
+    cache = EncodedEvalCache(cast(Any, _CappedInner()), max_entries=8, encoding_source=_Encoding())
+    assert cache.search_leaf_row_cap is None
+
+
 def test_cache_splits_miss_batches_at_the_inner_max() -> None:
     inner = _CappedInner()
     cache = EncodedEvalCache(cast(Any, inner), max_entries=64, encoding_source=_Encoding())

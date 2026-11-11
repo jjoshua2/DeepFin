@@ -228,6 +228,11 @@ class EncodedEvalCache:
         may not, so enable the cache only where repeat positions are common
         and measure.
 
+        SCOPE: this cache is built only for single-root UCI search. A batch
+        caller with >= 64 boards would get a different search shape with the
+        cache on, because Gumbel's two-group leaf pipeline needs the in-place
+        path this wrapper declines.
+
         The slot methods themselves stay forwarded: the PUCV searchers
         (``puct_vl`` / the PUCV pools) are handed this wrapper, require
         ``evaluate_inplace_async`` and cache through their own

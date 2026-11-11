@@ -1802,7 +1802,10 @@ def run_gumbel_root_many_c(
             # `_enc_buf` rows, and the zero-copy (`_inplace`) arm is the one
             # production actually takes -- wiring this only into the copying
             # arms would have made the instrument read nothing live.
-            _record_batch_dup(_enc_buf, n_leaves, n_leaves if _use_legal_bf16 else padded)
+            _record_batch_dup(
+                _enc_buf, n_leaves,
+                n_leaves if (_use_legal_bf16 or _submit_live_rows_only) else padded,
+            )
             _tg0 = _time.perf_counter()
             if _use_legal_bf16:
                 legal_flat, legal_counts = tree.get_pending_legal_indices()
