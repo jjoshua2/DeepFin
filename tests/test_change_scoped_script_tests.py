@@ -142,7 +142,8 @@ def _items(*rels: str) -> list[pytest.Item]:
     return cast("list[pytest.Item]", [SimpleNamespace(path=validate.ROOT / rel) for rel in rels])
 
 
-SCRIPT_ONLY_PROBE = "tests/test_blindspot_retire.py"
+SCRIPT_ONLY_PROBE = "tests/test_blindspot_retire_step.py"
+assert (validate.ROOT / SCRIPT_ONLY_PROBE).is_file(), f"{SCRIPT_ONLY_PROBE} is gone; pick another script-only test file"
 
 
 def test_conftest_deselects_only_a_readable_listed_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

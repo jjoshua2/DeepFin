@@ -198,6 +198,12 @@ class RowSet:
     # no such flag: it is required at every entry point, because it is
     # load-bearing for EVERY CI rather than for one optional flag.
     population_known: bool = True
+    # Whether ``ply`` was MEASURED on every row. The replay writer stores a
+    # placeholder 0 beside ``has_ply_index == 0``; reading the raw column would
+    # report "ply 0" for a row whose ply was never recorded. Like
+    # ``population_known``, the dump carries ``ply`` only when this is True, so
+    # the absence survives a round trip instead of becoming a measured zero.
+    ply_known: bool = True
 
     def __len__(self) -> int:
         return int(self.p_sf.shape[0])
@@ -207,7 +213,7 @@ class RowSet:
             x=self.x[idx], p_sf=self.p_sf[idx], outcome=self.outcome[idx],
             game_id=self.game_id[idx], ply=self.ply[idx],
             is_selfplay=self.is_selfplay[idx], source=self.source,
-            population_known=self.population_known,
+            population_known=self.population_known, ply_known=self.ply_known,
         )
 
 
@@ -258,7 +264,7 @@ def load_rows_from_shards(
         # rows. Its presence mask, when supplied, is authoritative for the
         # selected sample. Older unmasked arrays keep their existing contract.
         present: dict[str, bool] = {}
-        for key in ("game_id", "is_selfplay"):
+        for key in ("game_id", "is_selfplay", "ply_index"):
             flag = f"has_{key}"
             if flag in keys:
                 mask = np.asarray(g[flag][:], dtype=bool)
@@ -272,6 +278,8 @@ def load_rows_from_shards(
             )
         if not present.get("is_selfplay", True):
             absent.add("is_selfplay")
+        if not present.get("ply_index", True):
+            absent.add("ply_index")
         cols["x"].append(np.asarray(g["x"].oindex[idx, :, :, :], dtype=np.float32))
         cols["p_sf"].append(_norm3(np.asarray(g["sf_wdl"].oindex[idx, :])))
         cols["game_id"].append(np.asarray(g["game_id"][:])[idx].astype(np.int64))
@@ -303,6 +311,7 @@ def load_rows_from_shards(
         is_selfplay=np.concatenate(cols["is_selfplay"]),
         source=f"shards:{shard_dir}",
         population_known="is_selfplay" not in absent,
+        ply_known="ply_index" not in absent,
     )
 
 
@@ -334,7 +343,9 @@ def load_rows_from_npz(path: str) -> RowSet:
     degrade VISIBLY: a missing ``outcome`` shows as ``n_used == 0`` and NaN on
     the outcome columns, and a missing ``is_selfplay`` makes
     ``--split-selfplay`` refuse (see ``population_known``) instead of reporting
-    everything as curriculum.
+    everything as curriculum. A missing ``ply`` reads as zeros with
+    ``ply_known`` False, so re-dumping the rows does not write those zeros back
+    as measured plies.
     """
     with np.load(path) as z:
         keys = set(z.files)
@@ -385,6 +396,7 @@ def load_rows_from_npz(path: str) -> RowSet:
             ),
             source=f"npz:{path}",
             population_known="is_selfplay" in keys,
+            ply_known="ply" in keys,
         )
 
 
@@ -557,6 +569,12 @@ class Contrast:
     column: str
     delta: float
     ci: tuple[float, float]
+    # Exact probability that one game-bootstrap draw lacks a stratum, from the
+    # per-stratum game counts alone (no resampling). NaN when not computed.
+    p_undefined: float = float("nan")
+    # Realized fraction of the n_boot draws that lacked a stratum. NaN when no
+    # resampling ran (CI withheld before drawing, or no data).
+    undefined_frac: float = float("nan")
 
     @property
     def excludes_zero(self) -> bool:
@@ -581,6 +599,34 @@ def _per_game_sums(
     return sums, counts
 
 
+# Two-sided level of the contrast's percentile interval (95% CI).
+CONTRAST_ALPHA = 0.05
+# Largest per-draw probability of an undefined resample (a stratum with no
+# game in the draw) at which the CI is still reported. Tied to alpha: at
+# alpha/20 the conditioning in ``contrast`` can move each tail's coverage by
+# at most p = 0.0025, i.e. 10% of that tail's nominal alpha/2 = 0.025 mass.
+CONTRAST_MAX_P_UNDEFINED = CONTRAST_ALPHA / 20.0
+
+
+def undefined_draw_probability(games: np.ndarray, ga: np.ndarray, gb: np.ndarray) -> float:
+    """P(one game-bootstrap draw over ``games`` lacks stratum a or stratum b).
+
+    A draw is G games sampled with replacement from the G-game pool. A stratum
+    present in k of them is absent from a draw with probability (1 - k/G)^G.
+    Both strata absent at once is impossible (every pooled game carries rows
+    of at least one stratum), so the union is the exact sum, not just a bound.
+    A deterministic function of the data: it does not depend on seed or n_boot.
+    """
+    g = int(games.size)
+    if g == 0:
+        return 1.0
+    total = 0.0
+    for gid in (ga, gb):
+        k = int(np.unique(gid).size)
+        total += 0.0 if k >= g else float(np.exp(g * np.log1p(-k / g)))
+    return min(1.0, total)
+
+
 def contrast(
     lost: RowSet, rest: RowSet, q_lost: np.ndarray, q_rest: np.ndarray, *,
     column: str, slope: float, draw_width_cp: float, n_boot: int, seed: int,
@@ -588,7 +634,13 @@ def contrast(
     """``mean(column | lost) - mean(column | rest)``, bootstrapped over GAMES.
 
     Both strata are resampled in the same bootstrap draw, so the CI is on the
-    difference rather than on two independently-resampled means.
+    difference rather than on two independently-resampled means. The CI is
+    withheld (NaN) when fewer than two games or draws exist, or when the
+    ANALYTIC probability that a draw lacks a stratum exceeds
+    ``CONTRAST_MAX_P_UNDEFINED``. That decision is made from the per-stratum
+    game counts before any resampling, so it cannot change with the seed or
+    with n_boot (an any-draw-undefined rule withheld MORE often as n_boot
+    grew, and invited re-rolling the seed until a CI appeared).
     """
     rng = np.random.default_rng(seed)
     a, _, _ = _per_row_errors(lost, q_lost, slope=slope, draw_width_cp=draw_width_cp)
@@ -611,19 +663,41 @@ def contrast(
     # bootstrap is one matrix index. Grouping the rows per draw instead is
     # O(n_boot x games x rows) and turns a full-window read into minutes.
     games = np.unique(np.concatenate([ga, gb]))
+    nan_ci = (float("nan"), float("nan"))
+    p_undef = undefined_draw_probability(games, ga, gb)
+    if games.size < 2 or n_boot < 2 or p_undef > CONTRAST_MAX_P_UNDEFINED:
+        return Contrast(column=column, delta=delta, ci=nan_ci, p_undefined=p_undef)
     sum_a, cnt_a = _per_game_sums(va, ga, games)
     sum_b, cnt_b = _per_game_sums(vb, gb, games)
-    draws = rng.integers(0, games.size, size=(max(1, n_boot), games.size))
+    draws = rng.integers(0, games.size, size=(n_boot, games.size))
+    count_a = cnt_a[draws].sum(axis=1)
+    count_b = cnt_b[draws].sum(axis=1)
+    # Conditioning on defined draws. The undefined draws are exactly the
+    # resamples with no game from one stratum; the statistic does not exist
+    # there, so the only question is how far dropping them can bias the
+    # percentile interval. Assign those draws ANY values: the full CDF is
+    # F = (1-p) F_defined + p H, so |F - F_defined| <= p at every point and
+    # each tail's coverage shifts by at most p. The gate above holds p
+    # (analytically) at <= alpha/20, so the shift is at most ~10% of a tail's
+    # nominal alpha/2; above it the bias can be a material share of the tail
+    # and the interval is withheld instead.
+    defined = (count_a > 0) & (count_b > 0)
+    undefined_frac = float(1.0 - defined.mean())
     with np.errstate(invalid="ignore", divide="ignore"):
-        mean_a = sum_a[draws].sum(axis=1) / cnt_a[draws].sum(axis=1)
-        mean_b = sum_b[draws].sum(axis=1) / cnt_b[draws].sum(axis=1)
-    boot = mean_a - mean_b
-    boot = boot[np.isfinite(boot)]
-    if boot.size < 2:
-        return Contrast(column=column, delta=delta, ci=(float("nan"), float("nan")))
+        boot = sum_a[draws].sum(axis=1) / count_a - sum_b[draws].sum(axis=1) / count_b
+    boot = boot[defined]
+    # Defined draws are finite by construction (finite values, positive
+    # counts); fewer than two survive with probability ~p_undef**(n_boot-1).
+    if boot.size < 2 or not np.isfinite(boot).all():
+        return Contrast(
+            column=column, delta=delta, ci=nan_ci,
+            p_undefined=p_undef, undefined_frac=undefined_frac,
+        )
+    half = CONTRAST_ALPHA / 2.0
     return Contrast(
         column=column, delta=delta,
-        ci=(float(np.quantile(boot, 0.025)), float(np.quantile(boot, 0.975))),
+        ci=(float(np.quantile(boot, half)), float(np.quantile(boot, 1.0 - half))),
+        p_undefined=p_undef, undefined_frac=undefined_frac,
     )
 
 
@@ -710,8 +784,15 @@ def render(report: Report) -> str:
             flag = "CI unavailable"
         else:
             flag = "excludes 0" if c.excludes_zero else "CONTAINS 0"
+        cover = ""
+        if np.isfinite(c.p_undefined):
+            realized = (
+                f"{c.undefined_frac:.4f}" if np.isfinite(c.undefined_frac) else "n/a"
+            )
+            cover = f"  undefined draws p={c.p_undefined:.2e} realized={realized}"
         lines.append(
-            f"{c.column:>12} {c.delta:>+10.4f}  95% CI [{c.ci[0]:+.4f}, {c.ci[1]:+.4f}]  {flag}"
+            f"{c.column:>12} {c.delta:>+10.4f}  95% CI [{c.ci[0]:+.4f}, {c.ci[1]:+.4f}]"
+            f"{cover}  {flag}"
         )
     return "\n".join(lines)
 
@@ -732,7 +813,6 @@ def write_dump(
         "oracle_lost": mask.astype(bool),
         "outcome": rows.outcome.astype(np.int16),
         "game_id": rows.game_id.astype(np.int64),
-        "ply": rows.ply.astype(np.int32),
     }
     # ⚑ PRESENCE OF THE KEY IS THE SIGNAL, so an unmeasured population must not
     # be written. ``load_rows_from_npz`` derives ``population_known`` from
@@ -744,6 +824,11 @@ def write_dump(
     # Writer and reader must agree on the contract; they did not.
     if rows.population_known:
         payload["is_selfplay"] = rows.is_selfplay.astype(bool)
+    # Same contract for ``ply``: a placeholder 0 for an unrecorded ply must not
+    # be banked as a measured ply 0 (``load_rows_from_npz`` derives
+    # ``ply_known`` from ``"ply" in keys``).
+    if rows.ply_known:
+        payload["ply"] = rows.ply.astype(np.int32)
     if with_x:
         payload["x"] = rows.x.astype(np.float32)
     saver: Callable[..., Any] = np.savez_compressed

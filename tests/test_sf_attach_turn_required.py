@@ -116,3 +116,4 @@ def test_last_record_wrapper_is_a_noop_without_records() -> None:
         state, 0, p_sf=_p_sf(), a_idx=int(_legal()[0]), res=_res(),  # pyright: ignore[reportArgumentType]
         legal_indices=_legal(), turn=True,
     )
+    assert state.samples_per_game == [[]]
