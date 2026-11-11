@@ -198,6 +198,12 @@ class RowSet:
     # no such flag: it is required at every entry point, because it is
     # load-bearing for EVERY CI rather than for one optional flag.
     population_known: bool = True
+    # Whether ``ply`` was MEASURED on every row. The replay writer stores a
+    # placeholder 0 beside ``has_ply_index == 0``; reading the raw column would
+    # report "ply 0" for a row whose ply was never recorded. Like
+    # ``population_known``, the dump carries ``ply`` only when this is True, so
+    # the absence survives a round trip instead of becoming a measured zero.
+    ply_known: bool = True
 
     def __len__(self) -> int:
         return int(self.p_sf.shape[0])
@@ -207,7 +213,7 @@ class RowSet:
             x=self.x[idx], p_sf=self.p_sf[idx], outcome=self.outcome[idx],
             game_id=self.game_id[idx], ply=self.ply[idx],
             is_selfplay=self.is_selfplay[idx], source=self.source,
-            population_known=self.population_known,
+            population_known=self.population_known, ply_known=self.ply_known,
         )
 
 
@@ -258,7 +264,7 @@ def load_rows_from_shards(
         # rows. Its presence mask, when supplied, is authoritative for the
         # selected sample. Older unmasked arrays keep their existing contract.
         present: dict[str, bool] = {}
-        for key in ("game_id", "is_selfplay"):
+        for key in ("game_id", "is_selfplay", "ply_index"):
             flag = f"has_{key}"
             if flag in keys:
                 mask = np.asarray(g[flag][:], dtype=bool)
@@ -272,6 +278,8 @@ def load_rows_from_shards(
             )
         if not present.get("is_selfplay", True):
             absent.add("is_selfplay")
+        if not present.get("ply_index", True):
+            absent.add("ply_index")
         cols["x"].append(np.asarray(g["x"].oindex[idx, :, :, :], dtype=np.float32))
         cols["p_sf"].append(_norm3(np.asarray(g["sf_wdl"].oindex[idx, :])))
         cols["game_id"].append(np.asarray(g["game_id"][:])[idx].astype(np.int64))
@@ -303,6 +311,7 @@ def load_rows_from_shards(
         is_selfplay=np.concatenate(cols["is_selfplay"]),
         source=f"shards:{shard_dir}",
         population_known="is_selfplay" not in absent,
+        ply_known="ply_index" not in absent,
     )
 
 
@@ -334,7 +343,9 @@ def load_rows_from_npz(path: str) -> RowSet:
     degrade VISIBLY: a missing ``outcome`` shows as ``n_used == 0`` and NaN on
     the outcome columns, and a missing ``is_selfplay`` makes
     ``--split-selfplay`` refuse (see ``population_known``) instead of reporting
-    everything as curriculum.
+    everything as curriculum. A missing ``ply`` reads as zeros with
+    ``ply_known`` False, so re-dumping the rows does not write those zeros back
+    as measured plies.
     """
     with np.load(path) as z:
         keys = set(z.files)
@@ -385,6 +396,7 @@ def load_rows_from_npz(path: str) -> RowSet:
             ),
             source=f"npz:{path}",
             population_known="is_selfplay" in keys,
+            ply_known="ply" in keys,
         )
 
 
@@ -732,7 +744,6 @@ def write_dump(
         "oracle_lost": mask.astype(bool),
         "outcome": rows.outcome.astype(np.int16),
         "game_id": rows.game_id.astype(np.int64),
-        "ply": rows.ply.astype(np.int32),
     }
     # ⚑ PRESENCE OF THE KEY IS THE SIGNAL, so an unmeasured population must not
     # be written. ``load_rows_from_npz`` derives ``population_known`` from
@@ -744,6 +755,11 @@ def write_dump(
     # Writer and reader must agree on the contract; they did not.
     if rows.population_known:
         payload["is_selfplay"] = rows.is_selfplay.astype(bool)
+    # Same contract for ``ply``: a placeholder 0 for an unrecorded ply must not
+    # be banked as a measured ply 0 (``load_rows_from_npz`` derives
+    # ``ply_known`` from ``"ply" in keys``).
+    if rows.ply_known:
+        payload["ply"] = rows.ply.astype(np.int32)
     if with_x:
         payload["x"] = rows.x.astype(np.float32)
     saver: Callable[..., Any] = np.savez_compressed
