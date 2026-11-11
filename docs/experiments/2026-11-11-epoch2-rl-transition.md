@@ -15,7 +15,7 @@ already contained in main. Development uses a separate checkout.
 ## Baseline and evidence
 
 The donor is the permanent epoch-two checkpoint under
-`/home/josh/chess-artifacts/operations/all-accumulated-174m-epoch2-sqrt-cooldown-20261109-v1.resume-recovery654213-a4349851abddea4a/training/epoch-2/checkpoint.pt`.
+`~/chess-artifacts/operations/all-accumulated-174m-epoch2-sqrt-cooldown-20261109-v1.resume-recovery654213-a4349851abddea4a/training/epoch-2/checkpoint.pt`.
 Its SHA-256 is
 `a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0`.
 The payload was rehashed and read with `weights_only=True`: step 680276, 494 state
@@ -30,7 +30,7 @@ toy CPU tensor cases now pass. A separate direct real-donor CPU helper check
 preserved every model tensor and deterministic output, fresh Aurora optimizer and
 scheduler objects/state, and SWA. These do not prove worker execution or CUDA
 qualification. Raw receipts are under
-`/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/`.
+`~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/`.
 
 ## Qualification before candidate training
 
@@ -72,7 +72,7 @@ workers and the owned broker before learner work; remote/shared brokers cannot
 claim this exclusion. Long-lived production work and controls are untouched.
 
 Every scarce-resource stage holds the canonical absolute GPU lease
-`/home/josh/projects/chess/scratchpad/gpu0_experiment.lock` through owned-process
+`~/projects/chess/scratchpad/gpu0_experiment.lock` through owned-process
 cleanup, observes relevant STOP/PAUSE controls, has a finite wall bound and unique
 outputs, and checks available RAM/disk. A newly observed live job or lease owner
 causes this experiment to yield. Do not clear user controls or kill unrelated work.
@@ -145,9 +145,9 @@ Linux compute process reported. Further GPU work is deferred while it is busy.
 The next independent gate is a **CPU-only two-iteration wiring run**, whose short
 game horizon supports no playing-strength claim.
 
-- Config: `/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cpu-wiring-config-v1/config.yaml`
+- Config: `~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cpu-wiring-config-v1/config.yaml`
   SHA-256 `9fcca3f0786cb9363e5130feb2cd46280d96fe40412830dd1f3956680ca4f56b`.
-- New output root: `/home/josh/chess-artifacts/operations/rl-cpu-wiring-20261111-48546328`.
+- New output root: `~/chess-artifacts/operations/rl-cpu-wiring-20261111-48546328`.
 - Two iterations, two completed-game targets each, Gumbel 16 simulations, maximum
   48 plies, batch 8 and one-update cap per iteration. Both learner and worker use
   CPU and Ray allocates zero GPUs. The readonly baseline copy is hash-verified;
@@ -170,8 +170,8 @@ game horizon supports no playing-strength claim.
 
   ```bash
   CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 \
-  /home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python \
-    /home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/verify_cpu_wiring.py
+  ~/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python \
+    ~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/verify_cpu_wiring.py
   ```
 
 - Kill on timeout, control request, resource floor or runtime exception. A failure
