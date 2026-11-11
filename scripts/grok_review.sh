@@ -372,7 +372,14 @@ GROK_PGID=$!
 # $! does: poll for it. An empty answer means the child already exited, which
 # leaves nothing to isolate or kill.
 for _ in $(seq 1 100); do
-    GROK_ACTUAL_PGID="$(ps -o pgid= -p "$GROK_PGID" 2>/dev/null | tr -d ' ')"
+    if ! GROK_ACTUAL_PGID="$(ps -o pgid= -p "$GROK_PGID" 2>/dev/null | tr -d ' ')"; then
+        if kill -0 "$GROK_PGID" 2>/dev/null; then
+            kill -KILL "$GROK_PGID" 2>/dev/null || true
+            echo "GROK FAILED: could not inspect the Grok process group" >&2
+            exit 70
+        fi
+        GROK_ACTUAL_PGID=""
+    fi
     if [ -z "$GROK_ACTUAL_PGID" ] || [ "$GROK_ACTUAL_PGID" = "$GROK_PGID" ]; then
         break
     fi
