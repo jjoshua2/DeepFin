@@ -66,6 +66,14 @@ a stale move instead of `bestmove`. Second, in one of the two cases no
 emitted row carries the scalar at all, because that move's newer exact
 line has a different score.
 
+**CAST compatibility caveat.** `scripts/cast_probe.py` drops a pair when
+either row is orphaned. So the benign route also removes about 0.2% of rows
+from that probe's sample, and up to about twice that in pairs. The trainer
+only reports the orphan rate; it does not filter on it. PR #1201's second
+commit added a per-row `sf_eval_witness` shard field to remove this. That
+commit is not taken here: it is a reader/writer schema change of about 900
+lines, aimed at a rate below the 1% warn threshold.
+
 ## What this does NOT establish
 
 - **No strength claim.** Nothing here shows the net gets stronger from cleaner
