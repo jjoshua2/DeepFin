@@ -22,6 +22,13 @@ TRAIN_SH = Path(__file__).resolve().parents[1] / "scripts" / "train.sh"
 # Keep longer deadlines in clean-exit tests so scheduling delays can be retried.
 _TIMEOUT_GRACE = 2
 
+# Real seconds slept per nominal 2-second drain poll (train.sh's
+# CAE_DRAIN_POLL_SLEEP; unset in production = 2). It scales TIME only: the
+# drain's integer accounting is untouched, so every test still runs exactly the
+# number of polls its grace implies. Tests whose discrimination depends on a
+# real-time window inside a poll pass `poll=None` and keep production timing.
+_FAST_POLL = "0.5"
+
 _BEGIN = "── Drain selfplay BEFORE anything is killed"
 _END = 'echo "Stopping PID $pid ..."'
 
@@ -62,6 +69,20 @@ def _worker_pattern() -> str:
     found = re.findall(r"^\s*local wpat='(.+)'$", TRAIN_SH.read_text(), re.M)
     assert len(found) == 1, f"expected exactly one wpat definition, got {found}"
     return found[0]
+
+
+def _poll_definition() -> str:
+    """The single `local dpoll=...` definition and its guard, read out of the
+    real file so the orphan-only harness gets production's, not a copy."""
+    found = re.findall(r"^[ \t]*local dpoll=.*?^[ \t]*esac$", TRAIN_SH.read_text(),
+                       re.M | re.S)
+    assert len(found) == 1, f"expected exactly one dpoll definition, got {found}"
+    return found[0]
+
+
+def _poll_env(poll: str | None) -> str:
+    return "unset CAE_DRAIN_POLL_SLEEP" if poll is None else (
+        f"export CAE_DRAIN_POLL_SLEEP={shlex.quote(poll)}")
 
 
 def _run(script: str, *, timeout: float = 60.0) -> subprocess.CompletedProcess[str]:
@@ -309,6 +330,7 @@ REPL_DONE{n}=$(mktemp -u)
 def _harness(
     victim: str, *, grace: int, post: str = "", post_drain: str = "",
     orphan_pass: bool = False, orphan_grace: int = 4,
+    poll: str | None = _FAST_POLL,
 ) -> str:
     """Run the real drain block, then the real VERDICT block, under the same
     `set -e` train.sh uses, against real processes.
@@ -332,6 +354,7 @@ def _harness(
 set -e
 export CAE_STOP_GRACE_SECONDS={grace}
 export CAE_ORPHAN_GRACE_SECONDS={orphan_grace}
+{_poll_env(poll)}
 POOL_FILE=$(mktemp)
 {_PGREP_STUB}
 {victim}
@@ -394,6 +417,56 @@ rm -f "$POOL_FILE"
     )
     assert "NOPAT: rc=2" in r.stdout, f"a pattern-less call did not error:\n{r.stdout}"
     assert "PGREP_STUB_NO_PATTERN" in r.stderr, r.stderr
+
+
+# ---------------------------------------------------------------------------
+# The poll seam: production default pinned, and the seam proven to reach both
+# real loops
+# ---------------------------------------------------------------------------
+
+
+def _timed_ignore_drain(poll: str | None, *, orphan: bool = False) -> tuple[
+        subprocess.CompletedProcess[str], float]:
+    """One SIGTERM-ignoring victim, one nominal 2-second poll, timed in bash
+    from after the victim is ready to the end of the pass under test."""
+    victim = _victim(1, action="ignore") + "\nT0=$(date +%s%N)\n"
+    stamp = 'echo "PASS_NS=$(( $(date +%s%N) - T0 ))"'
+    if orphan:
+        script = _orphan_harness(victim, grace=_TIMEOUT_GRACE, poll=poll).replace(
+            'echo "REACHED_END_OF_STOP"', f'{stamp}\necho "REACHED_END_OF_STOP"', 1)
+    else:
+        script = _harness(victim, grace=_TIMEOUT_GRACE, poll=poll, post_drain=stamp)
+    r = _run(script, timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    return r, int(r.stdout.split("PASS_NS=")[1].split()[0]) / 1e9
+
+
+def test_the_drain_poll_defaults_to_two_seconds() -> None:
+    """Unset is production: each poll really sleeps 2s."""
+    r, elapsed = _timed_ignore_drain(None)
+    assert f"still running after {_TIMEOUT_GRACE}s" in r.stdout, r.stdout + r.stderr
+    assert elapsed >= 2.0, elapsed
+    assert "CAE_DRAIN_POLL_SLEEP" not in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("orphan", [False, True], ids=["first_pass", "orphan_pass"])
+def test_the_poll_seam_reaches_both_drain_loops(orphan: bool) -> None:
+    """The consumer's own wall time, not the exported variable: each pass's
+    single nominal 2-second poll takes the seam's 0.5s, not 2s."""
+    r, elapsed = _timed_ignore_drain(_FAST_POLL, orphan=orphan)
+    assert ("Force killing orphaned workers" if orphan else
+            f"still running after {_TIMEOUT_GRACE}s") in r.stdout, r.stdout + r.stderr
+    assert float(_FAST_POLL) <= elapsed < 1.5, elapsed
+
+
+def test_a_malformed_poll_is_refused_loudly_for_the_default() -> None:
+    """`sleep abc` would abort stop() under set -e; the guard refuses it on
+    stderr and keeps production's 2s poll, and the teardown completes."""
+    r, elapsed = _timed_ignore_drain("0.5s")
+    assert "ignoring CAE_DRAIN_POLL_SLEEP='0.5s'" in r.stderr, r.stderr
+    assert elapsed >= 2.0, elapsed
+    assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
+    assert r.returncode == 0, r.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -470,7 +543,10 @@ def test_a_revived_worker_does_not_extend_the_wait() -> None:
     post = """
 if ! grep -qx "$V2" "$POOL_FILE"; then echo "REVIVAL_UNPUBLISHED"; fi
 """
-    r = _run(_harness(victim, grace=30, post=post), timeout=40)
+    # Production timing: the revival must land between the pid capture (t~0)
+    # and the first liveness check (t~2); a shrunken poll would narrow that
+    # window until a late landing made this pass without discriminating.
+    r = _run(_harness(victim, grace=30, post=post, poll=None), timeout=40)
     assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     assert "REVIVAL_UNPUBLISHED" not in r.stdout, r.stdout
     assert "Selfplay drained cleanly: 3 in-flight game(s) suspended" in r.stdout, (
@@ -495,17 +571,19 @@ def test_no_workers_is_a_no_op() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _orphan_harness(victim: str, *, grace: int) -> str:
-    """The SECOND pass alone, which runs after ray teardown. `wpat` is injected
-    from the real file's single definition, not restated here."""
+def _orphan_harness(victim: str, *, grace: int, poll: str | None = _FAST_POLL) -> str:
+    """The SECOND pass alone, which runs after ray teardown. `wpat` and `dpoll`
+    are injected from the real file's single definitions, not restated here."""
     return f"""
 set -e
 export CAE_ORPHAN_GRACE_SECONDS={grace}
+{_poll_env(poll)}
 POOL_FILE=$(mktemp)
 wpat='{_worker_pattern()}'
 {_PGREP_STUB}
 {victim}
 second_pass() {{
+{_poll_definition()}
 {_block(_ORPHAN_BEGIN, _ORPHAN_END)}
 }}
 second_pass
@@ -807,6 +885,13 @@ def test_the_verdict_is_emitted_after_the_orphan_pass_not_before() -> None:
 # because that replacement was SIGKILLed while still importing.
 
 
+# The append must land after the offset and BEFORE the verdict reads the log. It
+# is gated on the victim's death, so it follows the offset; this checks, at the
+# end of the first pass and before the verdict, that it has already happened —
+# a late append would otherwise let the assertions below pass vacuously.
+_REPLACEMENT_IN_WINDOW = 'if [ ! -f "$REPL_DONE1" ]; then echo "REPLACEMENT_LATE"; fi'
+
+
 def test_a_replacements_graceful_exit_is_not_credited_to_the_worker_that_died() -> None:
     """THE SHIP-BLOCKER OF THE SECOND ROUND, and the same silent false-negative
     as M1 arriving through a different door.
@@ -823,9 +908,11 @@ def test_a_replacements_graceful_exit_is_not_credited_to_the_worker_that_died() 
     post = """
 if [ ! -f "$REPL_DONE1" ]; then echo "REPLACEMENT_NEVER_APPENDED"; fi
 """
-    r = _run(_harness(victim, grace=6, post=post), timeout=40)
+    r = _run(_harness(victim, grace=6, post=post, post_drain=_REPLACEMENT_IN_WINDOW),
+             timeout=40)
     assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     assert "REPLACEMENT_NEVER_APPENDED" not in r.stdout, r.stdout
+    assert "REPLACEMENT_LATE" not in r.stdout, r.stdout
     assert "exited cleanly" not in r.stdout, (
         f"a replacement's graceful exit was credited to the dead worker:\n{r.stdout}"
     )
@@ -848,9 +935,11 @@ def test_a_replacements_suspend_line_is_not_credited_to_the_worker_that_died() -
     post = """
 if [ ! -f "$REPL_DONE1" ]; then echo "REPLACEMENT_NEVER_APPENDED"; fi
 """
-    r = _run(_harness(victim, grace=6, post=post), timeout=40)
+    r = _run(_harness(victim, grace=6, post=post, post_drain=_REPLACEMENT_IN_WINDOW),
+             timeout=40)
     assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     assert "REPLACEMENT_NEVER_APPENDED" not in r.stdout, r.stdout
+    assert "REPLACEMENT_LATE" not in r.stdout, r.stdout
     # Specific strings, never a bare `"42" not in r.stdout`: every line carries
     # a pid and pid 2399696 already broke one control in this file that way.
     assert "suspended 42 in-flight game(s)" not in r.stdout, (
@@ -877,9 +966,11 @@ def test_a_worker_that_banked_and_was_then_replaced_keeps_its_own_count() -> Non
     post = """
 if [ ! -f "$REPL_DONE1" ]; then echo "REPLACEMENT_NEVER_APPENDED"; fi
 """
-    r = _run(_harness(victim, grace=6, post=post), timeout=40)
+    r = _run(_harness(victim, grace=6, post=post, post_drain=_REPLACEMENT_IN_WINDOW),
+             timeout=40)
     assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     assert "REPLACEMENT_NEVER_APPENDED" not in r.stdout, r.stdout
+    assert "REPLACEMENT_LATE" not in r.stdout, r.stdout
     assert "suspended 11 in-flight game(s)" in r.stdout, r.stdout + r.stderr
     assert "Selfplay drained cleanly: 11 in-flight game(s) suspended" in r.stdout, (
         r.stdout

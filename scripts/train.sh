@@ -260,6 +260,17 @@ stop() {
     # selfplay_resume/ files this drain just banked. The second pass at the end
     # of stop() is what stops that, since nothing above kills it.
     local grace="${CAE_STOP_GRACE_SECONDS:-90}"
+    # Seconds actually slept per 2-second drain poll, read once here for both
+    # passes. Unset is the production 2; only tests set it, to run the real
+    # loops quickly. Only `sleep` reads it: the integer `waited`/`owait`
+    # accounting and both deadlines are unchanged. A value `sleep` could reject
+    # would abort stop() under `set -e`, so it is refused loudly for 2.
+    local dpoll="${CAE_DRAIN_POLL_SLEEP:-2}"
+    case "$dpoll" in
+        *[!0-9.]*|*.*.*|.)
+            echo "WARNING: ignoring CAE_DRAIN_POLL_SLEEP='$dpoll' (not a number); polling every 2s" >&2
+            dpoll=2 ;;
+    esac
     # ONE definition, used by both drain passes. Duplicating the literal is how
     # this PR's own founding defect recurs: the second pass sits outside the
     # range tests/test_train_sh_worker_drain.py extracts, so a pattern edit
@@ -340,7 +351,7 @@ stop() {
         local waited=0 alive w
         alive="$wpids"
         while [ "$waited" -lt "$grace" ] && [ -n "$alive" ]; do
-            sleep 2
+            sleep "$dpoll"
             waited=$((waited + 2))
             alive=""
             for w in $wpids; do
@@ -409,7 +420,7 @@ stop() {
         kill -TERM $orphans 2>/dev/null || true
         local owait=0 oalive="$orphans" o
         while [ "$owait" -lt "${CAE_ORPHAN_GRACE_SECONDS:-30}" ] && [ -n "$oalive" ]; do
-            sleep 2
+            sleep "$dpoll"
             owait=$((owait + 2))
             oalive=""
             for o in $orphans; do
