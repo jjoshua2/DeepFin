@@ -825,7 +825,7 @@ def _check_pb2_bounds(flat: dict[str, Any]) -> None:
     ``train.lr`` -- is what sets the production learning rate. Before this
     check a malformed entry failed in one of two silent ways:
 
-    * wrong shape (a scalar, a string, three elements) -- dropped without a
+    * wrong shape (a scalar, a bare string, three elements) -- dropped without a
       word by ``harness._collect_mutation_bounds``, so the key quietly stopped
       being searched and the yaml value took over;
     * non-finite or inverted (``[nan, 1]``, ``[1, 0]``) -- accepted here and
@@ -848,14 +848,23 @@ def _check_pb2_bounds(flat: dict[str, Any]) -> None:
                 f"un-searching the key."
             )
         for bound in value:
-            if isinstance(bound, bool) or not isinstance(bound, (int, float)):
+            # Numeric STRINGS stay accepted: YAML reads `3e-5` (no decimal
+            # point) as a string, and `_collect_mutation_bounds` already
+            # realizes it with float() -- the same coercion used here, so the
+            # value validated is the value the harness searches. Consistent
+            # with the loader's `lr` policy (PR #1209). bool is refused even
+            # though float(True) works: `[true, 1]` is a typo, not a bound.
+            try:
+                if isinstance(bound, bool) or not isinstance(bound, (int, float, str)):
+                    raise TypeError
+                realized = float(bound)
+            except (TypeError, ValueError, OverflowError):
                 raise ValueError(
-                    f"YAML tune.{key} bounds must be real numbers, got "
-                    f"{bound!r} ({type(bound).__name__}) in {value!r}. Note that "
-                    f"YAML reads an exponent without a decimal point "
-                    f"(3e-5) as a STRING; write 3.0e-5 or 0.00003."
-                )
-            if not math.isfinite(float(bound)):
+                    f"YAML tune.{key} bounds must be real numbers (or numeric "
+                    f"strings), got {bound!r} ({type(bound).__name__}) in "
+                    f"{value!r}."
+                ) from None
+            if not math.isfinite(realized):
                 raise ValueError(
                     f"YAML tune.{key} bounds must be finite, got {value!r}."
                 )

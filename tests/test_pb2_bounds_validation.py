@@ -27,6 +27,9 @@ _REPO = Path(__file__).resolve().parents[1]
         (1, 2),                # ints and tuples are real-number pairs too
         [-1.0, 0.0],           # no sign/magnitude policy at this layer
         [0.3, 0.3],            # no magnitude cap here, by design
+        ["3e-5", "3e-5"],      # YAML reads `3e-5` as a string; works on main
+        ["0.1", 0.2],          # mixed string/number
+        [" 1e-4 ", "2e-4"],    # float() tolerates surrounding whitespace
     ],
 )
 def test_valid_pb2_bounds_are_accepted_and_reach_the_harness(bounds):
@@ -43,13 +46,21 @@ def test_valid_pb2_bounds_are_accepted_and_reach_the_harness(bounds):
         ([3e-5], "two-element"),
         ([1e-5, 2e-5, 3e-5], "two-element"),
         ({"lo": 1e-5, "hi": 2e-5}, "two-element"),
-        (["3e-5", "3e-5"], "real numbers"),   # YAML reads `3e-5` as a string
+        (["bad", 1.0], "real numbers"),
+        (["", 1.0], "real numbers"),
+        (["0,1", 1.0], "real numbers"),
+        ([[0.1], 1.0], "real numbers"),
         ([True, 1.0], "real numbers"),
         ([0.0, False], "real numbers"),
         ([None, 1.0], "real numbers"),
         ([math.nan, 1.0], "finite"),
         ([0.0, math.inf], "finite"),
         ([-math.inf, 0.0], "finite"),
+        (["1e400", 1.0], "finite"),           # float("1e400") is inf
+        (["nan", 1.0], "finite"),
+        (["-inf", "0"], "finite"),
+        ([10**400, 1.0], "real numbers"),     # float() overflows on the int
+        (["3e-4", "3e-5"], "lo <= hi"),       # ordered on the realized floats
         ([3e-4, 3e-5], "lo <= hi"),
     ],
 )
@@ -104,3 +115,76 @@ def test_mid_run_reload_with_bad_bounds_keeps_the_old_config(tmp_path):
     )
     _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
     assert config["w_policy"] == 2.5
+
+
+def test_numeric_string_bounds_from_yaml_reach_the_harness_as_floats(tmp_path):
+    """End to end from YAML text: the unquoted `3e-5` form loads as strings,
+    passes the check, and `_collect_mutation_bounds` realizes the SAME floats
+    that a decimal-point spelling would."""
+    path = tmp_path / "b.yaml"
+    path.write_text("tune:\n  pb2_bounds_lr: [3e-5, 3e-4]\n", encoding="utf-8")
+    flat = flatten_run_config_defaults(load_yaml_file(str(path)))
+    assert flat["pb2_bounds_lr"] == ["3e-5", "3e-4"]
+    assert _collect_mutation_bounds(flat) == {"lr": [3e-5, 3e-4]}
+
+
+# Ported from draft PR #1213 (fix/yaml-pb2-bounds-20261111), which duplicated
+# this check; adapted to this file. The `'0,1'`/`[bad, 1]` cases stay rejected
+# under the numeric-string policy because they do not parse as floats.
+@pytest.mark.parametrize("searched", [False, True])
+@pytest.mark.parametrize("live_reload", [False, True])
+@pytest.mark.parametrize(
+    "bounds_yaml",
+    ["0.1", "[]", "[0.1]", "[0, 1, 2]", "'0,1'", "[bad, 1]",
+     "[null, 1]", "[.nan, 1]", "[0, .inf]", "[-.inf, 1]", "[2, 1]", "[1e400, 1]"],
+)
+def test_pb2_bounds_reload_rejects_atomically_and_recovers(
+    tmp_path: Path, searched: bool, live_reload: bool, bounds_yaml: str,
+) -> None:
+    from chess_anti_engine.tune.trainable_config_ops import (
+        _reload_yaml_into_config,
+        last_reload_yaml_keys,
+        reset_yaml_reload_key_tracking,
+    )
+
+    reset_yaml_reload_key_tracking()
+    path = tmp_path / "pb2.yaml"
+    config: dict = {"lr": 0.003, "batch_size": 32}
+    if searched:
+        config["pb2_bounds_lr"] = [0.001, 0.01]
+    path.write_text("lr: 0.003\nbatch_size: 32\n", encoding="utf-8")
+    _reload_yaml_into_config(config, str(path), live_reload=live_reload)
+    before = dict(config)
+    baseline = last_reload_yaml_keys(str(path))
+
+    # A bad bound must not apply even unrelated eligible siblings or advance
+    # the baseline. Include another valid bound so silently dropping the bad
+    # one would still leave a nonempty PB2 search space.
+    path.write_text(
+        "lr: 0.009\nbatch_size: 99\nw_wdl: 0.8\n"
+        f"tune:\n  pb2_bounds_lr: {bounds_yaml}\n"
+        "  pb2_bounds_w_wdl: [0, 1]\n",
+        encoding="utf-8",
+    )
+    _reload_yaml_into_config(config, str(path), live_reload=live_reload)
+    assert config == before
+    assert last_reload_yaml_keys(str(path)) == baseline
+
+    path.write_text(
+        "lr: 0.009\nbatch_size: 64\nw_wdl: 0.9\n"
+        "tune:\n  pb2_bounds_lr: [0.002, 0.02]\n",
+        encoding="utf-8",
+    )
+    _reload_yaml_into_config(config, str(path), live_reload=live_reload)
+    assert config["batch_size"] == 64
+    assert config["w_wdl"] == 0.9
+    assert config["lr"] == (0.003 if searched else 0.009)
+    # Bounds remain launch-time settings, including on startup/resume reload.
+    if searched:
+        assert config["pb2_bounds_lr"] == [0.001, 0.01]
+    else:
+        assert "pb2_bounds_lr" not in config
+    assert "pb2_bounds_w_wdl" not in config
+    assert last_reload_yaml_keys(str(path)) == frozenset(
+        {"lr", "batch_size", "w_wdl", "pb2_bounds_lr"}
+    )
