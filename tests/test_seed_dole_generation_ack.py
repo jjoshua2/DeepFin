@@ -452,3 +452,76 @@ def test_trainable_rearm_is_fenced_by_durable_generation(tmp_path: Path) -> None
         )
         is None
     )
+
+
+@pytest.mark.parametrize(
+    ("trial_id", "gate_keys", "winner_keys", "expected_token"),
+    [
+        ("trial_00000", ["trial_00000"], ["trial_00000"], "gen-trial_00000"),
+        ("", [""], [""], "gen-"),
+        ("  trial_00000  ", ["trial_00000"], ["trial_00000"], "gen-trial_00000"),
+        ("trial_00000", [""], [""], None),
+        ("trial_00000", [""], ["trial_00000"], None),
+        ("trial_00000", ["trial_00000"], [""], None),
+        ("trial_00000", ["00000"], ["00000"], None),
+        ("trial_00000", ["prefix_trial_00000"], ["prefix_trial_00000"], None),
+        ("trial_00000", ["trial_00000"], ["00000"], None),
+        ("trial_00000", ["trial_00000"], ["prefix_trial_00000"], None),
+        ("trial_00000", ["other_00000"], ["other_00000"], None),
+        ("", ["trial_00000"], ["trial_00000"], None),
+        (
+            "trial_00000",
+            ["", "00000", "prefix_trial_00000", "trial_00000"],
+            ["", "00000", "prefix_trial_00000", "trial_00000"],
+            "gen-trial_00000",
+        ),
+    ],
+    ids=[
+        "exact-named-lane",
+        "exact-default-lane",
+        "normalized-named-lane",
+        "reject-default-lane-for-named-trial",
+        "reject-default-gate-with-exact-winner",
+        "reject-default-winner-with-exact-gate",
+        "reject-short-suffix-gate",
+        "reject-long-suffix-gate",
+        "reject-short-suffix-winner",
+        "reject-long-suffix-winner",
+        "reject-unrelated-lane",
+        "reject-named-lane-for-default-trial",
+        "exact-lane-wins-among-aliases",
+    ],
+)
+def test_trainable_rearm_requires_exact_trial_in_both_records(
+    tmp_path: Path,
+    trial_id: str,
+    gate_keys: list[str],
+    winner_keys: list[str],
+    expected_token: str | None,
+) -> None:
+    gate = tmp_path / "seed_dole_gate.json"
+    winners = gate.with_suffix(gate.suffix + ".winners.json")
+    gate_text = json.dumps(dict.fromkeys(gate_keys, 12))
+    winner_text = json.dumps(
+        {key: {"iteration": 12, "grant_token": f"gen-{key}"} for key in winner_keys}
+    )
+    gate.write_text(gate_text, encoding="utf-8")
+    winners.write_text(winner_text, encoding="utf-8")
+
+    assert _seed_dole_generation_for_iteration(
+        server_root=tmp_path,
+        trial_id=trial_id,
+        training_iteration=12,
+    ) == expected_token
+    expected_payload = (
+        {"training_iteration": 12, "grant_token": expected_token}
+        if expected_token is not None
+        else None
+    )
+    assert _seed_dole_rearm_payload(
+        server_root=tmp_path,
+        trial_id=trial_id,
+        training_iteration=12,
+    ) == expected_payload
+    assert gate.read_text(encoding="utf-8") == gate_text
+    assert winners.read_text(encoding="utf-8") == winner_text

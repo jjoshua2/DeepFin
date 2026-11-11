@@ -35,6 +35,7 @@ from chess_anti_engine.inference import (
     _COMPILED_BATCH_BUCKETS,
     _aoti_load_package,
     _policy_output_full,
+    aot_check_full_update_enabled,
     build_aot_constants,
     model_constant_source,
 )
@@ -1239,9 +1240,11 @@ def verify_packages(
                     f"bucket {b}: get_constant_fqns() empty — package is not "
                     "weight-updatable (rebuild with externalized constants)"
                 )
+            # Match the runtime default and its explicit emergency override.
+            # Verification must not silently disable the coverage check.
             pkg.load_constants(
                 build_aot_constants(weight_source, fqns, device=device),
-                check_full_update=False,
+                check_full_update=aot_check_full_update_enabled(),
             )
             all_ok = True
             details: list[str] = []

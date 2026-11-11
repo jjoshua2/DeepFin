@@ -254,6 +254,24 @@ def load_rows_from_shards(
             if max_rows > 0 and kept >= max_rows:
                 break
             continue
+        # A stored optional array can contain placeholders beside measured
+        # rows. Its presence mask, when supplied, is authoritative for the
+        # selected sample. Older unmasked arrays keep their existing contract.
+        present: dict[str, bool] = {}
+        for key in ("game_id", "is_selfplay"):
+            flag = f"has_{key}"
+            if flag in keys:
+                mask = np.asarray(g[flag][:], dtype=bool)
+                if mask.shape != sel.shape:
+                    raise SystemExit(f"{name}: {flag} shape {mask.shape} != {sel.shape}")
+                present[key] = bool(mask[idx].all())
+        if not present.get("game_id", True):
+            raise SystemExit(
+                f"{name}: game_id is missing on selected rows; "
+                "game-clustered confidence intervals require observed IDs"
+            )
+        if not present.get("is_selfplay", True):
+            absent.add("is_selfplay")
         cols["x"].append(np.asarray(g["x"].oindex[idx, :, :, :], dtype=np.float32))
         cols["p_sf"].append(_norm3(np.asarray(g["sf_wdl"].oindex[idx, :])))
         cols["game_id"].append(np.asarray(g["game_id"][:])[idx].astype(np.int64))
@@ -277,7 +295,7 @@ def load_rows_from_shards(
         # every outcome column reads NaN, and without ``is_selfplay`` the
         # curriculum/selfplay split would silently report everything as
         # curriculum.
-        print(f"NOTE: optional fields absent in some shards: {sorted(absent)}", flush=True)
+        print(f"NOTE: optional fields absent on some selected rows: {sorted(absent)}", flush=True)
     return RowSet(
         x=np.concatenate(cols["x"]), p_sf=np.concatenate(cols["p_sf"]),
         outcome=np.concatenate(cols["outcome"]),
@@ -987,9 +1005,9 @@ def main(argv: list[str] | None = None) -> int:
     # from the row source alone, so it is settled at the row source.
     if args.split_selfplay and not rows.population_known:
         raise SystemExit(
-            f"--split-selfplay: {rows.source} carries no is_selfplay field, so "
-            "every row would default to curriculum and the 'selfplay' half "
-            "would print as empty — a population split nobody observed"
+            f"--split-selfplay: {rows.source} carries no is_selfplay field "
+            "for every selected row; unknown rows would default to curriculum "
+            "and report a population split that was not fully observed"
         )
 
     model = load_model_from_checkpoint(args.checkpoint, device=args.device)
