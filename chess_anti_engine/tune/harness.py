@@ -229,7 +229,10 @@ def _trial_dirs_referenced_by(state_file: Path) -> set[str] | None:
         names: set[str] = set()
         for entry in payload["trial_data"]:
             logdir = json.loads(entry[0]).get("relative_logdir")
-            if isinstance(logdir, str) and logdir:
+            # A trial dir is a direct child of the tune dir. Anything else
+            # (absolute, `..`, nested) names nothing we manage, and must not
+            # let a checkpoint elsewhere count toward this file's slot.
+            if isinstance(logdir, str) and logdir and Path(logdir).name == logdir:
                 names.add(logdir)
     except Exception as exc:
         print(f"[run_tune] Could not read trial dirs from {state_file.name}: {exc}")
@@ -447,7 +450,9 @@ def _cleanup_old_tune_experiments(
                 f"[run_tune] WARNING: keeping unreferenced trial dir {d}: it holds "
                 "a checkpoint and no readable experiment_state file names it. "
                 "Remove it by hand (rm -rf) once you have confirmed it is not "
-                "needed; startup pruning will not."
+                "needed (salvage-export it first if unsure: ./scripts/train.sh "
+                "salvage-export --top-n 1 --metric training_iteration --out <dir>); "
+                "startup pruning will not."
             )
             continue
         print(f"[run_tune] Pruning old Ray Tune trial dir: {d}")

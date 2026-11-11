@@ -470,6 +470,35 @@ def test_a_state_file_referencing_no_trial_dir_uses_no_slot(
     assert (tune_dir / "experiment_state-2026-11-11_09-00-00.json").is_file()
 
 
+@pytest.mark.parametrize("form", ["absolute", "dotdot", "nested"])
+def test_a_state_file_naming_a_dir_outside_the_tune_dir_uses_no_slot(
+    tmp_path: Path, form: str,
+) -> None:
+    """Only direct children of the tune dir are trial dirs. A name that points
+    elsewhere must not let a checkpoint there take the real run's slot."""
+    tune_dir = tmp_path / "tune"
+    tune_dir.mkdir()
+    _reviewer_layout(tune_dir, failed=0)
+    outside = tmp_path / "outside" / "train_trial_zzzzz"
+    (outside / "checkpoint_000001").mkdir(parents=True)
+    (outside / "checkpoint_000001" / "trainer.pt").write_bytes(b"x")
+    nested = tune_dir / "sub" / "train_trial_yyyyy"
+    (nested / "checkpoint_000001").mkdir(parents=True)
+    (nested / "checkpoint_000001" / "trainer.pt").write_bytes(b"x")
+    name = {"absolute": str(outside), "dotdot": "../outside/train_trial_zzzzz",
+            "nested": "sub/train_trial_yyyyy"}[form]
+    _write_raw_state(tune_dir, "2026-11-11_09-00-00", [
+        [json.dumps({"trainable_name": "train_trial", "relative_logdir": name}), "{}"],
+    ])
+
+    _cleanup_old_tune_experiments(tune_dir=tune_dir, keep_last=2, reserve_new=True)
+
+    a_trial = tune_dir / _trial_name("dea5e", A_TS)
+    assert (a_trial / "checkpoint_000250" / "trainer.pt").is_file()
+    assert (tune_dir / "experiment_state-2026-08-20_16-13-10.json").is_file()
+    assert (outside / "checkpoint_000001" / "trainer.pt").is_file()
+
+
 def test_a_population_with_one_checkpointed_trial_uses_a_slot(tmp_path: Path) -> None:
     """PBT: one trial errored, its sibling holds a checkpoint -> the state file
     is checkpoint-bearing, so it fills the slot and the older run goes."""
