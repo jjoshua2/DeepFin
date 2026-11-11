@@ -85,6 +85,28 @@ def test_fresh_start_reserves_room_for_the_new_experiment(
 
     monkeypatch.setattr(tune, "Tuner", FakeTuner)
 
+    if keep_last == 1 and not resume:
+        # A fresh run cannot discard its only recovery artifacts at startup.
+        before = {p.relative_to(tune_dir): p.read_bytes() for p in tune_dir.rglob("*") if p.is_file()}
+
+        def unexpected_startup(**_kwargs):
+            raise AssertionError("retention-one rejection must precede startup and pruning")
+
+        monkeypatch.setattr(harness, "_launch_distributed_server", unexpected_startup)
+        monkeypatch.setattr(harness, "_maybe_launch_shared_broker", unexpected_startup)
+        monkeypatch.setattr(harness, "_cleanup_old_tune_experiments", unexpected_startup)
+        monkeypatch.setattr(ray, "init", unexpected_startup)
+        with pytest.raises(ValueError, match="Use a new work directory"):
+            harness.run_tune(
+                base_config={"tune_keep_last_experiments": keep_last},
+                work_dir=tmp_path, num_samples=1, resume=resume,
+            )
+        after = {p.relative_to(tune_dir): p.read_bytes() for p in tune_dir.rglob("*") if p.is_file()}
+        assert after == before
+        assert old_dir.is_dir() and previous_dir.is_dir() and unrelated.is_dir()
+        assert not (tune_dir / current_trial).exists()
+        return
+
     result = harness.run_tune(
         base_config={} if keep_last is None else {"tune_keep_last_experiments": keep_last},
         work_dir=tmp_path, num_samples=1, resume=resume,
