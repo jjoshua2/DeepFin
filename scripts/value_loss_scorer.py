@@ -557,6 +557,12 @@ class Contrast:
     column: str
     delta: float
     ci: tuple[float, float]
+    # Exact probability that one game-bootstrap draw lacks a stratum, from the
+    # per-stratum game counts alone (no resampling). NaN when not computed.
+    p_undefined: float = float("nan")
+    # Realized fraction of the n_boot draws that lacked a stratum. NaN when no
+    # resampling ran (CI withheld before drawing, or no data).
+    undefined_frac: float = float("nan")
 
     @property
     def excludes_zero(self) -> bool:
@@ -581,6 +587,34 @@ def _per_game_sums(
     return sums, counts
 
 
+# Two-sided level of the contrast's percentile interval (95% CI).
+CONTRAST_ALPHA = 0.05
+# Largest per-draw probability of an undefined resample (a stratum with no
+# game in the draw) at which the CI is still reported. Tied to alpha: at
+# alpha/20 the conditioning in ``contrast`` can move each tail's coverage by
+# at most p = 0.0025, i.e. 10% of that tail's nominal alpha/2 = 0.025 mass.
+CONTRAST_MAX_P_UNDEFINED = CONTRAST_ALPHA / 20.0
+
+
+def undefined_draw_probability(games: np.ndarray, ga: np.ndarray, gb: np.ndarray) -> float:
+    """P(one game-bootstrap draw over ``games`` lacks stratum a or stratum b).
+
+    A draw is G games sampled with replacement from the G-game pool. A stratum
+    present in k of them is absent from a draw with probability (1 - k/G)^G.
+    Both strata absent at once is impossible (every pooled game carries rows
+    of at least one stratum), so the union is the exact sum, not just a bound.
+    A deterministic function of the data: it does not depend on seed or n_boot.
+    """
+    g = int(games.size)
+    if g == 0:
+        return 1.0
+    total = 0.0
+    for gid in (ga, gb):
+        k = int(np.unique(gid).size)
+        total += 0.0 if k >= g else float(np.exp(g * np.log1p(-k / g)))
+    return min(1.0, total)
+
+
 def contrast(
     lost: RowSet, rest: RowSet, q_lost: np.ndarray, q_rest: np.ndarray, *,
     column: str, slope: float, draw_width_cp: float, n_boot: int, seed: int,
@@ -588,10 +622,13 @@ def contrast(
     """``mean(column | lost) - mean(column | rest)``, bootstrapped over GAMES.
 
     Both strata are resampled in the same bootstrap draw, so the CI is on the
-    difference rather than on two independently-resampled means. Return an
-    unavailable CI when fewer than two games or draws exist, or any draw
-    lacks a stratum. Dropping undefined draws conditions the interval on
-    coverage; it does not estimate the declared game-bootstrap uncertainty.
+    difference rather than on two independently-resampled means. The CI is
+    withheld (NaN) when fewer than two games or draws exist, or when the
+    ANALYTIC probability that a draw lacks a stratum exceeds
+    ``CONTRAST_MAX_P_UNDEFINED``. That decision is made from the per-stratum
+    game counts before any resampling, so it cannot change with the seed or
+    with n_boot (an any-draw-undefined rule withheld MORE often as n_boot
+    grew, and invited re-rolling the seed until a CI appeared).
     """
     rng = np.random.default_rng(seed)
     a, _, _ = _per_row_errors(lost, q_lost, slope=slope, draw_width_cp=draw_width_cp)
@@ -614,21 +651,41 @@ def contrast(
     # bootstrap is one matrix index. Grouping the rows per draw instead is
     # O(n_boot x games x rows) and turns a full-window read into minutes.
     games = np.unique(np.concatenate([ga, gb]))
-    if games.size < 2 or n_boot < 2:
-        return Contrast(column=column, delta=delta, ci=(float("nan"), float("nan")))
+    nan_ci = (float("nan"), float("nan"))
+    p_undef = undefined_draw_probability(games, ga, gb)
+    if games.size < 2 or n_boot < 2 or p_undef > CONTRAST_MAX_P_UNDEFINED:
+        return Contrast(column=column, delta=delta, ci=nan_ci, p_undefined=p_undef)
     sum_a, cnt_a = _per_game_sums(va, ga, games)
     sum_b, cnt_b = _per_game_sums(vb, gb, games)
     draws = rng.integers(0, games.size, size=(n_boot, games.size))
     count_a = cnt_a[draws].sum(axis=1)
     count_b = cnt_b[draws].sum(axis=1)
-    if np.any(count_a == 0) or np.any(count_b == 0):
-        return Contrast(column=column, delta=delta, ci=(float("nan"), float("nan")))
-    boot = sum_a[draws].sum(axis=1) / count_a - sum_b[draws].sum(axis=1) / count_b
-    if not np.isfinite(boot).all():
-        return Contrast(column=column, delta=delta, ci=(float("nan"), float("nan")))
+    # Conditioning on defined draws. The undefined draws are exactly the
+    # resamples with no game from one stratum; the statistic does not exist
+    # there, so the only question is how far dropping them can bias the
+    # percentile interval. Assign those draws ANY values: the full CDF is
+    # F = (1-p) F_defined + p H, so |F - F_defined| <= p at every point and
+    # each tail's coverage shifts by at most p. The gate above holds p
+    # (analytically) at <= alpha/20, so the shift is at most ~10% of a tail's
+    # nominal alpha/2; above it the bias can be a material share of the tail
+    # and the interval is withheld instead.
+    defined = (count_a > 0) & (count_b > 0)
+    undefined_frac = float(1.0 - defined.mean())
+    with np.errstate(invalid="ignore", divide="ignore"):
+        boot = sum_a[draws].sum(axis=1) / count_a - sum_b[draws].sum(axis=1) / count_b
+    boot = boot[defined]
+    # Defined draws are finite by construction (finite values, positive
+    # counts); fewer than two survive with probability ~p_undef**(n_boot-1).
+    if boot.size < 2 or not np.isfinite(boot).all():
+        return Contrast(
+            column=column, delta=delta, ci=nan_ci,
+            p_undefined=p_undef, undefined_frac=undefined_frac,
+        )
+    half = CONTRAST_ALPHA / 2.0
     return Contrast(
         column=column, delta=delta,
-        ci=(float(np.quantile(boot, 0.025)), float(np.quantile(boot, 0.975))),
+        ci=(float(np.quantile(boot, half)), float(np.quantile(boot, 1.0 - half))),
+        p_undefined=p_undef, undefined_frac=undefined_frac,
     )
 
 
@@ -715,8 +772,15 @@ def render(report: Report) -> str:
             flag = "CI unavailable"
         else:
             flag = "excludes 0" if c.excludes_zero else "CONTAINS 0"
+        cover = ""
+        if np.isfinite(c.p_undefined):
+            realized = (
+                f"{c.undefined_frac:.4f}" if np.isfinite(c.undefined_frac) else "n/a"
+            )
+            cover = f"  undefined draws p={c.p_undefined:.2e} realized={realized}"
         lines.append(
-            f"{c.column:>12} {c.delta:>+10.4f}  95% CI [{c.ci[0]:+.4f}, {c.ci[1]:+.4f}]  {flag}"
+            f"{c.column:>12} {c.delta:>+10.4f}  95% CI [{c.ci[0]:+.4f}, {c.ci[1]:+.4f}]"
+            f"{cover}  {flag}"
         )
     return "\n".join(lines)
 
