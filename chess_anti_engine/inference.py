@@ -336,6 +336,80 @@ def _detach_attached_shm_from_resource_tracker(shm: SharedMemory) -> None:
         pass  # already unregistered (race between parent/child detach)
 
 
+# CPython's message when SharedMemory(create=False) maps a zero-length segment.
+# Used only as a secondary signal (see _attach_error_is_unsized_segment); the
+# primary test is the segment's actual size, which does not depend on wording.
+_EMPTY_MAP_MESSAGE = "cannot mmap an empty file"
+
+
+def _posix_shm_name(name: str) -> str:
+    # SharedMemory always prepends "/" on POSIX; mirror it exactly.
+    return "/" + name
+
+
+def _posix_shm_segment_size(name: str) -> int | None:
+    """Current size in bytes of the named POSIX segment; None if it does not exist.
+
+    Also None on a platform without POSIX shared memory, where the size cannot
+    be read and callers must not treat the segment as known-empty.
+    """
+    try:
+        import _posixshmem
+    except ImportError:
+        return None
+    try:
+        fd = _posixshmem.shm_open(_posix_shm_name(name), os.O_RDONLY, mode=0o600)
+    except FileNotFoundError:
+        return None
+    try:
+        return int(os.fstat(fd).st_size)
+    finally:
+        os.close(fd)
+
+
+def _attach_error_is_unsized_segment(name: str, exc: ValueError) -> bool:
+    """True when an attach ValueError came from a segment that exists but is unsized.
+
+    POSIX publishes a segment's name at ``shm_open`` and sizes it at
+    ``ftruncate``; an attach in between fails to mmap the zero-length file. The
+    test is the segment's size *now*, not the exception wording, so it survives
+    CPython changing the message. The known message is accepted as well only to
+    cover the creator finishing ``ftruncate`` between the failed mmap and our
+    size read -- a retry is then correct and immediately succeeds. Any other
+    ValueError (bad name, length mismatch) is a real error.
+    """
+    if _posix_shm_segment_size(name) == 0:
+        return True
+    return str(exc) == _EMPTY_MAP_MESSAGE
+
+
+def _unlink_stale_slot_segment(name: str) -> None:
+    """Remove a leftover slot segment before the broker re-creates *name*.
+
+    A creator that crashed between ``shm_open`` and ``ftruncate`` leaves a
+    zero-length orphan, which cannot be attached (SharedMemory raises
+    ValueError on the empty mmap). Unlink it directly by name so broker
+    startup is not killed by its predecessor's crash. A ValueError for a
+    segment that is NOT zero-length still propagates.
+    """
+    try:
+        old = SharedMemory(name=name, create=False)
+    except FileNotFoundError:
+        return
+    except ValueError:
+        if _posix_shm_segment_size(name) != 0:
+            raise
+        import _posixshmem
+
+        # The failed constructor never registered with the resource tracker,
+        # so there is nothing to unregister.
+        with contextlib.suppress(FileNotFoundError):
+            _posixshmem.shm_unlink(_posix_shm_name(name))
+        return
+    old.close()
+    old.unlink()
+
+
 # ---------------------------------------------------------------------------
 # Local (in-process) evaluator — used in tests and single-GPU mode
 # ---------------------------------------------------------------------------
@@ -2017,13 +2091,8 @@ class SlotBroker:
 
         for i in range(num_slots):
             name = f"{slot_prefix}-{i}"
-  # Clean up stale shm with the same name
-            try:
-                old = SharedMemory(name=name, create=False)
-                old.close()
-                old.unlink()
-            except FileNotFoundError:
-                pass
+  # Clean up stale shm with the same name (incl. a zero-length orphan)
+            _unlink_stale_slot_segment(name)
             shm = SharedMemory(name=name, create=True, size=self._layout.total_bytes)
             slot = _InferenceSlot(shm, self._layout, owns=True)
             slot.state = _STATE_IDLE
@@ -3058,13 +3127,10 @@ class SlotInferenceClient:
         mismatch is NOT in that class: magic is written last and is the publish
         barrier, so seeing valid magic means the layout id beside it is final.
 
-        The size branch is marked settling too, but note it does NOT actually
-        cover the ``ftruncate`` window: ``SharedMemory(name=..., create=False)``
-        mmaps the fd and raises ``ValueError: cannot mmap an empty file`` before
-        this function runs, and ``_connect`` only catches ``FileNotFoundError``
-        (unchanged from before this guard existed). In practice the size branch
-        fires only for a genuinely undersized segment -- an OLD broker serving a
-        NEW client -- where retrying to the deadline is merely slow, not wrong.
+        The zero-length ``shm_open`` -> ``ftruncate`` window raises from the
+        SharedMemory constructor before validation; ``_connect`` retries that
+        specific empty-map error within the same deadline. The size branch
+        below handles a nonempty undersized segment, which still cannot be read.
         """
         want = self._layout.total_bytes
         if int(shm.size) < want:
@@ -3104,13 +3170,31 @@ class SlotInferenceClient:
                 return slot
             try:
                 shm = SharedMemory(name=self._slot_name, create=False)
-            except FileNotFoundError:
+            except (FileNotFoundError, ValueError) as exc:
+                # POSIX publishes the name before the creator sizes the segment.
+                # Only a ValueError from a segment that is still zero-length is
+                # transient; preserve unrelated ValueErrors and all
+                # access/resource errors instead of hiding them.
+                if isinstance(exc, ValueError) and not _attach_error_is_unsized_segment(
+                    self._slot_name, exc,
+                ):
+                    raise
                 self._disconnect()
                 if time.monotonic() >= deadline:
+                    # The two timeouts point at different culprits: no name at
+                    # all means no broker created the slot; a name that stayed
+                    # zero-length means a creator opened it and never sized it.
+                    if isinstance(exc, ValueError):
+                        what = (
+                            "exists but is still zero-length (its creator never "
+                            "sized it)"
+                        )
+                    else:
+                        what = "never appeared (was not available)"
                     raise TimeoutError(
-                        f"inference broker slot {self._slot_name!r} was not available "
+                        f"inference broker slot {self._slot_name!r} {what} "
                         f"after {self._request_timeout_s:.3f}s"
-                    ) from None
+                    ) from exc
                 time.sleep(0.01)
                 continue
             _detach_attached_shm_from_resource_tracker(shm)
@@ -3760,12 +3844,7 @@ class SharedSlotBroker:
         slots: list[_InferenceSlot] = []
         for i in range(self.slots_per_trial):
             name = f"{slot_prefix}-{i}"
-            try:
-                old = SharedMemory(name=name, create=False)
-                old.close()
-                old.unlink()
-            except FileNotFoundError:
-                pass
+            _unlink_stale_slot_segment(name)
             shm = SharedMemory(name=name, create=True, size=self._layout.total_bytes)
             slot = _InferenceSlot(shm, self._layout, owns=True)
             slot.state = _STATE_IDLE
