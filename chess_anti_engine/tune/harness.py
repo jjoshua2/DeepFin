@@ -271,7 +271,11 @@ def _guard_fresh_retention_one(*, tune_dir: Path, keep_last: int | str) -> None:
 
     Include orphan state, trial and policy artifacts, not just readable states.
     This is a preflight check, not a backup or protection against concurrent
-    writers. Use a separate work directory for a new experiment.
+    writers. The way out is a larger retention count or a separate work
+    directory -- not --resume: a resumed trial restores its Ray checkpoint and
+    `_restore_checkpoint_or_salvage` reads `salvage_seed_pool_dir` only when
+    there is no checkpoint, so a salvage restart under --resume silently drops
+    the salvage pool.
     """
     try:
         count = int(keep_last)
@@ -289,9 +293,13 @@ def _guard_fresh_retention_one(*, tune_dir: Path, keep_last: int | str) -> None:
         ):
             raise ValueError(
                 "Fresh Tune startup with tune_keep_last_experiments=1 "
-                f"would risk existing artifacts in {tune_dir}. "
-                "Use a new work directory, or --resume to continue the existing run. "
-                "No artifacts have been pruned and no sidecars have been launched."
+                f"would delete the existing experiment in {tune_dir} before the "
+                "new one exists. Set tune_keep_last_experiments >= 2 to keep "
+                "the previous experiment, or pass a new --work-dir. --resume "
+                "continues the existing trial from its Ray checkpoint and "
+                "ignores --salvage-seed-pool-dir, so it is not a way to start a "
+                "salvage restart. No artifacts have been pruned and no sidecars "
+                "have been launched."
             )
 
 

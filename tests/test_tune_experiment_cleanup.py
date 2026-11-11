@@ -96,7 +96,7 @@ def test_fresh_start_reserves_room_for_the_new_experiment(
         monkeypatch.setattr(harness, "_maybe_launch_shared_broker", unexpected_startup)
         monkeypatch.setattr(harness, "_cleanup_old_tune_experiments", unexpected_startup)
         monkeypatch.setattr(ray, "init", unexpected_startup)
-        with pytest.raises(ValueError, match="Use a new work directory"):
+        with pytest.raises(ValueError, match="tune_keep_last_experiments >= 2"):
             harness.run_tune(
                 base_config={"tune_keep_last_experiments": keep_last},
                 work_dir=tmp_path, num_samples=1, resume=resume,
