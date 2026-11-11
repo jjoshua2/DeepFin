@@ -43,6 +43,8 @@ from chess_anti_engine.tune._utils import (
     terminate_process as _stop_process,
 )
 from chess_anti_engine.tune.process_cleanup import (
+    CAE_ENGINE_MARKER_ENV,
+    list_pids_with_env,
     terminate_engines_owned_by,
     terminate_matching_processes,
 )
@@ -1439,6 +1441,39 @@ def _stop_worker_processes(procs: list[subprocess.Popen[bytes]]) -> None:
                 "reaped %d orphaned Stockfish engine(s) %s left by worker pid %d "
                 "(PDEATHSIG did not fire)", len(orphans), orphans, worker_pid,
             )
+
+
+def _stop_local_selfplay_for_training(
+    *, worker_procs: list[subprocess.Popen[bytes]],
+    broker_proc_box: list[subprocess.Popen[bytes] | None], expected_workers: int,
+) -> None:
+    """Stop owned producers and prove exit before the learner may use the GPU.
+
+    The ordinary stop helpers tolerate a final kill timeout on cleanup paths.
+    This phase boundary cannot: preserve the handles and refuse to train if
+    any process remains alive, so the trial's finally block can retry cleanup.
+    """
+    if len(worker_procs) != expected_workers or expected_workers < 1:
+        raise RuntimeError("sequential selfplay cannot verify ownership of the local workers")
+    if len(broker_proc_box) != 1:
+        raise RuntimeError("sequential selfplay requires the owned per-trial broker handle")
+    _stop_worker_processes(worker_procs)
+    _stop_process(broker_proc_box[0])
+    producers = [*worker_procs]
+    if broker_proc_box[0] is not None:
+        producers.append(broker_proc_box[0])
+    alive = [proc.pid for proc in producers if proc.poll() is None]
+    if alive:
+        raise RuntimeError(f"refusing training while selfplay producers remain alive: {alive}")
+    orphan_engines = [
+        pid for proc in worker_procs
+        for pid in list_pids_with_env(CAE_ENGINE_MARKER_ENV, str(proc.pid))
+    ]
+    if orphan_engines:
+        raise RuntimeError(f"refusing training while owned Stockfish engines remain alive: {orphan_engines}")
+    worker_procs.clear()
+    broker_proc_box[0] = None
+    print("[trial] sequential selfplay barrier: all owned producers exited", flush=True)
 
 
 def _ensure_distributed_workers(

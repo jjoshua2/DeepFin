@@ -21,6 +21,7 @@ from chess_anti_engine.tune._utils import (
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.utils.config_yaml import strict_config_bool
+from chess_anti_engine.utils.sequential_selfplay import validate_sequential_selfplay_config
 import contextlib
 
 
@@ -1024,6 +1025,7 @@ def run_tune(
         fits comfortably in 32 GB VRAM.
     """
     validate_declared(base_config | {"resume": resume})
+    validate_sequential_selfplay_config(base_config)
     try:
         import ray
         from ray import tune

@@ -50,6 +50,7 @@ from chess_anti_engine.tune.diff_focus_guard import evaluate_diff_focus_regime
 from chess_anti_engine.tune.distributed_runtime import (
     _ensure_distributed_workers,
     _ensure_inference_broker,
+    _stop_local_selfplay_for_training,
     revive_dead_selfplay_processes,
     _ingest_distributed_selfplay,
     _prune_processed_shards,
@@ -1321,6 +1322,13 @@ def _run_selfplay_phase(
             ),
             prev_published_model_sha,
             current_window,
+        )
+
+    if tc.distributed_stop_selfplay_before_training:
+        _stop_local_selfplay_for_training(
+            worker_procs=distributed_worker_procs,
+            broker_proc_box=broker_proc_box,
+            expected_workers=tc.distributed_workers_per_trial,
         )
 
     _export_selfplay_shards_for_siblings(

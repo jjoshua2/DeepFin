@@ -7,6 +7,7 @@ from typing import Any
 
 from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
 from chess_anti_engine.tune.fresh_rl_donor import validate_config as validate_fresh_rl_config
+from chess_anti_engine.utils.sequential_selfplay import validate_sequential_selfplay_config
 
 
 def strict_config_bool(value: Any, *, key: str, source: str) -> bool:
@@ -368,6 +369,7 @@ _TUNE_KEYS = (
     "distributed_inference_max_batch_per_slot",
     "distributed_inference_slots_per_worker",
     "distributed_pause_selfplay_during_training", "distributed_wait_timeout_seconds",
+    "distributed_stop_selfplay_before_training",
     "distributed_prefetch_shards",
     "distributed_async_test_eval", "distributed_async_test_eval_timeout_s",
     "distributed_min_games_fraction",
@@ -483,6 +485,7 @@ _RUN_BOOLEAN_KEYS = frozenset({
     "distributed_worker_use_compile", "distributed_worker_auto_tune",
     "distributed_worker_threaded", "distributed_worker_inference_fp8",
     "distributed_inference_broker_enabled", "distributed_inference_shared_broker", "pbt_synch",
+    "distributed_stop_selfplay_before_training",
     "search_smolgen", "search_nla", "search_optimizer",
     "asha_optimizer_only", "search_feature_dropout_p",
     "search_w_volatility", "search_volatility_source",
@@ -645,6 +648,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     _check_boolean_run_values(flat)
     _check_pb2_bounds(flat)
     validate_fresh_rl_config(flat)
+    validate_sequential_selfplay_config(flat)
     return flat
 
 

@@ -25,6 +25,7 @@ from chess_anti_engine.utils.architecture import (
     normalize_ffn_mult_by_layer,
     normalize_phase_piece_thresholds,
 )
+from chess_anti_engine.utils.sequential_selfplay import validate_sequential_selfplay_config
 
 if TYPE_CHECKING:
     from chess_anti_engine.train.trainer import TrainMetrics
@@ -513,6 +514,7 @@ class TrialConfig:
     distributed_prev_model_max_fraction: float = 0.33
     distributed_stale_pause_target_games: int = -1
     distributed_pause_selfplay_during_training: bool = False
+    distributed_stop_selfplay_before_training: bool = False
     processed_max_age_seconds: float = 43200.0
     # Background shard prefetcher: zarr decompress moves to a daemon thread
     # during train phase. Default off until measured in production.
@@ -586,6 +588,7 @@ class TrialConfig:
             return default if v is None else v
 
         validate_fresh_rl_config(config)
+        validate_sequential_selfplay_config(config)
         num_layers = int(config.get("num_layers", 6))
 
   # ⚑ CALLED FOR ITS EXCEPTION, AND THE RESULT IS DELIBERATELY DISCARDED.
@@ -1005,6 +1008,7 @@ class TrialConfig:
             distributed_prev_model_max_fraction=float(config.get("distributed_prev_model_max_fraction", 0.33)),
             distributed_stale_pause_target_games=int(config.get("distributed_stale_pause_target_games", -1)),
             distributed_pause_selfplay_during_training=bool(config.get("distributed_pause_selfplay_during_training", False)),
+            distributed_stop_selfplay_before_training=config.get("distributed_stop_selfplay_before_training", False),
             processed_max_age_seconds=float(config.get("processed_max_age_seconds", 43200.0)),
             distributed_prefetch_shards=bool(config.get("distributed_prefetch_shards", False)),
             distributed_prefetch_max_queued_mb=int(config.get("distributed_prefetch_max_queued_mb", 768)),

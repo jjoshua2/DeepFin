@@ -338,6 +338,7 @@ _TOPOLOGY_KEYS = frozenset({
     "distributed_inference_aot_dir",
     "distributed_inference_broker_enabled",
     "distributed_inference_shared_broker",
+    "distributed_stop_selfplay_before_training",
     "distributed_inference_slots_per_worker",
     "num_samples",
     "max_concurrent_trials",
