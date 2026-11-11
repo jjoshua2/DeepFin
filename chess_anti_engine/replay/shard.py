@@ -557,7 +557,12 @@ def sf_eval_pv_orphan_flags(
     ``_SearchInfoAccumulator.cp_pv1`` / ``mate_pv1``, and the same accumulator
     files the rank-1 line into ``res.pvs[0]``, so on a healthy row the stored
     ``sf_label_meta`` eval and the stored ``sf_multipv_raw`` row 0 carry the
-    SAME (cp, mate) pair BY CONSTRUCTION — not by empirical agreement.
+    SAME (cp, mate) pair — by construction whenever the search's last rank-1
+    line was exact. Since the MultiPV rerank parser fix that is no longer
+    every healthy row: a search that stops on a rank-1 BOUND line for a
+    different move splits the pair with no desync involved (the benign route
+    below, ~0.2% of searches at MultiPV 6 / 150k nodes). So a healthy row
+    agrees by construction in the common case, not on every row.
 
     They differ when rank 1's line was dropped by ``_collect_sparse_pv_rows``,
     leaving a lower-ranked line at row 0. That is a Stockfish answering a
@@ -575,6 +580,18 @@ def sf_eval_pv_orphan_flags(
     with no drop involved. Real Stockfish ships ``pv`` on every scored MultiPV
     line and this was never observed: 0 orphans over the 474,278 labelled rows
     of the pre-episode range. It is not proven impossible, only unobserved.
+
+    ⚑ A third, BENIGN route since the MultiPV rerank parser fix
+    (docs/experiments/2026-11-11-multipv-rerank-parser.md): a node-limited
+    search that stops while rank 1 is a bound line for a DIFFERENT move than
+    the last exact rank-1 line files that move (SF's ``bestmove``, with its
+    own earlier exact score) at row 0, while the scalar stays on the previous
+    exact rank-1 line. Real Stockfish produced it on 2 of 1000 MultiPV-6
+    searches at 150k nodes (0 of 200 at MultiPV 40 / 150k in the independent
+    review's bank), on random-playout positions, so the production rate is
+    unmeasured. That is 5x below ``_SF_EVAL_PV_ORPHAN_WARN_RATE`` (0.01). Row 0 is
+    deliberately NOT reordered to match the scalar: the full-strength
+    curriculum path plays ``cand_indices[0]`` as SF's best.
 
     **Why it is not a second copy of the policy detector.** The policy-side
     fingerprint (``train/losses.py::sf_multipv_presence_counts``) fires when NO
@@ -598,7 +615,15 @@ def sf_eval_pv_orphan_flags(
     pre-episode ids 33118:33387 (474,278 lab.)      0.000000      0.000000
     ==========================================  ============  ============
 
-    **Floor.** Exactly 0.000000, and structurally so per the paragraph above.
+    **Floor.** These measurements predate the MultiPV rerank parser fix. On
+    data parsed by that older code the floor was exactly 0.000000 on the
+    pre-episode range. On data parsed after the fix the floor is NOT zero: the
+    benign bound route above adds about 0.002 (2/1000 at MultiPV 6 / 150k nodes,
+    measured on random-playout positions, not production ones). Desync is
+    indicated by a rate above ``_SF_EVAL_PV_ORPHAN_WARN_RATE`` (0.01, about 5x
+    that benign floor; the quarantined shards read ~0.1). A rate between ~0.002
+    and 0.01 is not alarming on its own. Re-measure the floor on production
+    labels before tightening the bar.
     The 3.0e-5 on the policy-clean subset is 34 rows in 25 shards, and it is
     burst-edge RESIDUE rather than a background: those 25 shard ids sit a median
     of 25 from the nearest quarantined id against 49.7 +/- 15.0 for a uniform
