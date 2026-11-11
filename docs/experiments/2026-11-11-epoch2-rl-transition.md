@@ -110,3 +110,70 @@ new conflicting stage. After a clean pilot, evaluate before expanding training;
 at most one further adjustment is justified by the first pilot's evidence unless
 the user changes the budget or scope. Record the readout against its rule in this
 file, including negative/inconclusive verdicts and returned resource custody.
+
+## November 11 qualification readout and CPU wiring preregistration
+
+Source `bd1ae0cbe7d863dbb3dd124034b0bbe7090a4a99` composes the strict startup
+and sequential local phases. Separate component and final-composition independent
+reviews found no remaining runtime defect. The line-accounting test finding was
+corrected. The composed focused suite passed 337 tests with no skips, including
+all 18 Stockfish-backed end-to-end cases; the composition reviewer independently
+passed 67 relevant checks. Local whole lint's three `_posixshmem` resolution
+failures reproduce on unchanged source; CI lint passes without a suppression.
+
+Bounded CUDA and Ray qualification both passed with owned process closure and
+lease release verified. CUDA tested BF16 forward/backward, finite gradients,
+model/optimizer checkpoint roundtrip and compiled/eager parity under Torch
+`2.14.0+cu130` on the RTX 5090 (33.991 seconds inside the child, peak allocated
+285.38 MiB). Ray `2.58.0` tested local startup, persisted Tuner restoration and
+checkpoint continuation (10.952 seconds inside the child). Both are synthetic
+runtime checks, not donor training or strength evidence.
+
+The installed CPU qualification at
+`rl-transition-preflight-20261111-local-v1/installed-cpu-qualification-v2/result.json`
+exercised real argparse/driver conversion, actual donor loading and first export,
+manifest reconstruction and the installed worker loading method. All 494 tensors
+and the policy/value forward outputs match exactly, with fresh Aurora and
+scheduler objects/state, sqrt-release schedule and clipping cap 1.0. It did not
+start an HTTP worker process. The first diagnostic's reporting-only ZClip field
+typo is preserved in the failed v1 receipt and corrected in v2.
+
+After the owned CUDA job closed, external GPU use remained around 50% with no
+Linux compute process reported. Further GPU work is deferred while it is busy.
+The next independent gate is a **CPU-only two-iteration wiring run**, whose short
+game horizon supports no playing-strength claim.
+
+- Config: `/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cpu-wiring-config-v1/config.yaml`
+  SHA-256 `9fcca3f0786cb9363e5130feb2cd46280d96fe40412830dd1f3956680ca4f56b`.
+- New output root: `/home/josh/chess-artifacts/operations/rl-cpu-wiring-20261111-48546328`.
+- Two iterations, two completed-game targets each, Gumbel 16 simulations, maximum
+  48 plies, batch 8 and one-update cap per iteration. Both learner and worker use
+  CPU and Ray allocates zero GPUs. The readonly baseline copy is hash-verified;
+  all model settings and the strict startup contract are retained. The two
+  iterations intentionally exercise changed-weight publication and worker recreation.
+  The supervised command begins `/usr/bin/env CUDA_VISIBLE_DEVICES=` **inside**
+  the stage owner, so its child override survives the owner's environment setup.
+  This is required because worker capability telemetry probes every visible GPU
+  even when its model device is CPU; zero Ray GPU resources alone is insufficient.
+- Fixed SF 1,000 nodes, PID off (so curriculum uses unhandicapped best-SF moves),
+  half selfplay/half curriculum, SF/search/outcome WDL shares 0.5/0.2/0.3, and
+  fresh Aurora LR 3e-6 with matrix multiplier 20 and eight-update warmup. SF may
+  adjudicate at the ply cap; these are wiring samples, not factual-outcome research.
+- Finite 600-second stage, then verified owned cleanup, under the canonical leases
+  and existing controls. New local-only credentials provision only the new loopback
+  server. No existing account, run, checkpoint or control is changed.
+- Success: two actual updates, finite reported losses and all final tensors, plus
+  publication of changed weights for the next collection and closed owned processes.
+  Deciding readout command:
+
+  ```bash
+  CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 \
+  /home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python \
+    /home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/verify_cpu_wiring.py
+  ```
+
+- Kill on timeout, control request, resource floor or runtime exception. A failure
+  is a wiring failure with retained receipts, not a negative RL-strength result.
+  Do not resume it as an exact RL recovery. After success, qualify the real CUDA
+  handoff when the GPU is available, then preregister the scientific pilot and its
+  fixed paired evaluation budgets before observing playing results.
