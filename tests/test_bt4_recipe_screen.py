@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import sys
+import threading
+import time
 from typing import Any
 
 import pytest
@@ -45,6 +47,49 @@ def test_owned_stage_polls_every_second_by_default(tmp_path, monkeypatch):
 def test_owned_stage_reads_the_poll_seam(tmp_path, monkeypatch):
     assert owned.STAGE_POLL_SECONDS == _FAST_STAGE_POLL
     assert _stage_seconds(tmp_path, monkeypatch) < 0.9
+
+
+@pytest.mark.parametrize("where", ["out", "external"])
+def test_stop_mid_stage_kills_the_running_child(tmp_path, monkeypatch, where):
+    """bt4_direct_screen.py: the in-loop STOP check. A STOP touched while the
+    child is running must end the stage within a few polls, kill the owned
+    group and leave failed.json -- not wait for the child to finish."""
+    monkeypatch.setattr(owned, "disk_guard", lambda out: None)
+    out = tmp_path / "stage"
+    ready = tmp_path / "ready"
+    alive = tmp_path / "alive"
+    external = tmp_path / "EXTERNAL_STOP"
+    stop = out / "STOP" if where == "out" else external
+    child = (
+        "import pathlib,time; a=pathlib.Path(%r); a.write_text(str(time.time())); "
+        "pathlib.Path(%r).touch(); "
+        "[ (time.sleep(0.05), a.write_text(str(time.time()))) for _ in range(400) ]"
+        % (str(alive), str(ready))
+    )
+
+    def touch_stop() -> None:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        stop.touch()
+
+    threading.Thread(target=touch_stop, daemon=True).start()
+    started = time.monotonic()
+    with pytest.raises(ValueError, match="stop requested"):
+        owned.run_owned_stage(
+            [sys.executable, "-c", child], out, 60, None, "probe", {}, manifest={},
+            stop_paths=(external,), cwd=tmp_path, env=dict(os.environ),
+        )
+    elapsed = time.monotonic() - started
+    assert ready.exists()
+    assert elapsed < 8.0, elapsed  # the child alone would run ~20 s
+    failed = json.loads((out / "failed.json").read_text())
+    assert failed["error"] == "stop requested"
+    assert "process_complete" not in failed
+    # The owned group is dead: the heartbeat stops advancing.
+    beat = alive.read_text()
+    time.sleep(0.3)
+    assert alive.read_text() == beat
 
 
 @pytest.mark.parametrize("explicit", [False, True])
@@ -406,3 +451,37 @@ def test_lookahead_refuses_old_runtime_before_cpu_model_preparation(tmp_path, mo
          "candidate_training": {}, "reference_training": {}, "runtime": {}}
     with pytest.raises(reader.InvalidCell, match="wrong CUDA overlay"):
         tool.inputs(m)
+
+
+def _inflate(monkeypatch, seconds):
+    real = owned.run_owned_stage
+
+    def charged(*args, **kwargs):
+        receipt = real(*args, **kwargs)
+        return {**receipt, "gpu_seconds": seconds}
+
+    monkeypatch.setattr(owned, "run_owned_stage", charged)
+
+
+def test_arena_package_cap_refuses_the_high_stage_over_budget(package, monkeypatch):
+    """bt4_recipe_screen.py: `charges <= 2 * HARD_SECONDS`. Each stage charged
+    one second over HARD_SECONDS: low passes (HARD+1), high pushes the package
+    to 2*HARD+2 and must be refused before the high cell is certified."""
+    m, _ = package
+    _inflate(monkeypatch, tool.HARD_SECONDS + 1)
+    with pytest.raises(reader.InvalidCell, match="arena package cap exceeded"):
+        tool.execute(m)
+    out = Path(m["output"])
+    assert (out / "low/complete.json").is_file()
+    assert not (out / "high/complete.json").exists()
+    assert not (out / "complete.json").exists()
+    assert (out / "failed.json").exists()
+
+
+def test_arena_package_cap_admits_exactly_two_hard_caps(package, monkeypatch):
+    """The boundary: two stages at exactly HARD_SECONDS each is the cap, not over it."""
+    m, _ = package
+    _inflate(monkeypatch, tool.HARD_SECONDS)
+    tool.execute(m)
+    out = Path(m["output"])
+    assert json.loads((out / "complete.json").read_text())["complete"] is True
