@@ -229,7 +229,10 @@ def _trial_dirs_referenced_by(state_file: Path) -> set[str] | None:
         names: set[str] = set()
         for entry in payload["trial_data"]:
             logdir = json.loads(entry[0]).get("relative_logdir")
-            if isinstance(logdir, str) and logdir:
+            # A trial dir is a direct child of the tune dir. Anything else
+            # (absolute, `..`, nested) names nothing we manage, and must not
+            # let a checkpoint elsewhere count toward this file's slot.
+            if isinstance(logdir, str) and logdir and Path(logdir).name == logdir:
                 names.add(logdir)
     except Exception as exc:
         print(f"[run_tune] Could not read trial dirs from {state_file.name}: {exc}")
@@ -362,6 +365,15 @@ def _cleanup_old_tune_experiments(
     stops all trial-dir deletion for the pass (see below). With healthy
     state files only, this is exactly "keep the newest `keep_last` files".
 
+    Unreferenced trial dirs: one that no retained state file references is
+    deleted only if it holds no checkpoint, or if a readable state file that
+    this pass prunes names it (ordinary rotation). A dir holding a checkpoint
+    that no readable state file names -- its state files renamed to
+    `.corrupt`/`.bak_*`, unreadable, or parsed without a `relative_logdir` --
+    is kept with a WARNING every startup, since its checkpoints may be the
+    live run's only copy. Reclaiming that space is manual: confirm and
+    `rm -rf` the named dir.
+
     The reference has to be read out of the state files. It CANNOT be derived
     from the filenames, which is what this used to do: a trial directory is
     named with the timestamp of the experiment that created it, while every
@@ -409,9 +421,13 @@ def _cleanup_old_tune_experiments(
 
     ts_re = re.compile(r"^experiment_state-(?P<ts>.+)\.json$")
     keep_set = set(keep)
+  # Trial dirs a readable state file that is being pruned names: rotation
+  # accounts for deleting these. Read before the files go.
+    rotated_out: set[str] = set()
     for p in state_files:
         if p in keep_set:
             continue
+        rotated_out |= _trial_dirs_referenced_by(p) or set()
         m = ts_re.match(p.name)
         if m:
             _delete_obsolete_state_files(tune_dir=tune_dir, ts=m.group("ts"))
@@ -425,6 +441,19 @@ def _cleanup_old_tune_experiments(
 
     for d in sorted(tune_dir.glob("train_trial_*")):
         if not d.is_dir() or d.name in protected:
+            continue
+      # No readable state file accounts for this dir (its state files were
+      # renamed or unreadable, or Ray stopped writing the field we read), so
+      # its checkpoints may be the only copy of the run. Never delete it here.
+        if d.name not in rotated_out and _trial_dir_holds_checkpoint(d):
+            print(
+                f"[run_tune] WARNING: keeping unreferenced trial dir {d}: it holds "
+                "a checkpoint and no readable experiment_state file names it. "
+                "Remove it by hand (rm -rf) once you have confirmed it is not "
+                "needed (salvage-export it first if unsure: ./scripts/train.sh "
+                "salvage-export --top-n 1 --metric training_iteration --out <dir>); "
+                "startup pruning will not."
+            )
             continue
         print(f"[run_tune] Pruning old Ray Tune trial dir: {d}")
         shutil.rmtree(d, ignore_errors=True)

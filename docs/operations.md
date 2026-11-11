@@ -67,7 +67,13 @@ disables pruning; `1` refuses a fresh start over any existing artifacts — rais
 use a new work dir (`--work-dir`, or `TRAIN_WORK_DIR` for `train.sh`). `--resume` is not
 a way out for a salvage restart: when the resumed trial has a Ray checkpoint it
 restores that and ignores `--salvage-seed-pool-dir`. Pruning also removes trial dirs
-that no retained state file references.
+that no retained state file references, with one exception: a trial dir holding a
+checkpoint is deleted only when a readable state file being pruned names it (ordinary
+rotation). If no readable `experiment_state-*.json` names it — its state files were
+renamed (`.corrupt`, `.bak_*`), are unreadable, or Ray stopped writing
+`relative_logdir` — it is kept and every fresh start prints
+`WARNING: keeping unreferenced trial dir <path>`. That space is reclaimed by hand:
+confirm the dir is not needed (or salvage-export it), then `rm -rf` it.
 
 **`$CHESS_ANTI_ENGINE_LIVE_CONFIG` — which yaml the offline instruments treat as
 production.** `train.sh` exports it (absolute path to `$TRAIN_CONFIG`, default
