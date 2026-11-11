@@ -288,6 +288,14 @@ for cleanup; the next collection phase recreates workers and the broker after a
 successful stop. The default is `false`, and changing it requires a fresh driver
 launch rather than a YAML reload.
 
+Sequential startup defers the worker and broker until the first collection boundary,
+after pause/config resolution. Each collection publishes its current model before
+starting these producers. Worker seeds derive deterministically from the trial,
+worker index, unchanged global `seed` and actual global collection iteration, so a
+new collection gets a different random stream; a health relaunch within that same
+collection gets the same seed. Ordinary streaming worker seeds and startup order
+are unchanged.
+
 This mode requires loopback server endpoints, local worker handles, no shared broker,
 and `distributed_async_test_eval: false`. It verifies this trial's producers; the
 operator still owns the machine-wide resource lease and must exclude unrelated GPU

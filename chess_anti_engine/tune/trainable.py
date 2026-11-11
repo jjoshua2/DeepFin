@@ -304,6 +304,23 @@ def _assert_distributed_configured(tc: TrialConfig) -> None:
         )
 
 
+def _start_initial_selfplay_producers(
+    *, config: dict, trial_id: str, trial_dir: Path, publish_dir: Path,
+    worker_procs: list[subprocess.Popen[bytes]],
+    broker_proc_box: list[subprocess.Popen[bytes] | None],
+) -> None:
+    """Sequential producers start only at the collection boundary after pause/config resolution."""
+    if config.get("distributed_stop_selfplay_before_training", False):
+        return
+    broker_proc_box[0] = _ensure_inference_broker(
+        config=config, trial_id=trial_id, trial_dir=trial_dir,
+        publish_dir=publish_dir, proc=broker_proc_box[0],
+    )
+    worker_procs[:] = _ensure_distributed_workers(
+        config=config, trial_dir=trial_dir, trial_id=trial_id, procs=worker_procs,
+    )
+
+
 def _make_stockfish_uci(tc: TrialConfig, *, nodes: int, multipv: int) -> StockfishUCI:
     """Single-engine factory used by both gate and eval SF init."""
     return StockfishUCI(
@@ -1038,18 +1055,13 @@ def train_trial(config: dict):
   # the loop's first real publish is what starts the sign-validity history.
         override_model_path=gate_hold.hold_path,
     )
-    _broker_box[0] = _ensure_inference_broker(
+    _start_initial_selfplay_producers(
         config=config,
         trial_id=trial_id,
         trial_dir=trial_dir,
         publish_dir=distributed_dirs["publish_dir"],
-        proc=_broker_box[0],
-    )
-    distributed_worker_procs = _ensure_distributed_workers(
-        config=config,
-        trial_dir=trial_dir,
-        trial_id=trial_id,
-        procs=distributed_worker_procs,
+        worker_procs=distributed_worker_procs,
+        broker_proc_box=_broker_box,
     )
     distributed_pause_active = False
     distributed_pause_started_at: float | None = None

@@ -12,6 +12,7 @@ import pytest
 
 from chess_anti_engine.tune import distributed_runtime as runtime
 from chess_anti_engine.tune import harness
+from chess_anti_engine.tune import trainable
 from chess_anti_engine.tune import trainable_phases as phases
 from chess_anti_engine.tune.trainable_config_ops import _reload_yaml_into_config
 from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
@@ -132,6 +133,8 @@ def test_collection_returns_only_after_barrier_and_recreates_next_iteration(
 ) -> None:
     """Exercise the real successful collection consumer for two iterations."""
     created = []
+    events: list[str] = []
+    collection_configs: list[dict] = []
 
     def process() -> SimpleNamespace:
         proc = SimpleNamespace(pid=10001 + len(created), returncode=None)
@@ -140,10 +143,18 @@ def test_collection_returns_only_after_barrier_and_recreates_next_iteration(
         return proc
 
     def ensure_workers(**kwargs: Any) -> list:
+        events.append('workers')
+        collection_configs.append(kwargs['config'])
         return kwargs['procs'] or [process()]
 
     def ensure_broker(**kwargs: Any) -> SimpleNamespace:
+        events.append('broker')
         return kwargs['proc'] or process()
+
+    def publish(**kwargs: Any) -> str:
+        events.append('publish')
+        assert kwargs['config'] is config
+        return 'donor'
 
     def stop_workers(procs: list) -> None:
         for proc in procs:
@@ -155,22 +166,35 @@ def test_collection_returns_only_after_barrier_and_recreates_next_iteration(
 
     monkeypatch.setattr(phases, '_ensure_distributed_workers', ensure_workers)
     monkeypatch.setattr(phases, '_ensure_inference_broker', ensure_broker)
-    monkeypatch.setattr(phases, '_publish_iteration_model', lambda **_kwargs: 'donor')
+    monkeypatch.setattr(phases, '_publish_iteration_model', publish)
     monkeypatch.setattr(phases, '_export_selfplay_shards_for_siblings', lambda **_kwargs: None)
     monkeypatch.setattr(phases, '_maybe_share_cross_trial_replay', lambda **_kwargs: {})
     monkeypatch.setattr(runtime, '_stop_worker_processes', stop_workers)
     monkeypatch.setattr(runtime, '_stop_process', stop_broker)
     summary = runtime._empty_ingest_summary()
     summary.update(matching_games=1, matching_positions=2, positions_replay_added=2)
-    monkeypatch.setattr(phases, '_ingest_distributed_selfplay', lambda **_kwargs: summary)
+    revived_configs: list[dict] = []
+
+    def revive(**kwargs: Any) -> bool:
+        revived_configs.append(kwargs['config'])
+        return False
+
+    def ingest(**kwargs: Any) -> dict:
+        kwargs['on_poll']()
+        return summary
+
+    monkeypatch.setattr(phases, 'revive_dead_selfplay_processes', revive)
+    monkeypatch.setattr(phases, '_ingest_distributed_selfplay', ingest)
     buf = SimpleNamespace(capacity=16, _snapshot_shards=list, flush=lambda: None)
     tc = TrialConfig.from_dict({KEY: enabled, 'games_per_iter': 1, 'replay_window_max': 16,
                                'replay_window_growth': 0, 'replay_window_growth_frac': 0.0})
     workers: list[Any] = []
     broker: list[Any] = [None]
-    for iteration in (1, 2):
+    config = {KEY: enabled, 'seed': 123}
+    for cycle, iteration in enumerate((42, 43), start=1):
+        events.clear()
         result, _, _ = phases._run_selfplay_phase(
-            tc=tc, config={KEY: enabled}, trainer=None, model_cfg=None,
+            tc=tc, config=config, trainer=None, model_cfg=None,
             buf=buf, holdout_buf=None, holdout_frozen=False, rng=np.random.default_rng(0),
             distributed_dirs={'publish_dir': tmp_path / 'publish', 'inbox_dir': tmp_path / 'inbox',
                               'processed_dir': tmp_path / 'processed'},
@@ -182,13 +206,117 @@ def test_collection_returns_only_after_barrier_and_recreates_next_iteration(
             replay_shard_dir=tmp_path / 'replay', current_window=16, in_salvage_startup_grace=False,
         )
         assert result.should_retry is False
+        assert revived_configs[-1] is collection_configs[-1]
+        assert config == {KEY: enabled, 'seed': 123}
         if enabled:
+            assert events == ['publish', 'broker', 'workers']
+            assert collection_configs[-1][runtime._SEQUENTIAL_COLLECTION_ITERATION] == iteration
             assert workers == []
             assert broker == [None]
             assert all(proc.poll() == 0 for proc in created)
-            assert len(created) == iteration * 2
+            assert len(created) == cycle * 2
         else:
+            assert events == ['workers', 'publish', 'broker']
+            assert collection_configs[-1] is config
             assert len(workers) == 1
             assert broker[0] is not None
             assert all(proc.poll() is None for proc in created)
             assert len(created) == 2
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_sequential_startup_defers_producers_until_collection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool,
+) -> None:
+    events: list[str] = []
+    worker, broker = object(), object()
+
+    def ensure_workers(**_kwargs: Any) -> list:
+        events.append('workers')
+        return [worker]
+
+    def ensure_broker(**_kwargs: Any) -> object:
+        events.append('broker')
+        return broker
+
+    monkeypatch.setattr(trainable, '_ensure_distributed_workers', ensure_workers)
+    monkeypatch.setattr(trainable, '_ensure_inference_broker', ensure_broker)
+    workers: list[Any] = []
+    box: list[Any] = [None]
+    trainable._start_initial_selfplay_producers(
+        config={KEY: enabled}, trial_id='trial', trial_dir=tmp_path, publish_dir=tmp_path,
+        worker_procs=workers, broker_proc_box=box,
+    )
+    assert events == ([] if enabled else ['broker', 'workers'])
+    assert workers == ([] if enabled else [worker])
+    assert box == ([None] if enabled else [broker])
+
+
+def test_sequential_collection_seed_reaches_real_launch_and_health_relaunch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Build the actual argv on initial launch, corpse revival and next collection."""
+    commands: list[list[str]] = []
+
+    def spawn(**kwargs: Any) -> SimpleNamespace:
+        commands.append(kwargs['cmd'])
+        proc = SimpleNamespace(pid=10000 + len(commands), returncode=None)
+        proc.poll = lambda: proc.returncode
+        return proc
+
+    monkeypatch.setattr(runtime, '_spawn_with_reap', spawn)
+    monkeypatch.setattr(runtime, '_resolve_distributed_worker_auth',
+                        lambda **_kwargs: ('test-local', tmp_path / 'unused-password'))
+    base = {KEY: True, 'seed': 123, 'distributed_workers_per_trial': 2,
+            'distributed_server_url': 'http://127.0.0.1:9000',
+            'distributed_server_root': str(tmp_path / 'server'),
+            'stockfish_path': 'unused-stockfish'}
+    first = runtime._selfplay_collection_config(base, iteration_idx=42)
+    workers = runtime._ensure_distributed_workers(
+        config=first, trial_dir=tmp_path, trial_id='trial', procs=[],
+    )
+    seeds = [cmd[cmd.index('--seed') + 1] for cmd in commands]
+    assert len(set(seeds)) == 2
+    cast(Any, workers[0]).returncode = 1
+    assert runtime.revive_dead_selfplay_processes(
+        config=first, trial_id='trial', trial_dir=tmp_path, publish_dir=tmp_path,
+        broker_proc_box=[None], worker_procs=workers,
+    )
+    assert commands[2] == commands[0]
+    assert runtime._ensure_distributed_workers(
+        config=first, trial_dir=tmp_path, trial_id='trial', procs=workers,
+    ) == workers
+    assert len(commands) == 3
+    second = runtime._selfplay_collection_config(base, iteration_idx=43)
+    runtime._ensure_distributed_workers(
+        config=second, trial_dir=tmp_path, trial_id='trial', procs=[],
+    )
+    next_seeds = [cmd[cmd.index('--seed') + 1] for cmd in commands[3:]]
+    assert len(set(seeds + next_seeds)) == 4
+    assert base['seed'] == 123
+    assert runtime._SEQUENTIAL_COLLECTION_ITERATION not in base
+    assert runtime._worker_launch_signature(config=first, trial_id='trial', worker_index=0) != (
+        runtime._worker_launch_signature(config=second, trial_id='trial', worker_index=0)
+    )
+
+
+def test_streaming_seed_and_collection_settings_are_unchanged() -> None:
+    config = {'seed': 123}
+    assert runtime._selfplay_collection_config(config, iteration_idx=42) is config
+    assert runtime._distributed_worker_seed(config=config, trial_id='trial', worker_index=0) == (
+        runtime.stable_seed_u32('dist-worker', 'trial', 0, 123)
+    )
+    assert runtime._worker_launch_signature(config=config, trial_id='trial', worker_index=0) == (
+        'trial', 0, tuple((key, config.get(key)) for key in runtime._WORKER_LAUNCH_CONFIG_KEYS),
+    )
+
+
+@pytest.mark.parametrize('iteration', [None, 0, -1, True, 1.5])
+def test_sequential_launch_requires_a_valid_collection_iteration(iteration: Any) -> None:
+    with pytest.raises(ValueError, match='collection iteration'):
+        runtime._selfplay_collection_config({KEY: True}, iteration_idx=iteration)
+    with pytest.raises(ValueError, match='collection iteration'):
+        runtime._distributed_worker_seed(
+            config={KEY: True, runtime._SEQUENTIAL_COLLECTION_ITERATION: iteration},
+            trial_id='trial', worker_index=0,
+        )

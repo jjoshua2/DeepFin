@@ -51,6 +51,7 @@ from chess_anti_engine.tune.distributed_runtime import (
     _ensure_distributed_workers,
     _ensure_inference_broker,
     _stop_local_selfplay_for_training,
+    _selfplay_collection_config,
     revive_dead_selfplay_processes,
     _ingest_distributed_selfplay,
     _prune_processed_shards,
@@ -1155,12 +1156,14 @@ def _run_selfplay_phase(
   # --- Play games (distributed workers upload shards; we ingest) ---
     ingest_t0 = time.monotonic()
 
-    distributed_worker_procs[:] = _ensure_distributed_workers(
-        config=config,
-        trial_dir=trial_dir,
-        trial_id=trial_id,
-        procs=distributed_worker_procs,
-    )
+    worker_config = _selfplay_collection_config(config, iteration_idx=iteration_idx)
+    if not tc.distributed_stop_selfplay_before_training:
+        distributed_worker_procs[:] = _ensure_distributed_workers(
+            config=worker_config,
+            trial_dir=trial_dir,
+            trial_id=trial_id,
+            procs=distributed_worker_procs,
+        )
     published_model_sha = _publish_iteration_model(
         trainer=trainer,
         config=config,
@@ -1175,12 +1178,20 @@ def _run_selfplay_phase(
         hold=hold,
     )
     broker_proc_box[0] = _ensure_inference_broker(
-        config=config,
+        config=worker_config,
         trial_id=trial_id,
         trial_dir=trial_dir,
         publish_dir=distributed_dirs["publish_dir"],
         proc=broker_proc_box[0],
     )
+    if tc.distributed_stop_selfplay_before_training:
+        # No producer may read the previous collection's manifest on restart.
+        distributed_worker_procs[:] = _ensure_distributed_workers(
+            config=worker_config,
+            trial_dir=trial_dir,
+            trial_id=trial_id,
+            procs=distributed_worker_procs,
+        )
   # ``_snapshot_shards()``, not the raw ``_shard_paths`` deque: that deque is
   # guarded by ``DiskReplayBuffer._prefetch_lock`` and the buffer's own prefetch
   # thread iterates it under that lock. Reading it unlocked here is safe ONLY
@@ -1217,7 +1228,7 @@ def _run_selfplay_phase(
     def _revive_fleet() -> None:
         nonlocal _revived_total
         if revive_dead_selfplay_processes(
-            config=config,
+            config=worker_config,
             trial_id=trial_id,
             trial_dir=trial_dir,
             publish_dir=distributed_dirs["publish_dir"],
