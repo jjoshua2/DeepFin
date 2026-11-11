@@ -43,12 +43,14 @@ def pairs(acc: _SearchInfoAccumulator) -> list[tuple[str, int | None]]:
 
 class TestMultiPVMoveIdentity(unittest.TestCase):
     def test_complete_reranked_bound_reuses_its_own_exact_score(self):
-        for bound in ("lowerbound", "upperbound"):
+        # B's exact 10 is consistent with "at most 200" and kept; it
+        # contradicts "at least 200" and is clamped to the bound.
+        for bound, b_cp in (("lowerbound", 200), ("upperbound", 10)):
             with self.subTest(bound=bound):
                 acc = accumulate([line(1, A, 40), line(2, B, 10),
                                   line(1, B, 200, depth=6, bound=bound),
                                   line(2, A, 35, depth=6)])
-                assert pairs(acc) == [(B, 10), (A, 35)]
+                assert pairs(acc) == [(B, b_cp), (A, 35)]
                 assert acc.result(B).cp == 40
 
     def test_unknown_bound_move_evicts_previous_rank_occupant(self):
@@ -64,7 +66,7 @@ class TestMultiPVMoveIdentity(unittest.TestCase):
         acc = accumulate([line(1, A, 40), line(2, B, 10), line(3, C, -10),
                           line(1, B, 200, bound="lowerbound"),
                           line(2, C, 25), line(3, A, 30)])
-        assert pairs(acc) == [(B, 10), (C, 25), (A, 30)]
+        assert pairs(acc) == [(B, 200), (C, 25), (A, 30)]
 
     def test_exact_snapshot_rerank_remains_rank_ordered(self):
         acc = accumulate([line(1, A, 40), line(2, B, 10),
@@ -138,10 +140,10 @@ class TestMultiPVMoveIdentity(unittest.TestCase):
         ids, scores = _collect_sf_pv_candidates(
             acc.result(B), _turn=True, legal_set=set(legal.tolist()), sf_policy_score_mode="cp")
         assert len(ids) == len(set(ids))
-        assert dict(zip(ids, scores, strict=True)) == dict(zip(legal.tolist(), [30, 10, 25], strict=True))
+        assert dict(zip(ids, scores, strict=True)) == dict(zip(legal.tolist(), [30, 200, 25], strict=True))
         result = _build_sf_policy_target(ids, scores, legal_indices=legal,
                                         sf_policy_temp=100.0, sf_policy_label_smooth=0.1)
-        expected = np.exp(np.array([30, 10, 25], dtype=np.float64) / 100.0)
+        expected = np.exp(np.array([30, 200, 25], dtype=np.float64) / 100.0)
         expected /= expected.sum()
         np.testing.assert_allclose(result[legal], expected, rtol=1e-6, atol=1e-7)
         assert float(result.sum()) == pytest.approx(1.0, rel=0, abs=5e-7)
@@ -155,7 +157,7 @@ class TestMultiPVMoveIdentity(unittest.TestCase):
         target = _build_sf_policy_target(ids, scores, legal_indices=legal,
                                         sf_policy_temp=100.0, sf_policy_label_smooth=0.0)
         assert float(target[legal[1]]) > 0.0
-        expected_a = 1.0 / (1.0 + np.exp((10 - 35) / 100.0))
+        expected_a = 1.0 / (1.0 + np.exp((200 - 35) / 100.0))
         assert float(target[legal[0]]) == pytest.approx(float(expected_a), rel=0, abs=5e-7)
 
     def test_preserved_root_scalar_can_trigger_existing_pv_health_flag(self):
@@ -163,7 +165,7 @@ class TestMultiPVMoveIdentity(unittest.TestCase):
         acc = accumulate([line(1, A, 40), line(2, B, 10),
                           line(1, B, 200, bound="lowerbound"), line(2, A, 35)])
         res = acc.result(B)
-        assert (res.cp, res.pvs[0].cp) == (40, 10)
+        assert (res.cp, res.pvs[0].cp) == (40, 200)
         record = SimpleNamespace(
             sf_multipv_raw=np.array([[0, res.pvs[0].cp, 0, -1, -1]], dtype=np.int16),
             sf_label_meta=np.array([100, 5, res.cp, 0, -1, -1], dtype=np.int32),
@@ -206,7 +208,7 @@ for raw in sys.stdin:
             try:
                 fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
                 first = engine.search(fen)
-                assert [(p.move_uci, p.cp) for p in first.pvs] == [(B, 10), (A, 35)]
+                assert [(p.move_uci, p.cp) for p in first.pvs] == [(B, 200), (A, 35)]
                 second = engine.search(fen)
                 assert second.pvs == []
             finally:

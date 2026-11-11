@@ -576,6 +576,16 @@ def sf_eval_pv_orphan_flags(
     line and this was never observed: 0 orphans over the 474,278 labelled rows
     of the pre-episode range. It is not proven impossible, only unobserved.
 
+    ⚑ A third, BENIGN route since the MultiPV rerank parser fix
+    (docs/experiments/2026-11-11-multipv-rerank-parser.md): a node-limited
+    search that stops while rank 1 is a bound line for a DIFFERENT move than
+    the last exact rank-1 line files that move (SF's ``bestmove``, with its
+    own earlier exact score) at row 0, while the scalar stays on the previous
+    exact rank-1 line. Real Stockfish produced it on 2 of 1000 MultiPV-6
+    searches at 150k nodes, below ``_SF_EVAL_PV_ORPHAN_WARN_RATE``. Row 0 is
+    deliberately NOT reordered to match the scalar: the full-strength
+    curriculum path plays ``cand_indices[0]`` as SF's best.
+
     **Why it is not a second copy of the policy detector.** The policy-side
     fingerprint (``train/losses.py::sf_multipv_presence_counts``) fires when NO
     MultiPV move survived, i.e. on rows with ``has_sf_multipv_raw == 0``. This

@@ -18,6 +18,8 @@ from functools import partial
 import chess
 import numpy as np
 
+from chess_anti_engine.stockfish.wdl import mate_to_effective_cp
+
 
 # Default deadline for any single readline waiting on Stockfish stdout.
 # 60s is generous enough for the slowest realistic search (~5k nodes per
@@ -276,6 +278,44 @@ class _SearchInfoAccumulator:
         str,
         tuple[str, tuple[int, int, int] | None, int | None, int | None],
     ] = field(default_factory=dict, init=False, repr=False)
+    # The exact tuple the scalar (cp_pv1/mate_pv1) was read from. Its row is
+    # never clamped below, so a healthy row 0 keeps matching the scalar that
+    # the value label and the eval/PV orphan detector read.
+    _scalar_exact: (
+        tuple[str, tuple[int, int, int] | None, int | None, int | None] | None
+    ) = field(default=None, init=False, repr=False)
+
+    def _clamp_to_bound(
+        self, move: str, kind: str,
+        bound: tuple[str, tuple[int, int, int] | None, int | None, int | None],
+    ) -> None:
+        """Project ``move``'s kept exact score onto a newer contradicting bound.
+
+        ``upperbound v`` says the move is now at most v; ``lowerbound v`` at
+        least v. A kept exact score on the wrong side of v is stale evidence
+        the deeper search has already ruled out, so it is replaced by the
+        bound line itself (v and that line's WDL): the closest value that is
+        consistent with both. Dropping the move instead would give a fail-high
+        move, often SF's new best, zero policy mass and lose it from the
+        max-based sf_p0_regret vector. The row the scalar came from is left
+        alone (see ``_scalar_exact``); a move with no exact evidence is not
+        emitted at all, as before.
+        """
+        previous = self._exact_pvs.get(move)
+        if previous is None or previous == self._scalar_exact:
+            return
+        if bound[2] is None and bound[3] is None:
+            return
+        if previous[2] is None and previous[3] is None:
+            return
+
+        def rank(entry: tuple[str, tuple[int, int, int] | None, int | None, int | None]) -> float:
+            mate = entry[3]
+            return mate_to_effective_cp(mate) if mate is not None else float(entry[2] or 0)
+
+        kept, edge = rank(previous), rank(bound)
+        if (kind == "upperbound" and kept > edge) or (kind == "lowerbound" and kept < edge):
+            self._exact_pvs[move] = bound
 
     def consume(self, parts: list[str]) -> None:
         # The string field consumes the rest of the line as opaque debug text.
@@ -298,8 +338,13 @@ class _SearchInfoAccumulator:
         if "lowerbound" in parts or "upperbound" in parts:
             if pv_move is not None:
                 # A reranked bound must not leave the previous move at this
-                # rank. Reuse only this move's own earlier exact evidence.
+                # rank. Reuse only this move's own earlier exact evidence,
+                # clamped to the bound when the two contradict.
                 self.pvs.pop(mpv, None)
+                self._clamp_to_bound(
+                    pv_move, "lowerbound" if "lowerbound" in parts else "upperbound",
+                    (pv_move, wdl_counts, cp, mate),
+                )
                 previous = self._exact_pvs.get(pv_move)
                 if previous is not None:
                     self.pvs[mpv] = previous
@@ -317,6 +362,8 @@ class _SearchInfoAccumulator:
             exact = (pv_move, wdl_counts, cp, mate)
             self.pvs[mpv] = exact
             self._exact_pvs[pv_move] = exact
+            if mpv == 1:
+                self._scalar_exact = exact
 
     def result(self, bestmove: str | None) -> StockfishResult:
         pv_list = []
