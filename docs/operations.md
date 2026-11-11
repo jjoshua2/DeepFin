@@ -51,6 +51,19 @@ Without that, restarting after a stop silently drops the running trial and spawn
 random-init one. To abandon the current trial's state, pass `--fresh` or use
 `salvage-restart` from a good pool; never `rm` the tune dir while a run is live.
 
+**Fresh-start pruning (`tune_keep_last_experiments`).** A fresh start (`--fresh`,
+`salvage-restart`; never `--resume`) prunes `$WORK_DIR/tune` before Ray starts. The
+count includes the experiment about to be created, so `2` keeps one prior experiment.
+Only experiments whose trial dir holds a Ray checkpoint (`checkpoint_NNNNNN/trainer.pt`)
+use a slot: a launch that failed before its first checkpoint never displaces the run
+it was meant to replace, however many such launches there were. Those checkpoint-less
+experiments are kept while they are newer than the oldest retained checkpointed one
+and pruned once they are older. `0` or less disables pruning; `1` refuses a fresh start
+over any existing artifacts — raise it or use a new work dir. `--resume` is not a way
+out for a salvage restart: a resumed trial restores its Ray checkpoint and ignores
+`--salvage-seed-pool-dir`. Pruning is by experiment-state file (each resume writes one)
+and also removes trial dirs that no retained state file references.
+
 **`$CHESS_ANTI_ENGINE_LIVE_CONFIG` — which yaml the offline instruments treat as
 production.** `train.sh` exports it (absolute path to `$TRAIN_CONFIG`, default
 `configs/pbt2_small.yaml`), and ⚑ **that export reaches training and its observer

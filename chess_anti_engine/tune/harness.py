@@ -303,17 +303,53 @@ def _guard_fresh_retention_one(*, tune_dir: Path, keep_last: int | str) -> None:
             )
 
 
+def _trial_dir_holds_checkpoint(trial_dir: Path) -> bool:
+    """True if a trial dir holds a Ray `checkpoint_NNNNNN/trainer.pt`.
+
+    Same definition salvage uses for "state that actually exists on disk"
+    (`salvage._newest_disk_checkpoint`): the trainable stages its save in
+    `ckpt/` and Ray copies it into `checkpoint_NNNNNN`, so a dir without
+    `trainer.pt` -- or only a `ckpt/` staging dir -- is not a checkpoint a
+    restart could use.
+    """
+    from chess_anti_engine.tune.salvage import _newest_disk_checkpoint
+
+    try:
+        return _newest_disk_checkpoint(trial_dir) is not None
+    except OSError:
+        return False
+
+
 def _cleanup_old_tune_experiments(
     *, tune_dir: Path, keep_last: int, reserve_new: bool = False,
 ) -> None:
     """Best-effort pruning of old Ray Tune experiments.
 
-    Keeps the newest `keep_last` experiment_state-*.json files, then deletes
-    trial directories that none of those kept files reference.
-    Only intended to run on fresh starts (not --resume).
-    Nonpositive `keep_last` disables pruning. With `reserve_new`, a positive
-    count includes the new experiment the caller is about to create, so one
-    retains no old experiments rather than disabling cleanup.
+    Only intended to run on fresh starts (not --resume). Nonpositive
+    `keep_last` disables pruning. With `reserve_new`, a positive count
+    includes the new experiment the caller is about to create, so one retains
+    no old experiments rather than disabling cleanup.
+
+    Retention unit: one `experiment_state-*.json` file (a resume writes a new
+    one, so a resumed experiment is several). Walking newest first, each state
+    file is retained; it uses up a retention slot only if a trial dir it
+    references holds a checkpoint (`_trial_dir_holds_checkpoint`). The walk
+    stops once the slots are used, so the newest `keep_last` checkpoint-bearing
+    state files are kept together with every checkpoint-less one newer than
+    them. Older state files are deleted, then every trial dir that no retained
+    state file references, then policy logs whose trial dir is gone.
+
+    Why checkpoint-less ones do not count: a fresh launch that fails after
+    `Tuner.fit` wrote its experiment_state leaves a newer state file pointing
+    at an errored trial with no checkpoint. Counting it let it displace the
+    real experiment -- two failed salvage-restart attempts in a row under
+    `keep_last=2` deleted every checkpoint of the run. Why they are kept
+    rather than deleted: an experiment without a checkpoint can still be the
+    one the operator means to inspect (error.txt, logs), and anything older
+    than a retained checkpoint-bearing experiment is pruned in due course. A
+    state file that cannot be read counts as checkpoint-less and, if retained,
+    stops all trial-dir deletion for the pass (see below). With healthy
+    experiments only, this is exactly "keep the newest `keep_last` files".
 
     The reference has to be read out of the state files. It CANNOT be derived
     from the filenames, which is what this used to do: a trial directory is
@@ -341,19 +377,24 @@ def _cleanup_old_tune_experiments(
     if len(state_files) <= keep_last:
         return
 
-    keep = state_files[-keep_last:] if keep_last else []
-
   # Fail safe: an unreadable kept state file means we do not know what it
   # protects, so we delete no trial directories at all this pass. Deleting the
   # state files is still fine -- they are small and not the irreplaceable part.
+    keep: list[Path] = []
     protected: set[str] = set()
     protection_is_complete = True
-    for p in keep:
+    slots_used = 0
+    for p in reversed(state_files):
+        if slots_used >= keep_last:
+            break
+        keep.append(p)
         names = _trial_dirs_referenced_by(p)
         if names is None:
             protection_is_complete = False
-        else:
-            protected |= names
+            continue
+        protected |= names
+        if any(_trial_dir_holds_checkpoint(tune_dir / n) for n in names):
+            slots_used += 1
 
     ts_re = re.compile(r"^experiment_state-(?P<ts>.+)\.json$")
     keep_set = set(keep)

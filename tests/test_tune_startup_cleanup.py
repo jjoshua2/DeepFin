@@ -195,7 +195,8 @@ def test_retention_and_sidecar_cleanup_keep_their_failure_boundaries(
     states, trials = [], []
     for stamp in ["2026-01-01", "2026-02-01"]:
         trial = tune_dir / f"train_trial_{stamp}_00000"
-        trial.mkdir()
+        (trial / "checkpoint_000001").mkdir(parents=True)
+        (trial / "checkpoint_000001" / "trainer.pt").write_bytes(b"weights")
         (trial / "marker").write_text(stamp)
         state = tune_dir / f"experiment_state-{stamp}.json"
         state.write_text(json.dumps({"trial_data": [[json.dumps({
