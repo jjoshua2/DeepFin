@@ -2978,6 +2978,7 @@ class Trainer:
   # a sibling params.json. Kept optional for backward compatibility
   # with direct Trainer() construction in tests.
         self._model_config = model_config
+        self.fresh_rl_donor_provenance: dict[str, Any] | None = None
         self._input_history_encoding = normalize_lc0_history_encoding(
             model_config.input_history_encoding if model_config is not None else None
         )
@@ -6369,6 +6370,7 @@ class Trainer:
             "scheduler": self._scheduler.state_dict(),
             "step": self.step,
             "peak_lr": float(self._peak_lr),
+            "fresh_rl_donor_provenance": self.fresh_rl_donor_provenance,
   # zclip's EMA is trained state, not configuration: without it every
   # restart re-enters the 25-step warmup during which the adaptive branch
   # cannot fire at all (`ZClip.step` returns before `_compute_clip_val`
@@ -6996,6 +6998,7 @@ class Trainer:
         # Trainer checkpoints include optimizer/scheduler/RNG pickles, so resume needs the
         # full trusted checkpoint payload rather than PyTorch's weights-only loader.
         ckpt = torch.load(str(path), map_location=self.device, weights_only=False)
+        self.fresh_rl_donor_provenance = ckpt.get("fresh_rl_donor_provenance")
         if exact_resume:
             # Fixed-epoch restart must refuse the warm-start loader's deliberate
             # partial-model and cold-optimizer fallbacks. Its run spec already

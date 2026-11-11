@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from chess_anti_engine.tune.startup_intent import (
+    refuse_strict_resume, validate_declared, validate_saved_overlay,
+)
+
 import csv
 import json
 import os
@@ -412,6 +416,7 @@ def _patch_experiment_state_for_resume(
     drop param_space keys that aren't in any saved trial config (Ray rejects
     those on restore).
     """
+    refuse_strict_resume(param_space)
     with state_file.open("r", encoding="utf-8") as fh:
         experiment_state = json.load(fh)
 
@@ -434,6 +439,7 @@ def _patch_experiment_state_for_resume(
         if not isinstance(cfg, dict):
             continue
 
+        validate_saved_overlay(cfg, param_space)
         trial_changed = False
         for key, value in param_space.items():
             # Never inject or force-overwrite a construction-bound key (model
@@ -653,6 +659,7 @@ def _filter_param_space_against_tuner_pkl(
     experiment_state JSON we patched. Any key not in the pkl triggers
     ValueError; missing keys must be padded with None.
     """
+    refuse_strict_resume(param_space)
     import pickle as _pickle
     out = dict(param_space)
     try:
@@ -673,6 +680,7 @@ def _filter_param_space_against_tuner_pkl(
         for k in missing:
             out[k] = None
         print(f"[run_tune] Padding removed keys with None for Ray validation: {sorted(missing)}")
+    refuse_strict_resume(out)
     return out
 
 
@@ -1015,6 +1023,7 @@ def run_tune(
         GPU.  On an RTX 5090 with a small model, 10 trials at gpu=0.1 each
         fits comfortably in 32 GB VRAM.
     """
+    validate_declared(base_config | {"resume": resume})
     try:
         import ray
         from ray import tune

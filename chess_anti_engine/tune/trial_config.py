@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+
+from chess_anti_engine.tune.fresh_rl_donor import validate_config as validate_fresh_rl_config
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -559,6 +561,12 @@ class TrialConfig:
     salvage_startup_max_train_steps: int = 0
     salvage_startup_post_share_ramp_iters: int = 0
     salvage_startup_post_share_max_train_steps: int = 0
+    rl_startup_intent: str | None = None
+    rl_startup_contract: dict[str, Any] | None = None
+    _rl_startup_settings: dict[str, Any] = field(default_factory=dict)
+    bootstrap_handoff_mode: str = "legacy"
+    bootstrap_checkpoint_sha256: str | None = None
+    bootstrap_model_contract: dict[str, Any] | None = None
     bootstrap_checkpoint: str | None = None
     bootstrap_zero_policy_heads: bool = False
     bootstrap_reinit_volatility_heads: bool = False
@@ -577,6 +585,7 @@ class TrialConfig:
             v = config.get(key)
             return default if v is None else v
 
+        validate_fresh_rl_config(config)
         num_layers = int(config.get("num_layers", 6))
 
   # ⚑ CALLED FOR ITS EXCEPTION, AND THE RESULT IS DELIBERATELY DISCARDED.
@@ -1029,6 +1038,14 @@ class TrialConfig:
             salvage_startup_max_train_steps=int(config.get("salvage_startup_max_train_steps", 0)),
             salvage_startup_post_share_ramp_iters=int(config.get("salvage_startup_post_share_ramp_iters", 0)),
             salvage_startup_post_share_max_train_steps=int(config.get("salvage_startup_post_share_max_train_steps", 0)),
+            rl_startup_intent=config.get("rl_startup_intent"),
+            rl_startup_contract=config.get("rl_startup_contract"),
+            _rl_startup_settings={
+                key: config[key] for key in (config.get("rl_startup_contract") or {}).get("settings", {})
+            },
+            bootstrap_handoff_mode=_get("bootstrap_handoff_mode", "legacy"),
+            bootstrap_checkpoint_sha256=_get("bootstrap_checkpoint_sha256", None),
+            bootstrap_model_contract=_get("bootstrap_model_contract", None),
             bootstrap_checkpoint=_get("bootstrap_checkpoint", None),
             bootstrap_zero_policy_heads=bool(config.get("bootstrap_zero_policy_heads", False)),
             bootstrap_reinit_volatility_heads=bool(config.get("bootstrap_reinit_volatility_heads", False)),

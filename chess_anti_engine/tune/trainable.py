@@ -824,6 +824,8 @@ def train_trial(config: dict):
   # deliberate warm-start migration (v1 -> v2_threats) is still honored. No
   # checkpoint / older checkpoint without arch / salvage -> config-driven.
     ckpt = _tune_get_checkpoint()
+    from chess_anti_engine.tune.startup_intent import enforce_startup
+    enforce_startup(config, ckpt)
     ckpt_arch = peek_checkpoint_arch(ckpt)
     if ckpt_arch is not None:
         model_cfg = resume_model_config_from_arch(ckpt_arch, config_model_cfg)

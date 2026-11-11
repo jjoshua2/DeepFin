@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
+from chess_anti_engine.tune.fresh_rl_donor import validate_config as validate_fresh_rl_config
 
 
 def strict_config_bool(value: Any, *, key: str, source: str) -> bool:
@@ -84,6 +85,8 @@ _CORE_KEYS = (
     "mode", "seed", "device", "iterations", "work_dir",
     "replay_window_start", "replay_window_max", "replay_window_growth",
     "replay_window_growth_frac",
+    "rl_startup_intent", "rl_startup_contract",
+    "bootstrap_handoff_mode", "bootstrap_checkpoint_sha256", "bootstrap_model_contract",
     "bootstrap_dir", "bootstrap_checkpoint", "bootstrap_zero_policy_heads",
     "bootstrap_reinit_volatility_heads", "worker_wheel_path",
     "bootstrap_max_positions", "bootstrap_train_steps", "shared_shards_dir",
@@ -641,6 +644,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     _check_target_only_knobs_require_zero_temperature(flat)
     _check_boolean_run_values(flat)
     _check_pb2_bounds(flat)
+    validate_fresh_rl_config(flat)
     return flat
 
 
