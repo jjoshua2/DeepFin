@@ -48,6 +48,8 @@ REGISTERED_COMPARISONS = {
 }
 EXTENDED_READER = Path(__file__).resolve().with_name('bt4_joint_readout.py')
 RESERVE = 150 * 1024**3
+# Seconds between owned-stage liveness polls. Read once per stage; tests shrink it.
+STAGE_POLL_SECONDS = 1
 
 
 def require(condition, message):
@@ -313,6 +315,7 @@ def run_owned_stage(cmd, out, seconds, lease_fd, stage, metadata, *, manifest, s
     out.mkdir(exist_ok=False)
     write(out / 'manifest.json', manifest)
     wrapped = timeout_command(cmd, seconds)
+    poll_seconds = STAGE_POLL_SECONDS
     started = time.monotonic()
     receipt = {**metadata, 'complete': False, 'owner_pid': os.getpid(), 'started_unix': time.time(),
                'command': cmd, 'supervisor_command': wrapped, 'cwd': str(stage_cwd), 'hard_seconds': seconds}
@@ -360,7 +363,7 @@ def run_owned_stage(cmd, out, seconds, lease_fd, stage, metadata, *, manifest, s
                                 write(out / 'process.json', receipt)
                 disk_guard(out)
                 require(not any(p.exists() for p in (out / 'STOP', *stop_paths)), 'stop requested')
-                time.sleep(1)
+                time.sleep(poll_seconds)
             require(child.returncode == 0, f'{stage}/timeout exited {child.returncode}')
         cleanup(child)
         elapsed = time.monotonic() - started

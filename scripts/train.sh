@@ -276,6 +276,39 @@ stop() {
     # selfplay_resume/ files this drain just banked. The second pass at the end
     # of stop() is what stops that, since nothing above kills it.
     local grace="${CAE_STOP_GRACE_SECONDS:-90}"
+    # Seconds actually slept per 2-second drain poll, read once here for both
+    # passes. Unset (or empty) is the production 2; only tests set it, to run
+    # the real loops quickly. Only `sleep` reads it: the integer `waited`/`owait`
+    # accounting is unchanged, so both graces are counted in POLLS and the real
+    # grace is grace*dpoll/2. That is why the range is closed: 0.5 (what the
+    # tests use, a quarter of the grace) to 2 (production). Anything else --
+    # malformed (which `sleep` could reject, aborting stop() under `set -e`),
+    # zero or tiny (which would collapse a 90s drain and SIGKILL workers
+    # mid-suspend) or above 2 (one poll of days) -- is refused loudly for 2.
+    # A value equal to 2 (`2.0`, `02`) runs as exactly 2; any other accepted
+    # value prints a NOTE, so a shortened grace is never silent.
+    local dpoll="${CAE_DRAIN_POLL_SLEEP:-2}" dpoll_ms=-1 dpoll_i dpoll_f
+    case "$dpoll" in
+        *[!0-9.]*|*.*.*|.) ;;
+        *)
+            dpoll_i="${dpoll%%.*}"
+            dpoll_f=""
+            case "$dpoll" in *.*) dpoll_f="${dpoll#*.}" ;; esac
+            if [ "${#dpoll_i}" -le 3 ] && [ "${#dpoll_f}" -le 3 ]; then
+                dpoll_f="${dpoll_f}000"
+                dpoll_ms=$(( 10#${dpoll_i:-0} * 1000 + 10#${dpoll_f:0:3} ))
+            fi ;;
+    esac
+    if [ "$dpoll_ms" -eq 2000 ]; then
+        dpoll=2
+    elif [ "$dpoll_ms" -ge 500 ] && [ "$dpoll_ms" -lt 2000 ]; then
+        echo "NOTE: CAE_DRAIN_POLL_SLEEP=$dpoll: graces are counted in 2s polls," \
+             "so each real grace is grace x $dpoll/2 seconds" >&2 || true
+    else
+        echo "WARNING: ignoring CAE_DRAIN_POLL_SLEEP='$dpoll' (need a number from" \
+             "0.5 to 2); polling every 2s" >&2 || true
+        dpoll=2
+    fi  # dpoll: end
     # ONE definition, used by both drain passes. Duplicating the literal is how
     # this PR's own founding defect recurs: the second pass sits outside the
     # range tests/test_train_sh_worker_drain.py extracts, so a pattern edit
@@ -356,7 +389,7 @@ stop() {
         local waited=0 alive w
         alive="$wpids"
         while [ "$waited" -lt "$grace" ] && [ -n "$alive" ]; do
-            sleep 2
+            sleep "$dpoll"
             waited=$((waited + 2))
             alive=""
             for w in $wpids; do
@@ -425,7 +458,7 @@ stop() {
         kill -TERM $orphans 2>/dev/null || true
         local owait=0 oalive="$orphans" o
         while [ "$owait" -lt "${CAE_ORPHAN_GRACE_SECONDS:-30}" ] && [ -n "$oalive" ]; do
-            sleep 2
+            sleep "$dpoll"
             owait=$((owait + 2))
             oalive=""
             for o in $orphans; do
