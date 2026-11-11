@@ -301,10 +301,10 @@ stop() {
         dpoll=2
     elif [ "$dpoll_ms" -ge 500 ] && [ "$dpoll_ms" -lt 2000 ]; then
         echo "NOTE: CAE_DRAIN_POLL_SLEEP=$dpoll: graces are counted in 2s polls," \
-             "so each real grace is grace x $dpoll/2 seconds" >&2
+             "so each real grace is grace x $dpoll/2 seconds" >&2 || true
     else
         echo "WARNING: ignoring CAE_DRAIN_POLL_SLEEP='$dpoll' (need a number from" \
-             "0.5 to 2); polling every 2s" >&2
+             "0.5 to 2); polling every 2s" >&2 || true
         dpoll=2
     fi  # dpoll: end
     # ONE definition, used by both drain passes. Duplicating the literal is how
