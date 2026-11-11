@@ -251,14 +251,14 @@ screening and confirmation opening panels before inspecting candidate play.
 The original CPU bank has 128 rows but only 64 byte-identical unique inputs.
 Exact producer joins show the same two trajectories in both cycles, caused by
 reusing the trial/worker seed at every restart. This is a pipeline defect.
-Audit: `/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cpu-shard-audit-v1/readout.json`.
+Audit: `~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cpu-shard-audit-v1/readout.json`.
 
 Independently accepted correction `2eba488ab6e9624aaf4e1b493b1233e7f0bcc973`
 varies seeds by global collection iteration and publishes current weights before
 starting sequential workers; health revival retains the collection seed.
 Default streaming behavior is preserved.
 
-Successor preregistration: `/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cpu-wiring-config-v2/manifest.json`,
+Successor preregistration: `~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cpu-wiring-config-v2/manifest.json`,
 config SHA256 `38900afe4ee63165a7b3271e8aba59905e09296fbdfa7760c7f0d1acdd9e43d4`, source `2da5c6054ae54a6daee024eef79d2cc0413fb1b7`.
 Two CPU-only collections, one selfplay game each, 24-ply cap, 8 simulations,
 batch 4, one update cap each, 360-second ceiling. Require actual completion,
@@ -332,3 +332,20 @@ Independent review checked logs/CSV/producer metadata and exact PID/birth closur
 it did not repeat the parent tensor comparison or prove statistical independence.
 Readout and raw bank: `~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/cpu-wiring-diversity-v2/result.json`
 and `cpu-wiring-readout-v2.json` under the same artifact root. No strength claim.
+
+
+### CI contract integration
+
+The first remote ordinary CPU suite on8252 failed15cases: strict startup identity
+fields lacked updated atomic-group fixtures/reader classifications, an isolated
+AST harness lacked the new real validator bindings, and public documentation
+contained local absolute home paths. Independently accepted correction
+`731417da05d625fee9f8bab2389af5be35b6fe67` changes tests/docs only, preserves
+negative consumer-detection controls, and passes211focusedchecks with zero skips.
+Exact original failures and raw CI job log remain in
+`~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/ci-failure-8252/`;
+corrective evidence is in sibling `ci-contracts-2da5-20261111-v1/`.
+This is not a claim that the whole remote suite has passed; rerun CI on the final
+composed branch. Local whole lint retains only three established standalone-Python
+`_posixshmem` resolution errors; ruff and vulture pass. Runtime source remains
+unchanged during the fixed CPU mechanism stage.
