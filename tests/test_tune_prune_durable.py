@@ -85,6 +85,54 @@ def _main_cleanup(*, tune_dir: Path, keep_last: int, reserve_new: bool = False) 
     _prune_orphan_pb2_policy_logs(tune_dir=tune_dir)
 
 
+def _pr1217_cleanup(*, tune_dir: Path, keep_last: int, reserve_new: bool = False) -> None:
+    """Verbatim body of the #1217 rule (checkpoint-less state files use no
+    slot), before unreferenced checkpointed trial dirs were protected."""
+    keep_last = int(keep_last)
+    if keep_last <= 0 or not tune_dir.exists():
+        return
+    if reserve_new:
+        keep_last -= 1
+
+    state_files = sorted(tune_dir.glob("experiment_state-*.json"))
+    if len(state_files) <= keep_last:
+        return
+
+    keep: list[Path] = []
+    protected: set[str] = set()
+    protection_is_complete = True
+    slots_used = 0
+    for p in reversed(state_files):
+        if slots_used >= keep_last:
+            break
+        keep.append(p)
+        names = _trial_dirs_referenced_by(p)
+        if names is None:
+            protection_is_complete = False
+            continue
+        protected |= names
+        if any(harness._trial_dir_holds_checkpoint(tune_dir / n) for n in names):
+            slots_used += 1
+
+    ts_re = re.compile(r"^experiment_state-(?P<ts>.+)\.json$")
+    keep_set = set(keep)
+    for p in state_files:
+        if p in keep_set:
+            continue
+        m = ts_re.match(p.name)
+        if m:
+            _delete_obsolete_state_files(tune_dir=tune_dir, ts=m.group("ts"))
+
+    if not protection_is_complete:
+        return
+
+    for d in sorted(tune_dir.glob("train_trial_*")):
+        if not d.is_dir() or d.name in protected:
+            continue
+        shutil.rmtree(d, ignore_errors=True)
+
+    _prune_orphan_pb2_policy_logs(tune_dir=tune_dir)
+
 def _trial_name(trial_id: str, ts: str) -> str:
     return f"train_trial_{trial_id}_00000_0_lr=0.0003_{ts}"
 
@@ -520,11 +568,15 @@ def _has_checkpoint(d: Path) -> bool:
 
 @pytest.mark.parametrize("block", range(4))
 def test_property_random_sequences_against_main(tmp_path: Path, block: int) -> None:
-    """(a) the newest prior checkpoint-bearing state file's checkpointed trial
-    dirs always survive; (b) nothing main keeps is deleted; (c) healthy-only
-    layouts have identical survivors. 4 x 75 seeded cases."""
+    """4 x 75 seeded cases, the current rule against main's and #1217's:
+    (a) the newest prior checkpoint-bearing state file's checkpointed trial
+    dirs always survive; (b) nothing main or #1217 keeps is deleted; (c) on
+    healthy-only layouts survivors are identical to both, apart from an
+    unreferenced checkpointed (orphan) dir; (d) a trial dir holding a
+    checkpoint that no readable state file names always survives."""
     rules: dict[str, Callable[..., None]] = {
-        "main": _main_cleanup, "new": _cleanup_old_tune_experiments,
+        "main": _main_cleanup, "pr1217": _pr1217_cleanup,
+        "new": _cleanup_old_tune_experiments,
     }
     for seed in range(block * 75, (block + 1) * 75):
         rng = random.Random(seed)
@@ -541,11 +593,17 @@ def test_property_random_sequences_against_main(tmp_path: Path, block: int) -> N
             meta = _random_layout(root, outside, random.Random(seed * 7919 + 1))
             healthy_only = meta["healthy_only"]
             newest = None
+            named: set[str] = set()
             for name in sorted(meta["refs"]):
                 refs = meta["refs"][name]
+                named |= set(refs or [])
                 ck = [r for r in refs or [] if _has_checkpoint(root / r)]
                 if ck:
                     newest = ck
+            unnamed_ckpt = [
+                d.name for d in root.glob("train_trial_*")
+                if d.name not in named and _has_checkpoint(d)
+            ]
             call_root = root
             if link_root:
                 call_root = base / "tune_link"
@@ -553,8 +611,115 @@ def test_property_random_sequences_against_main(tmp_path: Path, block: int) -> N
             with contextlib.redirect_stdout(io.StringIO()):
                 rule(tune_dir=call_root, keep_last=keep, reserve_new=reserve)
             trees[label] = _tree(root) | {"OUT:" + x for x in _tree(outside)}
-            if label == "new" and keep - int(reserve) >= 1 and newest is not None:
-                assert all(_has_checkpoint(root / r) for r in newest), (seed, newest)
-        assert trees["main"] <= trees["new"], (seed, sorted(trees["main"] - trees["new"])[:5])
+            if label == "new":
+                if keep - int(reserve) >= 1 and newest is not None:
+                    assert all(_has_checkpoint(root / r) for r in newest), (seed, newest)
+                assert all(_has_checkpoint(root / n) for n in unnamed_ckpt), (seed, unnamed_ckpt)
+        assert trees["main"] <= trees["pr1217"] <= trees["new"], seed
         if healthy_only:
-            assert trees["main"] == trees["new"], seed
+            def strip(tree: set[str]) -> set[str]:
+                return {x for x in tree if "_orphan" not in x}
+            assert strip(trees["main"]) == strip(trees["pr1217"]) == strip(trees["new"]), seed
+
+
+# -- unreferenced trial dirs holding checkpoints ------------------------------
+
+LIVE_TS = ("2026-08-16_12-38-11", "2026-08-17_19-02-16", "2026-08-20_16-13-10")
+
+
+def _live_behind_old(tune_dir: Path) -> tuple[Path, Path]:
+    """An old finished experiment, then the live one resumed twice."""
+    _experiment(tune_dir, "9827e", "2026-07-11_12-50-16", healthy=True,
+                resumes=("2026-07-12_00-00-00",))
+    _experiment(tune_dir, "dea5e", LIVE_TS[0], healthy=True, resumes=LIVE_TS[1:])
+    return (tune_dir / _trial_name("9827e", "2026-07-11_12-50-16"),
+            tune_dir / _trial_name("dea5e", LIVE_TS[0]))
+
+
+@pytest.mark.parametrize("suffix", [".corrupt", ".bak_pre_lr3e5", ".failed_missing_ckpt103"])
+def test_live_state_files_renamed_keeps_the_live_trial(
+    tmp_path: Path, suffix: str, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Reviewer case B: operators rename the live run's state files. The live
+    trial dir is then referenced by no experiment_state-*.json at all."""
+    tune_dir = tmp_path / "tune"
+    tune_dir.mkdir()
+    old, live = _live_behind_old(tune_dir)
+    for ts in LIVE_TS:
+        f = tune_dir / f"experiment_state-{ts}.json"
+        f.rename(f.with_name(f.name + suffix))
+
+    _cleanup_old_tune_experiments(tune_dir=tune_dir, keep_last=2, reserve_new=True)
+
+    assert (live / "checkpoint_000250" / "trainer.pt").is_file()
+    assert (tune_dir / "pbt_policy_dea5e_00000.txt").is_file()
+    for ts in LIVE_TS:
+        assert (tune_dir / f"experiment_state-{ts}.json{suffix}").is_file()
+    assert (old / "checkpoint_000250" / "trainer.pt").is_file()
+    assert f"WARNING: keeping unreferenced trial dir {live}" in capsys.readouterr().out
+
+
+def test_state_files_without_relative_logdir_keep_every_checkpointed_trial(
+    tmp_path: Path,
+) -> None:
+    """Reviewer case C: the files parse but name no trial (e.g. a Ray upgrade
+    renames the field). Nothing accounts for any deletion; checkpointed dirs
+    stay, a checkpoint-less orphan still goes."""
+    tune_dir = tmp_path / "tune"
+    tune_dir.mkdir()
+    old, live = _live_behind_old(tune_dir)
+    for f in tune_dir.glob("experiment_state-*.json"):
+        payload = json.loads(f.read_text())
+        for entry in payload["trial_data"]:
+            trial = json.loads(entry[0])
+            trial["log_dir_name"] = trial.pop("relative_logdir")
+            entry[0] = json.dumps(trial)
+        f.write_text(json.dumps(payload))
+    garbage = _failed_trial(tune_dir, _trial_name("f0000", "2026-08-01_00-00-00"))
+
+    _cleanup_old_tune_experiments(tune_dir=tune_dir, keep_last=2, reserve_new=True)
+
+    assert (live / "checkpoint_000250" / "trainer.pt").is_file()
+    assert (old / "checkpoint_000250" / "trainer.pt").is_file()
+    assert not garbage.exists()
+
+
+def test_rotation_still_deletes_a_checkpointed_trial_named_by_a_pruned_state(
+    tmp_path: Path,
+) -> None:
+    """The exception is narrow: an old experiment whose readable state file is
+    pruned this pass is ordinary rotation and still goes, checkpoints and all."""
+    tune_dir = tmp_path / "tune"
+    tune_dir.mkdir()
+    old, live = _live_behind_old(tune_dir)
+
+    _cleanup_old_tune_experiments(tune_dir=tune_dir, keep_last=2, reserve_new=True)
+
+    assert not old.exists()
+    assert not (tune_dir / "pbt_policy_9827e_00000.txt").exists()
+    assert (live / "checkpoint_000250" / "trainer.pt").is_file()
+
+
+def test_symlinked_unreferenced_trial_dirs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Symlinked orphan with a checkpoint in its target: kept and reported (the
+    check follows the link). Symlinked orphan without one: its target's
+    contents are never deleted."""
+    tune_dir = tmp_path / "tune"
+    tune_dir.mkdir()
+    external = tmp_path / "archive"
+    _live_behind_old(tune_dir)
+    ck_name = _trial_name("aaaa1", "2026-06-01_00-00-00")
+    _healthy_trial(external, ck_name)
+    (tune_dir / ck_name).symlink_to(external / ck_name, target_is_directory=True)
+    bare_name = _trial_name("aaaa2", "2026-06-02_00-00-00")
+    _failed_trial(external, bare_name)
+    (tune_dir / bare_name).symlink_to(external / bare_name, target_is_directory=True)
+
+    _cleanup_old_tune_experiments(tune_dir=tune_dir, keep_last=2, reserve_new=True)
+
+    assert (tune_dir / ck_name).is_symlink()
+    assert (tune_dir / ck_name / "checkpoint_000250" / "trainer.pt").is_file()
+    assert f"keeping unreferenced trial dir {tune_dir / ck_name}" in capsys.readouterr().out
+    assert (external / bare_name / "error.txt").is_file()

@@ -212,13 +212,31 @@ def test_old_state_files_are_pruned_and_the_kept_ones_are_not(tmp_path: Path) ->
 def test_an_orphan_trial_dir_with_no_referencing_state_is_deleted(
     tmp_path: Path,
 ) -> None:
-    """Cleanup still has to reclaim disk, not just protect things."""
+    """Cleanup still has to reclaim disk, not just protect things: an
+    unreferenced trial dir without a checkpoint goes."""
+    _live_layout(tmp_path)
+    orphan = tmp_path / "train_trial_dead0_00000_0_lr=0.1_2026-06-01_00-00-00"
+    orphan.mkdir()
+    (orphan / "error.txt").write_text("boom")
+
+    _cleanup_old_tune_experiments(tune_dir=tmp_path, keep_last=2)
+
+    assert not orphan.exists()
+
+
+def test_an_orphan_trial_dir_holding_a_checkpoint_is_kept_with_a_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No readable state file names it, so nothing accounts for deleting it."""
     _live_layout(tmp_path)
     orphan = _make_trial_dir(tmp_path, "train_trial_dead0_00000_0_lr=0.1_2026-06-01_00-00-00")
 
     _cleanup_old_tune_experiments(tune_dir=tmp_path, keep_last=2)
 
-    assert not orphan.exists()
+    assert (orphan / "checkpoint_000250" / "trainer.pt").exists()
+    out = capsys.readouterr().out
+    assert f"WARNING: keeping unreferenced trial dir {orphan}" in out
+    assert "rm -rf" in out
 
 
 def test_an_unreadable_kept_state_file_protects_every_trial_dir(
