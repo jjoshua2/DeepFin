@@ -5,6 +5,13 @@ uses the code it was started on; this change reaches generated data only when
 a run is restarted onto a commit that contains it, and that restart must
 follow the adoption condition below.
 
+"Merging does not deploy" holds for the live run only. Node-limited MultiPV
+tools run from main change behaviour on merge, because each calls
+`StockfishUCI.search(..., nodes=...)` and so goes through the changed
+`_SearchInfoAccumulator`: `scripts/rvg_label_pass.py`,
+`scripts/build_audit_set.py`, `scripts/audit_targets.py` (its SF soft-target
+labelling) and `scripts/mpv6_tail_panel.py`.
+
 ## What changes
 
 `_SearchInfoAccumulator` in `chess_anti_engine/stockfish/uci.py` builds the
@@ -74,6 +81,54 @@ commit added a per-row `sf_eval_witness` shard field to remove this. That
 commit is not taken here: it is a reader/writer schema change of about 900
 lines, aimed at a rate below the 1% warn threshold.
 
+## Independent review measurements (wider MultiPV, fresh banks)
+
+The table above covers MultiPV 6 only. The independent reviewer of PR #1212
+replayed real Stockfish transcripts through three parsers: main, the rerank
+fix alone ("parser"), and this branch ("head"). Two banks are the author's
+MultiPV 6 banks above (bound-ending subset only). Four are new. The two
+150k-node fresh banks send `ucinewgame` before every search.
+
+| bank | searches | main dup | main lost | PR dup/lost | changed vs main (parser / head) |
+| --- | --- | --- | --- | --- | --- |
+| author MPV6 75k (bound subset of 300) | 109 | 23 | 24 | 0/0 | 24 / 47 |
+| author MPV6 150k (bound subset of 1000) | 309 | 64 | 65 | 0/0 | 67 / 151 |
+| new MPV20 75k | 150 | 27 (18%) | 27 | 0/0 | 27 / 42 |
+| new MPV40 75k | 150 | 39 (26%) | 39 | 0/0 | 39 / 47 |
+| new MPV6 150k, ucinewgame per search | 300 | 27 | 28 | 0/0 | 28 / 57 |
+| new MPV40 150k, ucinewgame per search | 200 | 40 (20%) | 40 | 0/0 | 40 / 55 (27.5%) |
+
+"dup" is a move emitted twice. "lost" is a move SF searched that main drops.
+Under this branch, row 0 equals Stockfish's `bestmove` on every search in every
+bank. Main misses it twice in the author's 150k MultiPV 6 bank. So at
+production width 40, main corrupts about 20–26% of searches (a duplicate plus a
+lost move), roughly three times the MultiPV 6 rate. The eval/PV orphan flag
+read 0 of 200 on the MPV40 150k bank under this branch.
+
+**Clamp vs re-searched truth.** All 101 clamped rows from the fresh banks were
+re-searched to get a reference value for the clamped move:
+
+- `T_full`: `ucinewgame; go depth d+1` at the same MultiPV.
+- `T_sm`: `go depth d+1 searchmoves <move>` at MultiPV 1.
+
+| truth | clamped closer / ties / stale closer | median abs error, stale → clamped (cp) | mean win-prob error, stale → clamped |
+| --- | --- | --- | --- |
+| `T_full` | 78 / 2 / 21 | 26 → 12 | 0.039 → 0.018 |
+| `T_sm` | 68 / 1 / 32 | 30 → 24 | 0.042 → 0.028 |
+
+All 5 lower-bound clamps were closer under `T_full`. Limits: the positions are
+random playouts, not production game positions; node budgets are at most 150k;
+no real mate clamp occurred, so the mate branch of the clamp is untested
+against truth.
+
+**Bank (the independent reviewer's, not the author's):**
+`~/chess-artifacts/experiments/2026-11-11-multipv-rerank-review/`.
+It holds the generators (`gen.py`, `gen_fresh.py`), the census, clamp and
+truth scripts (`census.py`, `clamped.py`, `truth.py`), the transcript banks
+(`bank_*.json`, `fbank_*.json`), the clamped rows and the re-searched truth
+(`clamped_rows.json`, `clamped_fresh.json`, `truth_rows.json`), and the
+parser variants and mutation outputs used in the review.
+
 ## What this does NOT establish
 
 - **No strength claim.** Nothing here shows the net gets stronger from cleaner
@@ -81,6 +136,8 @@ lines, aimed at a rate below the 1% warn threshold.
 - **Rates may not transfer to production.** Production labels run with
   MultiPV 40 and far larger node budgets. Wider MultiPV means more ranks
   carry previous-depth scores, so these rates are illustrative, not a forecast.
+  The review's MultiPV 40 banks (20–26% of searches corrupted on main) narrow
+  the width gap, but not the position or node-budget gap.
 - **The value label is unchanged.** `res.cp`/`res.mate` still come from the
   last exact rank-1 line, even when a later bound contradicts it. That is a
   separate value-target question, not addressed here.
