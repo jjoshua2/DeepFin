@@ -58,3 +58,110 @@ def test_boolean_run_config_rejects_truthy_non_booleans(config, key):
 )
 def test_boolean_run_config_accepts_yaml_booleans(config):
     flatten_run_config_defaults(config)
+
+
+@pytest.mark.parametrize("key", ["pb2_bounds_lr", "pb2_bounds_w_wdl", "pb2_bounds_custom"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        0.1, False, "0.1,0.2", {}, [], [0.1], [0.1, 0.2, 0.3],
+        [None, 1], [[], 1], ["bad", 1], [0, {}],
+        [float("nan"), 1], [0, float("nan")],
+        [float("-inf"), 1], [0, float("inf")],
+        ["-Infinity", 1], [0, "NaN"], [0, "1e999"],
+        [10**400, 1], [0, 10**400], [2, 1],
+    ],
+)
+def test_pb2_bounds_reject_invalid_effective_values(key, value):
+    config = {"tune": {key: value}}
+    with pytest.raises(ValueError, match=rf"YAML {key}.*two-element.*finite.*lower"):
+        flatten_run_config_defaults(config)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        [0, 0], [-2, -1], [-1, 0], [0.1, 1], ["0.1", "0.2"],
+        [False, True], [True, True], (0, 1), ["-2", "0"],
+        [5e-324, 1.7976931348623157e308],
+    ],
+)
+def test_pb2_bounds_preserve_valid_representation(value):
+    config = {"tune": {"pb2_bounds_lr": value}}
+    flat = flatten_run_config_defaults(config)
+    assert flat["pb2_bounds_lr"] is value
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {}, {"tune": {"pb2_bounds_lr": None}},
+    ],
+)
+def test_pb2_bounds_null_omission(config):
+    assert flatten_run_config_defaults(config) == {}
+
+
+@pytest.mark.parametrize("value", [None, "bad", [0, 1]])
+def test_pb2_bounds_root_syntax_remains_unsupported(value):
+    with pytest.raises(ValueError, match="Unknown yaml root-level keys"):
+        flatten_run_config_defaults(
+            {"pb2_bounds_lr": value, "tune": {"pb2_bounds_lr": [0, 1]}}
+        )
+
+
+def test_pb2_bounds_validate_every_effective_bound():
+    with pytest.raises(ValueError, match="pb2_bounds_w_wdl"):
+        flatten_run_config_defaults(
+            {"tune": {"pb2_bounds_lr": [0, 1], "pb2_bounds_w_wdl": "bad"}}
+        )
+
+
+def test_pb2_bounds_convert_endpoints_once():
+    class Endpoint:
+        def __init__(self, value):
+            self.value = value
+            self.calls = 0
+
+        def __float__(self):
+            self.calls += 1
+            return self.value
+
+    lo, hi = Endpoint(0.0), Endpoint(1.0)
+    bounds = [lo, hi]
+    assert flatten_run_config_defaults({"tune": {"pb2_bounds_lr": bounds}})["pb2_bounds_lr"] is bounds
+    assert (lo.calls, hi.calls) == (1, 1)
+
+
+def test_pb2_bounds_unrelated_conversion_failure_propagates():
+    class Endpoint:
+        def __float__(self):
+            raise RuntimeError("endpoint failure")
+
+    with pytest.raises(RuntimeError, match="endpoint failure"):
+        flatten_run_config_defaults({"tune": {"pb2_bounds_lr": [Endpoint(), 1]}})
+
+
+@pytest.mark.parametrize(
+    "bounds_yaml", ["0.1", "[.nan, 1]", "[0, .inf]", "[-.inf, 1]", "[2, 1]"],
+)
+def test_pb2_bounds_yaml_parser_rejection(tmp_path, bounds_yaml):
+    from chess_anti_engine.utils.config_yaml import load_yaml_file
+
+    path = tmp_path / "bounds.yaml"
+    path.write_text(f"tune:\n  pb2_bounds_lr: {bounds_yaml}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="pb2_bounds_lr"):
+        flatten_run_config_defaults(load_yaml_file(path))
+
+
+def test_pb2_bounds_yaml_parser_preserves_strings_and_omits_null(tmp_path):
+    from chess_anti_engine.utils.config_yaml import load_yaml_file
+
+    path = tmp_path / "bounds.yaml"
+    path.write_text(
+        "tune:\n  pb2_bounds_lr: ['0.1', '0.2']\n  pb2_bounds_w_wdl: null\n",
+        encoding="utf-8",
+    )
+    assert flatten_run_config_defaults(load_yaml_file(path)) == {
+        "pb2_bounds_lr": ["0.1", "0.2"],
+    }

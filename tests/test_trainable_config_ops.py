@@ -1034,3 +1034,59 @@ def test_live_reload_refuses_optimizer_group_value_knobs(
     assert restarted["matrix_weight_decay"] == 0
     assert restarted["aux_weight_decay"] == pytest.approx(0.01)
     assert restarted["aurora_uw_floor"] == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize("searched", [False, True])
+@pytest.mark.parametrize("live_reload", [False, True])
+@pytest.mark.parametrize(
+    "bounds_yaml",
+    ["0.1", "[]", "[0.1]", "[0, 1, 2]", "'0,1'", "[bad, 1]",
+     "[null, 1]", "[.nan, 1]", "[0, .inf]", "[-.inf, 1]", "[2, 1]"],
+)
+def test_pb2_bounds_reload_rejects_atomically_and_recovers(
+    tmp_path: Path, searched: bool, live_reload: bool, bounds_yaml: str,
+) -> None:
+    from chess_anti_engine.tune.trainable_config_ops import last_reload_yaml_keys
+
+    reset_yaml_reload_key_tracking()
+    path = tmp_path / "pb2.yaml"
+    config: dict = {"lr": 0.003, "batch_size": 32}
+    if searched:
+        config["pb2_bounds_lr"] = [0.001, 0.01]
+    path.write_text("lr: 0.003\nbatch_size: 32\n", encoding="utf-8")
+    _reload_yaml_into_config(config, str(path), live_reload=live_reload)
+    before = dict(config)
+    baseline = last_reload_yaml_keys(str(path))
+
+    # A bad bound must not apply even unrelated eligible siblings or advance
+    # the baseline. Include another valid bound so silently dropping the bad
+    # one would still leave a nonempty PB2 search space.
+    prefix = "tune:\n  "
+    path.write_text(
+        "lr: 0.009\nbatch_size: 99\nw_wdl: 0.8\n"
+        + prefix + f"pb2_bounds_lr: {bounds_yaml}\n"
+        + "  " + "pb2_bounds_w_wdl: [0, 1]\n",
+        encoding="utf-8",
+    )
+    _reload_yaml_into_config(config, str(path), live_reload=live_reload)
+    assert config == before
+    assert last_reload_yaml_keys(str(path)) == baseline
+
+    path.write_text(
+        "lr: 0.009\nbatch_size: 64\nw_wdl: 0.9\n"
+        + prefix + "pb2_bounds_lr: [0.002, 0.02]\n",
+        encoding="utf-8",
+    )
+    _reload_yaml_into_config(config, str(path), live_reload=live_reload)
+    assert config["batch_size"] == 64
+    assert config["w_wdl"] == 0.9
+    assert config["lr"] == (0.003 if searched else 0.009)
+    # Bounds remain launch-time settings, including on startup/resume reload.
+    if searched:
+        assert config["pb2_bounds_lr"] == [0.001, 0.01]
+    else:
+        assert "pb2_bounds_lr" not in config
+    assert "pb2_bounds_w_wdl" not in config
+    assert last_reload_yaml_keys(str(path)) == frozenset(
+        {"lr", "batch_size", "w_wdl", "pb2_bounds_lr"}
+    )

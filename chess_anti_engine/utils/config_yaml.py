@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from io import BytesIO, TextIOWrapper
 from pathlib import Path
@@ -600,6 +601,25 @@ def _apply_tune_section(out: dict[str, Any], section: dict[str, Any]) -> None:
     out.update({k: v for k, v in section.items() if k.startswith("pb2_bounds_")})
 
 
+def _check_pb2_bounds(flat: dict[str, Any]) -> None:
+    """Validate effective YAML bounds without changing their representation."""
+    for key, value in flat.items():
+        if not key.startswith("pb2_bounds_"):
+            continue
+        message = (
+            f"YAML {key} must be a two-element list/tuple of finite numbers "
+            "with lower <= upper; use null to omit the bound."
+        )
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise ValueError(message)
+        try:
+            lower, upper = float(value[0]), float(value[1])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(message) from exc
+        if not math.isfinite(lower) or not math.isfinite(upper) or lower > upper:
+            raise ValueError(message)
+
+
 def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     """Map a nested YAML config into run.py argparse defaults.
 
@@ -640,6 +660,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     _check_volatility_search_unsupported(flat)
     _check_target_only_knobs_require_zero_temperature(flat)
     _check_boolean_run_values(flat)
+    _check_pb2_bounds(flat)
     return flat
 
 
