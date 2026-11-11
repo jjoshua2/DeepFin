@@ -511,6 +511,23 @@ probe
         assert r.stderr.count("\n") == 1, r.stderr
 
 
+@pytest.mark.parametrize(("value", "want"), [("0.5", "0.5"), ("junk", "2")])
+def test_the_poll_guard_survives_a_closed_stderr(value: str, want: str) -> None:
+    """Its NOTE/WARNING go to stderr; under `set -e` a failed write there must
+    cost the message, never the rest of stop()."""
+    r = _run(f"""
+set -e
+{_poll_env(value)}
+probe() {{
+{_poll_definition()}
+echo "DPOLL=$dpoll"
+}}
+probe 2>&-
+""")
+    assert r.returncode == 0, r.stderr
+    assert f"DPOLL={want}\n" in r.stdout, r.stdout + r.stderr
+
+
 # ---------------------------------------------------------------------------
 # First pass: the workers get signalled and waited for
 # ---------------------------------------------------------------------------
