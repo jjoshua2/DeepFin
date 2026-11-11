@@ -640,6 +640,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     _check_volatility_search_unsupported(flat)
     _check_target_only_knobs_require_zero_temperature(flat)
     _check_boolean_run_values(flat)
+    _check_pb2_bounds(flat)
     return flat
 
 
@@ -813,3 +814,53 @@ def _check_sparse_sf_policy_flags(flat: dict[str, Any]) -> None:
             "train.sf_policy_sparse_ce: true — without it, samples written "
             "with only sparse MultiPV labels get NO policy_sf supervision."
         )
+
+
+def _check_pb2_bounds(flat: dict[str, Any]) -> None:
+    """Reject a malformed ``pb2_bounds_*`` before Ray or the harness sees it.
+
+    These bounds are not advisory: ``tune/harness.py:_build_mutation_param_space``
+    REPLACES the searched key with ``tune.uniform(*bounds)`` at launch, and the
+    mid-run reloader skips searched keys, so ``pb2_bounds_lr`` -- not
+    ``train.lr`` -- is what sets the production learning rate. Before this
+    check a malformed entry failed in one of two silent ways:
+
+    * wrong shape (a scalar, a string, three elements) -- dropped without a
+      word by ``harness._collect_mutation_bounds``, so the key quietly stopped
+      being searched and the yaml value took over;
+    * non-finite or inverted (``[nan, 1]``, ``[1, 0]``) -- accepted here and
+      failed later, inside Ray, far from the line that caused it.
+
+    Deliberately NO magnitude cap: the safe ceiling depends on the optimizer
+    and ``matrix_lr_multiplier`` (the danger figure is a per-param-group LR),
+    and other ``pb2_bounds_*`` keys have unrelated scales. ``lo == hi`` is the
+    supported way to pin a searched key and stays valid.
+    """
+    import math
+
+    for key in sorted(k for k in flat if k.startswith("pb2_bounds_")):
+        value = flat[key]
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise ValueError(
+                f"YAML tune.{key} must be a two-element [lo, hi] list, got "
+                f"{value!r}. A malformed entry is otherwise DROPPED by "
+                f"tune/harness.py:_collect_mutation_bounds, silently "
+                f"un-searching the key."
+            )
+        for bound in value:
+            if isinstance(bound, bool) or not isinstance(bound, (int, float)):
+                raise ValueError(
+                    f"YAML tune.{key} bounds must be real numbers, got "
+                    f"{bound!r} ({type(bound).__name__}) in {value!r}. Note that "
+                    f"YAML reads an exponent without a decimal point "
+                    f"(3e-5) as a STRING; write 3.0e-5 or 0.00003."
+                )
+            if not math.isfinite(float(bound)):
+                raise ValueError(
+                    f"YAML tune.{key} bounds must be finite, got {value!r}."
+                )
+        lo, hi = float(value[0]), float(value[1])
+        if lo > hi:
+            raise ValueError(
+                f"YAML tune.{key} must satisfy lo <= hi, got {value!r}."
+            )
