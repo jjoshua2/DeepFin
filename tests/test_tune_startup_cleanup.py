@@ -195,7 +195,8 @@ def test_retention_and_sidecar_cleanup_keep_their_failure_boundaries(
     states, trials = [], []
     for stamp in ["2026-01-01", "2026-02-01"]:
         trial = tune_dir / f"train_trial_{stamp}_00000"
-        trial.mkdir()
+        (trial / "checkpoint_000001").mkdir(parents=True)
+        (trial / "checkpoint_000001" / "trainer.pt").write_bytes(b"weights")
         (trial / "marker").write_text(stamp)
         state = tune_dir / f"experiment_state-{stamp}.json"
         state.write_text(json.dumps({"trial_data": [[json.dumps({
@@ -256,7 +257,11 @@ def test_fresh_retention_one_rejects_existing_artifacts_before_sidecars(
         )
     message = str(caught.value)
     assert "--work-dir" in message
-    assert "ignores --salvage-seed-pool-dir" in message
+    assert "TRAIN_WORK_DIR" in message
+    assert (
+        "when the resumed trial has a Ray checkpoint it restores that checkpoint "
+        "and ignores --salvage-seed-pool-dir"
+    ) in message
     assert calls == ["sync_patch"]
     assert existing.read_text() == "preserve even malformed or orphan artifacts"
 
