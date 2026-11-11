@@ -61,10 +61,10 @@ def test_stop_mid_stage_kills_the_running_child(tmp_path, monkeypatch, where):
     external = tmp_path / "EXTERNAL_STOP"
     stop = out / "STOP" if where == "out" else external
     child = (
-        "import pathlib,time; a=pathlib.Path(%r); a.write_text(str(time.time())); "
-        "pathlib.Path(%r).touch(); "
+        f"import pathlib,time; a=pathlib.Path({str(alive)!r}); "
+        "a.write_text(str(time.time())); "
+        f"pathlib.Path({str(ready)!r}).touch(); "
         "[ (time.sleep(0.05), a.write_text(str(time.time()))) for _ in range(400) ]"
-        % (str(alive), str(ready))
     )
 
     def touch_stop() -> None:
