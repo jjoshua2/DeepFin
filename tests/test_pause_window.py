@@ -130,11 +130,41 @@ def _run(work: Path, bin_dir: Path, *cmd: str, timeout: int = 90, **kw: str):
     )
 
 
-def _ack_after(tune: Path, delay: float) -> subprocess.Popen[bytes]:
-    """Write the trial's ack a moment from now, as the trial itself would."""
+# Several poll intervals (CAE_PAUSE_POLL_SECONDS=1), not one: an ack landing
+# exactly one poll after the marker lets a script that polls ONCE and then
+# proceeds without the ack pass the ordering tests by luck.
+ORDERING_ACK_DELAY = 3.0
+
+
+def _after_marker(tune: Path, delay: float, body: str) -> str:
+    """Shell that runs ``body`` ``delay`` seconds after the window's marker lands.
+
+    This is the order the trial itself produces -- it acks only once it has
+    seen the marker -- so the helper keys on the marker instead of on a fixed
+    wall-clock delay from launch. A fixed delay had to be long enough to cover
+    script startup on a loaded CI box (or the ack predates the marker and is
+    rightly read as stale), and every case paid that ceiling. The marker wait
+    is bounded by ACK_WAIT so a case whose script never writes one still ends.
+    """
+    marker = tune / "pause.txt"
+    polls = int(ACK_WAIT / 0.05)
+    return (
+        f'i=0; while [ ! -e "{marker}" ] && [ "$i" -lt {polls} ]; do '
+        f'sleep 0.05; i=$((i + 1)); done; [ -e "{marker}" ] || exit 0; '
+        f'sleep {delay}; {body}'
+    )
+
+
+def _ack_after(tune: Path, delay: float = 0.0) -> subprocess.Popen[bytes]:
+    """Write the trial's ack ``delay`` seconds after the marker, as the trial would.
+
+    Ordering cases pass ORDERING_ACK_DELAY so that a drain fired without
+    waiting for the park lands visibly BEFORE the ack.
+    """
     ack = tune / f".paused_{TRIAL_ID}.ack"
     return subprocess.Popen(
-        ["sh", "-c", f'sleep {delay}; echo "trial={TRIAL_ID} next_iter=7" > "{ack}"'],
+        ["sh", "-c", _after_marker(
+            tune, delay, f'echo "trial={TRIAL_ID} next_iter=7" > "{ack}"')],
     )
 
 
@@ -159,7 +189,7 @@ def test_the_marker_is_released_even_when_the_command_fails(
     release is a trap, not a trailing line. The command's exit code must still
     propagate, or a failing job inside a window would look like a success."""
     work, bin_dir, _ = _sandbox(tmp_path, workers=workers)
-    proc = _ack_after(work / "tune", 2.0)
+    proc = _ack_after(work / "tune")
     try:
         r = _run(work, bin_dir, "sh", "-c", "exit 17")
     finally:
@@ -177,7 +207,7 @@ def test_the_drain_never_starts_before_the_trial_has_parked(tmp_path: Path) -> N
     contended machine while reporting success.
     """
     work, bin_dir, calls = _sandbox(tmp_path, workers=True)
-    proc = _ack_after(work / "tune", 4.0)
+    proc = _ack_after(work / "tune", ORDERING_ACK_DELAY)
     try:
         r = _run(work, bin_dir, "true")
     finally:
@@ -198,7 +228,7 @@ def test_a_stale_ack_from_a_DIFFERENT_trial_does_not_satisfy_the_wait(
     """
     work, bin_dir, calls = _sandbox(tmp_path, workers=True)
     (work / "tune" / ".paused_dead99_00000.ack").write_text("trial=dead99_00000\n")
-    proc = _ack_after(work / "tune", 4.0)
+    proc = _ack_after(work / "tune", ORDERING_ACK_DELAY)
     try:
         r = _run(work, bin_dir, "true")
     finally:
@@ -225,7 +255,7 @@ def test_a_preexisting_ack_for_this_trial_is_ignored_until_it_is_refreshed(
     """
     work, bin_dir, calls = _sandbox(tmp_path, workers=True)
     (work / "tune" / f".paused_{TRIAL_ID}.ack").write_text("trial=old next_iter=1\n")
-    proc = _ack_after(work / "tune", 4.0)
+    proc = _ack_after(work / "tune", ORDERING_ACK_DELAY)
     try:
         r = _run(work, bin_dir, "true")
     finally:
@@ -312,7 +342,7 @@ def test_the_resume_baseline_is_taken_before_the_drain(tmp_path: Path) -> None:
     )
     (bin_dir / "killstub").chmod(0o755)
 
-    proc = _ack_after(work / "tune", 2.0)
+    proc = _ack_after(work / "tune")
     try:
         r = _run(work, bin_dir, "true")
     finally:
@@ -348,30 +378,63 @@ def test_it_does_not_leave_the_marker_behind_when_interrupted(tmp_path: Path) ->
   # needs the same opt-out: what it exercises is the signal trap, and the
   # no-worker refusal would fire before the marker ever appears.
     env["CAE_PAUSE_ALLOW_NO_WORKERS"] = "1"
+    started = tmp_path / "job_started"
     p = subprocess.Popen(
-        [str(SCRIPT), "--work-dir", str(work), "--trial-id", TRIAL_ID, "--", "sleep", "60"],
+        [str(SCRIPT), "--work-dir", str(work), "--trial-id", TRIAL_ID, "--",
+         "sh", "-c", f'touch "{started}"; exec sleep 60'],
         env=env, cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     ack = work / "tune" / f".paused_{TRIAL_ID}.ack"
     deadline = time.monotonic() + ACK_WAIT
     while not (work / "tune" / "pause.txt").exists():
         assert time.monotonic() < deadline, "marker never appeared"
-        time.sleep(0.2)
+        time.sleep(0.05)
     ack.write_text(f"trial={TRIAL_ID} next_iter=7\n")
-    time.sleep(3)
+    # Interrupt only once the JOB is running (the phase under test), not
+    # after a fixed sleep that merely hoped it had started.
+    while not started.exists():
+        assert p.poll() is None, "the script exited before running the job"
+        assert time.monotonic() < deadline, "the job never started"
+        time.sleep(0.05)
     p.terminate()
     rc = p.wait(timeout=30)
     assert not (work / "tune" / "pause.txt").exists(), "interrupted while holding the marker"
-  # ⚑ 130, NOT the wrapper-failure code. This is the ONE path where the EXIT
-  # trap is still armed while a status other than a setup failure is in flight,
-  # so it is the only place the `PHASE=job` guard is observable -- deleting
-  # `PHASE=job` SURVIVED every other test, because the normal path disarms the
-  # trap with `trap - EXIT` before exiting. An interrupt reported as "the
-  # wrapper failed" would be counted against CAE_RATCHET_PAUSE_MAX_FAILS and
-  # would disable the window for the rest of the day, for an operator Ctrl-C.
+  # ⚑ 130, NOT the wrapper-failure code. An interrupt reported as "the wrapper
+  # failed" would be counted against CAE_RATCHET_PAUSE_MAX_FAILS and would
+  # disable the window for the rest of the day, for an operator Ctrl-C. This
+  # does NOT observe `PHASE=job`: `remap_setup_failure` whitelists 130 in every
+  # phase, so deleting `PHASE=job` passes here. The test after this one is the
+  # one that pins it.
     assert rc == 130, (
         f"an interrupt exited {rc}; 130 is the documented interrupt status and "
         "anything else is read by the loop as a wrapper failure"
+    )
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores the read-only directory")
+def test_a_failure_after_the_job_ran_is_not_remapped_to_a_wrapper_failure(
+    tmp_path: Path,
+) -> None:
+    """⚑ THE ONE PLACE `PHASE=job` IS OBSERVABLE.
+
+    After the job, `release` runs with the EXIT trap still armed. If its
+    `rm -f "$MARKER"` fails (here: the job left the tune dir read-only), `set -e`
+    exits 1 through `release_then_remap`. Once the job has run that status must
+    pass through as-is; only a death during SETUP is remapped to
+    WRAPPER_FAILED_RC (7), which the ratchet loop counts against its daily fail
+    cap. Delete `PHASE=job` and this exits 7.
+    """
+    work, bin_dir, _ = _sandbox(tmp_path, workers=False)
+    tune = work / "tune"
+    proc = _ack_after(tune)
+    try:
+        r = _run(work, bin_dir, "chmod", "a-w", str(tune))
+    finally:
+        proc.wait()
+        tune.chmod(0o755)
+    assert r.returncode == 1, (
+        f"a post-job failure exited {r.returncode}; 7 means it was remapped to "
+        f"a wrapper failure although the job had already run\n{r.stderr}"
     )
 
 
@@ -542,7 +605,7 @@ def test_a_worker_that_survives_sigterm_stops_the_job(tmp_path: Path) -> None:
     (bin_dir / "killstub").chmod(0o755)
 
     ran = tmp_path / "ran"
-    ack = _ack_after(work / "tune", 2.0)
+    ack = _ack_after(work / "tune")
     try:
         r = _run(work, bin_dir, "touch", str(ran), CAE_PAUSE_DRAIN_TIMEOUT="2")
     finally:
@@ -576,7 +639,7 @@ def test_a_zombie_worker_counts_as_drained(tmp_path: Path) -> None:
     (bin_dir / "killstub").chmod(0o755)
 
     ran = tmp_path / "ran"
-    ack = _ack_after(work / "tune", 2.0)
+    ack = _ack_after(work / "tune")
     try:
         r = _run(work, bin_dir, "touch", str(ran), CAE_PAUSE_DRAIN_TIMEOUT="4")
     finally:
@@ -702,7 +765,7 @@ def test_the_log_file_parse_is_anchored_like_train_sh(tmp_path: Path) -> None:
     victim = _worker_with_argv(tmp_path, "--log-file", str(logf), "--log-file-level", "debug")
     _drain_stub(bin_dir, tmp_path, victim, append_to=logf)
 
-    proc = _ack_after(work / "tune", 2.0)
+    proc = _ack_after(work / "tune")
     try:
         r = _run(work, bin_dir, "true")
     finally:
@@ -727,7 +790,7 @@ def test_a_worker_with_no_log_file_says_so_LOUDLY(tmp_path: Path) -> None:
     victim = _worker_with_argv(tmp_path, "--log-file-level", "debug")
     _drain_stub(bin_dir, tmp_path, victim)
 
-    proc = _ack_after(work / "tune", 2.0)
+    proc = _ack_after(work / "tune")
     try:
         r = _run(work, bin_dir, "true")
     finally:
@@ -749,7 +812,7 @@ def test_a_missing_log_file_is_distinguished_from_a_missing_flag(tmp_path: Path)
     victim = _worker_with_argv(tmp_path, "--log-file", str(tmp_path / "not_there.log"))
     _drain_stub(bin_dir, tmp_path, victim)
 
-    proc = _ack_after(work / "tune", 2.0)
+    proc = _ack_after(work / "tune")
     try:
         r = _run(work, bin_dir, "true")
     finally:
@@ -894,7 +957,7 @@ def test_a_well_formed_trial_dir_still_resolves(tmp_path: Path) -> None:
     """The positive control for the validation above: a real trial-dir name
     must still resolve, or the guard is just a refusal to work."""
     work, bin_dir, calls = _sandbox(tmp_path, workers=True)
-    proc = _ack_after(work / "tune", 2.0)
+    proc = _ack_after(work / "tune")
     try:
         env_free = subprocess.run(
             [str(SCRIPT), "--work-dir", str(work), "--", "true"],
@@ -953,7 +1016,7 @@ def test_a_worker_REVIVED_during_the_ack_wait_is_drained_too(tmp_path: Path) -> 
     cmdline = "python3\\0-m\\0chess_anti_engine.worker\\0--trial-id\\0" + TRIAL_ID + "\\0"
     stat = f"{revived_pid} (python3) S {FAKE_PPID} " + " ".join(["0"] * 13) + " 20 0 1 0 7777 0 0"
     script = (
-        "sleep 2\n"
+        _after_marker(work / "tune", 0.0, ":") + "\n"
         f"mkdir -p {shlex.quote(str(revived_dir))}\n"
         f"printf '%b' {shlex.quote(cmdline)} > {shlex.quote(str(revived_dir / 'cmdline'))}\n"
         f"echo {shlex.quote(stat)} > {shlex.quote(str(revived_dir / 'stat'))}\n"
@@ -1148,7 +1211,7 @@ def test_it_does_not_clear_a_marker_that_is_no_longer_ours(tmp_path: Path) -> No
     mine = tmp_path / "replaced"
     job = f'cat "{marker}" > "{mine}"; echo "operator holds this" > "{marker}"'
 
-    proc = _ack_after(work / "tune", 2.0)
+    proc = _ack_after(work / "tune")
     try:
         r = _run(work, bin_dir, "bash", "-c", job)
     finally:
@@ -1169,7 +1232,7 @@ def test_it_still_clears_its_OWN_marker(tmp_path: Path) -> None:
     wrong in the other direction the script leaves production parked on every
     run, which is the one unrecoverable mistake it exists to avoid."""
     work, bin_dir, _ = _sandbox(tmp_path, workers=False)
-    proc = _ack_after(work / "tune", 2.0)
+    proc = _ack_after(work / "tune")
     try:
         r = _run(work, bin_dir, "true")
     finally:
@@ -1284,7 +1347,8 @@ def _resolve(work: Path, bin_dir: Path, live_id: str):
     """
     ack = work / "tune" / f".paused_{live_id}.ack"
     writer = subprocess.Popen(
-        ["sh", "-c", f'sleep 2; echo "trial={live_id} next_iter=7" > "{ack}"'],
+        ["sh", "-c", _after_marker(
+            work / "tune", 0.0, f'echo "trial={live_id} next_iter=7" > "{ack}"')],
     )
     try:
         env = dict(os.environ)
@@ -1762,6 +1826,11 @@ def test_a_proc_entry_that_vanishes_mid_walk_is_skipped_silently(tmp_path: Path)
     assert r.stderr == "", f"drain snapshot leaked to stderr: {r.stderr!r}"
 
 
+# The watchdog's poll is handed to `sleep`, so it may be fractional: the
+# 1 s "several polls" windows below are five polls each.
+LEASE_POLL = "0.2"
+
+
 def test_the_lease_watchdog_never_touches_a_foreign_marker(tmp_path: Path) -> None:
     """⚑ THE REVIEW'S BLOCKING FINDING. The watchdog used to `rm -f` whatever
     sat at the marker path once its owner died -- demonstrated live against a
@@ -1780,8 +1849,8 @@ def test_the_lease_watchdog_never_touches_a_foreign_marker(tmp_path: Path) -> No
     marker.write_text("pause_window.sh pid=999999 started=x\njob=other window\n")
     r = _run_lib(
         f'wd=$(pause_start_lease_watchdog {shlex.quote(str(marker))} {dead.pid} '
-        f'600 {shlex.quote(str(wlog))}); sleep 4; kill "$wd" 2>/dev/null; wait 2>/dev/null; echo done',
-        env={"CAE_PAUSE_LEASE_POLL_SECONDS": "1"},
+        f'600 {shlex.quote(str(wlog))}); sleep 1; kill "$wd" 2>/dev/null; wait 2>/dev/null; echo done',
+        env={"CAE_PAUSE_LEASE_POLL_SECONDS": LEASE_POLL},
     )
     assert r.returncode == 0, r.stderr
     assert marker.exists(), (
@@ -1797,12 +1866,12 @@ def test_the_lease_watchdog_never_touches_a_foreign_marker(tmp_path: Path) -> No
         f'600 {shlex.quote(str(wlog))}); '
         # Unlink precedes logging. Wait for BOTH observations before teardown;
         # killing on unlink alone races the watchdog's final printf/date command.
-        'for i in $(seq 1 20); do '
+        'for i in $(seq 1 100); do '
         f'if [ ! -e {shlex.quote(str(marker))} ] && '
         f'grep -q "launcher pid" {shlex.quote(str(wlog))} 2>/dev/null; then break; fi; '
-        'sleep 0.5; done; '
+        'sleep 0.1; done; '
         'kill "$wd" 2>/dev/null; echo done',
-        env={"CAE_PAUSE_LEASE_POLL_SECONDS": "1"},
+        env={"CAE_PAUSE_LEASE_POLL_SECONDS": LEASE_POLL},
     )
     assert r.returncode == 0, r.stderr
     assert not marker.exists(), "the lease no longer cleans up our own orphaned marker"
@@ -1832,8 +1901,8 @@ def test_the_lease_watchdogs_owner_identity_is_start_time_pinned(tmp_path: Path)
             f'start="$(pause_proc_start_time {owner.pid})" || exit 9; '
             f'wd=$(pause_start_lease_watchdog {shlex.quote(str(marker))} {owner.pid} '
             f'600 {shlex.quote(str(wlog))} "$start"); '
-            'sleep 4; kill "$wd" 2>/dev/null; echo done',
-            env={"CAE_PAUSE_LEASE_POLL_SECONDS": "1"},
+            'sleep 1; kill "$wd" 2>/dev/null; echo done',
+            env={"CAE_PAUSE_LEASE_POLL_SECONDS": LEASE_POLL},
         )
         assert r.returncode == 0, r.stderr
         assert marker.exists(), (
@@ -1846,9 +1915,9 @@ def test_the_lease_watchdogs_owner_identity_is_start_time_pinned(tmp_path: Path)
             f'start="$(pause_proc_start_time {owner.pid})" || exit 9; '
             f'wd=$(pause_start_lease_watchdog {shlex.quote(str(marker))} {owner.pid} '
             f'600 {shlex.quote(str(wlog))} "$((start + 1))"); '
-            'for i in $(seq 1 20); do [ -e ' + shlex.quote(str(marker)) + ' ] || break; sleep 0.5; done; '
+            'for i in $(seq 1 100); do [ -e ' + shlex.quote(str(marker)) + ' ] || break; sleep 0.1; done; '
             'kill "$wd" 2>/dev/null; echo done',
-            env={"CAE_PAUSE_LEASE_POLL_SECONDS": "1"},
+            env={"CAE_PAUSE_LEASE_POLL_SECONDS": LEASE_POLL},
         )
         assert r.returncode == 0, r.stderr
         assert not marker.exists(), (

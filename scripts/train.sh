@@ -108,8 +108,22 @@ check_c_extensions() {
     if [ "${TRAIN_SKIP_C_EXT_CHECK:-0}" = "1" ]; then
         return 0
     fi
-    PYTHONPATH=. python3 scripts/check_c_extensions_fresh.py --quiet \
-        --min-gcc-major 15 --require-production-recipe
+    if ! PYTHONPATH=. python3 scripts/check_c_extensions_fresh.py --quiet \
+        --min-gcc-major 15 --require-production-recipe; then
+        echo "Refusing to start training on these C extensions." >&2
+        echo "  Bypass (runs whatever is built): TRAIN_SKIP_C_EXT_CHECK=1 $0 ..." >&2
+        return 1
+    fi
+}
+
+# restart = gate, stop, start. ⚑ The extension gate runs BEFORE stop: start()
+# runs it too, but by then the live job is already down, so a rejection there
+# would turn a restart into an outage. start() keeps its own call for plain
+# `start` and as a re-check.
+restart_training() {
+    check_c_extensions || return 1
+    stop
+    start "$@"
 }
 
 start() {
@@ -682,6 +696,9 @@ salvage_restart() {
         esac
     done
 
+    # Gate before stop, as in restart_training: never take the job down for a
+    # start that is already known to be refused.
+    check_c_extensions || return 1
     stop
     start \
         --salvage-seed-pool-dir "$pool_dir" \
@@ -885,7 +902,7 @@ PY
 case "${1:-status}" in
     start)            shift; start "$@" ;;
     stop)             stop ;;
-    restart)          shift; stop; start "$@" ;;
+    restart)          shift; restart_training "$@" ;;
     status)           status ;;
     log)              tail -f "$LOG" ;;
     salvage-export)   shift; salvage_export "$@" ;;
