@@ -70,6 +70,10 @@ from tests.test_derive_corpus_targets import (
 #: spawn (so Blosc's adaptive encoder still picks the child's context mode), and
 #: the server is never a fork of this pytest process.  The end-to-end identity
 #: and byte tests keep the production "spawn" path.
+#: ⚑ The server's environment is frozen when it starts (the first fast-lane test
+#: in the module), and every lane inherits THAT, not the current one: a later
+#: ``monkeypatch.setenv`` in a test does not reach its lanes, as it would under
+#: spawn.  A test whose lanes must see an env change has to stay on spawn.
 _FAST_LANE_CONTEXT = "forkserver"
 
 

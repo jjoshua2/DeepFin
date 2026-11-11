@@ -41,6 +41,10 @@ def _archive(game: int) -> bytes:
 # together, only inside the owned child processes of that case;
 # test_shipped_segment_constants_are_pinned keeps the real values pinned and
 # every other case runs on them.
+# What the scaled case no longer reaches: no test now builds a full shipped
+# segment (8,192 rows in 16 frames) or a 2,048-record sort run, so how those
+# sizes sit against the sort's byte_cap and the zstd window
+# (frame_rows * row_bytes) is covered only by the constants pin, not by data.
 _SCALED_SEGMENT_ROWS = 64
 _SCALED_FRAME_ROWS = 32  # 32 rows * row_bytes 32 = zstd's 1 KiB minimum window
 _SCALED_RUN_ROWS = 16
