@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
+import time
 
 import pytest
 
@@ -236,3 +238,88 @@ except subprocess.TimeoutExpired:
     child = int(pid_file.read_text())
     status = Path(f"/proc/{child}/stat")
     assert not status.exists() or status.read_text().split(") ", 1)[1].startswith("Z")
+
+
+@pytest.mark.parametrize(("child_exit", "expected_status"), [(0, 0), (7, 70)])
+def test_child_exit_before_pgid_inspection_preserves_result(
+    tmp_path: Path, child_exit: int, expected_status: int,
+) -> None:
+    """A completed child makes ps return 1, not a failed review by itself."""
+    repo, env, base, head = _setup(tmp_path)
+    real_ps = shutil.which("ps")
+    assert real_ps is not None
+    status_file = tmp_path / "ps-status"
+    env.update(REAL_PS=real_ps, PS_STATUS_FILE=str(status_file), FAKE_EXIT=str(child_exit))
+    proxy = tmp_path / "bin" / "ps"
+    proxy.write_text("""#!/usr/bin/env bash
+pid="${4}"
+gone=0
+for _ in $(seq 1 500); do
+    if ! "$REAL_PS" -p "$pid" >/dev/null 2>&1; then
+        gone=1
+        break
+    fi
+    sleep 0.01
+done
+[ "$gone" = 1 ] || exit 3
+"$REAL_PS" "$@"
+status=$?
+printf '%s\\n' "$status" > "$PS_STATUS_FILE"
+exit "$status"
+""")
+    proxy.chmod(0o755)
+
+    result = _run(repo, env, "--diff", f"{base}...{head}")
+
+    assert status_file.read_text().strip() == "1"
+    assert result.returncode == expected_status, result.stderr
+    assert "raw_output:" in result.stdout
+    assert "LIVE WORKTREE CHECK: unchanged" in result.stdout
+    assert (repo / "value.txt").read_text() == "base"
+    observed = json.loads(Path(env["OBSERVED"]).read_text())
+    assert not Path(observed["snapshot"]).exists()
+    if child_exit:
+        assert "grok -p exited 7" in result.stderr
+        assert "===== GROK REVIEW" not in result.stdout
+    else:
+        assert "BEGIN_FINDINGS\nNONE\nEND_FINDINGS" in result.stdout
+
+
+def test_live_pgid_inspection_failure_cleans_up_owned_descendant(tmp_path: Path) -> None:
+    """Inspection errors fail closed and retain the wrapper's group cleanup."""
+    repo, env, base, head = _setup(tmp_path)
+    child_file = tmp_path / "child.pid"
+    leader_file = tmp_path / "leader.pid"
+    env.update(RESIST_TERM="1", CHILD_PID=str(child_file), PS_LEADER_FILE=str(leader_file))
+    proxy = tmp_path / "bin" / "ps"
+    proxy.write_text("""#!/usr/bin/env bash
+printf '%s\\n' "${4}" > "$PS_LEADER_FILE"
+for _ in $(seq 1 500); do
+    [ -s "$CHILD_PID" ] && break
+    sleep 0.01
+done
+[ -s "$CHILD_PID" ] || exit 3
+exit 2
+""")
+    proxy.chmod(0o755)
+
+    result = _run(repo, env, "--diff", f"{base}...{head}")
+
+    assert result.returncode == 70, result.stderr
+    assert "could not inspect the Grok process group" in result.stderr
+    for pid_file in (leader_file, child_file):
+        pid = int(pid_file.read_text())
+        status = Path(f"/proc/{pid}/stat")
+        deadline = time.monotonic() + 2
+        while True:
+            try:
+                state = status.read_text().split(") ", 1)[1]
+            except FileNotFoundError:
+                break
+            if state.startswith("Z"):
+                break
+            assert time.monotonic() < deadline, f"owned pid {pid} survived cleanup"
+            time.sleep(0.01)
+    observed = json.loads(Path(env["OBSERVED"]).read_text())
+    assert not Path(observed["snapshot"]).exists()
+    assert (repo / "value.txt").read_text() == "base"
