@@ -91,6 +91,7 @@ class TestMultiPVMoveIdentity(unittest.TestCase):
                           line(1, B, 200, bound="lowerbound"), line(2, A, 35)])
         pv = acc.result(B).pvs[0]
         assert (pv.move_uci, pv.cp, pv.mate) == (B, None, 3)
+        assert pv.wdl is not None
         np.testing.assert_array_equal(pv.wdl, [1, 0, 0])
 
     def test_no_pv_bound_preserves_unknown_identity_behavior(self):
