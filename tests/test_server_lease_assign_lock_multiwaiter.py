@@ -86,7 +86,9 @@ class _Census:
             self.busy += 1
 
 
-def _hammer(lock_path: Path, census: _Census, *, waiters: int) -> None:
+def _hammer(
+    lock_path: Path, census: _Census, *, waiters: int, timeout_s: float = 1.0,
+) -> None:
     """One round: `waiters` threads released together onto one planted lock."""
     start = threading.Barrier(waiters)
 
@@ -95,7 +97,7 @@ def _hammer(lock_path: Path, census: _Census, *, waiters: int) -> None:
             start.wait(timeout=_ROUND_DEADLINE_S)
         except threading.BrokenBarrierError:  # pragma: no cover - wedge guard
             return
-        lk = _LeaseAssignLock(lock_path, timeout_s=1.0, stale_after_s=1e9)
+        lk = _LeaseAssignLock(lock_path, timeout_s=timeout_s, stale_after_s=1e9)
         try:
             lk.__enter__()
         except _LeaseAssignBusy:
@@ -122,11 +124,12 @@ def _hammer(lock_path: Path, census: _Census, *, waiters: int) -> None:
 
 def _run_rounds(
     lock_path: Path, *, pid_source, rounds: int, waiters: int = _WAITERS,
+    timeout_s: float = 1.0,
 ) -> _Census:
     census = _Census()
     for _ in range(rounds):
         _plant(lock_path, pid=pid_source())
-        _hammer(lock_path, census, waiters=waiters)
+        _hammer(lock_path, census, waiters=waiters, timeout_s=timeout_s)
         lock_path.unlink(missing_ok=True)
     return census
 
@@ -167,7 +170,11 @@ def test_live_holder_admits_nobody(tmp_path: Path) -> None:
     below is the STEAL path and not the lock as a whole. The holder pid is this
     very process, so it is unambiguously alive and no child is left running.
     """
-    census = _run_rounds(tmp_path / ".assign.lock", pid_source=os.getpid, rounds=3)
+    # Every waiter is refused only at its deadline, so the deadline is the
+    # test's wall time. 0.25s is still five of the lock's 50ms busy polls.
+    census = _run_rounds(
+        tmp_path / ".assign.lock", pid_source=os.getpid, rounds=3, timeout_s=0.25,
+    )
 
     assert census.entries == 0, "a live holder's lock must never be taken"
     assert census.busy == 3 * _WAITERS
@@ -337,9 +344,12 @@ def test_two_polls_never_assign_two_workers_to_one_trial(tmp_path: Path) -> None
                 results.append({"worker": worker_id, "trial": None})
             return
         try:
-            # Times out when exclusion HOLDS -- that is the good path.
+            # Times out when exclusion HOLDS -- that is the good path. Without
+            # exclusion both threads arrive within milliseconds, so 0.5s only
+            # bounds the good path's wait. Shorter than the second poll's 1s
+            # lock timeout, so it may be admitted after the first leaves.
             with contextlib.suppress(threading.BrokenBarrierError):
-                both_inside.wait(timeout=2.0)
+                both_inside.wait(timeout=0.5)
             lease = assign_trial_lease(
                 leases_root=leases_root,
                 username="volunteer",
