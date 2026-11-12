@@ -940,6 +940,12 @@ def _check_pb2_bounds(flat: dict[str, Any]) -> None:
                     f"YAML tune.{key} bounds must be finite, got {value!r}."
                 )
         lo, hi = float(value[0]), float(value[1])
+        # A learning rate is never negative; production draws its LR from
+        # these bounds, not from `train.lr`. Other searched keys may be signed.
+        if key == "pb2_bounds_lr" and lo < 0.0:
+            raise ValueError(
+                f"YAML tune.{key} bounds must not be negative, got {value!r}."
+            )
         if lo > hi:
             raise ValueError(
                 f"YAML tune.{key} must satisfy lo <= hi, got {value!r}."

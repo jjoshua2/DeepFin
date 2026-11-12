@@ -69,18 +69,19 @@ A bad live value fails in one of four ways, which code comments cite by letter:
 
 - **(a) Rejected by the loader**: a key not in the schema (`utils/config_yaml.py`), or
   a value failing a check in `flatten_run_config_defaults` (strict booleans,
-  `pb2_bounds_*` shape, flag pairings, the `lr` checks, one range check; read the
-  function). Mid-run the whole reload is rejected and the old config kept, so other
+  `pb2_bounds_*` shape, flag pairings, the `lr`/`pb2_bounds_lr` checks, one range
+  check; read the function). Mid-run the whole reload is rejected and the old config kept, so other
   edits in the same save are not applied; at launch it is fatal. Before a restart,
   compare the live YAML's keys with the target revision's schema.
 - **(b) In the schema, rejected by a validator that runs inside the iteration loop**
   (chiefly `TrialConfig.from_dict`): the reload succeeds, the validator raises and
   the trial dies.
-- **(c) In the schema but not range-checked**: applied raw and silently. `lr` is one
-  such key: the loader rejects a non-numeric, non-finite, boolean or negative `lr`
-  (class (a)); a positive value such as 0.3 is applied raw (LR above 0.003 has
-  destroyed the model), and `lr: 0` builds the optimizer at LR 0 at launch but is
-  ignored by a mid-run reload (old LR kept).
+- **(c) In the schema but not range-checked**: applied raw and silently. `lr`: the
+  loader rejects a non-numeric, non-finite, boolean or negative value (class (a)).
+  Where `pb2_bounds_lr` is set (production) a valid YAML `lr` is silently not applied,
+  at launch or mid-run: the LR comes from the bounds, and from `experiment_state` on
+  resume, so change those. Without `pb2_bounds_lr`, YAML `lr` is applied raw (LR
+  above 0.003 has destroyed the model).
 - **(d) A dead key** (`dead_config_keys()` in `tune/trainable_config_ops.py`: parsed,
   read by no production path): a non-inert value is declined mid-run for that key
   only, then the trial refuses to start at the next restart.

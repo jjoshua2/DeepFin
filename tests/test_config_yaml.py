@@ -190,3 +190,26 @@ def test_lr_boolean_is_fatal_at_launch(tmp_path, monkeypatch, token):
     ])
     with pytest.raises(ValueError, match="'lr' must be a finite number, not a boolean"):
         run.main()
+
+
+@pytest.mark.parametrize("token", ["-1", "-0.0003", "nan", "inf", "bad"])
+def test_cli_lr_rejects_negative_or_nonfinite_at_parse(tmp_path, monkeypatch, capsys, token):
+    # Without pb2_bounds_lr (or a YAML `lr` to overwrite it on reload) the CLI
+    # value becomes the trainer's LR, so it is refused at argument parsing.
+    from chess_anti_engine import run
+
+    monkeypatch.setattr(sys, "argv", [
+        "chess_anti_engine.run", "--mode", "train", "--work-dir", str(tmp_path),
+        "--device", "cpu", f"--lr={token}",
+    ])
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+    assert exc.value.code == 2
+    assert "--lr must" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("token", "expected"), [("0", 0.0), ("-0.0", 0.0), ("3e-5", 3e-5)])
+def test_cli_lr_accepts_zero_and_positive(token, expected):
+    from chess_anti_engine.run import _learning_rate_arg
+
+    assert _learning_rate_arg(token) == expected

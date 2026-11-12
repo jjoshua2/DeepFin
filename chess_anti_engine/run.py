@@ -31,6 +31,28 @@ _TUNE_CONFIG_DENYLIST = frozenset({
 })
 
 
+def _learning_rate_arg(text: str) -> float:
+    """argparse type for ``--lr``: a finite, non-negative float.
+
+    Without ``pb2_bounds_lr`` (and without a YAML ``lr`` to overwrite it on
+    reload) the CLI value is the trainer's LR, so refuse what the YAML loader
+    refuses. A YAML ``lr`` becomes an argparse default, which argparse passes
+    through this function only when it is a string; the loader has already
+    validated it either way.
+    """
+    import math
+
+    try:
+        value = float(text)
+    except (TypeError, ValueError, OverflowError):
+        raise argparse.ArgumentTypeError(f"--lr must be a finite number, got {text!r}") from None
+    if not math.isfinite(value):
+        raise argparse.ArgumentTypeError(f"--lr must be a finite number, got {text!r}")
+    if value < 0.0:
+        raise argparse.ArgumentTypeError(f"--lr must not be negative, got {text!r}")
+    return value
+
+
 def _build_tune_config_dict(args: argparse.Namespace) -> dict:
     """Convert parsed CLI args into the flat config dict consumed by Ray Tune.
 
@@ -625,7 +647,7 @@ def main() -> None:
     ap.add_argument("--mcts-simulations", type=int, default=800)
     ap.add_argument("--mcts", type=str, default="puct", choices=["puct", "gumbel"])
     ap.add_argument("--min-replay-size", type=int, default=0)
-    ap.add_argument("--lr", type=float, default=3e-4)
+    ap.add_argument("--lr", type=_learning_rate_arg, default=3e-4)
     ap.add_argument("--w-volatility", type=float, default=0.05)
     ap.add_argument("--volatility-source", type=str, default="raw", choices=["raw", "search"],
                     help="Volatility target source: raw (network raw WDL) or search (search-adjusted WDL).")

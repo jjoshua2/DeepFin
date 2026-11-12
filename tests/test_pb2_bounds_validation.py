@@ -25,7 +25,8 @@ _REPO = Path(__file__).resolve().parents[1]
         [3e-5, 3e-5],          # production: a pinned (degenerate) interval
         [0.0001, 0.0003],
         (1, 2),                # ints and tuples are real-number pairs too
-        [-1.0, 0.0],           # no sign/magnitude policy at this layer
+        [0.0, 0.0],            # zero is a legal LR endpoint
+        [-0.0, 3e-5],          # -0.0 == 0, accepted like the scalar `lr`
         [0.3, 0.3],            # no magnitude cap here, by design
         ["3e-5", "3e-5"],      # YAML reads `3e-5` as a string; works on main
         ["0.1", 0.2],          # mixed string/number
@@ -62,12 +63,21 @@ def test_valid_pb2_bounds_are_accepted_and_reach_the_harness(bounds):
         ([10**400, 1.0], "real numbers"),     # float() overflows on the int
         (["3e-4", "3e-5"], "lo <= hi"),       # ordered on the realized floats
         ([3e-4, 3e-5], "lo <= hi"),
+        ([-1.0, 0.0], "must not be negative"),     # production draws its LR here
+        ([-1e-3, 3e-5], "must not be negative"),
+        (["-1e-3", "3e-5"], "must not be negative"),
     ],
 )
 def test_malformed_pb2_bounds_raise_naming_the_key(bounds, match):
     with pytest.raises(ValueError, match=match) as exc:
         flatten_run_config_defaults({"tune": {"pb2_bounds_lr": bounds}})
     assert "pb2_bounds_lr" in str(exc.value)
+
+
+def test_negative_bounds_stay_legal_for_keys_other_than_lr():
+    # The sign rule is a learning-rate rule; other searched keys may be signed.
+    flat = flatten_run_config_defaults({"tune": {"pb2_bounds_w_value": [-1.0, 0.0]}})
+    assert _collect_mutation_bounds(flat) == {"w_value": [-1.0, 0.0]}
 
 
 def test_every_pb2_bounds_key_is_checked_not_only_lr():
