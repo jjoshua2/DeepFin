@@ -386,6 +386,7 @@ class Engine:
         self._options = options if options is not None else EngineOptions()
         self._gil_probe = GilContentionProbe(interval_s=0.010) if gil_profile else None
         self._worker.set_max_tree_mb(self._options.hash_mb)
+        self._leaf_tb_noted: str | None = None
   # Set by setoption handlers that reshape the search path / evaluator
   # (Threads/UseVL/UseMultiGpuPUCV/LeafGather/VLGather/MaxBatch/
   # EvalCacheEntries). The build-time ``warmup_search`` runs BEFORE any
@@ -655,6 +656,7 @@ class Engine:
             target_moves = self._pending_moves
             self._popped_ponder_move = None
             search_board = self._board
+        self._note_leaf_tb_inactive()
         self._sync_tree_root(target_moves)
         overhead = self._options.move_overhead_ms
         limits = limits_from_go(
@@ -1506,6 +1508,19 @@ class Engine:
             f"{probe.n_wdl} WDL + {probe.n_dtz} DTZ tables, "
             f"up to {probe.max_pieces}-piece positions"
         )
+        self._leaf_tb_noted = None
+        self._note_leaf_tb_inactive()
+
+    def _note_leaf_tb_inactive(self) -> None:
+        """Say once per mode that the active search path ignores SyzygyPath at leaves."""
+        mode = self._worker.leaf_tb_inactive_mode()
+        if mode is not None and mode != self._leaf_tb_noted:
+            _println(
+                f"info string note: leaf tablebase probing is inactive on search path {mode}; "
+                "SyzygyPath reaches only the root move shortcut and root eval "
+                "(only the classic Gumbel path probes leaves)"
+            )
+        self._leaf_tb_noted = mode
 
   # -- search thread body ---------------------------------------------------
 

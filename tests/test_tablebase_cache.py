@@ -8,7 +8,8 @@ import chess_anti_engine.tablebase as tablebase
 class _FakeTablebase:
     instances: ClassVar[list[_FakeTablebase]] = []
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_fds: int | None = 128) -> None:
+        self.max_fds = max_fds
         self.dirs: list[str] = []
         self.closed = False
         _FakeTablebase.instances.append(self)
@@ -33,6 +34,8 @@ def test_get_tablebase_keeps_path_swaps_from_closing_active_handles(monkeypatch)
     assert isinstance(first, _FakeTablebase)
     assert isinstance(second, _FakeTablebase)
     assert first is not second
+    assert first.max_fds is None
+    assert second.max_fds is None
     assert not first.closed
     assert not second.closed
     assert tablebase.get_tablebase("tb_a") is first
