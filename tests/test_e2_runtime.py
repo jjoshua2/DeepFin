@@ -86,6 +86,7 @@ def test_real_transformer_actual_aurora_updates_shared_trace(qualified):
     for arm in out["arms"]:
         assert arm["final_model_sha256"] != before
         assert arm["optimizer_state_entries"] > 0
+        assert any(g["use_aurora"] for g in arm["optimizer_group_membership"])
         assert arm["initial_trunk_sha256"] != arm["final_trunk_sha256"]
         assert [r["step"] for r in arm["steps"]] == [1, 2]
     assert out["arms"][0]["final_model_sha256"] != out["arms"][1]["final_model_sha256"]
@@ -214,3 +215,15 @@ def test_actual_trainer64_tiny_steps_both_arms(qualified):
     assert a[63]["group_lr_applied"][0] < a[32]["group_lr_applied"][0]
     assert out["batch_size"] == 2
     assert out["status"] == "SYNTHETIC_RUNTIME_ONLY"
+
+
+def test_optimizer_membership_rejects_foreign_parameter():
+    from chess_anti_engine.train.e2_runtime import group_membership
+    from types import SimpleNamespace
+
+    model = torch.nn.Linear(2, 2)
+    fake = SimpleNamespace(
+        param_groups=[{"params": [torch.nn.Parameter(torch.zeros(1))]}]
+    )
+    with pytest.raises(ValueError, match="foreign"):
+        group_membership(model, fake)

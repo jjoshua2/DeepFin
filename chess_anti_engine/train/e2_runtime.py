@@ -56,6 +56,28 @@ def trunk_digest(model):
     )
 
 
+def group_membership(model, optimizer):
+    names = {id(p): name for name, p in model.named_parameters() if p.requires_grad}
+    observed = []
+    groups = []
+    for group in optimizer.param_groups:
+        ids = [id(p) for p in group["params"]]
+        if any(i not in names for i in ids):
+            raise ValueError("optimizer contains foreign parameter")
+        observed.extend(ids)
+        groups.append(
+            {
+                "parameters": sorted(names[i] for i in ids),
+                "use_aurora": bool(group.get("use_aurora", False)),
+                "use_muon": bool(group.get("use_muon", False)),
+                "weight_decay": float(group.get("weight_decay", 0.0)),
+            }
+        )
+    if len(observed) != len(set(observed)) or set(observed) != set(names):
+        raise ValueError("optimizer parameter coverage differs from model")
+    return groups
+
+
 def trace_digest(pairs):
     return digest([list(p.tensor_bindings) for p in pairs])
 
@@ -212,6 +234,7 @@ def run_verified_pair(
                 or state_digest(child) != initial
             ):
                 raise ValueError("fresh optimizer/model requirement failed")
+            membership = group_membership(child, trainer.opt)
             rows = []
             applied_lrs = []
 
@@ -295,6 +318,7 @@ def run_verified_pair(
                         "initial_trunk_sha256": initial_trunk,
                         "final_trunk_sha256": trunk_digest(child),
                         "optimizer_state_entries": len(trainer.opt.state),
+                        "optimizer_group_membership": membership,
                     }
                 )
             finally:
@@ -304,6 +328,11 @@ def run_verified_pair(
             r["group_lr_applied"] for r in result[1]["steps"]
         ]:
             raise ValueError("arm LR trace differs")
+        if (
+            result[0]["optimizer_group_membership"]
+            != result[1]["optimizer_group_membership"]
+        ):
+            raise ValueError("arm optimizer membership differs")
         if state_digest(model) != initial:
             raise ValueError("input model mutated")
         return {
