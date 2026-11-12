@@ -21,6 +21,26 @@ Lower is better agreement with this named target:
 - Row-weighted Brier: donor **0.014763238**, cap40 **0.036587110**; candidate-minus-donor **+0.021823872**. Brier agreement worsened in all three supplied groups. Equal-group delta: **+0.020580016**.
 - Row-weighted log loss: donor **0.693543415**, cap40 **0.707798328**; candidate-minus-donor **+0.014254913**. Two supplied groups worsened and one improved. Equal-group delta: **+0.010384260**.
 
-This is agreement with recorded **producer search targets**, not the final mixed training target, Stockfish truth, real accuracy, calibration, playing strength or a causal diagnosis. The same exposure, grouping and semantic-POV limitations above apply. The producer can replace a nonfinite search target with `[0,1,0]`; presence flags do not identify those fallbacks, so fallback incidence remains unknown and all draw targets were retained.
+This is agreement with recorded **producer search targets**, not Stockfish truth, real accuracy, calibration, playing strength or a causal diagnosis. As subsequently verified below, normalized search labels match the actual configured WDL-target semantics for present rows; these measurements are not the realized sampled/weighted overall training loss. The same exposure, grouping and semantic-POV limitations above apply. The producer can replace a nonfinite search target with `[0,1,0]`; presence flags do not identify those fallbacks, so fallback incidence remains unknown and all draw targets were retained.
 
 `native-search-agreement-review.json` is the unchanged independent review receipt (SHA256 `bc6e7b25fd65075e87fcf488d285680a5edbe811645d8e3eba1fbb83c91bfc7d`). It binds raw/normalized target identities, original ordered rows, checkpoint/prediction receipts and independently recomputed metrics. Raw targets and datasets are not published. Extraction/scoring source revision: `155f2f887861520fb8976860fbbbbeaa5007c814`. Execution settings were 8 GiB address-space, 120 CPU seconds, 150 wall seconds, one CPU thread and CUDA disabled; no training or additional inference occurred.
+
+## Configuration correction and draw/score decomposition
+
+Independent source/config review confirms this specific run used `search_wdl_draw_mode=net_raw`: the stored search target retains the **producer root network's draw probability**, while the searched Q adjusts win/loss probabilities. On this step-zero producer shard, draw-target agreement is therefore partly self-referential, not an independent draw-quality signal. Metadata alone does not prove exact functional equivalence between the producer export and the donor checkpoint.
+
+The actual WDL blend was search fraction 1, SF fraction 0, with adjusted outcomes, directional damping and terminal outcome transfer disabled. All eight retained iteration logs reported search effective fraction 1 and terminal outcome fraction 0. Thus normalized search labels match the configured WDL-target semantics on present rows. The earlier review receipt's blanket exclusion of “final mixed training loss” must not be read as evidence of a different WDL target here: exact sampled exposure, weighting and the overall multi-objective training loss remain distinct and unknown on these 254 rows. `w_future=0.01` trains a future **policy**, not future-outcome WDL transfer.
+
+Using expected score `s=W+0.5D`, WDL Brier decomposes algebraically as `2*(s-s_target)^2 + 1.5*(D-D_target)^2`. The recorded candidate-minus-donor aggregate change consists of:
+
+- Draw-error component: **+0.0222491304**.
+- Expected-score squared-error component: **−0.0004252600**.
+- Total Brier change: **+0.0218238715**, subject to floating-point rounding.
+
+The Brier worsening is driven by disagreement with the partly self-referential draw target; the expected-score squared-error component improved slightly. This does not establish an independent quality improvement either. Expected-score mean absolute error increased (0.051828364 to 0.060572924), so even the direction depends on the named metric. No strength or causal gradient conclusion follows.
+
+Unchanged independently reviewed evidence:
+- `independent-config-review-20261112.json`, SHA256 `0939c7025b442927ea0bf5c92cf977b0beb40e8b30359909258629052ab92a50`.
+- `independent-decomposition-20261112.json`, SHA256 `c78f44d4473415a17ed169a89f88d28856e1ac3b37e784f9d312d42535961e5b`.
+
+This correction used saved outputs, metadata and pinned source only. No additional model inference, corpus decoding or training was performed.
