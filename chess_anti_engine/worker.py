@@ -183,6 +183,14 @@ _MANIFEST_STATE_PAUSED = "paused_selfplay"
 # iteration — the window in which stale uploads still cost a whole iteration.
 _MODEL_STALE_ALARM_S = 180.0
 
+# How long _cleanup waits for an in-flight model-watch iteration (a manifest
+# poll / model download / load holding _model_watch_lock) before closing the
+# inference client and Stockfish anyway. Cleanup runs on the way out of run(),
+# so an unbounded wait would turn one stuck network read into a worker that
+# never exits; past this bound the daemon watcher is abandoned, which is
+# exactly what happened unconditionally before the join existed.
+_MODEL_WATCH_CLEANUP_TIMEOUT_S = 60.0
+
 
 def _require_compact_policy_encoding(raw: object) -> str:
     """Reject az_4672 as a recording encoding (stale/legacy server manifest).
@@ -1236,7 +1244,14 @@ class WorkerSession:
   # _start_model_watch_thread). The lock keeps it from running concurrently
   # with the per-ply on_step call; _model_stale_since_s drives the alarm.
         self._model_watch_started = False
+        # Guards model/manifest mutation by the watcher and on_step AND the
+        # _selfplay_session_active handoff (_set_selfplay_session_active), so a
+        # swap admitted during a session finishes before run() regains
+        # ownership, and none is admitted after.
         self._model_watch_lock = threading.Lock()
+        # Set once by _cleanup: wakes an idle watcher and makes it exit.
+        self._model_watch_stop = threading.Event()
+        self._model_watch_thread: threading.Thread | None = None
         self._model_stale_since_s: float | None = None
         self._model_stale_alarmed = False
   # Manifest-watch state (lazy-init in _check_model_update via getattr fallback).
@@ -2567,9 +2582,28 @@ class WorkerSession:
         if not self._model_watch_lock.acquire(blocking=False):
             return
         try:
-            self._check_model_update_locked()
+            # Re-checked UNDER the lock: teardown flips this flag while holding
+            # the same lock (_set_selfplay_session_active), so a caller admitted
+            # before the handoff completes first and one admitted after it
+            # cannot touch the next session's setup.
+            if self._selfplay_session_active and not self._model_watch_stop.is_set():
+                self._check_model_update_locked()
         finally:
             self._model_watch_lock.release()
+
+    def _set_selfplay_session_active(self, active: bool) -> None:
+        """Hand manifest/model ownership between the session and run().
+
+        Blocks until any in-flight ``_check_model_update`` (watcher thread or a
+        selfplay thread's ``on_step``) has finished. The caller (the main
+        thread in ``_run_selfplay``) holds no other lock here, and the lock
+        holder never waits on the main thread, so this cannot deadlock. The
+        wait is bounded by the holder's own network/disk timeouts; while it
+        lasts the session still reads as active, so the selfplay stall
+        watchdog remains the backstop for a holder that never returns.
+        """
+        with self._model_watch_lock:
+            self._selfplay_session_active = active
 
     def _check_model_update_locked(self) -> None:
         """Body of _check_model_update; caller holds _model_watch_lock."""
@@ -2954,7 +2988,7 @@ class WorkerSession:
         down by a selfplay thread, so the worst case is a slow swap, never a
         permanently stale one.
         """
-        if self._model_watch_started:
+        if self._model_watch_started or self._model_watch_stop.is_set():
             return
         raw = os.environ.get("CAE_WORKER_MODEL_WATCH_S", "5").strip()
         try:
@@ -2977,14 +3011,21 @@ class WorkerSession:
         )
 
         def _loop() -> None:
-            while True:
-                time.sleep(poll_s)
+            # Event wait, not sleep: _cleanup's stop wakes an idle watcher
+            # immediately so it can be joined.
+            while not self._model_watch_stop.wait(poll_s):
                 if not self._selfplay_session_active:
                     # Between sessions the outer run() loop owns the manifest;
                     # a concurrent swap here would race its session setup.
+                    # (Fast path only -- _check_model_update re-checks under
+                    # the handoff lock, which is what makes this safe.)
                     continue
                 try:
                     self._check_model_update()
+                    # Deliberately OUTSIDE the lock: it only reads the local
+                    # manifest and writes the stale-alarm fields, and it must
+                    # still fire while another caller is wedged mid-swap
+                    # holding the lock -- that is the failure it reports.
                     self._check_model_freshness()
                 except Exception as exc:
                     # Never let a transient failure kill the watch thread —
@@ -2995,9 +3036,44 @@ class WorkerSession:
                         poll_s, exc, exc_info=True,
                     )
 
-        threading.Thread(
+        self._model_watch_thread = threading.Thread(
             target=_loop, name="model-watch", daemon=True,
-        ).start()
+        )
+        self._model_watch_thread.start()
+
+    def _stop_model_watch_thread(self, timeout_s: float = _MODEL_WATCH_CLEANUP_TIMEOUT_S) -> bool:
+        """Stop and join the watcher, draining an in-flight update first.
+
+        Terminal: once called, ``_start_model_watch_thread`` is a no-op. Waits
+        at most ``timeout_s`` in total; returns False (and logs) if the
+        watcher was still busy, in which case the caller proceeds anyway and
+        the daemon thread is abandoned.
+        """
+        self._model_watch_stop.set()
+        deadline = time.monotonic() + max(0.0, float(timeout_s))
+        if self._model_watch_lock.acquire(timeout=max(0.0, float(timeout_s))):
+            try:
+                self._selfplay_session_active = False
+            finally:
+                self._model_watch_lock.release()
+        else:
+            self._selfplay_session_active = False
+            self.log.warning(
+                "model watch: an in-flight model update did not finish within "
+                "%.0fs of shutdown; closing clients anyway", float(timeout_s),
+            )
+            return False
+        thread = self._model_watch_thread
+        if thread is None or thread is threading.current_thread():
+            return True
+        thread.join(max(0.0, deadline - time.monotonic()))
+        if thread.is_alive():
+            self.log.warning(
+                "model watch thread did not exit within %.0fs of shutdown; "
+                "abandoning the daemon thread", float(timeout_s),
+            )
+            return False
+        return True
 
     def _check_model_freshness(self) -> None:
         """Alarm when our shard tag has lagged the published model too long.
@@ -5222,7 +5298,7 @@ class WorkerSession:
         t0 = time.time()
         self._saw_completed_game = False
         self._note_selfplay_progress()
-        self._selfplay_session_active = True
+        self._set_selfplay_session_active(True)
         self._start_selfplay_stall_watchdog()
         self._start_model_watch_thread()
         n_dole = len(fen_dole_queue)
@@ -5253,7 +5329,9 @@ class WorkerSession:
                 fen_sf_refute_queue=fen_sf_refute_queue,
             )
         finally:
-            self._selfplay_session_active = False
+            # Waits out an in-flight watcher/on_step swap before run() takes
+            # the manifest back (see _set_selfplay_session_active).
+            self._set_selfplay_session_active(False)
   # Session over: whatever the session did NOT drain is preserved for the next
   # session start — a normally-stopped-but-empty session (games=0) keeps its full
   # batch, a recoverable dispatch failure (stats is None) keeps the remainder,
@@ -5368,6 +5446,10 @@ class WorkerSession:
         return killed
 
     def _cleanup(self) -> None:
+        # First: drain an in-flight model update before its clients are closed,
+        # and while the boot-hang watchdog still covers its model.to(device).
+        # The stop event also wakes an idle watcher so it is joined, not leaked.
+        self._stop_model_watch_thread()
         self._boot_hang_watchdog.stop()
         self._gil_probe.close()
         if self.inference_client is not None and hasattr(self.inference_client, "close"):

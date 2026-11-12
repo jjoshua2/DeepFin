@@ -292,7 +292,7 @@ def test_run_selfplay_gates_before_threads_spawn_and_before_session_active() -> 
     is marked active, so the stall watchdog cannot see a legitimate warmup."""
     src = inspect.getsource(WorkerSession._run_selfplay)
     gate = src.index("self._await_broker_ready(cfgs)")
-    session_active = src.index("self._selfplay_session_active = True")
+    session_active = src.index("self._set_selfplay_session_active(True)")
     dispatch = src.index("self._dispatch_selfplay_one_shard(")
     assert gate < session_active < dispatch
 
