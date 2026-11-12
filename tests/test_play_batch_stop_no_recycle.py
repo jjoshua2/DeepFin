@@ -74,8 +74,10 @@ class _HeldLabelPool(StockfishPool):
         self, fen: str, *, nodes: int | None = None,
         syzygy_path: str | None = None, fresh: bool = False,
         searchmoves: Sequence[str] | None = None,
+        root_fen: str | None = None,
+        root_moves: Sequence[str] | None = None,
     ) -> Future[StockfishResult]:
-        del syzygy_path, fresh
+        del syzygy_path, fresh, root_fen, root_moves
         board = chess.Board(fen)
         if searchmoves:
             move = chess.Move.from_uci(str(next(iter(searchmoves))))
