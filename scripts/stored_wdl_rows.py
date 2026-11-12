@@ -21,6 +21,7 @@ import numpy as np
 from scripts import match_audit_rows as match
 from chess_anti_engine.replay.shard import load_shard_arrays
 
+MAX_ATTR_BYTES = 65536
 MAX_AUDIT_BYTES = 8 * 1024**2
 MAX_SHARDS = 32
 MAX_SCAN_ROWS = 65536
@@ -89,6 +90,22 @@ def _metadata(path: Path) -> dict[str, dict]:
     return declarations
 
 
+def _history_metadata(path: Path, expected: bool) -> str:
+    """Require an explicit matching repetition contract, never infer a default."""
+    meta = path / ".zattrs"
+    with meta.open("rb") as stream:
+        raw = stream.read(MAX_ATTR_BYTES + 1)
+    if len(raw) > MAX_ATTR_BYTES:
+        raise ValueError("oversized shard attributes")
+    value = json.loads(raw)
+    actual = value.get("history_rep_fix")
+    if type(actual) is not bool or actual != expected:
+        raise ValueError("explicit matching history_rep_fix required")
+    if value.get("input_history_encoding") != match.STORED_HISTORY_ENCODING:
+        raise ValueError("explicit stored history encoding layout required")
+    return _sha(raw)
+
+
 def _charge_rows(arr: Any, start: int, stop: int) -> int:
     """Count full physical chunks for this read; repeated reads are charged again."""
     chunks = arr.chunks
@@ -100,7 +117,7 @@ def _charge_rows(arr: Any, start: int, stop: int) -> int:
 
 
 def scan_prefix(audit_bytes: bytes, expected_audit_sha256: str,
-                shard_paths: tuple[Path, ...], *, count: int = 256) -> dict:
+                shard_paths: tuple[Path, ...], *, expected_history_rep_fix: object, count: int = 256) -> dict:
     """Return evidence for the supplied prefix only, without writing an artifact.
 
     Metadata/codec guards run before array reads. Any limit, invalid identity,
@@ -108,6 +125,8 @@ def scan_prefix(audit_bytes: bytes, expected_audit_sha256: str,
     The byte cap counts decoded chunks conservatively, not compressed I/O bytes.
     These partial-prefix components never establish original-game independence.
     """
+    if not isinstance(expected_history_rep_fix, bool):
+        raise ValueError("explicit boolean expected_history_rep_fix required")
     paths = tuple(Path(p) for p in shard_paths)
     if (not 1 <= len(paths) <= MAX_SHARDS or
             tuple(sorted(paths, key=str)) != paths or
@@ -134,6 +153,7 @@ def scan_prefix(audit_bytes: bytes, expected_audit_sha256: str,
     decoded_bytes = scanned_rows = 0
     started = time.monotonic()
     for path in paths:
+        attrs_sha256 = _history_metadata(path, expected_history_rep_fix)
         declarations = _metadata(path)
         arrays, _ = load_shard_arrays(path, lazy=True)
         if match._shard_layout(arrays) != (match.STORED_HISTORY_ENCODING, 175):
@@ -193,7 +213,10 @@ def scan_prefix(audit_bytes: bytes, expected_audit_sha256: str,
                         rows[i] = row.copy()
                         origins[i] = {"shard": str(path.resolve()), "row": start + offset}
                         found[i] = True
-        consumed.append({"path": str(path.resolve()), "declarations": declarations,
+        if _history_metadata(path, expected_history_rep_fix) != attrs_sha256:
+            raise ValueError("shard history metadata changed during scan")
+        consumed.append({"path": str(path.resolve()), "attrs_sha256": attrs_sha256,
+                         "declarations": declarations,
                          "consumed_values_sha256": input_hash.hexdigest()})
     if time.monotonic() - started > MAX_SECONDS:
         raise ValueError("prefix scan deadline exceeded")
@@ -204,7 +227,8 @@ def scan_prefix(audit_bytes: bytes, expected_audit_sha256: str,
     indices = np.flatnonzero(found).tolist()
     if len(set(component[found].tolist())) < 2:
         raise ValueError("fewer than two observed prefix components")
-    return {"mode": "descriptive-inspected-prefix", "candidate_universe_complete": False,
+    return {"mode": "descriptive-inspected-prefix",
+            "expected_history_rep_fix": expected_history_rep_fix, "candidate_universe_complete": False,
             "holdout_claim": False, "group_kind": "inspected_prefix_connected_component",
             "audit_sha256": expected_audit_sha256, "selected": selected,
             "matched_selection_indices": indices, "x": np.stack([rows[i] for i in indices]),

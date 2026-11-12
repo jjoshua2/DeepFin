@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import chess
 import numpy as np
@@ -28,6 +29,7 @@ def fixture(tmp_path: Path) -> tuple[bytes, tuple[Path, ...]]:
     group.create_dataset("wdl_target", data=np.ones(2, dtype=np.int64))
     group.create_dataset("game_id", data=np.array([7, 9], dtype=np.int64), chunks=(1,))
     group.create_dataset("has_game_id", data=np.ones(2, dtype=np.uint8), chunks=(1,))
+    group.attrs["history_rep_fix"] = False
     group.attrs["input_history_encoding"] = match.STORED_HISTORY_ENCODING
     records = [{"key": match.position_key(board), "fen": board.fen(),
                 "wdl": target} for board, target in zip(
@@ -36,7 +38,7 @@ def fixture(tmp_path: Path) -> tuple[bytes, tuple[Path, ...]]:
 
 
 def run(data: bytes, paths: tuple[Path, ...]) -> dict:
-    return reader.scan_prefix(data, hashlib.sha256(data).hexdigest(), paths)
+    return reader.scan_prefix(data, hashlib.sha256(data).hexdigest(), paths, expected_history_rep_fix=False)
 
 
 def test_alignment_and_partial_prefix(tmp_path: Path) -> None:
@@ -101,9 +103,11 @@ def test_exact_plane_checks(tmp_path: Path, plane: int) -> None:
 def test_wrong_encoding_and_unknown_identity(tmp_path: Path) -> None:
     data, paths = fixture(tmp_path)
     group = zarr.open_group(str(paths[0]), mode="a")
+    group.attrs["history_rep_fix"] = False
     group.attrs["input_history_encoding"] = "legacy"
     with pytest.raises(ValueError, match="layout"):
         run(data, paths)
+    group.attrs["history_rep_fix"] = False
     group.attrs["input_history_encoding"] = match.STORED_HISTORY_ENCODING
     group["has_game_id"][0] = 0
     with pytest.raises(ValueError, match="source identity incomplete"):
@@ -144,8 +148,34 @@ def test_interruption_propagates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 def test_order_identity_and_no_backfill(tmp_path: Path) -> None:
     data, paths = fixture(tmp_path)
     with pytest.raises(ValueError, match="identity"):
-        reader.scan_prefix(data, "0"*64, paths)
+        reader.scan_prefix(data, "0"*64, paths, expected_history_rep_fix=False)
     with pytest.raises(ValueError, match="prefix"):
         run(data, (paths[0], paths[0]))
     with pytest.raises(ValueError, match="fewer than two"):
-        reader.scan_prefix(data, hashlib.sha256(data).hexdigest(), paths, count=1)
+        reader.scan_prefix(data, hashlib.sha256(data).hexdigest(), paths, expected_history_rep_fix=False, count=1)
+
+
+@pytest.mark.parametrize("actual", [None, True, 0, "false"])
+def test_history_contract_rejected_before_array_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, actual) -> None:
+    data, paths = fixture(tmp_path)
+    attrs = paths[0] / ".zattrs"
+    values = json.loads(attrs.read_text())
+    if actual is None:
+        values.pop("history_rep_fix")
+    else:
+        values["history_rep_fix"] = actual
+    attrs.write_text(json.dumps(values))
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("arrays loaded despite mismatched metadata")
+    monkeypatch.setattr(reader, "load_shard_arrays", forbidden)
+    with pytest.raises(ValueError, match="history_rep_fix"):
+        run(data, paths)
+
+
+def test_expected_history_bool_and_attribute_cap(tmp_path: Path) -> None:
+    data, paths = fixture(tmp_path)
+    with pytest.raises(ValueError, match="boolean"):
+        reader.scan_prefix(data, hashlib.sha256(data).hexdigest(), paths, expected_history_rep_fix=cast(Any, 1))
+    (paths[0] / ".zattrs").write_text(" " * (reader.MAX_ATTR_BYTES + 1))
+    with pytest.raises(ValueError, match="oversized"):
+        run(data, paths)
