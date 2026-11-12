@@ -973,6 +973,18 @@ def _launch_distributed_worker(
     return proc
 
 
+def distributed_worker_sf_workers(config: Mapping[str, Any]) -> int:
+    """The ``--sf-workers`` every driver-launched worker receives.
+
+    ONE resolution of the key, shared by the command builder below and by the
+    driver's single-engine budget refusal/reload decline
+    (``trainable_config_ops.sf_budget_topology_violations``), so the check
+    judges exactly the value the workers are launched with. The driver's own
+    ``sf_workers`` is deliberately not consulted: it does not reach workers.
+    """
+    return int(config.get("distributed_worker_sf_workers", 1))
+
+
 def _build_distributed_worker_cmd(
     *,
     config: dict,
@@ -1061,7 +1073,7 @@ def _build_distributed_worker_cmd(
             else []
         ),
         "--sf-workers",
-        str(int(config.get("distributed_worker_sf_workers", 1))),
+        str(distributed_worker_sf_workers(config)),
         "--sf-nice",
         str(int(config.get("sf_nice", 0))),
         "--poll-seconds",

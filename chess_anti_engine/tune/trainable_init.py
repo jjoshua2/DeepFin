@@ -59,6 +59,7 @@ from chess_anti_engine.tune.trainable_config_ops import (
     _TRAINER_WEIGHT_KEYS,
     _apply_lr_gamma_weights,
     reject_dead_config_keys,
+    reject_sf_budget_topology,
 )
 from chess_anti_engine.tune.trainable_metrics import _count_jsonl_rows
 from chess_anti_engine.tune.trial_config import RestoreResult, TrialConfig
@@ -686,6 +687,9 @@ def _init_replay_buffers(
   # `replay_sf_gap_priority_signed` goes missing, so the check belongs on this
   # path and not in a startup banner that a resume could skip.
     reject_dead_config_keys(config)
+  # Same startup path, same reason: the workers this trial launches (after this
+  # call, in train_trial) would refuse every session on this combination.
+    reject_sf_budget_topology(config)
 
     current_window = tc.replay_window_start
     replay_shard_dir = _trial_replay_shard_dir(config=config, trial_dir=trial_dir)

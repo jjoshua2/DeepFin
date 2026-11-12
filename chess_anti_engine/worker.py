@@ -80,7 +80,9 @@ from chess_anti_engine.selfplay.config import (
     OpponentConfig,
     SearchConfig,
     TemperatureConfig,
-    validate_sf_move_nodes_transport,
+    sf_workers_use_pool,
+    single_engine_sf_budget_message,
+    single_engine_sf_budget_violations,
 )
 from chess_anti_engine.selfplay.diff_focus_norm import DiffFocusNormalizer
 from chess_anti_engine.selfplay.manager import BatchStats
@@ -152,6 +154,22 @@ class _MissingRequiredReco(RuntimeError):
     Stockfish at the wrong strength and silently poison training data (this is
     what produced the ~100% curriculum-winrate batches). The main loop catches
     it, skips the session, and re-polls for a complete manifest.
+    """
+
+
+class _UnsupportedSfBudgetForTopology(_MissingRequiredReco):
+    """The reco asks for an SF budget knob this worker's engine route ignores.
+
+    ``sf_move_nodes`` / ``sf_label_nodes_floor`` / ``sf_label_nodes_cap`` > 0
+    on a single-engine worker (``--sf-workers <= 1``): see
+    ``selfplay.config.single_engine_sf_budget_violations``. A subclass of
+    ``_MissingRequiredReco`` so every site that already fails closed on an
+    unusable reco (``run()`` re-polls; ``_apply_live_reco`` declines and falls
+    back to a restart, which re-checks here) handles it the same way. It must
+    NOT escape ``run()``: a remote worker would exit, and a driver-launched one
+    would be relaunched by ``revive_dead_selfplay_processes`` into the same
+    refusal forever. Waiting keeps the process alive and the reason in its log
+    until the server publishes a usable reco.
     """
 
   # Wire-protocol values sent in X-CAE-Worker-State; tests assert on them
@@ -888,6 +906,9 @@ class WorkerSession:
   # _begin_resume_session sets all three per session; session-fixed by design.
     _resume_inflight_enabled: bool = False
     _resume_compat_fingerprint_active: str = ""
+  # Throttle state for the "NOT PLAYING" wait (_log_unsupported_sf_budget).
+    _unsupported_sf_budget_reason: str | None = None
+    _unsupported_sf_budget_logged_s: float = float("-inf")
   # Trial this session's games belong to, SNAPSHOT at session start. Not read
   # live: _negotiate_lease assigns self.leased_trial_id BEFORE the caller
   # notices the change and sets _stop_selfplay, so by the time the suspend hook
@@ -1399,6 +1420,14 @@ class WorkerSession:
                 else:
                     try:
                         self._run_selfplay(manifest)
+                    except _UnsupportedSfBudgetForTopology as exc:
+                        # Fail closed WITHOUT exiting (see the class). Logged at
+                        # ERROR on every change of reason and then once a
+                        # minute, so the waiting state stays visible in the
+                        # worker log without one line per poll.
+                        self._log_unsupported_sf_budget(str(exc))
+                        time.sleep(float(self.args.poll_seconds))
+                        continue
                     except _MissingRequiredReco as exc:
                         # Fail closed: never generate games with a guessed SF
                         # strength. Warn loudly + re-poll for a complete manifest.
@@ -1768,6 +1797,41 @@ class WorkerSession:
                 f"'{key}' is set on neither the CLI nor the recommended_worker manifest",
             )
         return cast(v)
+
+    def _check_sf_budget_topology(self, reco: dict) -> None:
+        """Refuse a reco whose SF budget knobs this worker's route would ignore.
+
+        Resolves each knob with the same ``_resolve_reco`` expression the
+        GameConfig build uses, and the route with the same predicate
+        ``_sync_stockfish`` uses to build the engine.
+        """
+        problems = single_engine_sf_budget_violations(
+            sf_move_nodes=self._resolve_reco(reco, "sf_move_nodes", 0, int),
+            sf_label_nodes_floor=self._resolve_reco(reco, "sf_label_nodes_floor", 0, int),
+            sf_label_nodes_cap=self._resolve_reco(reco, "sf_label_nodes_cap", 0, int),
+            pooled=sf_workers_use_pool(getattr(self.args, "sf_workers", 1)),
+        )
+        if problems:
+            raise _UnsupportedSfBudgetForTopology(
+                single_engine_sf_budget_message(problems),
+            )
+
+    def _log_unsupported_sf_budget(self, reason: str) -> None:
+        now = time.monotonic()
+        if (
+            reason == self._unsupported_sf_budget_reason
+            and now - self._unsupported_sf_budget_logged_s < 60.0
+        ):
+            return
+        self._unsupported_sf_budget_reason = reason
+        self._unsupported_sf_budget_logged_s = now
+        self.log.error(
+            "NOT PLAYING: recommended_worker is unusable on this worker's "
+            "Stockfish route (--sf-workers=%s): %s Waiting and re-polling; no "
+            "games are generated until the server publishes a usable reco or "
+            "this worker is restarted with more SF workers.",
+            getattr(self.args, "sf_workers", 1), reason,
+        )
 
     def _snapshot_reco(self, reco: dict) -> dict:
         """Snapshot every watched reco key (restart + live) for change detection."""
@@ -2276,7 +2340,17 @@ class WorkerSession:
         if not states:
             return False
         try:
+            # sf_label_nodes_floor/cap are LIVE keys, so a change to them never
+            # passes the session-start check; refuse here and let the restart
+            # path re-check and wait (see _UnsupportedSfBudgetForTopology).
+            self._check_sf_budget_topology(reco)
             cfgs, (sf_nodes, _sf_multipv, _sf_hash_mb, _sz) = self._build_selfplay_configs(reco)
+        except _UnsupportedSfBudgetForTopology as exc:
+            self.log.error(
+                "live reco NOT applied: %s Ending the session; it will not "
+                "restart until the reco is usable.", exc,
+            )
+            return False
         except _MissingRequiredReco:
   # Incomplete reco (e.g. sf_nodes dropped) — restart will re-poll cleanly.
             return False
@@ -3730,7 +3804,7 @@ class WorkerSession:
                 with suppress(Exception):
                     self.sf.close()
 
-            if int(self.args.sf_workers) > 1:
+            if sf_workers_use_pool(self.args.sf_workers):
                 self.sf = StockfishPool(
                     path=str(stockfish_path),
                     nodes=int(sf_nodes),
@@ -5048,10 +5122,9 @@ class WorkerSession:
         reco = manifest.get("recommended_worker") or {}
         # Use this worker's actual CLI topology, including the distributed
         # worker override, before evaluator warmup or Stockfish bring-up.
-        validate_sf_move_nodes_transport(
-            self._resolve_reco(reco, "sf_move_nodes", 0, int),
-            pooled=int(getattr(self.args, "sf_workers", 1)) > 1,
-        )
+        # Raises _UnsupportedSfBudgetForTopology, which run() turns into a
+        # logged wait rather than an exit (and a relaunch crash-loop).
+        self._check_sf_budget_topology(reco)
         self._active_reco = self._snapshot_reco(reco)
         self._active_assets = self._asset_fingerprint(manifest)
   # The realized difficulty this session will stamp on its shards. The LIVE
