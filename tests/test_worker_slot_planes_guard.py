@@ -129,17 +129,22 @@ def test_matching_width_passes_on_every_entry_point() -> None:
     for extra, planes in (("v2_threats", PROD_PLANES), ("v1", V1_PLANES)):
         session = _session(client=_Client(planes))
         WorkerSession._sync_model(session, _manifest(task="selfplay", extra=extra))
+        assert session.model_sha == "a" * 8
         session = _session(client=_Client(planes))
         WorkerSession._swap_model_from_manifest(
             session, _manifest(task="selfplay", extra=extra, sha="c" * 8),
         )
+        assert session.model_sha == "c" * 8
 
 
 def test_no_client_is_not_an_error() -> None:
-    """A worker with a local model has no slot to disagree with."""
+    """A worker with a local model has no slot to disagree with -- including
+    one that left ``--inference-slot-input-planes`` at its v1 default, which
+    sizes nothing and must not kill it. The guard passes and the local load runs."""
     session = _session(client=None, cli_planes=V1_PLANES, slot_name="")
     session._ensure_local_model_at_sha = Mock(return_value=None)
     WorkerSession._sync_model(session, _manifest(task="selfplay", extra="v2_threats"))
+    session._ensure_local_model_at_sha.assert_called_once()
 
 
 def test_the_cli_arg_is_compared_too_not_just_the_client() -> None:
@@ -163,14 +168,6 @@ def test_the_cli_leg_also_guards_the_mid_batch_swap() -> None:
             session, _manifest(task="selfplay", extra="v2_threats", sha="e" * 8),
         )
     assert session.model_sha == ""
-
-
-def test_the_cli_leg_is_inert_without_a_configured_slot() -> None:
-    """A local-inference worker that left the flag at its v1 default sizes
-    nothing with it, and must not be killed for it."""
-    session = _session(client=None, cli_planes=V1_PLANES, slot_name="")
-    session._ensure_local_model_at_sha = Mock(return_value=None)
-    WorkerSession._sync_model(session, _manifest(task="selfplay", extra="v2_threats"))
 
 
 def test_manifest_without_an_encoding_warns_once_instead_of_skipping_silently(

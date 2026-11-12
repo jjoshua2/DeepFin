@@ -61,6 +61,44 @@ from tests.test_derive_corpus_targets import (
 # ── fixtures ─────────────────────────────────────────────────────────────────
 
 
+#: Production lanes start under "spawn": each one re-imports this module and its
+#: torch-backed dependencies (~1 s of CPU per lane, per run).  The partition,
+#: limit, refusal and knob-propagation tests below run their lanes under
+#: "forkserver" instead, through ``derive_parallel``'s own ``context``
+#: parameter: one fresh server process imports the module once, and every lane
+#: forks from it.  Tasks are still pickled to a non-main child exactly as under
+#: spawn (so Blosc's adaptive encoder still picks the child's context mode), and
+#: the server is never a fork of this pytest process.  The end-to-end identity
+#: and byte tests keep the production "spawn" path.
+#: ⚑ The server's environment is frozen when it starts (the first fast-lane test
+#: in the module), and every lane inherits THAT, not the current one: a later
+#: ``monkeypatch.setenv`` in a test does not reach its lanes, as it would under
+#: spawn.  A test whose lanes must see an env change has to stay on spawn.
+_FAST_LANE_CONTEXT = "forkserver"
+
+
+@pytest.fixture(scope="module")
+def _lane_server() -> Any:
+    ctx = multiprocessing.get_context(_FAST_LANE_CONTEXT)
+    ctx.set_forkserver_preload(["scripts.derive_corpus_targets"])
+    yield ctx
+    # Stop the server with the module: later files in the serial phase assert
+    # on live child processes, and a lingering server would be one.
+    from multiprocessing import forkserver
+    forkserver._forkserver._stop()  # pyright: ignore[reportAttributeAccessIssue]
+
+
+@pytest.fixture
+def fast_lanes(_lane_server: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    original = derive.derive_parallel
+
+    def forkserver_lanes(**kwargs: Any) -> dict[str, Any]:
+        assert "context" not in kwargs, "the CLI started passing a context"
+        return original(**kwargs, context=_FAST_LANE_CONTEXT)
+
+    monkeypatch.setattr(derive, "derive_parallel", forkserver_lanes)
+
+
 def _row(
     *, worker_id: int, game_id: int, ply: int, result: float | None,
     played_move: Any = None,
@@ -594,6 +632,7 @@ def test_the_parallel_read_derives_the_sequential_corpus(
     assert_same_corpus(sequential, parallel)
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_the_spill_directory_is_gone_when_the_run_succeeds(tmp_path: Path) -> None:
     rows = [row for gid in range(8) for row in game(gid, 9)]
     corpus_dir = write_split_corpus(tmp_path, rows, [30, 30, 12])
@@ -606,6 +645,7 @@ def test_the_spill_directory_is_gone_when_the_run_succeeds(tmp_path: Path) -> No
 # ── the adversarial boundaries ───────────────────────────────────────────────
 
 
+@pytest.mark.usefixtures("fast_lanes")
 @pytest.mark.parametrize("value_scheme", ["qzphase", "qzsegment"])
 def test_a_boundary_exactly_at_a_game_start_carries_nothing(
     tmp_path: Path, value_scheme: str,
@@ -619,6 +659,7 @@ def test_a_boundary_exactly_at_a_game_start_carries_nothing(
     assert_same_corpus(sequential, parallel)
 
 
+@pytest.mark.usefixtures("fast_lanes")
 @pytest.mark.parametrize("value_scheme", ["qzphase", "qzsegment"])
 def test_a_game_that_swallows_a_whole_range_is_owned_by_one_lane(
     tmp_path: Path, value_scheme: str,
@@ -637,6 +678,7 @@ def test_a_game_that_swallows_a_whole_range_is_owned_by_one_lane(
     assert_same_corpus(sequential, parallel)
 
 
+@pytest.mark.usefixtures("fast_lanes")
 @pytest.mark.parametrize("value_scheme", ["qzphase", "qzsegment"])
 def test_a_dropped_tail_at_the_boundary_is_not_lost(
     tmp_path: Path, value_scheme: str,
@@ -672,6 +714,7 @@ def test_a_dropped_tail_at_the_boundary_is_not_lost(
     )
 
 
+@pytest.mark.usefixtures("fast_lanes")
 @pytest.mark.parametrize("value_scheme", ["search", "qzphase"])
 def test_the_limit_cuts_at_the_same_global_row(
     tmp_path: Path, value_scheme: str,
@@ -686,6 +729,7 @@ def test_the_limit_cuts_at_the_same_global_row(
     assert_same_corpus(sequential, parallel)
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_the_limit_lands_inside_a_lanes_overflow(tmp_path: Path) -> None:
     """The carried game runs past the cut and the budget stops it there.
 
@@ -706,6 +750,7 @@ def test_the_limit_lands_inside_a_lanes_overflow(tmp_path: Path) -> None:
     assert summary["realized"]["value_scheme_realized"]["games_cut_by_limit"] == 1
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_the_limit_exactly_on_a_shard_boundary(tmp_path: Path) -> None:
     """⚑ ``rows_read >= limit`` is TRUE when the limit equals the rows read.
 
@@ -722,6 +767,7 @@ def test_the_limit_exactly_on_a_shard_boundary(tmp_path: Path) -> None:
     assert_same_corpus(sequential, parallel)
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_a_limit_smaller_than_one_range(tmp_path: Path) -> None:
     """Seven lanes were asked for and one shard is in play."""
     rows = [row for gid in range(9) for row in game(gid, 8)]
@@ -733,6 +779,7 @@ def test_a_limit_smaller_than_one_range(tmp_path: Path) -> None:
     assert_same_corpus(sequential, parallel)
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_a_boundary_inside_a_leading_drop_run(tmp_path: Path) -> None:
     """The first rows of the next lane's range are dropped rows of the carried
     game, so the carrying lane must read PAST them to find where the game ends.
@@ -754,6 +801,7 @@ def test_a_boundary_inside_a_leading_drop_run(tmp_path: Path) -> None:
 # ── the runtime guards ───────────────────────────────────────────────────────
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_an_inventory_that_miscounts_a_shard_is_refused(tmp_path: Path) -> None:
     """⚑ The claims place ``--limit``; a wrong claim is a wrong cut.
 
@@ -769,6 +817,7 @@ def test_an_inventory_that_miscounts_a_shard_is_refused(tmp_path: Path) -> None:
     assert not (out / derive.SUMMARY_NAME).exists()
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_the_envelope_tolerance_is_checked_on_the_whole_read(
     tmp_path: Path,
 ) -> None:
@@ -803,6 +852,7 @@ def test_the_envelope_tolerance_is_checked_on_the_whole_read(
     assert not (parallel / derive.SUMMARY_NAME).exists()
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_a_tolerated_envelope_miss_reports_the_same_first_examples(
     tmp_path: Path,
 ) -> None:
@@ -1017,6 +1067,7 @@ def test_the_game_stream_is_replayed_through_note_game(tmp_path: Path) -> None:
     assert merged.qz_games_cut_by_limit == reference.qz_games_cut_by_limit == 1
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_an_empty_shard_before_a_range_does_not_break_the_handoff(
     tmp_path: Path,
 ) -> None:
@@ -1038,6 +1089,7 @@ def test_an_empty_shard_before_a_range_does_not_break_the_handoff(
     assert_same_corpus(sequential, parallel)
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_a_row_without_a_game_identity_is_refused_by_name(tmp_path: Path) -> None:
     """The parallel read refuses it saying the same thing the grouper says."""
     rows = game(0, 6)
@@ -1048,6 +1100,7 @@ def test_a_row_without_a_game_identity_is_refused_by_name(tmp_path: Path) -> Non
             "--workers", "2")
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_the_ungrouped_arms_do_not_require_a_worker_id(tmp_path: Path) -> None:
     """⚑ A DIFFERENCE IN WHAT THE FLAG ACCEPTS, WHICH NO OUTPUT DIFF WOULD SHOW.
 
@@ -1068,6 +1121,7 @@ def test_the_ungrouped_arms_do_not_require_a_worker_id(tmp_path: Path) -> None:
 # ── the guards, each made to fire ────────────────────────────────────────────
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_a_non_binding_limit_puts_every_shard_back_in_play(tmp_path: Path) -> None:
     """⚑⚑ THE GUARD WAS SCOPED BY THE THING IT VALIDATES.
 
@@ -1272,6 +1326,7 @@ def test_a_drained_stream_is_the_values_in_order_however_often_it_flushed(
 # ── does the flag take effect at all? ────────────────────────────────────────
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_the_lane_count_reaches_the_lanes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1351,6 +1406,7 @@ def test_many_spill_chunks_per_lane_derive_the_same_corpus(
     assert_same_corpus(sequential, parallel)
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_the_spill_chunk_size_reaches_the_lanes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1437,6 +1493,7 @@ def test_plan_repack_refuses_a_spill_that_does_not_match_the_survivors() -> None
         derive._plan_repack([10], [[4, 4]], 8)
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_a_mid_corpus_zero_claim_is_refused_once_a_lane_bases_on_it(
     tmp_path: Path,
 ) -> None:
@@ -1460,6 +1517,7 @@ def test_a_mid_corpus_zero_claim_is_refused_once_a_lane_bases_on_it(
     assert not (out / derive.SUMMARY_NAME).exists()
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_the_same_zero_claim_is_harmless_when_the_limit_stops_first(
     tmp_path: Path,
 ) -> None:
@@ -1489,6 +1547,7 @@ def test_plan_ranges_at_a_limit_exactly_equal_to_the_claimed_total() -> None:
     assert (in_play, rows) == (3, 30)
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_an_overstated_claim_refuses_rather_than_deriving_a_short_corpus(
     tmp_path: Path,
 ) -> None:
@@ -1525,6 +1584,7 @@ def value_depth_corpus(tmp_path: Path) -> Path:
     return write_split_corpus(tmp_path, rows, [16, 16, 16])
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_the_value_depth_reaches_the_lanes_and_agrees_with_the_sequential_read(
     tmp_path: Path,
 ) -> None:
@@ -1584,6 +1644,7 @@ def test_the_value_depth_reaches_the_lanes_and_agrees_with_the_sequential_read(
     assert moved["scheme"]["value_source"] == "deepest_phase_covering_at_d7"
 
 
+@pytest.mark.usefixtures("fast_lanes")
 def test_deepening_the_value_reaches_the_lanes_too(tmp_path: Path) -> None:
     """⚑⚑ THE DEEPENING DIRECTION ON THE PARALLEL PATH -- the arm the round wants.
 
