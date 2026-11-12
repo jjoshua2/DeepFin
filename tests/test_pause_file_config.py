@@ -95,6 +95,14 @@ def test_directory_pause_file_is_refused(
         TrialConfig.from_dict({"pause_file": raw.format(tmp=tmp_path)})
 
 
+def test_an_existing_marker_file_is_accepted(tmp_path: Path) -> None:
+    """A restart while the operator's pause marker exists is the pause-and-restart
+    window: the directory refusal must not widen into "refuse anything that exists"."""
+    marker = tmp_path / "pause.txt"
+    marker.write_text("paused")
+    assert TrialConfig.from_dict({"pause_file": str(marker)}).pause_file == str(marker)
+
+
 def test_file_inside_home_is_still_accepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     assert TrialConfig.from_dict({"pause_file": "~/pause.txt"}).pause_file == str(tmp_path / "pause.txt")

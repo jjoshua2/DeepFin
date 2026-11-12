@@ -87,6 +87,9 @@ fi
 # still starting with `~` came from $RECOVER_PAUSE_FILE or names an unknown
 # user (which the trainer refuses too). Both failure shapes refuse to run with
 # a reason rather than dying on `set -u` or watching a literal `~...` path.
+# Exit 2 (usage), not INTENTIONAL_STOP_EXIT: that status means "refused on a
+# marker" and makes watchdog_loop.sh roll back its cooldown stamp, which a
+# configuration error that will not fix itself must not do.
 case "$PAUSE_FILE" in
     "~"|"~/"*)
         if [ -z "${HOME:-}" ]; then
