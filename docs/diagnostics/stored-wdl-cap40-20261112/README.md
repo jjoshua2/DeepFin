@@ -187,3 +187,18 @@ The published receipt replaces only local home prefixes with `~/`; the retained
 original is unchanged. Original SHA256:
 `e1ad5fc266306943d8960c1803334c093c06d4d84cb4d59d1260a6d16dfe6d9c`.
 Published derivative SHA256: `1cfc74ea262a99033357bbfc1067a4c9513e4bd237a71f7e30adb013a72a1d0f`.
+
+
+## One-search resource feasibility pilot
+
+[Independent resource review](crossover-resource-pilot-review.json) verified one
+64-simulation common-Python-path search with cap40 policy and donor value at
+1.Nf3 d5. Complete child costs were 15.494 CPU seconds, 15.555 wall seconds and
+a conservative 3.24 GiB peak-memory upper bound. The evaluator consumed 65
+positions, requiring 130 model-row forwards. Both model-state hashes were
+unchanged. This is resource feasibility only, not a four-cell comparison or
+strength result; real identity, repeat and batch controls were not yet run.
+
+Published receipt replaces only home-directory prefixes. Original SHA256:
+`e329ce90500fbfb9114af2d388e1a7531e9acd0e80b9270f31921c09b34d1b95`.
+Published copy SHA256: `e329ce90500fbfb9114af2d388e1a7531e9acd0e80b9270f31921c09b34d1b95`.
