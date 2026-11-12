@@ -77,6 +77,10 @@ def test_positive_share_preserves_ingest_and_progress(tmp_path, monkeypatch, fra
     assert len(set(received[0]['x'].ravel().tolist())) == count
     assert len(written) == 1
     assert json.loads(written[0][1]) == {str(tmp_path.resolve()): 3}
+    if fraction == 1.:
+        # Whole shard: no subsampling, rows in shard order, RNG untouched.
+        np.testing.assert_array_equal(received[0]['x'], arrays['x'])
+        assert buf.rng.bit_generator.state == np.random.default_rng(4).bit_generator.state
 
 
 BAD_FRACTIONS = [-.5, -1e-9, float('nan'), float('inf'), -float('inf'), 1.5, 1.0000001, True, False]
@@ -165,3 +169,13 @@ def test_live_reload_with_bad_share_fraction_keeps_previous_config(tmp_path, cap
     _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
     assert config['exploit_replay_share_fraction'] == 0.25
     assert config['exploit_replay_top_k_trials'] == 9
+
+
+@pytest.mark.parametrize('fraction', [np.float32(.5), np.float64(.5), np.float16(.5), .5])
+def test_numpy_real_scalars_are_accepted(fraction):
+    assert exchange._share_fraction_ingests(fraction)
+
+
+@pytest.mark.parametrize('fraction', [np.bool_(True), np.float32('nan'), np.float32(1.5), '0.5', None])
+def test_numpy_and_non_numeric_bad_values_are_refused(fraction):
+    assert not exchange._share_fraction_ingests(fraction)

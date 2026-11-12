@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import numbers
 import math
 import time
 from pathlib import Path
@@ -458,7 +459,7 @@ def _share_fraction_ingests(share_fraction: object) -> bool:
     caller), and the old fall-through for anything not in ``(0, 1)`` was to
     ingest the WHOLE shard.
     """
-    if isinstance(share_fraction, bool) or not isinstance(share_fraction, (int, float)):
+    if isinstance(share_fraction, (bool, np.bool_)) or not isinstance(share_fraction, numbers.Real):
         return False
     return 0.0 < float(share_fraction) <= 1.0  # NaN compares False
 

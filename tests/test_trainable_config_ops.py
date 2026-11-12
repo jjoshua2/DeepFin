@@ -638,9 +638,17 @@ def test_restart_required_keys_match_the_reloader(
     # own bounds, not to the key, so they are the caller's job to exclude.
     searched = {k.removeprefix("pb2_bounds_") for k in flat if k.startswith("pb2_bounds_")}
 
-    def _mutate(value: object) -> object:
+    # Keys the LOADER range-checks to [0, 1] (config_yaml
+    # `_check_exploit_replay_share_fraction`). `+ 1` would push them out of range
+    # and turn the reading into a void whole-document rejection; perturb them
+    # inside the range so their reload class stays observable.
+    loader_unit_fraction_keys = frozenset({"exploit_replay_share_fraction"})
+
+    def _mutate(key: str, value: object) -> object:
         if isinstance(value, bool):
             return not value
+        if key in loader_unit_fraction_keys and isinstance(value, (int, float)):
+            return float(value) / 2 if value > 0 else 0.5
         if isinstance(value, (int, float)):
             return type(value)(value + 1)
         if isinstance(value, str):
@@ -657,7 +665,7 @@ def test_restart_required_keys_match_the_reloader(
         if key.startswith("pb2_bounds_") or key in searched or key not in flat:
             continue
         value = flat[key]
-        changed = _mutate(value)
+        changed = _mutate(key, value)
         if changed == value:  # None / dict / empty list: nothing to observe
             continue
         doc = copy.deepcopy(raw)
@@ -721,6 +729,10 @@ def test_restart_required_keys_match_the_reloader(
     assert len(observed_restart_required) < len(exercised) // 2
     assert "opening_fen_dole_per_iter" not in declared, \
         "the key that made params.json look stale must be live-reloadable"
+    # The in-range perturbation keeps the range-checked fraction observable,
+    # and it is live (not restart-required).
+    assert loader_unit_fraction_keys <= exercised, sorted(loader_unit_fraction_keys - exercised)
+    assert not (loader_unit_fraction_keys & observed_restart_required)
 
 
 @pytest.mark.parametrize("temperature_key", sorted(_TARGET_ONLY_MOVE_TEMPERATURES))
