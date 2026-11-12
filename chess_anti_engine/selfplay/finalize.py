@@ -38,6 +38,12 @@ from chess_anti_engine.selfplay.blindspot_harvest import (
     run_harvest as run_blindspot_harvest,
 )
 from chess_anti_engine.selfplay.game import _result_to_wdl
+from chess_anti_engine.selfplay.provenance import (
+    GameProvenance,
+    GameStartProvenance,
+    NetRecordProvenance,
+    TerminalResolution,
+)
 from chess_anti_engine.selfplay.state import (
     CompletedGameBatch,
     SelfplayState,
@@ -155,6 +161,8 @@ def _rescore_with_syzygy(
     b: chess.Board,
     records: list[_NetRecord],
     result: str,
+    *,
+    on_result: Callable[[str], None] | None = None,
 ) -> tuple[str, dict[int, np.ndarray]]:
     """Apply syzygy-tablebase rescoring + per-sample policy overrides.
 
@@ -183,6 +191,8 @@ def _rescore_with_syzygy(
     tb_result = rescore_game_samples(replay_boards, state.game.syzygy_path)
     if tb_result is not None:
         result = tb_result
+        if on_result is not None:
+            on_result(tb_result)
 
     if not state.game.syzygy_rescore_policy:
         return result, tb_policy_overrides
@@ -1449,6 +1459,9 @@ def finalize_game(
     i: int,
     all_samples: list[ReplaySample],
     on_game_complete: Callable[[CompletedGameBatch], None] | None,
+    *,
+    on_game_provenance: Callable[[GameProvenance], None] | None = None,
+    game_start: GameStartProvenance | None = None,
 ) -> None:
     """Finalize a completed game: compute labels, build samples, update stats.
 
@@ -1457,11 +1470,15 @@ def finalize_game(
     * Appends new ``ReplaySample`` instances to ``all_samples``.
     * Invokes ``on_game_complete`` with a ``CompletedGameBatch`` when it
       is provided and the game produced samples.
+    * Emits immutable ``on_game_provenance`` metadata even without retained
+      samples, when supplied with the identity captured at slot creation.
     * Clears ``all_samples`` in continuous mode (samples are delivered
       through the callback; retaining them would cause unbounded memory
       growth for long-running workers).
     """
     cb = state.cboards[i]
+    if on_game_provenance is not None and game_start is None:
+        raise ValueError("game provenance requires identity captured at slot start")
     b = state.replay_board(i)
     game_plies = int(cb.ply)
     state.stats.total_game_plies += game_plies
@@ -1476,6 +1493,7 @@ def finalize_game(
     result, was_adjudicated, was_tb_adjudicated, sf_res = _resolve_terminal_result(
         state, i,
     )
+    resolved_result = result
     _log_terminal_anomalies(
         state, i,
         result=result, game_plies=game_plies,
@@ -1484,7 +1502,13 @@ def finalize_game(
 
     records = state.samples_per_game[i]
     flush_async_sf_labels_for_records(state, records)
-    result, tb_policy_overrides = _rescore_with_syzygy(state, i, b, records, result)
+    rescore_results: list[str] | None = [] if on_game_provenance is not None else None
+    if rescore_results is None:
+        result, tb_policy_overrides = _rescore_with_syzygy(state, i, b, records, result)
+    else:
+        result, tb_policy_overrides = _rescore_with_syzygy(
+            state, i, b, records, result, on_result=rescore_results.append,
+        )
     counters = _update_aggregate_stats(
         state, i, result=result,
         was_adjudicated=was_adjudicated, game_plies=game_plies,
@@ -1528,6 +1552,41 @@ def finalize_game(
             is_selfplay=bool(state.selfplay_arr[i]) if i < len(state.selfplay_arr) else False,
         )
 
+    provenance: GameProvenance | None = None
+    if on_game_provenance is not None:
+        assert game_start is not None
+        resolution: TerminalResolution
+        if was_tb_adjudicated:
+            resolution = "tablebase_adjudication"
+        elif not was_adjudicated:
+            resolution = "natural"
+        elif sf_res is None or sf_res.wdl is None:
+            resolution = "sf_default_draw"
+        else:
+            resolution = "sf_adjudication"
+        played = tuple(int(m) for m in state.move_idx_history[i])
+        provenance = GameProvenance(
+            start=game_start,
+            game_id=_stable_game_id(
+                start_fen=game_start.start_fen,
+                opening_source=game_start.opening_source,
+                move_trace=",".join(str(m) for m in played),
+                result=result, total_plies_played=game_plies,
+            ),
+            played_move_indices=played,
+            final_fen=cb.fen(),
+            records=tuple(NetRecordProvenance(
+                move_offset=int(rec.move_offset), ply_index=int(rec.ply_index),
+                pov_color=bool(rec.pov_color), has_policy=bool(rec.has_policy),
+                is_sf_refute_opp=bool(rec.is_sf_refute_opp),
+            ) for rec in records),
+            result=result, resolved_result=resolved_result,
+            natural_result=str(cb.result()), resolution=resolution,
+            tablebase_rescore_result=rescore_results[0] if rescore_results else None,
+            cap_reached=game_plies - game_start.start_ply >= int(state.game.max_plies),
+            total_plies=game_plies, retained_samples=len(all_samples) - sample_start,
+        )
+
     if on_game_complete is not None:
         game_samples = list(all_samples[sample_start:])
         diff_focus_stats = _compute_diff_focus_game_stats(records, game_samples)
@@ -1555,6 +1614,10 @@ def finalize_game(
         _update_gumbel_policy_stats(
             state, _compute_gumbel_policy_game_stats(records),
         )
+
+    if on_game_provenance is not None:
+        assert provenance is not None
+        on_game_provenance(provenance)
 
     # In continuous mode, samples flow through ``on_game_complete`` and
     # ``all_samples`` would otherwise grow without bound.
