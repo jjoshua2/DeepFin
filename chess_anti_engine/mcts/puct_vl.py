@@ -35,6 +35,8 @@ from chess_anti_engine.inference_cache import PucvEvalCache, PucvEvalCacheStats
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.gumbel import GumbelConfig, _policy_logits_to_full
 from chess_anti_engine.mcts.puct_history import puct_history_args
+from chess_anti_engine.mcts.puct_tb import LeafSnapshots, descend_batch, mark_batch_solved, override_leaf_values
+from chess_anti_engine.tablebase import SyzygyProbe
 from chess_anti_engine.mcts.vloss import MAX_PATH, release_batch_rows
 
 # Stride constants matching the C extension's per-leaf write layout.
@@ -169,6 +171,8 @@ class PucvChunker:
         root_id: int,
         root_cboard: _CBoard,
         target_sims: int,
+        *, tb_probe: SyzygyProbe | None = None,
+        tb_path_prefix: tuple[int, ...] = (),
     ) -> int:
         """Drive ``target_sims`` simulations on (tree, root_id) under root_cboard.
 
@@ -192,7 +196,7 @@ class PucvChunker:
 
         try:
             sims = self._run_pipelined(
-                tree, root_id, root_cboard, target_sims, outstanding,
+                tree, root_id, root_cboard, target_sims, outstanding, tb_probe, tb_path_prefix,
             )
         finally:
             _release_outstanding(tree, self._bufs, outstanding, self._vloss, sys.exc_info()[1])
@@ -205,6 +209,8 @@ class PucvChunker:
         root_cboard: _CBoard,
         target_sims: int,
         outstanding: dict[int, int],
+        tb_probe: SyzygyProbe | None = None,
+        tb_path_prefix: tuple[int, ...] = (),
     ) -> int:
         """The descend/evaluate/integrate pipeline. See ``run`` for the contract.
 
@@ -221,6 +227,7 @@ class PucvChunker:
         pending_handle: Any = None
 
         receipts: dict[int, Any] = {}
+        tb_batches: dict[int, LeafSnapshots | None] = {}
         # Own the exact async result before pending metadata or registration can fail.
         unregistered_receipt: list[Any] = [None]
         next_buf_idx = -1
@@ -238,18 +245,16 @@ class PucvChunker:
                     enc_view = np.asarray(inp_np).reshape(n, self._planes, 8, 8)
                     b = self._bufs[next_buf_idx]
                     rel = b["rel"] if self._relations else None
-                    tree.batch_descend_puct(
-                        root_id, root_cboard, n,
+                    snapshots = descend_batch(
+                        tree, root_id, root_cboard, n,
                         self._c_puct, self._fpu_root, self._fpu_red, self._vloss,
-                        enc_view,
-                        b["leaf_ids"], b["path_buf"], b["path_lens"],
-                        b["legal_buf"], b["legal_lens"],
-                        b["term_qs"], b["is_term"], self._vloss_mode,
+                        enc_view, b, self._vloss_mode,
                         b["cache_keys"] if self._cache is not None else None,
-                        rel,
-                        *self._input_history_args,
+                        rel, self._input_history_args, tb_probe,
                     )
                     outstanding[next_buf_idx] = n
+                    # One private snapshot set for each ping-pong metadata slot.
+                    tb_batches[next_buf_idx] = snapshots
                     if self._cache is None:
                         if rel is None:
                             handle = submit_async(ev, n, slot=next_slot)
@@ -282,6 +287,9 @@ class PucvChunker:
                         # Transform after cache storage/materialization so cache
                         # hits can be reused at the next live temperature.
                         pol = _policy_logits_to_full(pol, cfg=self._policy_cfg)
+                    wdl, solved = override_leaf_values(
+                        tb_probe, tb_batches.get(pending_buf_idx), wdl,
+                    )
                     tree.batch_integrate_leaves(
                         pending_n,
                         b_cur["path_buf"], b_cur["path_lens"],
@@ -289,6 +297,8 @@ class PucvChunker:
                         b_cur["is_term"], pol, wdl, self._vloss,
                     )
                     outstanding.pop(pending_buf_idx, None)
+                    tb_batches.pop(pending_buf_idx, None)
+                    mark_batch_solved(tree, b_cur, solved, path_prefix=tb_path_prefix)
 
                 if next_handle is not None:
                     pending_slot = next_slot

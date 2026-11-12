@@ -1673,14 +1673,15 @@ class SearchWorker:
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
                 witness_stop_fn=witness_stop_fn,
             ), chunk
+        tb_args = () if tb_probe is None else (tb_probe,)
         if self._rpg_pool is not None:
-            return self._run_rpg_chunk(chunk, stop_event)
+            return self._run_rpg_chunk(chunk, stop_event, *tb_args)
         if self._pucv_pool is not None:
-            return self._run_pucv_pool_chunk(chunk, stop_event)
+            return self._run_pucv_pool_chunk(chunk, stop_event, *tb_args)
         if self._walker_pool is not None:
             return self._run_walker_chunk(chunk, stop_event, tb_probe)
         if self._pucv is not None:
-            return self._run_pucv_chunk(chunk), chunk
+            return self._run_pucv_chunk(chunk, *tb_args), chunk
         return self._run_gumbel_chunk(
             chunk, board, tb_probe, allowed_root_indices,
             allow_terminal_shortcuts=allow_terminal_shortcuts,
@@ -2482,7 +2483,7 @@ class SearchWorker:
         return float(values[0])
 
     def _run_pucv_pool_chunk(
-        self, chunk: int, stop_event: threading.Event,
+        self, chunk: int, stop_event: threading.Event, tb_probe=None,
     ) -> tuple[float, int]:
         assert self._tree is not None
         assert self._root_id is not None
@@ -2493,12 +2494,12 @@ class SearchWorker:
             root_id=self._root_id,
             root_cboard=self._pucv_pool_cboard,
             target_sims=chunk,
-            stop_event=stop_event,
+            stop_event=stop_event, **({"tb_probe": tb_probe} if tb_probe is not None else {}),
         )
         return self._tree.node_q(self._root_id), int(completed)
 
     def _run_rpg_chunk(
-        self, chunk: int, stop_event: threading.Event,
+        self, chunk: int, stop_event: threading.Event, tb_probe=None,
     ) -> tuple[float, int]:
         """One root-parallel Gumbel chunk. The pool runs a full sequential-
         halving schedule over ``chunk`` sims (identical budget shape to the
@@ -2509,7 +2510,7 @@ class SearchWorker:
         Gumbel chunk so final selection semantics are unchanged."""
         assert self._rpg_pool is not None
         value, action = self._rpg_pool.run(
-            target_sims=chunk, stop_event=stop_event,
+            target_sims=chunk, stop_event=stop_event, **({"tb_probe": tb_probe} if tb_probe is not None else {}),
         )
         if action >= 0:
             self._last_gumbel_action_idx = int(action)
@@ -2575,7 +2576,7 @@ class SearchWorker:
                     self._root_pol_logits[0],
                 )
 
-    def _run_pucv_chunk(self, chunk: int) -> float:
+    def _run_pucv_chunk(self, chunk: int, tb_probe=None) -> float:
         assert self._tree is not None
         assert self._root_id is not None
         assert self._pucv is not None
@@ -2584,7 +2585,7 @@ class SearchWorker:
             tree=self._tree,
             root_id=self._root_id,
             root_cboard=self._pucv_cboard,
-            target_sims=chunk,
+            target_sims=chunk, **({"tb_probe": tb_probe} if tb_probe is not None else {}),
         )
         return self._tree.node_q(self._root_id)
 
