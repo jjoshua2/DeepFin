@@ -132,3 +132,78 @@ def test_shared_parameter_alias_contract(conflicting: bool) -> None:
             _validate_aliases(model, state)
     else:
         _validate_aliases(model, state)
+
+
+def test_synthetic_transformer_forward_repeat_and_batch_invariance(checkpoint) -> None:
+    import numpy as np
+    from scripts.stored_wdl_checkpoint import forward_checkpoint
+    from scripts.stored_wdl_compare import rows_digest
+    path, payload = checkpoint
+    digest = save(path, payload)
+    planes = np.zeros((4, 175, 8, 8), np.float32)
+    planes[:, 17, 0, 0] = [.1, .2, .3, .4]
+    ids, groups = ["r1", "r2", "r3", "r4"], ["g1", "g1", "g2", "g2"]
+    identity = rows_digest(planes, ids, groups)
+    def run(batch):
+        return forward_checkpoint(path, digest, _canonical(payload["arch"]), planes,
+                                  row_ids=ids, group_ids=groups, expected_rows_sha256=identity,
+                                  batch_size=batch)
+    first, repeated, batched = run(1), run(1), run(4)
+    np.testing.assert_array_equal(first["probabilities"], repeated["probabilities"])
+    np.testing.assert_allclose(first["probabilities"], batched["probabilities"], rtol=1e-5, atol=1e-6)
+    np.testing.assert_allclose(np.asarray(first["probabilities"]).sum(axis=1), 1, atol=1e-6)
+    assert first["inference_performed"] is True
+    assert first["controls_performed"] == []
+    assert first["output_semantics_measured"] is False
+    assert first["production_qualified"] is False
+
+
+@pytest.mark.parametrize("fault", ["identity", "bool_batch", "large_batch", "many_rows", "dtype"])
+def test_forward_input_rejected_before_child(monkeypatch: pytest.MonkeyPatch, fault: str) -> None:
+    import numpy as np
+    import scripts.stored_wdl_checkpoint as module
+    from scripts.stored_wdl_compare import rows_digest
+    x = np.zeros((2, 175, 8, 8), np.float32)
+    ids = ["r1", "r2"]
+    identity = rows_digest(x, ids, ids)
+    batch = 1
+    if fault == "identity":
+        identity = "0" * 64
+    elif fault == "bool_batch":
+        batch = True
+    elif fault == "large_batch":
+        batch = 65
+    elif fault == "many_rows":
+        x = np.zeros((257, 175, 8, 8), np.float32)
+    else:
+        x = x.astype(np.float64)
+    def forbidden(_payload):
+        pytest.fail("child launched for invalid input")
+    monkeypatch.setattr(module, "_run_child", forbidden)
+    with pytest.raises(ValueError, match=r"bounded|identity"):
+        module.forward_checkpoint(Path("not-opened"), "a" * 64, "{}", x,
+                                  row_ids=ids, group_ids=ids, expected_rows_sha256=identity,
+                                  batch_size=batch)
+
+
+@pytest.mark.parametrize("fault", ["length", "digest", "bool_rows", "bool_batch"])
+def test_child_revalidates_wire_identity(fault: str) -> None:
+    import base64
+    import numpy as np
+    from scripts.stored_wdl_checkpoint import _decode_planes
+    from scripts.stored_wdl_compare import rows_digest
+    x = np.zeros((2, 175, 8, 8), np.float32)
+    ids = ["r1", "r2"]
+    request = {"rows": 2, "batch_size": 1, "row_ids": ids, "group_ids": ids,
+               "rows_sha256": rows_digest(x, ids, ids),
+               "planes_base64": base64.b64encode(x.tobytes()).decode("ascii")}
+    if fault == "length":
+        request["planes_base64"] = ""
+    elif fault == "digest":
+        request["rows_sha256"] = "0" * 64
+    elif fault == "bool_rows":
+        request["rows"] = True
+    else:
+        request["batch_size"] = True
+    with pytest.raises(ValueError, match=r"bounded|identity|byte count"):
+        _decode_planes(request)
