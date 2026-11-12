@@ -149,7 +149,8 @@ start() {
             echo "Detected prior tune state under $WORK_DIR/tune — auto-resuming."
             echo "  To start fresh instead, pass --fresh (needs tune_keep_last_experiments >= 2;"
             echo "  with 1, a fresh start over existing artifacts is refused) or use a new"
-            echo "  TRAIN_WORK_DIR. --resume ignores --salvage-seed-pool-dir."
+            echo "  TRAIN_WORK_DIR. --resume of a trial with a Ray checkpoint ignores"
+            echo "  --salvage-seed-pool-dir."
             extra_args+=("--resume")
         fi
     fi
