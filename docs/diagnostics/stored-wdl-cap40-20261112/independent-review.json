@@ -22,7 +22,7 @@
     }
   },
   "extraction_receipt": {
-    "path": "/home/josh/chess-artifacts/operations/stored-wdl-cap40-direct-20261112-tsxbicyz/stored-wdl-prefix-3laxfnm8/result.json",
+    "path": "~/chess-artifacts/operations/stored-wdl-cap40-direct-20261112-tsxbicyz/stored-wdl-prefix-3laxfnm8/result.json",
     "sha256": "e0e61ac7c6246261d344ac2459c6e01b8512784d64ca49d50b24f843f9ce6249"
   },
   "group_sizes": [

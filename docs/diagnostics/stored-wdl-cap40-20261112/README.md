@@ -132,3 +132,18 @@ for training changes. The partial cohort is successor-available, not random.
 No model inference, engine execution or new corpus acquisition was needed
 for this saved-output comparison. Raw per-pair evidence stays outside the
 repository.
+
+
+### Published receipt path redaction
+
+The three receipt copies listed below replace the local home-directory prefix
+with `~/`. Their metrics, artifact identity hashes and all other fields are
+unchanged. Earlier SHA256 references for these receipts identify the original
+retained review bytes, not the path-redacted repository copies. This is a
+presentation-only derivative, not a reissued independent review.
+
+| Repository receipt | Original review SHA256 | Published copy SHA256 |
+| --- | --- | --- |
+| `child-sf-agreement-review.json` | `f8582c8be0cd63abcc58aa4e1c78f468c42659ef79d01db4835acdd3ec4d08b2` | `9692d01ff0ffb49bb73fb86647e0ffdbfc8b8dc0bee42f56218a5f42e14458ee` |
+| `independent-review.json` | `9da1295da264a3a9488bde613f357d62420fa8a607db002398bca58cb13b8e9d` | `ff488948d6c90db5131b1f91086be3dd3e319d646138686a1acfa636da5453ba` |
+| `transition-review.json` | `f3abf94acfbecee2615715de1a6cc52415d94529f5908d7339fbab3013ee5661` | `db9afe7d141545c81c14fe8e2d9cb1c29ccf615651a6fc7eed5006db5359bdda` |
