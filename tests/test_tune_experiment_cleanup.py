@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,6 +28,106 @@ from chess_anti_engine.tune.harness import (
     _cleanup_old_tune_experiments,
     _trial_dirs_referenced_by,
 )
+
+
+@pytest.mark.parametrize(
+    ("keep_last", "resume", "corrupt_retained"),
+    [
+        (None, False, False), (0, False, False), (-1, False, False),
+        (1, False, False), (2, False, False), (3, False, False),
+        (1, True, False), (2, True, False), (2, False, True),
+    ],
+)
+def test_fresh_start_reserves_room_for_the_new_experiment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, keep_last: int | None,
+    resume: bool, corrupt_retained: bool,
+) -> None:
+    """Exercise the real caller without starting Ray, servers or training."""
+    import ray
+    from ray import tune
+
+    from chess_anti_engine.tune import harness
+
+    tune_dir = tmp_path / "tune"
+    tune_dir.mkdir()
+    old_dir, previous_dir = _live_layout(tune_dir)
+    if corrupt_retained:
+        (tune_dir / "experiment_state-2026-07-25_12-12-34.json").write_text("{bad json")
+    unrelated = tune_dir / "not-a-trial"
+    unrelated.mkdir()
+    (unrelated / "keep.txt").write_text("unrelated")
+    policy_log = tune_dir / "pbt_policy_4c17c_00000.txt"
+    policy_log.write_text("old policy")
+    monkeypatch.setattr(harness, "_patch_ray_artifact_sync_excludes", lambda: None)
+    monkeypatch.setattr(harness, "_launch_distributed_server", lambda **_kw: None)
+    monkeypatch.setattr(harness, "_maybe_launch_shared_broker", lambda **_kw: None)
+    monkeypatch.setattr(harness, "_build_scheduler_and_param_space", lambda **_kw: ({}, None, None))
+    monkeypatch.setattr(harness, "_make_checkpoint_eviction_idempotent", lambda: None)
+    monkeypatch.setattr(harness, "_make_csv_logger_schema_safe", lambda: None)
+    monkeypatch.setattr(harness, "_resolve_resume_param_space", lambda **_kw: {})
+    monkeypatch.setattr(harness, "_hotpatch_scheduler_bounds", lambda **_kw: None)
+    monkeypatch.setattr(ray, "init", lambda **_kw: None)
+    monkeypatch.setattr(tune, "with_resources", lambda fn, _resources: fn)
+
+    current_trial = "train_trial_new_00000_0_lr=0.1_2026-08-01_00-00-00"
+
+    class FakeTuner:
+        def __init__(self, *_args, **_kwargs):
+            _write_state(tune_dir, "2026-08-01_00-00-00", trial_dirs=[current_trial])
+            _make_trial_dir(tune_dir, current_trial)
+
+        def fit(self):
+            return "completed"
+
+        @staticmethod
+        def restore(*_args, **_kwargs):
+            return SimpleNamespace(fit=lambda: "completed")
+
+    monkeypatch.setattr(tune, "Tuner", FakeTuner)
+
+    if keep_last == 1 and not resume:
+        # A fresh run cannot discard its only recovery artifacts at startup.
+        before = {p.relative_to(tune_dir): p.read_bytes() for p in tune_dir.rglob("*") if p.is_file()}
+
+        def unexpected_startup(**_kwargs):
+            raise AssertionError("retention-one rejection must precede startup and pruning")
+
+        monkeypatch.setattr(harness, "_launch_distributed_server", unexpected_startup)
+        monkeypatch.setattr(harness, "_maybe_launch_shared_broker", unexpected_startup)
+        monkeypatch.setattr(harness, "_cleanup_old_tune_experiments", unexpected_startup)
+        monkeypatch.setattr(ray, "init", unexpected_startup)
+        with pytest.raises(ValueError, match="tune_keep_last_experiments >= 2"):
+            harness.run_tune(
+                base_config={"tune_keep_last_experiments": keep_last},
+                work_dir=tmp_path, num_samples=1, resume=resume,
+            )
+        after = {p.relative_to(tune_dir): p.read_bytes() for p in tune_dir.rglob("*") if p.is_file()}
+        assert after == before
+        assert old_dir.is_dir()
+        assert previous_dir.is_dir()
+        assert unrelated.is_dir()
+        assert not (tune_dir / current_trial).exists()
+        return
+
+    result = harness.run_tune(
+        base_config={} if keep_last is None else {"tune_keep_last_experiments": keep_last},
+        work_dir=tmp_path, num_samples=1, resume=resume,
+    )
+
+    assert result == "completed"
+    realized = 2 if keep_last is None else keep_last
+    expected = 6 if resume else (realized if realized > 0 else 7)
+    if corrupt_retained and not resume:
+        # The unreadable newest state cannot show a checkpoint: it is kept
+        # without using a slot, so the next (checkpoint-bearing) one stays too.
+        expected += 1
+    assert len(list(tune_dir.glob("experiment_state-*.json"))) == expected
+    assert len(list(tune_dir.glob("basic-variant-state-*.json"))) == expected
+    assert old_dir.exists() == (resume or realized <= 0 or corrupt_retained)
+    assert previous_dir.exists() == (resume or realized != 1)
+    assert policy_log.exists() == (resume or realized != 1)
+    assert (tune_dir / current_trial / "checkpoint_000250" / "trainer.pt").exists() == (not resume)
+    assert (unrelated / "keep.txt").read_text() == "unrelated"
 
 
 def _write_state(tune_dir: Path, ts: str, *, trial_dirs: list[str]) -> Path:
@@ -59,7 +160,7 @@ def _write_state(tune_dir: Path, ts: str, *, trial_dirs: list[str]) -> Path:
 def _make_trial_dir(tune_dir: Path, name: str) -> Path:
     d = tune_dir / name
     (d / "checkpoint_000250").mkdir(parents=True)
-    (d / "checkpoint_000250" / "state.pt").write_bytes(b"irreplaceable")
+    (d / "checkpoint_000250" / "trainer.pt").write_bytes(b"irreplaceable")
     return d
 
 
@@ -86,7 +187,7 @@ def test_the_kept_experiments_trial_dir_survives_a_timestamp_it_does_not_share(
 
     _cleanup_old_tune_experiments(tune_dir=tmp_path, keep_last=2)
 
-    assert (live_dir / "checkpoint_000250" / "state.pt").exists(), (
+    assert (live_dir / "checkpoint_000250" / "trainer.pt").exists(), (
         "deleted the trial dir that the newest retained state file names"
     )
     assert not old_dir.exists(), "the genuinely unreferenced experiment should go"
@@ -111,13 +212,31 @@ def test_old_state_files_are_pruned_and_the_kept_ones_are_not(tmp_path: Path) ->
 def test_an_orphan_trial_dir_with_no_referencing_state_is_deleted(
     tmp_path: Path,
 ) -> None:
-    """Cleanup still has to reclaim disk, not just protect things."""
+    """Cleanup still has to reclaim disk, not just protect things: an
+    unreferenced trial dir without a checkpoint goes."""
+    _live_layout(tmp_path)
+    orphan = tmp_path / "train_trial_dead0_00000_0_lr=0.1_2026-06-01_00-00-00"
+    orphan.mkdir()
+    (orphan / "error.txt").write_text("boom")
+
+    _cleanup_old_tune_experiments(tune_dir=tmp_path, keep_last=2)
+
+    assert not orphan.exists()
+
+
+def test_an_orphan_trial_dir_holding_a_checkpoint_is_kept_with_a_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No readable state file names it, so nothing accounts for deleting it."""
     _live_layout(tmp_path)
     orphan = _make_trial_dir(tmp_path, "train_trial_dead0_00000_0_lr=0.1_2026-06-01_00-00-00")
 
     _cleanup_old_tune_experiments(tune_dir=tmp_path, keep_last=2)
 
-    assert not orphan.exists()
+    assert (orphan / "checkpoint_000250" / "trainer.pt").exists()
+    out = capsys.readouterr().out
+    assert f"WARNING: keeping unreferenced trial dir {orphan}" in out
+    assert "rm -rf" in out
 
 
 def test_an_unreadable_kept_state_file_protects_every_trial_dir(
@@ -139,13 +258,22 @@ def test_an_unreadable_kept_state_file_protects_every_trial_dir(
 def test_a_corrupt_kept_state_file_still_lets_the_old_state_files_go(
     tmp_path: Path,
 ) -> None:
-    """The fail-safe covers trial dirs only; state files are small and stale."""
+    """The fail-safe covers trial dirs only; state files are small and stale.
+
+    An unreadable state file cannot show a checkpoint, so it is retained
+    without using a slot: the two newest readable, checkpoint-bearing files
+    are kept beside it and the three older ones still go.
+    """
     _live_layout(tmp_path)
     (tmp_path / "experiment_state-2026-07-25_12-12-34.json").write_text("{tru ncated")
 
     _cleanup_old_tune_experiments(tune_dir=tmp_path, keep_last=2)
 
-    assert len(list(tmp_path.glob("experiment_state-*.json"))) == 2
+    assert sorted(p.name for p in tmp_path.glob("experiment_state-*.json")) == [
+        "experiment_state-2026-07-19_13-38-40.json",
+        "experiment_state-2026-07-24_22-52-27.json",
+        "experiment_state-2026-07-25_12-12-34.json",
+    ]
 
 
 def test_nothing_happens_when_there_is_nothing_to_prune(tmp_path: Path) -> None:
@@ -171,6 +299,7 @@ def test_keep_last_zero_disables_cleanup_entirely(tmp_path: Path) -> None:
 
 def test_a_missing_tune_dir_is_not_an_error(tmp_path: Path) -> None:
     _cleanup_old_tune_experiments(tune_dir=tmp_path / "nope", keep_last=2)
+    assert not (tmp_path / "nope").exists()
 
 
 def test_a_state_file_naming_several_trials_protects_all_of_them(

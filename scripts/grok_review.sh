@@ -70,6 +70,10 @@ command -v timeout >/dev/null 2>&1 || {
     echo "GROK UNAVAILABLE: the timeout command is not on PATH." >&2
     exit 69
 }
+command -v setsid >/dev/null 2>&1 || {
+    echo "GROK UNAVAILABLE: the setsid command is not on PATH." >&2
+    exit 69
+}
 command -v python3 >/dev/null 2>&1 || {
     echo "GROK UNAVAILABLE: Python 3 is required for private artifact allocation." >&2
     exit 69
@@ -114,7 +118,14 @@ SNAP="$(mktemp -d "$RUN_DIR/snapshot.XXXXXXXX")"
 TMP_ARCHIVE=""
 TMP_DIFF=""
 TMP_UNTRACKED=""
+GROK_PGID=""
+kill_grok_group() {
+    [ -z "$GROK_PGID" ] || kill -KILL -- "-$GROK_PGID" 2>/dev/null || true
+    # Never signal this id again: once the group is gone the kernel may reuse it.
+    GROK_PGID=""
+}
 cleanup() {
+    kill_grok_group
     [ -z "$TMP_ARCHIVE" ] || rm -f -- "$TMP_ARCHIVE"
     [ -z "$TMP_DIFF" ] || rm -f -- "$TMP_DIFF"
     [ -z "$TMP_UNTRACKED" ] || rm -f -- "$TMP_UNTRACKED"
@@ -344,13 +355,48 @@ fi
 
 # A file avoids operating-system argv limits on larger diffs. Inherit Grok's
 # configured model/effort rather than duplicating machine defaults in this repo.
-if timeout --kill-after=5s "${GROK_REVIEW_TIMEOUT_SECONDS}s" \
+#
+# Grok runs in its own session so this script owns the kill of everything it
+# started. Which processes `timeout` signals is implementation-specific: GNU
+# signals the whole group, while the timeout shipped with Ubuntu 26.04 left a
+# TERM-ignoring grandchild alive. The background child is not a group leader,
+# so setsid makes it one without forking and $! is the group id. That needs
+# job control off (with it on, the job already leads a group, setsid forks and
+# returns at once), so turn it off and verify the result rather than assume it.
+set +m
+setsid timeout --kill-after=5s "${GROK_REVIEW_TIMEOUT_SECONDS}s" \
     grok --prompt-file "$PROMPT" --cwd "$SNAP" --max-turns 25 \
-        --no-subagents --output-format plain > "$RAW" 2>&1; then
+        --no-subagents --output-format plain > "$RAW" 2>&1 &
+GROK_PGID=$!
+# setsid runs in the child after the fork, so the group appears a moment after
+# $! does: poll for it. An empty answer means the child already exited, which
+# leaves nothing to isolate or kill.
+for _ in $(seq 1 100); do
+    if ! GROK_ACTUAL_PGID="$(ps -o pgid= -p "$GROK_PGID" 2>/dev/null | tr -d ' ')"; then
+        if kill -0 "$GROK_PGID" 2>/dev/null; then
+            kill -KILL "$GROK_PGID" 2>/dev/null || true
+            echo "GROK FAILED: could not inspect the Grok process group" >&2
+            exit 70
+        fi
+        GROK_ACTUAL_PGID=""
+    fi
+    if [ -z "$GROK_ACTUAL_PGID" ] || [ "$GROK_ACTUAL_PGID" = "$GROK_PGID" ]; then
+        break
+    fi
+    sleep 0.05
+done
+if [ -n "$GROK_ACTUAL_PGID" ] && [ "$GROK_ACTUAL_PGID" != "$GROK_PGID" ]; then
+    kill -KILL "$GROK_PGID" 2>/dev/null || true
+    GROK_PGID=""
+    echo "GROK FAILED: could not isolate the Grok process group" >&2
+    exit 70
+fi
+if wait "$GROK_PGID"; then
     GROK_STATUS=0
 else
     GROK_STATUS=$?
 fi
+kill_grok_group
 printf 'raw_output: %s\n' "$RAW"
 
 AFTER_STATUS="$(git -C "$REPO" status --short --untracked-files=all 2>/dev/null)"

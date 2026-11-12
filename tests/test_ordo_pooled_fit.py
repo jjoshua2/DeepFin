@@ -55,15 +55,18 @@ def test_z_constant_equals_our_400_point_scale() -> None:
     assert abs(ORDO_Z_MATCHING_400_SCALE - 202.0) > 1.0
 
 
-def _capture_argv(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+def _capture_argv(
+    monkeypatch: pytest.MonkeyPatch, players: tuple[str, str] = ("A", "B"),
+) -> list[list[str]]:
     seen: list[list[str]] = []
+    first, second = players
 
     def fake_run(cmd: list[str], **_kwargs: object) -> object:
         seen.append(list(cmd))
         Path(cmd[cmd.index("-o") + 1]).write_text(
             "   # PLAYER    :  RATING  ERROR  POINTS  PLAYED   (%)\n"
-            "   1 A         :    10.0    5.0    60.0     100    60\n"
-            "   2 B         :     0.0    5.0    40.0     100    40\n"
+            f"   1 {first}         :    10.0    5.0    60.0     100    60\n"
+            f"   2 {second}         :     0.0    5.0    40.0     100    40\n"
         )
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
@@ -750,7 +753,7 @@ def test_main_stamps_every_section_under_allow_mixed_hoist(
     the end: a long fit's opening banner is off the screen by the time the
     numbers land, and this one says the numbers do not mean what they look like.
     """
-    _capture_argv(monkeypatch)
+    _capture_argv(monkeypatch, players=("armA", "armB"))  # the fit must cover the games' players
     ordo = tmp_path / "ordo"
     ordo.write_text("")
     monkeypatch.setattr("sys.argv", [
@@ -770,7 +773,7 @@ def test_main_does_not_stamp_a_clean_pool(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture,
 ) -> None:
     """The control: the stamp must be evidence, not decoration."""
-    _capture_argv(monkeypatch)
+    _capture_argv(monkeypatch, players=("armA", "armB"))
     ordo = tmp_path / "ordo"
     ordo.write_text("")
     clean = _hoist_pgn(tmp_path / "clean.pgn", [
