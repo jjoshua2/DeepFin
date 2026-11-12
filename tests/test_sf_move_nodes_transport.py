@@ -34,6 +34,7 @@ from chess_anti_engine.tune.trainable_config_ops import (
     reject_sf_budget_topology,
 )
 from chess_anti_engine.tune.trainable_phases import _run_eval_games
+from chess_anti_engine.tune.startup_intent import StartupIntentError
 from chess_anti_engine.tune.trial_config import TrialConfig
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 from chess_anti_engine import worker as worker_mod
@@ -41,7 +42,9 @@ from chess_anti_engine.worker import WorkerSession
 from tests.selfplay_helpers import FakeStockfish, UniformPolicyValueModel
 
 _REFUSAL = worker_mod._UnsupportedSfBudgetForTopology
-_BUDGET_KEYS = ("sf_move_nodes", "sf_label_nodes_floor", "sf_label_nodes_cap")
+_BUDGET_KEYS = (
+    "sf_move_nodes", "sf_label_nodes_floor", "sf_label_nodes_cap", "sf_label_escalate_q_gap",
+)
 
 
 class _ReachedSetup(Exception):
@@ -53,6 +56,7 @@ class _ReachedSetup(Exception):
 @pytest.mark.parametrize(('key', 'value'), [
     ('sf_move_nodes', 100), ('sf_move_nodes', 5000),
     ('sf_label_nodes_floor', 150_000), ('sf_label_nodes_cap', 200_000),
+    ('sf_label_escalate_q_gap', 0.8),
 ])
 def test_play_batch_rejects_single_engine_before_state_or_engine_work(
     monkeypatch: pytest.MonkeyPatch, key: str, value: int,
@@ -76,6 +80,7 @@ def test_play_batch_rejects_single_engine_before_state_or_engine_work(
     (True, {}),
     (True, {'sf_move_nodes': 100}),
     (True, {'sf_label_nodes_floor': 150_000, 'sf_label_nodes_cap': 200_000}),
+    (True, {'sf_label_escalate_q_gap': 0.8}),
 ])
 def test_play_batch_preserves_default_and_pool_routes(
     monkeypatch: pytest.MonkeyPatch, pooled: bool, overrides: dict[str, int],
@@ -127,7 +132,7 @@ class _RecordingUCI(FakeStockfish):
         )
 
 
-def _eval_budgets(**budget: int) -> tuple[Counter, dict]:
+def _eval_budgets(**budget: float) -> tuple[Counter, dict]:
     tc = TrialConfig.from_dict({
         'eval_games': 2, 'eval_max_plies': 8, 'eval_mcts_simulations': 1,
         'sf_fast_ply_node_scale': 1.0, **budget,
@@ -148,6 +153,7 @@ def test_eval_on_single_engine_ignores_training_budget_knobs_exactly() -> None:
     oracle_sent, oracle_out = _eval_budgets()
     sent, out = _eval_budgets(
         sf_move_nodes=100, sf_label_nodes_floor=50_000, sf_label_nodes_cap=60_000,
+        sf_label_escalate_q_gap=0.8,
     )
     assert sum(oracle_sent.values()) > 0, 'eval issued no SF queries'
     assert sent == oracle_sent
@@ -236,6 +242,7 @@ def _reload(tmp_path: Path, base: dict, edits: dict, caplog) -> tuple[dict, dict
     ({'distributed_worker_sf_workers': 1}, {'sf_label_nodes_floor': 150_000}),
     ({'distributed_worker_sf_workers': 1}, {'sf_label_nodes_cap': 200_000}),
     ({'distributed_worker_sf_workers': 1}, {'sf_move_nodes': 100}),
+    ({'distributed_worker_sf_workers': 1}, {'sf_label_escalate_q_gap': 0.8}),
     ({'distributed_worker_sf_workers': 8, 'sf_label_nodes_floor': 150_000},
      {'distributed_worker_sf_workers': 1}),
 ])
@@ -263,6 +270,57 @@ def test_live_reload_applies_a_topology_and_budget_edit_that_is_valid_together(
     )
     assert {k: config[k] for k in edit} == edit
     assert not any('NOT applied' in m for m in messages), messages
+
+
+def test_startup_intent_refusal_still_propagates_before_any_decline(
+    tmp_path: Path, caplog,
+) -> None:
+    """main's `except StartupIntentError: raise` sits right after the decline
+    call. A strict-intent refusal raised earlier in the try (here: the save
+    adds `rl_startup_intent` without its contract) must propagate unchanged,
+    with no overlay and no decline, even when the same save is also a bad SF
+    combination."""
+    raw = load_yaml_file(str(_PRODUCTION))
+    _set(raw, 'distributed_worker_sf_workers', 1)
+    start = tmp_path / 'start.yaml'
+    start.write_text(yaml.safe_dump(raw), encoding='utf-8')
+    config = flatten_run_config_defaults(load_yaml_file(str(start)))
+    launched = dict(config)
+    doc = copy.deepcopy(raw)
+    _set(doc, 'sf_label_nodes_floor', 150_000)
+    doc['rl_startup_intent'] = 'fresh_bootstrap'
+    edited = tmp_path / 'edited.yaml'
+    edited.write_text(yaml.safe_dump(doc), encoding='utf-8')
+    with (
+        caplog.at_level(logging.WARNING, logger='chess_anti_engine.tune.trainable_config_ops'),
+        pytest.raises(StartupIntentError, match='strict startup'),
+    ):
+        _reload_yaml_into_config(config, str(edited), live_reload=True)
+    assert config == launched
+    assert not any('NOT applied' in r.getMessage() for r in caplog.records)
+
+
+def test_live_reload_declines_every_key_of_a_jointly_bad_save_and_says_so(
+    tmp_path: Path, caplog,
+) -> None:
+    """Review note: one save that drops the workers to one SF engine AND adds a
+    floor declines BOTH, although each would be valid alone (conservative by
+    design). The warning must name every declined key with attempted and
+    kept values, and say all were declined together."""
+    edit = {'distributed_worker_sf_workers': 1, 'sf_label_nodes_floor': 150_000}
+    launched, config, messages = _reload(
+        tmp_path, {'distributed_worker_sf_workers': 8}, edit, caplog,
+    )
+    assert config['distributed_worker_sf_workers'] == launched['distributed_worker_sf_workers'] == 8
+    assert config.get('sf_label_nodes_floor') == launched.get('sf_label_nodes_floor')
+    declined = [m for m in messages if 'NOT applied' in m]
+    assert len(declined) == 1, messages
+    warning = declined[0]
+    assert '2 SF budget/topology edit(s) NOT applied, ALL of them declined together' in warning
+    assert 'distributed_worker_sf_workers: 1 -> kept 8' in warning
+    assert 'sf_label_nodes_floor: 150000 -> kept' in warning
+    assert 'even one that would be valid on its own' in warning
+    assert 'sf_label_nodes_floor > 0 requires StockfishPool' in warning
 
 
 # -- worker ------------------------------------------------------------------
@@ -316,18 +374,20 @@ def test_distributed_worker_uses_effective_cli_topology_before_any_bringup(
 
 # `args.sf_move_nodes` (and the floor/cap) are NOT tested as worker-local
 # overrides: no worker CLI flag or worker.yaml field sets them, so
-# `_resolve_reco` always reads the reco for these three keys in production.
+# `_resolve_reco` always reads the reco for these keys in production.
 
-def test_invalid_budget_does_not_reach_an_existing_engine() -> None:
+@pytest.mark.parametrize(('key', 'value'), [
+    ('sf_label_nodes_floor', 150_000), ('sf_label_nodes_cap', 200_000),
+    ('sf_label_escalate_q_gap', 0.8),
+])
+def test_invalid_budget_does_not_reach_an_existing_engine(key: str, value: float) -> None:
     session = object.__new__(WorkerSession)
     session.args = SimpleNamespace(sf_workers=1)
     session._shutdown_requested = False
     calls: list[int] = []
     session.sf = cast(Any, SimpleNamespace(set_nodes=calls.append))
-    with pytest.raises(_REFUSAL, match='sf_label_nodes_floor > 0 requires StockfishPool'):
-        session._run_selfplay(
-            {'recommended_worker': {'sf_label_nodes_floor': 150_000, 'sf_nodes': 5000}},
-        )
+    with pytest.raises(_REFUSAL, match=f'{key} > 0 requires StockfishPool'):
+        session._run_selfplay({'recommended_worker': {key: value, 'sf_nodes': 5000}})
     assert calls == []
 
 
@@ -364,9 +424,12 @@ def test_worker_waits_instead_of_exiting_on_an_unusable_reco(caplog) -> None:
     assert 'sf_label_nodes_floor > 0 requires StockfishPool' in errors[0]
 
 
+@pytest.mark.parametrize(('key', 'value'), [
+    ('sf_label_nodes_floor', 150_000), ('sf_label_escalate_q_gap', 0.8),
+])
 @pytest.mark.parametrize(('sf_workers', 'applied'), [(1, False), (8, True)])
 def test_live_floor_change_is_not_transplanted_onto_a_single_engine(
-    sf_workers: int, applied: bool,
+    sf_workers: int, applied: bool, key: str, value: float,
 ) -> None:
     """floor/cap are LIVE reco keys, so they bypass the session-start check;
     _apply_live_reco must refuse them on a single engine (forcing the restart
@@ -380,7 +443,7 @@ def test_live_floor_change_is_not_transplanted_onto_a_single_engine(
     session._live_states = [state]
     session._live_states_lock = threading.Lock()
     cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
-    reco = {'sf_nodes': 5000, 'sf_label_nodes_floor': 150_000}
+    reco = {'sf_nodes': 5000, key: value}
     built: list[dict] = []
     real_build = WorkerSession._build_selfplay_configs
 

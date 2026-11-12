@@ -249,7 +249,8 @@ class GameConfig:
   # blind-spot harvester still sees the original gap — otherwise escalation
   # would hide exactly the positions it mines. Pool (async) label path only;
   # the sync StockfishUCI fallback path ignores the flag. See
-  # configs/exp_label_escalation.yaml.
+  # configs/exp_label_escalation.yaml. Refused on a single engine
+  # (single_engine_sf_budget_violations) rather than silently ignored.
     sf_label_escalate_q_gap: float = 0.0
   # Node budget for the escalated re-query. Never capped by
   # sf_label_nodes_cap and never touches the PID opponent budget.
@@ -465,6 +466,7 @@ def single_engine_sf_budget_violations(
     sf_move_nodes: int,
     sf_label_nodes_floor: int,
     sf_label_nodes_cap: int,
+    sf_label_escalate_q_gap: float,
     pooled: bool,
 ) -> list[str]:
     """Budget knobs the synchronous single-engine route would accept and ignore.
@@ -476,6 +478,9 @@ def single_engine_sf_budget_violations(
     label-only floor/cap without changing the opponent's strength. Applying the
     floor/cap to that combined query would move the PID's actuator; ignoring
     them is the silent-no-op defect. Refusing is the only honest option.
+    ``sf_label_escalate_q_gap`` is ignored outright there: label escalation
+    re-queries a pending POOL label future, and ``_maybe_submit_label_escalation``
+    returns before any engine call on any non-pool engine.
 
     Returns one sentence per violated key; empty on the pool route or when
     every knob is 0 (the shared-budget behaviour every checked-in config uses).
@@ -500,13 +505,20 @@ def single_engine_sf_budget_violations(
                 "opponent's move query, which takes neither floor nor cap, so it "
                 "would apply to selfplay labels only"
             )
+    if float(sf_label_escalate_q_gap or 0.0) > 0.0:
+        out.append(
+            "sf_label_escalate_q_gap > 0 requires StockfishPool (got "
+            f"{float(sf_label_escalate_q_gap)!r}); label escalation runs only on "
+            "the pool's asynchronous label path, so the synchronous single-engine "
+            "route never escalates a label"
+        )
     return out
 
 
 def single_engine_sf_budget_message(problems: list[str]) -> str:
     """The refusal sentence for a non-empty violation list, with the fix."""
     return (
-        "; ".join(problems) + ". Set them to 0, or use at least 2 effective SF "
+        "; ".join(problems) + ". Set each listed key to 0, or use at least 2 effective SF "
         "workers (worker --sf-workers; for driver-launched workers, "
         "distributed_worker_sf_workers)."
     )
@@ -517,12 +529,14 @@ def validate_sf_budget_transport(
     sf_move_nodes: int,
     sf_label_nodes_floor: int,
     sf_label_nodes_cap: int,
+    sf_label_escalate_q_gap: float,
     pooled: bool,
 ) -> None:
     """Raise ``ValueError`` on any single-engine budget violation (see above)."""
     problems = single_engine_sf_budget_violations(
         sf_move_nodes=sf_move_nodes, sf_label_nodes_floor=sf_label_nodes_floor,
-        sf_label_nodes_cap=sf_label_nodes_cap, pooled=pooled,
+        sf_label_nodes_cap=sf_label_nodes_cap,
+        sf_label_escalate_q_gap=sf_label_escalate_q_gap, pooled=pooled,
     )
     if problems:
         raise ValueError(single_engine_sf_budget_message(problems))

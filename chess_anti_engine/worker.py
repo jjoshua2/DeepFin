@@ -160,8 +160,8 @@ class _MissingRequiredReco(RuntimeError):
 class _UnsupportedSfBudgetForTopology(_MissingRequiredReco):
     """The reco asks for an SF budget knob this worker's engine route ignores.
 
-    ``sf_move_nodes`` / ``sf_label_nodes_floor`` / ``sf_label_nodes_cap`` > 0
-    on a single-engine worker (``--sf-workers <= 1``): see
+    ``sf_move_nodes`` / ``sf_label_nodes_floor`` / ``sf_label_nodes_cap`` /
+    ``sf_label_escalate_q_gap`` > 0 on a single-engine worker (``--sf-workers <= 1``): see
     ``selfplay.config.single_engine_sf_budget_violations``. A subclass of
     ``_MissingRequiredReco`` so every site that already fails closed on an
     unusable reco (``run()`` re-polls; ``_apply_live_reco`` declines and falls
@@ -1809,6 +1809,7 @@ class WorkerSession:
             sf_move_nodes=self._resolve_reco(reco, "sf_move_nodes", 0, int),
             sf_label_nodes_floor=self._resolve_reco(reco, "sf_label_nodes_floor", 0, int),
             sf_label_nodes_cap=self._resolve_reco(reco, "sf_label_nodes_cap", 0, int),
+            sf_label_escalate_q_gap=self._resolve_reco(reco, "sf_label_escalate_q_gap", 0.0),
             pooled=sf_workers_use_pool(getattr(self.args, "sf_workers", 1)),
         )
         if problems:
@@ -2340,7 +2341,7 @@ class WorkerSession:
         if not states:
             return False
         try:
-            # sf_label_nodes_floor/cap are LIVE keys, so a change to them never
+            # sf_label_nodes_floor/cap and sf_label_escalate_q_gap are LIVE keys, so a change to them never
             # passes the session-start check; refuse here and let the restart
             # path re-check and wait (see _UnsupportedSfBudgetForTopology).
             self._check_sf_budget_topology(reco)

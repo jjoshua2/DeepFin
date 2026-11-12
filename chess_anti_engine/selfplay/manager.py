@@ -327,6 +327,7 @@ def play_batch(
         sf_move_nodes=game.sf_move_nodes,
         sf_label_nodes_floor=game.sf_label_nodes_floor,
         sf_label_nodes_cap=game.sf_label_nodes_cap,
+        sf_label_escalate_q_gap=game.sf_label_escalate_q_gap,
         pooled=isinstance(stockfish, StockfishPool),
     )
     requested_batch = int(games)

@@ -819,7 +819,7 @@ def reject_dead_config_keys(config: Mapping[str, object]) -> None:
 
 
 # The keys whose COMBINATION decides whether a driver-launched worker can honour
-# its SF budget knobs: the three knobs plus the worker topology that picks the
+# its SF budget knobs: the four knobs plus the worker topology that picks the
 # route. Either side can move on a live edit (`distributed_worker_sf_workers`
 # is hashed into `_WORKER_LAUNCH_CONFIG_KEYS`, so the fleet is relaunched with
 # a new value), which is why the reload declines on the combination rather
@@ -828,6 +828,7 @@ _SF_BUDGET_TOPOLOGY_KEYS: tuple[str, ...] = (
     "sf_move_nodes",
     "sf_label_nodes_floor",
     "sf_label_nodes_cap",
+    "sf_label_escalate_q_gap",
     "distributed_worker_sf_workers",
 )
 
@@ -846,6 +847,7 @@ def sf_budget_topology_violations(config: Mapping[str, object]) -> list[str]:
         sf_move_nodes=_int("sf_move_nodes"),
         sf_label_nodes_floor=_int("sf_label_nodes_floor"),
         sf_label_nodes_cap=_int("sf_label_nodes_cap"),
+        sf_label_escalate_q_gap=float(cast(Any, config.get("sf_label_escalate_q_gap", 0.0)) or 0.0),
         pooled=sf_workers_use_pool(distributed_worker_sf_workers(config)),
     )
 
@@ -1432,6 +1434,11 @@ def _decline_sf_budget_topology_edit(
     mid-iteration (class (b)); applying would publish a reco the workers
     refuse, idling the whole fleet. A restart with the same yaml refuses to
     start (``reject_sf_budget_topology``), so the message says so.
+
+    Conservative by design: EVERY changed key of the combination is declined,
+    including one that would have been valid on its own (e.g. a floor added in
+    the same save that drops the workers to one SF engine). The warning lists
+    each declined key with its attempted and kept value so that is visible.
     """
     problems = sf_budget_topology_violations(config)
     if not problems:
@@ -1442,17 +1449,25 @@ def _decline_sf_budget_topology_edit(
         # makes that unreachable in practice); nothing this reload did to undo.
         return
     attempted = {k: config.get(k) for k in changed}
+    worker_sf = distributed_worker_sf_workers(config)
     for k in changed:
         if before[k] is missing:
             config.pop(k, None)
         else:
             config[k] = before[k]
+    declined = ", ".join(
+        f"{k}: {attempted[k]!r} -> kept {config.get(k, '<unset: default>')!r}"
+        for k in changed
+    )
     log.warning(
-        "YAML reload: %s NOT applied — kept %s. %s A restart with this yaml "
-        "will REFUSE to start (reject_sf_budget_topology).",
-        attempted,
-        {k: config.get(k, "<unset: default>") for k in changed},
-        single_engine_sf_budget_message(problems),
+        "YAML reload: %d SF budget/topology edit(s) NOT applied, ALL of them "
+        "declined together [%s]. Applied together they would leave "
+        "driver-launched workers on the single-engine Stockfish route "
+        "(distributed_worker_sf_workers=%d), where: %s Every key listed is "
+        "declined, even one that would be valid on its own; save the valid part "
+        "alone to apply it. Unrelated edits in this save were applied. A "
+        "restart with this yaml will REFUSE to start (reject_sf_budget_topology).",
+        len(changed), declined, worker_sf, single_engine_sf_budget_message(problems),
     )
 
 

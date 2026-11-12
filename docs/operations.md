@@ -339,33 +339,37 @@ exact interrupted RL restore.
 
 ## Separate Stockfish move and label budgets
 
-Positive `sf_move_nodes`, `sf_label_nodes_floor` or `sf_label_nodes_cap` requires the
-asynchronous `StockfishPool` route. A worker uses that route only with
+Positive `sf_move_nodes`, `sf_label_nodes_floor`, `sf_label_nodes_cap` or
+`sf_label_escalate_q_gap` requires the asynchronous `StockfishPool` route. A worker uses that route only with
 `--sf-workers >= 2`; driver-launched workers take this value from
 `distributed_worker_sf_workers`, independently of the driver's `sf_workers`. On the
 synchronous single-engine route one query is both the curriculum move and its label,
-so it cannot honour a separate move budget, and a label floor or cap would reach
-selfplay labels only. `0` for all three keeps the shared-budget behaviour every
-checked-in config uses. A positive move override is refused even when it equals the
+so it cannot honour a separate move budget, a label floor or cap would reach
+selfplay labels only, and label escalation never runs (it re-queries pool label
+futures only). `0` for all four keeps the behaviour of every single-engine checked-in
+config. A positive move override is refused even when it equals the
 current `sf_nodes`: later PID/live node updates can make those budgets diverge.
 
 Where the refusal happens:
 
 - **Launch.** A trial whose `distributed_worker_sf_workers <= 1` combines with any of
-  the three keys above 0 refuses to start (`reject_sf_budget_topology`, beside
+  the four keys above 0 refuses to start (`reject_sf_budget_topology`, beside
   `reject_dead_config_keys` and before any worker is launched).
 - **Live reload.** A yaml save that would create that combination, by changing either
   a budget key or `distributed_worker_sf_workers`, is declined for the keys of the
   combination that changed. The previous values are kept, a `YAML reload: ... NOT
-  applied` warning names both sets, and unrelated edits in the same save still apply.
+  applied` warning lists each declined key with its attempted and kept value, and
+  unrelated edits in the same save still apply. Every changed key of the combination
+  is declined, even one that would be valid on its own (for example a floor added in
+  the same save that drops the workers to one SF engine); save the valid part alone.
   A restart with that yaml then refuses to start.
 - **Worker.** A worker on a single engine that receives such a reco (for example a
   remote worker started with `--sf-workers 1`) does not exit. It logs `NOT PLAYING:
   recommended_worker is unusable ...` at ERROR (on each change of reason, then once a
-  minute) and re-polls until the reco is usable. A live floor or cap change ends the
-  running session the same way. Exiting would make the driver relaunch it into the
+  minute) and re-polls until the reco is usable. A live floor, cap or escalation-gap
+  change ends the running session the same way. Exiting would make the driver relaunch it into the
   same refusal forever.
-- **Eval.** Eval games always play on one `StockfishUCI`. They zero the three keys,
+- **Eval.** Eval games always play on one `StockfishUCI`. They zero the four keys,
   which sends the same node budgets as before: with `selfplay_fraction` 0 that route
   never read them.
 - **Direct `play_batch` callers** (scripts) get a `ValueError` before any engine work.
