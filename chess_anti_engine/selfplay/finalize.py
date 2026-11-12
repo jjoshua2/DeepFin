@@ -1252,7 +1252,8 @@ def _log_terminal_anomalies(
             was_adjudicated, cb.is_game_over(),
         )
 
-    if was_adjudicated and game_plies >= max_plies:
+    played_plies = game_plies - int(state.starting_ply_arr[i])
+    if was_adjudicated and played_plies >= max_plies:
         wdl_str = (
             f"{float(sf_res.wdl[0]):.3f}/{float(sf_res.wdl[1]):.3f}/{float(sf_res.wdl[2]):.3f}"
             if (sf_res is not None and sf_res.wdl is not None) else "none"
