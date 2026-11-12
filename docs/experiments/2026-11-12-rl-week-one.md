@@ -51,7 +51,7 @@ results or launch authority for another owner's jobs.
 | --- | --- | --- |
 | Nov 12–13 | Repair and qualify the external match instrument; capture actual engine capabilities and off-clock readiness; calibrate one paired match | Complete histories reach the engine and PGN/log, required options fail closed, correct clocks/colors/results and bounded process closure |
 | Nov 13–15 | Establish a donor-versus-multicore-Rof baseline; consume the existing owner's crossover controls | Frozen binary/net/checkpoint identities, declared hardware/clock/book, complete paired games and uncertainty; actual identity/repeat/batch crossover controls |
-| Nov 15–17 | Select one falsifiable mechanism and run the smallest justified controlled update comparison | Frozen starting state, legitimate untouched measurement cohort, explicit targets/sampling/update budget and a prediction that can fail |
+| Nov 15–17 | Select one falsifiable mechanism and run the smallest justified controlled update comparison | Frozen starting state, new whole-game cohort with bounded exposure checks, explicit targets/sampling/update budget and a prediction that can fail |
 | Nov 17–19 | Test a promising endpoint on fresh playing evidence and, where justified, an independent training realization; report the week | Predeclared horizon and margin, independent confirmation before a gain/adoption claim, all failed/inconclusive outcomes and generation-inclusive costs retained |
 
 These are working windows, not promises that a candidate will improve on schedule.
@@ -125,8 +125,11 @@ change. In particular, producer-draw agreement is partly self-referential and
 the auxiliary hard-clip scope excludes Aurora matrix updates. Historical SF-anchor
 anecdotes are not current causal evidence.
 
-A new learning comparison needs a genuinely untouched, complete-history cohort
-with declared game groups, target provenance/perspective and exposure exclusion.
+A new learning comparison needs new physical games with complete histories,
+declared whole-game groups and target provenance/perspective. Selected measurement
+roots must pass the declared bounded known-input exclusion, including production
+file mirrors. That check does not certify unknown epoch-two pretraining, every
+trajectory position, feature-dropout exposure or opening-family independence.
 Do not relabel an ingested shard, old inspected arena panel or the three tiny
 prefixes as that holdout. Preregister the next intervention, simpler control,
 deciding metric, effect threshold, uncertainty, training realizations, compute
@@ -372,3 +375,170 @@ exact costs, source/readout hashes and compact results are in
 There are still **zero new week-one training updates, no qualified research
 cohort and no candidate adoption**. The first week and longer strength program
 remain active.
+
+## November 12: substantive baseline and learning readiness
+
+Readout cutoff: **2026-11-12 21:36:41 UTC**. Subsequent execution retains its
+own readout; pending stages below describe this cutoff.
+
+This checkpoint follows the fixed earlier cutoffs; their pending statements and
+failed collectors remain part of the record. The 64-game external baseline is
+complete and independently accepted. The unchanged A39 donor faced full-strength
+Rofchade 3.1 on eight physical cores with 1 GiB hash, equal 30 s + 0.1 s clocks,
+zero grace, common indexed three-through-six-piece tablebases and no harness
+tablebase adjudication. The donor used the separately qualified compiled public
+UCI profile at frozen source `f914f51eb349681300fe50147029e98b880de63e`.
+
+| Donor wins | Draws | Losses | Score | Fixed opening pairs |
+| --- | --- | --- | --- | --- |
+| 1 | 24 | 39 | 0.203125 | 32 |
+
+The paired empirical normal 95% score interval is
+**[0.1473019112, 0.2589480888]**, conditional on these 32 opening pairs. The
+pentanomial counts, ordered WW/WD/(DD or WL)/LD/LL, are **[0, 0, 4, 18, 10]**.
+All 64 endings followed the declared rules, with no time forfeit, illegal move,
+ply-cap ending or guarded fault. All 24 draws were claimable by the next move
+under the driver's automatic `claim_draw=True` policy; they were not already
+threefold positions. Two legitimate bare Rof bestmove responses had no info
+fields: the first reader failed and is preserved; the corrected reader treats
+missing-to-missing as unknown rather than inventing a zero. Node/time reports
+cover 3,318 of 3,320 Rof responses and all 3,308 donor responses.
+
+The banked baseline evidence is directly identified below. Artifact paths are
+relative to the week-one evidence bundle; hashes are taken from the independently
+accepted readout, without rerunning or selecting games.
+
+| Artifact | SHA256 |
+| --- | --- |
+| `donor-rof-32-pair-baseline-v1/games.jsonl` | `a7cef0795eaf815c83f81de7a3ea0bb9b2add539785f5731020e3b87471fc865` |
+| `donor-rof-32-pair-baseline-v1/games.pgn` | `c0a34acdc5078cbbde3ae8401a0b89bfab871e477d915e888f26f0e010d82966` |
+| `donor-rof-32-pair-baseline-v1/moves.csv` | `45c95b0e15423d3b7e32849423194798f715f408a33691386ec06538dc6d3230` |
+| `donor-rof-32-pair-baseline-v1/uci.log` | `c1a7e4301aac9e5b8b3d72ae9e18fb72f66508b549b720d05a0d6eb7d72abddb` |
+| `substantive-baseline-preparation-v1/openings.epd` (32 full-history roots) | `a718d6005a9e3b267318de38b246a9fd49531d9b02dda0e5be23a69e3ee28e77` |
+
+Rofchade used `~/local_engines/rofchade/rofChadeBMI2AVX2`, SHA256
+`35db4c03faf3e8ba1af3644d431678d855e26144d68a7555c3a19e8bdaa905f0`,
+and `~/local_engines/rofchade/230620-224.nnue`, SHA256
+`e579db8ef0f8b1910ad7704773229d41bf770a68910698e030e2021acf911f30`.
+The exact commands/options and full environment are frozen in
+`substantive-baseline-execution-preparation-v1/plan.json`, SHA256
+`c76f68904f2006a0ee93753b824e94da398936fc9cd3bb2422a1ced1da03593d`.
+
+Donor reply latency p50/p95/p99/max was 0.628289/1.121440/1.324226/1.658535 s.
+The observed minimum pre-increment whole clock was 0.789695 s; internal deadline
+allocations were not recorded, so that is not an allocation-margin estimate.
+The owner closed all three process identities after 3,730.443 s including startup
+and cleanup. This is a substantial measured gap under this deployed profile,
+not an absolute Elo estimate. No Rofchade, Stockfish or Lc0 strength milestone
+has been achieved, and no learning gain or adoption follows.
+
+The corrected finite-game collector banked two naturally checkmated pilot games.
+Only the 144-row TRAIN game entered the excluded consumer pilot; its 67-row
+HOLDOUT game stayed outside sampling. The actual Trainer made two finite B256
+updates (512 row views), with all 494 state tensors initially equal to A39,
+fresh optimizer state and no resume. It used the original full-trunk optimizer,
+losses and schedule. Auxiliary AdamW gradients hit the 6.5 hard clip in both
+steps; Aurora matrix norms were reported separately and were not covered by that
+hard clip. These two updates establish plumbing only. They do not qualify a
+40-step matched comparison, a research holdout or a learned playing endpoint.
+
+A separate four-update-versus-four-update A/A qualification closed after
+32.295 s and passed independent audit. Both saved steps 0, 1 and 4 match exactly;
+all 494 final state tensors, 462 name-normalized optimizer states, 414 present
+step counters at four, scheduler and ZClip state agree. Batch, target, loss and
+RNG observations also match. Both controls share common capture; only one adds
+selected gradient/update copies. This qualifies those added observations on one
+excluded TRAIN game and four warmup updates, not common capture against a wholly
+uninstrumented Trainer or the new E2 target bundle. Eight selected tensors do
+not measure whole-trunk interference. Counting both controls and the earlier
+two-update pilot gives **10 excluded engineering updates and zero research
+updates**. No research candidate has been adopted.
+
+The bounded old-input index covered 803 declared sources and 138,822 retained
+primary inputs plus their actual production file mirrors: 245,742 distinct F16
+hashes. All 128 cohort/reserve starts and 628 playing starts had zero matches.
+This is bounded possible-input exposure evidence, not untouched epoch-two
+pretraining or complete-history certification. The original weighted ranking and
+fixed best-4,096 cap produced the same final 128/500 books after this index.
+Independent structural review replayed all 756 candidate/book histories and
+verified distinct source parents, EPDs and input hashes. The retained-row collision
+check against all 96 new collected games remains required before research learning.
+
+The optional history-aware SF API merged in
+[PR 1240](https://github.com/jjoshua2/DeepFin/pull/1240). One separately admitted
+CPU probe sent the same final FEN with and without its seven legal history moves,
+forcing the repetition-completing reply at a fresh 5,000-node request. Full
+history returned CP 0; bare FEN returned CP -559, both from Black's side to move
+and with zero reported TB hits. Observed nodes were 245 and 5,001. This
+qualifies transport/history impact on one fixed fixture, not teacher quality,
+calibration, an SF blend or default production adoption. The helper and engine
+closed; the existing close method's -9 engine status is not called graceful exit.
+
+The first internal TB6 consumer qualification failed closed before any fixture
+probe after 2.143 CPU stage seconds: its reader compared 1,000 raw Python-chess
+mapping aliases with the bank's 510 normalized material families. The original
+qualifier used `normalize_tablename` before deduplication; a metadata-only check
+confirmed the same 510 canonical families. V1 is preserved. A separate corrected
+preparation retained every fixture, coverage check and resource bound. Its first
+14 rows passed the real fixture, history, root/leaf and scoped class checks, but
+it failed after 5.152 CPU stage seconds at an arena-observer units assertion:
+the API returns a color-pair total of 1.0, equivalent to a per-game mean of 0.5.
+V2 is preserved. V3 corrected that assertion, recorded returned arena events before
+checking them and bound the frozen evaluation-shape YAML explicitly. It passed
+and closed after 5.158 CPU stage seconds, with independent acceptance of all 26
+rows: five real asset fixtures, zeroing/history/rule-50 behavior, actual root and
+pending-leaf consumers, two controlled cursed/blessed class checks and both arena
+loops at already resolved roots. The controlled classes are not real cursed/blessed
+asset probes; a pending-tree adapter is not a neural search. Positive-clock
+decisive TB leaves remain unresolved conservatively. These bounded checks do not
+qualify the full neural arena: its separate engineering operation is still
+**PENDING**. The two failed attempts were helper-reader bugs, not tablebase-data
+failures or playing results. The research collector remains explicitly TB-off.
+
+The next proposed scientific study is recorded separately as the
+[E2 outcome-target bundle](2026-11-12-e2-outcome-bundle.md): search-only FULLA
+versus a preselected FULLB with 20% genuine completed-game outcome in both WDL
+and categorical targets, all other learning settings fixed. It supersedes the
+earlier proposed SF-share contrast as the first comparison; it does not establish
+a preferred SF share or causal mechanism. Its exact scientific JSON and reviewed
+prose are frozen before research collection; execution remains separate. The final
+actual collector profile, owner and resource admission are **PENDING** at this
+cutoff. Learning needs qualified actual cohort/targets and playing-start exclusion;
+playing additionally needs the complete neural arena qualification. No research result
+or learned playing endpoint exists yet.
+
+Sixteen closed GPU-intended stages total **5,439.775491 s (90 min 39.775 s)**,
+including failed attempts, generation, readiness, A/A and cleanup. This is owner
+wall time, not CUDA-active time or all CPU/CI work. The 803-input CPU index took
+12.182530 s and the optional SF probe 1.140190 s; manual metadata/finalization
+work and all CPU validation are not comprehensively accounted. Compact readouts
+and immutable external identities are in
+[learning-readiness-readout.json](evidence/rl-week-one-20261112/learning-readiness-readout.json).
+The first week and months-long strength program remain active.
+
+## Prospective review addendum — November 12, 22:17 UTC
+
+Before any research collection or update, an independent review requested exact
+arena commands and clearer harm/non-pass labels. The
+[E2 registration's prospective addendum](2026-11-12-e2-outcome-bundle.md#exact-arena-commands-and-fixed-endpoint-classification)
+freezes all four commands, 3,500/3,600-second screen and 6,900/7,200-second
+confirmation inner/owner caps, and fixed-endpoint harm/regression and unread-dose
+labels. All three screens remain fixed; the 40-update dose, 20% target bundle,
+books, seeds, success thresholds and sole conditional confirmation are unchanged.
+The original scientific JSON and the 21:36 readout snapshot are preserved.
+
+The later same-donor neural engineering arena passed all 32 games: 22 qualified
+Syzygy endings, seven checkmates and three next-move-only threefold claims, with
+no cap or reported fault. Its accepted readout is
+`internal-tb6-arena-engineering-actual-readout-v2/readout.json`, SHA256
+`f504034609da9e7853439d250326274d9295e20700b6643ae8c53217a9817822`.
+It qualifies this sampled internal instrument, not a learned candidate or a
+strength gain. The earlier bounded failed arena attempt remains preserved.
+
+Eighteen closed GPU-intended stages now total **5,546.954214 s**, including that
+failure and the completed engineering arena. This is a separate later census,
+not a rewrite of the earlier 16-stage snapshot or a CUDA-active/complete-CPU total.
+There are still 10 excluded engineering updates, zero research updates and no
+candidate adoption. Main publication and separate actual-stage controls still
+gate collection; research learning additionally needs qualified cohort, targets
+and the retained-input playing-start check.
