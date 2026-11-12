@@ -1389,6 +1389,19 @@ class SearchWorker:
         self._tb_probe = probe
         self.reset_tree()
 
+    def leaf_tb_inactive_mode(self) -> str | None:
+        """The realized search path whose leaves never see the installed Syzygy probe.
+
+        Classic Gumbel and walker search receive ``tb_probe``. The remaining
+        pools and single-thread PUCV search without it, so there
+        ``SyzygyPath`` reaches only the root shortcut and root eval. ``None``
+        when no probe is installed or a leaf-enabled path is active.
+        """
+        if self._tb_probe is None:
+            return None
+        path = self.realized_search_path()
+        return None if path in ("gumbel", "walker") else path
+
     def advance_root(self, board: chess.Board, moves: list[chess.Move]) -> bool:
         """Descend the current tree by ``moves`` plies, making the last-reached
         node the new root. ``board`` is the position BEFORE the first move;
