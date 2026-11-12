@@ -345,7 +345,7 @@ def test_actual_finalizer_delivers_strict_terminal_wdl_in_each_record_pov(monkey
     assert observed[0].result == "0-1"  # fake TB says final black STM wins
     assert observed[0].resolution == "tablebase_adjudication"
     assert observed[0].natural_result == "*"
-    assert [sample.wdl for sample in samples] == [2, 0, 2]
+    assert [sample.wdl_target for sample in samples] == [2, 0, 2]
     assert len(observed[0].records) == len(samples) == 3
 
 
