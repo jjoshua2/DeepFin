@@ -118,13 +118,16 @@ class _Encoding:
     use_dynamic_relations = False
 
 
-def test_supports_inplace_api_composes_through_cache_and_nesting() -> None:
+def test_supports_inplace_api_composes_through_nesting_but_not_the_cache() -> None:
     dispatcher = CUDAOwnerDispatcher(ThreadSafeGPUDispatcher(_OwnerInner()))
     try:
+        assert supports_inplace_api(dispatcher) is True
         cached = EncodedEvalCache(
             dispatcher, max_entries=16, encoding_source=_Encoding(),
         )
-        assert supports_inplace_api(cached) is True
+        # The pinned slot path would bypass the cache, so the cache declines
+        # it even over an inner that has it (search then uses evaluate_encoded).
+        assert supports_inplace_api(cached) is False
     finally:
         dispatcher.close()
     cached_slotless = EncodedEvalCache(

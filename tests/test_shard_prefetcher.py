@@ -97,8 +97,13 @@ def test_prefetcher_stop_is_idempotent(tmp_path):
         inbox_dir=tmp_path / "inbox", poll_seconds=0.05, path_iter=_path_iter,
     )
     pf.start()
+    thread = pf._thread
+    assert thread is not None
+    assert thread.is_alive()
     pf.stop()
+    assert not thread.is_alive()
     pf.stop()  # second stop must not raise
+    assert pf._thread is None
 
 
 def test_prefetcher_handles_missing_inbox(tmp_path):

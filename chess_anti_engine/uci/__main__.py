@@ -816,7 +816,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-batch", type=int, default=1024,
                    help="DirectGPUEvaluator max batch (default: 1024). Must be >= expected leaf count per wavefront.")
     p.add_argument("--eval-cache-entries", type=int, default=0,
-                   help="LRU entries for encoded eval caches, including single-thread PUCV (default: 0/off)")
+                   help="LRU entries for encoded eval caches, including single-thread PUCV (default: 0/off). "
+                        "NOT free: the encoded-row cache hashes every 44.8 KB row and assembles "
+                        "outputs per row (~55-75 us/row of CPU, hit or miss), and on the "
+                        "single-walker chain it gives up the zero-copy in-place path. It pays "
+                        "only when a hit saves more evaluator time than that; measure first.")
     p.add_argument("--abort-factor", type=float, default=1.0,
                    help="visit-margin early-abort aggressiveness (Lc0 smart-pruning factor): "
                         "1.0 = ~provable bound (default); < 1.0 aborts earlier to bank time")

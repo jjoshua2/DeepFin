@@ -135,6 +135,9 @@ def test_an_expired_lock_is_stolen_from(tmp_path: Path) -> None:
         (float("inf"), "infinite"),
         (time.time() + 86_400.0, "a day in the future"),
     ],
+    # Fixed ids: a clock value in the id differs between xdist workers, which
+    # then refuse to run because they collected different tests.
+    ids=["missing", "non-numeric", "nan", "inf", "future"],
 )
 def test_an_unusable_timestamp_falls_back_to_file_age(
     tmp_path: Path, created_at: object, label: str
