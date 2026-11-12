@@ -447,12 +447,10 @@ def _load_calibration_arrays_from_replay(
     source_cfg: ModelConfig,
     replay_dir: Path,
     positions: int,
-    synthetic_lc0_root_history: bool,
     inputs_only: bool = False,
 ) -> dict[str, np.ndarray]:
     return _concat_calibration_chunks(list(_iter_calibration_arrays_from_replay(
         source_cfg=source_cfg, replay_dir=replay_dir, positions=positions,
-        synthetic_lc0_root_history=synthetic_lc0_root_history,
         inputs_only=inputs_only,
     )))
 
@@ -487,7 +485,6 @@ def _decode_window_rows(x: Any) -> int:
 
 def _activation_directory_prefix(
     shard_path: Path, *, source_cfg: ModelConfig, positions: int,
-    synthetic_lc0_root_history: bool = False,
 ) -> list[dict[str, np.ndarray]] | None:
     """Validate an ordinary directory completely, retaining only selected inputs.
 
@@ -523,7 +520,6 @@ def _activation_directory_prefix(
         validate_arrays(chunk)
         chunk = select_input_history_arrays(
             chunk, input_history_encoding=source_cfg.input_history_encoding,
-            allow_lossy_legacy_remap=synthetic_lc0_root_history,
         )
         take = min(stop - start, max(0, positions - start))
         if take > 0:
@@ -538,37 +534,18 @@ def _iter_calibration_arrays_from_replay(
     source_cfg: ModelConfig,
     replay_dir: Path,
     positions: int,
-    synthetic_lc0_root_history: bool,
     inputs_only: bool = False,
 ) -> Iterator[dict[str, np.ndarray]]:
-    from chess_anti_engine.encoding.lc0 import uses_lc0_root_history
     from chess_anti_engine.replay.shard import iter_shard_paths
     from chess_anti_engine.replay.shard import load_shard_arrays
     from chess_anti_engine.train.trainer import select_input_history_arrays
 
-    # The selector follows the checkpoint's input_history_encoding: it always
-    # uses a recorded ``x_lc0_root`` when present and applies the legacy-meta
-    # patch iff the encoding is ``lc0_root_legacy_meta`` (which is why the old
-    # --prefer-recorded-lc0-root / --lc0-root-legacy-meta flags are refused in
-    # main). ``synthetic_lc0_root_history`` is the one real choice left: the
-    # opt-in for the POV-lossy legacy remap of rows with no recorded root
-    # tensor (docs/rl_loop_audit.md M12), exactly as in offline_replay_epoch.
-    # The selector does nothing with it for a non-LC0-root checkpoint, so it is
-    # refused there rather than accepted and ignored.
-    hist_enc = source_cfg.input_history_encoding
-    if synthetic_lc0_root_history:
-        if not uses_lc0_root_history(hist_enc):
-            raise ValueError(
-                "--synthetic-lc0-root-history only applies to an LC0-root input "
-                f"checkpoint; this checkpoint's input_history_encoding is {hist_enc!r}, "
-                "so there is nothing to synthesize"
-            )
-        print(
-            "[shrink] synthetic_lc0_root_history=True: legacy calibration rows with "
-            f"no recorded x_lc0_root are remapped to {hist_enc!r} (POV-lossy, every "
-            "such row reads as white-to-move; docs/rl_loop_audit.md M12)",
-            flush=True,
-        )
+    # The selector follows the checkpoint's input_history_encoding: it uses a
+    # recorded ``x_lc0_root`` whenever present, applies the legacy-meta patch
+    # iff the encoding is ``lc0_root_legacy_meta``, and REFUSES legacy rows
+    # with no recorded root tensor (no lossy remap is ever opted into here).
+    # The three history flags that once claimed to steer this are refused in
+    # ``main`` -- see ``_REMOVED_HISTORY_FLAGS``.
 
     shard_paths = iter_shard_paths(replay_dir)
     if not shard_paths:
@@ -581,7 +558,6 @@ def _iter_calibration_arrays_from_replay(
         if inputs_only:
             prefix = _activation_directory_prefix(
                 shard_path, source_cfg=source_cfg, positions=left,
-                synthetic_lc0_root_history=synthetic_lc0_root_history,
             )
             if prefix is not None:
                 for chunk in prefix:
@@ -594,8 +570,7 @@ def _iter_calibration_arrays_from_replay(
         arrs, _meta = load_shard_arrays(shard_path, lazy=False)
         arrs = select_input_history_arrays(
             arrs,
-            input_history_encoding=hist_enc,
-            allow_lossy_legacy_remap=synthetic_lc0_root_history,
+            input_history_encoding=source_cfg.input_history_encoding,
         )
         n_rows = int(np.asarray(arrs["x"]).shape[0])
         n = min(left, n_rows)
@@ -681,14 +656,12 @@ def activation_unit_scores_from_replay(
     positions: int,
     batch_size: int,
     device: torch.device,
-    synthetic_lc0_root_history: bool,
 ) -> tuple[dict[int, torch.Tensor], dict[str, Any]]:
     source_cfg = _checkpoint_model_config(ckpt, ckpt_path)
     chunks = _iter_calibration_arrays_from_replay(
         source_cfg=source_cfg,
         replay_dir=replay_dir,
         positions=positions,
-        synthetic_lc0_root_history=synthetic_lc0_root_history,
         inputs_only=True,
     )
     return _activation_unit_scores_from_batches(
@@ -824,14 +797,12 @@ def taylor_unit_scores_from_replay(
     batch_size: int,
     device: torch.device,
     config_path: Path | None,
-    synthetic_lc0_root_history: bool,
 ) -> tuple[dict[int, torch.Tensor], dict[str, Any]]:
     source_cfg = _checkpoint_model_config(ckpt, ckpt_path)
     arrs = _load_calibration_arrays_from_replay(
         source_cfg=source_cfg,
         replay_dir=replay_dir,
         positions=positions,
-        synthetic_lc0_root_history=synthetic_lc0_root_history,
     )
     return taylor_unit_scores_from_arrays(
         ckpt,
@@ -1023,11 +994,22 @@ def shrink_checkpoint(
     return new_ckpt, target_cfg, stats
 
 
+# Accepted-then-ignored history flags, removed. Still parsed (hidden) so an old
+# command line gets a reason and exit 2 instead of a silent no-op or a bare
+# "unrecognized arguments". The selector decides all three from the checkpoint.
 _REMOVED_HISTORY_FLAGS = {
     "prefer_recorded_lc0_root": (
         "--prefer-recorded-lc0-root was removed: it was accepted and ignored. The "
         "history selector always uses a recorded x_lc0_root when the row has one, "
         "with or without this flag; drop it."
+    ),
+    "synthetic_lc0_root_history": (
+        "--synthetic-lc0-root-history was removed: it was accepted and ignored, and "
+        "this tool never synthesizes LC0-root history (the remap cannot recover "
+        "side-to-move, docs/rl_loop_audit.md M12). Legacy calibration rows with no "
+        "recorded x_lc0_root are refused; point --calibration-replay-dir at shards "
+        "stored in the checkpoint's input_history_encoding (or carrying "
+        "x_lc0_root) and drop the flag."
     ),
     "lc0_root_legacy_meta": (
         "--lc0-root-legacy-meta was removed: it was accepted and ignored. The "
@@ -1038,16 +1020,11 @@ _REMOVED_HISTORY_FLAGS = {
 }
 
 
-def _refuse_unhonourable_history_flags(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None:
-    """Exit with a reason for any history flag this tool cannot honour."""
+def _refuse_removed_history_flags(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Exit 2 with a reason for any removed history flag."""
     for dest, reason in _REMOVED_HISTORY_FLAGS.items():
         if getattr(args, dest):
             ap.error(reason)
-    if args.synthetic_lc0_root_history and args.score_mode == "weight":
-        ap.error(
-            "--synthetic-lc0-root-history only affects calibration replay, which "
-            "--score-mode weight never reads; use activation or taylor, or drop it"
-        )
 
 
 def main() -> None:
@@ -1080,25 +1057,12 @@ def main() -> None:
     )
     ap.add_argument("--min-ffn-mult", type=float, default=1.0)
     ap.add_argument("--target-hidden-multiple", type=int, default=32)
-    ap.add_argument(
-        "--synthetic-lc0-root-history",
-        action="store_true",
-        help=(
-            "Activation/Taylor calibration on an LC0-root checkpoint: remap legacy "
-            "replay rows that carry no recorded x_lc0_root (POV-lossy; without "
-            "this flag such rows are refused). Refused for any other checkpoint "
-            "or score mode."
-        ),
-    )
-    # Removed, still parsed so an old command line gets a reason instead of a
-    # bare "unrecognized arguments". Both were accepted and ignored: the
-    # history selector decides them from the checkpoint, unconditionally.
-    ap.add_argument("--prefer-recorded-lc0-root", action="store_true", help=argparse.SUPPRESS)
-    ap.add_argument("--lc0-root-legacy-meta", action="store_true", help=argparse.SUPPRESS)
+    for flag in ("--prefer-recorded-lc0-root", "--synthetic-lc0-root-history", "--lc0-root-legacy-meta"):
+        ap.add_argument(flag, action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--force", action="store_true", help="Overwrite output checkpoint if it exists.")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    _refuse_unhonourable_history_flags(ap, args)
+    _refuse_removed_history_flags(ap, args)
 
     if not args.input_checkpoint.exists():
         raise SystemExit(f"missing input checkpoint: {args.input_checkpoint}")
@@ -1125,7 +1089,6 @@ def main() -> None:
             positions=int(args.calibration_positions),
             batch_size=int(args.calibration_batch_size),
             device=_device_from_arg(args.calibration_device),
-            synthetic_lc0_root_history=bool(args.synthetic_lc0_root_history),
         )
     elif args.score_mode == "taylor":
         unit_scores_by_layer, score_stats = taylor_unit_scores_from_replay(
@@ -1136,11 +1099,6 @@ def main() -> None:
             batch_size=int(args.calibration_batch_size),
             device=_device_from_arg(args.calibration_device),
             config_path=args.config,
-            synthetic_lc0_root_history=bool(args.synthetic_lc0_root_history),
-        )
-    if args.score_mode in ("activation", "taylor"):
-        score_stats["calibration_synthetic_lc0_root_history"] = bool(
-            args.synthetic_lc0_root_history
         )
     if args.optimize_target_schedule:
         if unit_scores_by_layer is None:
@@ -1173,10 +1131,6 @@ def main() -> None:
     if score_stats:
         print(f"score_positions={score_stats.get('activation_score_positions', score_stats.get('taylor_score_positions'))}")
         print(f"score_device={score_stats.get('activation_score_device', score_stats.get('taylor_score_device'))}")
-        print(
-            "calibration_synthetic_lc0_root_history="
-            f"{score_stats.get('calibration_synthetic_lc0_root_history')}"
-        )
         if "optimized_target_hidden" in score_stats:
             print(f"optimized_target_hidden={list(score_stats['optimized_target_hidden'])}")
             print(

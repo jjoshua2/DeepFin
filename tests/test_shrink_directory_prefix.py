@@ -169,8 +169,7 @@ def test_real_activation_caller_global_batch_parity(monkeypatch: pytest.MonkeyPa
     common = {"ckpt_path": Path("unused.pt"), "batch_size": 130, "device": torch.device("cpu")}
     expected, stats = module.activation_unit_scores_from_x(ckpt, x=torch.as_tensor(arrays["x"]), **common)
     actual, actual_stats = module.activation_unit_scores_from_replay(
-        ckpt, replay_dir=tmp_path, positions=257,
-        synthetic_lc0_root_history=False, **common,
+        ckpt, replay_dir=tmp_path, positions=257, **common,
     )
     assert actual_stats == stats
     for layer in expected:

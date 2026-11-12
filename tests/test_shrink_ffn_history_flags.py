@@ -1,11 +1,10 @@
-"""shrink_ffn_checkpoint's history flags: honoured for real, or refused loudly.
+"""shrink_ffn_checkpoint's history flags are refused loudly, never ignored.
 
-Three flags used to be parsed and then ``del``-ed: an operator passing
-``--synthetic-lc0-root-history`` got the same refusal of legacy-only shards as
-one who did not. Now ``--synthetic-lc0-root-history`` reaches the selector's
-``allow_lossy_legacy_remap`` on both calibration paths (the lazy directory
-prefix and the eager loader), and the two flags the selector decides on its own
-(``--prefer-recorded-lc0-root``, ``--lc0-root-legacy-meta``) exit with a reason.
+Three flags used to be parsed and then ``del``-ed. The history selector decides
+all three from the checkpoint (recorded ``x_lc0_root`` always preferred, legacy
+meta iff the encoding asks, and NO lossy remap of legacy rows ever), so each now
+exits 2 with a reason, and a legacy row with no recorded root tensor is refused
+through this tool on every calibration route.
 """
 from __future__ import annotations
 
@@ -18,7 +17,6 @@ import numpy as np
 import pytest
 
 from chess_anti_engine.replay import shard
-from chess_anti_engine.train.trainer import select_input_history_arrays
 from tests.test_shrink_directory_prefix import SliceOnly, install
 from tests.test_shrink_ffn_checkpoint_script import _load_shrink_module, _small_cfg
 
@@ -33,18 +31,6 @@ def _legacy_arrays(rows: int = 5) -> dict[str, np.ndarray]:
     }
 
 
-def _lc0_cfg(encoding: str = "lc0_root") -> Any:
-    return dataclasses.replace(_small_cfg(ffn_mult_by_layer=(2.0, 1.5)), input_history_encoding=encoding)
-
-
-def _iter_x(module: Any, *, cfg: Any, replay_dir: Path, positions: int, synthetic: bool, inputs_only: bool) -> np.ndarray:
-    chunks = module._iter_calibration_arrays_from_replay(
-        source_cfg=cfg, replay_dir=replay_dir, positions=positions,
-        synthetic_lc0_root_history=synthetic, inputs_only=inputs_only,
-    )
-    return np.concatenate([np.asarray(c["x"]) for c in chunks])
-
-
 def _install_eager(monkeypatch: pytest.MonkeyPatch, arrays: dict[str, np.ndarray]) -> None:
     # A path that is not a directory: the prefix path declines, the eager loader runs.
     monkeypatch.setattr(shard, "iter_shard_paths", lambda _: [Path("not_a_dir.zarr")])
@@ -53,42 +39,22 @@ def _install_eager(monkeypatch: pytest.MonkeyPatch, arrays: dict[str, np.ndarray
 
 @pytest.mark.parametrize("route", ["directory_prefix", "eager_inputs", "eager_taylor"])
 @pytest.mark.parametrize("encoding", ["lc0_root", "lc0_root_legacy_meta"])
-def test_synthetic_flag_reaches_the_selector_on_every_route(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
-    route: str, encoding: str,
+def test_legacy_rows_without_recorded_root_are_refused_on_every_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, route: str, encoding: str,
 ) -> None:
+    """No route may silently synthesize LC0-root history (rl_loop_audit M12)."""
     arrays = _legacy_arrays()
     if route == "directory_prefix":
         install(monkeypatch, tmp_path, arrays)
     else:
         _install_eager(monkeypatch, arrays)
-    module = _load_shrink_module()
-    cfg = _lc0_cfg(encoding)
-    inputs_only = route != "eager_taylor"
-
+    cfg = dataclasses.replace(_small_cfg(ffn_mult_by_layer=(2.0, 1.5)), input_history_encoding=encoding)
+    chunks = _load_shrink_module()._iter_calibration_arrays_from_replay(
+        source_cfg=cfg, replay_dir=tmp_path, positions=5,
+        inputs_only=route != "eager_taylor",
+    )
     with pytest.raises(ValueError, match="no recorded x_lc0_root"):
-        _iter_x(module, cfg=cfg, replay_dir=tmp_path, positions=5, synthetic=False, inputs_only=inputs_only)
-
-    got = _iter_x(module, cfg=cfg, replay_dir=tmp_path, positions=5, synthetic=True, inputs_only=inputs_only)
-    expected = select_input_history_arrays(
-        arrays, input_history_encoding=encoding, allow_lossy_legacy_remap=True,
-    )["x"]
-    np.testing.assert_array_equal(got, expected)
-    assert not np.array_equal(got, arrays["x"]), "the remap must actually change x"
-    assert "synthetic_lc0_root_history=True" in capsys.readouterr().out
-
-
-@pytest.mark.parametrize("inputs_only", [True, False])
-def test_synthetic_flag_refused_for_a_non_lc0_root_checkpoint(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inputs_only: bool,
-) -> None:
-    """The selector does nothing with the opt-in for a legacy-history model, so
-    accepting it would be accepted-then-ignored."""
-    install(monkeypatch, tmp_path, _legacy_arrays())
-    module = _load_shrink_module()
-    with pytest.raises(ValueError, match="only applies to an LC0-root input checkpoint"):
-        _iter_x(module, cfg=_small_cfg(ffn_mult_by_layer=(2.0, 1.5)), replay_dir=tmp_path,
-                positions=1, synthetic=True, inputs_only=inputs_only)
+        list(chunks)
 
 
 def _run_main(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *extra: str) -> SystemExit:
@@ -101,34 +67,28 @@ def _run_main(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *extra: str) -> S
     return info.value
 
 
+@pytest.mark.parametrize("score_mode", ["weight", "activation", "taylor"])
 @pytest.mark.parametrize(("flag", "reason"), [
     ("--prefer-recorded-lc0-root", "always uses a recorded x_lc0_root"),
+    ("--synthetic-lc0-root-history", "never synthesizes LC0-root history"),
     ("--lc0-root-legacy-meta", "CHECKPOINT's input_history_encoding"),
 ])
 def test_removed_flags_exit_with_a_reason(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
-    flag: str, reason: str,
+    flag: str, reason: str, score_mode: str,
 ) -> None:
-    exc = _run_main(monkeypatch, tmp_path, flag, "--score-mode", "activation")
+    exc = _run_main(monkeypatch, tmp_path, flag, "--score-mode", score_mode)
     assert exc.code == 2
     err = capsys.readouterr().err
     assert "was removed" in err, err
     assert reason in err, err
 
 
-def test_synthetic_flag_refused_with_weight_scoring(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
-) -> None:
-    exc = _run_main(monkeypatch, tmp_path, "--synthetic-lc0-root-history")
-    assert exc.code == 2
-    assert "never reads" in capsys.readouterr().err
-
-
 def test_without_history_flags_main_reaches_the_checkpoint_check(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """Positive control: the refusals above come from the flags, not from argv."""
-    exc = _run_main(monkeypatch, tmp_path, "--score-mode", "activation", "--synthetic-lc0-root-history")
+    exc = _run_main(monkeypatch, tmp_path, "--score-mode", "activation")
     assert "missing input checkpoint" in str(exc.code)
 
 
