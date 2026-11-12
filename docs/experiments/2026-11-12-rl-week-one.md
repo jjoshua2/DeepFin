@@ -40,7 +40,7 @@ part of its historical record, not this week's deadline.
   independent external-benchmark instrument repairs.
 
 External evidence bundle:
-`/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1`.
+`~/chess-artifacts/operations/rl-week-one-20261112-v1`.
 Readiness, diagnostic-design and research-audit packets there record exact
 source/path identities and limitations. They are planning evidence, not engine
 results or launch authority for another owner's jobs.
