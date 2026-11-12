@@ -69,9 +69,11 @@ configured threads is not proof of eight physical cores continuously executing.
 Higher-core-count comparisons remain part of the program and require their own
 recorded resource window. No Elo/skill/node handicap is allowed on Rofchade.
 
-The readiness packet proposes a small engineering pair at 30 seconds plus
+The readiness packet proposed a small engineering pair at 30 seconds plus
 100 milliseconds per move, zero clock grace, eager donor inference, off-clock
-warmup, both tablebases off and one match at a time. The exact source, commands,
+warmup and one match at a time. Before execution, the admitted protocol was
+revised to use the same indexed three-through-six-piece tablebases in both
+engines, with theoretical harness adjudication disabled. The exact source, commands,
 engine options, net identities, resource checks, fresh outputs and stopping rule
 must be bound before launch. The first pair establishes operational readiness,
 not strength. A following small full-history panel checks the complete instrument.
@@ -79,8 +81,13 @@ Choose the substantive baseline's fixed panel and horizon after measuring cost,
 before looking at its results. Count openings, not individual correlated games,
 as the sampling unit. Missing/degenerate uncertainty remains unavailable.
 
-The initial audit found Rofchade 3.1 installed, but no actual UCI/NNUE handshake
-was performed by that audit. Installed Lc0 0.32.1 and 0.33dev builds are CPU-only;
+The initial audit found Rofchade 3.1 installed. The subsequent capability probe
+verified its UCI handshake, NNUE load acknowledgement, eight-thread setting and
+affinity to eight distinct physical cores. The tablebase qualification found all
+510 expected indexed material families for both WDL and DTZ, reproduced five
+fixed rule/DTZ fixtures and obtained actual six-piece hits from both engines.
+This does not attest every table file's contents or every position.
+Installed Lc0 0.32.1 and 0.33dev builds are CPU-only;
 neither qualifies as a strong GPU-Lc0 reference. GPU backend/network readiness
 and the chosen Stockfish binary/net need separate verification. An installed
 version alone is not a current-best-engine claim.
@@ -99,13 +106,17 @@ it is not an untouched holdout. Its 227 child comparisons and limited gradient
 probe answer narrower questions than the rejected playing match. Three qualified
 distinct prefix positions do not provide complete histories for all 254 roots.
 
-The existing owner's next control work is an all-node policy/value output
-crossover: donor/donor, candidate/donor, donor/candidate and candidate/candidate.
-Require identity against the unmodified implementations, repeats and batch
-controls, node perspective and legally replayable complete histories. The
-current Python/CPU reference path is not automatically equivalent to the native
-GPU screen. This can isolate search sensitivity on those positions; it cannot
-label moves as worse, prove generalization or explain the match by itself.
+At snapshot `a039b723e86379b9eb57d966d6119fa7cf51d853`, the existing owner had
+completed 24 all-node policy/value crossover searches with 12 identity, repeat
+and batch controls on three correlated opening positions. All controls passed
+(maximum policy difference about 1.79e-7). Donor/donor and candidate/candidate
+selected the same move at all three roots; one mixed-output condition changed
+one move. The fourth search return is a legal-action mask, not search WDL.
+Use the corrected saved readout; do not repeat those controls or infer a harmful
+mechanism from them. The Python/CPU reference path is not automatically
+equivalent to the native GPU screen. These data show search sensitivity on those
+positions; they cannot label moves as worse, prove generalization or explain the
+match by themselves.
 
 Use its outcome to choose between target/perspective/calibration measurements,
 actual optimizer/trunk-update measurements and exposure/sampling measurements.
@@ -146,3 +157,46 @@ requires actual repeatable playing improvement with independent confirmation.
 Negative results are valuable but do not satisfy that strength milestone.
 Publish the week readout and costs with achieved/missing milestones. Keep the
 months-long strength objective explicitly open.
+
+## November 12: clock readiness failed; deadline repair
+
+The first engineering pair used source
+`5c4cff29a3832d7c6de94f8a6a542780c1c9ffbf`, donor A39, eager CUDA inference,
+two PUCT walkers with gather one and default chunk 2,048, Rofchade 3.1 with eight
+threads/1,024 MiB hash, equal 30 s + 100 ms clocks and zero grace. Both donor
+first responses were legal but took **73.872421 s and 73.160766 s**. The driver
+correctly recorded two time forfeits and excluded the late moves from the PGNs.
+This is a failed deployment profile, not an estimate of chess strength or RL gain.
+
+The owner closed all three tracked process identities after 303.956620 s;
+its PASS status means clean execution and cleanup. Independent readout:
+`engineering-pair-readout-v1/readout.json`, SHA256
+`25e90b639f961fe1b166598c8e76109a6f26896c770903bf49bc84a6d62b5a11`
+under the external evidence bundle. No guarded search error, incomplete-search,
+fallback or NNUE-load diagnostic appeared. GPU-intended readiness plus pair
+owner wall time totals **469.566925 s**, including startup and cleanup.
+
+The first-chunk bootstrap assumed 6,000 nodes/s and allowed a full 2,048-node
+chunk at the computed clock budget. Workers polled their stop event but were
+not signalled when the deadline expired; the caller waited for the whole chunk.
+Reducing the clock allocation alone cannot fix this. The proposed repair gives
+each finite UCI phase a deadline timer bound to that phase's stop event and
+cancels/joins it before returning. Cooperative pools can finish their in-flight
+batch and return truthful completed nodes. This does not preempt a GIL-held
+native operation or an opaque classic-Gumbel chunk; it is not universal hard
+real-time safety. No model, target, optimizer or allocation formula changes.
+
+A real slow-evaluator walker test fails against the original phase and passes
+with the repair. Nine deadline tests, 176 lifecycle/ponder/search regressions
+and one self-play smoke passed with CUDA hidden and two Torch threads. The
+source change still needs independent review and actual donor qualification.
+
+Before another pair, freeze the repaired source and qualify it with **no games**:
+same donor/device/search/chunk/tablebases, at most 300 GPU-intended stage seconds,
+off-clock startup, two full-history roots (start and `g1f3 d7d5`) at the same
+30 s + 100 ms clock allocation, one explicit 200 ms search and one exact
+64-node control. Require legal moves, positive genuine non-tablebase nodes,
+no guarded faults/fallbacks, each timed response within its computed hard
+budget plus 500 ms, exact 64 nodes for the node-only control and owned process
+closure. Record startup separately. Failure preserves the output and blocks
+the next match; no favorable retry or training/adoption follows automatically.
