@@ -18,11 +18,19 @@ import tempfile
 
 def verify_source_revision(expected, root=None):
     """Pin clean Git source, not ignored native images or dependencies."""
-    if not isinstance(expected, str) or len(expected) != 40 or any(c not in "0123456789abcdef" for c in expected):
+    if (
+        not isinstance(expected, str)
+        or len(expected) != 40
+        or any(c not in "0123456789abcdef" for c in expected)
+    ):
         raise ValueError("expected source revision required")
     root = Path(root) if root is not None else Path(__file__).resolve().parents[1]
+
     def git(*args):
-        return subprocess.check_output(["git", "-C", str(root), *args], text=True, timeout=10).strip()
+        return subprocess.check_output(
+            ["git", "-C", str(root), *args], text=True, timeout=10
+        ).strip()
+
     realized = git("rev-parse", "HEAD")
     if realized != expected:
         raise ValueError("source revision mismatch")
@@ -210,7 +218,9 @@ def child(plan, output):
         raise ValueError("source changed during runtime")
     verify_source_revision(revision)
     result["realized_source_revision"] = revision
-    result["source_authentication_scope"] = "clean Git source; ignored native images and dependencies not authenticated"
+    result["source_authentication_scope"] = (
+        "clean Git source; ignored native images and dependencies not authenticated"
+    )
     result["source_sha256"] = plan["source_sha256"]
     result["synthetic_training_performed"] = True
     result["bank_manifest_sha256"] = plan["bank_sha256"]

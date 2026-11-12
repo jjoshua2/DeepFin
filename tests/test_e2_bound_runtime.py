@@ -41,7 +41,9 @@ def test_strict_checkpoint_bank_trace_runtime(tmp_path, qualified):
     _, _, _, overrides = setup(qualified)
     plan = {
         "synthetic": True,
-        "expected_source_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        "expected_source_revision": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True
+        ).strip(),
         "bank_manifest": str(marker),
         "bank_sha256": sha(marker),
         "trace": [[{"ordinal": 0, "indices": [0, 0]}]] * 2,
@@ -142,7 +144,10 @@ def test_full_attempt_order_and_selection_rejected(tmp_path, monkeypatch):
 
 def test_helper_pin_fails_before_bank_or_checkpoint(tmp_path, monkeypatch):
     from scripts.e2_bound_runtime import child
-    monkeypatch.setattr("scripts.e2_bound_runtime.verify_source_revision", lambda *a: "a" * 40)
+
+    monkeypatch.setattr(
+        "scripts.e2_bound_runtime.verify_source_revision", lambda *a: "a" * 40
+    )
 
     with pytest.raises(ValueError, match="source identity"):
         child({"source_sha256": {}}, tmp_path / "out.json")
@@ -151,8 +156,12 @@ def test_helper_pin_fails_before_bank_or_checkpoint(tmp_path, monkeypatch):
 
 def test_committed_model_change_rejected_by_external_revision(tmp_path):
     from scripts.e2_bound_runtime import verify_source_revision
+
     def git(*args):
-        return subprocess.check_output(["git", "-C", str(tmp_path), *args], text=True).strip()
+        return subprocess.check_output(
+            ["git", "-C", str(tmp_path), *args], text=True
+        ).strip()
+
     git("init")
     git("config", "user.email", "synthetic@example.invalid")
     git("config", "user.name", "Synthetic")
@@ -174,11 +183,14 @@ def test_committed_model_change_rejected_by_external_revision(tmp_path):
 def test_revision_rejected_before_project_imports(tmp_path, monkeypatch):
     import builtins
     from scripts.e2_bound_runtime import child
+
     original = builtins.__import__
+
     def guarded(name, *args, **kwargs):
         if name.startswith(("chess_anti_engine", "scripts.stored_wdl_checkpoint")):
             pytest.fail("project import before revision admission")
         return original(name, *args, **kwargs)
+
     monkeypatch.setattr(builtins, "__import__", guarded)
     with pytest.raises(ValueError, match="revision mismatch"):
         child({"expected_source_revision": "0" * 40}, tmp_path / "out.json")
