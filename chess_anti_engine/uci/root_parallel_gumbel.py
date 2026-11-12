@@ -1159,11 +1159,13 @@ class RootParallelGumbelPool:
                 # When remaining < gather the chunker already densifies to
                 # remaining (min(gather, target)); no extra adaptive path.
                 n = min(item.budget - done, 2 * gather)
-                ran = int(chunker.run(
-                    st.tree, arena.cid, arena.cboard, n,
-                    **({"tb_probe": st.tb_probe, "tb_path_prefix": (st.root_id,)}
-                       if st.tb_probe is not None else {}),
-                ))
+                if st.tb_probe is None:
+                    ran = int(chunker.run(st.tree, arena.cid, arena.cboard, n))
+                else:
+                    ran = int(chunker.run(
+                        st.tree, arena.cid, arena.cboard, n,
+                        tb_probe=st.tb_probe, tb_path_prefix=(st.root_id,),
+                    ))
                 if ran <= 0:
                     break  # solved/terminal below the candidate root
                 done += ran
