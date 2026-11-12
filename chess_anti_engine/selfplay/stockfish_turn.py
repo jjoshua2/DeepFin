@@ -144,6 +144,13 @@ _SF_BESTMOVE_ILLEGAL_CONTEXT_RATE = 0.25
 #   122 quarantined shards, 51 windows        : median 0.102205, mean 0.143583
 #                                               -> 49 of 51 windows fire
 #
+# ⚑ That calibration predates the MultiPV rerank parser fix, which adds a
+# benign route at ~0.002 of searches (MultiPV 6 / 150k nodes, random-playout
+# positions; docs/experiments/2026-11-11-multipv-rerank-parser.md). On
+# post-fix data that route alone puts the expected rate near 0.002, ~5x under
+# the bar, so the 6.8x window-max headroom above does not carry over. The bar
+# is unchanged.
+#
 # ⚑ 2 of those 51 windows read BELOW the bar. This is a SECOND view, not a
 # superset of the policy one: a desynced search whose rank-1 move is
 # coincidentally legal here, or whose (cp, mate) ties the top surviving line,

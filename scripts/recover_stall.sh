@@ -68,11 +68,12 @@ log(){ echo "$(date '+%m-%d %H:%M:%S') recover_stall: $*" | tee -a "$LOG"; }
 # $RECOVER_PAUSE_FILE wins and skips the read entirely — that is the test seam
 # and the operator escape hatch.
 _read_pause_file='
-import sys
+import os, sys
 from pathlib import Path
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 cfg = flatten_run_config_defaults(load_yaml_file(Path(sys.argv[1])))
-print(str(cfg.get("pause_file") or "").strip())
+raw = str(cfg.get("pause_file") or "").strip()
+print(os.path.expanduser(raw) if raw else "")
 '
 PAUSE_FILE="${RECOVER_PAUSE_FILE-}"
 if [ -z "${RECOVER_PAUSE_FILE+set}" ]; then
@@ -81,12 +82,50 @@ if [ -z "${RECOVER_PAUSE_FILE+set}" ]; then
         log "WARN: could not read pause_file from $CONFIG — scanning $TUNE_DIR only"
     fi
 fi
-# Relative `pause_file` is anchored on the tune root, matching
-# `_resolve_pause_marker_paths`'s `tune_root_ephemeral / p`.
+# `~` / `~/...` expand against $HOME, as `TrialConfig`'s normaliser does with
+# `os.path.expanduser`. The yaml read above already expanded `~user`; anything
+# still starting with `~` came from $RECOVER_PAUSE_FILE or names an unknown
+# user (which the trainer refuses too). Both failure shapes refuse to run with
+# a reason rather than dying on `set -u` or watching a literal `~...` path.
+# Exit 2 (usage), not INTENTIONAL_STOP_EXIT: that status means "refused on a
+# marker" and makes watchdog_loop.sh roll back its cooldown stamp, which a
+# configuration error that will not fix itself must not do.
+case "$PAUSE_FILE" in
+    "~"|"~/"*)
+        if [ -z "${HOME:-}" ]; then
+            log "ERROR: pause_file '$PAUSE_FILE' needs \$HOME to expand and HOME is unset; refusing to run (set HOME or use an absolute path)"
+            exit 2
+        fi
+        if [ "$PAUSE_FILE" = "~" ]; then
+            PAUSE_FILE="$HOME"
+        else
+            PAUSE_FILE="$HOME/${PAUSE_FILE#\~/}"
+        fi
+        ;;
+    "~"*)
+        log "ERROR: pause_file '$PAUSE_FILE': a '~user' form is not expanded on this route (or names an unknown user, which the trainer refuses); use an absolute path. Refusing to run."
+        exit 2
+        ;;
+esac
+# A RELATIVE `pause_file` is REFUSED by the trainer at launch
+# (`trial_config._optional_pause_file`): the only anchor the trial has is the
+# per-session Ray staging dir, which no operator can reach, so no running trial
+# can be watching one. It can still appear here (a live edit the reload skips
+# as startup-only). Checking it under $TUNE_DIR costs nothing and can only make
+# this guard MORE conservative, so do that -- and say the trainer ignores it.
 case "$PAUSE_FILE" in
     ""|/*) ;;
-    *) PAUSE_FILE="$TUNE_DIR/$PAUSE_FILE" ;;
+    *)
+        log "WARN: pause_file '$PAUSE_FILE' is relative; the trainer refuses relative paths at launch (use an absolute path). Checking $TUNE_DIR/$PAUSE_FILE conservatively."
+        PAUSE_FILE="$TUNE_DIR/$PAUSE_FILE"
+        ;;
 esac
+# A DIRECTORY is refused by the trainer at launch (any existing path is a
+# marker, so it would pause forever). Keep it as a marker here -- this guard
+# fails closed -- but say why it will keep refusing.
+if [ -n "$PAUSE_FILE" ] && { [ "${PAUSE_FILE%/}" != "$PAUSE_FILE" ] || [ -d "$PAUSE_FILE" ]; }; then
+    log "WARN: pause_file '$PAUSE_FILE' is a directory; the trainer refuses that at launch (a pause marker must be a file path), and this guard refuses while it exists. Fix the yaml."
+fi
 
 # ⚑ AN UNKNOWN ARGUMENT IS REJECTED, NOT IGNORED. A typo'd override
 # (`--ignore-intentional_stop`) that silently fell through to the default would

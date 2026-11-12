@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import itertools
 import math
 import re
 from pathlib import Path
@@ -84,30 +85,33 @@ def _pre_deletion_root_sigma_scale(
     return csr * (cvr + mv_term)
 
 
-@pytest.mark.parametrize("c_scale", [0.025, 0.1, 7.0])
-@pytest.mark.parametrize("c_visit_root", [-1.0, 0.0, 900.0])
-@pytest.mark.parametrize("c_scale_root", [-1.0, 7.0])
-@pytest.mark.parametrize("q_visit_exp_root", [-1.0, 0.5, 1.0, 99.0])
-@pytest.mark.parametrize("max_visit", [0, 1, 60, 256, 1_000_000])
-def test_root_sigma_scale_equals_the_pre_deletion_formula_at_the_old_defaults(
-    c_scale: float, c_visit_root: float, c_scale_root: float,
-    q_visit_exp_root: float, max_visit: int,
-) -> None:
+def test_root_sigma_scale_equals_the_pre_deletion_formula_at_the_old_defaults() -> None:
     """The shipped root transform must be the old one with the knobs at default.
 
     Swept rather than spot-checked because the two arms that read the deleted
     knobs are BRANCHES: ``q_visit_exp`` was reached only at
     ``q_visit_exp_root >= 90``, and ``q_visit_floor`` only on the non-log arm. A
     grid that never sets ``q_visit_exp_root=99`` would agree no matter what the
-    fallback resolved to.
+    fallback resolved to. One case over the whole 360-point grid: each point is
+    a microsecond of arithmetic, and the failure names every point that moved.
     """
-    cfg = GumbelConfig(
-        c_scale=c_scale, c_visit=50.0, c_visit_root=c_visit_root,
-        c_scale_root=c_scale_root, q_visit_exp_root=q_visit_exp_root,
+    moved = []
+    for c_scale, c_visit_root, c_scale_root, q_visit_exp_root, max_visit in itertools.product(
+        (0.025, 0.1, 7.0), (-1.0, 0.0, 900.0), (-1.0, 7.0),
+        (-1.0, 0.5, 1.0, 99.0), (0, 1, 60, 256, 1_000_000),
+    ):
+        cfg = GumbelConfig(
+            c_scale=c_scale, c_visit=50.0, c_visit_root=c_visit_root,
+            c_scale_root=c_scale_root, q_visit_exp_root=q_visit_exp_root,
+        )
+        if _root_sigma_scale(max_visit=max_visit, cfg=cfg) != (
+            _pre_deletion_root_sigma_scale(max_visit=max_visit, cfg=cfg)
+        ):
+            moved.append((c_scale, c_visit_root, c_scale_root, q_visit_exp_root, max_visit))
+    assert not moved, (
+        "the root transform moved when the deleted knobs were at their defaults "
+        f"(c_scale, c_visit_root, c_scale_root, q_visit_exp_root, max_visit): {moved}"
     )
-    assert _root_sigma_scale(max_visit=max_visit, cfg=cfg) == (
-        _pre_deletion_root_sigma_scale(max_visit=max_visit, cfg=cfg)
-    ), "the root transform moved when the deleted knobs were at their defaults"
 
 
 def test_the_linear_root_sentinel_really_resolves_to_exponent_one() -> None:

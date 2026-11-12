@@ -1686,13 +1686,20 @@ class TrainMetrics:
   # `sf_eval_pv_orphan_frac` is the one with detection power, and it is the
   # first instrument that looks INSIDE the population the policy column
   # passes: it fires when the record-level SF eval that BECAME this row's
-  # `sf_wdl` disagrees with the top surviving MultiPV line, which on a healthy
-  # row is impossible — both are the same accumulator field. Measured
-  # 2026-08-03 THROUGH THIS COLUMN: 0.117386 over the 122 quarantined shards
-  # (19,468 orphans of 165,846 checked), 3.0e-5 over the 640 policy-clean
-  # post-quarantine shards (34 rows, 1,128,248 labelled), and exactly 0.000000
-  # over the 474,278 labelled rows of the pre-episode range 33118:33387, which
-  # is the floor. Its denominator is rows carrying ALL THREE blocks, published as
+  # `sf_wdl` disagrees with the top surviving MultiPV line. On a healthy row
+  # both usually come from the same accumulator line, but since the MultiPV
+  # rerank parser fix a search that stops on a rank-1 bound line for another
+  # move splits them benignly (~0.002 of searches at MultiPV 6 / 150k nodes on
+  # random-playout positions; see `replay/shard.py::sf_eval_pv_orphan_flags`).
+  # Measured 2026-08-03 THROUGH THIS COLUMN, on data parsed BEFORE that fix:
+  # 0.117386 over the 122 quarantined shards (19,468 orphans of 165,846
+  # checked), 3.0e-5 over the 640 policy-clean post-quarantine shards (34 rows,
+  # 1,128,248 labelled), and exactly 0.000000 over the 474,278 labelled rows of
+  # the pre-episode range 33118:33387. That zero was the floor for pre-fix
+  # data. For data parsed after the fix, expect ~0.002, and read desync only
+  # above the 0.01 warn bar (`_SF_EVAL_PV_ORPHAN_WARN_RATE` in
+  # `selfplay/stockfish_turn.py`). Its denominator is rows carrying ALL THREE
+  # blocks, published as
   # `sf_eval_pv_checked_frac` — read them together, exactly as with the policy
   # pair, because a rate over zero checked rows is UNMEASURED, not clean.
   #

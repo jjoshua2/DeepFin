@@ -20,6 +20,7 @@ slot indices are no longer safe across the architecture change.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterable, Iterator
 import contextlib
 import dataclasses
 import json
@@ -340,6 +341,22 @@ def activation_unit_scores_from_x(
     device: torch.device,
 ) -> tuple[dict[int, torch.Tensor], dict[str, Any]]:
     """Score FFN units by replay activation energy times down-projection norm."""
+    batch = max(1, int(batch_size))
+    return _activation_unit_scores_from_batches(
+        ckpt, ckpt_path=ckpt_path,
+        batches=(x[start:start + batch] for start in range(0, int(x.shape[0]), batch)),
+        batch_size=batch, device=device,
+    )
+
+
+def _activation_unit_scores_from_batches(
+    ckpt: dict[str, Any],
+    *,
+    ckpt_path: Path,
+    batches: Iterable[torch.Tensor],
+    batch_size: int,
+    device: torch.device,
+) -> tuple[dict[int, torch.Tensor], dict[str, Any]]:
     source_cfg = _checkpoint_model_config(ckpt, ckpt_path)
     source_state = _source_state_dict(ckpt)
     source_hidden = _ffn_hidden_sizes(source_state, num_layers=source_cfg.num_layers)
@@ -368,17 +385,14 @@ def activation_unit_scores_from_x(
 
         return hook
 
-    for layer_idx, block in enumerate(blocks):
-        handles.append(block.ffn[1].register_forward_hook(make_hook(layer_idx)))
-
+    total = 0
     try:
-        total = int(x.shape[0])
-        if total <= 0:
-            raise ValueError("calibration tensor is empty")
-        batch = max(1, int(batch_size))
+        for layer_idx, block in enumerate(blocks):
+            handles.append(block.ffn[1].register_forward_hook(make_hook(layer_idx)))
         with torch.no_grad():
-            for start in range(0, total, batch):
-                xb = x[start:start + batch].to(device=device, dtype=torch.float32, non_blocking=True)
+            for batch in batches:
+                total += int(batch.shape[0])
+                xb = batch.to(device=device, dtype=torch.float32, non_blocking=True)
                 if device.type == "cuda":
                     with torch.autocast(device_type="cuda", dtype=torch.float16):
                         model(xb)
@@ -389,6 +403,8 @@ def activation_unit_scores_from_x(
         for handle in handles:
             handle.remove()
 
+    if total <= 0:
+        raise ValueError("calibration tensor is empty")
     scores: dict[int, torch.Tensor] = {}
     for layer_idx, count in enumerate(counts):
         if count <= 0:
@@ -398,7 +414,7 @@ def activation_unit_scores_from_x(
         scores[layer_idx] = mean_act_sq * down_w.square().sum(dim=0)
 
     stats = {
-        "activation_score_positions": int(x.shape[0]),
+        "activation_score_positions": total,
         "activation_score_batch_size": max(1, int(batch_size)),
         "activation_score_device": str(device),
         "activation_score_layers": len(scores),
@@ -431,27 +447,126 @@ def _load_calibration_arrays_from_replay(
     source_cfg: ModelConfig,
     replay_dir: Path,
     positions: int,
-    prefer_recorded_lc0_root: bool,
-    synthetic_lc0_root_history: bool,
-    lc0_root_legacy_meta: bool,
+    inputs_only: bool = False,
 ) -> dict[str, np.ndarray]:
+    return _concat_calibration_chunks(list(_iter_calibration_arrays_from_replay(
+        source_cfg=source_cfg, replay_dir=replay_dir, positions=positions,
+        inputs_only=inputs_only,
+    )))
+
+
+_MIN_DECODE_WINDOW_ROWS = 256
+# Above this, stepping by the chunk would retain an unbounded decoded window
+# (every field, policy targets included); fall back to the 256-row window and
+# accept the repeated decompression instead.
+_MAX_DECODE_WINDOW_ROWS = 4096
+
+
+def _decode_window_rows(x: Any) -> int:
+    """Rows per decode window: a whole multiple of the zarr row chunk, >= 256.
+
+    ``replay/shard.py:_local_chunks`` writes 512-row chunks; a 256-row window
+    decompressed every chunk twice. Arrays without ``.chunks`` (eager numpy,
+    test proxies) keep 256. Window size changes only how rows are grouped, not
+    which rows are validated or selected.
+    """
+    chunks = getattr(x, "chunks", None)
+    try:
+        chunk_rows = int(chunks[0]) if chunks else 0
+    except (TypeError, ValueError, IndexError):
+        chunk_rows = 0
+    if chunk_rows <= 0:
+        return _MIN_DECODE_WINDOW_ROWS
+    window = -(-_MIN_DECODE_WINDOW_ROWS // chunk_rows) * chunk_rows
+    if window > _MAX_DECODE_WINDOW_ROWS:
+        return _MIN_DECODE_WINDOW_ROWS
+    return window
+
+
+def _activation_directory_prefix(
+    shard_path: Path, *, source_cfg: ModelConfig, positions: int,
+) -> list[dict[str, np.ndarray]] | None:
+    """Validate an ordinary directory completely, retaining only selected inputs.
+
+    Decode one window of every field at once: ``_decode_window_rows`` rows,
+    aligned to the shard's zarr row chunk (512 for the production writer) so
+    each chunk is decompressed once, never less than 256. Keep selected bytes until
+    all rows pass validation/history selection, then let the caller score them.
+    This bounds decoded target retention, not selected-prefix or codec memory.
+    Like the eager loader, this is not a snapshot of concurrently edited files.
+    Legacy archives and non-row metadata retain the existing eager path.
+    """
+    from chess_anti_engine.replay.shard import load_shard_arrays, validate_arrays
+    from chess_anti_engine.train.trainer import select_input_history_arrays
+
+    if shard_path.suffix != ".zarr" or not shard_path.is_dir():
+        return None
+    arrays, _meta = load_shard_arrays(shard_path, lazy=True)
+    rows = int(arrays["x"].shape[0])
+    # The ordinary loader attaches scalar identity metadata. Do not turn a
+    # global metadata constraint into per-window acceptance for other inputs.
+    for key, value in arrays.items():
+        shape = value.shape
+        if shape and (key.startswith("_") or int(shape[0]) != rows):
+            return None
+    selected: list[dict[str, np.ndarray]] = []
+    window = _decode_window_rows(arrays["x"])
+    for start in range(0, max(1, rows), window):
+        stop = min(rows, start + window)
+        chunk = {
+            key: np.asarray(value[start:stop]) if value.shape else np.asarray(value)
+            for key, value in arrays.items()
+        }
+        validate_arrays(chunk)
+        chunk = select_input_history_arrays(
+            chunk, input_history_encoding=source_cfg.input_history_encoding,
+        )
+        take = min(stop - start, max(0, positions - start))
+        if take > 0:
+            # Own only the prefix, not a view retaining decoded unused rows.
+            selected.append({"x": np.array(chunk["x"][:take], copy=True)})
+        del chunk
+    return selected
+
+
+def _iter_calibration_arrays_from_replay(
+    *,
+    source_cfg: ModelConfig,
+    replay_dir: Path,
+    positions: int,
+    inputs_only: bool = False,
+) -> Iterator[dict[str, np.ndarray]]:
     from chess_anti_engine.replay.shard import iter_shard_paths
     from chess_anti_engine.replay.shard import load_shard_arrays
     from chess_anti_engine.train.trainer import select_input_history_arrays
 
-    # Kept for CLI parity with offline_replay_epoch. The selector follows the
-    # checkpoint's input_history_encoding and uses recorded lc0-root tensors when
-    # present, matching the sidecar's --prefer-recorded-lc0-root behavior.
-    del prefer_recorded_lc0_root, synthetic_lc0_root_history, lc0_root_legacy_meta
+    # The selector follows the checkpoint's input_history_encoding: it uses a
+    # recorded ``x_lc0_root`` whenever present, applies the legacy-meta patch
+    # iff the encoding is ``lc0_root_legacy_meta``, and REFUSES legacy rows
+    # with no recorded root tensor (no lossy remap is ever opted into here).
+    # The three history flags that once claimed to steer this are refused in
+    # ``main`` -- see ``_REMOVED_HISTORY_FLAGS``.
 
     shard_paths = iter_shard_paths(replay_dir)
     if not shard_paths:
         raise ValueError(f"no replay shards found in {replay_dir}")
     left = max(1, int(positions))
-    chunks: list[dict[str, np.ndarray]] = []
+    found = False
     for shard_path in shard_paths:
         if left <= 0:
             break
+        if inputs_only:
+            prefix = _activation_directory_prefix(
+                shard_path, source_cfg=source_cfg, positions=left,
+            )
+            if prefix is not None:
+                for chunk in prefix:
+                    left -= int(chunk["x"].shape[0])
+                    found = True
+                    yield chunk
+                    del chunk
+                del prefix
+                continue
         arrs, _meta = load_shard_arrays(shard_path, lazy=False)
         arrs = select_input_history_arrays(
             arrs,
@@ -460,16 +575,24 @@ def _load_calibration_arrays_from_replay(
         n_rows = int(np.asarray(arrs["x"]).shape[0])
         n = min(left, n_rows)
         if n <= 0:
+            del arrs
             continue
         idx = np.arange(n, dtype=np.int64)
-        chunks.append({
+        # Keep the existing whole-shard validation and history selector, but
+        # activation scoring consumes no targets. Do not retain or concatenate
+        # unrelated policy widths across shards. Taylor still needs all fields.
+        selected = {"x": arrs["x"]} if inputs_only else arrs
+        chunk = {
             key: np.asarray(value)[idx] if np.asarray(value).ndim > 0 else np.asarray(value)
-            for key, value in arrs.items()
-        })
+            for key, value in selected.items()
+        }
+        del arrs, selected
         left -= n
-    if not chunks:
+        found = True
+        yield chunk
+        del chunk
+    if not found:
         raise ValueError(f"could not load calibration positions from {replay_dir}")
-    return _concat_calibration_chunks(chunks)
 
 
 def activation_unit_scores_from_arrays(
@@ -490,6 +613,41 @@ def activation_unit_scores_from_arrays(
     )
 
 
+def _calibration_input_batches(
+    chunks: Iterable[dict[str, np.ndarray]], *, batch_size: int,
+) -> Iterator[torch.Tensor]:
+    """Rebatch shard prefixes in global row order with at most one carry batch.
+
+    Copy carry rows into owned parts: a partial batch must not keep a previous
+    shard alive while the next shard is decoded. Whole-shard decoding remains.
+    """
+    size = max(1, int(batch_size))
+    parts: list[torch.Tensor] = []
+    used = 0
+    shape: tuple[int, ...] | None = None
+    for chunk in chunks:
+        x = torch.as_tensor(chunk["x"], dtype=torch.float32)
+        if shape is None:
+            shape = tuple(x.shape[1:])
+        elif tuple(x.shape[1:]) != shape:
+            raise ValueError("calibration input shapes differ across shards")
+        offset = 0
+        while offset < int(x.shape[0]):
+            take = min(size - used, int(x.shape[0]) - offset)
+            # Own just the rows seen, not a view retaining a previous shard or
+            # an allocation sized by a possibly enormous requested batch.
+            parts.append(x[offset:offset + take].clone())
+            used += take
+            offset += take
+            if used == size:
+                yield torch.cat(parts, dim=0)
+                parts.clear()
+                used = 0
+        del x, chunk
+    if parts:
+        yield torch.cat(parts, dim=0)
+
+
 def activation_unit_scores_from_replay(
     ckpt: dict[str, Any],
     *,
@@ -498,23 +656,18 @@ def activation_unit_scores_from_replay(
     positions: int,
     batch_size: int,
     device: torch.device,
-    prefer_recorded_lc0_root: bool,
-    synthetic_lc0_root_history: bool,
-    lc0_root_legacy_meta: bool,
 ) -> tuple[dict[int, torch.Tensor], dict[str, Any]]:
     source_cfg = _checkpoint_model_config(ckpt, ckpt_path)
-    arrs = _load_calibration_arrays_from_replay(
+    chunks = _iter_calibration_arrays_from_replay(
         source_cfg=source_cfg,
         replay_dir=replay_dir,
         positions=positions,
-        prefer_recorded_lc0_root=prefer_recorded_lc0_root,
-        synthetic_lc0_root_history=synthetic_lc0_root_history,
-        lc0_root_legacy_meta=lc0_root_legacy_meta,
+        inputs_only=True,
     )
-    return activation_unit_scores_from_arrays(
+    return _activation_unit_scores_from_batches(
         ckpt,
         ckpt_path=ckpt_path,
-        arrs=arrs,
+        batches=_calibration_input_batches(chunks, batch_size=batch_size),
         batch_size=batch_size,
         device=device,
     )
@@ -644,18 +797,12 @@ def taylor_unit_scores_from_replay(
     batch_size: int,
     device: torch.device,
     config_path: Path | None,
-    prefer_recorded_lc0_root: bool,
-    synthetic_lc0_root_history: bool,
-    lc0_root_legacy_meta: bool,
 ) -> tuple[dict[int, torch.Tensor], dict[str, Any]]:
     source_cfg = _checkpoint_model_config(ckpt, ckpt_path)
     arrs = _load_calibration_arrays_from_replay(
         source_cfg=source_cfg,
         replay_dir=replay_dir,
         positions=positions,
-        prefer_recorded_lc0_root=prefer_recorded_lc0_root,
-        synthetic_lc0_root_history=synthetic_lc0_root_history,
-        lc0_root_legacy_meta=lc0_root_legacy_meta,
     )
     return taylor_unit_scores_from_arrays(
         ckpt,
@@ -847,6 +994,39 @@ def shrink_checkpoint(
     return new_ckpt, target_cfg, stats
 
 
+# Accepted-then-ignored history flags, removed. Still parsed (hidden) so an old
+# command line gets a reason and exit 2 instead of a silent no-op or a bare
+# "unrecognized arguments". The selector decides all three from the checkpoint.
+_REMOVED_HISTORY_FLAGS = {
+    "prefer_recorded_lc0_root": (
+        "--prefer-recorded-lc0-root was removed: it was accepted and ignored. The "
+        "history selector always uses a recorded x_lc0_root when the row has one, "
+        "with or without this flag; drop it."
+    ),
+    "synthetic_lc0_root_history": (
+        "--synthetic-lc0-root-history was removed: it was accepted and ignored, and "
+        "this tool never synthesizes LC0-root history (the remap cannot recover "
+        "side-to-move, docs/rl_loop_audit.md M12). Legacy calibration rows with no "
+        "recorded x_lc0_root are refused; point --calibration-replay-dir at shards "
+        "stored in the checkpoint's input_history_encoding (or carrying "
+        "x_lc0_root) and drop the flag."
+    ),
+    "lc0_root_legacy_meta": (
+        "--lc0-root-legacy-meta was removed: it was accepted and ignored. The "
+        "legacy rule50/EP patch is applied iff the CHECKPOINT's "
+        "input_history_encoding is lc0_root_legacy_meta; it cannot be forced onto "
+        "a model trained without it. Drop the flag."
+    ),
+}
+
+
+def _refuse_removed_history_flags(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Exit 2 with a reason for any removed history flag."""
+    for dest, reason in _REMOVED_HISTORY_FLAGS.items():
+        if getattr(args, dest):
+            ap.error(reason)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("input_checkpoint", type=Path)
@@ -877,12 +1057,12 @@ def main() -> None:
     )
     ap.add_argument("--min-ffn-mult", type=float, default=1.0)
     ap.add_argument("--target-hidden-multiple", type=int, default=32)
-    ap.add_argument("--prefer-recorded-lc0-root", action="store_true")
-    ap.add_argument("--synthetic-lc0-root-history", action="store_true")
-    ap.add_argument("--lc0-root-legacy-meta", action="store_true")
+    for flag in ("--prefer-recorded-lc0-root", "--synthetic-lc0-root-history", "--lc0-root-legacy-meta"):
+        ap.add_argument(flag, action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--force", action="store_true", help="Overwrite output checkpoint if it exists.")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    _refuse_removed_history_flags(ap, args)
 
     if not args.input_checkpoint.exists():
         raise SystemExit(f"missing input checkpoint: {args.input_checkpoint}")
@@ -909,9 +1089,6 @@ def main() -> None:
             positions=int(args.calibration_positions),
             batch_size=int(args.calibration_batch_size),
             device=_device_from_arg(args.calibration_device),
-            prefer_recorded_lc0_root=bool(args.prefer_recorded_lc0_root),
-            synthetic_lc0_root_history=bool(args.synthetic_lc0_root_history),
-            lc0_root_legacy_meta=bool(args.lc0_root_legacy_meta),
         )
     elif args.score_mode == "taylor":
         unit_scores_by_layer, score_stats = taylor_unit_scores_from_replay(
@@ -922,9 +1099,6 @@ def main() -> None:
             batch_size=int(args.calibration_batch_size),
             device=_device_from_arg(args.calibration_device),
             config_path=args.config,
-            prefer_recorded_lc0_root=bool(args.prefer_recorded_lc0_root),
-            synthetic_lc0_root_history=bool(args.synthetic_lc0_root_history),
-            lc0_root_legacy_meta=bool(args.lc0_root_legacy_meta),
         )
     if args.optimize_target_schedule:
         if unit_scores_by_layer is None:

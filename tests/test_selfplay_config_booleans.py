@@ -1,4 +1,5 @@
-"""RS2 difficulty-focus subset: exercise only the real YAML loader and flatten boundary."""
+"""RS2 selfplay boolean flags (opening selector and difficulty focus): exercise
+only the real YAML loader and flatten boundary."""
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults, load_yaml_file
 
 _FLAGS = (
+    "opening_fen_net_side_to_move", "opening_fen_selfplay_only",
     "diff_focus_enabled", "diff_focus_norm_enabled", "diff_focus_norm_shared",
 )
 
@@ -50,5 +52,19 @@ def test_nested_selfplay_override_precedes_flat_validation(tmp_path, key, token,
         assert key not in config
     else:
         assert config[key] is expected
+
+
+def test_omitted_flags_keep_consumer_defaults(tmp_path):
+    config = _load(tmp_path, "selfplay: {}\n")
+    assert not any(key in config for key in _FLAGS)
+
+
+@pytest.mark.parametrize("key", _FLAGS)
+@pytest.mark.parametrize("value", [False, True])
+def test_invalid_nested_flag_overrides_valid_flat(tmp_path, key, value):
+    text = f'{key}: {str(value).lower()}\nselfplay:\n  {key}: "false"\n'
+    with pytest.raises(ValueError, match="must be a boolean") as exc:
+        _load(tmp_path, text)
+    assert key in str(exc.value)
 
 
