@@ -219,6 +219,8 @@ def load_own_evals(csv_paths: list[str]) -> dict[tuple[int, int], int]:
     DeepFin's POV themselves (every row's score gets stored regardless of
     which engine played it; DeepFin-ply filtering happens at lookup time in
     mine_game, which only ever queries plies it already knows are DeepFin's).
+    The CSV ``ply`` counts from the opening position, NOT from the PGN
+    mainline start; mine_game offsets by ``OpeningPlyCount`` when joining.
 
     Keyed by (round, ply) only, NOT per-source-file: one mining run is
     expected to cover a single match (one PGN + its one move log), where
@@ -335,6 +337,36 @@ def _deepfin_lost(game: chess.pgn.Game, color: chess.Color) -> bool:
     return result == ("0-1" if color == chess.WHITE else "1-0")
 
 
+def opening_ply_count(game: chess.pgn.Game) -> int:
+    """Book plies at the front of the PGN mainline (``OpeningPlyCount``).
+
+    match_vs_uci.py writes the opening history into the mainline ahead of the
+    engine moves and records its length here, while its ``--move-log-out``
+    CSV numbers plies from the opening position (CSV ply 1 = first ENGINE
+    move). Absent header -> 0 (legacy PGN, every mainline move was played).
+    A present but negative / non-integer / longer-than-the-game value is
+    refused: guessing would silently mis-join every eval and attribute book
+    moves to the engine.
+    """
+    raw = game.headers.get("OpeningPlyCount")
+    if raw is None:
+        return 0
+    text = raw.strip()
+    if not text.isdigit():
+        raise ValueError(
+            f"Round {game.headers.get('Round', '?')}: OpeningPlyCount={raw!r} "
+            f"is not a non-negative integer; refusing to guess the book length"
+        )
+    n = int(text)
+    total = sum(1 for _ in game.mainline_moves())
+    if n > total:
+        raise ValueError(
+            f"Round {game.headers.get('Round', '?')}: OpeningPlyCount={n} exceeds "
+            f"the {total}-ply mainline; refusing to guess the book length"
+        )
+    return n
+
+
 def _resolve_refute_uci(
     fens: list[str],
     ucis: list[str],
@@ -396,6 +428,7 @@ def mine_game(
     resolved or the post-refute terminal is rejected by the loader, falls
     back to the pre-blunder seed (still useful for the live SF-refute channel).
     """
+    book_plies = opening_ply_count(game)  # validated before any early return
     color = deepfin_color(game, name_needle)
     if color is None or _is_time_forfeit(game) or not _deepfin_lost(game, color):
         return []
@@ -409,11 +442,17 @@ def mine_game(
     ucis: list[str] = []
     df_evals: list[tuple[int, int, int]] = []
     own_by_ply: dict[int, int] = {}
+    # Replay EVERY mainline move (book included) so a seed keeps its real
+    # history, but only engine plies (j >= book_plies) are judged: a book move
+    # was not chosen by DeepFin. "Ours" is decided by the side to move on the
+    # replayed board, so it holds for either parity of book_plies and for a
+    # black-to-move SetUp root. The move-log CSV numbers plies from the
+    # opening position, so mainline index j is CSV ply j + 1 - book_plies.
     for j, move in enumerate(game.mainline_moves()):
         fen_before = board.fen()
         fens.append(fen_before)
         ucis.append(move.uci())
-        if board.turn == color:
+        if j >= book_plies and board.turn == color:
             before = sf_eval(fen_before, sf_nodes)
             board.push(move)
             after_stm = sf_eval(board.fen(), sf_nodes)
@@ -421,7 +460,7 @@ def mine_game(
                 # after_stm is opponent-POV (opponent to move) -> negate.
                 df_evals.append((j, before, -after_stm))
             if own_evals is not None:
-                own_white = own_evals.get((round_num, j + 1))
+                own_white = own_evals.get((round_num, j + 1 - book_plies))
                 if own_white is not None:
                     # score_cp_white is always White-POV; negate for Black.
                     own_by_ply[j] = own_white if color == chess.WHITE else -own_white

@@ -121,6 +121,35 @@ def test_resume_refuses_missing_or_different_history_at_identical_fen(
         match.load_match_resume(path, settings=settings, openings=[opening])
 
 
+def test_resume_of_pre_identity_log_refuses_with_restart_message(tmp_path: Path) -> None:
+    """A log written before opening-history identity is still refused, but the
+    message must not say "re-run without the changes" (impossible for keys the
+    old driver never wrote)."""
+    opening = _opening("g1f3 g8f6 f3g1 f6g8")
+    current = {"games": 2, "opening_history_version": 1,
+               "opening_panel_sha256": match._opening_panel_digest([opening])}
+    legacy = {"games": 2}
+    path = tmp_path / "games.jsonl"
+    with GameLogWriter(path, driver="match_vs_uci", settings=legacy) as writer:
+        writer.write_game({"game_index": 0, "a_is_white": True, "opening_index": 0,
+                           "opening_fen": opening.fen(), "result": "1/2-1/2", "score_a": 0.5})
+    with pytest.raises(SystemExit) as exc:
+        match.load_match_resume(path, settings=current, openings=[opening])
+    msg = str(exc.value)
+    assert "predates opening-history identity" in msg
+    assert "restart the match in a new log" in msg
+    assert "opening_panel_sha256" in msg
+    assert "Re-run without the changes" not in msg
+    # A log that HAS the identity keys but differs keeps the generic refusal.
+    other = tmp_path / "other.jsonl"
+    with GameLogWriter(other, driver="match_vs_uci",
+                       settings={**current, "opening_panel_sha256": "0" * 64}) as writer:
+        writer.write_game({"game_index": 0, "a_is_white": True, "opening_index": 0,
+                           "opening_fen": opening.fen(), "result": "1/2-1/2", "score_a": 0.5})
+    with pytest.raises(SystemExit, match="DIFFERENT settings"):
+        match.load_match_resume(other, settings=current, openings=[opening])
+
+
 class _Engine:
     def __init__(self, options: dict[str, chess.engine.Option]) -> None:
         self.options = options
