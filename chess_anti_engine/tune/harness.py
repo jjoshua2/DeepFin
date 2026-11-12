@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from chess_anti_engine.tune.startup_intent import (
+    refuse_strict_resume, validate_declared, validate_saved_overlay,
+)
+
 import csv
 import json
 import os
@@ -17,6 +21,7 @@ from chess_anti_engine.tune._utils import (
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.utils.config_yaml import strict_config_bool
+from chess_anti_engine.utils.sequential_selfplay import validate_sequential_selfplay_config
 import contextlib
 
 
@@ -493,6 +498,7 @@ def _patch_experiment_state_for_resume(
     drop param_space keys that aren't in any saved trial config (Ray rejects
     those on restore).
     """
+    refuse_strict_resume(param_space)
     with state_file.open("r", encoding="utf-8") as fh:
         experiment_state = json.load(fh)
 
@@ -515,6 +521,7 @@ def _patch_experiment_state_for_resume(
         if not isinstance(cfg, dict):
             continue
 
+        validate_saved_overlay(cfg, param_space)
         trial_changed = False
         for key, value in param_space.items():
             # Never inject or force-overwrite a construction-bound key (model
@@ -734,6 +741,7 @@ def _filter_param_space_against_tuner_pkl(
     experiment_state JSON we patched. Any key not in the pkl triggers
     ValueError; missing keys must be padded with None.
     """
+    refuse_strict_resume(param_space)
     import pickle as _pickle
     out = dict(param_space)
     try:
@@ -754,6 +762,7 @@ def _filter_param_space_against_tuner_pkl(
         for k in missing:
             out[k] = None
         print(f"[run_tune] Padding removed keys with None for Ray validation: {sorted(missing)}")
+    refuse_strict_resume(out)
     return out
 
 
@@ -1096,6 +1105,8 @@ def run_tune(
         GPU.  On an RTX 5090 with a small model, 10 trials at gpu=0.1 each
         fits comfortably in 32 GB VRAM.
     """
+    validate_declared(base_config | {"resume": resume})
+    validate_sequential_selfplay_config(base_config)
     try:
         import ray
         from ray import tune
@@ -1213,7 +1224,21 @@ def run_tune(
       # first result row is appended.
         _make_csv_logger_schema_safe()
 
-        return tuner.fit()
+        results = tuner.fit()
+        # Tuner.fit returns a ResultGrid even when trials errored. Returning it
+        # unchecked makes the CLI exit successfully after failed training.
+        if results.num_errors:
+            first_error = next(iter(results.errors), None)
+            message = (
+                f"Ray Tune returned {results.num_errors} errored trial(s); "
+                f"inspect {experiment_path} for trial error logs."
+            )
+            # Ray falls back to error.txt text when no pickled exception exists.
+            if isinstance(first_error, str):
+                message += f"\n{first_error}"
+            cause = first_error if isinstance(first_error, BaseException) else None
+            raise RuntimeError(message) from cause
+        return results
 
 
 # ---------------------------------------------------------------------------

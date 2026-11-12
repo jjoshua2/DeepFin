@@ -1,0 +1,724 @@
+{
+  "schema": "epoch2_rl_first_experiment_compact_readout_v1",
+  "record": "2026-11-11-epoch2-rl-transition",
+  "verdict": "VALID_COMPLETE_CONFIRMATION_INCONCLUSIVE_NO_CONFIRMED_GAIN",
+  "broader_research_goal_complete": false,
+  "artifact_root": "~/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1",
+  "donor_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+  "source_pins": {
+    "first_control_and_sole_confirmation": "08c57166e93fde43f061dd63f039a13a8f92a970",
+    "recovered_control_and_screen": "6d244aa0b7bac09987699cb9f2d4a93da5866621",
+    "prior_local_4PR_composition": "39967df3b73e69a64ba70dba5008a125e746f5ef",
+    "prior_main": "c9d5cc38127cb9ef6919c3f6293538a86575de83",
+    "adopted_main_refresh": "77f0aa0480c2af50b84a92a901ade3bf880ba87d",
+    "local_code_composition_before_final_record": "ca38f96baebcef89f61ec4a7c2299a1834827e9f",
+    "accepted_PR_heads": {
+      "1219": "08c57166e93fde43f061dd63f039a13a8f92a970",
+      "1220": "741a33647f9fad9d648009cb902686a2a1452770",
+      "1223": "4d3cfbcb2506dc135bd4d638e8812f54865b29ab",
+      "1224": "aa2c771a4699f3c1db3e34260e1816e0c8841467"
+    },
+    "merge_commit_ancestry_preserved": true,
+    "both_experiment_runtime_pins_unchanged": true
+  },
+  "disposable_CUDA_qualification": {
+    "updates": 10,
+    "batch_size": 256,
+    "samples": 2560,
+    "donor_worker_tensor_keys_each": 494,
+    "worker_forward_max_abs_diff": 0,
+    "prior_SF_exclusive_parameters_inert": 17,
+    "qualification_trajectory_adopted": false,
+    "fixture_scope": "41 historical rows explicitly repeated; hardware/optimizer qualification only, not independent data or online target quality"
+  },
+  "first_control": {
+    "candidate_sha256": "d9c1f3d3685013ce123ea97cd1007a99f15a525d87c186b3209fdcc73360abad",
+    "updates": 40,
+    "samples": 10240,
+    "rows": 5036,
+    "producer_games": 65,
+    "scientific_health": "ACCEPTED",
+    "adopted": false,
+    "full_cooldown_claim": false,
+    "screen": {
+      "WDL": {
+        "wins": 91,
+        "draws": 83,
+        "losses": 82
+      },
+      "statistics": {
+        "counts": {
+          "WW": 12,
+          "WD_DW": 31,
+          "DD_WL": 47,
+          "LD_DL": 30,
+          "LL": 8
+        },
+        "pairs": 128,
+        "games": 256,
+        "score_integer_quarter_pair_units": 265,
+        "score": 0.517578125,
+        "score_se": 0.023230896100532483,
+        "score_interval_95": [
+          0.4720455686429563,
+          0.5631106813570437
+        ],
+        "interval_status": "available_normal_approximation",
+        "screen_eligible": true,
+        "confirmation_gain": false
+      },
+      "all_games_rules_terminated": true,
+      "raw_artifact_identities": [
+        {
+          "artifact": "paired-screen-execution-v1/terminal.json",
+          "sha256": "a9e13d802fda7e1ef8f0164fd58eb0deb43ddae639b923de796a44d2c7348dc7"
+        },
+        {
+          "artifact": "evaluation-protocol-v1/screen/games.jsonl",
+          "sha256": "78b0c542d5630aa80f532bfb0f5634a18afd158b9eb95e4549650f79f3e8542c"
+        },
+        {
+          "artifact": "evaluation-protocol-v1/screen/games.pgn",
+          "sha256": "df270d2ed960575c7db492a90b52ceb46e63f5384b85cd63255ee6cfddbb631b"
+        },
+        {
+          "artifact": "evaluation-protocol-v1/screen/result.jsonl",
+          "sha256": "efb9088455b72ede4753096cb0e978ef115b707946656ea7b72e9574fc17b76f"
+        }
+      ]
+    }
+  },
+  "failed_856_attempt": {
+    "updates": 856,
+    "rows": 37803,
+    "producer_games": 515,
+    "endpoint_sha256": "5809fb3a62e1beefcb623cc5051f869cb8a1af9c4727ad467514d9d885e95234",
+    "health": "REJECTED",
+    "current_games_windows6_and7": [
+      63,
+      63
+    ],
+    "reported_matching_games_windows6_and7": [
+      64,
+      64
+    ],
+    "cause": "first previous-model shard counted before zero-quota exclusion",
+    "Elo_candidate_banked_or_played": false,
+    "scientific_inference": "unqualified execution, not a negative Elo result"
+  },
+  "recovered_control": {
+    "candidate_sha256": "f2f5444e6b02b8bb599f391bf7283a868d1b84c8b2ab29290dae464ba4cf6856",
+    "updates_per_window": [
+      38,
+      77,
+      117,
+      128,
+      128,
+      128,
+      128,
+      128
+    ],
+    "updates": 872,
+    "samples": 223232,
+    "rows": 40999,
+    "current_matching_games_per_window": [
+      64,
+      64,
+      65,
+      65,
+      64,
+      64,
+      64,
+      64
+    ],
+    "current_games": 514,
+    "stale_games_retained_in_replay": 2,
+    "stale_rows_retained_in_replay": 166,
+    "producer_claimed_games": 516,
+    "all_checkpoint_tensor_keys_finite": 494,
+    "changed_keys_vs_donor_each": 477,
+    "initial_step0_exact_donor": true,
+    "observed_worker_metadata_records": 33,
+    "observed_collection_coverage": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "last_served_checkpoint_number": 7,
+    "last_served_step": 744,
+    "final_step": 872,
+    "final_checkpoint_republished_or_served_claim": false,
+    "scientific_health": "ACCEPTED",
+    "adopted": false,
+    "screen": {
+      "status": "VALID_COMPLETE_RECOVERY_SCREEN_INELIGIBLE",
+      "WDL": {
+        "W": 78,
+        "L": 110,
+        "D": 68
+      },
+      "terminations": {
+        "rules": 256
+      },
+      "pairs": 128,
+      "games": 256,
+      "pentanomial": [
+        11,
+        17,
+        51,
+        27,
+        22
+      ],
+      "score_numerator_over512": 224,
+      "score": 0.4375,
+      "SE": 0.025414864830069602,
+      "normal95_interval": [
+        0.3876868649330636,
+        0.4873131350669364
+      ],
+      "screen_eligible": false,
+      "selected_by_existing_rule": "original40",
+      "selected_original_score_numerator_over512": 265,
+      "selected_candidate_sha256": "d9c1f3d3685013ce123ea97cd1007a99f15a525d87c186b3209fdcc73360abad",
+      "strength_claim": false
+    }
+  },
+  "selection": {
+    "selected_id": "original40",
+    "selected_candidate_sha256": "d9c1f3d3685013ce123ea97cd1007a99f15a525d87c186b3209fdcc73360abad",
+    "registered_rule": "Exactly two HEALTH-qualified endpoints; complete128-pair screens; higher eligible integer score strictly>0.5 wins; tie original40; failed856endpoint excluded; at most one untouched500-pair confirmation.",
+    "selected_before_confirmation": true,
+    "both_confirmation_directories_checked_absent_before_play": true,
+    "maximum_confirmation_candidates": 1
+  },
+  "sole_confirmation": {
+    "candidate_sha256": "d9c1f3d3685013ce123ea97cd1007a99f15a525d87c186b3209fdcc73360abad",
+    "WDL": {
+      "wins": 315,
+      "draws": 371,
+      "losses": 314
+    },
+    "statistics": {
+      "counts": {
+        "WW": 47,
+        "WD_DW": 108,
+        "DD_WL": 190,
+        "LD_DL": 109,
+        "LL": 46
+      },
+      "pairs": 500,
+      "games": 1000,
+      "score_integer_quarter_pair_units": 1001,
+      "score": 0.5005,
+      "score_se": 0.012146793370200908,
+      "score_interval_95": [
+        0.4766922849944062,
+        0.5243077150055937
+      ],
+      "interval_status": "available_normal_approximation",
+      "screen_eligible": true,
+      "confirmation_gain": false
+    },
+    "decision": "inconclusive",
+    "confirmed_gain": false,
+    "terminations": {
+      "rules": {
+        "games": 1000,
+        "candidate_wins": 315,
+        "draws": 371,
+        "candidate_losses": 314
+      },
+      "max_plies": {
+        "games": 0,
+        "candidate_wins": 0,
+        "draws": 0,
+        "candidate_losses": 0
+      }
+    },
+    "all1000_JSONL_PGN_games_and500_pairs_validated": true,
+    "no_extension_pooling_or_second_confirmation": true,
+    "GPU_owner_stage_seconds": 2977.595484438003,
+    "CPU_reader_owner_stage_seconds": 26.184312171011698,
+    "both_owned_process_groups_closed": true,
+    "raw_artifact_identities": [
+      {
+        "artifact": "paired-confirmation-execution-v1/terminal.json",
+        "sha256": "81713289bfbfa1603d3bb151d693a292ab6b866f94233f246afdeaae6fe06532"
+      },
+      {
+        "artifact": "evaluation-protocol-v1/confirmation/games.jsonl",
+        "sha256": "2bb020f34f9f596608730279c47aae260953aafb49b71c365e3a71c97de8044e"
+      },
+      {
+        "artifact": "evaluation-protocol-v1/confirmation/games.pgn",
+        "sha256": "68209dfa97af8859217b57867546048b00286d595c64c17dfbec18cbe909c37e"
+      },
+      {
+        "artifact": "evaluation-protocol-v1/confirmation/result.jsonl",
+        "sha256": "3acd3afefdf67fabd40bbed0a66e633b20dfa9f53e36d2e00fd86a5b416648e1"
+      }
+    ]
+  },
+  "training_diagnosis": {
+    "holdout_drift_measured": false,
+    "test_replay_all_rows": 0,
+    "loss_fit_is_strength_evidence": false,
+    "hard_clip_scope": "AdamW auxiliary group only; matrix Aurora outside clip",
+    "recovery_hard_clipped_updates": 856,
+    "recovery_updates": 872,
+    "hard_clip_fraction": 0.981651376146789,
+    "soft_categorical_fraction_of_aggregate_loss_reduction_approx": 0.901,
+    "causal_cap_clip_LR_teacher_or_sampler_remedy_established": false,
+    "per_trial_random_streams_differ": true
+  },
+  "separate_cap40_proposal": {
+    "status": "UNRUN_UNBOUND_PREPARATION_ONLY_ADMITTED",
+    "prospective_conditional_draft_existed_before_confirmation_outcome": true,
+    "only_intended_recipe_change": "train_steps128_to40",
+    "max_updates_per_window": 40,
+    "max_total_updates_eight_windows": 320,
+    "fresh_source_ID_panels_qualified": false,
+    "GPU_training_admitted": false,
+    "extension_of_old_selection_or_holdout": false,
+    "requires_separate_preregistration_readout": true
+  },
+  "compute": {
+    "closed_unique_owner_stages": 23,
+    "classification_counts": {
+      "GPU_STAGE_ELAPSED": 9,
+      "CPU_ONLY": 14,
+      "UNKNOWN": 0
+    },
+    "whole_owner_stage_seconds": {
+      "GPU_STAGE_ELAPSED": 12137.038439965982,
+      "CPU_ONLY": 2048.218279347988,
+      "UNKNOWN": 0.0
+    },
+    "GPU_stage_interval_overlap_recorded": false,
+    "all_previous21_stage_receipts_unchanged": true,
+    "stages": [
+      {
+        "name": "cpu-wiring-execution-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 455.265288021008,
+        "source_revision": "8252a8fdf94374700326e470829a1674eebce210",
+        "classification": "CPU_ONLY",
+        "terminal_sha256": "96ff35130bca4b94d85c0b29d8983a39b6f3e08d54cfab99387a5106550c5b5b",
+        "process_receipt_sha256": "615d1ca5fe74b1eb2045cb7422295e9aee586dfaafb9f0e71ec592ea1ebbd371",
+        "command_sha256": "9f04027b1c9016b5cf41f73983b8142f91fb3da24474c1108db2831fa1e7c0ef"
+      },
+      {
+        "name": "cpu-wiring-execution-v2",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 203.04126203400665,
+        "source_revision": "2da5c6054ae54a6daee024eef79d2cc0413fb1b7",
+        "classification": "CPU_ONLY",
+        "terminal_sha256": "9608cc90a8a512f5bcd72d8834925bd8f82b064edd8fbd66dd36b1a54a7e263d",
+        "process_receipt_sha256": "b861d7016785f8992da8e2b22b21efa7bbe89ba0ac48cd44721045d1fe28fd47",
+        "command_sha256": "567f4dbf52509fc5a69d7bef7bf0f03f84f5f6326696104acacd9f7604ba9492"
+      },
+      {
+        "name": "dose-eight-health-execution-v1",
+        "owner_status": "FAILED",
+        "returncode": 2,
+        "wall_seconds": 65.30047992497566,
+        "source_revision": "08c57166e93fde43f061dd63f039a13a8f92a970",
+        "classification": "CPU_ONLY",
+        "terminal_sha256": "9b2af453987fabe360f43c155adc36d174d42ea39f3ecfa9c8fa8f4c0e2d76d2",
+        "process_receipt_sha256": "d650d5854c85c8f6a6ecfee16430166a24450d2be3d9de9c28d772602c5c3380",
+        "command_sha256": "4083c8d57c05bddbeaf929aab8e41f7e936d0e3d80bf89c64e5ff645b5d8f494"
+      },
+      {
+        "name": "dose-only-eight-window-execution-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 3907.362615997001,
+        "source_revision": "08c57166e93fde43f061dd63f039a13a8f92a970",
+        "classification": "GPU_STAGE_ELAPSED",
+        "terminal_sha256": "bb38cfb508e46a1a8abdca9440963fce1e71bec2fbabab6130f76317f9525387",
+        "process_receipt_sha256": "4a9aa6f9fb957b7a9fa7d3812a04f798271b0f9e24f4bc05fd56cc1dfa9b8dcc",
+        "command_sha256": "35851a1aaa52d9d59faccbaabda038758b9bd5b25bbd7ee39918134193098543"
+      },
+      {
+        "name": "gpu-runtime-qualification-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 36.22159093400114,
+        "source_revision": "bd1ae0cbe7d863dbb3dd124034b0bbe7090a4a99",
+        "classification": "GPU_STAGE_ELAPSED",
+        "terminal_sha256": "6b03709a3251219c1d59cd23f3ac4ea53894c0279b9d9c8a5d27a0f3613e3d6b",
+        "process_receipt_sha256": "037443de50c5538347143b0bd0e443514032a04742b8b63d5e435be1971b1a78",
+        "command_sha256": "acc7f0b60074275c2a6ac684f2d631fc031185864cb3b5ba16b080a0dfe63490"
+      },
+      {
+        "name": "paired-confirmation-execution-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 2977.595484438003,
+        "source_revision": "08c57166e93fde43f061dd63f039a13a8f92a970",
+        "classification": "GPU_STAGE_ELAPSED",
+        "terminal_sha256": "81713289bfbfa1603d3bb151d693a292ab6b866f94233f246afdeaae6fe06532",
+        "process_receipt_sha256": "5be5881e70ab0a3b2c4fbd01fed1253ea03b3ac0df7bfda06d41e6d9be8c6f61",
+        "command_sha256": "4b49992618f9e5eeb31b5a1965724be9e2354198a7281ebbe9523275f87f2ab9"
+      },
+      {
+        "name": "paired-confirmation-readout-execution-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 26.184312171011698,
+        "source_revision": "08c57166e93fde43f061dd63f039a13a8f92a970",
+        "classification": "CPU_ONLY",
+        "terminal_sha256": "c4711a70913e93dbf18936e3785ebe8cea441e34cb8822707aa19d6727dd9477",
+        "process_receipt_sha256": "af6bde918a1bbbb2a7520f25d5b1d5c091476fad65bd0b1f449cfe3d984eeaad",
+        "command_sha256": "c7d00fc726d9fff759b6ff46b3eda2421d958eee68000507934fea194d143460"
+      },
+      {
+        "name": "paired-screen-execution-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 905.6098195690138,
+        "source_revision": "08c57166e93fde43f061dd63f039a13a8f92a970",
+        "classification": "GPU_STAGE_ELAPSED",
+        "terminal_sha256": "a9e13d802fda7e1ef8f0164fd58eb0deb43ddae639b923de796a44d2c7348dc7",
+        "process_receipt_sha256": "eaf1477e7e72b71096c1a2da905b41b5d11071a8d8de8da78ebe53549e160391",
+        "command_sha256": "7eda66a72cc506ca35fdba9e54f3b946c1fb5c206004623abd85a3edb14ee142"
+      },
+      {
+        "name": "paired-screen-readout-execution-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 12.168343314988306,
+        "source_revision": "08c57166e93fde43f061dd63f039a13a8f92a970",
+        "classification": "CPU_ONLY",
+        "terminal_sha256": "737f4d16de34344051c89d4f47c16613983e11a48847cf3efe005c7f69f204c7",
+        "process_receipt_sha256": "baa186daa9a00351af18dbf433c8ecb64e284bc329baafce868b8e8e3a2bcb38",
+        "command_sha256": "6425db16812c1b39d2814b4268c3b9388c155dadf84fa901027d657c931ead8b"
+      },
+      {
+        "name": "policy-control-cuda-execution-v2",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 38.220479370007524,
+        "source_revision": "08c57166e93fde43f061dd63f039a13a8f92a970",
+        "classification": "GPU_STAGE_ELAPSED",
+        "terminal_sha256": "d115a80d9190cb4c878b9bbbcbdcf6308f80779b23d32552da1f2a952d62599f",
+        "process_receipt_sha256": "bf5504d458dc8da6dbee33a3176f11426781e1d47ab1be25bdaedc4f381c07de",
+        "command_sha256": "72538bdd0caf54bee83eed08e61480162dd575c86a13457c41794c2ece3ef60f"
+      },
+      {
+        "name": "policy-control-health-execution-v3",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 12.153930091997609,
+        "source_revision": "08c57166e93fde43f061dd63f039a13a8f92a970",
+        "classification": "CPU_ONLY",
+        "terminal_sha256": "37bd1b06c1a134939f01c607b3d1fdbb0a9ce18e6053febe6a1dafe7d73f7e99",
+        "process_receipt_sha256": "074b38829c71ab27b53062fda41b3061d2fd10ceaa5213b3e560dee96a629f32",
+        "command_sha256": "c6fa44338e916fc7cb718c47ba7a91226065f1c8337b73923f36fe5e16990f2a"
+      },
+      {
+        "name": "policy-control-startup-failure-health-audit-v1",
+        "owner_status": "FAILED",
+        "returncode": 2,
+        "wall_seconds": 5.150963012012653,
+        "source_revision": "08c57166e93fde43f061dd63f039a13a8f92a970",
+        "classification": "CPU_ONLY",
+        "terminal_sha256": "7f5da83a4c2e7ba6fe33e384f9d6c37a11913f0b6b73dfcb65ae2c63ba0c7cb7",
+        "process_receipt_sha256": "eec32b820a0be2ad7905954942943d5b72dc422a12e1caa4a73a0e6bb15a3d0e",
+        "command_sha256": "5dd3d1ff601c9d05b7199ba7f0270a4b428de751b2a7fa245ce9a0bfb55995ed"
+      },
+      {
+        "name": "policy-focused-pilot-execution-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 17.180420721997507,
+        "source_revision": "08c57166e93fde43f061dd63f039a13a8f92a970",
+        "classification": "GPU_STAGE_ELAPSED",
+        "terminal_sha256": "18f88e00c8c656b55e6f79ea609498821d23a7d25ba0d93d7a3c31d8b2469608",
+        "process_receipt_sha256": "960e65c878f41caaa8edb62d406aa74ffa383fa858852f8228a40edb1337e192",
+        "command_sha256": "a65a388dc3d70cd8380a2a8a9a19c7e5b11951f388ad153223e35d60ba07631c"
+      },
+      {
+        "name": "policy-focused-pilot-execution-v2",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 369.9626257789787,
+        "source_revision": "08c57166e93fde43f061dd63f039a13a8f92a970",
+        "classification": "GPU_STAGE_ELAPSED",
+        "terminal_sha256": "660463269ee035f2b16c63d85246984cd7cd5f37770dc51051d05bf97a880b89",
+        "process_receipt_sha256": "7275848cb65e7916ab491b5313b070ffded5cbc1906c829c25b3e557426a0470",
+        "command_sha256": "f8960b4dc62270944f23636b429f2fca08815fe9b2128c4ccdf5edfe9fba0d92"
+      },
+      {
+        "name": "prev-quota-recovery-execution-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 2924.759330350993,
+        "source_revision": "6d244aa0b7bac09987699cb9f2d4a93da5866621",
+        "classification": "GPU_STAGE_ELAPSED",
+        "terminal_sha256": "fcb8a202936a33c35fea3e42cbbbb1f9154febafe87717da71890007a39dc4d2",
+        "process_receipt_sha256": "2c723bb1899bab76671afb6d4b1c77d6ef61d384c98b3c9f62f7e37e8f0d09fd",
+        "command_sha256": "ca64678016bdd3d71200bb66f556baed4c15f1b0aa08f3e446eb4009938675f0"
+      },
+      {
+        "name": "prev-quota-recovery-health-execution-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 49.26351035598782,
+        "source_revision": "6d244aa0b7bac09987699cb9f2d4a93da5866621",
+        "classification": "CPU_ONLY",
+        "terminal_sha256": "4348326cf5eb267fd41002d6f856fc2e6253e944c8976b073bc029e08a73b35f",
+        "process_receipt_sha256": "c12a37e8ae86db16e3cb04bc8bfca6acbb8ed38cef5c0466368d32608cb5b2fb",
+        "command_sha256": "bbe4555d1b396e27430299fbf636839a91d4a19e45da91c6beebe31a3281e7eb"
+      },
+      {
+        "name": "ray-runtime-qualification-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 12.165222484996775,
+        "source_revision": "bd1ae0cbe7d863dbb3dd124034b0bbe7090a4a99",
+        "classification": "CPU_ONLY",
+        "terminal_sha256": "7917081d1944f18185c73bf5c52fcaa0997b13e3be4e4f3ffe9d4f1df25d1692",
+        "process_receipt_sha256": "c49e031740da70f92aff81e6a9402ac7d5ffb81b47ee02c0707fad81c95dc895",
+        "command_sha256": "38ef03a710d469b0bc2961d670b7c9d84efb9af385e8415dde08f38928d54761"
+      },
+      {
+        "name": "recovery-paired-screen-execution-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 960.126072805986,
+        "source_revision": "6d244aa0b7bac09987699cb9f2d4a93da5866621",
+        "classification": "GPU_STAGE_ELAPSED",
+        "terminal_sha256": "d8117ec59c155dafd52de316ec08aaa3794c11d3e7cba27170a336f3481c75a2",
+        "process_receipt_sha256": "8db3731b3bb67394e0112616a9e84e3cd4f9e159a338ae41d1945c1dde925656",
+        "command_sha256": "b8b01264439fe0adc0ac22823655d484dc564ef42892cf740d490af5b1e7bdc8"
+      },
+      {
+        "name": "recovery-paired-screen-readout-execution-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 10.148386038985336,
+        "source_revision": "6d244aa0b7bac09987699cb9f2d4a93da5866621",
+        "classification": "CPU_ONLY",
+        "terminal_sha256": "a03d19b4711069cff3efdde79a386e91c7b82cadf71b3f0509500cb497a56a5e",
+        "process_receipt_sha256": "be186b8de451c954bd35d5c300d1dbef619108f546ca8a4747020190ea806b79",
+        "command_sha256": "ebefce686c446b19bbb6c6afe7df5506672fe5b1f8b4a0a1dd73ea1210bba969"
+      },
+      {
+        "name": "search-mechanism-execution-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 1140.805911285017,
+        "source_revision": "2da5c6054ae54a6daee024eef79d2cc0413fb1b7",
+        "classification": "CPU_ONLY",
+        "terminal_sha256": "8ae63791f278e6cb5a3b56ea7de6bea2c220554105bbf09df3f9b8aa4c256435",
+        "process_receipt_sha256": "c15109652cba91da113484ac33f9d86a7826c5a8626a8055c3e7864c678709d5",
+        "command_sha256": "d1e8dc08b51c589353672f024f7ff91feb7e317a2dc8e852ef7fcc6c9cbfb0fd"
+      },
+      {
+        "name": "sf-label-quality-execution-v1",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 8.144496430002619,
+        "source_revision": "5250bc2053c98cd3755df210bf7fffd2f3046745",
+        "classification": "CPU_ONLY",
+        "terminal_sha256": "c48b1a93d034c33e705d38b966aced93e75c85e3e633e56f0348c8cae68eb1e8",
+        "process_receipt_sha256": "d3164be2ce10091c2df4756322bc840ff8bffc7c3b11f97aef212092d5be8f83",
+        "command_sha256": "728a2d7102241df3e3daa5048cd30bbfc8743227fa8478640ca8da7ba196c438"
+      },
+      {
+        "name": "sf-label-quality-execution-v2",
+        "owner_status": "FAILED",
+        "returncode": 1,
+        "wall_seconds": 1.137852309999289,
+        "source_revision": "5250bc2053c98cd3755df210bf7fffd2f3046745",
+        "classification": "CPU_ONLY",
+        "terminal_sha256": "3905b2bd096ec2ebbf6f7bd1a2ab88decac1566aa6974861af583ad0e0b66de4",
+        "process_receipt_sha256": "6ef70c72a337c85fb87e4bd3469035abf51687349ab55845d923b14f41db95b3",
+        "command_sha256": "e23d412dfeb4eae1df8835bc755704863109ed408732dd07aab772c8eef7325a"
+      },
+      {
+        "name": "sf-label-quality-execution-v2b",
+        "owner_status": "PASS",
+        "returncode": 0,
+        "wall_seconds": 47.288321872998495,
+        "source_revision": "5250bc2053c98cd3755df210bf7fffd2f3046745",
+        "classification": "CPU_ONLY",
+        "terminal_sha256": "2a7f2b38bd58cf8e5efccadf38cbb1ca64914737331ef2d9ca4992cc5423dd33",
+        "process_receipt_sha256": "2fe6f093551cc88093d4a2e6b6517f19c44b8d4520b1a3cd74f49fb792ac6954",
+        "command_sha256": "13d16ccf4e71117c20ee2ec1bbf81a9b8e07489173414065f1fd1e722fc60ee7"
+      }
+    ],
+    "additional_known_CPU_validation_seconds": {
+      "first_402_checks": 36.877,
+      "updated_568_checks": 36.092
+    },
+    "total_CUDA_active_seconds_measured": false,
+    "complete_CPU_total_claim": false,
+    "failed_startup_and_unqualified_run_included": true
+  },
+  "integration_validation": {
+    "prior_source_composition_review_sha256": "42631e35a754c965eb9e8ed3536c0bdf893499218d8f3f7c46be6efa1359df8c",
+    "first_focused_CPU_tests": {
+      "passed": 402,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "seconds": 36.877
+    },
+    "updated_77f_focused_CPU_tests": {
+      "tests": 568,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": 36.092,
+      "Torch_threads": 2,
+      "CUDA_hidden": true,
+      "xml_sha256": "7d0dbe868b99842cc68bfb2aa8a0133f2953d5fcc40a544515c3f813c6ed1b6b"
+    },
+    "all263_frozen_bound_settings_and_effective_recipe_preserved": true,
+    "frozen_absolute_pause_marker_unchanged": true,
+    "synthetic_blank_pause_representation": "emptystring_toNone; no frozen config rewritten",
+    "full_local_lint": {
+      "exit_code": 1,
+      "Ruff": "PASS",
+      "Vulture": "no findings",
+      "basedpyright": "3 unchanged-base _posixshmem resolution errors, no suppressions"
+    },
+    "native_build_inputs_and5SOs_unchanged": true,
+    "final_published_head_remote_CI": "not run before publication; required on actual final aggregate head"
+  },
+  "limits": [
+    "Complete fixed panels and paired normal intervals qualify only this donor-relative comparison; no current external-engine/public rating benchmark or broader RL claim.",
+    "No screen/confirmation pooling, favorable extension, second confirmation or alternate heldout candidate.",
+    "HEALTH is numerical/provenance evidence, not strength; tensor results come from hash-bound executed readers, not new deserialization for this publication.",
+    "Source/byte hashes, worker argv/manifest observations and owned cleanup do not prove every game consumed independently inspected model bytes.",
+    "Quantized target checks are not exact producer algebra or per-row exposure; whole-replay generation metadata and holdout drift are unmeasured.",
+    "Zero direct-SF loss weights do not remove SF-shaped opponents, diagnostics, thinning or replay priorities; exclusive-gradient evidence is prior disposable CUDA scope only.",
+    "Fresh trial RNG, trajectory/replay composition and source admission correction preclude a matched-RNG causal dose/cap attribution.",
+    "GPU-intended owner-stage elapsed includes generation/CPU/Stockfish/I/O/wait/startup/cleanup/failed attempts; not CUDA-active/utilization/exclusive allocation or lifetime compute.",
+    "CPU owner sums plus separately known validations are not complete CPU accounting; unreceipted setup/build/lint/review/remote-CI/idle and pretraining have unknown or excluded duration.",
+    "The first experiment is closed without confirmed gain; the larger research goal remains open. A separate cap40 proposal is unrun/unbound with preparation only admitted, not GPU training."
+  ],
+  "receipt_identities": {
+    "cuda-actual-independent-review-v2/review.json": {
+      "artifact": "cuda-actual-independent-review-v2/review.json",
+      "sha256": "f11d4cb650eac3d8c4c7ec030e87111c9ba30c4dbe306d34e8b35f1d38589099"
+    },
+    "policy-control-actual-health-independent-review-v2-ac566990/review.json": {
+      "artifact": "policy-control-actual-health-independent-review-v2-ac566990/review.json",
+      "sha256": "eb32a84b0e1a27eb7c8a326c817b7ce6514475e21cf27380cf710d094fbd6c1c"
+    },
+    "policy-focused-health-preparation-v3-transport/health-readout.json": {
+      "artifact": "policy-focused-health-preparation-v3-transport/health-readout.json",
+      "sha256": "e7d3b2d3777ed09af7cbd39ddb2ad295a6dc1cd109746bb9fae6a72a24ca7e25"
+    },
+    "scientific-candidate-v1/manifest.json": {
+      "artifact": "scientific-candidate-v1/manifest.json",
+      "sha256": "103d23fb762e1fdba76d0a6792a456c520f241e4c431f1f69b9919db4b30fe77"
+    },
+    "evaluation-readout-preparation-v1/screen-readout.json": {
+      "artifact": "evaluation-readout-preparation-v1/screen-readout.json",
+      "sha256": "2bd039cc272bdbeefcf82154314db3999f2aaf1ba180860f1ac758593fb51b5f"
+    },
+    "first-screen-science-independent-v1/review.json": {
+      "artifact": "first-screen-science-independent-v1/review.json",
+      "sha256": "2c69a6f52268210717fd2b018ea8813475ea263616ecf8d5828babe1f0365530"
+    },
+    "dose-eight-actual-health-independent-review-v1/review.json": {
+      "artifact": "dose-eight-actual-health-independent-review-v1/review.json",
+      "sha256": "07ade8f9e82dc7ff229c82651040de0700618356e6fdb3fcd7e1dfa240d01502"
+    },
+    "dose-eight-quota-cause-v1/cause.json": {
+      "artifact": "dose-eight-quota-cause-v1/cause.json",
+      "sha256": "2d8668b227250bdaa634dde8399f366e55ffd04a86280ad27bccf71dd1bad5f3"
+    },
+    "prev-quota-recovery-actual-health-independent-review-v1/review.json": {
+      "artifact": "prev-quota-recovery-actual-health-independent-review-v1/review.json",
+      "sha256": "64db02e7aa3228c7758d29a10cc7cc72d4f2f55cf9c5e4878b5a7bd9f54fafe8"
+    },
+    "prev-quota-recovery-health-preparation-v1/health-readout.json": {
+      "artifact": "prev-quota-recovery-health-preparation-v1/health-readout.json",
+      "sha256": "5e93fd7907cdbe39e233d2004d8a499cb5ac8f101ac941a1946310f8000050be"
+    },
+    "recovered-eight-window-candidate-v1/manifest.json": {
+      "artifact": "recovered-eight-window-candidate-v1/manifest.json",
+      "sha256": "915cede49aa0f6e14eecdb4f6182155c206c8667cf02a427067c310511e84ec9"
+    },
+    "recovery-arena-actual-binding-independent-review-v1/review.json": {
+      "artifact": "recovery-arena-actual-binding-independent-review-v1/review.json",
+      "sha256": "37f14bd8c05f0529022c12805bed230ae46a330add10a32ff19f6494393880e8"
+    },
+    "recovery-screen-actual-independent-review-v1/review.json": {
+      "artifact": "recovery-screen-actual-independent-review-v1/review.json",
+      "sha256": "ff1c0746bec5aebc62e69b1697191e59a0a559b7f7883712c5d6e660df1c55f3"
+    },
+    "final-candidate-selection-v1/manifest.json": {
+      "artifact": "final-candidate-selection-v1/manifest.json",
+      "sha256": "159a6a7dc7c749049f9b8f08f6d9cb66d669885d3ff58d19fa7c1ac5fd684415"
+    },
+    "evaluation-readout-preparation-v1/confirmation-readout.json": {
+      "artifact": "evaluation-readout-preparation-v1/confirmation-readout.json",
+      "sha256": "cc3c3ba953b59fbc5128478f8d7c1b237bc39eb1e6319d4f1b3c47770f3d05a6"
+    },
+    "sole-confirmation-actual-independent-review-v1/review.json": {
+      "artifact": "sole-confirmation-actual-independent-review-v1/review.json",
+      "sha256": "cc1dd52c7b5d9539fb01edf81f0e2ced1fb501ec87cc1dec190705f8f1563c73"
+    },
+    "compute-accounting-final-v1/inventory.json": {
+      "artifact": "compute-accounting-final-v1/inventory.json",
+      "sha256": "9fd914e4efdab12583ab9ba7d08d61f363885d8a0baf1ad2c546cc70d800be6e"
+    },
+    "compute-accounting-final-v1/summary.md": {
+      "artifact": "compute-accounting-final-v1/summary.md",
+      "sha256": "74b98c85542ab2ddb51c400d5b59f3d2be5bed233aec9e2bf7e8d22e02b19697"
+    },
+    "evaluation-protocol-v1/manifest.json": {
+      "artifact": "evaluation-protocol-v1/manifest.json",
+      "sha256": "fcc31a747917725d95b7878797683304089ea3496899faf48215bf4e9d884559"
+    },
+    "evaluation-protocol-prev-quota-recovery-v1/manifest.json": {
+      "artifact": "evaluation-protocol-prev-quota-recovery-v1/manifest.json",
+      "sha256": "b14b5a43339becbf7b378a79ce85c8ff773302a1d11e5090b1b7982101396640"
+    },
+    "integration-independent-review-v1/review.json": {
+      "artifact": "integration-independent-review-v1/review.json",
+      "sha256": "42631e35a754c965eb9e8ed3536c0bdf893499218d8f3f7c46be6efa1359df8c"
+    },
+    "integration-main77f-preparation-v1/validation.json": {
+      "artifact": "integration-main77f-preparation-v1/validation.json",
+      "sha256": "4dbdd463b68f2a3e285d38165d62f443973c44f5ee648497c42b8dd79d0ff864"
+    },
+    "integration-main77f-preparation-v1/effective-config-qualification.json": {
+      "artifact": "integration-main77f-preparation-v1/effective-config-qualification.json",
+      "sha256": "beeea264f90bbc8824699b95fe0e5bac1785c26acee41537a853b6933d09e046"
+    },
+    "integration-main77f-preparation-v1/focused-tests.xml": {
+      "artifact": "integration-main77f-preparation-v1/focused-tests.xml",
+      "sha256": "7d0dbe868b99842cc68bfb2aa8a0133f2953d5fcc40a544515c3f813c6ed1b6b"
+    },
+    "integration-main77f-preparation-v1/full-lint.log": {
+      "artifact": "integration-main77f-preparation-v1/full-lint.log",
+      "sha256": "15a08bd1c1e668f25c82bde0bfe8428ba7ab8f9d868f65f784ae03e68fe70fd3"
+    },
+    "completed-training-dose-diagnosis-v1/readout.md": {
+      "artifact": "completed-training-dose-diagnosis-v1/readout.md",
+      "sha256": "a4cec29974d05011d61d6ee3305a153a40dc6fce5a72214d4c90c745db13cf74"
+    },
+    "conditional-cap40-proposal-v1/DRAFT.md": {
+      "artifact": "conditional-cap40-proposal-v1/DRAFT.md",
+      "sha256": "42e072b3147edc86f364848c6ac92f1bfa60fe582c90b6c2842db55f9502ff96"
+    },
+    "long-term-strength-direction-v2.md": {
+      "artifact": "long-term-strength-direction-v2.md",
+      "sha256": "4b4f61da8d7e68466b65a033b5a1870e6fb3853d8338b276aad52ec43c9eb91c"
+    }
+  }
+}

@@ -65,6 +65,9 @@ def test_feature_dropout_reload_source_contract():
         assert trainer._feature_group_dropout == before
     reload_fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_reload_yaml_into_config')
     import builtins
+    from chess_anti_engine.tune.startup_intent import (
+        StartupIntentError, validate_declared, validate_saved_overlay,
+    )
     safe_builtins = dict(vars(builtins))
     real_import = builtins.__import__
 
@@ -73,7 +76,7 @@ def test_feature_dropout_reload_source_contract():
             return NS(flatten_run_config_defaults=lambda x: x, load_yaml_file=lambda _p: {})
         return real_import(name, globals, locals, fromlist, level)
     safe_builtins['__import__'] = inert_import
-    reload_ns: dict[str, object] = {'__builtins__': safe_builtins, '_warn_on_keys_dropped_from_yaml': lambda **_kw: None, '_LAST_RELOAD_YAML_KEYS': {}, 'log': NS(warning=lambda *_a: None)}
+    reload_ns: dict[str, object] = {'__builtins__': safe_builtins, '_warn_on_keys_dropped_from_yaml': lambda **_kw: None, '_LAST_RELOAD_YAML_KEYS': {}, 'log': NS(warning=lambda *_a: None), 'StartupIntentError': StartupIntentError, 'validate_declared': validate_declared, 'validate_saved_overlay': validate_saved_overlay}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0), reload_fn], type_ignores=[])), 'actual-reload', 'exec'), reload_ns)
     config = {'feature_dropout_p': 0.3, 'fdp_mobility': 0.8}
     reload_config = reload_ns['_reload_yaml_into_config']

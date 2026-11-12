@@ -70,6 +70,7 @@ def test_fresh_start_reserves_room_for_the_new_experiment(
     monkeypatch.setattr(tune, "with_resources", lambda fn, _resources: fn)
 
     current_trial = "train_trial_new_00000_0_lr=0.1_2026-08-01_00-00-00"
+    answer = SimpleNamespace(num_errors=0, errors=[])
 
     class FakeTuner:
         def __init__(self, *_args, **_kwargs):
@@ -77,11 +78,11 @@ def test_fresh_start_reserves_room_for_the_new_experiment(
             _make_trial_dir(tune_dir, current_trial)
 
         def fit(self):
-            return "completed"
+            return answer
 
         @staticmethod
         def restore(*_args, **_kwargs):
-            return SimpleNamespace(fit=lambda: "completed")
+            return SimpleNamespace(fit=lambda: answer)
 
     monkeypatch.setattr(tune, "Tuner", FakeTuner)
 
@@ -114,7 +115,7 @@ def test_fresh_start_reserves_room_for_the_new_experiment(
         work_dir=tmp_path, num_samples=1, resume=resume,
     )
 
-    assert result == "completed"
+    assert result is answer
     realized = 2 if keep_last is None else keep_last
     expected = 6 if resume else (realized if realized > 0 else 7)
     if corrupt_retained and not resume:

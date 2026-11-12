@@ -32,6 +32,7 @@ would survive the very substitution it exists to forbid.
 from __future__ import annotations
 
 import ast
+import copy
 import logging
 import re
 from pathlib import Path
@@ -46,9 +47,21 @@ from chess_anti_engine.tune.trainable_config_ops import (
 )
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 from chess_anti_engine.utils.config_yaml import _FLAT_ALLOWLIST
+from chess_anti_engine.tune.startup_intent import (
+    SCHEMA, StartupIntentError, contract_digest, validate_declared,
+)
 from scripts.audit_realized_config import classify_config_provenance
 
 _REPO = Path(__file__).resolve().parents[1]
+
+# Identity fields form a validated group. A standalone numeric sentinel cannot
+# describe a strict startup, and an existing strict identity cannot be replaced
+# even during a startup overlay. The dedicated tests below pin that contract.
+_STRICT_STARTUP_KEYS = frozenset({
+    "rl_startup_intent", "rl_startup_contract", "bootstrap_handoff_mode",
+    "bootstrap_checkpoint_sha256", "bootstrap_model_contract",
+})
+_INDEPENDENT_CONSTRUCTION_KEYS = construction_only_config_keys() - _STRICT_STARTUP_KEYS
 
 # Replay-buffer constructor arguments that are NOT construction-bound, because
 # some per-iteration consumer re-reads them. Each entry names the file and the
@@ -117,6 +130,27 @@ _ALLOWED_CONSUMER_FILES = {
 # modules. This is the enumeration the scan enforces, so adding a reader without
 # updating it fails the test.
 _STARTUP_ONLY_READER_FILES: dict[str, set[str]] = {
+    # `trainable_init` (already in the constructor files) dispatches and loads
+    # the donor once. The strict helpers also read these fields during reload
+    # purely to refuse identity changes, not to load a new model.
+    **{
+        key: {"chess_anti_engine/tune/startup_intent.py"}
+        for key in ("rl_startup_intent", "rl_startup_contract")
+    },
+    **{
+        key: {
+            "chess_anti_engine/tune/fresh_rl_donor.py",
+            "chess_anti_engine/tune/startup_intent.py",
+        }
+        for key in (
+            "bootstrap_checkpoint", "bootstrap_handoff_mode",
+            "bootstrap_checkpoint_sha256", "bootstrap_model_contract",
+        )
+    },
+    **{
+        key: {"chess_anti_engine/tune/fresh_rl_donor.py"}
+        for key in ("bootstrap_zero_policy_heads", "bootstrap_reinit_volatility_heads")
+    },
     # `iterations = tc.iterations` (the while bound, read once into a local) and
     # the DRIVER-side `base_config.get("iterations")` that sizes ASHA's max_t at
     # experiment creation. Neither runs per iteration.
@@ -421,7 +455,7 @@ def test_the_startup_only_scan_names_the_key_that_slipped_through() -> None:
     assert "eval_games" not in _STARTUP_ONLY_TRIAL_KEYS
 
 
-@pytest.mark.parametrize("key", sorted(construction_only_config_keys()))
+@pytest.mark.parametrize("key", sorted(_INDEPENDENT_CONSTRUCTION_KEYS))
 def test_live_reload_refuses_and_warns_for_each_construction_only_key(
     key: str, tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -472,7 +506,7 @@ def test_live_reload_refuses_and_warns_for_each_construction_only_key(
     assert _restart_warning_for(key), caplog.text
 
 
-@pytest.mark.parametrize("key", sorted(construction_only_config_keys()))
+@pytest.mark.parametrize("key", sorted(_INDEPENDENT_CONSTRUCTION_KEYS))
 def test_startup_reload_still_applies_each_construction_only_key(
     key: str, tmp_path: Path,
 ) -> None:
@@ -494,6 +528,87 @@ def test_startup_reload_still_applies_each_construction_only_key(
         f"{key} must still be applied at startup/resume; a restart is the only "
         "way it can ever change"
     )
+
+
+def _strict_startup_fixture(tmp_path: Path) -> dict:
+    """Metadata-only donor declaration; these reload tests never open a donor."""
+    settings = {"lr": 3e-6, "optimizer": "aurora", "lr_schedule": "sqrt_release",
+                "batch_size": 2, "accum_steps": 1}
+    architecture = {"kind": "transformer", "input_history_encoding": "lc0_root_legacy_meta"}
+    return {
+        **settings, "bootstrap_checkpoint": str(tmp_path / "not-opened.pt"),
+        "bootstrap_checkpoint_sha256": "a" * 64,
+        "bootstrap_handoff_mode": "fresh_rl_complete_v1",
+        "bootstrap_model_contract": architecture, "rl_startup_intent": "fresh_bootstrap",
+        "rl_startup_contract": {
+            "schema": SCHEMA, "run_uuid": "11111111-1111-4111-8111-111111111111",
+            "donor_sha256": "a" * 64, "model_contract_sha256": contract_digest(architecture),
+            "settings": settings,
+        },
+    }
+
+
+def _write_strict_startup_yaml(path: Path, config: dict) -> None:
+    import yaml
+
+    settings = config["rl_startup_contract"]["settings"]
+    path.write_text(yaml.safe_dump({
+        "train": settings, **{key: value for key, value in config.items() if key not in settings},
+    }), encoding="utf-8")
+
+
+def test_strict_startup_group_applies_at_fresh_start_but_live_add_requires_restart(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert _STRICT_STARTUP_KEYS.issubset(construction_only_config_keys())
+    assert _STRICT_STARTUP_KEYS.issubset(restart_required_config_keys())
+    expected = _strict_startup_fixture(tmp_path)
+    yaml_path = tmp_path / "strict.yaml"
+    _write_strict_startup_yaml(yaml_path, expected)
+    settings = expected["rl_startup_contract"]["settings"]
+    startup = dict(settings)
+    _reload_yaml_into_config(startup, str(yaml_path), live_reload=False)
+    assert startup == expected
+    assert validate_declared(startup) == "fresh_bootstrap"
+
+    live = dict(settings)
+    with caplog.at_level(logging.WARNING):
+        _reload_yaml_into_config(live, str(yaml_path), live_reload=True)
+    assert live == settings
+    for key in _STRICT_STARTUP_KEYS:
+        assert any(key in record.getMessage() and "requires restart" in record.getMessage()
+                   for record in caplog.records), (key, caplog.text)
+
+
+@pytest.mark.parametrize("key", sorted(_STRICT_STARTUP_KEYS))
+@pytest.mark.parametrize("live_reload", [False, True])
+def test_strict_startup_identity_replacement_is_refused_atomically(
+    tmp_path: Path, key: str, live_reload: bool,
+) -> None:
+    original = _strict_startup_fixture(tmp_path)
+    changed = copy.deepcopy(original)
+    contract = changed["rl_startup_contract"]
+    if key == "rl_startup_intent":
+        changed[key] = "exact_restore"
+        changed["bootstrap_handoff_mode"] = "legacy"
+        for field in ("bootstrap_checkpoint", "bootstrap_checkpoint_sha256", "bootstrap_model_contract"):
+            changed.pop(field)
+    elif key == "rl_startup_contract":
+        contract["run_uuid"] = "22222222-2222-4222-8222-222222222222"
+    elif key == "bootstrap_handoff_mode":
+        changed[key] = "legacy"
+    elif key == "bootstrap_checkpoint_sha256":
+        changed[key] = contract["donor_sha256"] = "b" * 64
+    else:
+        assert key == "bootstrap_model_contract"
+        changed[key]["kind"] = "different-architecture"
+        contract["model_contract_sha256"] = contract_digest(changed[key])
+    yaml_path = tmp_path / "changed.yaml"
+    _write_strict_startup_yaml(yaml_path, changed)
+    config = copy.deepcopy(original)
+    with pytest.raises(StartupIntentError):
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=live_reload)
+    assert config == original
 
 
 @pytest.mark.parametrize("key", sorted(construction_only_config_keys()))

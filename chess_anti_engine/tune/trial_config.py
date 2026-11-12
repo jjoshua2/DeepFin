@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import math
 import os
+
+from chess_anti_engine.tune.fresh_rl_donor import validate_config as validate_fresh_rl_config
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -24,6 +26,7 @@ from chess_anti_engine.utils.architecture import (
     normalize_ffn_mult_by_layer,
     normalize_phase_piece_thresholds,
 )
+from chess_anti_engine.utils.sequential_selfplay import validate_sequential_selfplay_config
 
 if TYPE_CHECKING:
     from chess_anti_engine.train.trainer import TrainMetrics
@@ -557,6 +560,7 @@ class TrialConfig:
     distributed_prev_model_max_fraction: float = 0.33
     distributed_stale_pause_target_games: int = -1
     distributed_pause_selfplay_during_training: bool = False
+    distributed_stop_selfplay_before_training: bool = False
     processed_max_age_seconds: float = 43200.0
     # Background shard prefetcher: zarr decompress moves to a daemon thread
     # during train phase. Default off until measured in production.
@@ -605,6 +609,12 @@ class TrialConfig:
     salvage_startup_max_train_steps: int = 0
     salvage_startup_post_share_ramp_iters: int = 0
     salvage_startup_post_share_max_train_steps: int = 0
+    rl_startup_intent: str | None = None
+    rl_startup_contract: dict[str, Any] | None = None
+    _rl_startup_settings: dict[str, Any] = field(default_factory=dict)
+    bootstrap_handoff_mode: str = "legacy"
+    bootstrap_checkpoint_sha256: str | None = None
+    bootstrap_model_contract: dict[str, Any] | None = None
     bootstrap_checkpoint: str | None = None
     bootstrap_zero_policy_heads: bool = False
     bootstrap_reinit_volatility_heads: bool = False
@@ -623,6 +633,8 @@ class TrialConfig:
             v = config.get(key)
             return default if v is None else v
 
+        validate_fresh_rl_config(config)
+        validate_sequential_selfplay_config(config)
         num_layers = int(config.get("num_layers", 6))
 
   # ⚑ CALLED FOR ITS EXCEPTION, AND THE RESULT IS DELIBERATELY DISCARDED.
@@ -1042,6 +1054,7 @@ class TrialConfig:
             distributed_prev_model_max_fraction=float(config.get("distributed_prev_model_max_fraction", 0.33)),
             distributed_stale_pause_target_games=int(config.get("distributed_stale_pause_target_games", -1)),
             distributed_pause_selfplay_during_training=bool(config.get("distributed_pause_selfplay_during_training", False)),
+            distributed_stop_selfplay_before_training=config.get("distributed_stop_selfplay_before_training", False),
             processed_max_age_seconds=float(config.get("processed_max_age_seconds", 43200.0)),
             distributed_prefetch_shards=bool(config.get("distributed_prefetch_shards", False)),
             distributed_prefetch_max_queued_mb=int(config.get("distributed_prefetch_max_queued_mb", 768)),
@@ -1075,6 +1088,14 @@ class TrialConfig:
             salvage_startup_max_train_steps=int(config.get("salvage_startup_max_train_steps", 0)),
             salvage_startup_post_share_ramp_iters=int(config.get("salvage_startup_post_share_ramp_iters", 0)),
             salvage_startup_post_share_max_train_steps=int(config.get("salvage_startup_post_share_max_train_steps", 0)),
+            rl_startup_intent=config.get("rl_startup_intent"),
+            rl_startup_contract=config.get("rl_startup_contract"),
+            _rl_startup_settings={
+                key: config[key] for key in (config.get("rl_startup_contract") or {}).get("settings", {})
+            },
+            bootstrap_handoff_mode=_get("bootstrap_handoff_mode", "legacy"),
+            bootstrap_checkpoint_sha256=_get("bootstrap_checkpoint_sha256", None),
+            bootstrap_model_contract=_get("bootstrap_model_contract", None),
             bootstrap_checkpoint=_get("bootstrap_checkpoint", None),
             bootstrap_zero_policy_heads=bool(config.get("bootstrap_zero_policy_heads", False)),
             bootstrap_reinit_volatility_heads=bool(config.get("bootstrap_reinit_volatility_heads", False)),

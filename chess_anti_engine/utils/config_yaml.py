@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from io import BytesIO, TextIOWrapper
 from pathlib import Path
 from typing import Any
 
 from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
+from chess_anti_engine.tune.fresh_rl_donor import validate_config as validate_fresh_rl_config
+from chess_anti_engine.utils.sequential_selfplay import validate_sequential_selfplay_config
 
 
 def strict_config_bool(value: Any, *, key: str, source: str) -> bool:
@@ -84,6 +87,8 @@ _CORE_KEYS = (
     "mode", "seed", "device", "iterations", "work_dir",
     "replay_window_start", "replay_window_max", "replay_window_growth",
     "replay_window_growth_frac",
+    "rl_startup_intent", "rl_startup_contract",
+    "bootstrap_handoff_mode", "bootstrap_checkpoint_sha256", "bootstrap_model_contract",
     "bootstrap_dir", "bootstrap_checkpoint", "bootstrap_zero_policy_heads",
     "bootstrap_reinit_volatility_heads", "worker_wheel_path",
     "bootstrap_max_positions", "bootstrap_train_steps", "shared_shards_dir",
@@ -365,6 +370,7 @@ _TUNE_KEYS = (
     "distributed_inference_max_batch_per_slot",
     "distributed_inference_slots_per_worker",
     "distributed_pause_selfplay_during_training", "distributed_wait_timeout_seconds",
+    "distributed_stop_selfplay_before_training",
     "distributed_prefetch_shards",
     "distributed_async_test_eval", "distributed_async_test_eval_timeout_s",
     "distributed_min_games_fraction",
@@ -480,6 +486,7 @@ _RUN_BOOLEAN_KEYS = frozenset({
     "distributed_worker_use_compile", "distributed_worker_auto_tune",
     "distributed_worker_threaded", "distributed_worker_inference_fp8",
     "distributed_inference_broker_enabled", "distributed_inference_shared_broker", "pbt_synch",
+    "distributed_stop_selfplay_before_training",
     "search_smolgen", "search_nla", "search_optimizer",
     "asha_optimizer_only", "search_feature_dropout_p",
     "search_w_volatility", "search_volatility_source",
@@ -636,12 +643,24 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
         _apply_tune_section(out, tune)
 
     flat = {k: v for k, v in out.items() if v is not None}
+    # Validate the effective LR before a live reload can mutate config or its
+    # key baseline. Keep the original value: numeric strings and nonpositive
+    # finite values retain their existing consumer behavior.
+    if "lr" in flat:
+        try:
+            lr = float(flat["lr"])
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("YAML 'lr' must be a finite number") from exc
+        if not math.isfinite(lr):
+            raise ValueError("YAML 'lr' must be a finite number")
     _check_sparse_sf_policy_flags(flat)
     _check_volatility_search_unsupported(flat)
     _check_target_only_knobs_require_zero_temperature(flat)
     _check_boolean_run_values(flat)
     _check_pb2_bounds(flat)
     _check_exploit_replay_share_fraction(flat)
+    validate_fresh_rl_config(flat)
+    validate_sequential_selfplay_config(flat)
     return flat
 
 
