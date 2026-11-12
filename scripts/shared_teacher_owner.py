@@ -276,9 +276,9 @@ def run_owned_roster(
             pipeline.poll()
     try:
         control()
-        # Startup constructs the strict BT4 evaluator, and recovery can recreate
-        # native boards. Install the process mode under inherited custody before
-        # either path; no board from this roster exists yet.
+        # Startup constructs the strict BT4 evaluator, which refuses a process
+        # whose mode is not installed. Install it under inherited custody before
+        # any checkpoint or evaluator step; no board from this roster exists yet.
         worker.rep_fix.apply(True, boards_discarded=True)
         for name, descriptor in frozen.items():
             checkpoint = entry.Checkpoint(prepared[name][1], descriptor["bindings"],
