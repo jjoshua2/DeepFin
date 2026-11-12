@@ -647,6 +647,7 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     _check_target_only_knobs_require_zero_temperature(flat)
     _check_boolean_run_values(flat)
     _check_pb2_bounds(flat)
+    _check_exploit_replay_share_fraction(flat)
     validate_fresh_rl_config(flat)
     validate_sequential_selfplay_config(flat)
     return flat
@@ -821,6 +822,45 @@ def _check_sparse_sf_policy_flags(flat: dict[str, Any]) -> None:
             "selfplay.record_dense_sf_policy: false requires "
             "train.sf_policy_sparse_ce: true — without it, samples written "
             "with only sparse MultiPV labels get NO policy_sf supervision."
+        )
+
+
+def _check_exploit_replay_share_fraction(flat: dict[str, Any]) -> None:
+    """Refuse an ``exploit_replay_share_fraction`` outside ``[0, 1]`` at the loader.
+
+    The consumer (``replay_exchange._ingest_one_shard``) used to subsample only
+    for ``0 < f < 1`` and ingest the WHOLE donor shard otherwise, so a sign typo
+    (``-0.5``), ``nan`` or ``1.5`` meant "share everything", while
+    ``TrialConfig.from_dict`` passed the number through raw. The key is
+    live-reloadable, so the check lives HERE rather than in ``from_dict``: a bad
+    live edit rejects the whole reload and the trial keeps its previous config
+    (a ``from_dict`` raise would kill the trial mid-iteration), and a bad launch
+    value is fatal before anything starts.
+
+    Numeric strings are realized with ``float()`` -- the coercion
+    ``TrialConfig.from_dict`` applies, and the one ``_check_pb2_bounds`` uses --
+    so the value validated is the value the trial runs. ``bool`` is refused even
+    though ``float(True)`` is 1.0: ``true`` here is a typo, not a fraction.
+    """
+    import math
+
+    key = "exploit_replay_share_fraction"
+    if key not in flat:
+        return
+    value = flat[key]
+    try:
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise TypeError
+        realized = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(
+            f"YAML {key} must be a real number in [0, 1], got {value!r} "
+            f"({type(value).__name__})."
+        ) from None
+    if not math.isfinite(realized) or not 0.0 <= realized <= 1.0:
+        raise ValueError(
+            f"YAML {key} must be a finite number in [0, 1], got {value!r}. "
+            f"Out-of-range values used to ingest the WHOLE donor shard."
         )
 
 

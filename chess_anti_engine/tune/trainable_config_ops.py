@@ -67,6 +67,8 @@ def _resolve_pause_marker_paths(*, tc: TrialConfig, trial_dir: Path) -> list[Pat
     raw = tc.pause_file
     if raw and raw.strip():
         p = Path(raw.strip())
+        # Unreachable through `TrialConfig.from_dict`, which refuses a relative
+        # `pause_file` at launch (this anchor is the per-session staging dir).
         if not p.is_absolute():
             p = tune_root_ephemeral / p
         candidates.append(p)
