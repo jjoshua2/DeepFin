@@ -79,12 +79,22 @@ def test_lr_yaml_rejects_unusable_effective_value(tmp_path, nested, token):
 @pytest.mark.parametrize(
     "value",
     [0, -0.001, 0.002, "0.002", "-1e-3", sys.float_info.max,
-     -sys.float_info.max, math.nextafter(0.0, 1.0), True, False],
+     -sys.float_info.max, math.nextafter(0.0, 1.0)],
 )
 @pytest.mark.parametrize("nested", [False, True])
 def test_lr_finite_values_preserve_representation(value, nested):
     config = {"train": {"lr": value}} if nested else {"lr": value}
     assert flatten_run_config_defaults(config)["lr"] is value
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("token", ["true", "false", "True", "yes", "off"])
+def test_lr_yaml_rejects_boolean(tmp_path, nested, token):
+    # Consumers cast with float(), so `lr: true` would silently mean LR 1.0.
+    path = tmp_path / "lr.yaml"
+    path.write_text(("train:\n  lr: " if nested else "lr: ") + token + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="'lr' must be a finite number, not a boolean"):
+        flatten_run_config_defaults(load_yaml_file(path))
 
 
 def test_lr_integer_conversion_overflow_is_specific():
@@ -138,3 +148,19 @@ def test_lr_finite_yaml_preserves_loaded_value(tmp_path, token, nested):
     loaded = load_yaml_file(path)
     expected = loaded["train"]["lr"] if nested else loaded["lr"]
     assert flatten_run_config_defaults(loaded)["lr"] is expected
+
+
+@pytest.mark.parametrize("token", ["true", "false"])
+def test_lr_boolean_is_fatal_at_launch(tmp_path, monkeypatch, token):
+    # The launch path reads the yaml through the same loader; a boolean `lr`
+    # must stop the CLI before any server, broker or Tuner is built.
+    from chess_anti_engine import run
+
+    path = tmp_path / "launch.yaml"
+    path.write_text("train:\n  lr: " + token + "\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", [
+        "chess_anti_engine.run", "--config", str(path), "--mode", "train",
+        "--work-dir", str(tmp_path), "--device", "cpu",
+    ])
+    with pytest.raises(ValueError, match="'lr' must be a finite number, not a boolean"):
+        run.main()

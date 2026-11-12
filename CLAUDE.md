@@ -69,17 +69,19 @@ A bad live value fails in one of four ways, which code comments cite by letter:
 
 - **(a) Rejected by the loader**: a key not in the schema (`utils/config_yaml.py`), or
   a value failing a check in `flatten_run_config_defaults` (strict booleans,
-  `pb2_bounds_*` shape, flag pairings, a few ranges; read the function). Mid-run the whole
-  reload is rejected and the old config kept, so other edits in the same save are not
-  applied; at launch it is fatal. Before a restart, compare the live YAML's keys with
-  the target revision's schema.
+  `pb2_bounds_*` shape, flag pairings, the `lr` type check, one range check; read the
+  function). Mid-run the whole reload is rejected and the old config kept, so other
+  edits in the same save are not applied; at launch it is fatal. Before a restart,
+  compare the live YAML's keys with the target revision's schema.
 - **(b) In the schema, rejected by a validator that runs inside the iteration loop**
   (chiefly `TrialConfig.from_dict`): the reload succeeds, the validator raises and
   the trial dies.
 - **(c) In the schema but not range-checked**: applied raw and silently. `lr` is one
-  such key: the loader rejects only a non-numeric or non-finite `lr` (class (a)), so
-  any finite value, `lr: 0.3` or a non-positive one included, loads raw (LR above
-  0.003 has destroyed the model).
+  such key: the loader rejects a non-numeric, non-finite or boolean `lr` (class (a));
+  a finite positive value such as 0.3 is applied raw (LR above 0.003 has destroyed
+  the model), and a non-positive one is ignored by a mid-run reload (old LR kept).
+  At launch `lr: 0` builds the optimizer at LR 0, and a negative value runs at a
+  negative LR under `aurora` (`nadamw` refuses it).
 - **(d) A dead key** (`dead_config_keys()` in `tune/trainable_config_ops.py`: parsed,
   read by no production path): a non-inert value is declined mid-run for that key
   only, then the trial refuses to start at the next restart.

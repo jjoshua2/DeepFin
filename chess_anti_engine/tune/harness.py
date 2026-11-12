@@ -1067,21 +1067,48 @@ def _first_errored_trial(results) -> tuple[object | None, str | None]:
     trial (e.g. a PENDING trial resumed with `resume_errored=True` that still
     has an old error file), while `num_errors` counts only ERROR status, so the
     first entry of `errors` can be a stale error from a trial that did not fail.
-    The public `Result` has no status field, so pair statuses from the
-    analysis object; if that private attribute is missing or raises, fall back
-    to the first entry of `errors`. This must never raise itself: the caller's
-    RuntimeError has to reach the CLI.
+    The public `Result` has no status field, so pair statuses from the private
+    analysis object. `ResultGrid.__init__` builds `_results` index-aligned with
+    `trials` and has already populated each `Result.error`, so that is read
+    first; error files are re-read only if it is unavailable. Each trial is
+    checked on its own so one malformed entry cannot hide a later ERROR trial;
+    if no ERROR trial is found, fall back to the first entry of `errors`. This
+    must never raise itself: the caller's RuntimeError has to reach the CLI.
     """
+    error_status = "ERROR"  # Trial.ERROR on Ray 2.54
     try:
         from ray.tune.experiment import Trial
 
-        trials = results._experiment_analysis.trials
-        for trial in trials:
-            if trial.status == Trial.ERROR:
-                error = trial.get_pickled_error() or trial.get_error()
-                return error, str(trial.path)
+        error_status = Trial.ERROR
     except Exception:  # diagnosis must not mask the failure
         pass
+    try:
+        trials = list(results._experiment_analysis.trials)
+    except Exception:  # diagnosis must not mask the failure
+        trials = []
+    try:
+        populated = list(results._results)
+    except Exception:  # diagnosis must not mask the failure
+        populated = []
+    for index, trial in enumerate(trials):
+        try:
+            if trial.status != error_status:
+                continue
+        except Exception:  # diagnosis must not mask the failure
+            continue
+        error = None
+        try:
+            if index < len(populated):
+                error = populated[index].error
+        except Exception:  # diagnosis must not mask the failure
+            error = None
+        if error is None:
+            try:
+                error = trial.get_pickled_error() or trial.get_error()
+            except Exception:  # diagnosis must not mask the failure
+                error = None
+        path = getattr(trial, "path", None)
+        return error, (str(path) if path else None)
     try:
         return next(iter(results.errors), None), None
     except Exception:  # diagnosis must not mask the failure

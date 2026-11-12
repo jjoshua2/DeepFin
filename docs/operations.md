@@ -42,10 +42,13 @@ The train/tune driver raises an error when Ray returns any trial in `ERROR` stat
 even if `Tuner.fit()` itself returned normally. The CLI then exits nonzero after
 sidecar cleanup. SIGTERM stops (`train.sh stop`, a graceful restart) end the driver
 before this check, so they never raise this error; Ray's driver SIGTERM handler
-still exits with status 15, which records the stop, not a trial failure. Non-error
-scheduler stops and graceful unfinished results retain their normal return
-behavior; an exit code alone does not establish a completed iteration, valid
-checkpoint, or qualified experiment readout.
+still exits with status 15, which records the stop, not a trial failure. A SIGTERM
+that lands before `ray.init` (during server/broker launch) gets the default action
+instead (status 143, no Python cleanup), and `train.sh stop` sends SIGKILL if the
+driver has not exited 15 s after its SIGTERM. Non-error scheduler stops and
+graceful unfinished results retain their normal return behavior; an exit code
+alone does not establish a completed iteration, valid checkpoint, or qualified
+experiment readout.
 
 ```bash
 ./scripts/train.sh start                   # auto-resumes if $WORK_DIR/tune state exists; else fresh

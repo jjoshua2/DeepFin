@@ -645,8 +645,14 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     flat = {k: v for k, v in out.items() if v is not None}
     # Validate the effective LR before a live reload can mutate config or its
     # key baseline. Keep the original value: numeric strings and nonpositive
-    # finite values retain their existing consumer behavior.
+    # finite values retain their existing consumer behavior. A boolean is
+    # refused even though float(True) works: consumers cast with float(), so
+    # `lr: true` would silently train at LR 1.0.
     if "lr" in flat:
+        if isinstance(flat["lr"], bool):
+            raise ValueError(
+                f"YAML 'lr' must be a finite number, not a boolean ({flat['lr']!r})"
+            )
         try:
             lr = float(flat["lr"])
         except (TypeError, ValueError, OverflowError) as exc:

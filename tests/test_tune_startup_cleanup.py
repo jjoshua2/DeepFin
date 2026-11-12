@@ -164,6 +164,46 @@ def test_errored_trial_diagnosis_names_an_error_status_trial(
     assert calls[-3:] == ["fit", "cleanup:broker", "cleanup:server"]
 
 
+@pytest.mark.parametrize("case", ["statusless_before_error", "error_without_path", "error_files_unreadable"])
+def test_errored_trial_diagnosis_survives_malformed_trial_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    # Diagnosis quality only: one malformed entry must not drop the scan back to
+    # `errors[0]` (which may be stale), a missing path must not lose the error
+    # already found, and the error ResultGrid already populated is used before
+    # re-reading error files.
+    from ray.tune.experiment import Trial
+
+    real = RuntimeError("the real failure")
+    outcomes: list[tuple[str, Exception | str | None]] = [
+        (Trial.PENDING, ValueError("stale error from a resumed trial")),
+        (Trial.ERROR, real),
+    ]
+    grid = _ray_result_grid(tmp_path, outcomes)
+    trials = grid._experiment_analysis.trials
+    if case == "statusless_before_error":
+        # Ray's own `num_errors` reads every status, so pin the count to reach
+        # the helper's per-trial guard with a malformed entry ahead of the ERROR.
+        del trials[0].status
+        grid.__class__ = type("PinnedCountGrid", (type(grid),), {"num_errors": 1})
+    elif case == "error_without_path":
+        del trials[1].path
+    else:
+        def unreadable() -> None:
+            raise OSError("error file gone")
+        trials[1].get_pickled_error = unreadable
+        trials[1].get_error = unreadable
+    calls, _ = _driver_stubs(monkeypatch, fit_result=grid)
+    with pytest.raises(RuntimeError, match=r"1 errored trial\(s\)") as caught:
+        harness.run_tune(base_config={}, work_dir=tmp_path, num_samples=len(outcomes))
+    assert caught.value.__cause__ is real
+    if case == "error_without_path":
+        assert "First ERROR trial" not in str(caught.value)
+    else:
+        assert f"First ERROR trial: {tmp_path / 'trial_1'}" in str(caught.value)
+    assert calls[-3:] == ["fit", "cleanup:broker", "cleanup:server"]
+
+
 def test_errored_trial_diagnosis_falls_back_when_ray_internals_are_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
