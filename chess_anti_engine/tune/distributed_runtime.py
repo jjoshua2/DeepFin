@@ -43,6 +43,8 @@ from chess_anti_engine.tune._utils import (
     terminate_process as _stop_process,
 )
 from chess_anti_engine.tune.process_cleanup import (
+    CAE_ENGINE_MARKER_ENV,
+    list_pids_with_env,
     terminate_engines_owned_by,
     terminate_matching_processes,
 )
@@ -852,6 +854,28 @@ _WORKER_LAUNCH_CONFIG_KEYS: tuple[str, ...] = (
     "distributed_worker_max_games_per_batch",
 )
 
+_SEQUENTIAL_COLLECTION_ITERATION = "_sequential_collection_iteration"
+
+
+def _selfplay_collection_config(config: dict, *, iteration_idx: int) -> dict:
+    """Scope local sequential worker randomness without changing trial settings."""
+    if not config.get("distributed_stop_selfplay_before_training", False):
+        return config
+    if type(iteration_idx) is not int or iteration_idx < 1:
+        raise ValueError("sequential selfplay requires a positive global collection iteration")
+    return config | {_SEQUENTIAL_COLLECTION_ITERATION: iteration_idx}
+
+
+def _distributed_worker_seed(*, config: dict, trial_id: str, worker_index: int) -> int:
+    if config.get("distributed_stop_selfplay_before_training", False):
+        iteration_idx = config.get(_SEQUENTIAL_COLLECTION_ITERATION)
+        if type(iteration_idx) is not int or iteration_idx < 1:
+            raise ValueError("sequential worker launch requires a collection iteration")
+        return stable_seed_u32(
+            "dist-worker-sequential", trial_id, worker_index, config.get("seed", 0), iteration_idx,
+        )
+    return stable_seed_u32("dist-worker", trial_id, worker_index, config.get("seed", 0))
+
 
 def _worker_launch_signature(
     *, config: dict, trial_id: str, worker_index: int,
@@ -862,11 +886,16 @@ def _worker_launch_signature(
     values baked into the worker's command line or auth/cache resolution should
     restart an already-running worker.
     """
-    return (
+    signature = (
         str(trial_id),
         int(worker_index),
         tuple((k, config.get(k)) for k in _WORKER_LAUNCH_CONFIG_KEYS),
     )
+    if config.get("distributed_stop_selfplay_before_training", False):
+        return (*signature, _distributed_worker_seed(
+            config=config, trial_id=trial_id, worker_index=worker_index,
+        ))
+    return signature
 
 
   # How many previous worker-log generations to keep beside the live file.
@@ -1071,7 +1100,7 @@ def _build_distributed_worker_cmd(
         "--upload-flush-seconds",
         str(float(config.get("distributed_worker_upload_flush_seconds", 60.0))),
         "--seed",
-        str(stable_seed_u32("dist-worker", trial_id, worker_index, config.get("seed", 0))),
+        str(_distributed_worker_seed(config=config, trial_id=trial_id, worker_index=worker_index)),
         "--log-file",
         str(worker_log),
         "--log-level",
@@ -1439,6 +1468,39 @@ def _stop_worker_processes(procs: list[subprocess.Popen[bytes]]) -> None:
                 "reaped %d orphaned Stockfish engine(s) %s left by worker pid %d "
                 "(PDEATHSIG did not fire)", len(orphans), orphans, worker_pid,
             )
+
+
+def _stop_local_selfplay_for_training(
+    *, worker_procs: list[subprocess.Popen[bytes]],
+    broker_proc_box: list[subprocess.Popen[bytes] | None], expected_workers: int,
+) -> None:
+    """Stop owned producers and prove exit before the learner may use the GPU.
+
+    The ordinary stop helpers tolerate a final kill timeout on cleanup paths.
+    This phase boundary cannot: preserve the handles and refuse to train if
+    any process remains alive, so the trial's finally block can retry cleanup.
+    """
+    if len(worker_procs) != expected_workers or expected_workers < 1:
+        raise RuntimeError("sequential selfplay cannot verify ownership of the local workers")
+    if len(broker_proc_box) != 1:
+        raise RuntimeError("sequential selfplay requires the owned per-trial broker handle")
+    _stop_worker_processes(worker_procs)
+    _stop_process(broker_proc_box[0])
+    producers = [*worker_procs]
+    if broker_proc_box[0] is not None:
+        producers.append(broker_proc_box[0])
+    alive = [proc.pid for proc in producers if proc.poll() is None]
+    if alive:
+        raise RuntimeError(f"refusing training while selfplay producers remain alive: {alive}")
+    orphan_engines = [
+        pid for proc in worker_procs
+        for pid in list_pids_with_env(CAE_ENGINE_MARKER_ENV, str(proc.pid))
+    ]
+    if orphan_engines:
+        raise RuntimeError(f"refusing training while owned Stockfish engines remain alive: {orphan_engines}")
+    worker_procs.clear()
+    broker_proc_box[0] = None
+    print("[trial] sequential selfplay barrier: all owned producers exited", flush=True)
 
 
 def _ensure_distributed_workers(

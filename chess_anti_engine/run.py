@@ -38,6 +38,8 @@ def _build_tune_config_dict(args: argparse.Namespace) -> dict:
     forwarded.  A small denylist excludes harness-internal keys that should not
     be per-trial config.
     """
+    from chess_anti_engine.tune.fresh_rl_donor import validate_config
+    validate_config(vars(args))
     base = {k: v for k, v in vars(args).items() if k not in _TUNE_CONFIG_DENYLIST}
 
   # Derived values that differ from the raw argparse value.
@@ -685,6 +687,9 @@ def main() -> None:
 
     ap.set_defaults(**cfg_defaults)
     args = ap.parse_args()
+
+    from chess_anti_engine.tune.fresh_rl_donor import validate_config
+    validate_config(vars(args))
 
     from chess_anti_engine.tune.distributed_runtime import check_dynamic_relations_transport
     # Validate the realized configuration after CLI overrides of YAML defaults.

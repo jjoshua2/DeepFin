@@ -188,8 +188,8 @@ class DiffFocusConfig:
 class GameConfig:
     max_plies: int = 240
     selfplay_fraction: float = 0.0
-    # Optional node budget for blocking curriculum opponent moves. 0 means
-    # use the main SF label/eval node budget.
+    # Optional curriculum move budget, supported only by the asynchronous
+    # StockfishPool route. 0 uses the main SF label/eval node budget.
     sf_move_nodes: int = 0
     # On fast-sim (playout-capped) plies, SF's per-slot node budget is scaled by
     # this factor (full-sim plies always use 1.0). INTENDED optimization, not a
@@ -445,10 +445,22 @@ class GameConfig:
             )
 
 
+def validate_sf_move_nodes_transport(sf_move_nodes: int, *, pooled: bool) -> None:
+    """The synchronous route shares one query for a curriculum move and label."""
+    if int(sf_move_nodes) > 0 and not pooled:
+        raise ValueError(
+            "sf_move_nodes > 0 requires StockfishPool; the synchronous single-engine "
+            "route cannot honour a separate curriculum move budget. Set sf_move_nodes=0 "
+            "or use at least 2 effective SF workers (--sf-workers / "
+            "distributed_worker_sf_workers)."
+        )
+
+
 __all__ = [
     "DiffFocusConfig",
     "GameConfig",
     "OpponentConfig",
     "SearchConfig",
     "TemperatureConfig",
+    "validate_sf_move_nodes_transport",
 ]

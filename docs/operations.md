@@ -308,6 +308,51 @@ operator's stop or pause. To
 inspect one by hand, `cat runs/pbt2_small/tune/pause.txt` — it names the pid, the start
 time, and the job.
 
+## Sequential local selfplay and learning
+
+For an isolated local trial, `tune.distributed_stop_selfplay_before_training: true`
+stops the trial's owned worker processes and per-trial inference broker after a
+successful collection phase. Learning and synchronous evaluation begin only after
+each process reports exit. A survivor aborts the iteration with its handles retained
+for cleanup; the next collection phase recreates workers and the broker after a
+successful stop. The default is `false`, and changing it requires a fresh driver
+launch rather than a YAML reload.
+
+Sequential startup defers the worker and broker until the first collection boundary,
+after pause/config resolution. Each collection publishes its current model before
+starting these producers. Worker seeds derive deterministically from the trial,
+worker index, unchanged global `seed` and actual global collection iteration, so a
+new collection gets a different random stream; a health relaunch within that same
+collection gets the same seed. Ordinary streaming worker seeds and startup order
+are unchanged.
+
+This mode requires loopback server endpoints, local worker handles, no shared broker,
+and `distributed_async_test_eval: false`. It verifies this trial's producers; the
+operator still owns the machine-wide resource lease and must exclude unrelated GPU
+jobs. `distributed_pause_selfplay_during_training` alone remains advisory.
+
+Stopping workers uses their existing suspend/cleanup path. Unfinished games may resume
+across a later model publication, as in the ordinary loop; a model tag does not prove
+that every ply in such a game used one checkpoint. A single-iteration collection in a
+new server/work directory avoids prior model history. This mode does not qualify
+exact interrupted RL restore.
+
+## Separate Stockfish move and label budgets
+
+Positive `sf_move_nodes` requires the asynchronous `StockfishPool` route. A worker
+uses that route only with `--sf-workers >= 2`; local distributed workers take this
+value from `distributed_worker_sf_workers`, independently of the driver's
+`sf_workers`. The synchronous single-engine route shares one query between the
+curriculum move and label and rejects a positive override before starting engine
+work. `sf_move_nodes: 0` retains the existing shared-budget behavior. This refusal
+also applies when the override equals the current `sf_nodes`: later PID/live node
+updates can make those budgets diverge.
+
+The pool honors separate requested query budgets, but move and label queries use
+the same engines and transposition tables. Ordinary queries do not clear those
+tables, so expensive label searches can warm a later cheaper move search. A fixed
+move node budget does not establish independent or cold opponent strength.
+
 ## The worker credential
 
 The distributed selfplay server authenticates workers, and it binds `0.0.0.0`. The

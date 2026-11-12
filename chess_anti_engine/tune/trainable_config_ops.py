@@ -6,6 +6,10 @@ the pause-marker primitives used by the outer loop.
 """
 from __future__ import annotations
 
+from chess_anti_engine.tune.startup_intent import (
+    StartupIntentError, validate_declared, validate_saved_overlay,
+)
+
 import dataclasses
 import logging
 import time
@@ -336,6 +340,7 @@ _TOPOLOGY_KEYS = frozenset({
     "distributed_inference_aot_dir",
     "distributed_inference_broker_enabled",
     "distributed_inference_shared_broker",
+    "distributed_stop_selfplay_before_training",
     "distributed_inference_slots_per_worker",
     "num_samples",
     "max_concurrent_trials",
@@ -608,6 +613,9 @@ _CONSTRUCTION_ONLY_PROBE_KEYS = frozenset({
 #                      boundary to mark it. The arm's readout is a day-plus paired
 #                      arena, which is exactly the window that must not move.
 _STARTUP_ONLY_TRIAL_KEYS = frozenset({
+    "rl_startup_intent", "rl_startup_contract",
+    "bootstrap_handoff_mode", "bootstrap_checkpoint_sha256", "bootstrap_model_contract",
+    "bootstrap_checkpoint", "bootstrap_zero_policy_heads", "bootstrap_reinit_volatility_heads",
     "iterations",
     "puzzle_epd",
     "eval_sf_nodes",
@@ -1218,11 +1226,13 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
     the baked-in bounds from trial creation), not from the YAML being loaded.
     This prevents YAML edits from accidentally overriding tuned hyperparams.
     """
+    validate_declared(config)
     if not yaml_path:
         return
     try:
         from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
         fresh = flatten_run_config_defaults(load_yaml_file(yaml_path))
+        validate_saved_overlay(config, fresh)
   # Before the overlay, so `config` still holds the values this reload is
   # about to leave in place, and after the parse, so a rejected reload leaves
   # the baseline where it was.
@@ -1345,6 +1355,8 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
                     continue
                 continue
             config[k] = v
+    except StartupIntentError:
+        raise
     except Exception as exc:
         log.warning("YAML reload failed (%s): %s", yaml_path, exc)
 
