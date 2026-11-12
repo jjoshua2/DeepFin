@@ -51,6 +51,30 @@ Without that, restarting after a stop silently drops the running trial and spawn
 random-init one. To abandon the current trial's state, pass `--fresh` or use
 `salvage-restart` from a good pool; never `rm` the tune dir while a run is live.
 
+**Fresh-start pruning (`tune_keep_last_experiments`).** A fresh start (`--fresh`,
+`salvage-restart`; never `--resume`) prunes `$WORK_DIR/tune` before Ray starts. The
+retention unit is an `experiment_state-*.json` file, not an experiment: every launch
+and every resume writes one, so with `3` two resume state files of one experiment can
+fill two slots. The count includes the state file the new launch is about to write, so
+`2` keeps one prior state file. Only a state file that references a trial dir holding a
+Ray checkpoint (`checkpoint_NNNNNN/trainer.pt`) uses a slot. State files from launches
+that died before their first checkpoint (errored trial, empty `trial_data`, or a trial
+never scheduled) use none, however many there are, and are kept while newer than the
+oldest retained checkpointed one. What this does not cover: a launch that survives long
+enough to write one checkpoint (about one iteration) does use a slot, so around salvage
+restarts use `3` or more (the salvaged weights are also in the salvage pool). `0` or less
+disables pruning; `1` refuses a fresh start over any existing artifacts — raise it or
+use a new work dir (`--work-dir`, or `TRAIN_WORK_DIR` for `train.sh`). `--resume` is not
+a way out for a salvage restart: when the resumed trial has a Ray checkpoint it
+restores that and ignores `--salvage-seed-pool-dir`. Pruning also removes trial dirs
+that no retained state file references, with one exception: a trial dir holding a
+checkpoint is deleted only when a readable state file being pruned names it (ordinary
+rotation). If no readable `experiment_state-*.json` names it — its state files were
+renamed (`.corrupt`, `.bak_*`), are unreadable, or Ray stopped writing
+`relative_logdir` — it is kept and every fresh start prints
+`WARNING: keeping unreferenced trial dir <path>`. That space is reclaimed by hand:
+confirm the dir is not needed (or salvage-export it), then `rm -rf` it.
+
 **`$CHESS_ANTI_ENGINE_LIVE_CONFIG` — which yaml the offline instruments treat as
 production.** `train.sh` exports it (absolute path to `$TRAIN_CONFIG`, default
 `configs/pbt2_small.yaml`), and ⚑ **that export reaches training and its observer

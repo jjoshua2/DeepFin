@@ -540,3 +540,159 @@ def test_collect_mixed_shards_preserves_usable_rows_and_bounds_skip_details(monk
     assert scan["cast_pairs"] == 3
     assert len(scan["skipped_shards"]) == 20
     assert scan["skipped_shards_omitted"] == 5
+
+
+def _fixed_draw_tail_fixture() -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """Nine selected rows: six inside (three regret buckets), three outside."""
+    sel = np.zeros(18, dtype=bool)
+    sel[1::2] = True
+    arr = {
+        "regret_played": np.full(18, 999.0),
+        "adv": np.full(18, 999.0),
+        "in_multipv": np.zeros(18, dtype=bool),
+    }
+    arr["regret_played"][sel] = [0.0, 0.001, 0.0015, 0.011, 0.02, 0.025, 0.55, 0.55, 0.55]
+    arr["adv"][sel] = [-0.01, -0.02, -0.03, -0.10, -0.20, -0.30, -0.04, -0.08, -0.12]
+    arr["in_multipv"][sel] = [True] * 6 + [False] * 3
+    return arr, sel
+
+
+class _ScriptedDraws:
+    def __init__(self, picks: list[list[int]]) -> None:
+        self.picks = list(picks)
+
+    def integers(self, low: int, high: int, size: int) -> np.ndarray:
+        assert (low, high, size) == (0, 9, 9)
+        return np.asarray(self.picks.pop(0))
+
+
+# A pick that survives both gates, and one with NO outside rows, which the
+# MIN_BUCKET gate on the outside set drops.
+_SURVIVES = list(range(9))
+_DROPPED = [0, 1, 2, 3, 4, 5, 0, 1, 2]
+
+
+@pytest.mark.parametrize(("picks", "n_kept", "reliable"), [
+    ([_SURVIVES] * 4, 4, True),
+    ([_SURVIVES] * 3 + [_DROPPED], 3, False),   # 75%: CI finite but conditional
+    ([_SURVIVES] + [_DROPPED] * 3, 1, False),   # 25%: still >= N_BOOT // 4
+    ([_DROPPED] * 4, 0, False),                 # no interval at all
+])
+def test_tail_bootstrap_reports_survival_beside_the_interval(
+    monkeypatch: pytest.MonkeyPatch, picks: list[list[int]], n_kept: int, reliable: bool,
+) -> None:
+    """Dropped draws make the percentile interval CONDITIONAL on survival; the
+    result must say how many survived and flag a low share, without changing
+    the point estimate or which draws build the interval."""
+    monkeypatch.setattr(cast_probe, "MIN_BUCKET", 2)
+    monkeypatch.setattr(cast_probe, "N_BOOT", 4)
+    arr, sel = _fixed_draw_tail_fixture()
+    res = cast_probe.price_the_tail(arr, sel, "selected", _ScriptedDraws(picks))
+    point = 1000 * (0.001 + 0.019 * (0.06 / 0.18))
+    assert res["implied_cp"] == pytest.approx(point)
+    assert res["n_bootstrap"] == n_kept
+    assert res["n_bootstrap_attempted"] == 4
+    assert res["bootstrap_survival_frac"] == pytest.approx(n_kept / 4)
+    assert res["ci_reliable"] is reliable
+    if n_kept:
+        # The surviving draws all replay the full sample, so the interval is
+        # the point estimate -- dropped draws are not used, survivors are.
+        assert res["implied_cp_lo"] == pytest.approx(point)
+        assert res["implied_cp_hi"] == pytest.approx(point)
+    else:
+        assert np.isnan(res["implied_cp_lo"])
+
+
+def _report_arrays(n: int = 60) -> dict[str, np.ndarray]:
+    rng = np.random.default_rng(3)
+
+    def f() -> np.ndarray:
+        return rng.random(n)
+
+    return {
+        "adv": -f(), "regret_played": f(), "in_multipv": np.arange(n) % 3 != 0,
+        "is_sf_best": np.arange(n) % 2 == 0, "pmax": f(), "abs_q_parent": f(),
+        "n_legal": np.full(n, 20.0), "n_covered": np.full(n, 6.0), "mass_covered": f(),
+        "er_total": f() + 0.1, "er_imputed": f() * 0.1, "er_total_shuf": f() + 0.1,
+        "er_imputed_shuf": f() * 0.1, "imputed_value": f(), "worst_covered": f(),
+        "priority_policy_kl": f(), "priority_q_delta": f(),
+        "played_is_argmax": np.arange(n) % 4 != 0, "ply": np.arange(n) % 40,
+        "mean_regret_row": f() + 0.1,
+    }
+
+
+def test_report_prints_and_banks_bootstrap_survival(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The printed tail-pricing row carries `boot k/N (p%)` and marks a
+    low-survival interval; the banked JSON carries the same fields."""
+    import json
+
+    def fake_price(arr: Any, sel: Any, label: str, rng: Any) -> dict[str, Any]:
+        del arr, sel, rng
+        kept = 400 if label == "pmax>=0.0" else 180
+        return {
+            "stratum": label, "n": 100, "n_outside": 30, "calibration": [],
+            "outside_frac": 0.3, "mean_adv_outside": -0.01, "implied_cp": 20.0,
+            "implied_cp_lo": 15.0, "implied_cp_hi": 25.0, "assigned_cp": 550.0,
+            "overstatement": 27.5, "inversion_unstable": False,
+            "n_bootstrap": kept, "n_bootstrap_attempted": 400,
+            "bootstrap_survival_frac": kept / 400, "ci_reliable": kept == 400,
+        }
+
+    monkeypatch.setattr(cast_probe, "price_the_tail", fake_price)
+    scan = cast_probe.new_scan("replay", [])
+    out = cast_probe.report(_report_arrays(), scan, np.random.default_rng(0))
+    text = capsys.readouterr().out
+    rows = {line.split()[0]: line for line in text.splitlines() if "assigned" in line}
+    assert "boot 400/400 (100%)" in rows["pmax>=0.0"]
+    assert "CI UNRELIABLE" not in rows["pmax>=0.0"]
+    assert "boot 180/400 (45%)" in rows["pmax>=0.5"]
+    assert "CI UNRELIABLE" in rows["pmax>=0.5"]
+    assert "⚑⚑ CI UNRELIABLE means fewer than 95%" in text
+    banked = json.loads(json.dumps(out))["tail_pricing"]
+    assert [r["ci_reliable"] for r in banked] == [True, False, False, False]
+    assert banked[1]["bootstrap_survival_frac"] == pytest.approx(0.45)
+
+
+def test_report_runs_the_real_tail_pricing_with_survival_fields(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """End to end through the real `price_the_tail`: every priced stratum
+    carries the survival fields and the printed row shows them."""
+    rng = np.random.default_rng(0)
+    n = 4000
+    reg = np.concatenate([rng.choice([0.0, 0.02, 0.09], size=n), np.full(400, 0.55)])
+    adv = np.concatenate([-0.5 * reg[:n], np.full(400, -0.01)])
+    m = n + 400
+    arr = _report_arrays(m)
+    arr.update({"adv": adv, "regret_played": reg,
+                "in_multipv": np.concatenate([np.ones(n, bool), np.zeros(400, bool)]),
+                "pmax": np.ones(m)})
+    out = cast_probe.report(arr, cast_probe.new_scan("replay", []), np.random.default_rng(0))
+    text = capsys.readouterr().out
+    priced = [r for r in out["tail_pricing"] if "implied_cp" in r]
+    assert priced
+    for r in priced:
+        assert r["n_bootstrap_attempted"] == cast_probe.N_BOOT
+        assert r["bootstrap_survival_frac"] == pytest.approx(r["n_bootstrap"] / cast_probe.N_BOOT)
+        assert f"boot {r['n_bootstrap']}/{cast_probe.N_BOOT}" in text
+
+
+@pytest.mark.parametrize(("n_kept", "reliable"), [
+    (20, True),
+    (19, True),    # exactly BOOT_RELIABLE_MIN_SURVIVAL (0.95): reliable
+    (18, False),   # 0.90, just below
+])
+def test_tail_bootstrap_reliability_boundary_is_inclusive_at_095(
+    monkeypatch: pytest.MonkeyPatch, n_kept: int, reliable: bool,
+) -> None:
+    assert cast_probe.BOOT_RELIABLE_MIN_SURVIVAL == 0.95
+    monkeypatch.setattr(cast_probe, "MIN_BUCKET", 2)
+    monkeypatch.setattr(cast_probe, "N_BOOT", 20)
+    arr, sel = _fixed_draw_tail_fixture()
+    picks = [_SURVIVES] * n_kept + [_DROPPED] * (20 - n_kept)
+    res = cast_probe.price_the_tail(arr, sel, "selected", _ScriptedDraws(picks))
+    assert res["n_bootstrap"] == n_kept
+    assert res["bootstrap_survival_frac"] == pytest.approx(n_kept / 20)
+    assert res["ci_reliable"] is reliable

@@ -6,7 +6,7 @@ selfplay manager's finalizer. Done outcomes stay owned across writer failures.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from collections import deque
 from concurrent.futures import Future
 from dataclasses import dataclass
@@ -23,6 +23,10 @@ from chess_anti_engine.teacher_dispatch import TeacherDispatcher
 if TYPE_CHECKING:
     from scripts.bt4_generation_evaluator import BT4RootOutput
     from scripts.bt4_root_policy_stepper import BT4FinalizedGame, BT4RootPolicyStepper, PreparedBatch
+
+
+_Request = TypeVar("_Request")
+_Response = TypeVar("_Response")
 
 
 class DurableWriter:
@@ -83,6 +87,42 @@ class DurableWriter:
         self._thread.join(timeout)
         if self._thread.is_alive():
             raise TimeoutError("durable writer still owned; shutdown budget expired")
+
+
+class StopSignal:
+    """Share a sticky observation without filesystem reads in per-game loops.
+
+    Refresh on the coordinator and before backend results become visible.
+    A resumed invocation creates a new signal; an observed STOP never clears
+    underneath an invocation's pending results.
+    """
+
+    def __init__(self, observe: Callable[[], bool]) -> None:
+        self._observe = observe
+        self._event = threading.Event()
+
+    def refresh(self) -> bool:
+        if not self._event.is_set() and self._observe():
+            self._event.set()
+        return self._event.is_set()
+
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+    def latch_after(self, evaluate: Callable[[_Request], _Response]) -> Callable[[_Request], _Response]:
+        """Wrap a backend evaluate so the latch is refreshed after evaluation.
+
+        The dispatcher publishes a result to its future only after ``evaluate``
+        returns, so any STOP observed here is latched before any pool can read
+        the result; with ``advance(stop=signal.is_set)`` that pool then retains
+        the result instead of applying a move/RNG draw from it.
+        """
+        def latched(rows: _Request) -> _Response:
+            result = evaluate(rows)
+            self.refresh()
+            return result
+
+        return latched
 
 
 @dataclass
@@ -146,7 +186,7 @@ class BT4GamePool:
         finally:
             self.writer_seconds += time.monotonic() - started
 
-    def drain_writes(self, *, stopped: bool = False) -> None:
+    def drain_writes(self, *, stopped: bool = False, stop: Callable[[], bool] | None = None) -> None:
         """Collect acknowledgments without admitting writes, roots or games."""
         for game_id, game in tuple(self.active.items()):
             if game.writing is not None and game.writing.done():
@@ -158,7 +198,7 @@ class BT4GamePool:
             receipt = game.raw_receipt
             if self.acknowledge is not None:
                 if game.acknowledgment is None:
-                    if stopped:
+                    if stopped or (stop is not None and stop()):
                         continue  # no new companion admission after STOP
                     try:
                         ack = self.acknowledge(game_id, dict(receipt))
@@ -181,9 +221,14 @@ class BT4GamePool:
             self.receipts[game_id] = receipt
             del self.active[game_id]
 
-    def advance(self, *, stopped: bool = False) -> bool:
+    def advance(self, *, stopped: bool = False, stop: Callable[[], bool] | None = None) -> bool:
         """Poll completed work without waiting on any game or backend call."""
-        self.drain_writes(stopped=stopped)
+        def stopped_now() -> bool:
+            nonlocal stopped
+            stopped = stopped or (stop is not None and stop())
+            return stopped
+
+        self.drain_writes(stopped=stopped_now(), stop=stopped_now)
         writing_count = sum(game.writing is not None for game in self.active.values())
         for game_id, game in tuple(self.active.items()):
             if game.finalized is not None:
@@ -195,19 +240,21 @@ class BT4GamePool:
                         continue  # a shared writer retains independently bounded ownership
                     writing_count += 1
                 continue
-            if stopped:
+            if stopped_now():
                 continue
             if game.result is not None:
                 if not game.result.done():
                     continue
                 outputs = game.result.result()
+                if stopped_now():
+                    continue  # retain the exact batch/result for resume
                 assert game.batch is not None
                 game.stepper.apply_root_outputs(
                     game.batch, outputs, temperatures={game_id: self.temperature},
                 )
                 game.result = None
                 game.batch = None
-            if game.batch is None:
+            if game.batch is None and not stopped_now():
                 game.batch, finished = game.stepper.prepare_roots()
                 if finished:
                     if len(finished) != 1 or finished[0].slot_id != game_id:
@@ -216,11 +263,13 @@ class BT4GamePool:
                     continue
                 if game.batch is not None:
                     self._ready.append(game_id)
-        while self._ready and not stopped:
+        while self._ready and not stopped_now():
             game_id = self._ready[0]
             game = self.active[game_id]
             if game.batch is not None:
                 boards, inputs = game.batch.inference_inputs()
+                if stopped_now():
+                    break
                 try:
                     game.result = self.dispatcher.submit(
                         f"bt4:{self.namespace}:{game_id}:{game.batch.generation}", list(zip(boards, inputs)),
@@ -229,7 +278,7 @@ class BT4GamePool:
                     # Keep prepared root; no second prepare or RNG/move advance.
                     break
                 self._ready.popleft()
-        while not stopped and len(self.active) < self.capacity and self.next_id < self.games:
+        while not stopped_now() and len(self.active) < self.capacity and self.next_id < self.games:
             game_id = self.next_id
             if game_id in self.receipts:
                 self.next_id += 1
@@ -243,6 +292,30 @@ class BT4GamePool:
     def close(self, *, timeout: float = 30) -> None:
         if self._owns_writer:
             self._writer.close(timeout=timeout)
+
+
+def sweep_pools(pools: Iterable[BT4GamePool], signal: StopSignal) -> tuple[bool, bool]:
+    """One coordinator sweep over every pool: ``(paused, remaining)``.
+
+    The signal is refreshed (a filesystem observation) once before the sweep,
+    and every pool also gets ``stop=signal.is_set`` so a latch the backend sets
+    mid-sweep freezes all later move/RNG application in this sweep.
+
+    ``paused`` is re-read AFTER the sweep.  This is not what keeps move/RNG
+    application frozen (``stop=`` does that): without it, a latch that arrives
+    mid-sweep is acted on one sweep later, and that extra sweep runs with
+    ``stopped=True``, which only collects finished writes and admits writes of
+    already-finalized outcomes -- both allowed at STOP.  A mid-sweep latch always
+    comes from a backend result whose game is then retained (still active), so
+    ``remaining`` stays true and the reported pause status is the same either
+    way; the observable difference is the extra sweep (one more control call,
+    deadline check and advance per pool), which the resample removes.
+    """
+    paused = signal.refresh()
+    remaining = False
+    for pool in pools:
+        remaining = pool.advance(stopped=paused, stop=signal.is_set) or remaining
+    return signal.is_set(), remaining
 
 
 Root = TypeVar("Root")

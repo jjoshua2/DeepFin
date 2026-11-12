@@ -211,6 +211,11 @@ def test_deterministic_refresh_preserves_the_draw_distribution(tmp_path) -> None
     ``N_SEED_DIST`` seeds against a tolerance set from the pooled sd.
     """
     shard_dir = _write_window(tmp_path)
+    # 12 is the power budget, measured 2026-11-11 with each mutant applied to
+    # the deterministic arm only: pinning the refresh to the newest shards
+    # lands at 11.7x the tolerance, but squaring the recency weights (a
+    # subtler narrower draw) only at 2.2x with 12 seeds, 1.6x with 6 and 1.2x
+    # with 4. Fewer seeds would leave that mutant one noisy run from passing.
     n_seed_dist = 12
     det: list[float] = []
     default: list[float] = []

@@ -9,6 +9,7 @@ from typing import TypeAlias
 import numpy as np
 
 from chess_anti_engine.inference import BatchEvaluator
+from chess_anti_engine.inference_dispatcher import supports_inplace_api
 
 _CacheKey: TypeAlias = tuple[bytes, tuple[int, ...], str, bytes]
 _CacheValue: TypeAlias = tuple[np.ndarray, np.ndarray]
@@ -185,8 +186,106 @@ class EncodedEvalCache:
     def max_entries(self) -> int:
         return self._max_entries
 
+    # Dense evaluation entry points this cache does not implement. Forwarding
+    # them through ``__getattr__`` would let a search call the inner evaluator
+    # directly and bypass the cache while stats() reported a clean 0/0: Gumbel
+    # takes its 2-group pipeline whenever ``evaluate_encoded_async`` exists, and
+    # the volatility search prefers ``evaluate_encoded_with_volatility``. Hiding
+    # them sends the search to ``evaluate_encoded``, which is cached (or, for
+    # volatility, fails loudly instead of running uncached).
+    _UNCACHED_EVAL_ATTRS: frozenset[str] = frozenset({
+        "evaluate_encoded_async",
+        "evaluate_encoded_with_volatility",
+    })
+
     def __getattr__(self, name: str) -> object:
+        if name in EncodedEvalCache._UNCACHED_EVAL_ATTRS:
+            raise AttributeError(
+                f"{type(self).__name__} does not forward {name!r}: it would bypass "
+                "the cache; use evaluate_encoded"
+            )
         return getattr(self._inner, name)
+
+    @property
+    def supports_inplace_api(self) -> bool:
+        """Never: the dense pinned-slot path would bypass this cache.
+
+        ``supports_inplace_api()`` reads this explicit flag before any hasattr
+        probe, and Gumbel picks the pinned ``get_input_buffer`` /
+        ``evaluate_inplace_async`` path on it. Through ``__getattr__`` the flag
+        used to be the inner dispatcher's ``True``, so single-walker,
+        non-coalesced UCI wrote every root and leaf straight into the inner
+        evaluator's slots and this cache saw zero requests. Declaring False
+        sends Gumbel through ``evaluate_encoded`` (cached).
+
+        COST, paid only when the cache is enabled: every row is hashed
+        (blake2b over the whole encoded row -- 44.8 KB at 175 float32 planes)
+        and every output row is assembled one at a time in Python. Measured on
+        CPU against a stub inner that only copies its input: ~60-75 us/row
+        added at all-miss and ~55 us/row at all-hit (float32), on top of one
+        staging copy per batch. A hit therefore pays only when the evaluator
+        time it saves exceeds that; on a fast GPU forward of a large batch it
+        may not, so enable the cache only where repeat positions are common
+        and measure.
+
+        SCOPE: this cache is built only for single-root UCI search. A batch
+        caller with >= 64 boards would get a different search shape with the
+        cache on, because Gumbel's two-group leaf pipeline needs the in-place
+        path this wrapper declines.
+
+        The slot methods themselves stay forwarded: the PUCV searchers
+        (``puct_vl`` / the PUCV pools) are handed this wrapper, require
+        ``evaluate_inplace_async`` and cache through their own
+        ``PucvEvalCache`` keyed by C-emitted leaf keys.
+        """
+        return False
+
+    @property
+    def search_leaf_row_cap(self) -> int | None:
+        """Leaf-batch row cap the search would have applied without this cache.
+
+        Gumbel caps its leaf encode buffer at the evaluator's ``_max_batch``
+        only on the in-place path. Declining that path (above) would otherwise
+        size the buffer at the uncapped ``leaf_buffer_rows`` (>= 512), which
+        both changes the search -- leaves past the cap are evaluated instead of
+        being absorbed as root-Q pseudo-terminals -- and can raise in an inner
+        evaluator that rejects batches above its max. Advertising the cap the
+        inner in-place path would have used keeps cache-on and cache-off on
+        the same search shape. ``None`` when the inner would not have taken
+        the in-place path (its search was uncapped too).
+        """
+        inner = self._inner
+        if not supports_inplace_api(inner) or int(getattr(inner, "n_slots", 1)) < 1:
+            return None
+        cap = getattr(inner, "_max_batch", None)
+        if isinstance(cap, bool) or not isinstance(cap, int):
+            return None
+        return cap
+
+    # Leaf rows past the live count are stale or uninitialised buffer padding.
+    # Hashing, evaluating and storing them would evict real entries, and the
+    # dedup below already makes inner batch sizes arbitrary, so bucket padding
+    # above this cache buys no shape stability. Gumbel reads this to submit
+    # only its live rows here.
+    wants_unpadded_leaf_rows: bool = True
+
+    def _inner_max_rows(self) -> int | None:
+        """Largest batch the inner evaluator accepts, if it advertises one."""
+        for name in ("_max_batch", "max_batch"):
+            cap = getattr(self._inner, name, None)
+            if isinstance(cap, int) and not isinstance(cap, bool) and cap > 0:
+                return cap
+        return None
+
+    def _miss_chunks(self, n: int) -> list[tuple[int, int]]:
+        """Split ``n`` miss rows into spans no larger than the inner max batch.
+
+        Dedup and the search's own cap normally keep a miss batch under the
+        inner max; this is the backstop for any caller that does not (a root
+        batch of more boards than ``max_batch``, a non-Gumbel caller).
+        """
+        step = self._inner_max_rows() or n
+        return [(lo, min(lo + step, n)) for lo in range(0, n, step)]
 
     @property
     def async_backend(self) -> BatchEvaluator:
@@ -269,21 +368,38 @@ class EncodedEvalCache:
         miss_values: dict[_CacheKey, _CacheValue] = {}
         if miss_rows:
             miss_batch = np.ascontiguousarray(np.stack(miss_rows, axis=0), dtype=xb.dtype)
-            if miss_rels:
-                pol_miss, wdl_miss = self._inner.evaluate_encoded(
-                    miss_batch,
-                    relations=np.ascontiguousarray(np.stack(miss_rels, axis=0)),
-                )
+            rel_batch = (
+                np.ascontiguousarray(np.stack(miss_rels, axis=0)) if miss_rels else None
+            )
+            chunks = self._miss_chunks(len(miss_rows))
+            pol_parts: list[np.ndarray] = []
+            wdl_parts: list[np.ndarray] = []
+            for lo, hi in chunks:
+                if rel_batch is not None:
+                    pol_c, wdl_c = self._inner.evaluate_encoded(
+                        miss_batch[lo:hi], relations=rel_batch[lo:hi],
+                    )
+                else:
+                    pol_c, wdl_c = self._inner.evaluate_encoded(miss_batch[lo:hi])
+                if pol_c.shape[0] != hi - lo or wdl_c.shape[0] != hi - lo:
+                    raise ValueError(
+                        "inner evaluator returned mismatched batch dimensions: "
+                        f"policy={pol_c.shape!r}, wdl={wdl_c.shape!r}, "
+                        f"expected {hi - lo} rows"
+                    )
+                if len(chunks) > 1:
+                    # The inner may return views of a reused output buffer;
+                    # the next chunk's call would overwrite this one.
+                    pol_c, wdl_c = np.array(pol_c, copy=True), np.array(wdl_c, copy=True)
+                pol_parts.append(pol_c)
+                wdl_parts.append(wdl_c)
+            if len(chunks) == 1:
+                pol_miss, wdl_miss = pol_parts[0], wdl_parts[0]
             else:
-                pol_miss, wdl_miss = self._inner.evaluate_encoded(miss_batch)
-            if pol_miss.shape[0] != len(miss_rows) or wdl_miss.shape[0] != len(miss_rows):
-                raise ValueError(
-                    "inner evaluator returned mismatched batch dimensions: "
-                    f"policy={pol_miss.shape!r}, wdl={wdl_miss.shape!r}, "
-                    f"expected {len(miss_rows)} rows"
-                )
+                pol_miss = np.concatenate(pol_parts, axis=0)
+                wdl_miss = np.concatenate(wdl_parts, axis=0)
             with self._lock:
-                self._inner_calls += 1
+                self._inner_calls += len(chunks)
                 self._rows_submitted += len(miss_rows)
                 for key, j in miss_first_pos.items():
                     value = (np.array(pol_miss[j], copy=True), np.array(wdl_miss[j], copy=True))
@@ -377,23 +493,41 @@ class EncodedEvalCache:
             )
             miss_offsets = np.zeros(len(miss_rows) + 1, dtype=np.int64)
             np.cumsum(miss_counts.astype(np.int64), out=miss_offsets[1:])
-            pol_miss, wdl_miss = inner_call(
-                np.ascontiguousarray(np.stack(miss_rows, axis=0)),
-                np.concatenate(miss_legal).astype(np.int32, copy=False),
-                miss_counts,
-            )
-            if int(wdl_miss.shape[0]) != len(miss_rows):
-                raise ValueError(
-                    "inner evaluator returned mismatched batch dimensions: "
-                    f"wdl={wdl_miss.shape!r}, expected {len(miss_rows)} rows"
+            miss_batch = np.ascontiguousarray(np.stack(miss_rows, axis=0))
+            miss_flat = np.concatenate(miss_legal).astype(np.int32, copy=False)
+            chunks = self._miss_chunks(len(miss_rows))
+            pol_parts: list[np.ndarray] = []
+            wdl_parts: list[np.ndarray] = []
+            for lo, hi in chunks:
+                pol_c, wdl_c = inner_call(
+                    miss_batch[lo:hi],
+                    miss_flat[miss_offsets[lo]:miss_offsets[hi]],
+                    miss_counts[lo:hi],
                 )
-            if int(pol_miss.shape[0]) != int(miss_offsets[-1]):
-                raise ValueError(
-                    "inner evaluator returned mismatched compact policy length: "
-                    f"policy={pol_miss.shape!r}, expected {int(miss_offsets[-1])}"
-                )
+                if int(wdl_c.shape[0]) != hi - lo:
+                    raise ValueError(
+                        "inner evaluator returned mismatched batch dimensions: "
+                        f"wdl={wdl_c.shape!r}, expected {hi - lo} rows"
+                    )
+                want = int(miss_offsets[hi] - miss_offsets[lo])
+                if int(pol_c.shape[0]) != want:
+                    raise ValueError(
+                        "inner evaluator returned mismatched compact policy length: "
+                        f"policy={pol_c.shape!r}, expected {want}"
+                    )
+                if len(chunks) > 1:
+                    # The inner may return views of a reused output buffer;
+                    # the next chunk's call would overwrite this one.
+                    pol_c, wdl_c = np.array(pol_c, copy=True), np.array(wdl_c, copy=True)
+                pol_parts.append(pol_c)
+                wdl_parts.append(wdl_c)
+            if len(chunks) == 1:
+                pol_miss, wdl_miss = pol_parts[0], wdl_parts[0]
+            else:
+                pol_miss = np.concatenate(pol_parts, axis=0)
+                wdl_miss = np.concatenate(wdl_parts, axis=0)
             with self._lock:
-                self._inner_calls += 1
+                self._inner_calls += len(chunks)
                 self._rows_submitted += len(miss_rows)
                 for key, j in miss_first_pos.items():
                     value = (
