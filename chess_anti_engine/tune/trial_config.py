@@ -43,7 +43,19 @@ StartupSource = Literal[
 
 
 def _optional_pause_file(value: Any) -> str | None:
-    """Normalize the optional marker path before the pause consumer sees it."""
+    """Normalize the optional marker path before the pause consumer sees it.
+
+    Blank -> None (the default markers only). ``~`` / ``~user`` are expanded.
+    The result must be ABSOLUTE: a relative path is refused rather than
+    anchored. The only directory the trial could anchor it on is
+    ``trial_dir.parent`` -- the per-Ray-session staging dir
+    (``/tmp/ray/session_*/.../driver_artifacts``), new at every restart and
+    unknown to an operator before launch -- while ``scripts/recover_stall.sh``
+    anchors on the persistent tune dir. Any relative anchor is therefore a
+    marker someone can create where nothing is watching. ``pause_file`` is a
+    startup-only key (the live reload skips it), so this only ever raises at
+    launch/restart, never mid-iteration.
+    """
     if value is None:
         return None
     try:
@@ -52,7 +64,17 @@ def _optional_pause_file(value: Any) -> str | None:
         raise ValueError("pause_file must be a text path or None") from exc
     if not isinstance(path, str):
         raise ValueError("pause_file must be a text path or None")
-    return path.strip() or None
+    path = path.strip()
+    if not path:
+        return None
+    expanded = os.path.expanduser(path)
+    if not os.path.isabs(expanded):
+        raise ValueError(
+            f"pause_file must be an absolute path (or ~/...), got {path!r}: a "
+            "relative path would be anchored on the per-session Ray staging dir, "
+            "which no operator can reach; use an absolute path"
+        )
+    return expanded
 
 
 def _unit_fraction(value: Any, *, name: str) -> float:
