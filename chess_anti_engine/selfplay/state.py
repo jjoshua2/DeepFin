@@ -687,6 +687,10 @@ class SelfplayState:
     * **Stats** — see ``_StatsAcc``.
     """
 
+    # Opt-in finite-bank observer, installed via play_batch(on_state_ready=...).
+    # Called before samples are emitted; any failure propagates, never qualifies rows.
+    natural_outcome_sink: Callable[..., None] | None = field(default=None, init=False, repr=False)
+
     # ── Config (session-fixed; the live-reco subset — game, opponent,
     #    base_nodes, terminal_eval_nodes — is reassigned by apply_live_overrides
     #    so PID/difficulty changes apply without a session restart) ────────────

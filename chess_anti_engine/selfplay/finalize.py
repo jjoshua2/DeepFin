@@ -1482,6 +1482,17 @@ def finalize_game(
         was_adjudicated=was_adjudicated, sf_res=sf_res,
     )
 
+    natural_sink = getattr(state, "natural_outcome_sink", None)
+    natural_receipt = None
+    if natural_sink is not None:
+        from chess_anti_engine.natural_outcome import capture_natural_outcome
+        # Snapshot before any TB result rewrite. Nonstandard/missing history and
+        # nonautomatic terminals fail closed for this opt-in finite-bank path.
+        natural_receipt = capture_natural_outcome(
+            b, resolved_result=result, adjudicated=was_adjudicated,
+            tb_adjudicated=was_tb_adjudicated, resigned=False, censored=False,
+        )
+
     records = state.samples_per_game[i]
     flush_async_sf_labels_for_records(state, records)
     result, tb_policy_overrides = _rescore_with_syzygy(state, i, b, records, result)
@@ -1500,7 +1511,7 @@ def finalize_game(
     game_sf_d6_n = state.stats.sf_d6_n - sf_d6_n_before
 
     sample_start = len(all_samples)
-    all_samples.extend(_build_replay_samples(
+    materialized_samples = _build_replay_samples(
         state, i, records,
         result=result,
         tb_policy_overrides=tb_policy_overrides,
@@ -1508,7 +1519,13 @@ def finalize_game(
         sf_vol_targets=sf_vol_targets,
         total_plies_played=int(cb.ply),
         ply_to_index=ply_to_index,
-    ))
+    )
+    if natural_sink is not None:
+        natural_sink(
+            natural_receipt, materialized_samples, post_rescore_result=result,
+            tb_rescore_enabled=bool(state.game.syzygy_path),
+        )
+    all_samples.extend(materialized_samples)
 
     harvest_path = getattr(state.game, "blindspot_harvest_out_path", "")
     if harvest_path and state.starting_boards is not None:
