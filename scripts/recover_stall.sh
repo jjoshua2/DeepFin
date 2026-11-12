@@ -83,11 +83,26 @@ if [ -z "${RECOVER_PAUSE_FILE+set}" ]; then
     fi
 fi
 # `~` / `~/...` expand against $HOME, as `TrialConfig`'s normaliser does with
-# `os.path.expanduser` (the yaml read above already expanded `~user`; this
-# covers the $RECOVER_PAUSE_FILE route too).
+# `os.path.expanduser`. The yaml read above already expanded `~user`; anything
+# still starting with `~` came from $RECOVER_PAUSE_FILE or names an unknown
+# user (which the trainer refuses too). Both failure shapes refuse to run with
+# a reason rather than dying on `set -u` or watching a literal `~...` path.
 case "$PAUSE_FILE" in
-    "~") PAUSE_FILE="$HOME" ;;
-    "~/"*) PAUSE_FILE="$HOME/${PAUSE_FILE#\~/}" ;;
+    "~"|"~/"*)
+        if [ -z "${HOME:-}" ]; then
+            log "ERROR: pause_file '$PAUSE_FILE' needs \$HOME to expand and HOME is unset; refusing to run (set HOME or use an absolute path)"
+            exit 2
+        fi
+        if [ "$PAUSE_FILE" = "~" ]; then
+            PAUSE_FILE="$HOME"
+        else
+            PAUSE_FILE="$HOME/${PAUSE_FILE#\~/}"
+        fi
+        ;;
+    "~"*)
+        log "ERROR: pause_file '$PAUSE_FILE': a '~user' form is not expanded on this route (or names an unknown user, which the trainer refuses); use an absolute path. Refusing to run."
+        exit 2
+        ;;
 esac
 # A RELATIVE `pause_file` is REFUSED by the trainer at launch
 # (`trial_config._optional_pause_file`): the only anchor the trial has is the
@@ -102,6 +117,12 @@ case "$PAUSE_FILE" in
         PAUSE_FILE="$TUNE_DIR/$PAUSE_FILE"
         ;;
 esac
+# A DIRECTORY is refused by the trainer at launch (any existing path is a
+# marker, so it would pause forever). Keep it as a marker here -- this guard
+# fails closed -- but say why it will keep refusing.
+if [ -n "$PAUSE_FILE" ] && { [ "${PAUSE_FILE%/}" != "$PAUSE_FILE" ] || [ -d "$PAUSE_FILE" ]; }; then
+    log "WARN: pause_file '$PAUSE_FILE' is a directory; the trainer refuses that at launch (a pause marker must be a file path), and this guard refuses while it exists. Fix the yaml."
+fi
 
 # ⚑ AN UNKNOWN ARGUMENT IS REJECTED, NOT IGNORED. A typo'd override
 # (`--ignore-intentional_stop`) that silently fell through to the default would

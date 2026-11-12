@@ -240,6 +240,37 @@ def test_a_RELATIVE_pause_file_is_checked_conservatively_and_warned(recover) -> 
     assert recover.sacrifice_alive()
 
 
+def test_a_TILDE_pause_file_with_HOME_unset_refuses_with_a_reason(recover) -> None:
+    """`set -u` used to abort on `$HOME` with an opaque "unbound variable"."""
+    assert "HOME" not in recover.env
+    r = recover.run(RECOVER_PAUSE_FILE="~/p.txt")
+    assert r.returncode == 2, (r.returncode, r.stdout, r.stderr, recover.log)
+    assert "HOME is unset" in recover.log, recover.log
+    assert "unbound variable" not in r.stderr, r.stderr
+    assert not recover.teardown_ran()
+    assert recover.sacrifice_alive()
+
+
+def test_a_TILDE_USER_pause_file_on_the_env_route_refuses_loudly(recover) -> None:
+    """The yaml route expands `~user`; the env route cannot, so it refuses
+    rather than watching a literal `$TUNE_DIR/~root/x`."""
+    r = recover.run(RECOVER_PAUSE_FILE="~root/x")
+    assert r.returncode == 2, (r.returncode, r.stdout, r.stderr, recover.log)
+    assert "'~user' form" in recover.log, recover.log
+    assert not recover.teardown_ran()
+    assert recover.sacrifice_alive()
+
+
+def test_a_DIRECTORY_pause_file_refuses_and_says_why(recover, tmp_path) -> None:
+    d = tmp_path / "a_dir"
+    d.mkdir()
+    r = recover.run(RECOVER_PAUSE_FILE=str(d))
+    assert r.returncode == REFUSE_EXIT, (r.returncode, r.stdout, r.stderr, recover.log)
+    assert "is a directory" in recover.log, recover.log
+    assert not recover.teardown_ran()
+    assert recover.sacrifice_alive()
+
+
 def test_a_DANGLING_SYMLINK_marker_refuses_recovery(recover) -> None:
     """⚑ REVIEW FINDING P2-5. `[ -e ]` FOLLOWS the link and is FALSE when the
     target is gone, so a dangling-symlink marker read as "no marker" and

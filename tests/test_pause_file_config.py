@@ -81,3 +81,20 @@ def test_yaml_boolean_is_rejected_before_pause_resolution() -> None:
     config = yaml.safe_load("pause_file: true\n")
     with pytest.raises(ValueError, match="pause_file must be a text path or None"):
         TrialConfig.from_dict(config)
+
+
+@pytest.mark.parametrize("raw", ["~", "~/", "  ~  ", "{tmp}/", "{tmp}", "{tmp}/sub/", "{tmp}/nosuch/"])
+def test_directory_pause_file_is_refused(
+    raw: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Any existing path is a marker, so a directory (``~`` is the home dir)
+    would park the trial at its first iteration forever."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "sub").mkdir()
+    with pytest.raises(ValueError, match="pause_file must be a FILE path"):
+        TrialConfig.from_dict({"pause_file": raw.format(tmp=tmp_path)})
+
+
+def test_file_inside_home_is_still_accepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert TrialConfig.from_dict({"pause_file": "~/pause.txt"}).pause_file == str(tmp_path / "pause.txt")

@@ -74,6 +74,16 @@ def _optional_pause_file(value: Any) -> str | None:
             "relative path would be anchored on the per-session Ray staging dir, "
             "which no operator can reach; use an absolute path"
         )
+    # Any EXISTING path is a marker to the pause loop (`p.exists()`) and to
+    # recover_stall.sh (`[ -e ]`), so a directory -- `~` is the home dir --
+    # would park the trial at its first iteration and block recovery forever.
+    if path.endswith(("/", os.sep)) or os.path.isdir(expanded):
+        raise ValueError(
+            f"pause_file must be a FILE path, got {path!r}, which "
+            f"{'ends in a separator' if path.endswith(('/', os.sep)) else 'is an existing directory'}: "
+            "any existing path counts as a pause marker, so a directory would "
+            "pause the trial permanently; name a file inside it instead"
+        )
     return expanded
 
 
