@@ -202,3 +202,33 @@ strength result; real identity, repeat and batch controls were not yet run.
 Published receipt replaces only home-directory prefixes. Original SHA256:
 `e329ce90500fbfb9114af2d388e1a7531e9acd0e80b9270f31921c09b34d1b95`.
 Published copy SHA256: `e329ce90500fbfb9114af2d388e1a7531e9acd0e80b9270f31921c09b34d1b95`.
+
+
+## Fixed 24-search feasibility check and reporting correction
+
+[Independent saved-output review](fixed24-crossover-review.json) verified all
+24 searches and all 12 predeclared repeat, batch and uncrossed-identity controls.
+The largest policy probability difference in these controls was 1.79e-7.
+The fixed schedule used four policy/value-output combinations on only three
+correlated opening positions, with the same synchronous Python search path and
+64 simulations. This is not a representative playing-strength study, an Elo
+measurement, or causal evidence about training.
+
+**Erratum:** the original private pilot and fixed-24 per-pass receipts named
+Gumbel's fourth returned item `search_wdl`. It is actually the 4672-element
+boolean legal-move mask, not a WDL distribution. Final aggregation failed when
+it tried subtracting these booleans. All 24 search outputs were already saved;
+a separately reviewed saved-only correction checked masks and actions exactly,
+and compared policy probabilities and scalar root Q numerically. No searches
+were repeated, no original receipts were overwritten, and no search-WDL
+distribution claim is valid. The pilot's resource measurements are unaffected.
+
+Complete child CPU totaled 270.220 seconds. Original total parent wall time is
+unknown and is not reconstructed from timestamps. The independent review
+contains the per-root observations and limitations. No additional searches are
+authorized by this result; subsequent plans must qualify the user's six-piece
+tablebase requirement wherever applicable.
+
+Original review SHA256: `f0dde7eb279f02726ec2fee27ad14ac6dce151c9006d9c834209d06b8dc4f6f9`.
+Published copy SHA256: `f0dde7eb279f02726ec2fee27ad14ac6dce151c9006d9c834209d06b8dc4f6f9`.
+The receipt is already path-free; published bytes are unchanged.
