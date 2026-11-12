@@ -42,6 +42,7 @@ from chess_anti_engine.selfplay.opening import (
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.tablebase import SyzygyProbe
+from chess_anti_engine.selfplay.strict_tb import StrictSelfplayTablebase, TablebaseWitness
 
 if TYPE_CHECKING:
     import torch
@@ -73,6 +74,7 @@ class BatchStats:
     total_game_plies: int = 0
     adjudicated_games: int = 0
     tb_adjudicated_games: int = 0
+    censored_games: int = 0
     total_draw_games: int = 0
     selfplay_games: int = 0
     selfplay_adjudicated_games: int = 0
@@ -372,6 +374,7 @@ class _StatsAcc:
     total_game_plies: int = 0
     adjudicated_games: int = 0
     tb_adjudicated_games: int = 0
+    censored_games: int = 0
     total_draw_games: int = 0
     selfplay_games: int = 0
     selfplay_adjudicated_games: int = 0
@@ -434,6 +437,7 @@ class _StatsAcc:
             total_game_plies=int(self.total_game_plies),
             adjudicated_games=int(self.adjudicated_games),
             tb_adjudicated_games=int(self.tb_adjudicated_games),
+            censored_games=int(self.censored_games),
             total_draw_games=int(self.total_draw_games),
             selfplay_games=int(self.selfplay_games),
             selfplay_adjudicated_games=int(self.selfplay_adjudicated_games),
@@ -769,6 +773,9 @@ class SelfplayState:
     # count rides the ordinary CompletedGameBatch -> shard meta -> result.json
     # path. A session that finalizes no game at all reports it in the log only.
     pending_outcome_stats: dict[str, int] = field(default_factory=dict)
+    strict_tb: StrictSelfplayTablebase | None = None
+    strict_tb_witnesses: dict[int, TablebaseWitness] = field(default_factory=dict)
+    strict_tb_policy_abstained: dict[int, list[int]] = field(default_factory=dict)
 
     # ── Shared caches (None when C tree unavailable) ─────────────────────────
     mcts_tree: Any = None
@@ -903,10 +910,6 @@ class SelfplayState:
             col = _fenlist_net_color(start.source, boards[i], opening)
             if col is not None:
                 net_color_arr[i] = col
-        tb_probe, tb_result_arr, tb_adj_roll_arr = _init_tb_state(
-            batch_size, rng=rng, game=game,
-        )
-
         c_caps = _probe_c_extensions()
 
         # Normalize volatility source.
@@ -917,64 +920,85 @@ class SelfplayState:
         base_nodes = int(getattr(stockfish, "nodes", 0) or 0)
         terminal_eval_nodes = cls.terminal_eval_nodes_for(base_nodes)
 
-        return cls(
-            device=device,
-            rng=rng,
-            stockfish=stockfish,
-            evaluator=evaluator,
-            model=model,
-            opponent=opponent,
-            temp=temp,
-            search=search,
-            opening=opening,
-            diff_focus=diff_focus,
-            diff_focus_norm=norm,
-            game=game,
-            batch_size=batch_size,
-            continuous=continuous,
-            target=target,
-            volatility_source=vs,
-            base_nodes=base_nodes,
-            terminal_eval_nodes=terminal_eval_nodes,
-            done_arr=np.zeros(batch_size, dtype=np.int8),
-            finalized_arr=np.zeros(batch_size, dtype=np.int8),
-            net_color_arr=net_color_arr,
-            selfplay_arr=selfplay_arr,
-            starting_ply_arr=starting_ply_arr,
-            tb_probe=tb_probe,
-            tb_result_arr=tb_result_arr,
-            tb_adj_roll_arr=tb_adj_roll_arr,
-            boards=boards,
-            cboards=cboards,
-            starting_boards=starting_boards,
-            move_idx_history=[[] for _ in range(batch_size)],
-            samples_per_game=[[] for _ in range(batch_size)],
-            opening_source_arr=opening_source_arr,
-            consecutive_low_winrate=[0] * batch_size,
-            last_net_full=[True] * batch_size,
-            force_full_next=[False] * batch_size,
-            root_ids=[-1] * batch_size,
-            pending_sf_labels=[],
-            pending_sf_moves={},
-            sf_label_escalations=[0] * batch_size,
-            resumed_from_disk=[False] * batch_size,
-            mcts_tree=c_caps.mcts_tree,
-            has_c_ply=c_caps.has_c_ply,
-            has_classify_c=c_caps.has_classify_c,
-            c_process_ply=c_caps.c_process_ply,
-            batch_enc_146=c_caps.batch_enc_146,
-            batch_enc_146_lc0_root=c_caps.batch_enc_146_lc0_root,
-            batch_enc_146_lc0_root_legacy_meta=c_caps.batch_enc_146_lc0_root_legacy_meta,
-            batch_enc_146_bf16=c_caps.batch_enc_146_bf16,
-            batch_enc_146_lc0_root_bf16=c_caps.batch_enc_146_lc0_root_bf16,
-            batch_enc_146_lc0_root_legacy_meta_bf16=c_caps.batch_enc_146_lc0_root_legacy_meta_bf16,
-            c_classify=c_caps.c_classify,
-            c_temp_resample=c_caps.c_temp_resample,
-            fen_dole_queue=fen_dole_queue,
-            fen_sf_refute_queue=fen_sf_refute_queue,
-            sf_refute_opp_plies_left=sf_refute_opp_plies_left,
-            games_started=batch_size,
-        )
+        strict_tb = None
+        try:
+            if game.syzygy_outcome_mode == "rule50_match_v1":
+                assert game.syzygy_path is not None
+                strict_tb = StrictSelfplayTablebase(game.syzygy_path)
+                tb_probe = SyzygyProbe(
+                    game.syzygy_path, max_pieces=6, cursed_as_draw=True,
+                    rule50_aware=True, tablebase=strict_tb.tablebase,
+                )
+                tb_result_arr = [None] * batch_size
+                tb_adj_roll_arr = np.ones(batch_size, dtype=np.int8)
+            else:
+                tb_probe, tb_result_arr, tb_adj_roll_arr = _init_tb_state(
+                    batch_size, rng=rng, game=game,
+                )
+            return cls(
+                device=device,
+                rng=rng,
+                stockfish=stockfish,
+                evaluator=evaluator,
+                model=model,
+                opponent=opponent,
+                temp=temp,
+                search=search,
+                opening=opening,
+                diff_focus=diff_focus,
+                diff_focus_norm=norm,
+                game=game,
+                batch_size=batch_size,
+                continuous=continuous,
+                target=target,
+                volatility_source=vs,
+                base_nodes=base_nodes,
+                terminal_eval_nodes=terminal_eval_nodes,
+                done_arr=np.zeros(batch_size, dtype=np.int8),
+                finalized_arr=np.zeros(batch_size, dtype=np.int8),
+                net_color_arr=net_color_arr,
+                selfplay_arr=selfplay_arr,
+                starting_ply_arr=starting_ply_arr,
+                strict_tb=strict_tb,
+                tb_probe=tb_probe,
+                tb_result_arr=tb_result_arr,
+                tb_adj_roll_arr=tb_adj_roll_arr,
+                boards=boards,
+                cboards=cboards,
+                starting_boards=starting_boards,
+                move_idx_history=[[] for _ in range(batch_size)],
+                samples_per_game=[[] for _ in range(batch_size)],
+                opening_source_arr=opening_source_arr,
+                consecutive_low_winrate=[0] * batch_size,
+                last_net_full=[True] * batch_size,
+                force_full_next=[False] * batch_size,
+                root_ids=[-1] * batch_size,
+                pending_sf_labels=[],
+                pending_sf_moves={},
+                sf_label_escalations=[0] * batch_size,
+                resumed_from_disk=[False] * batch_size,
+                mcts_tree=c_caps.mcts_tree,
+                has_c_ply=c_caps.has_c_ply,
+                has_classify_c=c_caps.has_classify_c,
+                c_process_ply=c_caps.c_process_ply,
+                batch_enc_146=c_caps.batch_enc_146,
+                batch_enc_146_lc0_root=c_caps.batch_enc_146_lc0_root,
+                batch_enc_146_lc0_root_legacy_meta=c_caps.batch_enc_146_lc0_root_legacy_meta,
+                batch_enc_146_bf16=c_caps.batch_enc_146_bf16,
+                batch_enc_146_lc0_root_bf16=c_caps.batch_enc_146_lc0_root_bf16,
+                batch_enc_146_lc0_root_legacy_meta_bf16=c_caps.batch_enc_146_lc0_root_legacy_meta_bf16,
+                c_classify=c_caps.c_classify,
+                c_temp_resample=c_caps.c_temp_resample,
+                fen_dole_queue=fen_dole_queue,
+                fen_sf_refute_queue=fen_sf_refute_queue,
+                sf_refute_opp_plies_left=sf_refute_opp_plies_left,
+                games_started=batch_size,
+            )
+        except BaseException:
+            if strict_tb is not None:
+                strict_tb.close()
+            raise
+
 
     def net_color(self, i: int) -> chess.Color:
         """Return ``chess.Color`` for slot ``i``'s network-assigned color."""
@@ -1188,6 +1212,8 @@ class SelfplayState:
         # skip the new game forever. Re-roll the per-game "do I adjudicate"
         # flag from the configured fraction.
         self.tb_result_arr[i] = None
+        self.strict_tb_witnesses.pop(i, None)
+        self.strict_tb_policy_abstained.pop(i, None)
         if self.tb_probe is not None and self.game.syzygy_adjudicate:
             self.tb_adj_roll_arr[i] = 1 if self.rng.random() < max(
                 0.0, min(1.0, float(self.game.syzygy_adjudicate_fraction)),
@@ -1203,6 +1229,12 @@ class SelfplayState:
         if i < len(self.resumed_from_disk):
             self.resumed_from_disk[i] = False  # This slot's game starts here.
         self.games_started += 1
+
+    def close_tablebase(self) -> None:
+        # play_batch calls this only after all synchronous search/finalization
+        # frames return. SF futures do not borrow this Python handle.
+        if self.strict_tb is not None:
+            self.strict_tb.close()
 
     def replay_board(self, i: int) -> chess.Board:
         """Return a ``chess.Board`` at the current position of slot ``i``.
