@@ -12,6 +12,7 @@ from chess_anti_engine.tune.trainable_config_ops import (
     _play_batch_kwargs,
     _reload_yaml_into_config,
     reset_yaml_reload_key_tracking,
+    last_reload_yaml_keys,
 )
 from chess_anti_engine.tune.trial_config import TrialConfig
 
@@ -1046,3 +1047,36 @@ def test_live_reload_refuses_optimizer_group_value_knobs(
     assert restarted["matrix_weight_decay"] == 0
     assert restarted["aux_weight_decay"] == pytest.approx(0.01)
     assert restarted["aurora_uw_floor"] == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("searched", [False, True])
+@pytest.mark.parametrize(
+    "token",
+    [".nan", ".inf", "-.inf", "1e999", "1.0e+999", '"nan"', '"inf"',
+     '"-Infinity"', '"1e999"', '"bad"', "[]", "{}"],
+)
+def test_lr_rejected_reload_preserves_config_and_baseline(tmp_path, nested, searched, token):
+    path = tmp_path / "lr.yaml"
+    path.write_text("lr: 0.001\ntrain_steps: 25\n", encoding="utf-8")
+    config: dict[str, object] = {"lr": 0.001, "train_steps": 25}
+    if searched:
+        config["pb2_bounds_lr"] = [0.0001, 0.01]
+    _reload_yaml_into_config(config, str(path), live_reload=True)
+    before = dict(config)
+    baseline = last_reload_yaml_keys(str(path))
+    # A sibling change and a new key must not leak through a rejected edit,
+    # including when PB2 would otherwise skip the invalid YAML LR itself.
+    path.write_text(
+        "train_steps: 31\nseed: 7\n" + ("train:\n  lr: " if nested else "lr: ") + token + "\n",
+        encoding="utf-8",
+    )
+    _reload_yaml_into_config(config, str(path), live_reload=True)
+    assert config == before
+    assert last_reload_yaml_keys(str(path)) == baseline
+    # A later healthy edit still applies, with the searched LR preserved.
+    path.write_text("lr: 0.002\ntrain_steps: 31\nseed: 7\n", encoding="utf-8")
+    _reload_yaml_into_config(config, str(path), live_reload=True)
+    assert config["lr"] == (0.001 if searched else 0.002)
+    assert config["train_steps"] == 31
+    assert last_reload_yaml_keys(str(path)) == frozenset({"lr", "train_steps", "seed"})
