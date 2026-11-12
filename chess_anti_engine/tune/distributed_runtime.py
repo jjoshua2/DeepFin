@@ -2096,6 +2096,9 @@ def _ingest_distributed_selfplay(
     prev_max_games = math.ceil(float(prev_model_max_fraction) * target_games) if cap_prev else 0
     prev_matching_games_box = [0]
     effective_accepted = set(accepted_model_shas)
+    # A zero quota must exclude prev before the first shard is counted.
+    if prev_model_sha and cap_prev and prev_max_games <= 0:
+        effective_accepted.discard(prev_model_sha)
 
     def _ingest(sp: Path, *, preloaded: tuple | None = None) -> None:
         _process_shard_with_prev_cap(
