@@ -16,6 +16,21 @@ import sys
 import tempfile
 
 
+def verify_source_revision(expected, root=None):
+    """Pin clean Git source, not ignored native images or dependencies."""
+    if not isinstance(expected, str) or len(expected) != 40 or any(c not in "0123456789abcdef" for c in expected):
+        raise ValueError("expected source revision required")
+    root = Path(root) if root is not None else Path(__file__).resolve().parents[1]
+    def git(*args):
+        return subprocess.check_output(["git", "-C", str(root), *args], text=True, timeout=10).strip()
+    realized = git("rev-parse", "HEAD")
+    if realized != expected:
+        raise ValueError("source revision mismatch")
+    if git("status", "--porcelain", "--untracked-files=all"):
+        raise ValueError("clean source revision required")
+    return realized
+
+
 def source_hashes():
     root = Path(__file__).resolve().parents[1]
     names = (
@@ -150,6 +165,7 @@ def load_trace(plan):
 
 
 def child(plan, output):
+    revision = verify_source_revision(plan.get("expected_source_revision"))
     from scripts.stored_wdl_checkpoint import _qualify
     from chess_anti_engine.train.e2_objective import FrozenObjective, canonical
     from chess_anti_engine.train.e2_runtime import (
@@ -192,6 +208,9 @@ def child(plan, output):
     result = _qualify(request, verified_model_callback=consume)
     if plan["source_sha256"] != source_hashes():
         raise ValueError("source changed during runtime")
+    verify_source_revision(revision)
+    result["realized_source_revision"] = revision
+    result["source_authentication_scope"] = "clean Git source; ignored native images and dependencies not authenticated"
     result["source_sha256"] = plan["source_sha256"]
     result["synthetic_training_performed"] = True
     result["bank_manifest_sha256"] = plan["bank_sha256"]
@@ -205,6 +224,7 @@ def run_synthetic(plan_path, expected_plan_sha256, output_root):
     plan = read_json(plan_path, expected_plan_sha256)
     if plan.get("synthetic") is not True:
         raise ValueError("synthetic-only wrapper")
+    revision = verify_source_revision(plan.get("expected_source_revision"))
     output = Path(tempfile.mkdtemp(prefix="e2-bound-", dir=output_root))
     env = dict(
         os.environ,
@@ -251,7 +271,9 @@ def run_synthetic(plan_path, expected_plan_sha256, output_root):
         output / "candidate.json", sha(output / "candidate.json"), 8 * 1024**2
     )
     if (
-        result["source_sha256"] != source_hashes()
+        result.get("realized_source_revision") != revision
+        or verify_source_revision(revision) != revision
+        or result["source_sha256"] != source_hashes()
         or result["bank_manifest_sha256"] != plan["bank_sha256"]
         or sha(plan_path) != expected_plan_sha256
     ):

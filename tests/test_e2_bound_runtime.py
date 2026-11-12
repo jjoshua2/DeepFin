@@ -1,4 +1,5 @@
 import json
+import subprocess
 from dataclasses import asdict
 import pytest
 import torch
@@ -40,6 +41,7 @@ def test_strict_checkpoint_bank_trace_runtime(tmp_path, qualified):
     _, _, _, overrides = setup(qualified)
     plan = {
         "synthetic": True,
+        "expected_source_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "bank_manifest": str(marker),
         "bank_sha256": sha(marker),
         "trace": [[{"ordinal": 0, "indices": [0, 0]}]] * 2,
@@ -67,6 +69,7 @@ def test_strict_checkpoint_bank_trace_runtime(tmp_path, qualified):
     path.write_text(canonical(plan))
     output = run_synthetic(path, sha(path), tmp_path)
     result = json.loads((output / "SYNTHETIC-RUNTIME-COMMITTED.json").read_bytes())
+    assert result["realized_source_revision"] == plan["expected_source_revision"]
     assert result["sha256"] == sha(checkpoint)
     assert result["diagnostic"]["steps_per_arm"] == 2
     assert result["diagnostic"]["status"] == "SYNTHETIC_RUNTIME_ONLY"
@@ -93,6 +96,7 @@ def test_owned_child_interrupt_is_killed_and_reaped(tmp_path, monkeypatch):
 
     path = tmp_path / "plan.json"
     path.write_text('{"synthetic":true}')
+    monkeypatch.setattr(wrapper, "verify_source_revision", lambda *a: "a" * 40)
     calls = []
 
     class Child:
@@ -136,9 +140,45 @@ def test_full_attempt_order_and_selection_rejected(tmp_path, monkeypatch):
         )
 
 
-def test_helper_pin_fails_before_bank_or_checkpoint(tmp_path):
+def test_helper_pin_fails_before_bank_or_checkpoint(tmp_path, monkeypatch):
     from scripts.e2_bound_runtime import child
+    monkeypatch.setattr("scripts.e2_bound_runtime.verify_source_revision", lambda *a: "a" * 40)
 
     with pytest.raises(ValueError, match="source identity"):
         child({"source_sha256": {}}, tmp_path / "out.json")
     assert not (tmp_path / "out.json").exists()
+
+
+def test_committed_model_change_rejected_by_external_revision(tmp_path):
+    from scripts.e2_bound_runtime import verify_source_revision
+    def git(*args):
+        return subprocess.check_output(["git", "-C", str(tmp_path), *args], text=True).strip()
+    git("init")
+    git("config", "user.email", "synthetic@example.invalid")
+    git("config", "user.name", "Synthetic")
+    model = tmp_path / "model.py"
+    model.write_text("value = 1\n")
+    git("add", ".")
+    git("commit", "-m", "original")
+    expected = git("rev-parse", "HEAD")
+    assert verify_source_revision(expected, tmp_path) == expected
+    model.write_text("value = 2\n")
+    with pytest.raises(ValueError, match="clean"):
+        verify_source_revision(expected, tmp_path)
+    git("add", ".")
+    git("commit", "-m", "changed model only")
+    with pytest.raises(ValueError, match="revision mismatch"):
+        verify_source_revision(expected, tmp_path)
+
+
+def test_revision_rejected_before_project_imports(tmp_path, monkeypatch):
+    import builtins
+    from scripts.e2_bound_runtime import child
+    original = builtins.__import__
+    def guarded(name, *args, **kwargs):
+        if name.startswith(("chess_anti_engine", "scripts.stored_wdl_checkpoint")):
+            pytest.fail("project import before revision admission")
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    with pytest.raises(ValueError, match="revision mismatch"):
+        child({"expected_source_revision": "0" * 40}, tmp_path / "out.json")
