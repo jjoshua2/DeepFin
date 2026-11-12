@@ -149,7 +149,12 @@ def test_gather_keeps_sparse_leaf_row_and_raw_cache_separate(monkeypatch):
     assert len(tables.positions) == 1
     assert tree.get_solved_status(1) == -1
     assert tree.get_solved_status(2) == 0
-    assert tree.node_q(root) == pytest.approx(0.5, abs=1e-6)
+    # One proven losing child for its STM proves a winning root immediately;
+    # node_q exposes that solved value, rather than the visit-average 0.5.
+    assert tree.node_q(1) == pytest.approx(-1, abs=1e-6)
+    assert tree.node_q(2) == pytest.approx(0)
+    assert tree.get_solved_status(root) == 1
+    assert tree.node_q(root) == pytest.approx(1)
     assert np.array_equal(evaluator.raw, np.zeros((1, 3), np.float32))
     assert all(tree.get_virtual_loss(i) == 0 for i in range(tree.node_count()))
 
