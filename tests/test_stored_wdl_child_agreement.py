@@ -82,7 +82,13 @@ def bound_fixture():
         "has_sf_label_meta": np.ones(254, np.uint8),
     }
     buf = io.BytesIO()
-    np.savez(buf, **raw)
+    np.savez(
+        buf,
+        sf_wdl=raw["sf_wdl"],
+        has_sf_wdl=raw["has_sf_wdl"],
+        sf_label_meta=raw["sf_label_meta"],
+        has_sf_label_meta=raw["has_sf_label_meta"],
+    )
     blobs = {"sf_raw": buf.getvalue()}
 
     def put(k, v):
