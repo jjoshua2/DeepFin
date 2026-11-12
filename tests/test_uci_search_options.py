@@ -2150,3 +2150,48 @@ def test_main_builds_the_engine_from_the_args_it_advertised(
     assert captured["chunk_sims"] == 777
     assert captured["cpuct_factor"] == 7.0
     assert printed["CScale"] == "0.077"
+
+
+_LEAF_TB_NOTE = "leaf tablebase probing is inactive on search path"
+
+
+def test_syzygy_path_on_a_pool_says_leaf_probing_is_inactive(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The pools and single-thread PUCV never receive ``tb_probe``, so on them
+    SyzygyPath reaches only the root shortcut and root eval. Accepted and
+    silently ignored at the leaves unless the engine says so -- at setoption,
+    and at the next ``go`` after the search path changes to a pool."""
+    tb_dir = tmp_path / "tb"
+    tb_dir.mkdir()
+    for name in ("KQvK.rtbw", "KQvK.rtbz"):  # names only: never probed here
+        (tb_dir / name).write_bytes(b"")
+
+    walker = _make_engine(threads=2)
+    try:
+        assert walker._worker.realized_search_path() == "walker"
+        capsys.readouterr()
+        _setoption(walker, f"setoption name SyzygyPath value {tb_dir}")
+        assert f"{_LEAF_TB_NOTE} walker" in capsys.readouterr().out
+    finally:
+        walker._worker.close()
+
+    gumbel = _make_engine(threads=1)
+    try:
+        assert gumbel._worker.realized_search_path() == "gumbel"
+        capsys.readouterr()
+        _setoption(gumbel, f"setoption name SyzygyPath value {tb_dir}")
+        assert _LEAF_TB_NOTE not in capsys.readouterr().out
+        _setoption(gumbel, "setoption name Threads value 2")
+        assert gumbel._worker.realized_search_path() == "walker"
+        capsys.readouterr()
+        gumbel.dispatch(parse_command(f"position fen {FEN}"))
+        gumbel.dispatch(parse_command("go nodes 64"))
+        gumbel._wait_for_search()
+        out = capsys.readouterr().out
+        assert out.count(_LEAF_TB_NOTE) == 1
+        gumbel.dispatch(parse_command("go nodes 64"))  # once per mode, not per go
+        gumbel._wait_for_search()
+        assert _LEAF_TB_NOTE not in capsys.readouterr().out
+    finally:
+        gumbel._worker.close()
