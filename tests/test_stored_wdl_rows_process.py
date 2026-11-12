@@ -6,6 +6,7 @@ import json
 import signal
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -127,6 +128,7 @@ def test_clean_exit_mismatch_never_publishes(
             out = Path(payload["output_dir"])
             (out / "rows.npz").write_bytes(b"synthetic fake child bytes")
             receipt = {"status": "COMPLETE_DESCRIPTIVE_PREFIX",
+                       "request_binding": {k: v for k, v in payload.items() if k != "output_dir"},
                        "audit_sha256": payload["audit_sha256"],
                        "requested_shard_paths": payload["shard_paths"],
                        "expected_history_rep_fix": True,
@@ -185,6 +187,7 @@ def test_parent_checks_size_before_hash_and_syncs_success_link(
             artifact = out / "rows.npz"
             artifact.write_bytes(b"valid synthetic child output")
             receipt = {"status": "COMPLETE_DESCRIPTIVE_PREFIX",
+                       "request_binding": {k: v for k, v in payload.items() if k != "output_dir"},
                        "audit_sha256": payload["audit_sha256"],
                        "requested_shard_paths": payload["shard_paths"],
                        "expected_history_rep_fix": True,
@@ -205,3 +208,44 @@ def test_parent_checks_size_before_hash_and_syncs_success_link(
         process.run_reader(tmp_path / "audit", "0"*64, (tmp_path / "one.zarr",),
                            tmp_path / "output2", expected_history_rep_fix=True)
     assert not list((tmp_path / "output2").glob("*/result.json"))
+
+def test_direct_real_child_is_target_free_and_identity_bound(tmp_path: Path) -> None:
+    from tests.test_stored_wdl_direct import direct_fixture
+    path, kwargs = direct_fixture(tmp_path)
+    result = process.run_direct_reader(path, tmp_path / "direct-output", **kwargs)
+    out = Path(result["output_dir"])
+    assert result["status"] == "COMPLETE_DESCRIPTIVE_DIRECT"
+    assert result["mode"] == "descriptive-producer-rows"
+    assert result["request_binding"]["expected_rows"] == 3
+    assert result["request_binding"]["expected_attrs_sha256"] == kwargs["expected_attrs_sha256"]
+    assert result["project_source_sha256"]["scripts/stored_wdl_direct.py"]
+    assert "targets" not in result
+    with np.load(out / "rows.npz", allow_pickle=False) as arrays:
+        assert arrays.files == ["x"]
+        assert arrays["x"].shape == (3, 175, 8, 8)
+    assert result["limits"]["torch_threads"] == 1
+    assert result["limits"]["cuda_visible_devices"] == ""
+
+
+def test_direct_bad_metadata_never_publishes(tmp_path: Path) -> None:
+    from tests.test_stored_wdl_direct import direct_fixture
+    path, kwargs = direct_fixture(tmp_path)
+    kwargs["expected_attrs_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="reader failed"):
+        process.run_direct_reader(path, tmp_path / "direct-output", **kwargs)
+    assert not list((tmp_path / "direct-output").glob("*/result.json"))
+
+
+@pytest.mark.parametrize("change", [
+    {"expected_rows": True}, {"expected_rows": 257},
+    {"expected_history_rep_fix": 1}, {"expected_attrs_sha256": None},
+    {"expected_seal_sha256": "not-a-hash"},
+])
+def test_direct_invalid_request_precedes_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: dict,
+) -> None:
+    monkeypatch.setattr(process.subprocess, "Popen", lambda *_a, **_k: pytest.fail("spawned"))
+    kwargs: dict[str, Any] = {"expected_rows": 3, "expected_history_rep_fix": True,
+              "expected_attrs_sha256": "a" * 64, "expected_seal_sha256": "b" * 64, **change}
+    with pytest.raises(ValueError, match=r"explicit|exact metadata"):
+        process.run_direct_reader(tmp_path / "direct.zarr", tmp_path / "output", **kwargs)

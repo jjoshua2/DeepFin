@@ -45,13 +45,37 @@ def run_reader(audit_path: Path, audit_sha256: str, shard_paths: tuple[Path, ...
         raise ValueError("explicit history boolean and bounded selection count required")
     if not 1 <= len(shard_paths) <= 32:
         raise ValueError("bounded explicit shard prefix required")
+    payload = {"operation": "audit", "audit_path": str(audit_path.resolve()),
+               "audit_sha256": audit_sha256,
+               "shard_paths": [str(p.absolute()) for p in shard_paths], "count": count,
+               "expected_history_rep_fix": expected_history_rep_fix}
+    return _run_reader(payload, output_root)
+
+
+def run_direct_reader(shard_path: Path, output_root: Path, *,
+                      expected_attrs_sha256: object, expected_seal_sha256: object,
+                      expected_rows: int, expected_history_rep_fix: bool) -> dict:
+    """Extract exactly the declared producer shard, without labels or match search."""
+    if (type(expected_history_rep_fix) is not bool or type(expected_rows) is not int or
+            not 1 <= expected_rows <= 256):
+        raise ValueError("explicit history boolean and bounded exact row count required")
+    for digest in (expected_attrs_sha256, expected_seal_sha256):
+        if (not isinstance(digest, str) or len(digest) != 64 or
+                any(c not in "0123456789abcdef" for c in digest)):
+            raise ValueError("exact metadata SHA256 required")
+    payload = {"operation": "direct", "shard_paths": [str(shard_path.absolute())],
+               "expected_attrs_sha256": expected_attrs_sha256,
+               "expected_seal_sha256": expected_seal_sha256,
+               "expected_rows": expected_rows,
+               "expected_history_rep_fix": expected_history_rep_fix}
+    return _run_reader(payload, output_root)
+
+
+def _run_reader(payload: dict, output_root: Path) -> dict:
     output_root.mkdir(parents=True, exist_ok=True)
     out = Path(tempfile.mkdtemp(prefix="stored-wdl-prefix-", dir=output_root))
     _sync_directory(output_root)
-    payload = {"audit_path": str(audit_path.resolve()), "audit_sha256": audit_sha256,
-               "shard_paths": [str(p.absolute()) for p in shard_paths],
-               "output_dir": str(out.resolve()), "count": count,
-               "expected_history_rep_fix": expected_history_rep_fix}
+    payload = {**payload, "output_dir": str(out.resolve())}
     request = json.dumps(payload, allow_nan=False)
     if len(request.encode()) > MAX_REQUEST:
         raise ValueError("oversized reader request")
@@ -90,10 +114,12 @@ def run_reader(audit_path: Path, audit_sha256: str, shard_paths: tuple[Path, ...
     artifact_path = out / "rows.npz"
     if not 0 < artifact_path.stat().st_size <= MAX_FILE:
         raise ValueError("reader artifact size exceeds cap")
-    if (receipt.get("status") != "COMPLETE_DESCRIPTIVE_PREFIX" or
-            receipt.get("audit_sha256") != audit_sha256 or
+    expected_status = ("COMPLETE_DESCRIPTIVE_DIRECT" if payload["operation"] == "direct"
+                       else "COMPLETE_DESCRIPTIVE_PREFIX")
+    if (receipt.get("status") != expected_status or
+            receipt.get("request_binding") != {k: v for k, v in payload.items() if k != "output_dir"} or
             receipt.get("requested_shard_paths") != payload["shard_paths"] or
-            receipt.get("expected_history_rep_fix") is not expected_history_rep_fix or
+            receipt.get("expected_history_rep_fix") is not payload["expected_history_rep_fix"] or
             receipt.get("artifact_sha256") != _digest(out / "rows.npz")):
         raise ValueError("reader output identity mismatch")
     # An exclusive hard link atomically exposes the fully fsynced candidate.
@@ -107,9 +133,12 @@ def _source_snapshot(repo: Path) -> dict[str, str]:
     """Hash relevant source and ignored native images; no build or dependency change."""
     names = subprocess.check_output(
         ["git", "ls-files", "--", "chess_anti_engine", "scripts/match_audit_rows.py",
-         "scripts/stored_wdl_rows.py"], cwd=repo, text=True).splitlines()
+         "scripts/stored_wdl_rows.py", "scripts/stored_wdl_direct.py"], cwd=repo, text=True).splitlines()
     paths = [repo / name for name in names if Path(name).suffix in {".py", ".c", ".h"}]
     paths += [Path(__file__).resolve()]
+    direct = repo / 'scripts/stored_wdl_direct.py'
+    if direct.is_file():
+        paths.append(direct)
     paths += sorted((repo / "chess_anti_engine").rglob("*.so"))
     return {str(p.relative_to(repo)): _digest(p) for p in paths}
 
@@ -128,15 +157,30 @@ def _execute(request: dict) -> dict:
     torch.set_num_threads(1)
     torch.set_num_interop_threads(1)
 
-    audit_path = Path(request["audit_path"])
-    with audit_path.open("rb") as stream:
-        audit = stream.read(MAX_AUDIT_BYTES + 1)
-    if len(audit) > MAX_AUDIT_BYTES:
-        raise ValueError("audit size exceeds cap")
-    result = scan_prefix(
-        audit, request["audit_sha256"], tuple(Path(p) for p in request["shard_paths"]),
-        expected_history_rep_fix=request["expected_history_rep_fix"], count=request["count"],
-    )
+    operation = request.get("operation", "audit")
+    if operation == "direct":
+        from scripts.stored_wdl_direct import read_direct_shard
+        if len(request["shard_paths"]) != 1:
+            raise ValueError("direct operation requires exactly one shard")
+        result = read_direct_shard(
+            Path(request["shard_paths"][0]),
+            expected_attrs_sha256=request["expected_attrs_sha256"],
+            expected_seal_sha256=request["expected_seal_sha256"],
+            expected_rows=request["expected_rows"],
+            expected_history_rep_fix=request["expected_history_rep_fix"],
+        )
+    elif operation == "audit":
+        audit_path = Path(request["audit_path"])
+        with audit_path.open("rb") as stream:
+            audit = stream.read(MAX_AUDIT_BYTES + 1)
+        if len(audit) > MAX_AUDIT_BYTES:
+            raise ValueError("audit size exceeds cap")
+        result = scan_prefix(
+            audit, request["audit_sha256"], tuple(Path(p) for p in request["shard_paths"]),
+            expected_history_rep_fix=request["expected_history_rep_fix"], count=request["count"],
+        )
+    else:
+        raise ValueError("unsupported reader operation")
     # Snapshot known imported helpers and native dependencies, not merely git HEAD.
     imported = {}
     for name, module in sorted(sys.modules.items()):
@@ -148,23 +192,29 @@ def _execute(request: dict) -> dict:
     if _source_snapshot(repo) != source_before:
         raise ValueError("project source/native image changed during reader execution")
     out = Path(request["output_dir"])
-    x, targets = result.pop("x"), result.pop("targets")
-    if x.nbytes + targets.nbytes > 16 * 1024**2:
+    arrays = {"x": result.pop("x")}
+    if operation == "audit":
+        arrays["targets"] = result.pop("targets")
+    elif "targets" in result:
+        raise ValueError("direct extraction must not introduce targets")
+    if sum(a.nbytes for a in arrays.values()) > 16 * 1024**2:
         raise ValueError("oversized reconstructed arrays")
     artifact = out / "rows.npz"
     with artifact.open("xb") as stream:
-        np.savez(stream, x=x, targets=targets)
+        np.savez(stream, **arrays)
         stream.flush()
         os.fsync(stream.fileno())
     _sync_directory(out)
     with np.load(artifact, allow_pickle=False) as saved:
-        if (set(saved.files) != {"x", "targets"} or
+        if (set(saved.files) != set(arrays) or
                 saved["x"].dtype != np.dtype("float32") or
-                not np.array_equal(saved["x"], x) or not np.array_equal(saved["targets"], targets)):
+                any(not np.array_equal(saved[k], v) for k, v in arrays.items())):
             raise ValueError("reconstructed artifact validation failed")
     import resource
     receipt = {
-        **result, "status": "COMPLETE_DESCRIPTIVE_PREFIX",
+        **result, "status": ("COMPLETE_DESCRIPTIVE_DIRECT" if operation == "direct"
+                             else "COMPLETE_DESCRIPTIVE_PREFIX"),
+        "request_binding": {k: v for k, v in request.items() if k != "output_dir"},
         "artifact_sha256": _digest(artifact), "artifact_bytes": artifact.stat().st_size,
         "requested_shard_paths": request["shard_paths"],
         "source_revision": revision, "project_source_sha256": source_before,
