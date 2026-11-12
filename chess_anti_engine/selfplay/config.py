@@ -231,7 +231,9 @@ class GameConfig:
   # Applied after the cap, so on a conflicting config (floor > cap > 0) the
   # floor wins — __post_init__ warns. Label-escalation re-queries are
   # unaffected (they have their own budget). Curriculum move queries are never
-  # floored.
+  # floored. Floor and cap need the StockfishPool route: the single-engine route
+  # labels curriculum plies with the move query itself, so they are refused
+  # there (single_engine_sf_budget_violations).
     sf_label_nodes_floor: int = 0
   # Research bet (default 0.0 = off; provable no-op: the gate returns before
   # any engine call and no record field is ever written): adaptive escalation
@@ -247,7 +249,8 @@ class GameConfig:
   # blind-spot harvester still sees the original gap — otherwise escalation
   # would hide exactly the positions it mines. Pool (async) label path only;
   # the sync StockfishUCI fallback path ignores the flag. See
-  # configs/exp_label_escalation.yaml.
+  # configs/exp_label_escalation.yaml. Refused on a single engine
+  # (single_engine_sf_budget_violations) rather than silently ignored.
     sf_label_escalate_q_gap: float = 0.0
   # Node budget for the escalated re-query. Never capped by
   # sf_label_nodes_cap and never touches the PID opponent budget.
@@ -445,15 +448,98 @@ class GameConfig:
             )
 
 
-def validate_sf_move_nodes_transport(sf_move_nodes: int, *, pooled: bool) -> None:
-    """The synchronous route shares one query for a curriculum move and label."""
-    if int(sf_move_nodes) > 0 and not pooled:
-        raise ValueError(
-            "sf_move_nodes > 0 requires StockfishPool; the synchronous single-engine "
-            "route cannot honour a separate curriculum move budget. Set sf_move_nodes=0 "
-            "or use at least 2 effective SF workers (--sf-workers / "
-            "distributed_worker_sf_workers)."
+def sf_workers_use_pool(sf_workers: int) -> bool:
+    """THE pool-vs-single-engine predicate for a worker's ``--sf-workers``.
+
+    ``WorkerSession._sync_stockfish`` builds a ``StockfishPool`` exactly when
+    this is true and a single synchronous ``StockfishUCI`` otherwise. Every
+    check that asks "which route will this worker take" (the worker's own
+    session-start refusal, the driver's launch refusal, the live-reload
+    decline) calls this instead of restating the comparison, so the guards
+    cannot drift from the construction they guard.
+    """
+    return int(sf_workers) > 1
+
+
+def single_engine_sf_budget_violations(
+    *,
+    sf_move_nodes: int,
+    sf_label_nodes_floor: int,
+    sf_label_nodes_cap: int,
+    sf_label_escalate_q_gap: float,
+    pooled: bool,
+) -> list[str]:
+    """Budget knobs the synchronous single-engine route would accept and ignore.
+
+    On that route one query per curriculum ply is both the opponent's played
+    move and the P1 label (``finish_sf_annotation_and_moves`` with
+    ``play_curriculum_moves=True`` -> ``_eff_sf_nodes(for_move=False,
+    for_label=False)``), so it can honour neither a separate move budget nor a
+    label-only floor/cap without changing the opponent's strength. Applying the
+    floor/cap to that combined query would move the PID's actuator; ignoring
+    them is the silent-no-op defect. Refusing is the only honest option.
+    ``sf_label_escalate_q_gap`` is ignored outright there: label escalation
+    re-queries a pending POOL label future, and ``_maybe_submit_label_escalation``
+    returns before any engine call on any non-pool engine.
+
+    Returns one sentence per violated key; empty on the pool route or when
+    every knob is 0 (the shared-budget behaviour every checked-in config uses).
+    """
+    if pooled:
+        return []
+    out: list[str] = []
+    if int(sf_move_nodes or 0) > 0:
+        out.append(
+            f"sf_move_nodes > 0 requires StockfishPool (got {int(sf_move_nodes)}); "
+            "the synchronous single-engine route cannot honour a separate "
+            "curriculum move budget"
         )
+    for key, value in (
+        ("sf_label_nodes_floor", sf_label_nodes_floor),
+        ("sf_label_nodes_cap", sf_label_nodes_cap),
+    ):
+        if int(value or 0) > 0:
+            out.append(
+                f"{key} > 0 requires StockfishPool (got {int(value)}); on the "
+                "synchronous single-engine route a curriculum label is the "
+                "opponent's move query, which takes neither floor nor cap, so it "
+                "would apply to selfplay labels only"
+            )
+    if float(sf_label_escalate_q_gap or 0.0) > 0.0:
+        out.append(
+            "sf_label_escalate_q_gap > 0 requires StockfishPool (got "
+            f"{float(sf_label_escalate_q_gap)!r}); label escalation runs only on "
+            "the pool's asynchronous label path, so the synchronous single-engine "
+            "route never escalates a label"
+        )
+    return out
+
+
+def single_engine_sf_budget_message(problems: list[str]) -> str:
+    """The refusal sentence for a non-empty violation list, with the fix."""
+    return (
+        "; ".join(problems) + ". Set each listed key to 0, or use at least 2 effective SF "
+        "workers (worker --sf-workers; for driver-launched workers, "
+        "distributed_worker_sf_workers)."
+    )
+
+
+def validate_sf_budget_transport(
+    *,
+    sf_move_nodes: int,
+    sf_label_nodes_floor: int,
+    sf_label_nodes_cap: int,
+    sf_label_escalate_q_gap: float,
+    pooled: bool,
+) -> None:
+    """Raise ``ValueError`` on any single-engine budget violation (see above)."""
+    problems = single_engine_sf_budget_violations(
+        sf_move_nodes=sf_move_nodes, sf_label_nodes_floor=sf_label_nodes_floor,
+        sf_label_nodes_cap=sf_label_nodes_cap,
+        sf_label_escalate_q_gap=sf_label_escalate_q_gap, pooled=pooled,
+    )
+    if problems:
+        raise ValueError(single_engine_sf_budget_message(problems))
 
 
 __all__ = [
@@ -462,5 +548,8 @@ __all__ = [
     "OpponentConfig",
     "SearchConfig",
     "TemperatureConfig",
-    "validate_sf_move_nodes_transport",
+    "sf_workers_use_pool",
+    "single_engine_sf_budget_message",
+    "single_engine_sf_budget_violations",
+    "validate_sf_budget_transport",
 ]

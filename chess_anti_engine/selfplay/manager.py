@@ -20,7 +20,7 @@ from chess_anti_engine.selfplay.config import (
     OpponentConfig,
     SearchConfig,
     TemperatureConfig,
-    validate_sf_move_nodes_transport,
+    validate_sf_budget_transport,
 )
 from chess_anti_engine.selfplay.diff_focus_norm import DiffFocusNormalizer
 from chess_anti_engine.selfplay.finalize import finalize_game
@@ -321,8 +321,14 @@ def play_batch(
     live => 131,072 plies of warm-up per restart). ``None`` builds a private
     estimator exactly as before.
     """
-    validate_sf_move_nodes_transport(
-        game.sf_move_nodes, pooled=isinstance(stockfish, StockfishPool),
+    # Direct callers (eval, scripts) reach here without the worker/driver
+    # checks, so refuse knobs the single-engine route would silently ignore.
+    validate_sf_budget_transport(
+        sf_move_nodes=game.sf_move_nodes,
+        sf_label_nodes_floor=game.sf_label_nodes_floor,
+        sf_label_nodes_cap=game.sf_label_nodes_cap,
+        sf_label_escalate_q_gap=game.sf_label_escalate_q_gap,
+        pooled=isinstance(stockfish, StockfishPool),
     )
     requested_batch = int(games)
     continuous = stop_fn is not None and int(target_games) <= 0
