@@ -44,3 +44,16 @@ Unchanged independently reviewed evidence:
 - `independent-decomposition-20261112.json`, SHA256 `c78f44d4473415a17ed169a89f88d28856e1ac3b37e784f9d312d42535961e5b`.
 
 This correction used saved outputs, metadata and pinned source only. No additional model inference, corpus decoding or training was performed.
+
+## Donor shared-value-body gradient probe
+
+One independently reviewed, finite CPU diagnostic used the same 254 rows with exact native categorical labels and all network/categorical masks present. It compared the WDL and categorical gradients on only `value_wdl.token_proj.{weight,bias}` and `value_wdl.net.0.{weight,bias}` at the **donor** checkpoint. The trunk was detached, private output projections frozen, objective weights fixed at 1 and 1, and reduction was a uniform fixed-panel masked mean, not the unknown realized training sample weighting.
+
+Independently recomputed from saved gradient vectors:
+- Dot product: **+0.0699337494**.
+- Cosine: **+0.0897392491**, weak positive aggregate alignment rather than aggregate opposition on this subset.
+- WDL norm: **0.4775996354**; categorical norm: **1.6317003057**, approximately 3.42 times larger. Magnitude alone does not establish harmful dominance.
+
+There was no optimizer step or trunk backward. The execution receipt reports identical whole-model state hashes before/after and untouched parameter `.grad`; independent review verified the receipt binding, not a separate model reload. Actual repeat and batch-invariance controls were **not run**; corresponding tests used synthetic models. This local shared-body result does not establish full-trunk compatibility, optimizer/clipping effects, the cause of the observed training trajectory, or playing strength.
+
+`shared-body-gradient-review.json` is the unchanged compact independent review (SHA256 `f77d9c166f302276362b6fe3a2c46f32a6574745fc390395b684789e6893a0ea`). Source revision: `e9e029edb6501703652cf6141c595c5569cb6359`. The one child used recorded limits of 16 GiB address space, 60 CPU seconds, 90 wall seconds, one CPU thread and CUDA disabled. Raw gradient vectors, inputs and targets are not published here.
