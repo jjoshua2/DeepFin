@@ -167,3 +167,23 @@ This review contains no absolute home paths, so publication required no
 redaction. The published copy and original retained receipt are byte-identical.
 Original SHA256: `307190cfae5cfe3b8a202fe8c7114b37b2a34a9135703afa193e11c02cf7a7db`.
 Published copy SHA256: `307190cfae5cfe3b8a202fe8c7114b37b2a34a9135703afa193e11c02cf7a7db`.
+
+
+## Tiny complete-history prefix qualification
+
+[Independent reconstruction review](prefix-reconstruction-review.json) verified
+all 175 planes exactly for five fixed stored rows after float16 conversion.
+They represent only three distinct positions: standard start, 1.Nf3, and
+1.Nf3 d5. The three identical starting rows are not independent positions.
+Retained producer configuration disables alternate openings and resume; the
+two-move prefix uses independently validated legal transitions.
+
+This qualifies only these tiny prefixes, not the remaining corpus histories,
+representative search performance, or a policy/value crossover implementation.
+No model inference or search was performed. Reconstruction used the same pinned
+native encoder images, not an independently rebuilt historical binary.
+
+The published receipt replaces only local home prefixes with `~/`; the retained
+original is unchanged. Original SHA256:
+`e1ad5fc266306943d8960c1803334c093c06d4d84cb4d59d1260a6d16dfe6d9c`.
+Published derivative SHA256: `1cfc74ea262a99033357bbfc1067a4c9513e4bd237a71f7e30adb013a72a1d0f`.
