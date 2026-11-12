@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Sequence
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 
@@ -71,6 +71,27 @@ def compare(
     donor_training_games: frozenset[str], candidate_training_games: frozenset[str],
     target_description: str, bootstraps: int = 2000, seed: int = 0,
 ) -> dict:
+    """Membership-gated paired source-game comparison; existing contract preserved."""
+    return _compare(x, targets, row_ids=row_ids, game_ids=game_ids,
+                    expected_rows_sha256=expected_rows_sha256,
+                    donor_sha256=donor_sha256, candidate_sha256=candidate_sha256,
+                    layout=layout, donor=donor, candidate=candidate,
+                    donor_training_games=donor_training_games,
+                    candidate_training_games=candidate_training_games,
+                    target_description=target_description, bootstraps=bootstraps, seed=seed)
+
+
+def _compare(
+    x: np.ndarray, targets: np.ndarray, *,
+    row_ids: Sequence[str], game_ids: Sequence[str], expected_rows_sha256: str,
+    donor_sha256: str, candidate_sha256: str, layout: str,
+    donor: Callable[[np.ndarray], np.ndarray],
+    candidate: Callable[[np.ndarray], np.ndarray],
+    donor_training_games: frozenset[str] | None, candidate_training_games: frozenset[str] | None,
+    target_description: str, bootstraps: int = 2000, seed: int = 0,
+    descriptive: bool = False, group_kind: str = "source_game",
+    expected_targets_sha256: str | None = None,
+) -> dict:
     """Return equal-game-weight paired deltas (candidate minus donor).
 
     Targets and outputs are W,D,L probabilities in stored row side-to-move POV.
@@ -92,17 +113,26 @@ def compare(
         raise ValueError("bounded positive bootstrap count required")
     if type(seed) is not int or seed < 0:
         raise ValueError("nonnegative integer seed required")
-    donor_training_games = _membership(donor_training_games)
-    candidate_training_games = _membership(candidate_training_games)
+    if descriptive:
+        if len(x) > 256 or group_kind not in {"source_game", "connected_component"}:
+            raise ValueError("descriptive mode requires <=256 rows and explicit supported grouping")
+        _identity(expected_targets_sha256)
+    else:
+        donor_training_games = _membership(donor_training_games)
+        candidate_training_games = _membership(candidate_training_games)
     if rows_digest(x, row_ids, game_ids) != expected_rows_sha256:
         raise ValueError("stored-row digest mismatch")
     groups = sorted(set(game_ids))
     if len(groups) < 2:
-        raise ValueError("at least two independent source-game groups required")
-    if set(groups) & (donor_training_games | candidate_training_games):
+        raise ValueError("at least two supplied groups required" if descriptive else
+                         "at least two independent source-game groups required")
+    if not descriptive and set(groups) & (cast(frozenset[str], donor_training_games) | cast(frozenset[str], candidate_training_games)):
         raise ValueError("declared training/holdout source-game overlap")
     target = _simplex(targets, len(x), "targets").copy()
     target.flags.writeable = False
+    if descriptive and targets_digest(target, row_ids, game_ids, rows_sha256=expected_rows_sha256,
+                                      target_description=target_description) != expected_targets_sha256:
+        raise ValueError("ordered target identity mismatch")
     # Private copies prevent one adapter changing the other adapter's inputs.
     outputs = []
     for adapter in (donor, candidate):
@@ -126,7 +156,7 @@ def compare(
     for i in range(bootstraps):
         sampled[i] = delta[rng.integers(0, len(groups), size=len(groups))].mean(axis=0)
     interval = np.quantile(sampled, [0.025, 0.975], axis=0)
-    return {
+    result: dict[str, Any] = {
         "schema": "stored-wdl-paired/v1", "layout": layout,
         "rows_sha256": expected_rows_sha256,
         "target_sha256": hashlib.sha256(np.ascontiguousarray(target, dtype="<f8").tobytes()).hexdigest(),
@@ -145,3 +175,64 @@ def compare(
                      for i, (g, index) in enumerate(zip(groups, indices, strict=True))],
         "limits": "Supplied membership disjointness only; adapter/checkpoint and provenance declarations unverified; target fit is not Elo.",
     }
+
+    if descriptive:
+        result["schema"] = "stored-wdl-descriptive/v1"
+        result["mode"] = "descriptive"
+        result["group_kind_declared"] = group_kind
+        result["groups"] = result.pop("source_games")
+        result["weighting"] = "equal supplied-group means"
+        result["per_group"] = [{"group": row["source_game"], "rows": row["rows"], "delta": row["delta"]}
+                               for row in result.pop("per_game")]
+        result["ordered_targets_sha256"] = expected_targets_sha256
+        result["wdl_order"] = ["W", "D", "L"]
+        result["pov_declared"] = "stored row side to move"
+        result["training_exposure"] = "unknown"
+        result["provenance"] = "unverified"
+        result["controls_performed"] = []
+        result["controls_required_but_not_run"] = ["donor-donor", "batch-invariance", "POV"]
+        for metric in result["metrics"].values():
+            metric["conditional_descriptive_percentile_95"] = metric.pop("paired_percentile_95")
+        result["limits"] = ("Conditional descriptive variability across supplied groups only; "
+                            "no heldout, independence, generalization or strength claim. "
+                            "Training exposure, group provenance and callback/checkpoint identity unverified.")
+    return result
+
+
+def targets_digest(targets: np.ndarray, row_ids: Sequence[str], group_ids: Sequence[str], *,
+                   rows_sha256: str, target_description: str) -> str:
+    """Bind canonical WDL targets to ordered row/group identifiers, not origin."""
+    row_ids, group_ids = tuple(row_ids), tuple(group_ids)
+    target = _simplex(targets, len(row_ids), "targets")
+    if len(group_ids) != len(row_ids):
+        raise ValueError("target identity count mismatch")
+    _identity(rows_sha256)
+    if not _nonempty(target_description):
+        raise ValueError("target semantics required")
+    h = hashlib.sha256(json.dumps(["stored-STM-WDL/v1", rows_sha256, target_description,
+                                 list(row_ids), list(group_ids)], separators=(",", ":")).encode())
+    h.update(np.ascontiguousarray(target, dtype="<f8").tobytes())
+    return h.hexdigest()
+
+
+def compare_descriptive(
+    x: np.ndarray, targets: np.ndarray, *, row_ids: Sequence[str], group_ids: Sequence[str],
+    group_kind: str, expected_rows_sha256: str, expected_targets_sha256: str,
+    donor_sha256: str, candidate_sha256: str, layout: str,
+    donor: Callable[[np.ndarray], np.ndarray], candidate: Callable[[np.ndarray], np.ndarray],
+    target_description: str, bootstraps: int = 2000, seed: int = 0,
+) -> dict:
+    """<=256-row descriptive drift; no invented training membership/holdout claim.
+
+    Inputs/targets/predictions use W,D,L in stored-row side-to-move POV. Group
+    identifiers are supplied units, not proof of original source games or
+    independence. No control runs are implied by producing this report.
+    """
+    return _compare(x, targets, row_ids=row_ids, game_ids=group_ids,
+                    expected_rows_sha256=expected_rows_sha256,
+                    expected_targets_sha256=expected_targets_sha256,
+                    donor_sha256=donor_sha256, candidate_sha256=candidate_sha256,
+                    layout=layout, donor=donor, candidate=candidate,
+                    donor_training_games=None, candidate_training_games=None,
+                    target_description=target_description, bootstraps=bootstraps,
+                    seed=seed, descriptive=True, group_kind=group_kind)
