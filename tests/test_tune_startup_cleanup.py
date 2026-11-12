@@ -132,6 +132,53 @@ def test_fit_returning_errored_trials_raises_and_releases_sidecars(
     assert calls[-3:] == ["fit", "cleanup:broker", "cleanup:server"]
 
 
+@pytest.mark.parametrize("case", ["stale_then_error", "several_errored"])
+def test_errored_trial_diagnosis_names_an_error_status_trial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    # `ResultGrid.errors` includes stored errors of non-TERMINATED trials (a
+    # PENDING trial resumed with an old error file); `num_errors` counts only
+    # ERROR status. The diagnosis must come from an ERROR-status trial.
+    from ray.tune.experiment import Trial
+
+    real = RuntimeError("the real failure")
+    outcomes: list[tuple[str, Exception | str | None]] = [
+        (Trial.PENDING, ValueError("stale error from a resumed trial")),
+        (Trial.ERROR, real),
+    ]
+    if case == "several_errored":
+        outcomes = [
+            (Trial.TERMINATED, None),
+            (Trial.PAUSED, ValueError("stale error from a paused trial")),
+            (Trial.ERROR, real),
+            (Trial.ERROR, StartupFailure("a later failed trial")),
+        ]
+    grid = _ray_result_grid(tmp_path, outcomes)
+    assert not isinstance(grid.errors[0], RuntimeError)  # the trap is real
+    real_index = next(i for i, (_, err) in enumerate(outcomes) if err is real)
+    calls, _ = _driver_stubs(monkeypatch, fit_result=grid)
+    with pytest.raises(RuntimeError, match=rf"{grid.num_errors} errored trial\(s\)") as caught:
+        harness.run_tune(base_config={}, work_dir=tmp_path, num_samples=len(outcomes))
+    assert caught.value.__cause__ is real
+    assert f"First ERROR trial: {tmp_path / f'trial_{real_index}'}" in str(caught.value)
+    assert calls[-3:] == ["fit", "cleanup:broker", "cleanup:server"]
+
+
+def test_errored_trial_diagnosis_falls_back_when_ray_internals_are_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A Ray upgrade that drops `_experiment_analysis` must not mask the
+    # failure: the RuntimeError is still raised, with today's first-of-errors cause.
+    error = StartupFailure("only the public API is available")
+    grid = SimpleNamespace(num_errors=1, errors=[error])
+    calls, _ = _driver_stubs(monkeypatch, fit_result=grid)
+    with pytest.raises(RuntimeError, match=r"1 errored trial\(s\)") as caught:
+        harness.run_tune(base_config={}, work_dir=tmp_path, num_samples=1)
+    assert caught.value.__cause__ is error
+    assert "First ERROR trial" not in str(caught.value)
+    assert calls[-3:] == ["fit", "cleanup:broker", "cleanup:server"]
+
+
 @pytest.mark.parametrize("status", ["TERMINATED", "PENDING", "PAUSED", "RUNNING", "empty"])
 def test_non_error_fit_result_is_preserved_including_graceful_unfinished_trials(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str,

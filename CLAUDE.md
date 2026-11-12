@@ -69,7 +69,7 @@ A bad live value fails in one of four ways, which code comments cite by letter:
 
 - **(a) Rejected by the loader**: a key not in the schema (`utils/config_yaml.py`), or
   a value failing a check in `flatten_run_config_defaults` (strict booleans,
-  `pb2_bounds_*` shape, flag pairings; read its `_check_*` calls). Mid-run the whole
+  `pb2_bounds_*` shape, flag pairings, a few ranges; read the function). Mid-run the whole
   reload is rejected and the old config kept, so other edits in the same save are not
   applied; at launch it is fatal. Before a restart, compare the live YAML's keys with
   the target revision's schema.
@@ -77,7 +77,9 @@ A bad live value fails in one of four ways, which code comments cite by letter:
   (chiefly `TrialConfig.from_dict`): the reload succeeds, the validator raises and
   the trial dies.
 - **(c) In the schema but not range-checked**: applied raw and silently. `lr` is one
-  such key (LR above 0.003 has destroyed the model).
+  such key: the loader rejects only a non-numeric or non-finite `lr` (class (a)), so
+  any finite value, `lr: 0.3` or a non-positive one included, loads raw (LR above
+  0.003 has destroyed the model).
 - **(d) A dead key** (`dead_config_keys()` in `tune/trainable_config_ops.py`: parsed,
   read by no production path): a non-inert value is declined mid-run for that key
   only, then the trial refuses to start at the next restart.
