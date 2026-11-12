@@ -1,0 +1,40 @@
+{
+  "artifact_pins": {
+    "accepted": {
+      "path": "/home/josh/chess-artifacts/operations/stored-wdl-cap40-direct-20261112-tsxbicyz/stored-wdl-prefix-3laxfnm8/result.json",
+      "sha256": "e0e61ac7c6246261d344ac2459c6e01b8512784d64ca49d50b24f843f9ce6249"
+    },
+    "inputs": {
+      "path": "/home/josh/chess-artifacts/operations/stored-wdl-cap40-direct-20261112-tsxbicyz/stored-wdl-prefix-3laxfnm8/rows.npz",
+      "sha256": "76845b9472685e447e8e79749ffbe41b01eb5fc61763d33c6e89d659e372e726"
+    },
+    "pairs": {
+      "path": "/home/josh/chess-artifacts/operations/stored-wdl-ply-coverage-20261112-o0xz6jbx/result.json",
+      "sha256": "71df61e36146f66f1a0900a0003db16decce7ad60042b36b706639624bb55072"
+    }
+  },
+  "exact_pair_order_moves_and_history_overlap_match": true,
+  "fixed_pairs": 227,
+  "independent_recomputation": "Separate decoder and legal-move enumeration; audited implementation not imported",
+  "limitations": [
+    "Eligible only as partial child-position and seven-slot stored-history binding.",
+    "No SF scoring or root-label claim; label perspective and saved prediction bindings require separate reviewed scoring.",
+    "Extra feature correctness, older history, full game provenance, repetition truth, exact saturated clocks, fullmove and draw adjudication not established.",
+    "Dependencies/interpreter not authenticated by validator source hash."
+  ],
+  "limits": {
+    "AS": 8589934592,
+    "CPU": 120,
+    "CUDA": "",
+    "threads": 1,
+    "wall": 150
+  },
+  "matching_child_pids": [],
+  "model_or_engine_run": false,
+  "plan_sha256": "58e63e8d57912141f2551caf5ad09fd194c928cebfff7f9e2573645bb6644bd3",
+  "prior_missing_successors": 27,
+  "qualified_narrow": 227,
+  "result_sha256": "5ee1eb7330f64338623bd765fa11d80b730b4c70e66f8515466f59a5798d2538",
+  "schema": "independent-transition-review-v1",
+  "source_corpus_read": false
+}

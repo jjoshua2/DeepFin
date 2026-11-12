@@ -93,3 +93,15 @@ been qualified as legal transitions or exact child positions with complete
 history. This audit performs no model/checkpoint validation, inference or
 scoring. No subset was substituted for the original 254-row panel. Raw ply
 values and masks remain outside this repository.
+
+
+## Fixed partial-cohort transition validation
+
+[Independent transition review](transition-review.json), SHA256
+`f3abf94acfbecee2615715de1a6cc52415d94529f5908d7339fbab3013ee5661`,
+separately recomputed all 227 predetermined pairs. Each has one legal move
+matching successor position metadata and exact seven-slot stored-history
+overlap. The 27 missing successors remain exclusions, not replacements.
+This is narrow child-position/input consistency, not older-history or full
+game provenance, repetition truth, extra-feature correctness or adjudication
+qualification. No model or engine ran for this check.
