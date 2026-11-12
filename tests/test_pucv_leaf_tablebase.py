@@ -456,8 +456,10 @@ def test_search_dispatch_passes_the_live_probe_to_each_route(route):
         helper,
     )
     probe = tbmod.SyzygyProbe("not opened", max_pieces=3)
+    worker._tb_probe = probe
     worker._run_one_chunk(1, board, threading.Event(), probe, None, True)
     assert observed == [probe]
+    assert worker.leaf_tb_inactive_mode() is None
 
 
 def test_multi_workers_keep_distinct_owned_snapshots(monkeypatch):

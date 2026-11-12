@@ -2155,13 +2155,10 @@ def test_main_builds_the_engine_from_the_args_it_advertised(
 _LEAF_TB_NOTE = "leaf tablebase probing is inactive on search path"
 
 
-def test_syzygy_path_reports_only_paths_without_leaf_probing(
+def test_syzygy_path_reports_no_inactive_note_for_implemented_routes(
     tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Walker and Gumbel receive the probe; PUCV still needs its warning.
-
-    A transition to an inactive path reports once at the next go.
-    """
+    """Walker, Gumbel and the real asynchronous PUCV route all receive it."""
     tb_dir = tmp_path / "tb"
     tb_dir.mkdir()
     for name in ("KQvK.rtbw", "KQvK.rtbz"):  # names only: never probed here
@@ -2191,10 +2188,29 @@ def test_syzygy_path_reports_only_paths_without_leaf_probing(
         gumbel.dispatch(parse_command("go nodes 64"))
         gumbel._wait_for_search()
         out = capsys.readouterr().out
-        assert out.count(_LEAF_TB_NOTE) == 1
-        assert f"{_LEAF_TB_NOTE} pucv" in out
-        gumbel.dispatch(parse_command("go nodes 64"))  # once per mode, not per go
+        assert _LEAF_TB_NOTE not in out
+        gumbel.dispatch(parse_command("go nodes 64"))
         gumbel._wait_for_search()
         assert _LEAF_TB_NOTE not in capsys.readouterr().out
     finally:
         gumbel._worker.close()
+
+
+def test_unknown_future_leaf_route_keeps_warning_dedup(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from chess_anti_engine.tablebase import SyzygyProbe
+
+    engine = _make_engine(threads=1)
+    try:
+        engine._worker._tb_probe = SyzygyProbe("not opened", max_pieces=3)
+        monkeypatch.setattr(engine._worker, "realized_search_path", lambda: "future_unwired")
+        capsys.readouterr()
+        engine._note_leaf_tb_inactive()
+        engine._note_leaf_tb_inactive()
+        assert capsys.readouterr().out.count(f"{_LEAF_TB_NOTE} future_unwired") == 1
+        monkeypatch.setattr(engine._worker, "realized_search_path", lambda: "gumbel")
+        engine._note_leaf_tb_inactive()
+        assert _LEAF_TB_NOTE not in capsys.readouterr().out
+    finally:
+        engine._worker.close()
