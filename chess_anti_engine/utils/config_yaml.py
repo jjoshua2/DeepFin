@@ -644,15 +644,27 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
 
     flat = {k: v for k, v in out.items() if v is not None}
     # Validate the effective LR before a live reload can mutate config or its
-    # key baseline. Keep the original value: numeric strings and nonpositive
-    # finite values retain their existing consumer behavior.
+    # key baseline. Keep the original value: numeric strings and zero retain
+    # their existing consumer behavior (`lr: 0` builds the optimizer at LR 0
+    # at launch; a mid-run reload ignores it because `Trainer.set_peak_lr`
+    # skips non-positive peaks). A boolean is refused even though float(True)
+    # works: consumers cast with float(), so `lr: true` would silently train at
+    # LR 1.0. A negative LR is never legitimate: under `aurora` it builds and
+    # trains backwards. The sign check is on the converted float, so "-1" is
+    # refused and -0.0 compares equal to 0 and is accepted.
     if "lr" in flat:
+        if isinstance(flat["lr"], bool):
+            raise ValueError(
+                f"YAML 'lr' must be a finite number, not a boolean ({flat['lr']!r})"
+            )
         try:
             lr = float(flat["lr"])
         except (TypeError, ValueError, OverflowError) as exc:
             raise ValueError("YAML 'lr' must be a finite number") from exc
         if not math.isfinite(lr):
             raise ValueError("YAML 'lr' must be a finite number")
+        if lr < 0.0:
+            raise ValueError(f"YAML 'lr' must not be negative, got {flat['lr']!r}")
     _check_sparse_sf_policy_flags(flat)
     _check_volatility_search_unsupported(flat)
     _check_target_only_knobs_require_zero_temperature(flat)
@@ -928,6 +940,12 @@ def _check_pb2_bounds(flat: dict[str, Any]) -> None:
                     f"YAML tune.{key} bounds must be finite, got {value!r}."
                 )
         lo, hi = float(value[0]), float(value[1])
+        # A learning rate is never negative; production draws its LR from
+        # these bounds, not from `train.lr`. Other searched keys may be signed.
+        if key == "pb2_bounds_lr" and lo < 0.0:
+            raise ValueError(
+                f"YAML tune.{key} bounds must not be negative, got {value!r}."
+            )
         if lo > hi:
             raise ValueError(
                 f"YAML tune.{key} must satisfy lo <= hi, got {value!r}."
