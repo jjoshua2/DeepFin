@@ -204,8 +204,17 @@ def _finalize_completed_slots(
     continuous: bool,
     target: int,
     defer_pending_labels: bool = False,
+    recycle: bool = True,
 ) -> None:
-    """Finalize done-but-not-yet-finalized games; recycle slots while target allows."""
+    """Finalize done-but-not-yet-finalized games; recycle slots while target allows.
+
+    ``recycle=False`` is the STOP teardown: finished games are still finalized
+    and delivered exactly as in the running loop, but their slots are NOT
+    re-opened. ``recycle_slot`` pops the next seed off the shared dole /
+    SF-refute queue, and nothing plays a slot opened at teardown --
+    ``suspend_inflight_games`` skips it as an empty slot -- so recycling there
+    took seeds out of the queue the worker carries to its next session.
+    """
     for i in range(batch_size):
         if state.done_arr[i] and not state.finalized_arr[i]:
             if (
@@ -216,7 +225,7 @@ def _finalize_completed_slots(
             finalize_game(state, i, all_samples, on_game_complete)
             state.finalized_arr[i] = 1
             state.games_completed += 1
-            if continuous or state.games_started < target:
+            if recycle and (continuous or state.games_started < target):
                 state.recycle_slot(i)
 
 
@@ -409,6 +418,10 @@ def play_batch(
                 continuous=continuous,
                 target=target,
                 defer_pending_labels=False,
+                # Teardown: finalize, never re-open. A slot recycled here pops a
+                # doled / SF-refute seed that suspend then skips as empty, so the
+                # seed would leave the queue without ever being played.
+                recycle=False,
             )
             if on_timing is not None:
                 on_timing("finalize", time.perf_counter() - t0)
