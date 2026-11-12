@@ -1517,8 +1517,7 @@ class Engine:
         if mode is not None and mode != self._leaf_tb_noted:
             _println(
                 f"info string note: leaf tablebase probing is inactive on search path {mode}; "
-                "SyzygyPath reaches only the root move shortcut and root eval "
-                "(only the classic Gumbel path probes leaves)"
+                "SyzygyPath reaches only the root move shortcut and root eval on this path"
             )
         self._leaf_tb_noted = mode
 

@@ -1392,15 +1392,15 @@ class SearchWorker:
     def leaf_tb_inactive_mode(self) -> str | None:
         """The realized search path whose leaves never see the installed Syzygy probe.
 
-        ``_run_one_chunk`` passes ``tb_probe`` only to the classic Gumbel path;
-        the pools and single-thread PUCV search without it, so there
+        Classic Gumbel and walker search receive ``tb_probe``. The remaining
+        pools and single-thread PUCV search without it, so there
         ``SyzygyPath`` reaches only the root shortcut and root eval. ``None``
-        when no probe is installed or the classic path is active.
+        when no probe is installed or a leaf-enabled path is active.
         """
         if self._tb_probe is None:
             return None
         path = self.realized_search_path()
-        return None if path == "gumbel" else path
+        return None if path in ("gumbel", "walker") else path
 
     def advance_root(self, board: chess.Board, moves: list[chess.Move]) -> bool:
         """Descend the current tree by ``moves`` plies, making the last-reached
