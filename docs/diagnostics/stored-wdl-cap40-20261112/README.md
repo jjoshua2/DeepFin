@@ -57,3 +57,23 @@ Independently recomputed from saved gradient vectors:
 There was no optimizer step or trunk backward. The execution receipt reports identical whole-model state hashes before/after and untouched parameter `.grad`; independent review verified the receipt binding, not a separate model reload. Actual repeat and batch-invariance controls were **not run**; corresponding tests used synthetic models. This local shared-body result does not establish full-trunk compatibility, optimizer/clipping effects, the cause of the observed training trajectory, or playing strength.
 
 `shared-body-gradient-review.json` is the unchanged compact independent review (SHA256 `f77d9c166f302276362b6fe3a2c46f32a6574745fc390395b684789e6893a0ea`). Source revision: `e9e029edb6501703652cf6141c595c5569cb6359`. The one child used recorded limits of 16 GiB address space, 60 CPU seconds, 90 wall seconds, one CPU thread and CUDA disabled. Raw gradient vectors, inputs and targets are not published here.
+
+
+## Stored Stockfish coverage (same fixed 254 rows)
+
+Independent saved-artifact review: [sf-coverage-review.json](sf-coverage-review.json),
+SHA256 `5d6cd9f445e11701038cb9cdfc1dde0e521f6a5a7ec9954984d846385f77260c`.
+All 254 rows have SF labels and metadata; all labels are finite, nonnegative,
+component-bounded by one, and within 0.001 of unit sum (maximum error
+0.0003662109375). Recorded search nodes range from 3,065 to 5,047 and recorded
+depth from 2 to 15. These are observed metadata values, not a strength estimate
+or evidence of the historical 100k-node configuration. No normalization was
+performed.
+
+These SF labels describe action-conditioned child positions, not independent
+root-position truth. Exact played-action and full successor/history binding
+are absent; the recommended SF move is not evidence of the played action.
+Consequently no donor/candidate root prediction was scored against these
+labels, and no child comparison is qualified. The finite coverage read did
+not launch Stockfish, run model inference, or change training. Raw labels and
+row data remain outside this repository.
