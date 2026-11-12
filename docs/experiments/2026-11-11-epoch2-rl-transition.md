@@ -566,3 +566,81 @@ not prove those teachers are below80%accuracy or that SF-assistedRL cannot work;
 the old selected reference and interval leave uncertainty. The SF-assisted pilot
 proposal remains unrun. A policy-focused control supported by the actual64sim
 search-target result is being reviewed as the conservative next hypothesis.
+
+
+Main72 integration is complete at26050e85e4d5516099adb8c15bc0b52b769b85fd.
+The only conflict was the opening-book dynamic-read source location; actual
+harness line644 resolves both source-contract entries. Composed harness SHA256
+`27d3b9c126700e4994db8a1ed16a7e6fa1601a2efa3ff8bb5eba08cc4f16fd04`
+matches the independent preview. The targeted retention/startup/handoff/sequential/
+classification/hygiene checks all pass; actual CLI capture still matches all258
+bound settings with CUDA uninitialized. Whole lint has only the same three
+standalone-Python _posixshmem errors; ruff/vulture pass. Remote checks must run
+on the updated head;5250's prior greenCI remains identified separately.
+
+The independent SF-budget route defect is repaired in separate readyPR1220,
+head741a33647f9fad9d648009cb902686a2a1452770, on main72. Positive
+sf_move_nodes now refuses the actual synchronous/single-engine route before
+evaluator/SF startup and queries; outer worker asset/model synchronization may
+already have happened. Default0 and actual pooled operation are preserved;
+shared warmTT is explicitly not fixed opponent strength.152checks, including18
+boundedCPUe2e, pass; disabling only the guards fails six refusal cases while
+five supported controls pass. Independent source/evidence review accepts it.
+PR1220CI remains pending and this patch is not adopted by the frozenRLruntime.
+Receipt: `sf-move-nodes-fix-v1/readout-publication.json`.
+
+
+### Policy-focused first pilot: frozen successor
+
+Adopt one bounded policy-focused control as the next hypothesis, superseding
+the unrun SF-assisted proposal for this first window. All494learned donor tensors
+remain unchanged atstep0. Main WDL has SFfraction0/floor0/searchfraction1;
+categorical producer has0SF/1search. All direct SF losses are zero, including
+reply imitation, SF volatility, policy floor, SF eval/own/regret/shape; explicit
+SF-P0 target blending and SF-gap replay priority are also0. Retain own policy1,
+softened own-search policy1 atT2, future own-policy0.01, WDL1, categorical1,
+raw-network volatility0.1 and observed-rollout moves-left0.02. Their online
+producer sources were traced individually. SF5000 remains a generator opponent
+and diagnostic label budget; it is not a selected qualified imitation teacher.
+The original enabled retention/replay-priority sampler remains explicit.
+
+This is a new online self-bootstrap teacher, not preservation of historical
+BT4/Ceres target bytes. Positive policy-target evidence does not qualify
+selected-child WDL calibration, and net_raw draw retains the donor prediction.
+The SF0.5 value arm remains a plausible later regularizer; these conditional
+CP screens do not prove it harmful. The moves-left target includes censored
+max-ply/adjudicated endings. No larger SF effort, relaxed quality threshold,
+new distillation plumbing or new evaluation panel is introduced.
+
+Frozen control manifest:
+`policy-focused-pilot-config-v1/91c06e8f-9b5b-4655-91b2-00f3f2031dcd/manifest.json`,
+SHA256 `79f1f9071ac7e2a269d5f294cd81a83821a640cd276eee8fb93599c239d8a757`;
+config SHA256 `b27d7dee498535f43ced80d1bb653d5e158b2863b35a4a7860007e86235bd239`.
+Configuration-only qualification verifies263strict-bound effective settings,
+actual Trainer kwargs and worker dataclasses. Its active SideSearch equals the
+original frozen Elo protocol projection; those commands/panels/SHAPE stay fixed.
+Independent concrete source/config review remains pending at this record point.
+
+Keep the first scientific-health dose:64target completedgames,450ply horizon,
+64simulations, batch16, configured selfplayfraction0.5, PIDoff, SFworkers2;
+oneiteration/up to128updates atbatch256, two-window budget, views-per-ingested0,
+1800-second owner/1500-second generation wait. Actual completed-source mix,
+retained rows, replay views, learner steps and cooling horizon must be reported;
+128updates/fullcooldown are not guaranteed. Scientific-health acceptance requires
+finite/legal targets, finite actual updates, correct served donor/source and
+realized loss weights, durable candidate plus owned closure; this is not a
+strength verdict. Partial/startup/timeout results retain exact evidence and stay
+unqualified. Final playing-strength acceptance remains the frozen independent
+500-pair score interval rule; no candidate match has run.
+
+Updated, still-unrun disposable CUDA qualification:
+`scientific-cuda-qualification-v2/087fa011-9de0-4c93-9b3c-824759d92c58/manifest.json`,
+SHA256 `157ce8fca2b7ae62df3efe3553fb6914d7dce7ccf3fb20a2e5b22162b065e539`.
+It uses its own UUID and the new control, preserves fresh-state/tensor checks,
+then calls actual iteration weight sync before10updates atbatch256. Per-step
+checks enforce SF-zero coefficients and exclusive SF-head inactivity, with no
+qualification trajectory adoption. Online producer/Q/soft/future/raw-volatility/
+categorical semantics still need actual generation; P0floor is not requested.
+Thirteen runtime source hashes include the explicitly reviewed new harness and
+the actual sync consumer. A separate hash-bound receipt may admit a docs-only
+descendant HEAD; source or non-documentation changes require a new successor.
