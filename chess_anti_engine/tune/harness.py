@@ -1213,7 +1213,21 @@ def run_tune(
       # first result row is appended.
         _make_csv_logger_schema_safe()
 
-        return tuner.fit()
+        results = tuner.fit()
+        # Tuner.fit returns a ResultGrid even when trials errored. Returning it
+        # unchecked makes the CLI exit successfully after failed training.
+        if results.num_errors:
+            first_error = next(iter(results.errors), None)
+            message = (
+                f"Ray Tune returned {results.num_errors} errored trial(s); "
+                f"inspect {experiment_path} for trial error logs."
+            )
+            # Ray falls back to error.txt text when no pickled exception exists.
+            if isinstance(first_error, str):
+                message += f"\n{first_error}"
+            cause = first_error if isinstance(first_error, BaseException) else None
+            raise RuntimeError(message) from cause
+        return results
 
 
 # ---------------------------------------------------------------------------

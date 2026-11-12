@@ -38,6 +38,12 @@ restoring a config alone leaves trained weights and changed replay in place.
 
 `scripts/train.sh` manages the PID file, log, and Ray cleanup.
 
+The train/tune driver raises an error when Ray returns any trial in `ERROR` state,
+even if `Tuner.fit()` itself returned normally. The CLI then exits nonzero after
+sidecar cleanup. Non-error scheduler stops and graceful unfinished results retain
+their normal return behavior; an exit code alone does not establish a completed
+iteration, valid checkpoint, or qualified experiment readout.
+
 ```bash
 ./scripts/train.sh start                   # auto-resumes if $WORK_DIR/tune state exists; else fresh
 ./scripts/train.sh start --fresh           # force a fresh run (ignore prior tune state)

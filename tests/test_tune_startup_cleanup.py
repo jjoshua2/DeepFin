@@ -4,8 +4,8 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from types import ModuleType
-from typing import Any
+from types import ModuleType, SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -20,13 +20,14 @@ def _driver_stubs(
     monkeypatch: pytest.MonkeyPatch, *, fail_at: str | None = None,
     error: BaseException | None = None, server: bool = True, broker: bool = True,
     cleanup_error: str | None = None,
+    fit_result: object | None = None,
 ) -> tuple[list[str], object]:
     """Replace all resource acquisition, training and process termination."""
     import ray
     from ray import tune
 
     calls: list[str] = []
-    answer = object()
+    answer = fit_result if fit_result is not None else SimpleNamespace(num_errors=0, errors=[])
     failure = error if error is not None else StartupFailure("injected startup failure")
 
     def operation(name: str, result: Any = None) -> Any:
@@ -79,6 +80,90 @@ def _driver_stubs(
 
     monkeypatch.setattr(harness, "_terminate_process", terminate)
     return calls, answer
+
+
+def _ray_result_grid(tmp_path: Path, outcomes: list[tuple[str, Exception | str | None]]) -> Any:
+    """Use Ray's real status/error properties without running a Ray job."""
+    from ray.tune import ResultGrid
+
+    trials = []
+    for index, (status, error) in enumerate(outcomes):
+        trials.append(SimpleNamespace(
+            status=status, trial_id=str(index), path=str(tmp_path / f"trial_{index}"),
+            last_result={"training_iteration": 0},
+            run_metadata=SimpleNamespace(checkpoint_manager=SimpleNamespace(
+                latest_checkpoint_result=None, best_checkpoint_results=[],
+            )),
+            get_pickled_error=lambda error=error: None if isinstance(error, str) else error,
+            get_error=lambda error=error: error if isinstance(error, str) else None,
+        ))
+    analysis = SimpleNamespace(trials=trials, trial_dataframes={}, _fs=None,
+                               experiment_path=str(tmp_path))
+    return ResultGrid(cast(Any, analysis))
+
+
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize("case", ["single", "mixed", "multiple", "missing_exception", "text_error"])
+def test_fit_returning_errored_trials_raises_and_releases_sidecars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resume: bool, case: str,
+) -> None:
+    from ray.tune.experiment import Trial
+
+    error = StartupFailure("startup failed before the first report")
+    outcomes: list[tuple[str, Exception | str | None]] = [(Trial.ERROR, error)]
+    if case == "mixed":
+        outcomes.insert(0, (Trial.TERMINATED, None))
+    elif case == "multiple":
+        outcomes.append((Trial.ERROR, ValueError("another failed trial")))
+    elif case == "missing_exception":
+        outcomes = [(Trial.ERROR, None)]
+    elif case == "text_error":
+        outcomes = [(Trial.ERROR, "worker failure from error.txt")]
+    grid = _ray_result_grid(tmp_path, outcomes)
+    calls, _ = _driver_stubs(monkeypatch, fit_result=grid)
+    if resume:
+        (tmp_path / "tune").mkdir()
+    with pytest.raises(RuntimeError, match=rf"{grid.num_errors} errored trial\(s\)") as caught:
+        harness.run_tune(base_config={}, work_dir=tmp_path, num_samples=len(outcomes), resume=resume)
+    assert caught.value.__cause__ is (None if case in {"missing_exception", "text_error"} else error)
+    if case == "text_error":
+        assert "worker failure from error.txt" in str(caught.value)
+    assert str(tmp_path / "tune") in str(caught.value)
+    assert calls[-3:] == ["fit", "cleanup:broker", "cleanup:server"]
+
+
+@pytest.mark.parametrize("status", ["TERMINATED", "PENDING", "PAUSED", "RUNNING", "empty"])
+def test_non_error_fit_result_is_preserved_including_graceful_unfinished_trials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str,
+) -> None:
+    # Scheduler-stopped and interrupted runs need not reach every iteration.
+    # Only Ray ERROR counts as failure; this adds no completeness verdict.
+    grid = _ray_result_grid(tmp_path, [] if status == "empty" else [(status, None)])
+    assert grid.num_errors == 0
+    calls, _ = _driver_stubs(monkeypatch, fit_result=grid)
+    assert harness.run_tune(base_config={}, work_dir=tmp_path, num_samples=1) is grid
+    assert calls[-3:] == ["fit", "cleanup:broker", "cleanup:server"]
+
+
+@pytest.mark.parametrize("failure", [StartupFailure("trial config rejected"), "worker failure from error.txt"])
+def test_train_cli_propagates_a_returned_trial_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception | str,
+) -> None:
+    from chess_anti_engine import run
+    from ray.tune.experiment import Trial
+
+    grid = _ray_result_grid(tmp_path, [(Trial.ERROR, failure)])
+    calls, _ = _driver_stubs(monkeypatch, fit_result=grid)
+    monkeypatch.setattr(sys, "argv", [
+        "chess_anti_engine.run", "--mode", "train", "--stockfish-path", "unused-stockfish",
+        "--work-dir", str(tmp_path), "--device", "cpu", "--iterations", "1",
+    ])
+    with pytest.raises(RuntimeError, match="1 errored trial") as caught:
+        run.main()
+    assert caught.value.__cause__ is (failure if isinstance(failure, Exception) else None)
+    if isinstance(failure, str):
+        assert failure in str(caught.value)
+    assert calls[-3:] == ["fit", "cleanup:broker", "cleanup:server"]
 
 
 @pytest.mark.parametrize(("stage", "resume"), [
@@ -134,7 +219,7 @@ def test_normal_fit_returns_unchanged_result_and_cleans_only_owned_handles(
 
 
 @pytest.mark.parametrize("error", [KeyboardInterrupt("interrupt"), SystemExit(2)])
-@pytest.mark.parametrize("stage", ["broker", "scheduler"])
+@pytest.mark.parametrize("stage", ["broker", "scheduler", "fit"])
 def test_non_exception_exit_during_startup_still_releases_owned_handles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: BaseException, stage: str,
 ) -> None:
