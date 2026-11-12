@@ -163,7 +163,7 @@ whole-model state preservation are supported by execution receipts, not an
 independent model rerun. No raw logits, probabilities or input rows are
 published here.
 
-The published review is a path-redacted derivative: local home prefixes are
-replaced with `~/`; original private receipt bytes remain unchanged.
+This review contains no absolute home paths, so publication required no
+redaction. The published copy and original retained receipt are byte-identical.
 Original SHA256: `307190cfae5cfe3b8a202fe8c7114b37b2a34a9135703afa193e11c02cf7a7db`.
 Published copy SHA256: `307190cfae5cfe3b8a202fe8c7114b37b2a34a9135703afa193e11c02cf7a7db`.
