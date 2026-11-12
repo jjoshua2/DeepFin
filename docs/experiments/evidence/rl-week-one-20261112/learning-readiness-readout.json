@@ -30,7 +30,42 @@
       "p99": 1.324226,
       "max": 1.658535
     },
-    "owner_wall_seconds": 3730.443
+    "owner_wall_seconds": 3730.443,
+    "raw_artifacts": {
+      "games.jsonl": {
+        "artifact": "donor-rof-32-pair-baseline-v1/games.jsonl",
+        "sha256": "a7cef0795eaf815c83f81de7a3ea0bb9b2add539785f5731020e3b87471fc865"
+      },
+      "games.pgn": {
+        "artifact": "donor-rof-32-pair-baseline-v1/games.pgn",
+        "sha256": "c0a34acdc5078cbbde3ae8401a0b89bfab871e477d915e888f26f0e010d82966"
+      },
+      "moves.csv": {
+        "artifact": "donor-rof-32-pair-baseline-v1/moves.csv",
+        "sha256": "45c95b0e15423d3b7e32849423194798f715f408a33691386ec06538dc6d3230"
+      },
+      "uci.log": {
+        "artifact": "donor-rof-32-pair-baseline-v1/uci.log",
+        "sha256": "c1a7e4301aac9e5b8b3d72ae9e18fb72f66508b549b720d05a0d6eb7d72abddb"
+      }
+    },
+    "opening_book": {
+      "artifact": "substantive-baseline-preparation-v1/openings.epd",
+      "sha256": "a718d6005a9e3b267318de38b246a9fd49531d9b02dda0e5be23a69e3ee28e77",
+      "ordered_digest": "aafe8f61cd3124ef6c90a7149ad27bc6d3e436f522fe64c97503e3411d3fd52e"
+    },
+    "Rof_binary": {
+      "path": "~/local_engines/rofchade/rofChadeBMI2AVX2",
+      "sha256": "35db4c03faf3e8ba1af3644d431678d855e26144d68a7555c3a19e8bdaa905f0"
+    },
+    "Rof_net": {
+      "path": "~/local_engines/rofchade/230620-224.nnue",
+      "sha256": "e579db8ef0f8b1910ad7704773229d41bf770a68910698e030e2021acf911f30"
+    },
+    "execution_plan": {
+      "artifact": "substantive-baseline-execution-preparation-v1/plan.json",
+      "sha256": "c76f68904f2006a0ee93753b824e94da398936fc9cd3bb2422a1ced1da03593d"
+    }
   },
   "engineering_learning": {
     "two_update_pilot_applied": 2,
@@ -266,5 +301,156 @@
     "collection": "main preregistration + actual collector/profile/owner/source/resource controls",
     "learning": "qualified actual96cohort/rawF32targetcontrol and retainedplayingstart exclusion; paired40caller observations",
     "playing": "complete32same-donor neuralarenaengineering qualification;fixedTBconsumeracceptedseparately"
+  },
+  "prospective_precollection_addendum": {
+    "frozen_utc": "2026-11-12T22:17:15.781178+00:00",
+    "parent_sha256": "7d47cb547d8f1b0b96299dbcc097a31e8d9eab7cfd8522d1904ad88ff8f251d6",
+    "addendum_sha256": "8c66d3965f490c4cffd8a99520ab5c2bbe7e31ffb6ecb671bf9da8f88d95343e",
+    "execution_composite_sha256": "1e2ed5b098dea2e3b5829a08fa023f9a736b49cee618d1fc544ca6c0fd65a4a9",
+    "independent_review_sha256": "e04ba8a6725f6bb8444747eb282851a2c940b58bb4a36f884486a1d73a839927",
+    "research_games_and_updates_before_addendum": 0
+  },
+  "later_engineering_snapshot": {
+    "original_2136_cutoff_unchanged": true,
+    "same_donor_arena_games": 32,
+    "Syzygy_adjudications": 22,
+    "checkmates": 7,
+    "next_move_only_threefold_claims": 3,
+    "readout": {
+      "artifact": "internal-tb6-arena-engineering-actual-readout-v2/readout.json",
+      "sha256": "f504034609da9e7853439d250326274d9295e20700b6643ae8c53217a9817822"
+    },
+    "research_gain_or_adoption": false,
+    "closed_GPU_intended_stages": 18,
+    "GPU_intended_owner_wall_seconds": 5546.954214002966,
+    "stage_receipts": [
+      {
+        "stage": "compiled-serving-execution-v1",
+        "terminal_sha256": "c4556ad4ac0a102d83297ff69d6641302fe865945ec49fa1cdc7efb1c6554d3f",
+        "status": "FAILED",
+        "returncode": 1,
+        "owner_wall_seconds": 23.221695877000457
+      },
+      {
+        "stage": "compiled-serving-execution-v2",
+        "terminal_sha256": "e3e4e5895a6b3b66c40680ced8e338a71c0237d108a67fe847e02e005f3ad2b8",
+        "status": "PASS",
+        "returncode": 0,
+        "owner_wall_seconds": 107.49991975698504
+      },
+      {
+        "stage": "compiled-uci-qualification-execution-v2",
+        "terminal_sha256": "0e1744c76de0fc525b76c970d3e7b2514fef12cbcff7ac50cf17daa5cf584c9b",
+        "status": "PASS",
+        "returncode": 0,
+        "owner_wall_seconds": 106.52261679599178
+      },
+      {
+        "stage": "deadline-donor-qualification-execution-v1",
+        "terminal_sha256": "a9b2bc54e55df8d67f98f65078b315bc677085011de8242a87d4dad2713636cb",
+        "status": "PASS",
+        "returncode": 0,
+        "owner_wall_seconds": 90.40765657799784
+      },
+      {
+        "stage": "donor-rof-32-pair-baseline-execution-v1",
+        "terminal_sha256": "77c28cd2a331d454e516b7aaab8daac4aa2a6eba6edf5f27e1cf6cf083c4da0b",
+        "status": "PASS",
+        "returncode": 0,
+        "owner_wall_seconds": 3730.4429963149887
+      },
+      {
+        "stage": "donor-rof-engineering-pair-execution-v1",
+        "terminal_sha256": "c4591fe607afc62412af0256975721ba84ba7b53510f2055feda046931792953",
+        "status": "PASS",
+        "returncode": 0,
+        "owner_wall_seconds": 303.9566195179941
+      },
+      {
+        "stage": "donor-rof-engineering-pair-execution-v2",
+        "terminal_sha256": "422672d09ddc29aef3cf9c6acfbdb6c50a9edaee6d2b47dd630f4ddec2412be9",
+        "status": "PASS",
+        "returncode": 0,
+        "owner_wall_seconds": 288.22089199599577
+      },
+      {
+        "stage": "donor-rof-full-history-panel-execution-v1",
+        "terminal_sha256": "fe3b098ee1e17dcaba233d894868a95073054b49c941aa8a152f999e99f82e5d",
+        "status": "PASS",
+        "returncode": 0,
+        "owner_wall_seconds": 484.08005171699915
+      },
+      {
+        "stage": "donor-uci-readiness-execution-v1",
+        "terminal_sha256": "44727f639828ee2059350a4d709dd45cd4412e3c4a763acf92ba3d571cdb2e7e",
+        "status": "PASS",
+        "returncode": 0,
+        "owner_wall_seconds": 165.6103058909939
+      },
+      {
+        "stage": "e2-aa4-qualification-execution-v1",
+        "terminal_sha256": "89b7032c1dfc3595069054adcf2d102a52ce1cbb6cf58b307241fb09cb4b1029",
+        "status": "PASS",
+        "returncode": 0,
+        "owner_wall_seconds": 32.29501065600198
+      },
+      {
+        "stage": "fresh-game-consumer-execution-v1",
+        "terminal_sha256": "f2d1138bef535d24aae7d9162258a95283ba49de17ee2337ee6b76a821ea7425",
+        "status": "PASS",
+        "returncode": 0,
+        "owner_wall_seconds": 17.199565542017808
+      },
+      {
+        "stage": "fresh-game-pilot-execution-v1",
+        "terminal_sha256": "41552b0f0c1ceebf10ceaa3d89112526b1ab4f9c4239a35f2422e2ecb4c1c2a7",
+        "status": "FAILED",
+        "returncode": null,
+        "owner_wall_seconds": 3.2532553109922446
+      },
+      {
+        "stage": "fresh-game-pilot-execution-v2",
+        "terminal_sha256": "7006ef779f09f8cfeabf2d46104beea01a4cbfef8e5c8fc6a0b446c46c88e331",
+        "status": "FAILED",
+        "returncode": 1,
+        "owner_wall_seconds": 5.14548370699049
+      },
+      {
+        "stage": "fresh-game-pilot-execution-v3",
+        "terminal_sha256": "739be68596c3e78c821d8635446e70084edb094ab6250bd80bbab3b2e78f5813",
+        "status": "FAILED",
+        "returncode": 1,
+        "owner_wall_seconds": 30.329336882015923
+      },
+      {
+        "stage": "fresh-game-pilot-execution-v4",
+        "terminal_sha256": "e000d7fcbdef7fb7a0ffa952a8dc9fffec2c37ba72e91df1ba0a672d557a1613",
+        "status": "PASS",
+        "returncode": 0,
+        "owner_wall_seconds": 44.4420206299983
+      },
+      {
+        "stage": "internal-tb6-arena-engineering-execution-v1",
+        "terminal_sha256": "3bedb7bb38c9095611810c2780dc1f63761e5baebc6bf6b1ed4ade958807eb0c",
+        "status": "FAILED",
+        "returncode": 1,
+        "owner_wall_seconds": 3.1426796430023387
+      },
+      {
+        "stage": "internal-tb6-arena-engineering-execution-v2",
+        "terminal_sha256": "a8534bf08c35f234c11a3d3d6e303b4327eee46bec2bbe74815301a84c799daf",
+        "status": "PASS",
+        "returncode": 0,
+        "owner_wall_seconds": 104.03604329400696
+      },
+      {
+        "stage": "throughput-measurement-execution-v1",
+        "terminal_sha256": "0ecfbfae7aed2acc95774e5048c4c39aff0c7f07d6ef0c370aee6ce60982ba9e",
+        "status": "PASS",
+        "returncode": 0,
+        "owner_wall_seconds": 7.1480638929933775
+      }
+    ],
+    "coverage": "lateraddendumsnapshot;notCUDAactive/allCPUwork;original16stage2136snapshotunchanged"
   }
 }

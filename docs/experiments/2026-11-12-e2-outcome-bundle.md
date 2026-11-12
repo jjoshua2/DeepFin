@@ -6,6 +6,15 @@ Scientific freeze: **2026-11-12 21:33:31 UTC**. The authoritative
 [frozen scientific JSON](evidence/rl-week-one-20261112/first-E2-preregistration.json)
 is copied byte-for-byte from the external owner packet, SHA256
 `7d47cb547d8f1b0b96299dbcc097a31e8d9eab7cfd8522d1904ad88ff8f251d6`.
+A prospective [command/classification addendum](evidence/rl-week-one-20261112/first-E2-precollection-addendum.json)
+was frozen at **2026-11-12 22:17:15 UTC**, after the independent PR review and
+before any research game or update. Parent bytes remain unchanged. The
+[execution preregistration](evidence/rl-week-one-20261112/first-E2-execution-preregistration.json)
+combines them, SHA256
+`1e2ed5b098dea2e3b5829a08fa023f9a736b49cee618d1fc544ca6c0fd65a4a9`;
+its additive record is SHA256
+`8c66d3965f490c4cffd8a99520ab5c2bbe7e31ffb6ecb671bf9da8f88d95343e`.
+
 This registration precedes research collection. Every stage still needs its
 qualified actual source, input, owner, resource and control bindings; publication
 alone launches nothing.
@@ -65,9 +74,73 @@ Only if both FULLB comparisons pass, play exactly one fresh 1,000-game, 500-pair
 
 A passing confirmation supports an improvement under this internal TB6/64-simulation protocol. It does not establish external wall-clock strength or repeatability across training realizations. External nonregression and adoption need separate prospective evidence and review. The months-long strength objective stays open.
 
+## Exact arena commands and fixed-endpoint classification
+
+The addendum's four `arena_commands[].argv_template` arrays are the exact
+commands, including the source checkout, owner, environment, output paths and
+`python -B scripts/arena_standard.py`. They use frozen source
+`6d7f2e6d1b1fc80aa9df2ee5b922eaa3fabf0814`, owner `4507e626…`, the exact
+`evaluation-shape.yaml` hash `71b4cb1b…`, CPU affinity 16/18, two OMP/MKL threads
+and CUDA device 0. Compile is explicitly off; default root noise and rolling
+pool remain on, with SPRT and resume off. Every profile argument is included in
+the immutable arrays rather than left to an unspecified future command.
+
+| Role | Candidate/reference | Games/pairs | Opening file | Seed | Inner/owner seconds |
+| --- | --- | --- | --- | --- | --- |
+| Primary | FULLB40/FULLA40 | 256/128 | `screen.epd` | 2026111204 | 3500/3600 |
+| Eligibility | FULLB40/A39 | 256/128 | `screen.epd` | 2026111204 | 3500/3600 |
+| Context | FULLA40/A39 | 256/128 | `screen.epd` | 2026111204 | 3500/3600 |
+| Conditional confirmation | Same FULLB40/A39 | 1000/500 | `confirmation.epd` | 2026111205 | 6900/7200 |
+
+Only `{FULLA40_CHECKPOINT_PATH}` and `{FULLB40_CHECKPOINT_PATH}` may be
+substituted, with the qualified final step-40 files. Freeze both actual SHAs,
+arm/donor/40-update receipts and all instantiated argv before the first deciding
+arena. The same FULLB40 bytes must enter confirmation. Hash and legally load
+all 128/500 full-history roots before launch, assert the exact requested pair
+count, and require all 256/1000 games after closure. The reader's ability to
+shrink/subsample a mismatched file is not an allowed fallback. Inner time limits
+do not authorize a partial-score verdict, favorable extension or new candidate.
+
+At the fixed complete endpoint, a primary FULLB40/FULLA40 paired-normal 95%
+**upper** score bound strictly below 0.50 is evidence of a harmful bundle at this
+40-update dose/profile: no confirmation or adoption. A corresponding complete
+FULLB40/A39 upper bound below 0.50 is endpoint regression, not isolated proof of
+the outcome-target mechanism. All three screens still run to their fixed counts,
+except a global stop or technical failure; these are endpoint labels, not interim
+looks or an early statistical stopping rule.
+
+Without qualified harm, a non-pass is labelled
+`UNREAD_FOR_REGISTERED_GAIN_AT_40_UPDATE_DOSE`. This does not establish
+ineffectiveness, equivalence or an optimum. Actual observed scores and intervals
+are still reported. Power is unmeasured; the dose remains 40 and cannot be raised
+after observations. Incomplete/invalid runs are unqualified/inconclusive, and
+zero-variance uncertainty remains unavailable for both gain and harm. Existing
+point-score/lower-bound success and the sole conditional confirmation remain
+unchanged. Intervals are conditional testwise summaries, not a familywise claim.
+
 ## Offline diagnostics
 
 On the fixed one-root-per-game cohort, compare donor and both arms at steps 1, 8 and 40. Report expected-score squared error, draw Brier, three-class WDL Brier and legal-policy total-variation drift relative to donor. Expected score is `W + 0.5D`; these reporting units differ from signed categorical Q. Use 10,000 paired game-bootstrap samples with the frozen seed. Report incomplete outcome eligibility and exact overlap scope. These measurements are diagnostic only and are not a screen, confirmation, selection or adoption gate.
+
+## Confounds and recovery
+
+**Confounds:** this is a WDL-plus-categorical bundle, not head-isolated evidence.
+It uses one new pure-selfplay cohort, one shared stochastic realization and a
+uniform sampler rather than production's curriculum/prioritized replay. The
+comparison holds those settings common between arms; it is not a causal contrast
+with earlier cap-40 or eight-window runs. Known-input exclusion does not certify
+epoch-two pretraining, unknown historical inputs or independent opening families.
+Forty updates and these panels have no demonstrated power for a three-point gain;
+low power is a possibility, not a measured result or a reason to change the dose
+after observations. The offline endpoint cannot select the playing candidate.
+
+**Recovery:** A39 stays immutable and neither branch is deployed. Preserve every
+partial archive, failed stage, checkpoint, RNG/draw record and diagnostic. A
+technical failure, timeout or explicit stop blocks the affected stage; it does
+not authorize a retry, new game, replacement panel, seed change or extension.
+Close owned processes and release existing leases through the admitted owner.
+Any subsequent scientific decision needs its separate prospective record; do not
+resume a stopped training process or replace the donor with either endpoint.
 
 ## Seeds, cost and stopping
 
@@ -111,7 +184,7 @@ separate admitted owners and actual readouts.
 | Frozen scientific JSON | Repository evidence linked above; external `first-E2-frozen-preregistration-v1/preregistration.json` | `7d47cb547d8f1b0b96299dbcc097a31e8d9eab7cfd8522d1904ad88ff8f251d6` |
 | Four-update A/A actual independent acceptance | `e2-aa4-actual-independent-readout-v1/readout.json` | `fc114dcb839e834f8c194368f3429db7b9057484ebdea97fd5e677116cd2c9d9` |
 | Subsequent fixed TB6 CPU consumer acceptance | `internal-tb6-consumer-qualification-root-readout-v3/readout.json` | `085bafd4120d78dce95fdc7fc7e125efd1be088358363eb64e6653462345bdc5` |
-| Full neural arena engineering qualification | **PENDING actual complete readout** | **PENDING staged execution gate** |
+| Full neural arena engineering qualification | Pending at the 21:36 cutoff; subsequent accepted readout in the addendum below | `f504034609da9e7853439d250326274d9295e20700b6643ae8c53217a9817822` |
 
 The source revision is `6d7f2e6d1b1fc80aa9df2ee5b922eaa3fabf0814`,
 using managed Python 3.13.15 and Torch 2.14.0+cu130. Model/Trainer/search/encoding
@@ -140,10 +213,52 @@ target bundle. These are not instructions to launch the old cap-40 pipeline.
 | `selected8` (`selected-parameters.json`) | `fbb738aaf19b30520ef92a55c93a77eed9971c3904abbb2e18b2479f2a4e79ff` |
 | `postcollection_retained_playing_start_check` (`check_retained_playing_overlap.py`) | `a610f7fde662081a5bbbb6dad9140907cae15876fd47f6f2de1a8578c083aff1` |
 
+The collector, target factory, paired caller and observers are study-specific
+external adapters, SHA-pinned to the source above. They are not supported tools
+on main. Their code-review and qualification coverage is explicit:
+
+| External review/qualification | Artifact | SHA256 |
+| --- | --- | --- |
+| Initial component/delta review, with required successor fixes | `e2-value-bundle-root-component-review-v1/review.json` | `388165cafaa67d4e79bced7b91a3325cca1c0490d9af226754be675f33271538` |
+| Actual caller/loader and observer-delta review for excluded A/A | `e2-aa4-qualification-root-admission-v1/admission.json` | `539ddca7da947740c49f29345ad90cdd323212bf7e775c3b4b17da1a2bd765d2` |
+| Independent actual A/A result, with scoped limitations | `e2-aa4-actual-independent-readout-v1/readout.json` | `fc114dcb839e834f8c194368f3429db7b9057484ebdea97fd5e677116cd2c9d9` |
+| Final collector/profile and retained-input guard source review, not execution admission | `e2full-collection-inputs-root-review-v1/review.json` | `9c2172ebf7e3862c321849470be6b72ab85fe58972ad3fbd0eefd21841d661c1` |
+
+These reviews and excluded-pilot results do not establish the future research
+targets, 40-update delivery or learned quality. Actual stage guards enforce their
+frozen file identities; the main scientific JSON is checked against its expected
+SHA and exact Git blob before collection admission. A separate unit test that
+merely repeats the same embedded hash would add no scientific qualification.
+
+The user's week-one goal authorizes work within its stated scope and resource
+ceiling. Root's per-stage admission enforces the existing controls and readiness;
+it is not an added requirement for another human permission prompt.
+
 The JSON retains exact external source paths as frozen provenance; portable prose
 uses artifact-relative paths. Its future-stage requirements do not claim stage
 completion at the scientific freeze. The subsequent bounded TB acceptance above
-is distinct from the pending full neural arena qualification. No research data
+is distinct from the full neural arena qualification, which was pending at the
+original scientific freeze and passed subsequently as recorded below. No research data
 or learned endpoint has been selected. The scientific registration
 was independently reviewed against the prose, actual source and artifact hashes;
 execution remains separately controlled.
+
+## Subsequent engineering snapshot and review resolution
+
+At the addendum freeze, the separately admitted same-donor neural arena had
+completed all 32 games: 22 qualified Syzygy adjudications, seven checkmates and
+three next-move-only threefold claims. Its independent readout is
+`internal-tb6-arena-engineering-actual-readout-v2/readout.json`, SHA256
+`f504034609da9e7853439d250326274d9295e20700b6643ae8c53217a9817822`.
+It qualifies the sampled instrument; it is neither a target-bundle result nor a
+strength comparison. The earlier 21:36 week-one snapshot remains unchanged.
+
+The independent [PR review](https://github.com/jjoshua2/DeepFin/pull/1241#issuecomment-6837102507)
+requested exact deciding commands, harm/non-pass classification, explicit
+confounds/recovery and direct baseline provenance. The prospective addendum and
+this record address them before collection, preserving dose, targets, data,
+sampling, seeds, books, success thresholds and compute ceilings. Its exact-source
+parser/defaults and composite preservation were independently checked in
+`first-E2-addendum-independent-review-v1/review.json`, SHA256
+`e04ba8a6725f6bb8444747eb282851a2c940b58bb4a36f884486a1d73a839927`.
+Neither registration is an automatic launch or adoption decision.

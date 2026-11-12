@@ -404,6 +404,26 @@ fields: the first reader failed and is preserved; the corrected reader treats
 missing-to-missing as unknown rather than inventing a zero. Node/time reports
 cover 3,318 of 3,320 Rof responses and all 3,308 donor responses.
 
+The banked baseline evidence is directly identified below. Artifact paths are
+relative to the week-one evidence bundle; hashes are taken from the independently
+accepted readout, without rerunning or selecting games.
+
+| Artifact | SHA256 |
+| --- | --- |
+| `donor-rof-32-pair-baseline-v1/games.jsonl` | `a7cef0795eaf815c83f81de7a3ea0bb9b2add539785f5731020e3b87471fc865` |
+| `donor-rof-32-pair-baseline-v1/games.pgn` | `c0a34acdc5078cbbde3ae8401a0b89bfab871e477d915e888f26f0e010d82966` |
+| `donor-rof-32-pair-baseline-v1/moves.csv` | `45c95b0e15423d3b7e32849423194798f715f408a33691386ec06538dc6d3230` |
+| `donor-rof-32-pair-baseline-v1/uci.log` | `c1a7e4301aac9e5b8b3d72ae9e18fb72f66508b549b720d05a0d6eb7d72abddb` |
+| `substantive-baseline-preparation-v1/openings.epd` (32 full-history roots) | `a718d6005a9e3b267318de38b246a9fd49531d9b02dda0e5be23a69e3ee28e77` |
+
+Rofchade used `~/local_engines/rofchade/rofChadeBMI2AVX2`, SHA256
+`35db4c03faf3e8ba1af3644d431678d855e26144d68a7555c3a19e8bdaa905f0`,
+and `~/local_engines/rofchade/230620-224.nnue`, SHA256
+`e579db8ef0f8b1910ad7704773229d41bf770a68910698e030e2021acf911f30`.
+The exact commands/options and full environment are frozen in
+`substantive-baseline-execution-preparation-v1/plan.json`, SHA256
+`c76f68904f2006a0ee93753b824e94da398936fc9cd3bb2422a1ced1da03593d`.
+
 Donor reply latency p50/p95/p99/max was 0.628289/1.121440/1.324226/1.658535 s.
 The observed minimum pre-increment whole clock was 0.789695 s; internal deadline
 allocations were not recorded, so that is not an allocation-margin estimate.
@@ -495,3 +515,30 @@ work and all CPU validation are not comprehensively accounted. Compact readouts
 and immutable external identities are in
 [learning-readiness-readout.json](evidence/rl-week-one-20261112/learning-readiness-readout.json).
 The first week and months-long strength program remain active.
+
+## Prospective review addendum — November 12, 22:17 UTC
+
+Before any research collection or update, an independent review requested exact
+arena commands and clearer harm/non-pass labels. The
+[E2 registration's prospective addendum](2026-11-12-e2-outcome-bundle.md#exact-arena-commands-and-fixed-endpoint-classification)
+freezes all four commands, 3,500/3,600-second screen and 6,900/7,200-second
+confirmation inner/owner caps, and fixed-endpoint harm/regression and unread-dose
+labels. All three screens remain fixed; the 40-update dose, 20% target bundle,
+books, seeds, success thresholds and sole conditional confirmation are unchanged.
+The original scientific JSON and the 21:36 readout snapshot are preserved.
+
+The later same-donor neural engineering arena passed all 32 games: 22 qualified
+Syzygy endings, seven checkmates and three next-move-only threefold claims, with
+no cap or reported fault. Its accepted readout is
+`internal-tb6-arena-engineering-actual-readout-v2/readout.json`, SHA256
+`f504034609da9e7853439d250326274d9295e20700b6643ae8c53217a9817822`.
+It qualifies this sampled internal instrument, not a learned candidate or a
+strength gain. The earlier bounded failed arena attempt remains preserved.
+
+Eighteen closed GPU-intended stages now total **5,546.954214 s**, including that
+failure and the completed engineering arena. This is a separate later census,
+not a rewrite of the earlier 16-stage snapshot or a CUDA-active/complete-CPU total.
+There are still 10 excluded engineering updates, zero research updates and no
+candidate adoption. Main publication and separate actual-stage controls still
+gate collection; research learning additionally needs qualified cohort, targets
+and the retained-input playing-start check.
