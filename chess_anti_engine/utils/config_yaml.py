@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
+from chess_anti_engine.tune.fresh_rl_donor import validate_config as validate_fresh_rl_config
+from chess_anti_engine.utils.sequential_selfplay import validate_sequential_selfplay_config
 
 
 def strict_config_bool(value: Any, *, key: str, source: str) -> bool:
@@ -84,6 +86,8 @@ _CORE_KEYS = (
     "mode", "seed", "device", "iterations", "work_dir",
     "replay_window_start", "replay_window_max", "replay_window_growth",
     "replay_window_growth_frac",
+    "rl_startup_intent", "rl_startup_contract",
+    "bootstrap_handoff_mode", "bootstrap_checkpoint_sha256", "bootstrap_model_contract",
     "bootstrap_dir", "bootstrap_checkpoint", "bootstrap_zero_policy_heads",
     "bootstrap_reinit_volatility_heads", "worker_wheel_path",
     "bootstrap_max_positions", "bootstrap_train_steps", "shared_shards_dir",
@@ -365,6 +369,7 @@ _TUNE_KEYS = (
     "distributed_inference_max_batch_per_slot",
     "distributed_inference_slots_per_worker",
     "distributed_pause_selfplay_during_training", "distributed_wait_timeout_seconds",
+    "distributed_stop_selfplay_before_training",
     "distributed_prefetch_shards",
     "distributed_async_test_eval", "distributed_async_test_eval_timeout_s",
     "distributed_min_games_fraction",
@@ -480,6 +485,7 @@ _RUN_BOOLEAN_KEYS = frozenset({
     "distributed_worker_use_compile", "distributed_worker_auto_tune",
     "distributed_worker_threaded", "distributed_worker_inference_fp8",
     "distributed_inference_broker_enabled", "distributed_inference_shared_broker", "pbt_synch",
+    "distributed_stop_selfplay_before_training",
     "search_smolgen", "search_nla", "search_optimizer",
     "asha_optimizer_only", "search_feature_dropout_p",
     "search_w_volatility", "search_volatility_source",
@@ -641,6 +647,8 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
     _check_target_only_knobs_require_zero_temperature(flat)
     _check_boolean_run_values(flat)
     _check_pb2_bounds(flat)
+    validate_fresh_rl_config(flat)
+    validate_sequential_selfplay_config(flat)
     return flat
 
 

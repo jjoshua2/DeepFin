@@ -26,6 +26,9 @@ THE DERIVATION, and what it can and cannot see:
     there is; parsing a key into the dataclass is not consuming it, and the
     loop rebuilds ``tc`` every iteration, so including it would make every key
     look live.
+    Strict startup's ``validate_declared`` and ``validate_saved_overlay`` are
+    excluded for the same reason: they reject inconsistent identities on reload,
+    without loading another donor or changing an already-constructed object.
   * Startup-only = read in the startup scope, not read anywhere in the loop
     scope.
 
@@ -58,7 +61,7 @@ _PKG_ROOT = Path(__file__).resolve().parents[1] / "chess_anti_engine"
 
 # Reads inside this function are PARSING, not consuming: see the module
 # docstring.
-_NOT_A_CONSUMER = frozenset({"from_dict"})
+_NOT_A_CONSUMER = frozenset({"from_dict", "validate_declared", "validate_saved_overlay"})
 
 _CONFIG_NAMES = frozenset({"config", "cfg"})
 _TRIAL_CONFIG_NAMES = frozenset({"tc", "trial_config"})
@@ -163,6 +166,28 @@ def derive_startup_only_keys() -> frozenset[str]:
     startup_keys = _region_keys(startup, index)
     loop_keys = _region_keys([loop], index)
     return frozenset((startup_keys - loop_keys) & _FLAT_ALLOWLIST)
+
+
+@pytest.mark.parametrize("validator", ["validate_declared", "validate_saved_overlay"])
+def test_validation_reads_do_not_hide_an_independent_live_consumer(validator: str) -> None:
+    """A validation-only loop route is distinct from a real per-iteration read."""
+    module = ast.parse(f'''
+def _declared(config):
+    return config["bootstrap_checkpoint_sha256"]
+def {validator}(config):
+    return _declared(config)
+def construct(config):
+    return config["bootstrap_checkpoint_sha256"]
+def consume(config):
+    return config["bootstrap_checkpoint_sha256"]
+''')
+    index = _function_index([module])
+    startup = ast.parse('construct(config)').body
+    validation = ast.parse(f'{validator}(config)').body
+    assert "bootstrap_checkpoint_sha256" in _region_keys(startup, index)
+    assert "bootstrap_checkpoint_sha256" not in _region_keys(validation, index)
+    live = ast.parse(f'{validator}(config)\nconsume(config)').body
+    assert "bootstrap_checkpoint_sha256" in _region_keys(live, index)
 
 
 def _nodes_ease_route_sources() -> list[ast.Module]:
@@ -310,14 +335,16 @@ _UNCLASSIFIED_STARTUP_ONLY: tuple[tuple[str, frozenset[str]], ...] = (
         frozenset({"sf_pid_nodes_ease_step_frac"}),
     ),
     (
-        "Startup RESTORE decisions: they choose what this process starts FROM, "
+        "Startup dispatch/RESTORE decisions: run.py selects train/tune/salvage "
+        "before launching the trial; a live mode edit cannot dispatch a new "
+        "driver. The restore keys choose what this process starts FROM, "
         "so 'live' has no meaning for them and a warning saying 'restart "
         "required' would be noise. `salvage_seed_pool_dir` is the dangerous "
         "one and its danger (audit T5) is stickiness in the SAVED trial "
         "config, which freezing the reload does not touch.",
         frozenset({
-            "bootstrap_checkpoint", "bootstrap_reinit_volatility_heads",
-            "bootstrap_zero_policy_heads", "salvage_reinit_volatility_heads",
+            "mode",
+            "salvage_reinit_volatility_heads",
             "salvage_restore_donor_config", "salvage_restore_full_trainer_state",
             "salvage_restore_pid_state", "salvage_seed_pool_dir",
             "search_optimizer", "shared_shards_dir", "warm_start_lr_max_ratio",

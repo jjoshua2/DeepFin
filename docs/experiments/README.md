@@ -10,6 +10,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-11: Epoch-two RL transition](2026-11-11-epoch2-rl-transition.md) — strict donor handoff, sequential local pilot preparation and bounded strength-evaluation plan; no RL strength result yet.
+
 - [2026-11-11: MultiPV rerank parser fix and bound clamping](2026-11-11-multipv-rerank-parser.md) — data-affecting SF label change (~15% of real MultiPV-6 searches in the review bank); not adopted, adoption condition stated.
 
 - [2026-10-12: Frozen I-opt and completed-Q mechanism screen](2026-10-12-frozen-iopt-diagnostic.md) — opt-in native-root trace, counterfactual policy reconstruction, observed-label coverage and preregistration; no GPU readout or training.

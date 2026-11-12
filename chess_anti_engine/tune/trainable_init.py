@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from chess_anti_engine.tune.startup_intent import enforce_startup
 from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.eval.era_probe import (
     PROBE_ERA,
@@ -180,6 +181,7 @@ def _restore_from_ray_checkpoint(
     if optimizer differs across trials (PB2 exploit clone donor used a
     different optimizer family).
     """
+    enforce_startup(config, ckpt)
     ckpt_dir = Path(ckpt.to_directory())
     maybe = ckpt_dir / "trainer.pt"
     rr.holdout_state_dir = ckpt_dir
@@ -463,7 +465,10 @@ def _restore_checkpoint_or_salvage(
     Mutates *trainer* (model/optimizer load), *config* (donor config overlay),
     and may reseed *rng* on exploit clone.  Returns ``(restore_result, rng)``.
     """
+    dispatch = enforce_startup(config, ckpt)
     rr = RestoreResult(active_seed=active_seed)
+    if dispatch == "fresh_bootstrap":
+        return rr, rng
     restored_rng_state: dict | None = None
     restored_trial_meta: dict | None = None
 
@@ -529,6 +534,35 @@ def _maybe_load_bootstrap(
     buffers from bootstrap data cause wrong gradient directions on selfplay data,
     (4) PB2's lr perturbation has no effect because scheduler's base_lr is locked.
     """
+    startup_config = dict(tc._rl_startup_settings)
+    if tc.rl_startup_intent is not None or tc.rl_startup_contract is not None:
+        startup_config.update(
+            rl_startup_intent=tc.rl_startup_intent, rl_startup_contract=tc.rl_startup_contract,
+        )
+    startup_config.update(
+        bootstrap_handoff_mode=tc.bootstrap_handoff_mode,
+        bootstrap_checkpoint=tc.bootstrap_checkpoint,
+        bootstrap_checkpoint_sha256=tc.bootstrap_checkpoint_sha256,
+        bootstrap_model_contract=tc.bootstrap_model_contract,
+    )
+    dispatch = enforce_startup(startup_config, ckpt)
+    if dispatch == "fresh_bootstrap":
+        from chess_anti_engine.model import ARCH_SCHEMA_VERSION
+        from chess_anti_engine.tune.fresh_rl_donor import load_fresh_donor
+        load_fresh_donor(
+            config={
+                **startup_config,
+                "bootstrap_handoff_mode": tc.bootstrap_handoff_mode,
+                "bootstrap_checkpoint": tc.bootstrap_checkpoint,
+                "bootstrap_checkpoint_sha256": tc.bootstrap_checkpoint_sha256,
+                "bootstrap_model_contract": tc.bootstrap_model_contract,
+                "bootstrap_zero_policy_heads": tc.bootstrap_zero_policy_heads,
+                "bootstrap_reinit_volatility_heads": tc.bootstrap_reinit_volatility_heads,
+            },
+            trainer=trainer, checkpoint=ckpt, restore=restore,
+            torch_module=torch, schema_version=ARCH_SCHEMA_VERSION,
+        )
+        return
     if not (tc.bootstrap_checkpoint and ckpt is None and (not restore.seed_warmstart_used)):
         return
     bp = Path(tc.bootstrap_checkpoint)
