@@ -1,0 +1,125 @@
+{
+  "cohort_recorded_depth_range": [
+    2,
+    11
+  ],
+  "cohort_recorded_nodes_range": [
+    3065,
+    5047
+  ],
+  "independent_arithmetic": "saved successor predictions at child indices, W/L flipped exactly once; normalized raw parent-index SF labels",
+  "input_pins": {
+    "accepted": {
+      "path": "/home/josh/chess-artifacts/operations/stored-wdl-cap40-direct-20261112-tsxbicyz/stored-wdl-prefix-3laxfnm8/result.json",
+      "sha256": "e0e61ac7c6246261d344ac2459c6e01b8512784d64ca49d50b24f843f9ce6249"
+    },
+    "candidate": {
+      "path": "/home/josh/chess-artifacts/operations/stored-wdl-cap40-forward-20261112-xr_bp2pk/cap4016.json",
+      "sha256": "3880c651a2893c829ca5b85daec7e57e17faaad8cd4501e695a2fa53498a476f"
+    },
+    "donor": {
+      "path": "/home/josh/chess-artifacts/operations/stored-wdl-cap40-forward-20261112-xr_bp2pk/donor16.json",
+      "sha256": "61fc53f312fb1851452c46be4b0f018ec3d20f72f53ea02b89e501b0541584ff"
+    },
+    "keys": {
+      "path": "/home/josh/chess-artifacts/operations/stored-wdl-ply-coverage-20261112-o0xz6jbx/result.json",
+      "sha256": "71df61e36146f66f1a0900a0003db16decce7ad60042b36b706639624bb55072"
+    },
+    "plan": {
+      "path": "/home/josh/chess-artifacts/operations/stored-wdl-cap40-forward-20261112-xr_bp2pk/frozen-plan.json",
+      "sha256": "66af496839b589b6c773abcb34ff7597569bb9f6c76f02d5cf444e79cee5b63b"
+    },
+    "sf": {
+      "path": "/home/josh/chess-artifacts/operations/stored-wdl-sf-coverage-20261112-tp8bbhdr/result.json",
+      "sha256": "35ac7fe8a8ce3f98b30ec5c51c98535a53d1cdf843290b0e3045f58f2b81d826"
+    },
+    "sf_raw": {
+      "path": "/home/josh/chess-artifacts/operations/stored-wdl-sf-coverage-20261112-tp8bbhdr/raw-sf.npz",
+      "sha256": "b3ffc1bd200c283206cc0d06f01debe6e7f2e74fee8fe02ca3331ab69e222a25"
+    },
+    "transition": {
+      "path": "/home/josh/chess-artifacts/operations/stored-wdl-transition-20261112-tfv8ei80/result.json",
+      "sha256": "5ee1eb7330f64338623bd765fa11d80b730b4c70e66f8515466f59a5798d2538"
+    },
+    "transition_review": {
+      "path": "/home/josh/chess-artifacts/operations/stored-wdl-transition-20261112-tfv8ei80/independent-review-20261112.json",
+      "sha256": "f3abf94acfbecee2615715de1a6cc52415d94529f5908d7339fbab3013ee5661"
+    }
+  },
+  "limitations": [
+    "Partial, training-exposed/unknown-exposure cohort with only three supplied game groups; not heldout or randomized.",
+    "Agreement with stored low-budget action-conditioned child SF labels, not root-position truth or strength/Elo evidence.",
+    "Numeric label validity does not establish fallback absence or independently authenticated historical engine provenance.",
+    "Original score receipt budget ranges cover254; this review recomputes227 ranges.",
+    "Narrow legal transition/history overlap validated; extra-feature correctness and older complete history remain unqualified."
+  ],
+  "limits": {
+    "AS": 8589934592,
+    "CPU": 120,
+    "CUDA": "",
+    "threads": 1,
+    "wall": 150
+  },
+  "matching_child_pids": [],
+  "max_normalization_correction": 0.00022750686813188814,
+  "metrics": {
+    "brier": {
+      "candidate_minus_donor_equal_group_mean": -0.02700489793156786,
+      "candidate_minus_donor_row_mean": -0.025031542320470963,
+      "candidate_row_mean": 0.12960238428681753,
+      "donor_row_mean": 0.1546339266072885,
+      "groups": [
+        {
+          "delta": -0.019423056645840507,
+          "group": "4574726265432138265",
+          "rows": 86
+        },
+        {
+          "delta": -0.01340459837494618,
+          "group": "5641434355974801433",
+          "rows": 80
+        },
+        {
+          "delta": -0.04818703877391689,
+          "group": "6842486203887630397",
+          "rows": 61
+        }
+      ],
+      "improved_rows": 172,
+      "worsened_rows": 55
+    },
+    "logloss": {
+      "candidate_minus_donor_equal_group_mean": -0.11479763658974812,
+      "candidate_minus_donor_row_mean": -0.12015991977043755,
+      "candidate_row_mean": 1.2097630511765138,
+      "donor_row_mean": 1.3299229709469516,
+      "groups": [
+        {
+          "delta": -0.1728857370420527,
+          "group": "4574726265432138265",
+          "rows": 86
+        },
+        {
+          "delta": -0.1024310982060052,
+          "group": "5641434355974801433",
+          "rows": 80
+        },
+        {
+          "delta": -0.06907607452118647,
+          "group": "6842486203887630397",
+          "rows": 61
+        }
+      ],
+      "improved_rows": 193,
+      "worsened_rows": 34
+    }
+  },
+  "model_or_engine_run": false,
+  "per_pair_evidence_sha256": "dd8a95429db9a69e51107ddfdd561dbd511deadde555a162c3ea99f435fedb12",
+  "plan_sha256": "7ca95edd7c26a3feb85e50cdcbdd155790998af0eb2a2fef5e1c1aa39cbca3db",
+  "prior_exclusions": 27,
+  "result_sha256": "9ae16baa447af7b7a1ab80336cd27335cd394f9f4b3e2a7675f317dc73487251",
+  "rows": 227,
+  "schema": "independent-partial-child-sf-review-v1",
+  "source_corpus_read": false
+}

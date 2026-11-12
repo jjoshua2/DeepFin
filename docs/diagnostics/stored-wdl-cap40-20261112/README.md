@@ -105,3 +105,30 @@ overlap. The 27 missing successors remain exclusions, not replacements.
 This is narrow child-position/input consistency, not older-history or full
 game provenance, repetition truth, extra-feature correctness or adjudication
 qualification. No model or engine ran for this check.
+
+
+## Partial-cohort child Stockfish agreement
+
+[Independent saved-output review](child-sf-agreement-review.json), SHA256
+`f8582c8be0cd63abcc58aa4e1c78f468c42659ef79d01db4835acdd3ec4d08b2`,
+recomputed the fixed 227-pair comparison. Existing successor-row predictions
+were flipped W/L exactly once into parent POV and compared with the parent
+row's action-conditioned child SF target. Float16 target rounding was handled
+by the declared bounded normalization; no rows were selected by prediction
+or label outcome. The 27 missing successors remain excluded.
+
+- Brier: donor 0.154634, cap40 0.129602; 172 pairs improve, 55 worsen.
+- Log loss: donor 1.329923, cap40 1.209763; 193 improve, 34 worsen.
+- Both losses decrease in all three supplied game groups.
+- This partial cohort records 3,065–5,047 SF nodes and depth 2–11. The earlier
+  coverage report's depth 2–15 range describes the original 254-row panel,
+  not this subset.
+
+This direction differs from the producer-search-target agreement result,
+whose draw component partly preserves the producer network's own prediction.
+The two results address different targets and positions; neither establishes
+root-position truth, held-out generalization, Elo, or a causal explanation
+for training changes. The partial cohort is successor-available, not random.
+No model inference, engine execution or new corpus acquisition was needed
+for this saved-output comparison. Raw per-pair evidence stays outside the
+repository.
