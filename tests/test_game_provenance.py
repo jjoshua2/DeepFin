@@ -243,7 +243,7 @@ def test_ordinal_is_assigned_at_start_even_when_completions_are_out_of_order(mon
     assert [x.slot for x in finalized_starts] == [1, 0, 1]
 
 
-def test_early_tb_at_large_absolute_ply_does_not_claim_cap(monkeypatch):
+def test_early_tb_at_large_absolute_ply_does_not_claim_cap(monkeypatch, caplog):
     board = chess.Board(chess.STARTING_FEN.replace("0 1", "0 69"))
     monkeypatch.setattr(
         "chess_anti_engine.selfplay.state.resolve_slot_opening",
@@ -259,6 +259,43 @@ def test_early_tb_at_large_absolute_ply_does_not_claim_cap(monkeypatch):
     assert observed[0].start.start_ply == observed[0].total_plies == 136
     assert not observed[0].cap_reached
     assert observed[0].played_move_indices == ()
+    assert not any("MAX_PLY_GAME" in record.message for record in caplog.records)
+
+
+def test_actual_cap_at_large_opening_ply_is_still_reported(monkeypatch, caplog):
+    board = chess.Board(chess.STARTING_FEN.replace("0 1", "0 69"))
+    monkeypatch.setattr(
+        "chess_anti_engine.selfplay.state.resolve_slot_opening",
+        lambda **_kw: SimpleNamespace(board=board.copy(), source="test_late_seed"),
+    )
+    observed = []
+    _collect(
+        games=1, target_games=1,
+        game=GameConfig(max_plies=2, selfplay_fraction=1.0),
+        on_game_provenance=observed.append,
+    )
+    assert observed[0].total_plies - observed[0].start.start_ply == 2
+    assert observed[0].cap_reached
+    assert sum("MAX_PLY_GAME" in record.message for record in caplog.records) == 1
+
+
+def test_pre_cap_sf_adjudication_at_large_opening_ply_is_not_a_cap(monkeypatch, caplog):
+    board = chess.Board(chess.STARTING_FEN.replace("0 1", "0 69"))
+    monkeypatch.setattr(
+        "chess_anti_engine.selfplay.state.resolve_slot_opening",
+        lambda **_kw: SimpleNamespace(board=board.copy(), source="test_late_seed"),
+    )
+    observed = []
+    _collect(
+        games=1, target_games=1,
+        game=GameConfig(max_plies=2, selfplay_fraction=1.0),
+        on_state_ready=lambda state: state.done_arr.fill(1),
+        on_game_provenance=observed.append,
+    )
+    assert observed[0].total_plies == observed[0].start.start_ply == 136
+    assert observed[0].resolution == "sf_adjudication"
+    assert not observed[0].cap_reached
+    assert not any("MAX_PLY_GAME" in record.message for record in caplog.records)
 
 
 def test_raw_observation_is_snapshotted_before_existing_sample_callback():
