@@ -357,24 +357,29 @@ def parse_ordo(text: str) -> dict[str, tuple[float, float]]:
     out: dict[str, tuple[float, float]] = {}
     err_idx: int | None = None
     for line in text.splitlines():
-        parts = line.split()
-        if not parts:
+        # Player names can contain spaces and colons. The final colon separates
+        # the ranked name from numeric columns; name tokens are not columns.
+        label, separator, values = line.rpartition(":")
+        identity = label.split(maxsplit=1)
+        parts = values.split()
+        if not separator or len(identity) != 2 or not parts:
             continue
-        if parts[0] == "#" and "PLAYER" in parts:
-            cols = [p for p in parts if p != ":"]
-            err_idx = cols.index("ERROR") + 1 if "ERROR" in cols else None
+        rank, name = identity
+        name = name.strip()
+        if rank == "#" and name == "PLAYER":
+            err_idx = parts.index("ERROR") if "ERROR" in parts else None
             continue
-        if len(parts) < 4 or not parts[0].rstrip(".").isdigit() or parts[2] != ":":
+        if not rank.rstrip(".").isdigit():
             continue
         try:
-            rating = float(parts[3])
+            rating = float(parts[0])
         except ValueError:
             continue
         err = float("nan")
         if err_idx is not None and err_idx < len(parts):
             tok = parts[err_idx]
             err = float("nan") if tok.startswith("-") else float(tok)
-        out[parts[1]] = (rating, err)
+        out[name] = (rating, err)
     return out
 
 
@@ -670,6 +675,12 @@ def main() -> int:
             "Ordo did not return a fit (timeout or error). If it hung, that is "
             "the -D auto-draw-rate non-convergence — this wrapper already passes "
             "-M, so report the input.")
+    lost = sorted(set(players) - set(point))
+    if lost:
+        # A player the games contain but the fit does not would otherwise just
+        # be absent from every table below, with exit 0.
+        raise SystemExit(f"Ordo's output has no rating for {lost}; "
+                         "its table format was not parsed completely.")
 
     flagged = completion_bias_report(by_matchup, rng=rng)
 

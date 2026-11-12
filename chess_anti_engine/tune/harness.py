@@ -229,7 +229,10 @@ def _trial_dirs_referenced_by(state_file: Path) -> set[str] | None:
         names: set[str] = set()
         for entry in payload["trial_data"]:
             logdir = json.loads(entry[0]).get("relative_logdir")
-            if isinstance(logdir, str) and logdir:
+            # A trial dir is a direct child of the tune dir. Anything else
+            # (absolute, `..`, nested) names nothing we manage, and must not
+            # let a checkpoint elsewhere count toward this file's slot.
+            if isinstance(logdir, str) and logdir and Path(logdir).name == logdir:
                 names.add(logdir)
     except Exception as exc:
         print(f"[run_tune] Could not read trial dirs from {state_file.name}: {exc}")
@@ -266,12 +269,110 @@ def _prune_orphan_pb2_policy_logs(*, tune_dir: Path) -> None:
             p.unlink()
 
 
-def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
+def _guard_fresh_retention_one(*, tune_dir: Path, keep_last: int | str) -> None:
+    """Refuse to discard the only recovery artifacts before fresh startup.
+
+    Include orphan state, trial and policy artifacts, not just readable states.
+    This is a preflight check, not a backup or protection against concurrent
+    writers. The way out is a larger retention count or a separate work
+    directory -- not --resume: `_restore_checkpoint_or_salvage` reads
+    `salvage_seed_pool_dir` only when the resumed trial has no Ray checkpoint
+    (`if ckpt is not None ... elif salvage ...`), so a salvage restart under
+    --resume of a checkpointed trial silently drops the salvage pool.
+    """
+    try:
+        count = int(keep_last)
+    except (TypeError, ValueError, OverflowError):
+        # Leave invalid configuration to the existing startup validation path.
+        return
+    if count != 1 or not tune_dir.exists():
+        return
+    for path in tune_dir.iterdir():
+        if (
+            path.match("experiment_state-*.json")
+            or path.match("basic-variant-state-*.json")
+            or path.match("pbt_policy_*.txt")
+            or (path.match("train_trial_*") and path.is_dir())
+        ):
+            raise ValueError(
+                "Fresh Tune startup with tune_keep_last_experiments=1 "
+                f"would delete the existing experiment in {tune_dir} before the "
+                "new one exists. Set tune_keep_last_experiments >= 2 to keep "
+                "the previous experiment, or use a new work directory "
+                "(--work-dir; TRAIN_WORK_DIR for scripts/train.sh). --resume is "
+                "not a way to start a salvage restart: when the resumed trial "
+                "has a Ray checkpoint it restores that checkpoint and ignores "
+                "--salvage-seed-pool-dir. No artifacts have been pruned and no "
+                "sidecars have been launched."
+            )
+
+
+def _trial_dir_holds_checkpoint(trial_dir: Path) -> bool:
+    """True if a trial dir holds a Ray `checkpoint_NNNNNN/trainer.pt`.
+
+    Same definition salvage uses for "state that actually exists on disk"
+    (`salvage._newest_disk_checkpoint`): the trainable stages its save in
+    `ckpt/` and Ray copies it into `checkpoint_NNNNNN`, so a dir without
+    `trainer.pt` -- or only a `ckpt/` staging dir -- is not a checkpoint a
+    restart could use.
+    """
+    from chess_anti_engine.tune.salvage import _newest_disk_checkpoint
+
+    try:
+        return _newest_disk_checkpoint(trial_dir) is not None
+    except OSError:
+        return False
+
+
+def _cleanup_old_tune_experiments(
+    *, tune_dir: Path, keep_last: int, reserve_new: bool = False,
+) -> None:
     """Best-effort pruning of old Ray Tune experiments.
 
-    Keeps the newest `keep_last` experiment_state-*.json files, then deletes
-    trial directories that none of those kept files reference.
-    Only intended to run on fresh starts (not --resume).
+    Only intended to run on fresh starts (not --resume). Nonpositive
+    `keep_last` disables pruning. With `reserve_new`, a positive count
+    includes the new experiment the caller is about to create, so one retains
+    no old experiments rather than disabling cleanup.
+
+    Retention unit: one `experiment_state-*.json` file, NOT one experiment.
+    Every launch and every resume writes its own state file, so an experiment
+    resumed twice is three state files and can fill three slots. Walking
+    newest first, each state file is retained; it uses up a retention slot
+    only if a trial dir it references holds a checkpoint
+    (`_trial_dir_holds_checkpoint`). A state file that references no trial
+    dir at all -- `trial_data: []`, or `relative_logdir: null` as Ray leaves
+    it for a trial that was never scheduled -- uses no slot. The walk stops
+    once the slots are used, so the newest `keep_last` checkpoint-bearing
+    state files are kept together with every checkpoint-less one newer than
+    them. Older state files are deleted, then every trial dir that no retained
+    state file references, then policy logs whose trial dir is gone.
+
+    What this guarantees: launches that die before writing their first
+    checkpoint never displace an older checkpoint-bearing state file. What it
+    does not: a launch that lives long enough to write one checkpoint (about
+    one iteration) does use a slot. Around salvage restarts use
+    `keep_last >= 3`; the salvaged weights are also in the salvage pool.
+
+    Why checkpoint-less state files do not count: a fresh launch that fails
+    after `Tuner.fit` wrote its experiment_state leaves a newer state file
+    pointing at an errored trial with no checkpoint. Counting it let it
+    displace the real run -- two failed salvage-restart attempts in a row
+    under `keep_last=2` deleted every checkpoint of the run. Why they are kept
+    rather than deleted: a failed launch's state file and trial dir are what
+    the operator inspects (error.txt, logs), and anything older than a
+    retained checkpoint-bearing state file is pruned in due course. A state
+    file that cannot be read counts as checkpoint-less and, if retained,
+    stops all trial-dir deletion for the pass (see below). With healthy
+    state files only, this is exactly "keep the newest `keep_last` files".
+
+    Unreferenced trial dirs: one that no retained state file references is
+    deleted only if it holds no checkpoint, or if a readable state file that
+    this pass prunes names it (ordinary rotation). A dir holding a checkpoint
+    that no readable state file names -- its state files renamed to
+    `.corrupt`/`.bak_*`, unreadable, or parsed without a `relative_logdir` --
+    is kept with a WARNING every startup, since its checkpoints may be the
+    live run's only copy. Reclaiming that space is manual: confirm and
+    `rm -rf` the named dir.
 
     The reference has to be read out of the state files. It CANNOT be derived
     from the filenames, which is what this used to do: a trial directory is
@@ -292,30 +393,41 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
     keep_last = int(keep_last)
     if keep_last <= 0 or not tune_dir.exists():
         return
+    if reserve_new:
+        keep_last -= 1
 
     state_files = sorted(tune_dir.glob("experiment_state-*.json"))
     if len(state_files) <= keep_last:
         return
 
-    keep = state_files[-keep_last:]
-
   # Fail safe: an unreadable kept state file means we do not know what it
   # protects, so we delete no trial directories at all this pass. Deleting the
   # state files is still fine -- they are small and not the irreplaceable part.
+    keep: list[Path] = []
     protected: set[str] = set()
     protection_is_complete = True
-    for p in keep:
+    slots_used = 0
+    for p in reversed(state_files):
+        if slots_used >= keep_last:
+            break
+        keep.append(p)
         names = _trial_dirs_referenced_by(p)
         if names is None:
             protection_is_complete = False
-        else:
-            protected |= names
+            continue
+        protected |= names
+        if any(_trial_dir_holds_checkpoint(tune_dir / n) for n in names):
+            slots_used += 1
 
     ts_re = re.compile(r"^experiment_state-(?P<ts>.+)\.json$")
     keep_set = set(keep)
+  # Trial dirs a readable state file that is being pruned names: rotation
+  # accounts for deleting these. Read before the files go.
+    rotated_out: set[str] = set()
     for p in state_files:
         if p in keep_set:
             continue
+        rotated_out |= _trial_dirs_referenced_by(p) or set()
         m = ts_re.match(p.name)
         if m:
             _delete_obsolete_state_files(tune_dir=tune_dir, ts=m.group("ts"))
@@ -329,6 +441,19 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
 
     for d in sorted(tune_dir.glob("train_trial_*")):
         if not d.is_dir() or d.name in protected:
+            continue
+      # No readable state file accounts for this dir (its state files were
+      # renamed or unreadable, or Ray stopped writing the field we read), so
+      # its checkpoints may be the only copy of the run. Never delete it here.
+        if d.name not in rotated_out and _trial_dir_holds_checkpoint(d):
+            print(
+                f"[run_tune] WARNING: keeping unreferenced trial dir {d}: it holds "
+                "a checkpoint and no readable experiment_state file names it. "
+                "Remove it by hand (rm -rf) once you have confirmed it is not "
+                "needed (salvage-export it first if unsure: ./scripts/train.sh "
+                "salvage-export --top-n 1 --metric training_iteration --out <dir>); "
+                "startup pruning will not."
+            )
             continue
         print(f"[run_tune] Pruning old Ray Tune trial dir: {d}")
         shutil.rmtree(d, ignore_errors=True)
@@ -990,97 +1115,105 @@ def run_tune(
     if mode not in ("min", "max"):
         raise ValueError(f"mode must be 'min' or 'max', got {mode!r}")
 
-    server_proc = _launch_distributed_server(base_config=base_config, work_dir=work_dir)
-    shared_broker_proc = _maybe_launch_shared_broker(base_config=base_config, work_dir=work_dir)
-
-    want_cuda = str(base_config.get("device", "")) == "cuda"
-    resources = {
-        "cpu": int(base_config.get("cpus_per_trial", 4)),
-        "gpu": float(base_config.get("gpus_per_trial", 1.0 if want_cuda else 0.0)),
-    }
-    trainable = tune.with_resources(train_trial, resources)
-
-    scheduler_name = str(base_config.get("tune_scheduler", "pb2")).lower()
-    param_space, scheduler, search_alg = _build_scheduler_and_param_space(
-        scheduler_name=scheduler_name, base_config=base_config, metric=metric, mode=mode,
-    )
-
-    tune_config_kwargs: dict = {
-        "num_samples": int(num_samples),
-        "scheduler": scheduler,
-        "max_concurrent_trials": int(base_config.get("max_concurrent_trials", num_samples)),
-  # The tune path uses the function-style trainable API, which does not
-  # implement reset_config(). Reusing actors under GPBT/PBT causes Ray to
-  # error during perturb/exploit when it attempts an in-place config reset.
-        "reuse_actors": False,
-    }
-    if search_alg is not None:
-        tune_config_kwargs["search_alg"] = search_alg
-
-    os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-    os.environ.setdefault("RAY_memory_usage_threshold", "0.98")
-
-    ray.init(ignore_reinit_error=True, include_dashboard=False)
-
-    experiment_path = work_dir.resolve() / "tune"
     if not resume:
-        keep_last_exps = int(base_config.get("tune_keep_last_experiments", 2))
-  # Prune to (N-1) before the new experiment is created so we end at <=N total.
-        _cleanup_old_tune_experiments(
-            tune_dir=experiment_path,
-            keep_last=max(0, keep_last_exps - 1),
+        _guard_fresh_retention_one(
+            tune_dir=work_dir.resolve() / "tune",
+            keep_last=base_config.get("tune_keep_last_experiments", 2),
         )
 
-    valid_state_file = (
-        _find_valid_experiment_state(experiment_path)
-        if resume and experiment_path.exists()
-        else None
-    )
+    # Own each returned sidecar before any later startup step can fail.
+    # ExitStack also attempts both cleanups if one termination raises.
+    with contextlib.ExitStack() as cleanup:
+        server_proc = _launch_distributed_server(base_config=base_config, work_dir=work_dir)
+        cleanup.callback(_terminate_process, server_proc)
+        shared_broker_proc = _maybe_launch_shared_broker(base_config=base_config, work_dir=work_dir)
+        cleanup.callback(_terminate_process, shared_broker_proc)
 
-    if valid_state_file is not None:
-        restore_param_space = _resolve_resume_param_space(
-            param_space=param_space,
-            valid_state_file=valid_state_file,
-            experiment_path=experiment_path,
-        )
-        tuner = tune.Tuner.restore(
-            str(experiment_path),
-            trainable=trainable,
-            param_space=restore_param_space,
-            resume_errored=True,
-            resume_unfinished=True,
-        )
-        _hotpatch_scheduler_bounds(tuner=tuner, scheduler=scheduler)
-    else:
-        if resume and experiment_path.exists():
-            print("[run_tune] All experiment state files corrupt; starting fresh run.")
-        ckpt_keep = int(base_config.get("tune_num_to_keep", 2))
-        tuner = tune.Tuner(
-            trainable,
-            param_space=param_space,
-            tune_config=tune.TuneConfig(**tune_config_kwargs),
-            run_config=RunConfig(
-                name="tune",
-                storage_path=str(work_dir.resolve()),
-                checkpoint_config=CheckpointConfig(num_to_keep=ckpt_keep),
-            ),
+        want_cuda = str(base_config.get("device", "")) == "cuda"
+        resources = {
+            "cpu": int(base_config.get("cpus_per_trial", 4)),
+            "gpu": float(base_config.get("gpus_per_trial", 1.0 if want_cuda else 0.0)),
+        }
+        trainable = tune.with_resources(train_trial, resources)
+
+        scheduler_name = str(base_config.get("tune_scheduler", "pb2")).lower()
+        param_space, scheduler, search_alg = _build_scheduler_and_param_space(
+            scheduler_name=scheduler_name, base_config=base_config, metric=metric, mode=mode,
         )
 
-  # Both branches: the second deleter that makes an eviction target vanish is
-  # `_prune_trial_checkpoints`, which runs on a fresh experiment too. The
-  # manager itself lives in this (driver) process, so this is the right place.
-    _make_checkpoint_eviction_idempotent()
-  # Same rationale as above: the CSV logger callback also lives in this
-  # (driver) process, so this is the only place that can patch it before the
-  # first result row is appended.
-    _make_csv_logger_schema_safe()
+        tune_config_kwargs: dict = {
+            "num_samples": int(num_samples),
+            "scheduler": scheduler,
+            "max_concurrent_trials": int(base_config.get("max_concurrent_trials", num_samples)),
+      # The tune path uses the function-style trainable API, which does not
+      # implement reset_config(). Reusing actors under GPBT/PBT causes Ray to
+      # error during perturb/exploit when it attempts an in-place config reset.
+            "reuse_actors": False,
+        }
+        if search_alg is not None:
+            tune_config_kwargs["search_alg"] = search_alg
 
-    try:
+        os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+        os.environ.setdefault("RAY_memory_usage_threshold", "0.98")
+
+        ray.init(ignore_reinit_error=True, include_dashboard=False)
+
+        experiment_path = work_dir.resolve() / "tune"
+        if not resume:
+            keep_last_exps = int(base_config.get("tune_keep_last_experiments", 2))
+      # Prune to (N-1) before the new experiment is created so we end at <=N total.
+            _cleanup_old_tune_experiments(
+                tune_dir=experiment_path,
+                keep_last=keep_last_exps,
+                reserve_new=True,
+            )
+
+        valid_state_file = (
+            _find_valid_experiment_state(experiment_path)
+            if resume and experiment_path.exists()
+            else None
+        )
+
+        if valid_state_file is not None:
+            restore_param_space = _resolve_resume_param_space(
+                param_space=param_space,
+                valid_state_file=valid_state_file,
+                experiment_path=experiment_path,
+            )
+            tuner = tune.Tuner.restore(
+                str(experiment_path),
+                trainable=trainable,
+                param_space=restore_param_space,
+                resume_errored=True,
+                resume_unfinished=True,
+            )
+            _hotpatch_scheduler_bounds(tuner=tuner, scheduler=scheduler)
+        else:
+            if resume and experiment_path.exists():
+                print("[run_tune] All experiment state files corrupt; starting fresh run.")
+            ckpt_keep = int(base_config.get("tune_num_to_keep", 2))
+            tuner = tune.Tuner(
+                trainable,
+                param_space=param_space,
+                tune_config=tune.TuneConfig(**tune_config_kwargs),
+                run_config=RunConfig(
+                    name="tune",
+                    storage_path=str(work_dir.resolve()),
+                    checkpoint_config=CheckpointConfig(num_to_keep=ckpt_keep),
+                ),
+            )
+
+      # Both branches: the second deleter that makes an eviction target vanish is
+      # `_prune_trial_checkpoints`, which runs on a fresh experiment too. The
+      # manager itself lives in this (driver) process, so this is the right place.
+        _make_checkpoint_eviction_idempotent()
+      # Same rationale as above: the CSV logger callback also lives in this
+      # (driver) process, so this is the only place that can patch it before the
+      # first result row is appended.
+        _make_csv_logger_schema_safe()
+
         return tuner.fit()
-    finally:
-        _terminate_process(shared_broker_proc)
-        _terminate_process(server_proc)
 
 
 # ---------------------------------------------------------------------------

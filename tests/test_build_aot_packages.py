@@ -335,6 +335,56 @@ class _StubModel(torch.nn.Module):
         }
 
 
+@pytest.mark.parametrize("coverage_error", [False, True])
+@pytest.mark.parametrize(
+    ("override", "check_full"), [(None, True), ("1", True), ("0", False), (" OFF ", False)],
+)
+def test_verify_packages_uses_runtime_constant_coverage_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    coverage_error: bool, override: str | None, check_full: bool,
+) -> None:
+    """A runtime-rejected rebind must not pass verification by default."""
+    import scripts.build_aot_packages as MOD
+
+    if override is None:
+        monkeypatch.delenv("CAE_AOT_CHECK_FULL_UPDATE", raising=False)
+    else:
+        monkeypatch.setenv("CAE_AOT_CHECK_FULL_UPDATE", override)
+
+    class CoverageCheckingPackage(_StubPackage):
+        def load_constants(self, constants: dict, *, check_full_update: bool = True) -> None:
+            super().load_constants(constants, check_full_update=check_full_update)
+            if coverage_error and check_full_update:
+                raise RuntimeError("incomplete constant update")
+
+    package = CoverageCheckingPackage({
+        "policy": torch.zeros((2, POLICY_SIZE), dtype=torch.float32),
+        "wdl": torch.zeros((2, 3), dtype=torch.float32),
+    })
+    monkeypatch.setattr(MOD, "_aoti_load_package", lambda p: package)
+    (tmp_path / "chess_b2.pt2").write_bytes(b"synthetic package")
+    model = _StubModel()
+
+    n_pass, n_fail, rows = MOD.verify_packages(
+        out_dir=tmp_path, model=model, buckets=[2], max_batch=2,
+        input_planes=175, tv_ratio_max=1.5, verify_n=1, seed=3,
+    )
+
+    assert len(package.rebinds) == 1
+    constants, actual_check_full = package.rebinds[0]
+    assert set(constants) == {"w"}
+    if coverage_error and check_full:
+        assert (n_pass, n_fail) == (0, 1), rows
+        assert rows == [(2, "FAIL", "RuntimeError: incomplete constant update")]
+        assert not package.fed
+        assert not model.seen
+    else:
+        # The healthy rebind and explicit runtime escape hatch remain usable.
+        assert (n_pass, n_fail) == (1, 0), rows
+        assert len(package.fed) == 1
+    assert actual_check_full is check_full
+
+
 def test_verify_packages_encodes_in_the_models_own_encoding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
