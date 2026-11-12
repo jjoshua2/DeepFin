@@ -266,3 +266,23 @@ leases released. No training or model inference was performed.
 Original review SHA256: `8315058c22c4fbeb1f8539ff7e57c6bb4c857f8a5726ed9a99c1653bb5dbc1eb`.
 Published copy SHA256: `8315058c22c4fbeb1f8539ff7e57c6bb4c857f8a5726ed9a99c1653bb5dbc1eb`.
 The receipt is path-free; published bytes are unchanged. No raw panel is included.
+
+
+## Paired saved TB-off / TB-on value comparison
+
+[Independent paired review](tb-off-on-paired-value-review.json) joins the same
+64 FENs and node budgets and verifies engine/settings identities. With one
+**common TB6-enabled 1M reference**, expected-score MAE changes from 5.99 to
+5.30 percentage points at 5k, and from 3.45 to 3.30 points at 50k (TB-off to
+TB-on). Substantial tails remain.
+
+Comparing each condition against its own 1M reference instead gives 6.85 to
+5.30 points at 5k, but conflates the shallow-result change with a changing
+reference. The two 1M references themselves differ by 1.12 expected-score
+points on average. These descriptive paired observations are not a pure
+shallow-budget causal effect, significance result, calibrated truth, or Elo
+measurement. No engine, model, or tablebase probes were repeated for this review.
+
+Original review SHA256: `9f08c55b8a672a2cc57b6130001b0e5f81d520b984e404a3050e3be66b1493a7`.
+Published copy SHA256: `9f08c55b8a672a2cc57b6130001b0e5f81d520b984e404a3050e3be66b1493a7`.
+The receipt is path-free; published bytes are unchanged. No raw panel is included.
