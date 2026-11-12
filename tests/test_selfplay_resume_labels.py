@@ -40,7 +40,9 @@ class _ManualPool(StockfishPool):
         self.fresh_calls: list[bool] = []
 
     def submit(self, fen: str, *, nodes=None, syzygy_path=None,
-               fresh=False, searchmoves=None):
+               fresh=False, searchmoves=None, root_fen=None, root_moves=None):
+        assert root_fen is None
+        assert root_moves is None
         del syzygy_path, searchmoves
         self.fresh_calls.append(bool(fresh))
         if self.reject:

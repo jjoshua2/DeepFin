@@ -26,6 +26,11 @@ from chess_anti_engine.selfplay.diff_focus_norm import DiffFocusNormalizer
 from chess_anti_engine.selfplay.finalize import finalize_game
 from chess_anti_engine.selfplay.network_turn import run_network_turn
 from chess_anti_engine.selfplay.opening import OpeningConfig
+from chess_anti_engine.selfplay.provenance import (
+    GameProvenance,
+    GameStartProvenance,
+    capture_game_start,
+)
 from chess_anti_engine.selfplay.state import (
     BatchStats,
     CompletedGameBatch,
@@ -204,6 +209,8 @@ def _finalize_completed_slots(
     continuous: bool,
     target: int,
     defer_pending_labels: bool = False,
+    on_game_provenance: Callable[[GameProvenance], None] | None = None,
+    game_starts: list[GameStartProvenance] | None = None,
 ) -> None:
     """Finalize done-but-not-yet-finalized games; recycle slots while target allows."""
     for i in range(batch_size):
@@ -213,11 +220,21 @@ def _finalize_completed_slots(
                 and has_pending_sf_labels_for_records(state, state.samples_per_game[i])
             ):
                 continue
-            finalize_game(state, i, all_samples, on_game_complete)
+            if on_game_provenance is None:
+                finalize_game(state, i, all_samples, on_game_complete)
+            else:
+                assert game_starts is not None
+                finalize_game(
+                    state, i, all_samples, on_game_complete,
+                    on_game_provenance=on_game_provenance, game_start=game_starts[i],
+                )
             state.finalized_arr[i] = 1
             state.games_completed += 1
             if continuous or state.games_started < target:
+                ordinal = state.games_started
                 state.recycle_slot(i)
+                if game_starts is not None:
+                    game_starts[i] = capture_game_start(state, i, ordinal)
 
 
 def _wait_for_starved_sf(
@@ -247,6 +264,7 @@ def play_batch(
     games: int,
     target_games: int = 0,
     on_game_complete: Callable[[CompletedGameBatch], None] | None = None,
+    on_game_provenance: Callable[[GameProvenance], None] | None = None,
     on_timing: Callable[[str, float], None] | None = None,
     on_step: Callable[[], None] | None = None,
     on_state_ready: Callable[[SelfplayState], None] | None = None,
@@ -279,6 +297,11 @@ def play_batch(
 
     Finite mode (target_games > 0 or stop_fn is None): plays exactly
     target_games (or `games` if target_games=0) then returns all samples.
+
+    ``on_game_provenance`` is finite-only, opt-in observation of EVERY completed
+    game, including games with zero retained samples. Its frozen payload carries
+    original history and raw record/terminal provenance, without tensors. Start
+    ordinals are assigned at slot creation within this call. Exceptions propagate.
 
     ``fen_dole_queue`` (opt-in, opening_fen_dole_per_iter>0): a mutable FIFO of
     seed lines the server doled for this iteration. Selfplay slots drain it (via
@@ -332,6 +355,8 @@ def play_batch(
     )
     requested_batch = int(games)
     continuous = stop_fn is not None and int(target_games) <= 0
+    if continuous and on_game_provenance is not None:
+        raise ValueError("on_game_provenance requires finite play_batch mode")
     target = int(target_games) if int(target_games) > 0 else requested_batch
     batch_size = min(requested_batch, target)
     slot_factor = float(slot_oversubscribe)
@@ -371,6 +396,11 @@ def play_batch(
         diff_focus_norm=diff_focus_norm,
     )
 
+    game_starts = (
+        [capture_game_start(state, i, i) for i in range(batch_size)]
+        if on_game_provenance is not None else None
+    )
+
     # Hand the live state to the caller so it can apply live-safe reco changes
     # (selfplay_fraction, opponent regret, SF node budgets) by swapping the
     # config dataclasses in place — every consumer reads them fresh per
@@ -405,6 +435,7 @@ def play_batch(
                 state,
                 all_samples=all_samples,
                 on_game_complete=on_game_complete,
+                on_game_provenance=on_game_provenance, game_starts=game_starts,
                 batch_size=batch_size,
                 continuous=continuous,
                 target=target,
@@ -517,6 +548,7 @@ def play_batch(
             _finalize_completed_slots(
                 state, all_samples=all_samples,
                 on_game_complete=on_game_complete,
+                on_game_provenance=on_game_provenance, game_starts=game_starts,
                 batch_size=batch_size, continuous=continuous, target=target,
                 defer_pending_labels=continuous,
             )
@@ -538,6 +570,7 @@ def play_batch(
         _finalize_completed_slots(
             state, all_samples=all_samples,
             on_game_complete=on_game_complete,
+            on_game_provenance=on_game_provenance, game_starts=game_starts,
             batch_size=batch_size, continuous=continuous, target=target,
             defer_pending_labels=continuous,
         )
