@@ -80,6 +80,7 @@ from chess_anti_engine.selfplay.config import (
     OpponentConfig,
     SearchConfig,
     TemperatureConfig,
+    validate_sf_move_nodes_transport,
 )
 from chess_anti_engine.selfplay.diff_focus_norm import DiffFocusNormalizer
 from chess_anti_engine.selfplay.manager import BatchStats
@@ -5045,6 +5046,12 @@ class WorkerSession:
         self._hold_selfplay = False
         self._last_manifest_poll_s = time.time()
         reco = manifest.get("recommended_worker") or {}
+        # Use this worker's actual CLI topology, including the distributed
+        # worker override, before evaluator warmup or Stockfish bring-up.
+        validate_sf_move_nodes_transport(
+            self._resolve_reco(reco, "sf_move_nodes", 0, int),
+            pooled=int(getattr(self.args, "sf_workers", 1)) > 1,
+        )
         self._active_reco = self._snapshot_reco(reco)
         self._active_assets = self._asset_fingerprint(manifest)
   # The realized difficulty this session will stamp on its shards. The LIVE

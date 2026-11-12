@@ -331,6 +331,22 @@ that every ply in such a game used one checkpoint. A single-iteration collection
 new server/work directory avoids prior model history. This mode does not qualify
 exact interrupted RL restore.
 
+## Separate Stockfish move and label budgets
+
+Positive `sf_move_nodes` requires the asynchronous `StockfishPool` route. A worker
+uses that route only with `--sf-workers >= 2`; local distributed workers take this
+value from `distributed_worker_sf_workers`, independently of the driver's
+`sf_workers`. The synchronous single-engine route shares one query between the
+curriculum move and label and rejects a positive override before starting engine
+work. `sf_move_nodes: 0` retains the existing shared-budget behavior. This refusal
+also applies when the override equals the current `sf_nodes`: later PID/live node
+updates can make those budgets diverge.
+
+The pool honors separate requested query budgets, but move and label queries use
+the same engines and transposition tables. Ordinary queries do not clear those
+tables, so expensive label searches can warm a later cheaper move search. A fixed
+move node budget does not establish independent or cold opponent strength.
+
 ## The worker credential
 
 The distributed selfplay server authenticates workers, and it binds `0.0.0.0`. The
