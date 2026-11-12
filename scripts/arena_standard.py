@@ -1927,15 +1927,14 @@ def load_fen_seed_count(path: Path) -> int:
 def load_fen_openings(
     path: Path, *, n_pairs: int, rng: np.random.Generator,
 ) -> list[chess.Board]:
-    """Load opening boards from a plain FEN file (one per line, ``#`` comments).
+    """Load opening boards from FEN or full-history rows (``#`` comments).
 
-    For blind-spot / seed-list play-outs (e.g. ``data/blindspot_fens_v1.txt``):
-    each FEN is played as a color-swapped pair exactly like book openings. If
-    the file holds more usable rows than ``n_pairs`` a seeded subsample is drawn
-    (reproducible via --seed) and the drop is logged; if fewer, ALL rows are
-    used and the arena shrinks to ``2 * len(rows)`` games. Boards start with an
-    empty move stack, so history planes repeat-fill — the encoding selfplay FEN
-    seeds get. Validation/dedup live in ``_load_unique_fen_boards``.
+    Each row is played as a color-swapped pair. Full-history rows preserve
+    their root FEN and ordered legal UCI moves; bare FEN rows have no preceding
+    move stack. If the file holds more usable rows than ``n_pairs``, a seeded
+    subsample is drawn (reproducible via --seed) and the drop is logged. If
+    fewer, ALL rows are used and the arena shrinks to ``2 * len(rows)`` games.
+    Validation and history-aware dedup live in ``_load_unique_fen_boards``.
     """
     boards = _load_unique_fen_boards(path)
     n_usable = len(boards)
