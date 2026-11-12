@@ -228,8 +228,13 @@ os._exit(0)
 def test_shared_cached_handle_survives_multithreaded_stress(tmp_path: Path) -> None:
     """32 threads (production ``--selfplay-threads``) on main's cached handle.
 
-    With eviction forced small this pattern wedges within seconds; the child's
-    no-progress watchdog reports it and the outer timeout is the backstop."""
+    A liveness smoke, not a detector: the smoke set has too few tables to
+    evict at the default ``max_fds``, and even a forced ``max_fds=2`` wedges
+    only stochastically (seen at 5-13 s, never inside this 6 s window). The
+    deterministic guards are the opener and ``_bump_lru`` tests above; this
+    one checks the realized ``max_fds`` and that 32 threads keep progressing.
+    The child's no-progress watchdog reports a wedge and the outer timeout is
+    the backstop."""
     smoke = _smoke_syzygy()
     if smoke is None:
         pytest.skip("3-4 man smoke Syzygy set (data/syzygy_3-4man) not present")

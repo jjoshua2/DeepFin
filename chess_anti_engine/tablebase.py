@@ -73,7 +73,7 @@ def new_tablebase() -> chess.syzygy.Tablebase:
     for ``read_count == 0``. A reader of the evicted table and the evictor then
     wait on each other forever and every later probe blocks on ``lru_lock``.
     Eviction starts once more distinct tables are touched than ``max_fds``
-    (default 128); the production pair holds ~1400 table files, and selfplay
+    (default 128); the production pair holds ~1000 distinct tables, and selfplay
     probes one cached handle from every ``--selfplay-threads`` thread.
 
     Cost: every table touched stays mapped (one read-only mmap per table; the
