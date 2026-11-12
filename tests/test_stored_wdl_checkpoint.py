@@ -207,3 +207,35 @@ def test_child_revalidates_wire_identity(fault: str) -> None:
         request["batch_size"] = True
     with pytest.raises(ValueError, match=r"bounded|identity|byte count"):
         _decode_planes(request)
+
+
+def test_two_strict_loads_share_one_interop_thread(checkpoint):
+    import json
+    import os
+    import subprocess
+    import sys
+
+    path, payload = checkpoint
+    digest = save(path, payload)
+    request = {"path": str(path), "sha256": digest,
+               "architecture_json": _canonical(payload["arch"])}
+    script = """
+import json, sys, torch
+from scripts.stored_wdl_checkpoint import _qualify
+request = json.loads(sys.argv[1])
+def outer(model, receipt):
+    def inner(other, second):
+        assert model is not other
+        assert torch.get_num_threads() == torch.get_num_interop_threads() == 1
+        assert all(torch.equal(value, other.state_dict()[name])
+                   for name, value in model.state_dict().items())
+        return {'paired': True}
+    return _qualify(request, verified_model_callback=inner)
+report = _qualify(request, verified_model_callback=outer)
+assert report['diagnostic']['diagnostic']['paired'] is True
+"""
+    env = dict(os.environ, CUDA_VISIBLE_DEVICES="", OMP_NUM_THREADS="1",
+               MKL_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
+    subprocess.run([sys.executable, "-c", script, json.dumps(request)],
+                   cwd=Path(__file__).resolve().parents[1], env=env,
+                   check=True, timeout=30, capture_output=True, text=True)

@@ -101,7 +101,10 @@ def _qualify(request: dict, *, verified_model_callback=None) -> dict:
     from chess_anti_engine.uci.model_loader import model_config_from_arch
 
     torch.set_num_threads(1)
-    torch.set_num_interop_threads(1)
+    # A paired diagnostic may strictly load a second model in this same child.
+    # PyTorch forbids re-setting interop after initialization, even to one.
+    if torch.get_num_interop_threads() != 1:
+        torch.set_num_interop_threads(1)
     # Decode and validate forward bytes before checkpoint access. The explicit
     # operation gate keeps the existing qualification API strictly load-only.
     operation = request.get("operation", "qualify")
