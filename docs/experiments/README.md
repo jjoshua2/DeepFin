@@ -10,7 +10,9 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
-- [2026-11-11: Epoch-two RL transition](2026-11-11-epoch2-rl-transition.md) — qualified donor handoff and sequential RL loop; first experiment closed with an inconclusive 1,000-game confirmation and no confirmed gain. Compact evidence and a separate unrun follow-up are recorded.
+- [2026-11-12: Epoch-two RL cap-40 exposure experiment](2026-11-12-epoch2-rl-cap40.md) — separate preregistered eight-window cap-40 test on fresh donor state and new source-ID-aware panels; closed: 320-update endpoint passed HEALTH but regressed on its independently validated 256-game screen (score 0.375); no confirmation or adoption. Accounting and resource closure recorded.
+
+- [2026-11-11: Epoch-two RL transition](2026-11-11-epoch2-rl-transition.md) — qualified donor handoff and sequential RL loop; first experiment closed with an inconclusive 1,000-game confirmation and no confirmed gain. Compact evidence is recorded; the separate cap-40 follow-up has its own record.
 
 - [2026-11-11: MultiPV rerank parser fix and bound clamping](2026-11-11-multipv-rerank-parser.md) — data-affecting SF label change (~15% of real MultiPV-6 searches in the review bank); not adopted, adoption condition stated.
 
