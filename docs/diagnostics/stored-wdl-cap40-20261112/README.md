@@ -77,3 +77,19 @@ Consequently no donor/candidate root prediction was scored against these
 labels, and no child comparison is qualified. The finite coverage read did
 not launch Stockfish, run model inference, or change training. Raw labels and
 row data remain outside this repository.
+
+
+## Exact successor-key coverage
+
+Independent saved-artifact review: [ply-coverage-review.json](ply-coverage-review.json),
+SHA256 `910371e3c0c34705a9c6f8ed3b7fae6852e0c4bc4aeeac7c4afe27eb30ca74f2`.
+All 254 original rows have valid, unique supplied game/ply keys. Exactly 227
+have a unique same-game `ply + 1` key in this fixed panel; 27 do not. Group
+coverage is 86/97, 61/70 and 80/87. There are no duplicate keys or ambiguous
+successor keys. This does not use storage adjacency.
+
+Full-panel successor coverage therefore fails. These 227 candidates have not
+been qualified as legal transitions or exact child positions with complete
+history. This audit performs no model/checkpoint validation, inference or
+scoring. No subset was substituted for the original 254-row panel. Raw ply
+values and masks remain outside this repository.
