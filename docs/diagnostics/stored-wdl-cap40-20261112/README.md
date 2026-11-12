@@ -147,3 +147,23 @@ presentation-only derivative, not a reissued independent review.
 | `child-sf-agreement-review.json` | `f8582c8be0cd63abcc58aa4e1c78f468c42659ef79d01db4835acdd3ec4d08b2` | `9692d01ff0ffb49bb73fb86647e0ffdbfc8b8dc0bee42f56218a5f42e14458ee` |
 | `independent-review.json` | `9da1295da264a3a9488bde613f357d62420fa8a607db002398bca58cb13b8e9d` | `ff488948d6c90db5131b1f91086be3dd3e319d646138686a1acfa636da5453ba` |
 | `transition-review.json` | `f3abf94acfbecee2615715de1a6cc52415d94529f5908d7339fbab3013ee5661` | `db9afe7d141545c81c14fe8e2d9cb1c29ccf615651a6fc7eed5006db5359bdda` |
+
+
+## Raw legal policy-prior drift
+
+[Independent saved-output review](policy-drift-review.json) found 30/254 top-1
+changes and mean total variation 0.16415 between donor and cap40. Mean entropy
+decreased from 1.00374 to 0.69079 nats; all three supplied game groups had lower
+entropy. This is a sharper, changed raw legal-move prior at temperature 1, not
+evidence of better moves, deployed search-temperature behavior, or Elo.
+
+All 254 original inputs were retained. Saved repeat/batch probability controls
+passed the predeclared combined tolerances. Dense-versus-sparse agreement and
+whole-model state preservation are supported by execution receipts, not an
+independent model rerun. No raw logits, probabilities or input rows are
+published here.
+
+The published review is a path-redacted derivative: local home prefixes are
+replaced with `~/`; original private receipt bytes remain unchanged.
+Original SHA256: `307190cfae5cfe3b8a202fe8c7114b37b2a34a9135703afa193e11c02cf7a7db`.
+Published copy SHA256: `307190cfae5cfe3b8a202fe8c7114b37b2a34a9135703afa193e11c02cf7a7db`.

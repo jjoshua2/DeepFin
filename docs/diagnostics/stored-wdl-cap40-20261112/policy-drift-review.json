@@ -1,0 +1,81 @@
+{
+  "all_masks_recomputed_from_saved_inputs": true,
+  "all_probabilities_recomputed_from_saved_logits": true,
+  "all_reported_state_hashes_unchanged": true,
+  "comparison_tolerance": {
+    "atol": 1e-06,
+    "formula": "abs(a-b)<=atol+rtol*abs(b); not an absolute-only threshold",
+    "rtol": 1e-05
+  },
+  "limitations": [
+    "Raw legal temperature1 network-prior drift; no move quality, search-policy performance, heldout or strength claim.",
+    "Dense/sparse logits are not both retained; their tolerance pass and whole-model state stability are execution receipt assertions, not independently replayed inference.",
+    "Top-level loader head_declared=wdl is inherited load metadata; measured diagnostic head is policy_own.",
+    "Dependencies and full historical provenance/extra-feature correctness are not independently authenticated."
+  ],
+  "limits_per_child": {
+    "AS": 17179869184,
+    "CPU": 60,
+    "CUDA": "",
+    "threads": 1,
+    "wall": 90
+  },
+  "matching_child_pids": [],
+  "metrics": {
+    "candidate_mean_entropy_nats": 0.6907899638425635,
+    "donor_mean_entropy_nats": 1.003740604591172,
+    "groups": [
+      {
+        "candidate_entropy": 0.7368734139234415,
+        "donor_entropy": 1.0851490923125857,
+        "group": "4574726265432138265",
+        "mean_tv": 0.17400022626636066,
+        "rows": 97,
+        "top1_changed": 10
+      },
+      {
+        "candidate_entropy": 0.6816605159917575,
+        "donor_entropy": 0.9536615710287523,
+        "group": "5641434355974801433",
+        "mean_tv": 0.15623776772238318,
+        "rows": 87,
+        "top1_changed": 12
+      },
+      {
+        "candidate_entropy": 0.6382780682022058,
+        "donor_entropy": 0.9531727847476498,
+        "group": "6842486203887630397",
+        "mean_tv": 0.1603300751520588,
+        "rows": 70,
+        "top1_changed": 8
+      }
+    ],
+    "max_tv": 0.687100470138844,
+    "mean_js_nats": 0.04133068010048327,
+    "mean_tv": 0.1641488700800332,
+    "top1_changed": 30
+  },
+  "model_or_engine_rerun": false,
+  "pass_receipt_sha256": {
+    "cap401": "95b1e8b8b0b42963ddf13700588e9194017b9bbaf4df4f87b934e7983d5b9014",
+    "cap4016": "56d8c7dcdff96bc3df12536acd9109ae484f5f0172d2fd95185d2b7086177fbf",
+    "donor1": "14a28d7472292202a5d532fd9bc9b65bcf91dc450425d39f64d04c10dff41e7e",
+    "donor16": "b422ce2b869e5b836b8083acb706c2c1be69fb5dbbac526d2d8c72a6f07dd9f5",
+    "donor_repeat16": "8f1a6ba61c79087847df3f1acfffff11dff791fc56d0a2b37b023ed1b22d10d1"
+  },
+  "plan_sha256": "9287a136d99eab09f0724196dabec47b5ef0d6d73b114b8994fb6069a01b0845",
+  "recomputed_repeat_batch_controls_maxabs": {
+    "cap4016:cap401": 9.846102321242611e-07,
+    "donor16:donor1": 1.4494516786256462e-06,
+    "donor16:donor_repeat16": 0.0
+  },
+  "reported_dense_sparse_maxabs": {
+    "cap4016": 4.76837158203125e-06,
+    "donor16": 6.67572021484375e-06
+  },
+  "result_sha256": "b5eaca7fc13850bfb08faf20d12635cedf5756e2904d74213745f041a7a890f5",
+  "rows": 254,
+  "rows_sha256": "28fc79b056266bf728c51b8e093312dbe24004b449ec649d295d269cc83e16a5",
+  "schema": "independent-policy-drift-review-v1",
+  "source_corpus_read": false
+}
