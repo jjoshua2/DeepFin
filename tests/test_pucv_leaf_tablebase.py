@@ -65,8 +65,8 @@ class RawEvaluator:
 
 
 class Tables:
-    def __init__(self, value):
-        self.wdl = {"KPvK": object()}
+    def __init__(self, value, *, material="KPvK"):
+        self.wdl = {material: object()}
         self.dtz = {}
         self.value = value
         self.positions = []
@@ -78,10 +78,12 @@ class Tables:
         return self.value
 
 
-def probe_for(monkeypatch, value):
-    tables = Tables(value)
+def probe_for(monkeypatch, value, *, capacity=3):
+    tables = Tables(value, material={3: "KPvK", 4: "KRPvK"}[capacity])
     monkeypatch.setattr(tbmod, "get_tablebase", lambda _path: tables)
-    return tbmod.SyzygyProbe("controlled", max_pieces=3), tables
+    probe = tbmod.SyzygyProbe("controlled", max_pieces=capacity)
+    assert probe.max_pieces == capacity  # Public constructor must enable this path.
+    return probe, tables
 
 
 def branch(board, moves):
@@ -156,11 +158,11 @@ def test_positive_clock_and_missing_legacy_tables_keep_nn(
     assert all(tree.get_virtual_loss(i) == 0 for i in range(tree.node_count()))
 
 
-def test_native_sparse_snapshots_are_owned_and_off_abi_unchanged():
+def test_native_sparse_snapshots_are_owned_and_off_abi_unchanged(monkeypatch):
     board = chess.Board("7k/8/8/8/8/8/P7/K7 w - - 0 1")
     tree, root, _ = branch(board, ["a2a3", "a1b1"])
     bufs = puct_vl._alloc_buffers(2)
-    probe = tbmod.SyzygyProbe("not opened", max_pieces=3)
+    probe, _ = probe_for(monkeypatch, 2)
     snapshot = descend_batch(
         tree,
         root,
@@ -178,6 +180,7 @@ def test_native_sparse_snapshots_are_owned_and_off_abi_unchanged():
         (),
         probe,
     )
+    assert snapshot is not None
     rows, boards = snapshot
     assert rows.tolist() == [0]
     expected = board.copy(stack=True)
@@ -187,26 +190,25 @@ def test_native_sparse_snapshots_are_owned_and_off_abi_unchanged():
     puct_vl.release_batch_rows(tree, bufs, 2, vloss_weight=3)
     # A different descend cannot replace the prior call's copied board.
     other, rid, _ = branch(chess.Board(), ["e2e4"])
-    assert (
-        descend_batch(
-            other,
-            rid,
-            CBoard.from_board(chess.Board()),
-            1,
-            1.4,
-            0,
-            0.2,
-            0,
-            np.empty((1, 146, 8, 8), np.float32),
-            bufs,
-            0,
-            None,
-            None,
-            (),
-            probe,
-        )[1]
-        == []
+    other_snapshot = descend_batch(
+        other,
+        rid,
+        CBoard.from_board(chess.Board()),
+        1,
+        1.4,
+        0,
+        0.2,
+        0,
+        np.empty((1, 146, 8, 8), np.float32),
+        bufs,
+        0,
+        None,
+        None,
+        (),
+        probe,
     )
+    assert other_snapshot is not None
+    assert other_snapshot[1] == []
     assert boards[0].fen() == saved
     old = tree.batch_descend_puct(
         root,
@@ -257,7 +259,7 @@ def test_cache_hit_is_raw_and_reprobed_per_fresh_tree(monkeypatch, kind, cache):
         for value in (2, -2):
             tables.value = value
             tree, root, actions = branch(board, ["a2a3"])
-            if kind == "single":
+            if isinstance(helper, puct_vl.PucvChunker):
                 helper.run(tree, root, CBoard.from_board(board), 1, tb_probe=probe)
             else:
                 helper.run(
@@ -276,7 +278,7 @@ def test_cache_hit_is_raw_and_reprobed_per_fresh_tree(monkeypatch, kind, cache):
         assert len(tables.positions) == 2
         assert np.array_equal(ev.raw, np.zeros_like(ev.raw))
     finally:
-        if kind == "multi":
+        if isinstance(helper, multi.MultiGpuPucvPool):
             helper.close()
 
 
@@ -405,7 +407,12 @@ def test_tb_fault_drains_receipts_before_once_only_vl_release(
         if frame.f_code is pipeline.__code__:
             frame.f_trace_opcodes = True
             ins = instructions.get(frame.f_lasti)
-            line = linecache.getline(frame.f_code.co_filename, frame.f_lineno).strip()
+            line_no = frame.f_lineno
+            line = (
+                linecache.getline(frame.f_code.co_filename, line_no).strip()
+                if line_no is not None
+                else ""
+            )
             if (
                 boundary == "registration"
                 and not fired
@@ -420,14 +427,18 @@ def test_tb_fault_drains_receipts_before_once_only_vl_release(
         return trace
 
     previous, previous_threads = sys.gettrace(), threading.gettrace()
-    sys.settrace(trace)
-    threading.settrace(trace)
+    # Only registration needs opcode injection. Probe/mark faults must unwind
+    # without a tracer replacing their original exception at a line-less opcode.
+    if boundary == "registration":
+        sys.settrace(trace)
+        threading.settrace(trace)
     try:
         with pytest.raises(MemoryError, match="controlled TB boundary"):
             run(kind, ev, tree, root, board, probe, sims=2, gather=1)
     finally:
-        sys.settrace(previous)
-        threading.settrace(previous_threads)
+        if boundary == "registration":
+            sys.settrace(previous)
+            threading.settrace(previous_threads)
     assert len(ev.receipts) == 2
     assert sum(released) == (1 if boundary == "mark" else 2)
     assert bool(fired) == (boundary == "registration")
@@ -435,7 +446,7 @@ def test_tb_fault_drains_receipts_before_once_only_vl_release(
 
 
 @pytest.mark.parametrize("route", ["single", "multi", "rpg"])
-def test_search_dispatch_passes_the_live_probe_to_each_route(route):
+def test_search_dispatch_passes_the_live_probe_to_each_route(route, monkeypatch):
     worker = object.__new__(SearchWorker)
     board = chess.Board("7k/8/8/8/8/8/P7/K7 w - - 0 1")
     worker._tree, worker._root_id, _ = branch(board, ["a2a3"])
@@ -455,7 +466,7 @@ def test_search_dispatch_passes_the_live_probe_to_each_route(route):
         {"single": "_pucv", "multi": "_pucv_pool", "rpg": "_rpg_pool"}[route],
         helper,
     )
-    probe = tbmod.SyzygyProbe("not opened", max_pieces=3)
+    probe, _ = probe_for(monkeypatch, 2)
     worker._tb_probe = probe
     worker._run_one_chunk(1, board, threading.Event(), probe, None, True)
     assert observed == [probe]
@@ -512,11 +523,12 @@ def test_multi_workers_keep_distinct_owned_snapshots(monkeypatch):
     ],
 )
 def test_native_batch_filters_material_castling_and_terminal(
-    fen, move, capacity, terminal
+    fen, move, capacity, terminal, monkeypatch
 ):
     board = chess.Board(fen)
     tree, root, _ = branch(board, [move])
     bufs = puct_vl._alloc_buffers(1)
+    probe, _ = probe_for(monkeypatch, 2, capacity=capacity)
     snapshots = descend_batch(
         tree,
         root,
@@ -532,8 +544,9 @@ def test_native_batch_filters_material_castling_and_terminal(
         None,
         None,
         (),
-        tbmod.SyzygyProbe("not opened", max_pieces=capacity),
+        probe,
     )
+    assert snapshots is not None
     rows, boards = snapshots
     assert rows.size == 0
     assert boards == []
@@ -544,14 +557,17 @@ def test_native_batch_filters_material_castling_and_terminal(
 
 @pytest.mark.parametrize("planes", [146, 175])
 @pytest.mark.parametrize("history_args", [(), (1,), (2,)])
-def test_snapshot_api_preserves_old_encoding_and_full_history(planes, history_args):
+def test_snapshot_api_preserves_old_encoding_and_full_history(
+    planes, history_args, monkeypatch
+):
     board = chess.Board("7k/8/8/8/8/8/P7/K7 w - - 0 1")
     board.push_uci("a1b1")
     board.push_uci("h8g8")
     expected = board.copy(stack=True)
     expected.push_uci("a2a3")
     outputs = []
-    for probe in (None, tbmod.SyzygyProbe("not opened", max_pieces=3)):
+    enabled, _ = probe_for(monkeypatch, 2)
+    for probe in (None, enabled):
         tree, root, _ = branch(board, ["a2a3"])
         bufs = puct_vl._alloc_buffers(1, planes)
         enc = np.empty((1, planes, 8, 8), np.float32)
@@ -573,6 +589,7 @@ def test_snapshot_api_preserves_old_encoding_and_full_history(planes, history_ar
             probe,
         )
         if probe is not None:
+            assert snapshot is not None
             assert snapshot[0].tolist() == [0]
             assert snapshot[1][0].fen() == expected.fen()
         outputs.append((enc, bufs))
