@@ -1,3 +1,4 @@
+from typing import Any
 import json
 from types import SimpleNamespace as NS
 import chess
@@ -111,7 +112,7 @@ def test_production_finalize_captures_before_rescore_and_emits_after_sink(monkey
         assert not all_samples
         raise ValueError("fail closed")
 
-    state = NS(
+    state: Any = NS(
         cboards=[cb],
         replay_board=lambda i: b,
         stats=stats,

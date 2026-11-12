@@ -50,7 +50,7 @@ class NaturalOutcomeSidecar:
             x = np.array(sample.x, copy=True)
             if (
                 x.shape != (175, 8, 8)
-                or x.dtype not in (np.float16, np.float32)
+                or x.dtype not in (np.dtype(np.float16), np.dtype(np.float32))
                 or not np.isfinite(x).all()
             ):
                 raise ValueError("invalid stored175 input")

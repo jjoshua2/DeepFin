@@ -68,7 +68,7 @@ def capture_natural_outcome(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return NaturalOutcome(
-        moves, outcome.result(), outcome.termination.name, payload["final_fen"], digest
+        moves, outcome.result(), outcome.termination.name, replay.fen(en_passant="fen"), digest
     )
 
 

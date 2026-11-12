@@ -1,3 +1,4 @@
+from typing import Any
 import dataclasses
 import chess
 import pytest
@@ -5,7 +6,7 @@ from chess_anti_engine.natural_outcome import capture_natural_outcome, admit_row
 
 
 def capture(board, **kw):
-    args = {
+    args: dict[str, Any] = {
         "resolved_result": "0-1",
         "adjudicated": False,
         "tb_adjudicated": False,
@@ -93,7 +94,7 @@ def test_tb_never_substitutes_game_outcome(tb):
 
 def test_identity_pov_and_duplicate_controls():
     r = capture(mate())
-    common = {
+    common: dict[str, Any] = {
         "expected_trace_sha256": r.trace_sha256,
         "plies": [0],
         "stm_white": [True],
@@ -106,8 +107,9 @@ def test_identity_pov_and_duplicate_controls():
         {"plies": [True]},
         {"plies": [0, 0], "stm_white": [True, True], "outcomes": [2, 2]},
     ]:
+        invalid: dict[str, Any] = common | change
         with pytest.raises(ValueError, match=r".+"):
-            admit_rows(r, **(common | change))
+            admit_rows(r, **invalid)
     with pytest.raises(ValueError, match=r".+"):
         admit_rows(dataclasses.replace(r, termination="STALEMATE"), **common)
 
