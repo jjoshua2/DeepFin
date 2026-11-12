@@ -16,6 +16,14 @@ import torch
 from scripts import validate
 
 
+@pytest.fixture(autouse=True)
+def _no_change_scoping(monkeypatch: pytest.MonkeyPatch) -> None:
+    # On a CI pull request these are set, and main() would shell out to git
+    # through the subprocess.run fakes below; scoping has its own test file.
+    for name in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_BASE_REF", validate.DESELECT_LIST_ENV):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.mark.parametrize("suite", ["cpu", "pext", "capped"])
 def test_each_test_run_isolates_inherited_caches_and_cleans_up_after_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, suite: str,
@@ -236,3 +244,124 @@ def test_ci_invokes_shared_suites_and_canary_keeps_same_lint_scope() -> None:
     canary: dict[str, Any] = yaml.safe_load((validate.ROOT / ".github/workflows/lint-canary.yml").read_text())
     assert any("scripts/validate.py lint --require-cpu-wheel" in step.get("run", "")
                for step in canary["jobs"]["canary"]["steps"])
+
+
+def test_only_the_cpu_suite_is_spread_across_processes() -> None:
+    assert validate.parallel_args("cpu", "auto") == ["-n", "auto", "--dist", "loadfile"]
+    assert validate.parallel_args("cpu", "3") == ["-n", "3", "--dist", "loadfile"]
+    assert validate.parallel_args("cpu", "1") == []
+    for suite in ("capped", "pext", "lint"):
+        assert validate.parallel_args(suite, "auto") == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["--threads", "auto"], ["-n", "auto", "--dist", "loadfile"]),
+        (["--threads", "2"], []),
+        (["--threads", "2", "--workers", "4"], ["-n", "4", "--dist", "loadfile"]),
+        (["--threads", "auto", "--workers", "1"], []),
+    ],
+)
+def test_worker_default_follows_the_thread_regime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, argv: list[str], expected: list[str],
+) -> None:
+    monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
+    monkeypatch.setattr(validate, "preflight", lambda *_args: None)
+    seen: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(validate.subprocess, "run", fake_run)
+    assert validate.main(["cpu", *argv, "--report-dir", str(tmp_path)]) == 0
+    extra = [arg for arg in seen[0] if arg in {"-n", "--dist", "loadfile"} or arg in {"auto", "4"}]
+    assert extra == expected
+
+
+@pytest.mark.parametrize(
+    ("phase_codes", "expected"),
+    [((0, 0), 0), ((0, 3), 3), ((3, 0), 3), ((1, 2), 1)],
+)
+def test_parallel_cpu_run_adds_a_one_process_serial_phase(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase_codes: tuple[int, int], expected: int,
+) -> None:
+    monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
+    monkeypatch.setattr(validate, "preflight", lambda *_args: None)
+    seen: list[list[str]] = []
+    envs: list[dict[str, str]] = []
+    codes = iter(phase_codes)
+
+    def fake_run(command: list[str], *, env: dict[str, str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        envs.append(env)
+        return subprocess.CompletedProcess(command, next(codes))
+
+    monkeypatch.setattr(validate.subprocess, "run", fake_run)
+    # Either phase's failure is the run's result, and both phases always run.
+    assert validate.main(["cpu", "--threads", "auto", "--report-dir", str(tmp_path)]) == expected
+    parallel, serial = seen
+    # Workers are the parallelism in the xdist phase; the serial phase is uncapped.
+    assert envs[0]["CAE_TEST_THREADS"] == envs[0]["OMP_NUM_THREADS"] == "1"
+    assert envs[1]["CAE_TEST_THREADS"] == "auto"
+    assert parallel[parallel.index("-m", 3) + 1] == "(not slow) and not serial"
+    assert serial[serial.index("-m", 3) + 1] == "(not slow) and serial"
+    assert "-n" in parallel
+    assert "-n" not in serial
+    assert f"--junitxml={tmp_path / 'cpu.xml'}" in parallel
+    assert f"--junitxml={tmp_path / 'cpu-serial.xml'}" in serial
+
+
+def test_one_process_cpu_run_keeps_a_single_unsplit_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
+    monkeypatch.setattr(validate, "preflight", lambda *_args: None)
+    seen: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(validate.subprocess, "run", fake_run)
+    assert validate.main(["cpu", "--threads", "2", "--report-dir", str(tmp_path)]) == 0
+    (command,) = seen
+    assert command[command.index("-m", 3) + 1] == "not slow"
+
+
+def test_serial_phase_rule_and_explicit_list(tmp_path: Path) -> None:
+    from tests.conftest import SERIAL_TEST_FILES, runs_in_serial_phase
+
+    missing = sorted(name for name in SERIAL_TEST_FILES if not (validate.ROOT / "tests" / name).is_file())
+    assert not missing
+    cases = {
+        "test_a.py": ("import subprocess\n", True),
+        "test_b.py": ("import signal\nsignal.alarm(1)\n", True),
+        "test_c.py": ("import threading\nassert threading.enumerate()\n", True),
+        "test_d.py": ("import threading\nthreading.Event()\n", False),
+        "test_e.py": ("x = 1\n", False),
+    }
+    for name, (source, expected) in cases.items():
+        path = tmp_path / name
+        path.write_text(source)
+        assert runs_in_serial_phase(path) is expected, name
+    listed = tmp_path / sorted(SERIAL_TEST_FILES)[0]
+    listed.write_text("x = 1\n")
+    assert runs_in_serial_phase(listed)
+
+
+@pytest.mark.parametrize("argv", [["--threads", "auto"], ["--threads", "2"]])
+def test_a_failed_preflight_leaves_no_earlier_serial_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, argv: list[str],
+) -> None:
+    monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
+    stale = tmp_path / "cpu-serial.xml"
+    stale.write_text("earlier PASS")
+
+    def failing_preflight(*_args: object) -> None:
+        raise RuntimeError("no cpu wheel")
+
+    monkeypatch.setattr(validate, "preflight", failing_preflight)
+    assert validate.main(["cpu", *argv, "--report-dir", str(tmp_path)]) == 1
+    assert not stale.exists()

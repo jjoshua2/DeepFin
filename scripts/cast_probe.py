@@ -127,6 +127,17 @@ MIN_BUCKET = 25
 # monotone-segment selection, not merely the outside-set mean.
 N_BOOT = 400
 
+# ⚑ The tail-pricing bootstrap DROPS draws whose rebuilt calibration has fewer
+# than two monotone knots or fewer than MIN_BUCKET outside rows, so its
+# percentile interval is conditional on surviving those gates (synthetic runs
+# kept 145-222 of 400). Below this surviving share the interval is reported but
+# marked unreliable. Why 0.95: the nominal 95% interval holds 95% of the
+# SURVIVING draws, i.e. at least 0.95 * share of all draws even if every dropped
+# draw lay beyond one end -- so at share >= 0.95 it still spans >= ~90% of the
+# unconditional bootstrap distribution; below that the worst case falls under
+# 90% and the gap grows with every dropped draw.
+BOOT_RELIABLE_MIN_SURVIVAL = 0.95
+
 
 class Rows:
     """Column store for the joined (parent, child) rows the probe analyses."""
@@ -505,29 +516,39 @@ def price_the_tail(
     # ⚑ Bootstrap: resample rows and REBUILD the calibration on every draw, so
     # the interval carries bucket sampling noise and monotone-segment selection
     # -- not merely the outside-set mean against knots treated as exact.
+    # Preserve replacement multiplicities in both estimates. This remains a
+    # row bootstrap, not a game-clustered uncertainty estimate.
     idx_all = np.flatnonzero(sel)
     draws: list[float] = []
     for _ in range(N_BOOT):
         pick = rng.integers(0, idx_all.size, idx_all.size)
-        sub = np.zeros_like(sel)
         chosen = idx_all[pick]
-        sub[chosen] = True
-        bx, by, _t = calibration(arr, sub)
+        sample = {name: arr[name][chosen] for name in ("regret_played", "adv", "in_multipv")}
+        bx, by, _t = calibration(sample, np.ones(chosen.size, dtype=bool))
         if bx.size < 2:
             continue
         bxm, bym = monotone_prefix(bx, by)
         if bxm.size < 2:
             continue
-        b_out = sub & ~arr["in_multipv"]
+        b_out = ~sample["in_multipv"]
         if int(b_out.sum()) < MIN_BUCKET:
             continue
-        draws.append(invert(bxm, bym, float(arr["adv"][b_out].mean())) * SF_OWN_REGRET_CAP_CP)
+        draws.append(invert(bxm, bym, float(sample["adv"][b_out].mean())) * SF_OWN_REGRET_CAP_CP)
     if len(draws) >= N_BOOT // 4:
         lo_cp = float(np.percentile(draws, 2.5))
         hi_cp = float(np.percentile(draws, 97.5))
     else:
         lo_cp = hi_cp = float("nan")
     result["n_bootstrap"] = len(draws)
+    # Report the conditioning beside the interval rather than leaving it
+    # implicit; the draws used and the point estimate are unchanged.
+    survival = len(draws) / max(N_BOOT, 1)
+    result["n_bootstrap_attempted"] = N_BOOT
+    result["bootstrap_survival_frac"] = survival
+    result["ci_reliable"] = bool(
+        np.isfinite(lo_cp) and np.isfinite(hi_cp)
+        and survival >= BOOT_RELIABLE_MIN_SURVIVAL
+    )
     assigned = float(arr["regret_played"][out].mean()) * SF_OWN_REGRET_CAP_CP
     unstable = bool(np.isfinite(lo_cp) and np.isfinite(hi_cp)
                     and not (lo_cp <= implied <= hi_cp))
@@ -741,11 +762,21 @@ def report(arr: dict[str, np.ndarray], scan: dict[str, Any], rng: np.random.Gene
               f" [{res['implied_cp_lo']:.0f}-{res['implied_cp_hi']:.0f}]"
               f"  vs {res['assigned_cp']:5.0f} cp assigned"
               f"  = {res['overstatement']:5.1f}x"
+              f"  boot {res['n_bootstrap']}/{res['n_bootstrap_attempted']}"
+              f" ({100 * res['bootstrap_survival_frac']:.0f}%)"
+              f"{'' if res['ci_reliable'] else '   ⚑ CI UNRELIABLE'}"
               f"{'   ⚑ UNSTABLE' if res.get('inversion_unstable') else ''}")
     if any(r.get("inversion_unstable") for r in strata):
         print("   ⚑⚑ UNSTABLE means the point estimate falls OUTSIDE its own bootstrap")
         print("      interval: the full-sample calibration and the resampled ones disagree")
         print("      about where this advantage inverts. Do not quote such a row.")
+    if any("implied_cp" in r and not r["ci_reliable"] for r in strata):
+        print("   ⚑⚑ CI UNRELIABLE means fewer than"
+              f" {100 * BOOT_RELIABLE_MIN_SURVIVAL:.0f}% of bootstrap draws survived the")
+        print("      monotone-prefix / MIN_BUCKET gates (or too few survived to form an")
+        print("      interval at all, shown as nan). The bracket is conditional on")
+        print("      survival, which selects the resamples that look like the full sample,")
+        print("      so it can be too narrow. Quote the point estimate without it.")
     out["tail_pricing"] = strata
 
     print("\n6. PRE-QUERY DIAGNOSTICS vs A_CAST")

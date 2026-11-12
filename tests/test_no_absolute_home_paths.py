@@ -147,6 +147,7 @@ is why the sweep exists rather than being replaced by "one more pattern".
 """
 from __future__ import annotations
 
+import bisect
 import getpass
 import os
 import re
@@ -665,14 +666,21 @@ def _scan(shape: str, blob: bytes) -> list[tuple[str, int, str]]:
     counts (`abs_home` on that file went 11 → 12 for exactly this reason).
     """
     neutral = _NEUTRAL_VALUES.get(shape)
-    lines = blob.split(b"\n")
+    lines: list[bytes] | None = None
+    newlines: list[int] = []
     found: list[tuple[str, int, str]] = []
     for match in _PATTERNS[shape].finditer(blob):
         if neutral is not None:
             value = next((g for g in match.groups() if g is not None), b"")
             if value in neutral:
                 continue
-        lineno = blob.count(b"\n", 0, match.start()) + 1
+        if lines is None:
+            # Built once per blob, and only when it has a hit: re-counting
+            # newlines from offset 0 for every match was quadratic in the
+            # number of hits in a large file.
+            lines = blob.split(b"\n")
+            newlines = [m.start() for m in re.finditer(rb"\n", blob)]
+        lineno = bisect.bisect_left(newlines, match.start()) + 1
         found.append(
             (shape, lineno, lines[lineno - 1].decode("utf-8", "replace").strip()[:200])
         )
