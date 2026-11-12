@@ -33,7 +33,7 @@ from chess_anti_engine.encoding import _lc0_ext, rep_fix
 from chess_anti_engine.encoding.encode import input_plane_count
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
 from chess_anti_engine.teacher_dispatch import TeacherDispatcher
-from scripts.shared_teacher_generation import BT4GamePool, DurableWriter, StopSignal
+from scripts.shared_teacher_generation import BT4GamePool, DurableWriter, StopSignal, sweep_pools
 from scripts import bt4_generation_evaluator
 from scripts.bt4_policy_dump import file_sha256, open_session
 from scripts.bt4_root_policy_stepper import (
@@ -622,6 +622,10 @@ def run_pooled_games(
     This API leaves session/resource admission with the existing owner. It
     publishes raw files before a durable per-game checkpoint. On commit retry,
     a matching orphan NPZ is validated against the retained finalized outcome.
+    A custom ``stop`` callable also runs on the dispatcher thread (via
+    ``StopSignal.latch_after``), so it must be thread-safe and cheap, and an
+    exception it raises there makes the dispatcher fatal and fails every
+    pending future.
     """
     spec.validate()
     if rep_fix.current() is not True:
@@ -633,8 +637,12 @@ def run_pooled_games(
     def should_stop() -> bool:
         return stop() if stop is not None else (spec.out / "STOP").exists()
 
+    # Same latch as run_pooled_units: a STOP observed while a batch evaluates is
+    # latched before its result is published, so the sweep that reads it
+    # retains the result instead of applying a move/RNG draw from it.
+    signal = StopSignal(should_stop)
     dispatcher = TeacherDispatcher[tuple[chess.Board, np.ndarray], bt4_generation_evaluator.BT4RootOutput](
-                                   lambda rows: _evaluate_shared_roots(evaluator, rows, (spec,)),
+                                   signal.latch_after(lambda rows: _evaluate_shared_roots(evaluator, rows, (spec,))),
                                    target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms)
     try:
         pool = _make_pooled_unit(spec, match_tablebase, games_dir, dispatcher,
@@ -645,8 +653,7 @@ def run_pooled_games(
     paused = False
     try:
         while True:
-            paused = should_stop()
-            remaining = pool.advance(stopped=paused)
+            paused, remaining = sweep_pools((pool,), signal)
             if not remaining or paused:
                 break
             # Cooperative poll only; evaluation and writes run independently.
@@ -859,10 +866,11 @@ def run_pooled_units(
         control()
         result = _evaluate_shared_roots(evaluator, rows, specs)
         control()
-        signal.refresh()  # latch before any unit can consume these results
         return result
 
-    dispatcher = TeacherDispatcher(evaluate, target_rows=target_rows, max_rows=max_rows, batch_wait_ms=batch_wait_ms)
+    # latch_after refreshes the signal before any unit can consume these results.
+    dispatcher = TeacherDispatcher(signal.latch_after(evaluate), target_rows=target_rows,
+                                   max_rows=max_rows, batch_wait_ms=batch_wait_ms)
     try:
         writer = DurableWriter(capacity=max_writes)
     except BaseException:
@@ -909,14 +917,9 @@ def run_pooled_units(
             control()
             if time.monotonic() >= deadline:
                 raise TimeoutError("finite cross-unit operation budget expired; artifacts retained")
-            paused = signal.refresh()
-            remaining = False
             # Rotating the first unit gives shared writer and row admission fair
             # turns. Every unit advances even when an earlier unit has work.
-            for name in ids[cursor:] + ids[:cursor]:
-                unit_remaining = pools[name].advance(stopped=paused, stop=signal.is_set)
-                remaining = unit_remaining or remaining
-            paused = signal.is_set()
+            paused, remaining = sweep_pools((pools[name] for name in ids[cursor:] + ids[:cursor]), signal)
             cursor = (cursor + 1) % len(ids)
             live = sum(len(pool.active) for pool in pools.values())
             peak_live = max(peak_live, live)
