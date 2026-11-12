@@ -55,6 +55,32 @@ def test_legacy_progress_inventory_preserved(tmp_path: Path, torn: bool) -> None
     assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
 
 
+def test_dangling_summary_symlink_refused_before_progress_read(tmp_path: Path) -> None:
+    # A summary.json link whose target is gone is still evidence a summary existed.
+    _progress_fixture(tmp_path)
+    (tmp_path / repair.corpus.SUMMARY_NAME).symlink_to(tmp_path / "gone" / "summary.json")
+    assert not (tmp_path / repair.corpus.SUMMARY_NAME).exists()
+    with (
+        mock.patch.object(
+            repair.derive, "read_progress_inventory", wraps=repair.derive.read_progress_inventory,
+        ) as reader,
+        pytest.raises(repair.RepairError, match=r"summary.json exists;"),
+    ):
+        repair.corpus_inventory(tmp_path)
+    reader.assert_not_called()
+
+
+def test_refusal_tells_operator_not_to_delete_summary(tmp_path: Path) -> None:
+    (tmp_path / repair.corpus.SUMMARY_NAME).write_text("{}", encoding="utf-8")
+    with pytest.raises(repair.RepairError) as excinfo:
+        repair.refuse_summary_input(tmp_path)
+    message = str(excinfo.value)
+    assert "Do NOT delete or move summary.json to get past this check" in message
+    assert "stale subset" in message
+    assert "summary-aware inventory (derive.read_corpus_record)" in message
+    assert "which this tool does not implement" in message
+
+
 def test_legacy_missing_progress_still_refused(tmp_path: Path) -> None:
     with pytest.raises(repair.RepairError, match="no shard inventory exists"):
         repair.corpus_inventory(tmp_path)
@@ -87,7 +113,9 @@ def test_cli_summary_refused_before_mutation_or_resources(
         assert repair.main(["--in", str(in_dir), "--out", str(out_dir), *flags]) == 1
         for guard in guards:
             guard.assert_not_called()
-    assert "summary.json exists;" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "summary.json exists;" in err
+    assert "Do NOT delete or move summary.json" in err
     assert not out_dir.exists()
     assert {p.name: p.read_bytes() for p in in_dir.iterdir()} == before
 

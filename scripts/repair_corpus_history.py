@@ -115,6 +115,7 @@ import io
 import json
 import logging
 import multiprocessing
+import os
 import sys
 import time
 from collections import Counter
@@ -314,8 +315,9 @@ class RepairSpec:
     audit_only: bool
     shard_indices: tuple[int, ...] | None
     bench_encode_rows: int
-    #: The shards this run may read, BY NAME, from the corpus's own inventory
-    #: (``derive.read_corpus_record``) -- never a glob, so a paused run's
+    #: The shards this run may read, BY NAME, from the corpus's progress-file
+    #: inventory (``derive.read_progress_inventory``; summary-bearing inputs are
+    #: refused by ``refuse_summary_input``) -- never a glob, so a paused run's
     #: in-flight or abandoned last shard is not repaired.
     listed_shards: tuple[tuple[str, int], ...] = ()
     #: The deriver's inventory reading this repair was cut from.
@@ -380,12 +382,20 @@ def opening_config_from_manifest(
 
 
 def refuse_summary_input(in_dir: Path) -> None:
-    """This legacy repair cannot replace a completed corpus's authoritative inventory."""
+    """This legacy repair cannot replace a completed corpus's authoritative inventory.
+
+    ``os.path.lexists``, not ``Path.exists``: a dangling ``summary.json`` symlink
+    is still evidence that a summary existed, so it is refused too rather than
+    falling through to the possibly stale progress inventory."""
     summary_path = in_dir / corpus.SUMMARY_NAME
-    if summary_path.exists():
+    if os.path.lexists(summary_path):
         raise RepairError(
             f"{summary_path} exists; this tool repairs legacy manifest + progress "
-            "inputs without summary.json only, in both production and audit modes",
+            "inputs without summary.json only, in both production and audit modes. "
+            "Do NOT delete or move summary.json to get past this check: the progress "
+            "files of a completed corpus can be a stale subset of what the summary "
+            "lists. A completed corpus needs a summary-aware inventory "
+            "(derive.read_corpus_record), which this tool does not implement",
         )
 
 
@@ -448,9 +458,10 @@ def worker_shards(
 ) -> list[tuple[Path, int]]:
     """This worker's LISTED shards ``(path, rows claimed)`` in index order.
 
-    ⚑ ``listed`` is the corpus's own inventory (``read_corpus_record``: the
-    summary's shard list, or the progress files' on a run that has not
-    ended), never a glob of the directory.  A paused or killed run leaves its
+    ⚑ ``listed`` is the corpus's own progress-file inventory
+    (``derive.read_progress_inventory``, via ``corpus_inventory``; an input
+    with a ``summary.json`` is refused before it is read), never a glob of
+    the directory.  A paused or killed run leaves its
     in-flight shard on disk unlisted -- its zstd/JSON tail possibly torn --
     and a resume deletes and replays it; repairing it would bank rows the
     corpus itself does not claim.
