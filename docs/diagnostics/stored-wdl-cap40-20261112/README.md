@@ -232,3 +232,37 @@ tablebase requirement wherever applicable.
 Original review SHA256: `f0dde7eb279f02726ec2fee27ad14ac6dce151c9006d9c834209d06b8dc4f6f9`.
 Published copy SHA256: `f0dde7eb279f02726ec2fee27ad14ac6dce151c9006d9c834209d06b8dc4f6f9`.
 The receipt is already path-free; published bytes are unchanged.
+
+
+## Six-piece tablebase-enabled Stockfish value screen
+
+[Independent saved-output review](tb6-value-screen-review.json) verifies all
+192 cold queries on the same fixed 64 roots: 5k, 50k and 1M nodes, MultiPV 8,
+one engine/thread, Hash 16 MiB, no strength limiting. Each cold reset reapplied
+SyzygyPath, ProbeLimit 6, ProbeDepth 1 and 50MoveRule true, then waited for readyok.
+UCI requests are not effective-value readback. Mandatory three- and six-piece
+controls recorded 23 and 11 TB hits and legal WDL-preserving choices. None of
+these 64 roots had six or fewer pieces; deeper search recorded TB hits in 131
+queries (maximum 100,853). Inventory/header checks are not full TB integrity.
+
+Against the **same-run 1M-node reference**, expected-score mean absolute error
+was 5.30 percentage points at 5k and 3.30 points at 50k. Q mean absolute errors
+were 0.10591 and 0.06592; Q absolute-error 95th percentiles were 0.90960 and
+0.27700, so mean agreement hides substantial tails. This measures value
+agreement, not calibrated accuracy: 1M is not truth, and this MultiPV 8 screen
+establishes neither MultiPV 1/4 nor 100k/150k adequacy.
+
+Separately, the historical-reference 20cp **move-selection** criterion yielded
+46/47/50 successes out of 64. No rung met its preregistered Wilson lower-bound
+threshold of 0.8. That criterion must not be substituted for value fidelity.
+The selected correlated panel is not representative training data or an Elo test.
+
+Two earlier attempts failed before any query (CPU environment assertion, then
+unsupported custom retention capability). Both remain preserved; the reviewed
+successor used supported options, not TB-off fallback. Owner execution used
+60.11 CPU seconds and 79.32 wall seconds; engine/children closed and all three
+leases released. No training or model inference was performed.
+
+Original review SHA256: `8315058c22c4fbeb1f8539ff7e57c6bb4c857f8a5726ed9a99c1653bb5dbc1eb`.
+Published copy SHA256: `8315058c22c4fbeb1f8539ff7e57c6bb4c857f8a5726ed9a99c1653bb5dbc1eb`.
+The receipt is path-free; published bytes are unchanged. No raw panel is included.
