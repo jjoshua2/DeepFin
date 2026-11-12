@@ -1054,7 +1054,7 @@ def test_live_reload_refuses_optimizer_group_value_knobs(
 @pytest.mark.parametrize(
     "token",
     [".nan", ".inf", "-.inf", "1e999", "1.0e+999", '"nan"', '"inf"',
-     '"-Infinity"', '"1e999"', '"bad"', "[]", "{}", "true", "false"],
+     '"-Infinity"', '"1e999"', '"bad"', "[]", "{}", "true", "false", "-0.001", '"-1"'],
 )
 def test_lr_rejected_reload_preserves_config_and_baseline(tmp_path, nested, searched, token):
     path = tmp_path / "lr.yaml"

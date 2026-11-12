@@ -78,8 +78,8 @@ def test_lr_yaml_rejects_unusable_effective_value(tmp_path, nested, token):
 
 @pytest.mark.parametrize(
     "value",
-    [0, -0.001, 0.002, "0.002", "-1e-3", sys.float_info.max,
-     -sys.float_info.max, math.nextafter(0.0, 1.0)],
+    [0, 0.0, -0.0, "-0.0", 0.002, "0.002", sys.float_info.max,
+     math.nextafter(0.0, 1.0)],
 )
 @pytest.mark.parametrize("nested", [False, True])
 def test_lr_finite_values_preserve_representation(value, nested):
@@ -95,6 +95,32 @@ def test_lr_yaml_rejects_boolean(tmp_path, nested, token):
     path.write_text(("train:\n  lr: " if nested else "lr: ") + token + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="'lr' must be a finite number, not a boolean"):
         flatten_run_config_defaults(load_yaml_file(path))
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize(
+    "token", ["-0.001", '"-1e-3"', "-1", '"-1"', "-1.7976931348623157e+308", "-5e-324"],
+)
+def test_lr_yaml_rejects_negative(tmp_path, nested, token):
+    # A negative LR is never legitimate; under `aurora` it builds and trains
+    # backwards. The check runs on the converted float, so strings count too.
+    path = tmp_path / "lr.yaml"
+    path.write_text(("train:\n  lr: " if nested else "lr: ") + token + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="'lr' must not be negative, got "):
+        flatten_run_config_defaults(load_yaml_file(path))
+
+
+def test_lr_negative_is_fatal_at_launch(tmp_path, monkeypatch):
+    from chess_anti_engine import run
+
+    path = tmp_path / "launch.yaml"
+    path.write_text("train:\n  lr: -0.0003\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", [
+        "chess_anti_engine.run", "--config", str(path), "--mode", "train",
+        "--work-dir", str(tmp_path), "--device", "cpu",
+    ])
+    with pytest.raises(ValueError, match=r"'lr' must not be negative, got -0\.0003"):
+        run.main()
 
 
 def test_lr_integer_conversion_overflow_is_specific():
@@ -140,7 +166,7 @@ def test_lr_unrelated_conversion_error_is_not_hidden():
         flatten_run_config_defaults({"lr": BrokenFloat()})
 
 
-@pytest.mark.parametrize("token", ["0.002", '"0.002"', "0", "-0.001", '"-1e-3"'])
+@pytest.mark.parametrize("token", ["0.002", '"0.002"', "0", "-0.0", '"-0.0"'])
 @pytest.mark.parametrize("nested", [False, True])
 def test_lr_finite_yaml_preserves_loaded_value(tmp_path, token, nested):
     path = tmp_path / "finite-lr.yaml"
