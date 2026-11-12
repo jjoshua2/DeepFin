@@ -6,7 +6,7 @@ selfplay manager's finalizer. Done outcomes stay owned across writer failures.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from collections import deque
 from concurrent.futures import Future
 from dataclasses import dataclass
@@ -23,6 +23,10 @@ from chess_anti_engine.teacher_dispatch import TeacherDispatcher
 if TYPE_CHECKING:
     from scripts.bt4_generation_evaluator import BT4RootOutput
     from scripts.bt4_root_policy_stepper import BT4FinalizedGame, BT4RootPolicyStepper, PreparedBatch
+
+
+_Request = TypeVar("_Request")
+_Response = TypeVar("_Response")
 
 
 class DurableWriter:
@@ -104,6 +108,21 @@ class StopSignal:
 
     def is_set(self) -> bool:
         return self._event.is_set()
+
+    def latch_after(self, evaluate: Callable[[_Request], _Response]) -> Callable[[_Request], _Response]:
+        """Wrap a backend evaluate so the latch is refreshed after evaluation.
+
+        The dispatcher publishes a result to its future only after ``evaluate``
+        returns, so any STOP observed here is latched before any pool can read
+        the result; with ``advance(stop=signal.is_set)`` that pool then retains
+        the result instead of applying a move/RNG draw from it.
+        """
+        def latched(rows: _Request) -> _Response:
+            result = evaluate(rows)
+            self.refresh()
+            return result
+
+        return latched
 
 
 @dataclass
@@ -273,6 +292,30 @@ class BT4GamePool:
     def close(self, *, timeout: float = 30) -> None:
         if self._owns_writer:
             self._writer.close(timeout=timeout)
+
+
+def sweep_pools(pools: Iterable[BT4GamePool], signal: StopSignal) -> tuple[bool, bool]:
+    """One coordinator sweep over every pool: ``(paused, remaining)``.
+
+    The signal is refreshed (a filesystem observation) once before the sweep,
+    and every pool also gets ``stop=signal.is_set`` so a latch the backend sets
+    mid-sweep freezes all later move/RNG application in this sweep.
+
+    ``paused`` is re-read AFTER the sweep.  This is not what keeps move/RNG
+    application frozen (``stop=`` does that): without it, a latch that arrives
+    mid-sweep is acted on one sweep later, and that extra sweep runs with
+    ``stopped=True``, which only collects finished writes and admits writes of
+    already-finalized outcomes -- both allowed at STOP.  A mid-sweep latch always
+    comes from a backend result whose game is then retained (still active), so
+    ``remaining`` stays true and the reported pause status is the same either
+    way; the observable difference is the extra sweep (one more control call,
+    deadline check and advance per pool), which the resample removes.
+    """
+    paused = signal.refresh()
+    remaining = False
+    for pool in pools:
+        remaining = pool.advance(stopped=paused, stop=signal.is_set) or remaining
+    return signal.is_set(), remaining
 
 
 Root = TypeVar("Root")
