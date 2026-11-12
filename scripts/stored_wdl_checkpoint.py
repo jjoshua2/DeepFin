@@ -72,7 +72,13 @@ def _canonical(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
-def _qualify(request: dict) -> dict:
+def _qualify(request: dict, *, verified_model_callback=None) -> dict:
+    """Internal child seam: caller-supplied Python callback, never request-selected.
+
+    Public serialized qualification/forward routes pass no callback. An internal
+    bounded diagnostic may consume the strictly verified model after load; it
+    owns additional data admission and must bind callback source independently.
+    """
     # Import inside child, after resource limits. No Torch import in caller.
     import contextlib
     import resource
@@ -186,6 +192,10 @@ def _qualify(request: dict) -> dict:
                       rows_sha256=request["rows_sha256"], rows=len(planes), batch_size=batch,
                       probabilities=prediction.tolist(), wdl_order_declared=["W", "D", "L"],
                       controls_performed=[], controls_required_but_not_run=["donor-donor", "batch-invariance", "POV"])
+    if verified_model_callback is not None:
+        if operation != "qualify" or not callable(verified_model_callback):
+            raise ValueError("internal model consumer requires load-only operation")
+        report["diagnostic"] = verified_model_callback(model, dict(report))
     return report
 
 
