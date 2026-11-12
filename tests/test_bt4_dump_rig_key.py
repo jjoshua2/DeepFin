@@ -292,12 +292,32 @@ def test_the_emitted_key_is_the_fingerprint_and_the_fen_moved_to_its_own_field(
     assert [r.key for r in rows] == fixture_keys()
 
 
-def test_a_shard_too_narrow_to_fingerprint_is_refused(tmp_path: Path) -> None:
+def test_a_shard_too_narrow_to_fingerprint_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The guard fires as a REFUSAL, not a skip: a row that cannot be keyed
     cannot join, and emitting it under the empty-string key would make the rig
-    refuse the whole file for a duplicate hours later."""
+    refuse the whole file for a duplicate hours later.
+
+    The replay writer itself now refuses x narrower than the 112 LC0 base
+    planes, but the dump opens shards with raw ``zarr`` (no replay validator),
+    so a narrow shard on disk -- legacy or foreign -- still reaches this guard.
+    The fixture therefore lets only the WIDTH past the writer's declaration
+    check to put such a shard on disk.
+    """
+    from chess_anti_engine.replay import shard as shard_mod
+
+    original = shard_mod.validate_array_declarations
+
+    def width_blind(arrs: Any) -> None:
+        x = arrs["x"]
+        wide = np.broadcast_to(np.zeros((), dtype=x.dtype), (x.shape[0], 112, 8, 8))
+        original({**arrs, "x": wide})
+
+    monkeypatch.setattr(shard_mod, "validate_array_declarations", width_blind)
     shard_dir = tmp_path / "narrow"
     write_shard(shard_dir, planes=110)
+    monkeypatch.undo()
     with pytest.raises(SystemExit, match="too narrow"):
         list(dump.iter_shard_rows([str(shard_dir)]))
 

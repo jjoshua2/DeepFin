@@ -49,6 +49,35 @@ def _minimal_valid_arrays() -> dict[str, np.ndarray]:
     }
 
 
+@pytest.mark.parametrize("planes", [0, 1, 111])
+def test_validate_rejects_underwidth_input(planes: int):
+    arrs = _minimal_valid_arrays()
+    arrs["x"] = np.zeros((2, planes, 8, 8), dtype=np.float32)
+
+    with pytest.raises(ValueError, match="at least 112 input planes"):
+        validate_arrays(arrs)
+
+
+@pytest.mark.parametrize("planes", [0, 1, 111])
+def test_validate_declarations_rejects_underwidth_without_materializing(planes: int):
+    arrs = {
+        "x": _DeclaredArray((2, planes, 8, 8), np.dtype(np.float32)),
+        "policy_target": _DeclaredArray((2, 4672), np.dtype(np.float32)),
+        "wdl_target": _DeclaredArray((2,), np.dtype(np.int8)),
+    }
+
+    with pytest.raises(ValueError, match="at least 112 input planes"):
+        validate_array_declarations(arrs)
+
+
+@pytest.mark.parametrize("planes", [112, 146, 175, 179])
+def test_validate_accepts_base_and_extended_input_widths(planes: int):
+    arrs = _minimal_valid_arrays()
+    arrs["x"] = np.zeros((2, planes, 8, 8), dtype=np.float32)
+
+    validate_arrays(arrs)
+
+
 def test_validate_accepts_compact_policy_size():
     policy = np.zeros((2, 1858), dtype=np.float32)
     policy[:, 0] = 1.0

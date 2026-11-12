@@ -42,7 +42,7 @@ from chess_anti_engine.replay.shard import (
     shard_positions,
 )
 
-PLANES = 8
+PLANES = 112  # replay shards carry at least the 112 LC0 base planes
 TAIL = 512
 
 

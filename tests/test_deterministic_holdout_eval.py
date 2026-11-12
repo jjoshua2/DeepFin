@@ -42,7 +42,7 @@ from chess_anti_engine.replay.buffer import ArrayReplayBuffer
 from chess_anti_engine.train import trainer as trainer_mod
 from chess_anti_engine.train.trainer import Trainer
 
-PLANES = 4
+PLANES = 112  # replay shards carry at least the 112 LC0 base planes
 POLICY = 1858  # COMPACT_POLICY_SIZE; the shard validator accepts only 4672 or 1858
 ROWS = 2000
 BATCH = 512

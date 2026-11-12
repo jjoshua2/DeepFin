@@ -34,7 +34,7 @@ class SliceOnly:
 
 def fixture_arrays(rows: int = 257) -> dict[str, np.ndarray]:
     return {
-        "x": np.arange(rows * 2 * 64, dtype=np.float32).reshape(rows, 2, 8, 8) / 1000,
+        "x": np.arange(rows * 112 * 64, dtype=np.float32).reshape(rows, 112, 8, 8) / 1000,
         "policy_target": np.full((rows, 1858), 1 / 1858, np.float32),
         "wdl_target": np.ones(rows, np.int64),
         "_input_history_encoding": np.asarray("legacy"),
