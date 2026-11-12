@@ -2557,14 +2557,26 @@ static PyObject *MCTSTree_backprop(MCTSTreeObject *self, PyObject *args) {
  *
  * enc_out must be writable float32 (>=1, registered_planes, 8, 8). Only
  * enc_out[0] is written. */
-static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *args) {
+static PyObject *walker_descend_puct(MCTSTreeObject *self, PyObject *args, int with_tb) {
     int root_id;
     PyObject *root_cb_obj, *enc_obj;
     PyObject *rel_obj = Py_None;
     double c_puct, fpu_root, fpu_reduction;
     int vloss_weight;
     int input_history_mode = 0;
-    if (!PyArg_ParseTuple(args, "iOdddiO|Oi",
+    int tb_max_pieces = 0;
+    if (with_tb) {
+        if (!PyArg_ParseTuple(args, "iOdddiOi|Oi",
+                              &root_id, &root_cb_obj,
+                              &c_puct, &fpu_root, &fpu_reduction,
+                              &vloss_weight, &enc_obj, &tb_max_pieces,
+                              &rel_obj, &input_history_mode))
+            return NULL;
+        if (tb_max_pieces < 1 || tb_max_pieces > 7) {
+            PyErr_SetString(PyExc_ValueError, "tb_max_pieces must be between 1 and 7");
+            return NULL;
+        }
+    } else if (!PyArg_ParseTuple(args, "iOdddiO|Oi",
                           &root_id, &root_cb_obj,
                           &c_puct, &fpu_root, &fpu_reduction,
                           &vloss_weight, &enc_obj, &rel_obj, &input_history_mode))
@@ -2651,6 +2663,8 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
             PyObject *legal_arr = PyArray_SimpleNew(1, ldims, NPY_INT32);
             if (!legal_arr) { Py_DECREF(node_path); return NULL; }
             tree_mark_solved_and_propagate(t, path_buf, path_len, term_solved);
+            if (with_tb)
+                return Py_BuildValue("(iNNdO)", leaf_id, node_path, legal_arr, term_q, Py_None);
             return Py_BuildValue("(iNNd)", leaf_id, node_path, legal_arr, term_q);
         }
     }
@@ -2673,6 +2687,8 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
         PyObject *legal_arr = PyArray_SimpleNew(1, ldims, NPY_INT32);
         if (!legal_arr) { Py_DECREF(node_path); return NULL; }
         double term_q = (double)cboard_terminal_value(&cb);
+        if (with_tb)
+            return Py_BuildValue("(iNNdO)", leaf_id, node_path, legal_arr, term_q, Py_None);
         return Py_BuildValue("(iNNd)", leaf_id, node_path, legal_arr, term_q);
     }
     /* Non-terminal collapse may still have advanced the leaf — rebuild the
@@ -2684,6 +2700,23 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
         if (!node_path) { Py_XDECREF(rel_arr); Py_DECREF(enc_arr); return NULL; }
         memcpy(PyArray_DATA((PyArrayObject *)node_path), path_buf,
                path_len * sizeof(int32_t));
+    }
+
+    /* Copy the exact POST-collapse board only for an eligible TB leaf. It is
+     * caller-owned: the Gumbel pending batch is shared state and cannot serve
+     * concurrent walkers. Allocate before applying virtual loss. */
+    PyObject *tb_leaf = NULL;
+    if (with_tb && cb.castling == 0 &&
+        popcount64(cb.occ[0] | cb.occ[1]) <= tb_max_pieces) {
+        PyCBoard *cp = (PyCBoard *)cb_type->tp_alloc(cb_type, 0);
+        if (!cp) {
+            Py_XDECREF(rel_arr);
+            Py_DECREF(enc_arr);
+            Py_DECREF(node_path);
+            return NULL;
+        }
+        cp->board = cb;
+        tb_leaf = (PyObject *)cp;
     }
 
     /* Non-terminal: apply vloss along path[1:] before exposing the leaf to
@@ -2708,13 +2741,29 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
     PyObject *legal_arr = PyArray_SimpleNew(1, ldims, NPY_INT32);
     if (!legal_arr) {
         if (vloss_weight > 0) tree_remove_vloss_path(t, path_buf, path_len);
+        Py_XDECREF(tb_leaf);
         Py_DECREF(node_path);
         return NULL;
     }
     int32_t *legal_out = (int32_t *)PyArray_DATA((PyArrayObject *)legal_arr);
     for (int i = 0; i < n_legal_i; i++) legal_out[i] = legal_tmp[i];
 
-    return Py_BuildValue("(iNNO)", leaf_id, node_path, legal_arr, Py_None);
+    PyObject *result = with_tb
+        ? Py_BuildValue("(iNNOO)", leaf_id, node_path, legal_arr, Py_None,
+                        tb_leaf ? tb_leaf : Py_None)
+        : Py_BuildValue("(iNNO)", leaf_id, node_path, legal_arr, Py_None);
+    Py_XDECREF(tb_leaf);
+    if (!result && vloss_weight > 0)
+        tree_remove_vloss_path(t, path_buf, path_len);
+    return result;
+}
+
+static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *args) {
+    return walker_descend_puct(self, args, 0);
+}
+
+static PyObject *MCTSTree_walker_descend_puct_tb(MCTSTreeObject *self, PyObject *args) {
+    return walker_descend_puct(self, args, 1);
 }
 
 
@@ -5321,6 +5370,8 @@ static PyMethodDef MCTSTree_methods[] = {
      "remove_vloss_path(path: int32[]) -> None (floors at 0; pair with apply_vloss_path)"},
     {"walker_descend_puct", (PyCFunction)MCTSTree_walker_descend_puct, METH_VARARGS,
      "walker_descend_puct(root_id, root_cboard, c_puct, fpu_root, fpu_reduction, vloss_weight, enc_out, rel_out=None, input_history_mode=0) -> (leaf_id, node_path, legal, terminal_q_or_None)"},
+    {"walker_descend_puct_tb", (PyCFunction)MCTSTree_walker_descend_puct_tb, METH_VARARGS,
+     "walker_descend_puct_tb(root_id, root_cboard, c_puct, fpu_root, fpu_reduction, vloss_weight, enc_out, tb_max_pieces, rel_out=None, input_history_mode=0) -> (leaf_id, node_path, legal, terminal_q_or_None, eligible_cboard_or_None)"},
     {"walker_integrate_leaf", (PyCFunction)MCTSTree_walker_integrate_leaf, METH_VARARGS,
      "walker_integrate_leaf(node_path, legal, pol_logits, wdl_logits, vloss_weight) -> None"},
     {"batch_descend_puct", (PyCFunction)MCTSTree_batch_descend_puct, METH_VARARGS,

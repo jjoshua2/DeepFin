@@ -1678,7 +1678,7 @@ class SearchWorker:
         if self._pucv_pool is not None:
             return self._run_pucv_pool_chunk(chunk, stop_event)
         if self._walker_pool is not None:
-            return self._run_walker_chunk(chunk, stop_event)
+            return self._run_walker_chunk(chunk, stop_event, tb_probe)
         if self._pucv is not None:
             return self._run_pucv_chunk(chunk), chunk
         return self._run_gumbel_chunk(
@@ -2399,7 +2399,7 @@ class SearchWorker:
         )
 
     def _run_walker_chunk(
-        self, chunk: int, stop_event: threading.Event,
+        self, chunk: int, stop_event: threading.Event, tb_probe=None,
     ) -> tuple[float, int]:
         assert self._tree is not None
         assert self._root_id is not None
@@ -2411,6 +2411,7 @@ class SearchWorker:
             root_cboard=self._walker_cboard,
             target_sims=chunk,
             stop_event=stop_event,
+            tb_probe=tb_probe,
         )
         return self._tree.node_q(self._root_id), int(completed)
 
