@@ -463,6 +463,53 @@ def _validated_searchmoves(fen: str, searchmoves: Sequence[str]) -> list[str]:
     return tokens
 
 
+def _validated_position_history(
+    fen: str, *, root_fen: object, root_moves: object,
+) -> tuple[str, tuple[str, ...]] | None:
+    """Snapshot an optional legal history before queueing or protocol I/O.
+
+    The legacy bare-FEN path deliberately does not parse or rewrite ``fen``.
+    History callers must supply BOTH fields, including an explicit empty move
+    sequence when the requested position is the root itself.
+    """
+    if root_fen is None and root_moves is None:
+        return None
+    if root_fen is None or root_moves is None:
+        raise ValueError("history requires both root_fen and root_moves")
+    if (
+        not isinstance(root_fen, str)
+        or not isinstance(root_moves, Sequence)
+        or isinstance(root_moves, (str, bytes))
+    ):
+        raise ValueError("history requires a FEN string and a sequence of UCI strings")
+    snapshot = tuple(root_moves)
+    try:
+        board = chess.Board(root_fen)
+        requested = chess.Board(fen)
+    except ValueError as exc:
+        raise ValueError("history requires valid root and requested FENs") from exc
+    if not board.is_valid():
+        raise ValueError("history root is not a valid standard-chess position")
+    # Canonicalize the root so whitespace cannot inject protocol commands;
+    # retain even a non-capturable EP square when the root explicitly has one.
+    root = board.fen(en_passant="fen")
+    moves: list[str] = []
+    for token in snapshot:
+        if not isinstance(token, str) or not _UCI_MOVE_RE.fullmatch(token):
+            raise ValueError(f"history contains a malformed UCI move: {token!r}")
+        move = chess.Move.from_uci(token)
+        if not board.is_legal(move):
+            raise ValueError(f"history contains an illegal move: {token!r}")
+        board.push(move)
+        moves.append(token)
+    # Include both clocks, castling, turn and legal EP state. Match the same
+    # canonical FEN convention used by live Board.fen() callers; a phantom EP
+    # square omitted by that convention does not discard the supplied history.
+    if board.fen() != requested.fen():
+        raise ValueError("history does not reproduce the requested final FEN")
+    return root, tuple(moves)
+
+
 class StockfishUCI:
     # Class-level default so the guard holds for an instance built without
     # __init__ (tests drive the parser through object.__new__).
@@ -831,8 +878,18 @@ class StockfishUCI:
         syzygy_path: str | None = None,
         fresh: bool = False,
         searchmoves: Sequence[str] | None = None,
+        root_fen: str | None = None,
+        root_moves: Sequence[str] | None = None,
     ) -> StockfishResult:
         """Node-limited search from FEN, or DEPTH-limited when ``depth`` is given.
+
+        Optional ``root_fen`` + ``root_moves`` sends the legal history through
+        ``position fen <root> moves ...`` so Stockfish can see repetitions.
+        Both are required together; an empty sequence means the root itself.
+        Replay must match ``fen`` (including clocks) before any engine I/O.
+        Omitting both preserves the existing bare-FEN command verbatim. This
+        supplies history, not a teacher-quality or cold-TT guarantee; ``fresh``
+        still separately controls the latter.
 
         If MultiPV>1 is enabled, we attempt to collect (move, wdl) pairs for the
         top lines so the caller can build a soft "SF policy" target distribution.
@@ -877,6 +934,9 @@ class StockfishUCI:
         # written, and `StockfishPool` then throws the process away. A caller's
         # typo must not cost a Stockfish restart, and nothing has been sent yet
         # at this point, so there is nothing to desync.
+        history = _validated_position_history(
+            fen, root_fen=root_fen, root_moves=root_moves,
+        )
         if depth is not None:
             if nodes is not None:
                 raise ValueError(
@@ -899,7 +959,12 @@ class StockfishUCI:
                 self._new_game_locked()
             if syzygy_path is not None:
                 self._set_syzygy_path_locked(str(syzygy_path))
-            self._send(f"position fen {fen}")
+            if history is None:
+                self._send(f"position fen {fen}")
+            else:
+                root, moves = history
+                suffix = f" moves {' '.join(moves)}" if moves else ""
+                self._send(f"position fen {root}{suffix}")
             if depth is None:
                 n = int(self.nodes) if nodes is None else int(nodes)
                 go_cmd = f"go nodes {n}"
