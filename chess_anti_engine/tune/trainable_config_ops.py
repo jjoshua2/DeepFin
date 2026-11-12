@@ -839,16 +839,47 @@ def sf_budget_topology_violations(config: Mapping[str, object]) -> list[str]:
     The worker topology is ``distributed_worker_sf_workers`` resolved exactly as
     the worker command builder resolves it, judged by the same pool predicate
     the worker uses to build its engine. Empty for every checked-in config.
-    """
-    def _int(key: str) -> int:
-        return int(cast(Any, config.get(key, 0)) or 0)
 
+    Never raises on a malformed value: a key that does not convert to a number
+    (e.g. a quoted ``"1.5e5"``) is itself reported as a violation, so launch
+    refuses with a message naming it and a live reload declines it instead of
+    leaving it for ``TrialConfig.from_dict`` to raise mid-iteration.
+    ``from_dict``'s own handling of such values is unchanged.
+    """
+    unparseable: list[str] = []
+
+    def _num(key: str, default: float, conv: type[int] | type[float]) -> float:
+        raw = config.get(key, default)
+        try:
+            return conv(cast(Any, raw) or default)
+        except (TypeError, ValueError, OverflowError):
+            unparseable.append(
+                f"{key}={raw!r} is not a number, so the single-engine SF budget "
+                "check cannot judge it"
+            )
+            return default
+
+    move = _num("sf_move_nodes", 0, int)
+    floor = _num("sf_label_nodes_floor", 0, int)
+    cap = _num("sf_label_nodes_cap", 0, int)
+    q_gap = _num("sf_label_escalate_q_gap", 0.0, float)
+    try:
+        pooled = sf_workers_use_pool(distributed_worker_sf_workers(config))
+    except (TypeError, ValueError, OverflowError):
+        unparseable.append(
+            "distributed_worker_sf_workers="
+            f"{config.get('distributed_worker_sf_workers')!r} is not a number, so "
+            "the Stockfish route of launched workers is unknown"
+        )
+        pooled = False
+    if unparseable:
+        return unparseable
     return single_engine_sf_budget_violations(
-        sf_move_nodes=_int("sf_move_nodes"),
-        sf_label_nodes_floor=_int("sf_label_nodes_floor"),
-        sf_label_nodes_cap=_int("sf_label_nodes_cap"),
-        sf_label_escalate_q_gap=float(cast(Any, config.get("sf_label_escalate_q_gap", 0.0)) or 0.0),
-        pooled=sf_workers_use_pool(distributed_worker_sf_workers(config)),
+        sf_move_nodes=int(move),
+        sf_label_nodes_floor=int(floor),
+        sf_label_nodes_cap=int(cap),
+        sf_label_escalate_q_gap=q_gap,
+        pooled=pooled,
     )
 
 
@@ -864,9 +895,9 @@ def reject_sf_budget_topology(config: Mapping[str, object]) -> None:
     problems = sf_budget_topology_violations(config)
     if problems:
         raise ValueError(
-            "refusing to start: driver-launched workers get --sf-workers "
-            f"{distributed_worker_sf_workers(config)} (distributed_worker_sf_workers), "
-            "i.e. the single-engine Stockfish route. "
+            "refusing to start: SF budget/topology check failed for "
+            "driver-launched workers (distributed_worker_sf_workers="
+            f"{config.get('distributed_worker_sf_workers', 1)!r}). "
             + single_engine_sf_budget_message(problems)
         )
 
@@ -1415,11 +1446,49 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
                 continue
             config[k] = v
         if live_reload:
-            _decline_sf_budget_topology_edit(config, sf_budget_before, missing)
+            try:
+                _decline_sf_budget_topology_edit(config, sf_budget_before, missing)
+            except Exception as exc:  # fail CLOSED: never keep an unchecked combination
+                _revert_sf_budget_topology_edit(config, sf_budget_before, missing, exc)
     except StartupIntentError:
         raise
     except Exception as exc:
         log.warning("YAML reload failed (%s): %s", yaml_path, exc)
+
+
+def _revert_sf_budget_topology_edit(
+    config: dict, before: Mapping[str, object], missing: object, exc: BaseException,
+) -> None:
+    """The decline check itself raised: restore every SF budget/topology key.
+
+    By the time the check runs the overlay loop has written every yaml value
+    into ``config``, so letting the exception reach the reloader's broad
+    ``except`` would log "YAML reload failed" while leaving a possibly bad
+    combination applied. Instead restore every key of
+    ``_SF_BUDGET_TOPOLOGY_KEYS`` to its pre-reload snapshot (removing the ones
+    that were absent) and say so at ERROR on stdout and in the log. Unrelated
+    edits stay applied, as with a normal decline. Must not raise.
+    """
+    for k in _SF_BUDGET_TOPOLOGY_KEYS:
+        with contextlib.suppress(Exception):  # plain dict ops; never propagate
+            if before.get(k, missing) is missing:
+                config.pop(k, None)
+            else:
+                config[k] = before[k]
+    try:
+        reason = f"{type(exc).__name__}: {exc}"
+    except Exception:
+        reason = type(exc).__name__
+    message = (
+        "YAML reload: SF budget/topology edits REVERTED — the single-engine SF "
+        f"budget check itself failed ({reason}), so every key of "
+        f"{list(_SF_BUDGET_TOPOLOGY_KEYS)} keeps its pre-reload value. "
+        "Unrelated edits in this save were applied. Fix the value and save again."
+    )
+    with contextlib.suppress(Exception):
+        print(f"[trial] ERROR {message}", flush=True)
+    with contextlib.suppress(Exception):
+        log.error(message)
 
 
 def _decline_sf_budget_topology_edit(
@@ -1449,7 +1518,7 @@ def _decline_sf_budget_topology_edit(
         # makes that unreachable in practice); nothing this reload did to undo.
         return
     attempted = {k: config.get(k) for k in changed}
-    worker_sf = distributed_worker_sf_workers(config)
+    worker_sf = config.get("distributed_worker_sf_workers", 1)
     for k in changed:
         if before[k] is missing:
             config.pop(k, None)
@@ -1461,9 +1530,9 @@ def _decline_sf_budget_topology_edit(
     )
     log.warning(
         "YAML reload: %d SF budget/topology edit(s) NOT applied, ALL of them "
-        "declined together [%s]. Applied together they would leave "
-        "driver-launched workers on the single-engine Stockfish route "
-        "(distributed_worker_sf_workers=%d), where: %s Every key listed is "
+        "declined together [%s]. Applied together they fail the single-engine "
+        "SF budget check for driver-launched workers "
+        "(distributed_worker_sf_workers=%r): %s Every key listed is "
         "declined, even one that would be valid on its own; save the valid part "
         "alone to apply it. Unrelated edits in this save were applied. A "
         "restart with this yaml will REFUSE to start (reject_sf_budget_topology).",

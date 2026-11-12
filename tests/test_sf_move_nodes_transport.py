@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import logging
+import re
 import threading
 from collections import Counter
 from collections.abc import Sequence
@@ -29,6 +30,7 @@ from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.uci import StockfishResult, StockfishUCI
 from chess_anti_engine.tune import distributed_runtime as runtime
 from chess_anti_engine.tune import trainable_init
+from chess_anti_engine.tune import trainable_config_ops
 from chess_anti_engine.tune.trainable_config_ops import (
     _reload_yaml_into_config,
     reject_sf_budget_topology,
@@ -270,6 +272,58 @@ def test_live_reload_applies_a_topology_and_budget_edit_that_is_valid_together(
     )
     assert {k: config[k] for k in edit} == edit
     assert not any('NOT applied' in m for m in messages), messages
+
+
+def test_a_failing_decline_check_reverts_every_topology_key_and_says_so(
+    tmp_path: Path, caplog, capsys, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail closed: the overlay has already written the save into config when
+    the decline runs. If the check itself raises, every SF budget/topology key
+    goes back to its pre-reload value (absent keys removed), unrelated edits
+    stay applied, and an ERROR names the exception; nothing propagates."""
+    def broken(*_a: Any, **_kw: Any) -> None:
+        raise NameError('simulated decline failure')
+
+    monkeypatch.setattr(trainable_config_ops, '_decline_sf_budget_topology_edit', broken)
+    edit = {
+        'distributed_worker_sf_workers': 1, 'sf_label_nodes_floor': 150_000,
+        'sf_pid_target_winrate': 0.55,
+    }
+    launched, config, messages = _reload(
+        tmp_path, {'distributed_worker_sf_workers': 8}, edit, caplog,
+    )
+    assert config['distributed_worker_sf_workers'] == launched['distributed_worker_sf_workers'] == 8
+    assert 'sf_label_nodes_floor' not in launched
+    assert 'sf_label_nodes_floor' not in config, 'an absent key was not removed again'
+    assert config['sf_pid_target_winrate'] == 0.55, 'an unrelated edit was reverted'
+    assert not any(m.startswith('YAML reload failed') for m in messages), messages
+    errors = [
+        r.getMessage() for r in caplog.records
+        if r.levelno == logging.ERROR and 'REVERTED' in r.getMessage()
+    ]
+    assert len(errors) == 1, messages
+    assert 'NameError: simulated decline failure' in errors[0]
+    assert 'SF budget/topology edits REVERTED' in capsys.readouterr().out
+
+
+def test_a_non_numeric_budget_value_is_declined_loudly_not_raised(
+    tmp_path: Path, caplog,
+) -> None:
+    """A quoted number reaches the check as a string. The real reload must
+    decline it with a message naming it (TrialConfig.from_dict, run by
+    `_reload`, would otherwise raise mid-iteration), and launch must refuse
+    it with the same message rather than an int() traceback."""
+    launched, config, messages = _reload(
+        tmp_path, {'distributed_worker_sf_workers': 8}, {'sf_label_nodes_floor': '1.5e5'}, caplog,
+    )
+    assert config.get('sf_label_nodes_floor') == launched.get('sf_label_nodes_floor')
+    declined = [m for m in messages if 'NOT applied' in m]
+    assert len(declined) == 1, messages
+    assert "sf_label_nodes_floor='1.5e5' is not a number" in declined[0]
+    with pytest.raises(ValueError, match=re.escape("sf_label_nodes_floor='1.5e5' is not a number")):
+        reject_sf_budget_topology({'sf_label_nodes_floor': '1.5e5', 'distributed_worker_sf_workers': 8})
+    with pytest.raises(ValueError, match="distributed_worker_sf_workers='eight' is not a number"):
+        reject_sf_budget_topology({'distributed_worker_sf_workers': 'eight'})
 
 
 def test_startup_intent_refusal_still_propagates_before_any_decline(
