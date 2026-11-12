@@ -130,6 +130,19 @@ class MCTSTree:
         rel_out: NDArray[np.uint8] | None = ...,
         input_history_mode: int = ...,
     ) -> tuple[int, NDArray[np.int32], NDArray[np.int32], float | None]: ...
+    def walker_descend_puct_tb(
+        self,
+        root_id: int,
+        root_cboard: CBoard,
+        c_puct: float,
+        fpu_root: float,
+        fpu_reduction: float,
+        vloss_weight: int,
+        enc_out: NDArray[np.float32],
+        tb_max_pieces: int,
+        rel_out: NDArray[np.uint8] | None = ...,
+        input_history_mode: int = ...,
+    ) -> tuple[int, NDArray[np.int32], NDArray[np.int32], float | None, CBoard | None]: ...
     def walker_integrate_leaf(
         self,
         node_path: NDArray[np.int32],

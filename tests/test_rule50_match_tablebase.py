@@ -113,7 +113,8 @@ def test_theoretical_label_mapping_is_unchanged(monkeypatch: pytest.MonkeyPatch)
 class FakeOpenTablebase:
     instances: ClassVar[list[FakeOpenTablebase]] = []
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_fds: int | None = 128) -> None:
+        self.max_fds = max_fds
         self.wdl: dict[str, object] = {}
         self.dtz: dict[str, object] = {}
         self.closed = False
@@ -143,6 +144,7 @@ def test_strict_open_capacity_components_and_close(tmp_path: Path, monkeypatch: 
     assert opened.wdl
     assert opened.dtz
     assert not opened.closed
+    assert opened.max_fds is None  # eviction off: see tablebase.new_tablebase
     opened.close()
     for parts, problem in (
         (f"{wdl}{os.pathsep}{empty}", "no new tables"),

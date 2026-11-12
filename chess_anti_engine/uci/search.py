@@ -1389,6 +1389,19 @@ class SearchWorker:
         self._tb_probe = probe
         self.reset_tree()
 
+    def leaf_tb_inactive_mode(self) -> str | None:
+        """The realized search path whose leaves never see the installed Syzygy probe.
+
+        Classic Gumbel and walker search receive ``tb_probe``. The remaining
+        pools and single-thread PUCV search without it, so there
+        ``SyzygyPath`` reaches only the root shortcut and root eval. ``None``
+        when no probe is installed or a leaf-enabled path is active.
+        """
+        if self._tb_probe is None:
+            return None
+        path = self.realized_search_path()
+        return None if path in ("gumbel", "walker") else path
+
     def advance_root(self, board: chess.Board, moves: list[chess.Move]) -> bool:
         """Descend the current tree by ``moves`` plies, making the last-reached
         node the new root. ``board`` is the position BEFORE the first move;
@@ -1678,7 +1691,7 @@ class SearchWorker:
         if self._pucv_pool is not None:
             return self._run_pucv_pool_chunk(chunk, stop_event)
         if self._walker_pool is not None:
-            return self._run_walker_chunk(chunk, stop_event)
+            return self._run_walker_chunk(chunk, stop_event, tb_probe)
         if self._pucv is not None:
             return self._run_pucv_chunk(chunk), chunk
         return self._run_gumbel_chunk(
@@ -2399,7 +2412,7 @@ class SearchWorker:
         )
 
     def _run_walker_chunk(
-        self, chunk: int, stop_event: threading.Event,
+        self, chunk: int, stop_event: threading.Event, tb_probe=None,
     ) -> tuple[float, int]:
         assert self._tree is not None
         assert self._root_id is not None
@@ -2411,6 +2424,7 @@ class SearchWorker:
             root_cboard=self._walker_cboard,
             target_sims=chunk,
             stop_event=stop_event,
+            tb_probe=tb_probe,
         )
         return self._tree.node_q(self._root_id), int(completed)
 
