@@ -43,7 +43,11 @@ class _DelayedStockfishPool(StockfishPool):
         self, fen: str, *, nodes: int | None = None,
         syzygy_path: str | None = None, fresh: bool = False,
         searchmoves: Sequence[str] | None = None,
+        root_fen: str | None = None,
+        root_moves: Sequence[str] | None = None,
     ) -> Future[StockfishResult]:
+        assert root_fen is None
+        assert root_moves is None
         del nodes, syzygy_path, fresh
         board = chess.Board(fen)
         # Honour the restriction rather than discarding it: this fake picks the
