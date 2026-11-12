@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import numbers
 import math
 import time
 from pathlib import Path
@@ -448,10 +449,27 @@ def _collect_iter_shards(
     return iter_shards
 
 
+def _share_fraction_ingests(share_fraction: object) -> bool:
+    """True iff ``share_fraction`` is a real number in ``(0, 1]``.
+
+    Everything else -- 0, negative, > 1, NaN/inf, bool, non-numbers -- means
+    "ingest nothing". The yaml loader refuses out-of-range values
+    (``config_yaml._check_exploit_replay_share_fraction``), but a value can
+    also arrive by a route that skips it (a restored Ray/PB2 config, a direct
+    caller), and the old fall-through for anything not in ``(0, 1)`` was to
+    ingest the WHOLE shard.
+    """
+    if isinstance(share_fraction, (bool, np.bool_)) or not isinstance(share_fraction, numbers.Real):
+        return False
+    return 0.0 < float(share_fraction) <= 1.0  # NaN compares False
+
+
 def _ingest_one_shard(
     sp: Path, *, buf: DiskReplayBuffer, share_fraction: float, summary: dict[str, int],
 ) -> bool:
     """Load one shard and add it to ``buf``. Returns True on success."""
+    if not _share_fraction_ingests(share_fraction):
+        return False
     loaded = _load_shard_arrays_with_retry(sp, retries=5, sleep_s=0.12)
     if loaded is None:
         return False
@@ -459,7 +477,8 @@ def _ingest_one_shard(
     n_samples = int(np.asarray(shard_arrs["x"]).shape[0])
     if n_samples <= 0:
         return False
-    if 0.0 < share_fraction < 1.0:
+    if share_fraction < 1.0:
+        # Python round(): half-to-even (n*f = 2.5 -> 2, 3.5 -> 4), floor 1.
         k = max(1, round(n_samples * share_fraction))
         chosen = buf.rng.choice(n_samples, size=k, replace=False)
         shard_arrs = slice_array_batch(shard_arrs, chosen)
@@ -493,20 +512,34 @@ def _share_top_replay_each_iteration(
     max_unseen_iters_per_source = max(1, int(max_unseen_iters_per_source))
     max_shards_per_source = max(0, int(max_shards_per_source))
 
+    summary = {
+        "source_trials_selected": 0,
+        "source_trials_ingested": 0,
+        "source_trials_skipped_repeat": 0,
+        "source_shards_loaded": 0,
+        "source_samples_ingested": 0,
+    }
+    if share_fraction == 0.0:
+        return summary
+    if not _share_fraction_ingests(share_fraction):
+        # FAIL CLOSED, NOT FATAL. Raising here would kill the trial in the
+        # middle of an iteration; ingesting would be the old "share
+        # everything". Share nothing, and say so every iteration it happens.
+        msg = (
+            f"exploit_replay_share_fraction={share_fraction!r} is not a number "
+            f"in [0, 1]; replay share DISABLED this iteration (nothing "
+            f"ingested). Fix the config."
+        )
+        log.warning(msg)
+        print(f"[trial] WARNING: {msg}", flush=True)
+        return summary
     source_snaps = _select_top_trial_snapshots(
         recipient_trial_dir=recipient_trial_dir,
         top_k_trials=int(top_k_trials),
         within_best_frac=float(within_best_frac),
         min_metric=float(min_metric),
     )
-
-    summary = {
-        "source_trials_selected": len(source_snaps),
-        "source_trials_ingested": 0,
-        "source_trials_skipped_repeat": 0,
-        "source_shards_loaded": 0,
-        "source_samples_ingested": 0,
-    }
+    summary["source_trials_selected"] = len(source_snaps)
     if not source_snaps:
         return summary
 

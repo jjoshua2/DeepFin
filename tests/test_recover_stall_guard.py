@@ -39,6 +39,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -211,6 +212,61 @@ def test_a_CONFIGURED_pause_file_refuses_recovery(recover) -> None:
     r = recover.run(RECOVER_PAUSE_FILE=str(recover.pause_file))
     assert r.returncode == REFUSE_EXIT, (r.returncode, r.stdout, r.stderr, recover.log)
     assert str(recover.pause_file) in recover.log, recover.log
+    assert not recover.teardown_ran()
+    assert recover.sacrifice_alive()
+
+
+def test_a_TILDE_pause_file_is_expanded_like_the_trainer(recover, tmp_path) -> None:
+    """`TrialConfig` expands `~` with `os.path.expanduser`; a guard that kept it
+    literal would look under `$TUNE_DIR/~/...` and let the real marker through."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "p.txt").write_text("parked\n")
+    r = recover.run(RECOVER_PAUSE_FILE="~/p.txt", HOME=str(home))
+    assert r.returncode == REFUSE_EXIT, (r.returncode, r.stdout, r.stderr, recover.log)
+    assert str(home / "p.txt") in recover.log, recover.log
+    assert not recover.teardown_ran()
+    assert recover.sacrifice_alive()
+
+
+def test_a_RELATIVE_pause_file_is_checked_conservatively_and_warned(recover) -> None:
+    """The trainer refuses a relative `pause_file` at launch; the guard still
+    checks it under the tune dir (it can only refuse more) and says so."""
+    (recover.tune_dir / "rel_pause.txt").write_text("parked\n")
+    r = recover.run(RECOVER_PAUSE_FILE="rel_pause.txt")
+    assert r.returncode == REFUSE_EXIT, (r.returncode, r.stdout, r.stderr, recover.log)
+    assert "refuses relative paths" in recover.log, recover.log
+    assert not recover.teardown_ran()
+    assert recover.sacrifice_alive()
+
+
+def test_a_TILDE_pause_file_with_HOME_unset_refuses_with_a_reason(recover) -> None:
+    """`set -u` used to abort on `$HOME` with an opaque "unbound variable"."""
+    assert "HOME" not in recover.env
+    r = recover.run(RECOVER_PAUSE_FILE="~/p.txt")
+    assert r.returncode == 2, (r.returncode, r.stdout, r.stderr, recover.log)
+    assert "HOME is unset" in recover.log, recover.log
+    assert "unbound variable" not in r.stderr, r.stderr
+    assert not recover.teardown_ran()
+    assert recover.sacrifice_alive()
+
+
+def test_a_TILDE_USER_pause_file_on_the_env_route_refuses_loudly(recover) -> None:
+    """The yaml route expands `~user`; the env route cannot, so it refuses
+    rather than watching a literal `$TUNE_DIR/~root/x`."""
+    r = recover.run(RECOVER_PAUSE_FILE="~root/x")
+    assert r.returncode == 2, (r.returncode, r.stdout, r.stderr, recover.log)
+    assert "'~user' form" in recover.log, recover.log
+    assert not recover.teardown_ran()
+    assert recover.sacrifice_alive()
+
+
+def test_a_DIRECTORY_pause_file_refuses_and_says_why(recover, tmp_path) -> None:
+    d = tmp_path / "a_dir"
+    d.mkdir()
+    r = recover.run(RECOVER_PAUSE_FILE=str(d))
+    assert r.returncode == REFUSE_EXIT, (r.returncode, r.stdout, r.stderr, recover.log)
+    assert "is a directory" in recover.log, recover.log
     assert not recover.teardown_ran()
     assert recover.sacrifice_alive()
 
@@ -717,3 +773,20 @@ def test_the_refusal_status_agrees_between_the_guard_and_the_loop() -> None:
     assert a.group(1) == b.group(1), (
         f"refusal status drifted: guard={a.group(1)} loop={b.group(1)}"
     )
+
+
+def test_recover_yaml_reader_expands_tilde(tmp_path) -> None:
+    """The REAL `_read_pause_file` snippet from recover_stall.sh, run with the
+    real interpreter (the sandbox above shims python3, so it cannot reach it)."""
+    text = RECOVER_SH.read_text()
+    snippet = text.split("_read_pause_file='", 1)[1].split("\n'\n", 1)[0]
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text("pause_file: '  ~/p.txt  '\n")
+    home = tmp_path / "home"
+    r = subprocess.run(
+        [sys.executable, "-c", snippet, str(cfg)],
+        env={**os.environ, "HOME": str(home), "PYTHONPATH": str(REPO)},
+        capture_output=True, text=True, check=False, timeout=120,
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == str(home / "p.txt"), r.stdout
