@@ -299,3 +299,76 @@ cohort, full learning comparison or substantive external baseline is qualified y
 There have been **zero new week-one training updates and no candidate adoption**
 at this checkpoint. Keep the donor and prior negative results. The first week and
 the months-long Rofchade/Stockfish/Lc0 objectives remain active and unachieved.
+
+## Audited eight-game panel — November 12, 19:29 UTC
+
+This checkpoint follows the earlier 18:36 UTC readout; it does not rewrite its
+pending statuses. The compiled public UCI profile completed four separately
+qualified probes: the two 940 ms hard-budget requests returned in 945.2 and
+944.5 ms with 410 and 430 reported nodes, the 170 ms hard-budget movetime probe
+returned in 174.5 ms with 81 nodes, and the node-only control returned exactly
+64 nodes in 140.4 ms. Startup took 98.49 s off-clock. The owner closed all eleven
+observed process identities. This qualifies those measured operations; the
+distinct compiled profile still fails all 24 earlier raw eager/compiled strict
+tolerance comparisons. It is not numerical equivalence or checkpoint adoption.
+
+The fixed full-history engineering panel then completed all **eight games**
+against **Rofchade 3.1 on eight physical cores**, with its NNUE acknowledged,
+1 GiB hash, common indexed three-through-six-piece tablebases, equal
+30 s + 0.1 s clocks, zero grace and a 450-additional-ply cap. Four convenience
+openings were played in both colors. The unchanged A39 donor scored:
+
+| Donor wins | Draws | Losses | Score | Opening pairs |
+| --- | --- | --- | --- | --- |
+| 0 | 4 | 4 | 25% | 4 |
+
+Independent replay reconciled all 774 clocked responses, full opening histories,
+PGNs, UCI traces and clock charges. The four losses were checkmates; the four
+draws were claimable next-move threefold repetitions under the frozen driver's
+`claim_draw=True` rules. There were no time forfeits, illegal moves, ply-cap
+endings or guarded search faults. All three recorded owner/engine process
+identities were absent after closure. Whole-stage owner wall time was 484.080 s.
+
+The donor reported a median 345 nodes over 386 responses. Thirty eligible-root
+tablebase shortcuts each reported one node and one hit; the other 356 responses
+had median 357 nodes. These counters include search conventions and reused or
+terminal trees, not necessarily neural forwards. They are not comparable with
+Rofchade's node totals as neural throughput. No fresh graph/precision observer
+ran during these games.
+
+This establishes a functioning external instrument on four convenience pairs.
+No general-strength interval or Elo is reported. Do not pool these games with
+the earlier eager pair or attribute a playing improvement to compilation:
+openings and numerical profiles differ, and no weights were learned. The
+multicore Rofchade strength milestone remains unmet.
+
+The generation lane has **no qualified data** at this cutoff. Its first bounded
+attempt failed closed after 3.253 s because its runtime `process.json` collided
+with the owner's reserved stage namespace. Its unchanged files were preserved
+under a nested failure-artifact directory; the owner guard was retained. A
+separate preparation corrected the receipt name and exercised the actual owner
+accounting function against both the old collision and the new filename. The
+second attempt failed closed after 5.145 s at a raw architecture-dictionary
+equality guard, after strict donor loading but before evaluator construction or
+generation. It produced no games or shards. The architecture comparison needs
+diagnosis against the existing donor contract before another admission.
+
+The proposed four-arm loss-presence study is superseded for the SF-anchor
+question: every arm set SF supervision to zero, and removing entire objectives
+also changes gradient and optimizer dose. The next proposed contrast keeps all
+losses, prepared batches, the full trunk, optimizer and schedule fixed, changing
+only the main WDL target's SF/search shares. Stored categorical targets would
+remain unchanged. No share, teacher effort, deciding threshold or training run
+is selected. Actual whole-game provenance, target perspective/availability and
+the real Trainer consumer still need qualification. The old SF-removal anecdote
+is not mechanism evidence: the ledger records the operator's August 23 rejection
+of that uncontrolled result. Shared guidance now reflects that qualification.
+
+At this cutoff, eleven completed GPU-intended stages total **1585.066561 s**
+(26 min 25.067 s), including both failed collectors. This is complete owner wall
+time for those stages, not GPU kernel time or all CPU work. Their identities,
+exact costs, source/readout hashes and compact results are in
+[engineering-panel-readout.json](evidence/rl-week-one-20261112/engineering-panel-readout.json).
+There are still **zero new week-one training updates, no qualified research
+cohort and no candidate adoption**. The first week and longer strength program
+remain active.
