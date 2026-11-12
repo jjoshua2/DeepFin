@@ -106,6 +106,7 @@ def test_native_board_is_after_forced_chain_and_old_tuple_is_unchanged():
     assert terminal is None
     assert len(path) == 3
     assert path[-1] == leaf
+    assert cb is not None
     assert cb.fen() == expected.fen()
     assert set(legal) == set(CBoard.from_board(expected).legal_move_indices())
     assert len(tree.walker_descend_puct(root, CBoard.from_board(board),

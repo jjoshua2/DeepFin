@@ -76,9 +76,11 @@ def new_tablebase() -> chess.syzygy.Tablebase:
     (default 128); the production pair holds ~1000 distinct tables, and selfplay
     probes one cached handle from every ``--selfplay-threads`` thread.
 
-    Cost: every table touched stays mapped (one read-only mmap per table; the
-    fd itself is closed right after mapping), i.e. at most one VMA per table
-    file, shared page cache, far below ``vm.max_map_count``.
+    Cost: every table touched retains its read-only mapping until the handle
+    closes. On Python's default Unix mmap settings the mapping also owns a
+    duplicate file descriptor, even after the original fd closes. Budget both
+    mappings and descriptors alongside other process resources; page cache is
+    shared.
     """
     return chess.syzygy.Tablebase(max_fds=None)
 
