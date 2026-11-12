@@ -644,3 +644,388 @@ categorical semantics still need actual generation; P0floor is not requested.
 Thirteen runtime source hashes include the explicitly reviewed new harness and
 the actual sync consumer. A separate hash-bound receipt may admit a docs-only
 descendant HEAD; source or non-documentation changes require a new successor.
+
+## November 12 UTC readout and recovery status — publication draft
+
+This update supersedes earlier chronological statements that CUDA, candidate
+training or the first screen were still unrun. All preceding preregistrations and
+failures remain preserved. **The first experiment is closed: its sole complete
+confirmation is inconclusive, and reproducible donor-relative gain was not
+established.** Training/HEALTH success is separate from strength. The original
+donor is retained, and only preparation for a separate recipe comparison is
+admitted within the original deadline; this is not completion of the broader goal.
+
+Compact checked evidence is [readout.json](evidence/2026-11-11-epoch2-rl-transition/readout.json),
+SHA256 `e1c1462294dd97cd69e6a90c2c4af586f5fd602464077646303420c3fc159a98`.
+It retains identities, full integer statistics, stage accounting and limits;
+model weights, shards, books and per-game bulk remain external.
+
+### Direction and current scope
+
+The user's longer-term objective is to soundly beat an unhandicapped multicore
+Rofchade, approach strong Stockfish and Lc0 deployments, and investigate whether
+DeepFin can eventually surpass Lc0. These are research objectives, not capabilities
+established by this experiment. A reproducible gain over the epoch-two donor is an
+enabling milestone, not the full goal. External-engine strength needs separately
+pinned engines and networks, declared CPU/GPU resources, matched clocks, effective
+options, paired openings and independent confirmation. The prepared direction is
+`long-term-strength-direction-v2.md` under the artifact root.
+
+Richer input features and stronger or differently budgeted teacher supervision
+remain hypotheses for controlled successors. They do not change the current
+175-plane/history contract or qualify an SF-imitation teacher. The registered
+conditional SF screens remained inconclusive; the active control keeps direct SF
+losses at zero and uses its explicitly declared online search/bootstrap targets.
+
+### Completed CUDA qualification and first scientific-health pilot
+
+The actual disposable full-donor CUDA qualification passed on source
+`08c57166e93fde43f061dd63f039a13a8f92a970`: all 494 donor tensors survived
+CPU↔CUDA transfer and actual publication/worker loading, with matching BF16 outputs.
+Fresh optimizer and scheduler state was checked before normal iteration weight sync.
+Ten actual Aurora updates at batch size 256 completed with finite losses and weights,
+zero nonfinite-gradient skips and 17 exclusive SF parameters inactive. The 41 old
+fixture rows were explicitly repeated to exercise the hardware batch; this adds
+no independent training data and its trajectory was never adopted. All 10 steps
+hit the 6.5 hard cap. This qualifies finite execution of the recipe, not rare-tail
+clipping, online teacher availability or playing strength. Independent acceptance:
+`cuda-actual-independent-review-v2/review.json`, SHA256
+`f11d4cb650eac3d8c4c7ec030e87111c9ba30c4dbe306d34e8b35f1d38589099`.
+
+The first scientific attempt failed at zero iterations. The harness resolved a
+blank public server URL into a value that changed a strict-bound startup setting;
+reload correctly refused it. Ray reported a trial ERROR, but the driver returned 0
+and the finite owner's terminal said PASS after owned cleanup. No scientific
+candidate was produced. Preserve `policy-focused-pilot-execution-v1/` and the
+rejecting `policy-control-startup-failure-health-audit-v1/`. The transport successor
+bound an explicit matching loopback port and public URL with a fresh identity; it
+did not weaken the startup contract. The separate driver-status fix is PR 1223.
+
+The corrected one-window control passed independent HEALTH review: 65 completed
+games (37 selfplay / 28 curriculum), 5,036 retained/replay rows from 6,780 eligible
+records, 40 applied updates at batch size 256 and 10,240 sampled views. No producer
+games were SF/TB-adjudicated. Actual retained-row and sampled selfplay fractions
+differed from the configured game fraction; the existing thinning/priority sampler
+stayed active. Targets passed the accepted finite/legal/normalized checks, with
+stated storage and producer-algebra limits. Hard clipping bound on 100% of updates;
+the full 128-step dose and the 120-step release tail were not exercised. This is a
+healthy small pilot, not evidence of stable long training or improved strength.
+
+HEALTH readout: `policy-focused-health-preparation-v3-transport/health-readout.json`,
+SHA256 `e7d3b2d3777ed09af7cbd39ddb2ad295a6dc1cd109746bb9fae6a72a24ca7e25`;
+independent acceptance:
+`policy-control-actual-health-independent-review-v2-ac566990/review.json`, SHA256
+`eb32a84b0e1a27eb7c8a326c817b7ce6514475e21cf27380cf710d094fbd6c1c`.
+The immutable 40-step candidate SHA256 is
+`d9c1f3d3685013ce123ea97cd1007a99f15a525d87c186b3209fdcc73360abad`;
+its pre-screen receipt is `scientific-candidate-v1/manifest.json`, SHA256
+`103d23fb762e1fdba76d0a6792a456c520f241e4c431f1f69b9919db4b30fe77`.
+
+### First complete paired screen
+
+The frozen 128-opening-pair screen completed all 256 games, with JSONL/PGN,
+ordered 16-ply opening histories, colors, settings, source, candidate identity and
+owned closure validated by the accepted reader. All 256 games ended under chess
+rules; there were no 450-ply-cap draws.
+
+| Quantity | Observed value |
+| --- | --- |
+| Candidate wins / draws / losses | 91 / 83 / 82 |
+| Integer pentanomial WW, WD/DW, DD/WL, LD/DL, LL | 12, 31, 47, 30, 8 |
+| Score | 265/512 = 0.517578125 |
+| Pair-based normal 95% score interval | [0.4720455686429563, 0.5631106813570437] |
+| Registered verdict | Eligible for confirmation; no strength gain established |
+
+The interval was recomputed from complete integer pair counts, not rounded arena
+metrics. The screen is a selection instrument and its interval crosses 0.5.
+Readout: `evaluation-readout-preparation-v1/screen-readout.json`; independent
+reconciliation: `first-screen-science-independent-v1/review.json`, SHA256
+`2c69a6f52268210717fd2b018ea8813475ea263616ecf8d5828babe1f0365530`.
+Original protocol, panels, commands and raw files remain immutable.
+
+### Excluded 856-step attempt and current recovery
+
+A preregistered larger-dose attempt completed eight training windows and 856 finite
+updates on 37,803 replay rows from 515 producer games. **Its final checkpoint is
+unqualified and excluded from strength selection**, SHA256
+`5809fb3a62e1beefcb623cc5051f869cb8a1af9c4727ad467514d9d885e95234`.
+It was not banked for Elo and played no strength games.
+
+The decisive failure was per-window freshness: windows 6 and 7 each ingested only
+63 CURRENT-model games, although matching_games reported 64. A late previous-model
+shard counted before the zero-previous-quota limit was applied. Total game/row
+conservation and zero stale counters did not establish the required quota. The
+HEALTH rejection is retained; 64 was not relaxed to 63, and no global 515-game total
+was substituted for the per-window rule. This is not a negative Elo result.
+Evidence: `dose-eight-actual-health-independent-review-v1/review.json`, SHA256
+`07ade8f9e82dc7ff229c82651040de0700618356e6fdb3fcd7e1dfa240d01502`,
+and `dose-eight-quota-cause-v1/cause.json`.
+
+PR 1224 excludes the previous SHA before prefetch/polling when its matching quota
+is zero, preserving previous/stale-row replay semantics, positive quotas and the
+single-current-SHA case. The separately frozen recovery runtime is
+`6d244aa0b7bac09987699cb9f2d4a93da5866621`: source 08c plus only this three-line
+production guard and its regression tests. Twelve other qualified runtime
+references and all five native binaries are unchanged; 107 composed CPU tests
+pass. Prior CUDA evidence is reused only for unchanged model, Trainer, loss,
+search, optimizer and native code; no new CUDA qualification is claimed for the
+CPU admission fix. Source proof:
+`prev-quota-recovery-preflight-v1/source-composition.json`.
+
+**Recovery training and HEALTH: PASS; immutable candidate binding: ACCEPTED.**
+The fresh run UUID `8634d3da-2ef3-4d70-bcfe-2595cf769631` completed all eight
+windows from the original donor with fresh optimizer, scheduler and SWA state,
+unchanged recipe/search and all eight checkpoints retained. The corrected
+CURRENT-model quotas and actual applied updates were:
+
+| Window | CURRENT-model games counted toward quota | Applied batch-256 updates |
+| --- | ---: | ---: |
+| 1 | 64 | 38 |
+| 2 | 64 | 77 |
+| 3 | 65 | 117 |
+| 4 | 65 | 128 |
+| 5 | 64 | 128 |
+| 6 | 64 | 128 |
+| 7 | 64 | 128 |
+| 8 | 64 | 128 |
+| Total | 514 | 872 |
+
+All windows met the required 64 CURRENT-model games. The run applied 872 updates
+and sampled 223,232 positions, with zero reported retry microbatches or
+nonfinite-gradient skips. Actual dynamic budgets were below the maximum 1,024
+updates; no endpoint cooldown is claimed. Producer and replay totals reconcile
+at 40,999 rows and 516 producer-claimed games: 514 CURRENT-model games plus two
+previous-model games containing 166 rows. Those older games were reported
+separately as stale in windows 4 and 5, remained in replay under the existing
+semantics, and did not count toward CURRENT-model quotas. This fixes the failed
+attempt's matching-count defect without claiming that replay contains only the
+latest model's data.
+
+The accepted executed reader checked all 494 finite tensors with donor shapes
+and dtypes in every retained checkpoint; 477 tensors differed from the donor in
+each. The captured step-0 publication matched all donor tensors. Thirty-three
+process-argv/manifest observations cover all eight collections, with source-derived
+seeds, declared model steps/hashes and kernel PID/birth identities checked. These
+are finite process/manifest observations, not every-game serving telemetry. The
+latest served publication matched checkpoint 7 at step 744 for collection 8.
+The final 872-step checkpoint was trained afterward and was not republished at
+the end of the horizon; no future serving claim is made. The independent reviewer
+accepted the hash-bound tensor results rather than independently deserializing
+or recomputing tensors.
+
+Training completed in 2,924.759330 seconds with all 66 owned PID/birth identities
+absent after cleanup. The CPU HEALTH stage completed in 49.263510 seconds with
+its one owned identity closed. The completed HEALTH readout is
+`prev-quota-recovery-health-preparation-v1/health-readout.json`, SHA256
+`5e93fd7907cdbe39e233d2004d8a499cb5ac8f101ac941a1946310f8000050be`;
+independent actual HEALTH acceptance is
+`prev-quota-recovery-actual-health-independent-review-v1/review.json`, SHA256
+`64db02e7aa3228c7758d29a10cc7cc72d4f2f55cf9c5e4878b5a7bd9f54fafe8`.
+
+Recovery config/preregistration remains
+`prev-quota-recovery-config-v1/8634d3da-2ef3-4d70-bcfe-2595cf769631/manifest.json`,
+SHA256 `f06da6a65dbfaa7fabe9772e4dc810f3f88c7464ef48193ee58fd0ee246863b1`;
+its independent admission review is
+`prev-quota-recovery-admission-independent-review-v1/review.json`, SHA256
+`f2cce0e1ee21ddd4b5665d755cb254f2a72e97b0d05c908d3e77b0a30ff427ca`.
+The same configured base seed with a fresh Ray identity produces new learner and
+worker streams; this is not a matched-RNG causal dose comparison or an independent
+replication of the original trajectory. User-authorized graphics sharing remains
+in force; no idle-only or 4 GiB-used rule applies.
+
+HEALTH does not establish strength. Thinning, priority sampling and source
+imbalance remain: the recorded per-window keep fractions were approximately
+72.9%–79.7%. Hard clipping bound on approximately 90.9%–100% of updates in the
+AdamW clipping scope; the matrix Aurora group is excluded from that clip. High
+priorities already existed during the first three guard warmup windows, so later
+alarms were not a new onset or a newly imposed stop condition. Producer metadata
+reports one adjudicated game. Quantized target checks do not establish exact
+producer algebra or each row's realized exposure, and whole-replay generation
+metadata remains unavailable. Zero configured direct-SF loss weights do not make
+opponent trajectories, diagnostic labels, retention or replay priorities
+SF-independent. The reporting erratum still applies: actual exclusive-gradient
+checks belong to the earlier reused CUDA qualification; this run adds no such
+new gradient query or claim.
+
+The qualified final endpoint was copied outside Ray storage and bound immutably
+before its screen. Candidate SHA256:
+`f2f5444e6b02b8bb599f391bf7283a868d1b84c8b2ab29290dae464ba4cf6856`;
+receipt: `recovered-eight-window-candidate-v1/manifest.json`, SHA256
+`915cede49aa0f6e14eecdb4f6182155c206c8667cf02a427067c310511e84ec9`.
+The actual bound arena reader SHA256 is
+`696db10cbd5ceb5ea34ea9bec35bfe94bd3f4f900d1b348fadec4531414aa5e6`.
+Its identity substitutions reverse exactly to accepted reader `d663`; statistical
+and validation logic, panels and settings are unchanged. Actual identity review:
+`recovery-arena-actual-binding-independent-review-v1/review.json`, SHA256
+`37f14bd8c05f0529022c12805bed230ae46a330add10a32ff19f6494393880e8`.
+Screen and confirmation outputs use the recovery config directory's
+`evaluation/screen/` and `evaluation/confirmation/` paths. Both training and this
+evaluation truthfully record recovery source H.
+
+### Completed screens, final selection and sole confirmation
+
+The recovered 872-step endpoint completed the same fixed 128-pair screen, with
+all 256 JSONL/PGN games validated. It scored 78 wins, 68 draws and 110 losses:
+224/512 = 0.4375, paired normal 95% interval
+[0.3876868649330636, 0.4873131350669364], pentanomial [11, 17, 51, 27, 22].
+All games ended under chess rules, with no ply-cap draws. It failed the registered
+score-above-0.5 eligibility rule and did not enter confirmation. This is a negative
+screen for this endpoint, not a causal estimate of the effect of dose or a general
+verdict on RL. Independent acceptance:
+`recovery-screen-actual-independent-review-v1/review.json`, SHA256
+`ff1c0746bec5aebc62e69b1697191e59a0a559b7f7883712c5d6e660df1c55f3`.
+
+The precommitted selection set contained only the original healthy 40-step
+candidate and the qualified recovered final endpoint. The rejected 856-step
+attempt was never selectable. Among complete eligible screens, the higher point
+score would win, with ties selecting the original. The original's 265/512 screen
+was eligible; the recovered endpoint's 224/512 was not. The immutable selection
+receipt chose the original candidate before any confirmation play and recorded
+both confirmation output directories absent:
+`final-candidate-selection-v1/manifest.json`, SHA256
+`159a6a7dc7c749049f9b8f08f6d9cb66d669885d3ff58d19fa7c1ac5fd684415`.
+
+The sole confirmation used the original source 08c profile, candidate SHA256
+`d9c1f3d3685013ce123ea97cd1007a99f15a525d87c186b3209fdcc73360abad`,
+all 500 disjoint opening pairs and all 1,000 games. Complete histories, reversed
+colors, legal played suffixes, JSONL/PGN consistency, hashes, settings, selection
+chronology and owned closure passed the accepted reader and independent review.
+All 1,000 games ended under chess rules; there were no ply-cap draws.
+
+| Quantity | Sole confirmation |
+| --- | --- |
+| Candidate wins / draws / losses | 315 / 371 / 314 |
+| Pentanomial WW, WD/DW, DD/WL, LD/DL, LL | 47, 108, 190, 109, 46 |
+| Exact score | 1001/2000 = 0.5005 |
+| Pair-score standard error | 0.012146793370200908 |
+| Paired normal 95% score interval | [0.4766922849944062, 0.5243077150055937] |
+| Registered verdict | Valid complete confirmation; inconclusive; no confirmed gain |
+
+The available full precision interval crosses 0.5, so the registered gain rule
+was not met. This does not prove that the true effect is zero or that RL cannot
+improve the donor. No screen pooling, favorable extension, second confirmation,
+alternative candidate or post-result threshold change was used. The holdout has
+now been used for its sole registered confirmation and will not be reused for a
+new candidate under this experiment. Neither the 40-step nor the 872-step endpoint
+is adopted; the original epoch-two donor remains preserved.
+
+Readout: `evaluation-readout-preparation-v1/confirmation-readout.json`, SHA256
+`cc3c3ba953b59fbc5128478f8d7c1b237bc39eb1e6319d4f1b3c47770f3d05a6`;
+independent actual outcome review:
+`sole-confirmation-actual-independent-review-v1/review.json`, SHA256
+`cc1dd52c7b5d9539fb01edf81f0e2ced1fb501ec87cc1dec190705f8f1563c73`.
+The confirmation owner closed in 2,977.595484 seconds and the CPU readout in
+26.184312 seconds. These are whole-stage times, not CUDA-active durations.
+
+### Interpretation and separate follow-up preparation
+
+The larger recovery delivered 21.8 times as many updates as the short pilot.
+Its aggregate sampled-positions/newly-ingested-row ratio was 5.445 versus 2.033;
+these are delivery ratios, not uniform epochs or independent-position counts.
+Falling training loss and greater policy concentration did not translate into a
+passing recovered screen. Soft and categorical loss reductions numerically
+account for about 90.1% of the aggregate loss reduction, but their targets share
+search information and this does not measure gradient contribution, conflict or
+playing strength. Window-averaged entropy is not a fresh endpoint probe.
+
+Holdout drift was unmeasured: test_replay was zero, so zero-valued drift columns
+are not evidence of stability and no validation-loss curve was observed. Reported
+hard clipping bound on 856/872 recovery updates (98.17%) in the AdamW auxiliary
+group; the matrix Aurora group is outside that clip. Fresh trial RNG, trajectories,
+replay age/composition and the source admission fix confound pure dose attribution.
+No causal clipping, learning-rate, teacher-blend or sampler correction is
+established. Diagnosis: `completed-training-dose-diagnosis-v1/readout.md`.
+
+A conditional cap-40 draft was prepared prospectively before confirmation outcomes
+were read. After closing this first experiment, only preparation of one separate
+recipe comparison has been admitted under the original deadline: change the
+per-window train-step cap from 128 to 40 while preserving the declared recipe and
+fresh donor start. This remains **UNRUN and UNBOUND**; GPU training is not admitted
+until the final main-derived source, config, preregistration, HEALTH bindings and
+fresh source-ID-aware opening panels are qualified. New-panel feasibility remains
+pending. The counterfactual budget on completed data is not a prediction for new
+games, and the proposal is not a demonstrated remedy. It belongs in a separate
+preregistration/readout, never an extension or relabeling of the closed two-endpoint
+selection and sole confirmation. Draft: `conditional-cap40-proposal-v1/DRAFT.md`.
+The broader research objective remains open; this record closes only the first
+experiment and establishes no current Rofchade, Stockfish or Lc0 benchmark result.
+
+### Generation-inclusive compute accounting
+
+The final metadata-only inventory reconciles 23 closed unique owner stages:
+9 GPU-intended stages, 14 CPU-only stages and no unclassified stages. GPU-stage
+elapsed totals **12,137.038439965982 seconds (3 h 22 min 17.038 s)**. Generation,
+Stockfish, CPU work, I/O, waiting, startup, cleanup and failed attempts are included
+inside these stage times. They are not CUDA kernel-active time, utilization,
+exclusive GPU use, lifetime model compute or total project elapsed.
+
+| GPU-intended stage | Whole-stage seconds |
+| --- | ---: |
+| Synthetic GPU runtime qualification | 36.222 |
+| Actual disposable donor CUDA qualification | 38.220 |
+| Scientific startup failure at zero iterations | 17.180 |
+| Healthy first 40-step pilot | 369.963 |
+| First complete screen | 905.610 |
+| Unqualified 856-step attempt | 3,907.363 |
+| Corrected 872-step recovery | 2,924.759 |
+| Recovered endpoint screen | 960.126 |
+| Sole confirmation | 2,977.595 |
+
+CPU-only owner-stage elapsed totals 2,048.218279347988 seconds (34 min 8.218 s).
+The earlier 402-check integration run took another 36.877 seconds, and the updated
+main composition's 568-check run took 36.092 seconds; those validations are
+reported separately, not silently folded into a complete CPU total. Unreceipted
+setup, builds, lint, reviews, remote CI, inter-stage idle time and donor pretraining
+remain outside this inventory or have unknown duration. Owner PASS is not
+scientific success: the zero-iteration startup and rejected eight-window attempt
+remain counted. No recorded GPU-stage intervals overlap; that does not prove
+absence of external workloads. The unused managed integration worktree was
+archived and added no compute stage.
+
+Inventory: `compute-accounting-final-v1/inventory.json`, SHA256
+`9fd914e4efdab12583ab9ba7d08d61f363885d8a0baf1ad2c546cc70d800be6e`;
+summary: `compute-accounting-final-v1/summary.md`, SHA256
+`74b98c85542ab2ddb51c400d5b59f3d2be5bed233aec9e2bf7e8d22e02b19697`.
+Exact stage values and receipt hashes are retained in the compact evidence.
+
+### Local main integration and publication scope
+
+Local composition `39967df3b73e69a64ba70dba5008a125e746f5ef` merged exact reviewed
+PR heads 1219/1220/1223/1224 onto main `c9d5cc38127cb9ef6919c3f6293538a86575de83`,
+using merge commits and preserving all four heads and 08c ancestry. Its only manual
+resolution retained both operations-document sections verbatim. The 402 focused
+CPU checks passed with zero failures/skips; independent source-composition review:
+`integration-independent-review-v1/review.json`, SHA256
+`42631e35a754c965eb9e8ed3536c0bdf893499218d8f3f7c46be6efa1359df8c`.
+
+Main then advanced to `77f0aa0480c2af50b84a92a901ade3bf880ba87d`. The owned author
+branch merged that exact revision as `ca38f96baebcef89f61ec4a7c2299a1834827e9f`,
+retaining upstream pause-path/zero-sharing validators and the RL startup/sequential
+validators. All 568 composed CPU checks passed with zero failures/errors/skips,
+CUDA hidden and two Torch threads. Pure real CLI/TrialConfig/model-metadata/Trainer
+kwargs/worker/mocked-harness qualification preserved all 263 bound frozen settings
+and effective recipe. No old config was rewritten; the existing absolute pause
+path is unchanged. Synthetic blank pause strings now normalize to None, with
+relative paths and invalid sharing fractions refused. Native/build inputs are
+unchanged and prequalified native bytes were reused; no native build, scientific training or games were run during integration.
+
+The whole-repo local lint caveat remains the three unchanged-base `_posixshmem`
+import-resolution errors; no suppression is introduced. Fresh full remote CI is
+required on the final published integration head. Both pinned 08c/H runtime paths,
+HEADs and experiment evidence remain unchanged. Merge the eventual main-targeted
+integration PR with a merge commit to preserve the reviewed source ancestries;
+main integration is not runtime deployment.
+
+Last verified GitHub metadata at 2026-11-12 04:10:17 UTC: all four task PRs are
+ready/open, not drafts, and unmerged. This is a snapshot, not a future merge claim.
+
+| PR | Purpose | Last verified head | Runtime disposition |
+| --- | --- | --- | --- |
+| [1219](https://github.com/jjoshua2/DeepFin/pull/1219) | Strict donor handoff/sequential phases | `08c57166e` | Used as frozen base; PR unmerged |
+| [1220](https://github.com/jjoshua2/DeepFin/pull/1220) | Refuse unsupported single-engine SF move budgets | `741a33647` | Not adopted in these runtimes |
+| [1223](https://github.com/jjoshua2/DeepFin/pull/1223) | Fail driver on returned errored Ray trials | `4d3cfbcb2` | Not adopted; actual HEALTH remains mandatory |
+| [1224](https://github.com/jjoshua2/DeepFin/pull/1224) | Zero previous-model matching quota before ingest | `aa2c771a4` | Exact production guard composed into source H recovery |
+
+This record and its compact checked evidence are prepared locally for one
+main-targeted integration PR. Final publication review and remote CI remain;
+no push, merge, deployment or new training admission is claimed.
