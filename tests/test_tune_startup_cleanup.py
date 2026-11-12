@@ -82,7 +82,7 @@ def _driver_stubs(
     return calls, answer
 
 
-def _ray_result_grid(tmp_path: Path, outcomes: list[tuple[str, Exception | None]]) -> Any:
+def _ray_result_grid(tmp_path: Path, outcomes: list[tuple[str, Exception | str | None]]) -> Any:
     """Use Ray's real status/error properties without running a Ray job."""
     from ray.tune import ResultGrid
 
@@ -94,8 +94,8 @@ def _ray_result_grid(tmp_path: Path, outcomes: list[tuple[str, Exception | None]
             run_metadata=SimpleNamespace(checkpoint_manager=SimpleNamespace(
                 latest_checkpoint_result=None, best_checkpoint_results=[],
             )),
-            get_pickled_error=lambda error=error: error,
-            get_error=lambda: None,
+            get_pickled_error=lambda error=error: None if isinstance(error, str) else error,
+            get_error=lambda error=error: error if isinstance(error, str) else None,
         ))
     analysis = SimpleNamespace(trials=trials, trial_dataframes={}, _fs=None,
                                experiment_path=str(tmp_path))
@@ -103,27 +103,31 @@ def _ray_result_grid(tmp_path: Path, outcomes: list[tuple[str, Exception | None]
 
 
 @pytest.mark.parametrize("resume", [False, True])
-@pytest.mark.parametrize("case", ["single", "mixed", "multiple", "missing_exception"])
+@pytest.mark.parametrize("case", ["single", "mixed", "multiple", "missing_exception", "text_error"])
 def test_fit_returning_errored_trials_raises_and_releases_sidecars(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resume: bool, case: str,
 ) -> None:
     from ray.tune.experiment import Trial
 
     error = StartupFailure("startup failed before the first report")
-    outcomes: list[tuple[str, Exception | None]] = [(Trial.ERROR, error)]
+    outcomes: list[tuple[str, Exception | str | None]] = [(Trial.ERROR, error)]
     if case == "mixed":
         outcomes.insert(0, (Trial.TERMINATED, None))
     elif case == "multiple":
         outcomes.append((Trial.ERROR, ValueError("another failed trial")))
     elif case == "missing_exception":
         outcomes = [(Trial.ERROR, None)]
+    elif case == "text_error":
+        outcomes = [(Trial.ERROR, "worker failure from error.txt")]
     grid = _ray_result_grid(tmp_path, outcomes)
     calls, _ = _driver_stubs(monkeypatch, fit_result=grid)
     if resume:
         (tmp_path / "tune").mkdir()
     with pytest.raises(RuntimeError, match=rf"{grid.num_errors} errored trial\(s\)") as caught:
         harness.run_tune(base_config={}, work_dir=tmp_path, num_samples=len(outcomes), resume=resume)
-    assert caught.value.__cause__ is (None if case == "missing_exception" else error)
+    assert caught.value.__cause__ is (None if case in {"missing_exception", "text_error"} else error)
+    if case == "text_error":
+        assert "worker failure from error.txt" in str(caught.value)
     assert str(tmp_path / "tune") in str(caught.value)
     assert calls[-3:] == ["fit", "cleanup:broker", "cleanup:server"]
 
@@ -141,13 +145,13 @@ def test_non_error_fit_result_is_preserved_including_graceful_unfinished_trials(
     assert calls[-3:] == ["fit", "cleanup:broker", "cleanup:server"]
 
 
+@pytest.mark.parametrize("failure", [StartupFailure("trial config rejected"), "worker failure from error.txt"])
 def test_train_cli_propagates_a_returned_trial_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception | str,
 ) -> None:
     from chess_anti_engine import run
     from ray.tune.experiment import Trial
 
-    failure = StartupFailure("trial config rejected")
     grid = _ray_result_grid(tmp_path, [(Trial.ERROR, failure)])
     calls, _ = _driver_stubs(monkeypatch, fit_result=grid)
     monkeypatch.setattr(sys, "argv", [
@@ -156,7 +160,9 @@ def test_train_cli_propagates_a_returned_trial_failure(
     ])
     with pytest.raises(RuntimeError, match="1 errored trial") as caught:
         run.main()
-    assert caught.value.__cause__ is failure
+    assert caught.value.__cause__ is (failure if isinstance(failure, Exception) else None)
+    if isinstance(failure, str):
+        assert failure in str(caught.value)
     assert calls[-3:] == ["fit", "cleanup:broker", "cleanup:server"]
 
 
