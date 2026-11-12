@@ -420,8 +420,7 @@ def _calibration_shards(path: Path, widths: tuple[int, ...]) -> np.ndarray:
 def _calibration_kwargs(path: Path, cfg: ModelConfig, *, positions: int = 4) -> dict[str, Any]:
     return {
         "source_cfg": cfg, "replay_dir": path, "positions": positions,
-        "prefer_recorded_lc0_root": False, "synthetic_lc0_root_history": False,
-        "lc0_root_legacy_meta": False,
+        "synthetic_lc0_root_history": False,
     }
 
 
@@ -434,8 +433,8 @@ def test_activation_mixed_policy_widths_match_direct_scores(tmp_path: Path, widt
     common = {"ckpt_path": Path("trainer.pt"), "batch_size": 2, "device": torch.device("cpu")}
     expected, expected_stats = module.activation_unit_scores_from_x(ckpt, x=torch.as_tensor(x[:3]), **common)
     actual, actual_stats = module.activation_unit_scores_from_replay(
-        ckpt, replay_dir=tmp_path, positions=3, prefer_recorded_lc0_root=False,
-        synthetic_lc0_root_history=False, lc0_root_legacy_meta=False, **common,
+        ckpt, replay_dir=tmp_path, positions=3,
+        synthetic_lc0_root_history=False, **common,
     )
     assert actual_stats == expected_stats
     assert actual_stats["activation_score_positions"] == 3
@@ -507,8 +506,8 @@ def test_activation_loader_keeps_whole_shard_validation(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="policy_target"):
         module.activation_unit_scores_from_replay(
             ckpt, ckpt_path=Path("trainer.pt"), replay_dir=tmp_path, positions=1,
-            batch_size=1, device=torch.device("cpu"), prefer_recorded_lc0_root=False,
-            synthetic_lc0_root_history=False, lc0_root_legacy_meta=False,
+            batch_size=1, device=torch.device("cpu"),
+            synthetic_lc0_root_history=False,
         )
 
 
@@ -552,8 +551,8 @@ def test_streamed_activation_preserves_global_batches(
 
     monkeypatch.setattr(module, "_concat_calibration_chunks", no_concat)
     actual, actual_stats = module.activation_unit_scores_from_replay(
-        ckpt, replay_dir=tmp_path, positions=positions, prefer_recorded_lc0_root=False,
-        synthetic_lc0_root_history=False, lc0_root_legacy_meta=False, **common,
+        ckpt, replay_dir=tmp_path, positions=positions,
+        synthetic_lc0_root_history=False, **common,
     )
     assert actual_stats == stats
     for layer, score in expected.items():
@@ -634,8 +633,7 @@ def test_activation_stream_preserves_recorded_history(monkeypatch: pytest.Monkey
     ckpt = {"model": build_model(cfg).state_dict(), "arch": {"_schema_version": ARCH_SCHEMA_VERSION, **dataclasses.asdict(cfg)}}
     common = {"ckpt_path": Path("trainer.pt"), "batch_size": 3, "device": torch.device("cpu")}
     kwargs = {
-        "replay_dir": Path("fixture"), "positions": 1, "prefer_recorded_lc0_root": False,
-        "synthetic_lc0_root_history": False, "lc0_root_legacy_meta": False,
+        "replay_dir": Path("fixture"), "positions": 1, "synthetic_lc0_root_history": False,
     }
     if not recorded:
         with pytest.raises(ValueError, match="no recorded x_lc0_root"):
@@ -666,8 +664,8 @@ def test_activation_stream_rejects_late_malformed_target_and_removes_hooks(
     with pytest.raises(ValueError, match="policy_target"):
         module.activation_unit_scores_from_replay(
             ckpt, ckpt_path=Path("trainer.pt"), replay_dir=tmp_path, positions=4,
-            batch_size=1, device=torch.device("cpu"), prefer_recorded_lc0_root=False,
-            synthetic_lc0_root_history=False, lc0_root_legacy_meta=False,
+            batch_size=1, device=torch.device("cpu"),
+            synthetic_lc0_root_history=False,
         )
     for component in model.modules():
         assert not component._forward_hooks
