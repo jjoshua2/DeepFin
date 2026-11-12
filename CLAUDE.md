@@ -65,7 +65,7 @@ Validate a copy first and verify the realized value after adoption. Some keys ar
 restart-only, and removing an override may leave the old value in memory. The live
 run Skill and operations document cover the mechanics.
 
-A bad live value fails in one of three ways, which code comments cite by letter:
+A bad live value fails in one of four ways, which code comments cite by letter:
 
 - **(a) Rejected by the loader**: a key not in the schema (`utils/config_yaml.py`), or
   a value failing a check in `flatten_run_config_defaults` (strict booleans,
@@ -78,6 +78,9 @@ A bad live value fails in one of three ways, which code comments cite by letter:
   the trial dies.
 - **(c) In the schema but not range-checked**: applied raw and silently. `lr` is one
   such key (LR above 0.003 has destroyed the model).
+- **(d) A dead key** (`dead_config_keys()` in `tune/trainable_config_ops.py`: parsed,
+  read by no production path): a non-inert value is declined mid-run for that key
+  only, then the trial refuses to start at the next restart.
 
 Respect intentional-stop and pause markers. Before a change whose effects survive a
 config revert, preserve enough state to recover: weights, optimizer, PID and replay,
