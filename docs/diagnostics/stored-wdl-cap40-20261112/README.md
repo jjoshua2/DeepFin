@@ -11,3 +11,16 @@ This independently reviewed diagnostic compares donor and cap40 WDL predictions 
 - W,D,L order and side-to-move perspective are source-declared. Real semantic POV validation remains unperformed.
 
 `independent-review.json` is the unchanged reviewed compact receipt (SHA256 `9da1295da264a3a9488bde613f357d62420fa8a607db002398bca58cb13b8e9d`). It binds checkpoint, input, saved-output and plan identities and independently recomputed metrics. Raw input rows and probability datasets are not published here. Local paths in the receipt identify retained technical evidence, not publicly accessible artifacts. No training, GPU workload or model update occurred.
+
+## Same-row native search-target agreement
+
+A separately reviewed, bounded CPU extraction retained **all the same 254 rows** and their native `search_wdl` values. No model forward was repeated; scoring used the identity-bound saved donor/cap40 predictions above. All presence flags were true. Raw float16 targets were retained, then explicitly normalized in float64 under a predeclared absolute sum-error tolerance of 0.001. Maximum observed sum error was 0.000366211 and maximum component correction was 0.000243366. The log-probability floor was `1e-12`.
+
+Lower is better agreement with this named target:
+
+- Row-weighted Brier: donor **0.014763238**, cap40 **0.036587110**; candidate-minus-donor **+0.021823872**. Brier agreement worsened in all three supplied groups. Equal-group delta: **+0.020580016**.
+- Row-weighted log loss: donor **0.693543415**, cap40 **0.707798328**; candidate-minus-donor **+0.014254913**. Two supplied groups worsened and one improved. Equal-group delta: **+0.010384260**.
+
+This is agreement with recorded **producer search targets**, not the final mixed training target, Stockfish truth, real accuracy, calibration, playing strength or a causal diagnosis. The same exposure, grouping and semantic-POV limitations above apply. The producer can replace a nonfinite search target with `[0,1,0]`; presence flags do not identify those fallbacks, so fallback incidence remains unknown and all draw targets were retained.
+
+`native-search-agreement-review.json` is the unchanged independent review receipt (SHA256 `bc6e7b25fd65075e87fcf488d285680a5edbe811645d8e3eba1fbb83c91bfc7d`). It binds raw/normalized target identities, original ordered rows, checkpoint/prediction receipts and independently recomputed metrics. Raw targets and datasets are not published. Extraction/scoring source revision: `155f2f887861520fb8976860fbbbbeaa5007c814`. Execution settings were 8 GiB address-space, 120 CPU seconds, 150 wall seconds, one CPU thread and CUDA disabled; no training or additional inference occurred.
