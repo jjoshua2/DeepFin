@@ -338,10 +338,21 @@ def _run_eval_games(
         playout_cap_fraction=1.0,
         fast_simulations=0,
     )
+    # `eval_sf` is ONE StockfishUCI (`_init_eval_stockfish`), and with
+    # selfplay_fraction=0 every eval query is a curriculum move on the
+    # single-engine route, which never read these four knobs: the move takes
+    # base_nodes (eval_sf_nodes), the combined label query takes no floor or
+    # cap, and escalation is pool-only. Zeroing them sends byte-identical budgets to main's eval while
+    # keeping the training values from tripping play_batch's single-engine
+    # refusal, which would kill the iteration before the checkpoint save.
     kw["game"] = dataclasses.replace(
         kw["game"],
         max_plies=tc.eval_max_plies,
         selfplay_fraction=0.0,
+        sf_move_nodes=0,
+        sf_label_nodes_floor=0,
+        sf_label_nodes_cap=0,
+        sf_label_escalate_q_gap=0.0,
     )
     kw["diff_focus"] = dataclasses.replace(kw["diff_focus"], enabled=False)
     kw["opening"] = OpeningConfig()

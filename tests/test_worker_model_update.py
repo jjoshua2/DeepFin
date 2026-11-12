@@ -789,7 +789,9 @@ def test_every_live_key_is_transplanted() -> None:
     )
     for key, (base, changed, get) in cases.items():
         session = _bare_worker_session()
-        session.args = SimpleNamespace(sf_nodes=None)
+        # A pool worker: on a single engine the label floor/cap are refused
+        # (single_engine_sf_budget_violations), not transplanted.
+        session.args = SimpleNamespace(sf_nodes=None, sf_workers=8)
         session._live_states = [_live_state()]
         cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
         baseline = {"sf_nodes": 5000, key: base}
@@ -806,7 +808,7 @@ def test_live_reco_log_line_names_the_label_floor(caplog) -> None:
     import logging
 
     session = _bare_worker_session()
-    session.args = SimpleNamespace(sf_nodes=None)
+    session.args = SimpleNamespace(sf_nodes=None, sf_workers=8)  # pool worker
     session._live_states = [_live_state()]
     cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
 

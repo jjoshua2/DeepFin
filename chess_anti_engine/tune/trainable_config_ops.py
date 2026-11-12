@@ -15,6 +15,7 @@ import logging
 import time
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import Any, cast
 
 from chess_anti_engine.config_keys import is_inert_dead_config_value, TRAINER_WEIGHT_KEYS
 from chess_anti_engine.model import ModelConfig
@@ -25,10 +26,14 @@ from chess_anti_engine.selfplay.config import (
     OpponentConfig,
     SearchConfig,
     TemperatureConfig,
+    sf_workers_use_pool,
+    single_engine_sf_budget_message,
+    single_engine_sf_budget_violations,
 )
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.train import Trainer
 from chess_anti_engine.train.trainer import resolve_sf_target_params
+from chess_anti_engine.tune.distributed_runtime import distributed_worker_sf_workers
 from chess_anti_engine.tune.trainable_metrics import _dynamic_sf_wdl_weight
 from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
 import contextlib
@@ -813,6 +818,90 @@ def reject_dead_config_keys(config: Mapping[str, object]) -> None:
         )
 
 
+# The keys whose COMBINATION decides whether a driver-launched worker can honour
+# its SF budget knobs: the four knobs plus the worker topology that picks the
+# route. Either side can move on a live edit (`distributed_worker_sf_workers`
+# is hashed into `_WORKER_LAUNCH_CONFIG_KEYS`, so the fleet is relaunched with
+# a new value), which is why the reload declines on the combination rather
+# than on one key.
+_SF_BUDGET_TOPOLOGY_KEYS: tuple[str, ...] = (
+    "sf_move_nodes",
+    "sf_label_nodes_floor",
+    "sf_label_nodes_cap",
+    "sf_label_escalate_q_gap",
+    "distributed_worker_sf_workers",
+)
+
+
+def sf_budget_topology_violations(config: Mapping[str, object]) -> list[str]:
+    """Single-engine SF budget violations for this config's LAUNCHED workers.
+
+    The worker topology is ``distributed_worker_sf_workers`` resolved exactly as
+    the worker command builder resolves it, judged by the same pool predicate
+    the worker uses to build its engine. Empty for every checked-in config.
+
+    Never raises on a malformed value: a key that does not convert to a number
+    (e.g. a quoted ``"1.5e5"``) is itself reported as a violation, so launch
+    refuses with a message naming it and a live reload declines it instead of
+    leaving it for ``TrialConfig.from_dict`` to raise mid-iteration.
+    ``from_dict``'s own handling of such values is unchanged.
+    """
+    unparseable: list[str] = []
+
+    def _num(key: str, default: float, conv: type[int] | type[float]) -> float:
+        raw = config.get(key, default)
+        try:
+            return conv(cast(Any, raw) or default)
+        except (TypeError, ValueError, OverflowError):
+            unparseable.append(
+                f"{key}={raw!r} is not a number, so the single-engine SF budget "
+                "check cannot judge it"
+            )
+            return default
+
+    move = _num("sf_move_nodes", 0, int)
+    floor = _num("sf_label_nodes_floor", 0, int)
+    cap = _num("sf_label_nodes_cap", 0, int)
+    q_gap = _num("sf_label_escalate_q_gap", 0.0, float)
+    try:
+        pooled = sf_workers_use_pool(distributed_worker_sf_workers(config))
+    except (TypeError, ValueError, OverflowError):
+        unparseable.append(
+            "distributed_worker_sf_workers="
+            f"{config.get('distributed_worker_sf_workers')!r} is not a number, so "
+            "the Stockfish route of launched workers is unknown"
+        )
+        pooled = False
+    if unparseable:
+        return unparseable
+    return single_engine_sf_budget_violations(
+        sf_move_nodes=int(move),
+        sf_label_nodes_floor=int(floor),
+        sf_label_nodes_cap=int(cap),
+        sf_label_escalate_q_gap=q_gap,
+        pooled=pooled,
+    )
+
+
+def reject_sf_budget_topology(config: Mapping[str, object]) -> None:
+    """Refuse to START a trial whose workers would ignore an SF budget knob.
+
+    Same placement and contract as ``reject_dead_config_keys``: called on the
+    startup path before any worker is launched, so a bad combination is a
+    launch refusal with an actionable message instead of a worker that refuses
+    every session. The live-reload path cannot reach here; it declines the
+    edit instead (``_reload_yaml_into_config``).
+    """
+    problems = sf_budget_topology_violations(config)
+    if problems:
+        raise ValueError(
+            "refusing to start: SF budget/topology check failed for "
+            "driver-launched workers (distributed_worker_sf_workers="
+            f"{config.get('distributed_worker_sf_workers', 1)!r}). "
+            + single_engine_sf_budget_message(problems)
+        )
+
+
 def dead_config_keys() -> frozenset[str]:
     """Yaml keys that reach NO production consumer at any value.
 
@@ -1245,6 +1334,7 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
             for k in config if k.startswith("pb2_bounds_")
         }
         missing = object()
+        sf_budget_before = {k: config.get(k, missing) for k in _SF_BUDGET_TOPOLOGY_KEYS}
         for k, v in fresh.items():
             if k in searched or k.startswith("pb2_bounds_"):
                 continue
@@ -1355,10 +1445,99 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
                     continue
                 continue
             config[k] = v
+        if live_reload:
+            try:
+                _decline_sf_budget_topology_edit(config, sf_budget_before, missing)
+            except Exception as exc:  # fail CLOSED: never keep an unchecked combination
+                _revert_sf_budget_topology_edit(config, sf_budget_before, missing, exc)
     except StartupIntentError:
         raise
     except Exception as exc:
         log.warning("YAML reload failed (%s): %s", yaml_path, exc)
+
+
+def _revert_sf_budget_topology_edit(
+    config: dict, before: Mapping[str, object], missing: object, exc: BaseException,
+) -> None:
+    """The decline check itself raised: restore every SF budget/topology key.
+
+    By the time the check runs the overlay loop has written every yaml value
+    into ``config``, so letting the exception reach the reloader's broad
+    ``except`` would log "YAML reload failed" while leaving a possibly bad
+    combination applied. Instead restore every key of
+    ``_SF_BUDGET_TOPOLOGY_KEYS`` to its pre-reload snapshot (removing the ones
+    that were absent) and say so at ERROR on stdout and in the log. Unrelated
+    edits stay applied, as with a normal decline. Must not raise.
+    """
+    for k in _SF_BUDGET_TOPOLOGY_KEYS:
+        with contextlib.suppress(Exception):  # plain dict ops; never propagate
+            if before.get(k, missing) is missing:
+                config.pop(k, None)
+            else:
+                config[k] = before[k]
+    try:
+        reason = f"{type(exc).__name__}: {exc}"
+    except Exception:
+        reason = type(exc).__name__
+    message = (
+        "YAML reload: SF budget/topology edits REVERTED — the single-engine SF "
+        f"budget check itself failed ({reason}), so every key of "
+        f"{list(_SF_BUDGET_TOPOLOGY_KEYS)} keeps its pre-reload value. "
+        "Unrelated edits in this save were applied. Fix the value and save again."
+    )
+    with contextlib.suppress(Exception):
+        print(f"[trial] ERROR {message}", flush=True)
+    with contextlib.suppress(Exception):
+        log.error(message)
+
+
+def _decline_sf_budget_topology_edit(
+    config: dict, before: Mapping[str, object], missing: object,
+) -> None:
+    """Undo a live edit that would make launched workers ignore an SF budget.
+
+    The dead-key pattern, applied to a combination: decline ONLY the keys of
+    ``_SF_BUDGET_TOPOLOGY_KEYS`` that this reload changed, keep their previous
+    values, and let every unrelated edit in the same save apply (a dead key is
+    likewise declined "for that key only"). Raising would kill the trial
+    mid-iteration (class (b)); applying would publish a reco the workers
+    refuse, idling the whole fleet. A restart with the same yaml refuses to
+    start (``reject_sf_budget_topology``), so the message says so.
+
+    Conservative by design: EVERY changed key of the combination is declined,
+    including one that would have been valid on its own (e.g. a floor added in
+    the same save that drops the workers to one SF engine). The warning lists
+    each declined key with its attempted and kept value so that is visible.
+    """
+    problems = sf_budget_topology_violations(config)
+    if not problems:
+        return
+    changed = [k for k in _SF_BUDGET_TOPOLOGY_KEYS if config.get(k, missing) != before[k]]
+    if not changed:
+        # The trial was already running this combination (the launch refusal
+        # makes that unreachable in practice); nothing this reload did to undo.
+        return
+    attempted = {k: config.get(k) for k in changed}
+    worker_sf = config.get("distributed_worker_sf_workers", 1)
+    for k in changed:
+        if before[k] is missing:
+            config.pop(k, None)
+        else:
+            config[k] = before[k]
+    declined = ", ".join(
+        f"{k}: {attempted[k]!r} -> kept {config.get(k, '<unset: default>')!r}"
+        for k in changed
+    )
+    log.warning(
+        "YAML reload: %d SF budget/topology edit(s) NOT applied, ALL of them "
+        "declined together [%s]. Applied together they fail the single-engine "
+        "SF budget check for driver-launched workers "
+        "(distributed_worker_sf_workers=%r): %s Every key listed is "
+        "declined, even one that would be valid on its own; save the valid part "
+        "alone to apply it. Unrelated edits in this save were applied. A "
+        "restart with this yaml will REFUSE to start (reject_sf_budget_topology).",
+        len(changed), declined, worker_sf, single_engine_sf_budget_message(problems),
+    )
 
 
 def _apply_lr_gamma_weights(trainer: Trainer, config: dict, *, rescale_current_lr: bool) -> None:
