@@ -1,0 +1,839 @@
+{
+  "status": "CLOSED_VALID_COMPLETE_SCREEN_INELIGIBLE_CONDITIONAL_DONOR_REGRESSION_NO_CONFIRMATION_NO_ADOPTION",
+  "record_snapshot_utc": "2026-11-12T08:48:41.483310+00:00",
+  "run_uuid": "fe23025d-a55d-4e00-8eae-a001036c0755",
+  "artifact_bundle": "operations/rl-transition-preflight-20261111-local-v1",
+  "runtime_bundle": "operations/rl-cap40-eight-20261112-fe23025d",
+  "source_revision": "7a5d3802c1f992cb2e1fc7dfc06afb2f3e4764ad",
+  "source_tree": "3b5f88507482f69d4c4b33bb5c52922360c7eb50",
+  "baseline_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+  "single_learning_intervention": "train_steps128to40plusstrictmirror",
+  "configured_seed": 20261111,
+  "fresh_Ray_streams_not_matched_RNG": true,
+  "registered_training": {
+    "windows": 8,
+    "minimum_CURRENT_games_each": 64,
+    "batch_size": 256,
+    "updates_cap_each": 40,
+    "updates_cap_total": 320,
+    "actual_budget_dynamic": true,
+    "window_fraction": 2,
+    "views": 0,
+    "imports": 0,
+    "retained_checkpoints": 8,
+    "candidate_count": 1,
+    "endpoint": "only independently qualified final8",
+    "fresh_optimizer_scheduler": true,
+    "SWA_off": true,
+    "all_other_declared_learning_search_sampler_recipe_unchanged": true
+  },
+  "registered_evaluation": {
+    "screen": {
+      "pairs": 128,
+      "games": 256,
+      "seed": 20261114,
+      "rule": "complete valid exactinteger pointscore>0.5 permitsconfirmation only"
+    },
+    "confirmation": {
+      "pairs": 500,
+      "games": 1000,
+      "seed": 20261115,
+      "rule": "same singleimmutablecandidate; available empiricalpairedvariance normal95%score lower>0.5 requiredforgain"
+    },
+    "book_seed": 20261114,
+    "sims_both": 64,
+    "root_noise_scale_both": 1,
+    "temperature_both": 0.1,
+    "opening_history_plies": 16,
+    "additional_played_plies_cap": 450,
+    "tablebases": false,
+    "compile": "off",
+    "concurrency": 32,
+    "eval_leaf_cap": 1024,
+    "testwise_interval_z": 1.96,
+    "no_familywise_or_pooled_claim": true
+  },
+  "bounds": {
+    "owner_seconds_each": 7200,
+    "arena_internal_seconds": 6900,
+    "global_deadline_utc": "2026-11-13T22:06:18+00:00",
+    "graphics_sharing_authorized": true,
+    "no_idle_or_numerical_usedVRAM_gate": true
+  },
+  "prereg_precedes_training": true,
+  "identity_erratum_precedes_training": true,
+  "pending": {},
+  "old_experiment": {
+    "closed": true,
+    "confirmed_gain": false,
+    "sole_confirmation_WDL": [
+      315,
+      371,
+      314
+    ],
+    "score": 0.5005,
+    "interval95": [
+      0.4766922849944062,
+      0.5243077150055937
+    ],
+    "used_holdout_not_reused": true,
+    "trained_endpoint_adopted": false
+  },
+  "fixed_receipts": {
+    "preregistration": {
+      "path": "cap40-preregistration-v1/manifest.json",
+      "sha256": "512eac2d92a3c0f5556a59e7e9b145987c7ad38dcedbd4de3c8e264625887bb4"
+    },
+    "identity_erratum": {
+      "path": "cap40-preregistration-identity-erratum-v1/manifest.json",
+      "sha256": "df1d0bc207f8fc2c0747f50e650d205b415abcd1d211111dfc1ee284e1fa37b2"
+    },
+    "config_manifest": {
+      "path": "cap40-config-preparation-v1/fe23025d-a55d-4e00-8eae-a001036c0755/manifest.json",
+      "sha256": "8f42d3ae5f9026ff00c9adff55c30cf252df98189e608ab37f38fc502b954d9f"
+    },
+    "YAML": {
+      "path": "cap40-config-preparation-v1/fe23025d-a55d-4e00-8eae-a001036c0755/config.yaml",
+      "sha256": "683addc8519057a2f5089a76e43934847c1cd0ba2e860b6e4a2e86cd6dc03faa"
+    },
+    "protocol": {
+      "path": "cap40-evaluation-protocol-v1/manifest.json",
+      "sha256": "7098bf4fcf8509e6f6500616a3c479ed408975b1a2c9be594d14b64f4f48184d"
+    },
+    "panels": {
+      "path": "cap40-evaluation-openings-v1/manifest.json",
+      "sha256": "24eef8eeb8c4f4bdb2afa7f9bd1adbeab04cb1a9e0404d3ea980e33a08edbab6"
+    },
+    "panel_actual_audit": {
+      "path": "cap40-panel-actual-audit-v1/readout.json",
+      "sha256": "4db611ae9adc60bdbce18556150314181980a2cac382212a95511f433d92d705"
+    },
+    "source_pin_managed": {
+      "path": "cap40-source-pin-v2/manifest.json",
+      "sha256": "c71466224a12401ca1aeb16c0554ec7ce340ebb97a7ede89e86d186bef4e322e"
+    },
+    "managed_AST_proof": {
+      "path": "cap40-source-pin-v2/managed-callback-AST-proof.json",
+      "sha256": "480ddabead193333b55b39f1ca70084f908a337e06c7850b5afe1947746057ff"
+    },
+    "actual_config_qualification": {
+      "path": "cap40-final-source-qualification-v1/qualification.json",
+      "sha256": "89c4abcb680d4bbd8eb7bf89b1d0e725a6aaf734a884308d890052c0a27e1444"
+    },
+    "HEALTH_preparation": {
+      "path": "cap40-health-preparation-v3/preparation.json",
+      "sha256": "70e6c283bbaddf94c87cdf6cd0eb48199b21e99a164bb4da9a2580f827aa37f6"
+    },
+    "actual_managed_source_helper": {
+      "path": "cap40-health-preparation-v3/actual-source-helper-result.json",
+      "sha256": "f65580a390883e0842ef3c1cb8ade820bcc6c1dc39ea596bdca71113e26e0d02"
+    },
+    "final_training_admission_review": {
+      "path": "cap40-final-binding-independent-review-v1/review.json",
+      "sha256": "83463c36016d5f72dcc3daff34ffd308143c3b65da9d2cc4d8a5edf7623ef7c3"
+    },
+    "owner": {
+      "path": "run_stage_cap40_v1.py",
+      "sha256": "2128f9bfaa22c3dd4b46abd4704403d5ac6e269e7b4dd2069ed32e374d4f28f7"
+    },
+    "observer": {
+      "path": "cap40-observe-once-v1.py",
+      "sha256": "e3b92a6371ea374c2936235b20b1dd5bd6f2621d61ce8cbbe81d6afd7e64cd9d"
+    },
+    "first_publication_manifest": {
+      "path": "cap40-step0-publication/fe23025d-a55d-4e00-8eae-a001036c0755/manifest.json",
+      "sha256": "7c9855139eebeb1d501376802f9aff8caab068f78c5fa4e10dfdd7edbd3d5749"
+    },
+    "first_publication_receipt": {
+      "path": "cap40-step0-publication/fe23025d-a55d-4e00-8eae-a001036c0755/receipt.json",
+      "sha256": "63e7d6b771dbf98e920a781c758d63f23b209fb989b338287c3a61063250b8d7"
+    },
+    "actual_step0_literal_bindings": {
+      "path": "cap40-health-preparation-v3/step0-bindings.json",
+      "sha256": "475bd5acbd8aa4d8651c78fd145d1e05b0b807e64c09e45cec85359a89674ab4"
+    },
+    "actual_reader_finalization": {
+      "path": "cap40-health-preparation-v3/finalization.json",
+      "sha256": "3ff36c37a600b9bb89ffc51647ac5319f87c7e6f1e6230562e364c6cd4d18efa"
+    },
+    "actual_bound_reader": {
+      "path": "cap40-health-preparation-v3/read_health.py",
+      "sha256": "e098a77649af58d2b0fbff5401a0d9987bd03e3bff41bbcb874ea9a3efb854ea"
+    },
+    "actual_bound_reader_review": {
+      "path": "cap40-bound-health-independent-review-v1/review.json",
+      "sha256": "ddb8914dbacb252f3f71e3263cb20f2804fe3d466d15792b5d828c5fc4e6ab62"
+    },
+    "old_confirmation": {
+      "path": "evaluation-readout-preparation-v1/confirmation-readout.json",
+      "sha256": "cc3c3ba953b59fbc5128478f8d7c1b237bc39eb1e6319d4f1b3c47770f3d05a6"
+    },
+    "actual_CPU_HEALTH_readout": {
+      "path": "cap40-health-preparation-v3/health-readout.json",
+      "sha256": "b16cf80b298845d457c33394375ed301e69a8dd3aafb44ddb991b9926ee368b9"
+    },
+    "training_terminal": {
+      "path": "cap40-eight-window-execution-v1/terminal.json",
+      "sha256": "e1748a8a20ce735b79cd40df17556e44176790ef4fb7c26d50ba5985a08a6bda"
+    },
+    "CPU_HEALTH_terminal": {
+      "path": "cap40-health-execution-v1/terminal.json",
+      "sha256": "54b1cab519fa30b135aeec716a7ebdf526e7858fcb7e74b676eef7a6b9029874"
+    },
+    "actual_HEALTH_independent_review": {
+      "path": "cap40-actual-health-independent-review-v1/review.json",
+      "sha256": "c31e74e161720cb28b05874de4c29f5b4e01407f15ff62f6d8c3e3891746c0cc"
+    },
+    "formal_final8_candidate_manifest": {
+      "path": "cap40-final-eight-window-candidate-v1/manifest.json",
+      "sha256": "2bd0167744bdca0d1341c0c3b944149e57f40a78cd4cec08d753238d5f448d7a"
+    },
+    "actual_arena_reader_binding": {
+      "path": "cap40-evaluation-reader-final-v1/binding.json",
+      "sha256": "ddea8ea8e1cbfbc840d1f44585693a99eed305544b1b0fcbe90d0323929b99c3"
+    },
+    "actual_arena_identity_review": {
+      "path": "cap40-arena-binding-independent-review-v1/review.json",
+      "sha256": "dae64414ae9e346e82080c6238a55049a4cf93c751084bc779313982d3271aa2"
+    },
+    "complete_screen_readout": {
+      "path": "cap40-evaluation-reader-final-v1/screen-readout.json",
+      "sha256": "3abc62573bf1fac3b0b875f39ffba9f3521b4ee894aa28bb07e97fd40842c267"
+    },
+    "screen_owner_terminal": {
+      "path": "cap40-paired-screen-execution-v1/terminal.json",
+      "sha256": "f334cf486e553edc04456e96ea5f6d2e625e47e51830f03b909afe47e583e37f"
+    },
+    "screen_CPU_readout_terminal": {
+      "path": "cap40-paired-screen-readout-execution-v1/terminal.json",
+      "sha256": "75059d909d8fe80cdc110f413bf5a6f5f2134042d185b50af76f620fd5b77199"
+    },
+    "prior_completed_training_dose_diagnosis": {
+      "path": "completed-training-dose-diagnosis-v1/readout.md",
+      "sha256": "a4cec29974d05011d61d6ee3305a153a40dc6fce5a72214d4c90c745db13cf74"
+    },
+    "actual_screen_independent_review": {
+      "path": "cap40-actual-screen-independent-review-v1/review.json",
+      "sha256": "04790d820a3fb497472545bff1942a1c5f2a38e320f7d22fc169c5e1098db620"
+    },
+    "post_cap40_inventory": {
+      "path": "compute-accounting-post-cap40-v1/inventory.json",
+      "sha256": "dabf54623f6f0975db909c5604c682fa9f12b079686e3c36d006c325d2b7ed85"
+    },
+    "post_cap40_accounting_summary": {
+      "path": "compute-accounting-post-cap40-v1/summary.md",
+      "sha256": "94add15b026d253801c67a41199b56051703cc16cf548eb66499f0c13b33f7e7"
+    },
+    "post_cap40_accounting_reconciliation": {
+      "path": "compute-accounting-post-cap40-v1/reconciliation.json",
+      "sha256": "0960c0716048edf58bd4928e3ff4ab3d04e33f003612b7319ec1a4c1ce966f23"
+    },
+    "post_cap40_accounting_scope": {
+      "path": "compute-accounting-post-cap40-v1/scope-note.md",
+      "sha256": "b48401088c212863014a18264eaa403f0d41422fa31b791e527290580392b558"
+    },
+    "compute_resource_closure": {
+      "path": "cap40-compute-closure-v1/receipt.json",
+      "sha256": "1458416ce1b1ae9cef2ea37dd493e791669560c0ecf7ccd822516cc2777af330"
+    }
+  },
+  "limits": [
+    "One fresh stochastic training realization, not a matched causal cap contrast or independent replication.",
+    "Record author read completed banked HEALTH/CSV/terminal metadata only; no model/checkpoint/shard or arena result read.",
+    "The bound CPU reader reports tensor/target HEALTH; independent semantic review accepted the readout and actual reconciliation without duplicate model/shard deserialization.",
+    "Clipping applies to AdamW auxiliary scope, not Aurora matrices; alarms are watch evidence, not retroactive kill rules or causal remedies.",
+    "SF-shaped trajectories, nonuniform sampling and quantized target limits remain; configured zero direct-SF losses do not establish SF independence.",
+    "Conditional donor-relative regression on fixed new openings/search only; no representative Elo rating or external-engine benchmark.",
+    "Cap40 versus872 uses different RNG/trajectory, panels and source; observed scores do not identify a causal cap effect.",
+    "Original confirmation score0.5005 remains valid/inconclusive and separate; no pooling, reroll or old holdout reuse.",
+    "No confirmation or further training follows this rejected bounded adjustment. Later mechanism/held-out design advice is not new code or compute."
+  ],
+  "first_window_operational_snapshot_at_earlier_live_draft": {
+    "rows_read": 1,
+    "iteration": 1,
+    "reported_matching_games": 65,
+    "applied_updates": 40,
+    "trainer_steps_done": 40,
+    "sampled_positions": 10240,
+    "aggregate_train_loss_finite": true,
+    "reported_nonfinite_gradient_skip_rate": 0.0,
+    "reported_retry_batches": 0.0,
+    "CSV_header_plus_first_row_sha256": "fa2341c91ac1a5844386c8c8a23999567760de607b48019e4e868a220ca5f461",
+    "CURRENT_quota_independently_audited": false,
+    "model_tensors_inspected": false,
+    "later_CSV_rows_read": false
+  },
+  "first_publication_metadata_at_initial_capture": {
+    "model_sha256_reported_by_owned_hashverified_capture": "170c9500b3c1ab29037bccc017506b78359cc448a0da40be3d0f5dd32fb54bc0",
+    "training_iteration": 1,
+    "trainer_step": 0,
+    "trial_id": "e7700_00000",
+    "observed_worker_seed": 3146462230,
+    "model_bytes_read_or_rehashed_for_this_record": false,
+    "donor_tensor_equality_established_by_metadata": false,
+    "source_manifest_and_receipt_hash_checked": true
+  },
+  "completed_training_and_CPU_HEALTH": {
+    "readout_status": "PASS_QUALIFIED_EIGHT_WINDOW_ENDPOINT_HEALTH_ONLY",
+    "independent_semantic_review": "ACCEPTED",
+    "independent_review_identity": {
+      "path": "cap40-actual-health-independent-review-v1/review.json",
+      "sha256": "c31e74e161720cb28b05874de4c29f5b4e01407f15ff62f6d8c3e3891746c0cc"
+    },
+    "trial_id": "e7700_00000",
+    "Ray_status": "TERMINATED",
+    "Ray_iterations": 8,
+    "Ray_failures": 0,
+    "windows": [
+      {
+        "iteration": 1,
+        "current_matching_games": 65,
+        "applied_updates": 40,
+        "cumulative_steps": 40,
+        "sampled_positions": 10240,
+        "ingested_rows": 5027,
+        "stale_games": 0,
+        "grad_norm_samples": 40,
+        "grad_norm_median_aux": 9.717737197875977,
+        "grad_hard_clip_rate_aux": 1.0,
+        "grad_adaptive_clip_fired_rate_aux": 0.0,
+        "grad_adaptive_bound_rate_aux": 0.0,
+        "diff_focus_keep_rate": 0.7018989109187378,
+        "diff_focus_priority_mean": 3.1164421812838095,
+        "diff_focus_regime_alarm": false,
+        "diff_focus_regime_alarm_metrics": "warmup",
+        "test_replay": 0
+      },
+      {
+        "iteration": 2,
+        "current_matching_games": 66,
+        "applied_updates": 40,
+        "cumulative_steps": 80,
+        "sampled_positions": 10240,
+        "ingested_rows": 4890,
+        "stale_games": 0,
+        "grad_norm_samples": 40,
+        "grad_norm_median_aux": 8.2920823097229,
+        "grad_hard_clip_rate_aux": 1.0,
+        "grad_adaptive_clip_fired_rate_aux": 0.0,
+        "grad_adaptive_bound_rate_aux": 0.0,
+        "diff_focus_keep_rate": 0.7818995842660698,
+        "diff_focus_priority_mean": 2.65107576357054,
+        "diff_focus_regime_alarm": false,
+        "diff_focus_regime_alarm_metrics": "warmup",
+        "test_replay": 0
+      },
+      {
+        "iteration": 3,
+        "current_matching_games": 65,
+        "applied_updates": 40,
+        "cumulative_steps": 120,
+        "sampled_positions": 10240,
+        "ingested_rows": 4346,
+        "stale_games": 0,
+        "grad_norm_samples": 40,
+        "grad_norm_median_aux": 7.77582859992981,
+        "grad_hard_clip_rate_aux": 1.0,
+        "grad_adaptive_clip_fired_rate_aux": 0.0,
+        "grad_adaptive_bound_rate_aux": 0.0,
+        "diff_focus_keep_rate": 0.7112929623567922,
+        "diff_focus_priority_mean": 2.4725433993352763,
+        "diff_focus_regime_alarm": false,
+        "diff_focus_regime_alarm_metrics": "warmup",
+        "test_replay": 0
+      },
+      {
+        "iteration": 4,
+        "current_matching_games": 64,
+        "applied_updates": 40,
+        "cumulative_steps": 160,
+        "sampled_positions": 10240,
+        "ingested_rows": 4604,
+        "stale_games": 0,
+        "grad_norm_samples": 40,
+        "grad_norm_median_aux": 8.752726078033447,
+        "grad_hard_clip_rate_aux": 1.0,
+        "grad_adaptive_clip_fired_rate_aux": 0.05,
+        "grad_adaptive_bound_rate_aux": 0.0,
+        "diff_focus_keep_rate": 0.7040831931487995,
+        "diff_focus_priority_mean": 2.3604663850205307,
+        "diff_focus_regime_alarm": true,
+        "diff_focus_regime_alarm_metrics": "diff_focus_priority_mean=2.3605>1.9|replay_priority_mean=2.5784>2.2|grad_hard_clip_rate=1.0000>0.3",
+        "test_replay": 0
+      },
+      {
+        "iteration": 5,
+        "current_matching_games": 65,
+        "applied_updates": 40,
+        "cumulative_steps": 200,
+        "sampled_positions": 10240,
+        "ingested_rows": 4789,
+        "stale_games": 1,
+        "grad_norm_samples": 40,
+        "grad_norm_median_aux": 9.191848278045654,
+        "grad_hard_clip_rate_aux": 1.0,
+        "grad_adaptive_clip_fired_rate_aux": 0.1,
+        "grad_adaptive_bound_rate_aux": 0.0,
+        "diff_focus_keep_rate": 0.7300339192106075,
+        "diff_focus_priority_mean": 2.141279365654128,
+        "diff_focus_regime_alarm": true,
+        "diff_focus_regime_alarm_metrics": "diff_focus_priority_mean=2.1413>1.9|replay_priority_mean=2.2811>2.2|grad_hard_clip_rate=1.0000>0.3",
+        "test_replay": 0
+      },
+      {
+        "iteration": 6,
+        "current_matching_games": 65,
+        "applied_updates": 40,
+        "cumulative_steps": 240,
+        "sampled_positions": 10240,
+        "ingested_rows": 4425,
+        "stale_games": 0,
+        "grad_norm_samples": 40,
+        "grad_norm_median_aux": 9.279031753540039,
+        "grad_hard_clip_rate_aux": 1.0,
+        "grad_adaptive_clip_fired_rate_aux": 0.05,
+        "grad_adaptive_bound_rate_aux": 0.0,
+        "diff_focus_keep_rate": 0.7250532524987711,
+        "diff_focus_priority_mean": 2.2161781316346674,
+        "diff_focus_regime_alarm": true,
+        "diff_focus_regime_alarm_metrics": "diff_focus_priority_mean=2.2162>1.9|replay_priority_mean=2.3707>2.2|grad_hard_clip_rate=1.0000>0.3",
+        "test_replay": 0
+      },
+      {
+        "iteration": 7,
+        "current_matching_games": 65,
+        "applied_updates": 40,
+        "cumulative_steps": 280,
+        "sampled_positions": 10240,
+        "ingested_rows": 5003,
+        "stale_games": 0,
+        "grad_norm_samples": 40,
+        "grad_norm_median_aux": 9.831343173980713,
+        "grad_hard_clip_rate_aux": 1.0,
+        "grad_adaptive_clip_fired_rate_aux": 0.2,
+        "grad_adaptive_bound_rate_aux": 0.0,
+        "diff_focus_keep_rate": 0.7363850456284957,
+        "diff_focus_priority_mean": 2.134315184595424,
+        "diff_focus_regime_alarm": true,
+        "diff_focus_regime_alarm_metrics": "diff_focus_priority_mean=2.1343>1.9|replay_priority_mean=2.3228>2.2|grad_hard_clip_rate=1.0000>0.3",
+        "test_replay": 0
+      },
+      {
+        "iteration": 8,
+        "current_matching_games": 64,
+        "applied_updates": 40,
+        "cumulative_steps": 320,
+        "sampled_positions": 10240,
+        "ingested_rows": 5238,
+        "stale_games": 0,
+        "grad_norm_samples": 40,
+        "grad_norm_median_aux": 9.800405502319336,
+        "grad_hard_clip_rate_aux": 1.0,
+        "grad_adaptive_clip_fired_rate_aux": 0.1,
+        "grad_adaptive_bound_rate_aux": 0.0,
+        "diff_focus_keep_rate": 0.7792323713180601,
+        "diff_focus_priority_mean": 2.1598320651119307,
+        "diff_focus_regime_alarm": true,
+        "diff_focus_regime_alarm_metrics": "diff_focus_priority_mean=2.1598>1.9|replay_priority_mean=2.3485>2.2|grad_hard_clip_rate=1.0000>0.3",
+        "test_replay": 0
+      }
+    ],
+    "sum_applied_updates": 320,
+    "sum_samples": 81920,
+    "retry_microbatches": 0,
+    "nonfinite_gradient_skips": 0,
+    "producer_and_replay_rows": 38322,
+    "replay_rows": 38322,
+    "producer_claimed_game_pairs": 520,
+    "current_games_counted_toward_quotas": 519,
+    "separately_stale_games": 1,
+    "stale_window": 5,
+    "stale_rows": 54,
+    "producer_selfplay_rows": 27797,
+    "producer_selfplay_fraction_among_tagged": 0.7253535827983926,
+    "producer_metadata_game_totals": {
+      "games": 520,
+      "selfplay_games": 256,
+      "curriculum_games": 264,
+      "adjudicated_games": 0,
+      "tb_adjudicated_games": 0,
+      "total_game_plies": 67474
+    },
+    "all8_checkpoints_state_tensors": [
+      494,
+      494,
+      494,
+      494,
+      494,
+      494,
+      494,
+      494
+    ],
+    "all8_finite_tensors": [
+      494,
+      494,
+      494,
+      494,
+      494,
+      494,
+      494,
+      494
+    ],
+    "all8_changed_tensors": [
+      477,
+      477,
+      477,
+      477,
+      477,
+      477,
+      477,
+      477
+    ],
+    "step0_reader_reports_exact_all494_donor_state_equal": true,
+    "HEALTH_only_final_checkpoint_sha256": "cc2aa8fc00db3510f5101c5471522bbfa4356d64ce03abb9588c677de1bbb6ba",
+    "final_step": 320,
+    "latest_served_checkpoint": 7,
+    "latest_served_step": 280,
+    "latest_served_sha256": "78990fe087079f40a81d85200e842cffd770b715514f1d71cedaea4d68ab4b41",
+    "latest_served_reader_reports_exact_checkpoint7_equal": true,
+    "final320_republished_at_horizon": false,
+    "configured_base_seed": 20261111,
+    "actual_learner_seed": 1462384720,
+    "observed_collection_coverage": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "observation_records": 26,
+    "seed_scope": "Source-derived expected seeds are joined to finite observer records; only last3 worker logs survive. Not every-game serving telemetry.",
+    "terminals": {
+      "training": {
+        "path": "cap40-eight-window-execution-v1/terminal.json",
+        "sha256": "e1748a8a20ce735b79cd40df17556e44176790ef4fb7c26d50ba5985a08a6bda",
+        "whole_stage_wall_seconds": 2516.7589892800024,
+        "owned_PID_birth_identities": 66,
+        "owned_closed": true,
+        "returncode": 0
+      },
+      "CPU_HEALTH": {
+        "path": "cap40-health-execution-v1/terminal.json",
+        "sha256": "54b1cab519fa30b135aeec716a7ebdf526e7858fcb7e74b676eef7a6b9029874",
+        "whole_stage_wall_seconds": 43.21177029600949,
+        "owned_PID_birth_identities": 1,
+        "owned_closed": true,
+        "returncode": 0
+      }
+    },
+    "tensor_claims_source": "Bound CPU HEALTH readout; document author never opened, rehashed or deserialized models, checkpoints or shards."
+  },
+  "diagnostic_limits": {
+    "CSV_SHA256": "b0d5e20686d9fe194497c6fe566cfb2573974852b71aa22032021ba80e065c87",
+    "CSV_rows_read_for_this_update": 8,
+    "hard_clip_binding_updates_aux": 320,
+    "hard_clip_scope": "AdamW auxiliary parameters only; Aurora matrix group excluded",
+    "hard_clip_rate_aux_each_window": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "adaptive_fired_rates_aux": [
+      0.0,
+      0.0,
+      0.0,
+      0.05,
+      0.1,
+      0.05,
+      0.2,
+      0.1
+    ],
+    "adaptive_bound_rates_aux": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "aux_median_norm_range": [
+      7.77582859992981,
+      9.831343173980713
+    ],
+    "diff_focus_alarm_windows": [
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "first3_alarm_status": "First three windows marked warmup despite priority means already above 1.9.",
+    "diff_focus_priority_mean_range": [
+      2.134315184595424,
+      3.1164421812838095
+    ],
+    "recorded_keep_fraction_range": [
+      0.7018989109187378,
+      0.7818995842660698
+    ],
+    "unmeasured_holdout_drift_all_test_replay0": true,
+    "no_alarm_to_new_kill_rule_or_causal_cap_claim": true,
+    "quantized_target_algebra_and_every_game_serving_not_proven": true,
+    "no_new_gradient_or_SF_isolation_measurement": true
+  },
+  "formal_candidate_binding": {
+    "manifest_identity": {
+      "path": "cap40-final-eight-window-candidate-v1/manifest.json",
+      "sha256": "2bd0167744bdca0d1341c0c3b944149e57f40a78cd4cec08d753238d5f448d7a"
+    },
+    "candidate_sha256": "cc2aa8fc00db3510f5101c5471522bbfa4356d64ce03abb9588c677de1bbb6ba",
+    "trainer_step": 320,
+    "source_revision": "7a5d3802c1f992cb2e1fc7dfc06afb2f3e4764ad",
+    "protocol_sha256": "7098bf4fcf8509e6f6500616a3c479ed408975b1a2c9be594d14b64f4f48184d",
+    "selected_unix": 1794471988.793492,
+    "selected_only_after_actual_HEALTH_acceptance": true,
+    "candidate_count": 1,
+    "adopted_or_strength_claim": false,
+    "arena_binding_identity": {
+      "path": "cap40-evaluation-reader-final-v1/binding.json",
+      "sha256": "ddea8ea8e1cbfbc840d1f44585693a99eed305544b1b0fcbe90d0323929b99c3"
+    },
+    "arena_reader_sha256": "b53ebe7509d405bce307fbebadf7e557ad6ef2b66b43982894d604c48d6759dc",
+    "reports_exact_d663_reversal": true,
+    "independent_actual_arena_identity_review": "ACCEPTED",
+    "independent_actual_arena_identity_review_receipt": {
+      "path": "cap40-arena-binding-independent-review-v1/review.json",
+      "sha256": "dae64414ae9e346e82080c6238a55049a4cf93c751084bc779313982d3271aa2"
+    }
+  },
+  "completed_screen": {
+    "readout_identity": {
+      "path": "cap40-evaluation-reader-final-v1/screen-readout.json",
+      "sha256": "3abc62573bf1fac3b0b875f39ffba9f3521b4ee894aa28bb07e97fd40842c267"
+    },
+    "status": "VALID_COMPLETE_SCREEN",
+    "stage": "screen",
+    "candidate_sha256": "cc2aa8fc00db3510f5101c5471522bbfa4356d64ce03abb9588c677de1bbb6ba",
+    "candidate_manifest_sha256": "2bd0167744bdca0d1341c0c3b944149e57f40a78cd4cec08d753238d5f448d7a",
+    "reader_sha256": "b53ebe7509d405bce307fbebadf7e557ad6ef2b66b43982894d604c48d6759dc",
+    "source_revision": "7a5d3802c1f992cb2e1fc7dfc06afb2f3e4764ad",
+    "protocol_sha256": "7098bf4fcf8509e6f6500616a3c479ed408975b1a2c9be594d14b64f4f48184d",
+    "counts_WDL": [
+      56,
+      80,
+      120
+    ],
+    "integer_pentanomial_counts": [
+      5,
+      22,
+      33,
+      40,
+      28
+    ],
+    "pairs": 128,
+    "games": 256,
+    "integer_units": 192,
+    "score": 0.375,
+    "score_SE": 0.0249569018273282,
+    "paired_normal95": [
+      0.32608447241843674,
+      0.42391552758156326
+    ],
+    "termination_strata": {
+      "rules": {
+        "games": 256,
+        "candidate_wins": 56,
+        "draws": 80,
+        "candidate_losses": 120
+      },
+      "max_plies": {
+        "games": 0,
+        "candidate_wins": 0,
+        "draws": 0,
+        "candidate_losses": 0
+      }
+    },
+    "screen_eligible": false,
+    "registered_decision": "not_eligible",
+    "conditional_regression_against_donor_fixed_panel": true,
+    "representative_Elo_or_external_engine_strength_claim": false,
+    "independent_actual_screen_review": "ACCEPTED",
+    "independent_actual_screen_review_identity": {
+      "path": "cap40-actual-screen-independent-review-v1/review.json",
+      "sha256": "04790d820a3fb497472545bff1942a1c5f2a38e320f7d22fc169c5e1098db620"
+    },
+    "score_recomputed_from_complete_integer_counts_not_rounded_metrics": true,
+    "no_raw_games_or_model_read_by_record_author": true,
+    "whole_stage_timings": {
+      "GPU_intended_screen": {
+        "terminal": {
+          "path": "cap40-paired-screen-execution-v1/terminal.json",
+          "sha256": "f334cf486e553edc04456e96ea5f6d2e625e47e51830f03b909afe47e583e37f"
+        },
+        "whole_stage_wall_seconds": 865.4940991149924,
+        "owned_closed": true,
+        "owned_PID_birth_identities": 1
+      },
+      "CPU_screen_readout": {
+        "terminal": {
+          "path": "cap40-paired-screen-readout-execution-v1/terminal.json",
+          "sha256": "75059d909d8fe80cdc110f413bf5a6f5f2134042d185b50af76f620fd5b77199"
+        },
+        "whole_stage_wall_seconds": 9.138764237985015,
+        "owned_closed": true,
+        "owned_PID_birth_identities": 1
+      }
+    },
+    "review_scope": "Independent all256 JSONL/PGN, full16ply histories, colors, terminal legality/settings, pair arithmetic and owned closure; no duplicate model reads."
+  },
+  "final_disposition": {
+    "screen_ineligible": true,
+    "confirmation_run": false,
+    "candidate_adopted": false,
+    "retained_original_A39_donor": true,
+    "further_training_planned_within_this_bounded_one_adjustment_experiment": false,
+    "no_causal_cap_vs_872_comparison": true,
+    "old_experiment_valid_inconclusive_confirmation_kept_separate": true,
+    "no_pooling_or_favorable_extension": true,
+    "broader_Rofchade_Stockfish_Lc0_goal_achieved": false
+  },
+  "compute_accounting": {
+    "inventory_identity": {
+      "path": "compute-accounting-post-cap40-v1/inventory.json",
+      "sha256": "dabf54623f6f0975db909c5604c682fa9f12b079686e3c36d006c325d2b7ed85"
+    },
+    "separate_reconciliation_identity": {
+      "path": "compute-accounting-post-cap40-v1/reconciliation.json",
+      "sha256": "0960c0716048edf58bd4928e3ff4ab3d04e33f003612b7319ec1a4c1ce966f23"
+    },
+    "original23_records_and_receipt_hashes_preserved": true,
+    "closed_owner_stages": 29,
+    "classification_counts": {
+      "GPU_STAGE_ELAPSED": 11,
+      "CPU_ONLY": 18,
+      "UNKNOWN": 0
+    },
+    "whole_owner_stage_wall_seconds": {
+      "GPU_STAGE_ELAPSED": 15519.291528360976,
+      "CPU_ONLY": 2247.169121291983,
+      "UNKNOWN": 0.0
+    },
+    "new_cap40_GPU_intended_stage_seconds": 3382.253088394995,
+    "new_cap40_CPU_owner_seconds": 198.95084194399533,
+    "new_cap40_stages": [
+      {
+        "name": "cap40-eight-window-execution-v1",
+        "classification": "GPU_STAGE_ELAPSED",
+        "wall_seconds": 2516.7589892800024,
+        "terminal_sha256": "e1748a8a20ce735b79cd40df17556e44176790ef4fb7c26d50ba5985a08a6bda",
+        "returncode": 0,
+        "owned_processes_closed": true,
+        "custody": "OWNED_PROCESSES_CLOSED"
+      },
+      {
+        "name": "cap40-health-execution-v1",
+        "classification": "CPU_ONLY",
+        "wall_seconds": 43.21177029600949,
+        "terminal_sha256": "54b1cab519fa30b135aeec716a7ebdf526e7858fcb7e74b676eef7a6b9029874",
+        "returncode": 0,
+        "owned_processes_closed": true,
+        "custody": "OWNED_PROCESSES_CLOSED"
+      },
+      {
+        "name": "cap40-paired-screen-execution-v1",
+        "classification": "GPU_STAGE_ELAPSED",
+        "wall_seconds": 865.4940991149924,
+        "terminal_sha256": "f334cf486e553edc04456e96ea5f6d2e625e47e51830f03b909afe47e583e37f",
+        "returncode": 0,
+        "owned_processes_closed": true,
+        "custody": "OWNED_PROCESSES_CLOSED"
+      },
+      {
+        "name": "cap40-paired-screen-readout-execution-v1",
+        "classification": "CPU_ONLY",
+        "wall_seconds": 9.138764237985015,
+        "terminal_sha256": "75059d909d8fe80cdc110f413bf5a6f5f2134042d185b50af76f620fd5b77199",
+        "returncode": 0,
+        "owned_processes_closed": true,
+        "custody": "OWNED_PROCESSES_CLOSED"
+      },
+      {
+        "name": "cap40-panel-actual-audit-execution-v1",
+        "classification": "CPU_ONLY",
+        "wall_seconds": 3.128948456986109,
+        "terminal_sha256": "68e799b91bf54d3d0c6672dbbd73b7018eca8dfecf7d1b28b856adb6c6854c17",
+        "returncode": 0,
+        "owned_processes_closed": true,
+        "custody": "OWNED_PROCESSES_CLOSED"
+      },
+      {
+        "name": "cap40-panel-extraction-execution-v1",
+        "classification": "CPU_ONLY",
+        "wall_seconds": 143.47135895301471,
+        "terminal_sha256": "a0bd9c49bc86e3cb68746984b431d64a2396ca911a0b9aca5a294a6d30ee1288",
+        "returncode": 0,
+        "owned_processes_closed": true,
+        "custody": "OWNED_PROCESSES_CLOSED"
+      }
+    ],
+    "pending_owner_stages": 0,
+    "unknown_closed_classifications": 0,
+    "recorded_GPU_owner_interval_overlap_count": 0,
+    "external_workload_absence_or_exclusive_GPU_claim": false,
+    "not_CUDA_active_time_utilization_device_hours_lifetime_or_full_project_elapsed": true,
+    "not_complete_CPU_cost": true,
+    "manual_bank_hash_fsync_and_metadata_finalizers_outside_owner_totals": true,
+    "CPU_coverage_gaps": [
+      "Root manual formal-bank copy/hash/fsync outside owner stages: elapsed CPU/I/O unmeasured, not included.",
+      "Root metadata finalizers and direct qualification/source/native proof/preparation/review calls outside owner receipts: elapsed CPU unmeasured unless separately recorded; no invented comprehensive CPU total.",
+      "Inherited402checks36.877s remains a separate known validation observation, never included in owner sums or claimed complete qualification time."
+    ],
+    "unrun_confirmation_counted_as_stage": false,
+    "unrun_confirmation_duration_invented": false
+  },
+  "resource_closure": {
+    "receipt_identity": {
+      "path": "cap40-compute-closure-v1/receipt.json",
+      "sha256": "1458416ce1b1ae9cef2ea37dd493e791669560c0ecf7ccd822516cc2777af330"
+    },
+    "at_utc": "2026-11-12T08:44:28.977653+00:00",
+    "owned_birth_counts_closed": [
+      66,
+      1,
+      1,
+      1
+    ],
+    "all3_canonical_leases_available_at_snapshot": true,
+    "controls_cleared": false,
+    "unrelated_work_modified": false,
+    "confirmation_launched": false,
+    "candidate_adopted": false,
+    "new_training_planned": false,
+    "scope": "Closure-time observation, not permanent idle/exclusive resource claim."
+  },
+  "next_design_recommendation": {
+    "scope": "Conservative design advice only; no code or compute started.",
+    "prior_completed_dose_diagnosis_identity": {
+      "path": "completed-training-dose-diagnosis-v1/readout.md",
+      "sha256": "a4cec29974d05011d61d6ee3305a153a40dc6fce5a72214d4c90c745db13cf74"
+    },
+    "recommendation": "Isolate one falsifiable mechanism with a real held-out behavior/target or update measurement before another dose expansion; match relevant source/state/replay/RNG for causal questions and preregister fresh unseen evaluation/uncertainty/bounds.",
+    "not_established": [
+      "causal cap remedy",
+      "causal clipping/LR/teacher/sampler remedy",
+      "representative public Elo",
+      "Rofchade/Stockfish/Lc0 ranking",
+      "general failure or success of RL"
+    ]
+  }
+}
