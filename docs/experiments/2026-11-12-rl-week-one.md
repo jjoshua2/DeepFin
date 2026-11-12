@@ -188,8 +188,8 @@ real-time safety. No model, target, optimizer or allocation formula changes.
 
 A real slow-evaluator walker test fails against the original phase and passes
 with the repair. Nine deadline tests, 176 lifecycle/ponder/search regressions
-and one self-play smoke passed with CUDA hidden and two Torch threads. The
-source change still needs independent review and actual donor qualification.
+and one self-play smoke passed with CUDA hidden and two Torch threads. At this
+preregistration, independent review and actual donor qualification were pending.
 
 Before another pair, freeze the repaired source and qualify it with **no games**:
 same donor/device/search/chunk/tablebases, at most 300 GPU-intended stage seconds,
@@ -200,3 +200,102 @@ no guarded faults/fallbacks, each timed response within its computed hard
 budget plus 500 ms, exact 64 nodes for the node-only control and owned process
 closure. Record startup separately. Failure preserves the output and blocks
 the next match; no favorable retry or training/adoption follows automatically.
+
+## November 12: qualification and repaired pair
+
+Readout cutoff: **2026-11-12 18:36 UTC**. Subsequent stages retain separate
+results; the pending work below describes this cutoff.
+
+The match-history/option fix merged in [PR 1232](https://github.com/jjoshua2/DeepFin/pull/1232)
+at `0db6e954861ebae91526c6cd4c3a08dd37ce1655`. The deadline repair merged in
+[PR 1235](https://github.com/jjoshua2/DeepFin/pull/1235) at
+`9a0a825b2b147d72522b406c52d051b7a2a97f80`. Both composed revisions received
+independent review and passed all four remote CI jobs. Measured repaired runtime
+remains pinned to `f914f51eb349681300fe50147029e98b880de63e`.
+
+All four preregistered donor probes passed with no fallback/fault diagnostic.
+The two 940 ms clock allocations returned in 1.028 s and 0.995 s; the 200 ms
+request (170 ms after move overhead) returned in 0.251 s, within the declared
+500 ms tolerance. The node-only control returned exactly 64 nodes. Startup took
+82.137 s off clock; the owner closed after 90.408 s. This qualifies the sampled
+cooperative route, not every clock or an opaque native chunk.
+
+The fixed successor pair kept the original eager PUCT2/gather-one/chunk-2,048
+profile, 30 s + 100 ms clocks, eight-thread Rofchade and common tablebases.
+It completed **0 wins, 0 draws, 2 losses** for the donor, with actual checkmates
+at 132 and 127 plies. Independent replay reconciled all 259 legal played moves,
+PGNs, clock charges and protocol responses. No clock forfeit, illegal move,
+ply-cap draw or guarded engine fault occurred; all three owned process births
+were absent after closure. Wall time was 288.221 s including startup/cleanup.
+There is no between-opening interval from one pair and no strength milestone.
+
+Of the donor's 129 replies, 26 were root tablebase shortcuts reporting one node
+and one hit. The remaining 103 replies reported 1,844 nodes in total, median 19
+and range 1–33. Do not count the shortcuts as neural search work or interpret
+this small deployed-search budget as an RL-quality measurement.
+
+## November 12: serving cost and compilation
+
+The fixed raw study loaded one strict A39 model, retained actual 175-plane/history
+metadata and observed CUDA BF16 autocast. It completed 48 forward calls/516 rows,
+including 40 timed calls/430 rows. Same-batch route/repeat outputs matched exactly;
+batch-size changes did produce small numerical differences. Direct serving
+median latencies for batches 1, 2, 8 and 32 were 28.846, 30.022, 29.321 and
+29.880 ms. Larger batches amortize a nearly fixed call cost on this small panel;
+this is not search NPS or an attribution to one specific CPU/GPU operation.
+CUDA-event stream intervals include eager host-launch gaps and are not accumulated
+kernel-active time. The owner closed after 7.148 s.
+
+The first compiled-study attempt failed during observer setup: it tried a
+nonexistent dispatcher attribute after two eager factory calls/three rows.
+It never constructed the compiled comparison route. Its 23.222 s and failure
+artifacts are retained. The corrected observer uses the actual delegate API;
+real CPU constructor controls reproduce the old failure. A separately reviewed,
+fixed successor preserved the original comparison schedule and 900 s ceiling.
+
+The successor completed with actual owner-thread graph capture/replay, finite
+outputs and bit-identical same-route repeats. Two Dynamo graphs were recorded;
+separate hooks observed three CUDA capture objects and 22 balanced replays.
+The 36 measured requests/48 rows gave these completed request latencies:
+
+| Batch | Eager median | Compiled median | Median latency ratio |
+| --- | --- | --- | --- |
+| 1 | 29.726 ms | 3.052 ms | 9.74 |
+| 2 | 29.127 ms | 3.663 ms | 7.95 |
+
+These small-sample serving measurements include dispatcher completion, not search
+or playing strength. Inverse-median throughput differs from aggregate rows divided
+by summed durations; both are retained in the compact evidence. Cold compilation,
+imports and cleanup are included in the 107.500 s owner wall time.
+
+**Strict numerical equivalence remains unqualified:** none of the 24 eager versus
+compiled comparisons met the original `atol=1e-5, rtol=1e-4` criterion. Maximum
+WDL probability difference was 0.0006151; maximum legal-policy total variation
+was 0.0039340. No sampled legal top action changed on the four correlated opening
+prefixes. These observations do not prove numerical equivalence on other boards.
+Treat compilation as a distinct experimental serving profile. An actual UCI
+clock/node/history qualification is the next step before binding its command to
+the frozen eight-game/four-opening engineering panel; neither is an adoption or
+strength gate.
+
+## Continuing work and cost checkpoint
+
+Seven completed GPU-intended stages total **986.065154 s (16 min 26.065 s)** at
+this readout cutoff, including the failed observer, load, warmup and cleanup.
+This is owner wall time, not GPU kernel time. Manual CPU tests and remote CI are
+outside that total; the earlier closed RL experiments retain their separate cost
+records. Compact results, per-stage identities and bulk-artifact hashes are in
+[day1-readout.json](evidence/rl-week-one-20261112/day1-readout.json).
+
+The learning lane found that default distributed holdout selection splits rows
+within games and that capped games can receive SF/default-draw labels. The optional
+finite-game provenance API in [PR 1237](https://github.com/jjoshua2/DeepFin/pull/1237)
+exposes full histories, pre-outcome start ordinals, raw record roles, final native
+FEN and separate terminal/rescore paths. It preserves current labels; it does not
+create or qualify a holdout. A separate two-game plumbing pilot is being prepared,
+with its physical games excluded from the later research cohort. No new research
+cohort, full learning comparison or substantive external baseline is qualified yet.
+
+There have been **zero new week-one training updates and no candidate adoption**
+at this checkpoint. Keep the donor and prior negative results. The first week and
+the months-long Rofchade/Stockfish/Lc0 objectives remain active and unachieved.
