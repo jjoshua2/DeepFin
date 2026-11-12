@@ -74,6 +74,13 @@ def test_real_python_search_uses_same_mixed_evaluator_for_root_and_leaves():
     assert evaluator.evaluated_rows > 1
     root_hash = evaluator.calls[0]["input_sha256"]
     assert any(c["input_sha256"] != root_hash for c in evaluator.calls[1:])
+    # Production fourth return is a full legal mask, never a WDL distribution.
+    assert len(result) == 4
+    legal_mask = result[3][0]
+    assert legal_mask.shape == (4672,)
+    assert legal_mask.dtype == np.bool_
+    assert int(legal_mask.sum()) == 20
+    assert legal_mask[result[1][0]]
     repeat = search_one(chess.Board(), OutputCrossover(a, b), cfg=cfg, seed=37)
     for left, right in zip(result, repeat, strict=True):
         assert np.array_equal(np.asarray(left), np.asarray(right))
