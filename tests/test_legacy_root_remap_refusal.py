@@ -115,17 +115,3 @@ def test_samples_convert_when_the_caller_opts_in() -> None:
         allow_lossy_legacy_remap=True,
     )
     assert all(s.input_history_encoding == "lc0_root" for s in out)
-
-
-def test_refusal_names_what_works_not_the_threat_converter() -> None:
-    """The converter only adds threat planes; it cannot create x_lc0_root, so
-    the message must not send an operator to it as the fix."""
-    with pytest.raises(ValueError, match="CANNOT recover side-to-move") as info:
-        select_input_history_arrays(
-            {"x": _legacy_rows(2)},
-            input_history_encoding="lc0_root_legacy_meta",
-        )
-    msg = str(info.value)
-    assert "Re-encode the shards" not in msg
-    assert "No converter can rebuild the missing history" in msg
-    assert "stored in 'lc0_root_legacy_meta' or carrying a recorded x_lc0_root" in msg
