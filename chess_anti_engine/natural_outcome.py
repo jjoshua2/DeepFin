@@ -5,13 +5,14 @@ Only complete standard-start histories and automatic natural terminals qualify.
 Claimable draws, resignation, censoring and adjudication are deliberately excluded.
 Capture BEFORE any tablebase rescore; never substitute a TB WDL for game outcome.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
 import json
 import math
-from typing import Sequence
+from collections.abc import Sequence
 
 import chess
 
@@ -26,8 +27,13 @@ class NaturalOutcome:
 
 
 def capture_natural_outcome(
-    board: chess.Board, *, resolved_result: str,
-    adjudicated: bool, tb_adjudicated: bool, resigned: bool, censored: bool,
+    board: chess.Board,
+    *,
+    resolved_result: str,
+    adjudicated: bool,
+    tb_adjudicated: bool,
+    resigned: bool,
+    censored: bool,
 ) -> NaturalOutcome:
     """Snapshot full board history before rescore; refuse unknown/altered histories."""
     flags = (adjudicated, tb_adjudicated, resigned, censored)
@@ -51,17 +57,28 @@ def capture_natural_outcome(
     outcome = replay.outcome(claim_draw=False)
     if outcome is None or outcome.result() != resolved_result:
         raise ValueError("automatic natural result required")
-    payload = {"start": chess.STARTING_FEN, "moves": moves,
-               "result": outcome.result(), "termination": outcome.termination.name,
-               "final_fen": replay.fen(en_passant="fen")}
-    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    return NaturalOutcome(moves, outcome.result(), outcome.termination.name,
-                          payload["final_fen"], digest)
+    payload = {
+        "start": chess.STARTING_FEN,
+        "moves": moves,
+        "result": outcome.result(),
+        "termination": outcome.termination.name,
+        "final_fen": replay.fen(en_passant="fen"),
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return NaturalOutcome(
+        moves, outcome.result(), outcome.termination.name, payload["final_fen"], digest
+    )
 
 
 def admit_rows(
-    receipt: NaturalOutcome, *, expected_trace_sha256: str,
-    plies: Sequence[int], stm_white: Sequence[bool], outcomes: Sequence[int],
+    receipt: NaturalOutcome,
+    *,
+    expected_trace_sha256: str,
+    plies: Sequence[int],
+    stm_white: Sequence[bool],
+    outcomes: Sequence[int],
     tb_rescored: bool,
 ) -> tuple[int, ...]:
     """Bind ordered pre-move rows to replay; WDL class order W=0,D=1,L=2.
@@ -72,8 +89,11 @@ def admit_rows(
     """
     if type(tb_rescored) is not bool or tb_rescored:
         raise ValueError("TB-rescored or unknown outcome source")
-    if (type(receipt.moves) is not tuple or not 1 <= len(receipt.moves) <= 1600
-            or any(type(m) is not str or not 4 <= len(m) <= 5 for m in receipt.moves)):
+    if (
+        type(receipt.moves) is not tuple
+        or not 1 <= len(receipt.moves) <= 1600
+        or any(type(m) is not str or not 4 <= len(m) <= 5 for m in receipt.moves)
+    ):
         raise ValueError("bounded immutable UCI history required")
     ps, turns, labels = tuple(plies), tuple(stm_white), tuple(outcomes)
     if not ps or len(ps) > 256 or not (len(ps) == len(turns) == len(labels)):
@@ -90,22 +110,34 @@ def admit_rows(
         if move not in replay.legal_moves:
             raise ValueError("illegal receipt history")
         replay.push(move)
-    verified = capture_natural_outcome(replay, resolved_result=receipt.result,
-        adjudicated=False, tb_adjudicated=False, resigned=False, censored=False)
+    verified = capture_natural_outcome(
+        replay,
+        resolved_result=receipt.result,
+        adjudicated=False,
+        tb_adjudicated=False,
+        resigned=False,
+        censored=False,
+    )
     if verified != receipt or verified.trace_sha256 != expected_trace_sha256:
         raise ValueError("receipt identity mismatch")
     expected = []
     for p, turn, label in zip(ps, turns, labels):
         if type(turn) is not bool or turn != positions[p]:
             raise ValueError("row side-to-move mismatch")
-        value = 1 if receipt.result == "1/2-1/2" else (0 if (receipt.result == "1-0") == turn else 2)
+        value = (
+            1
+            if receipt.result == "1/2-1/2"
+            else (0 if (receipt.result == "1-0") == turn else 2)
+        )
         if type(label) is not int or label != value:
             raise ValueError("stored outcome differs from natural result")
         expected.append(value)
     return tuple(expected)
 
 
-def require_search_labels(labels: Sequence[Sequence[float]], present: Sequence[bool]) -> None:
+def require_search_labels(
+    labels: Sequence[Sequence[float]], present: Sequence[bool]
+) -> None:
     """Reject missing/invalid sources before the production outcome fallback.
 
     Values must already be qualified normalized labels; this gate never repairs
