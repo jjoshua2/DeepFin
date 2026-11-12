@@ -474,3 +474,29 @@ def test_single_unit_latches_backend_stop_before_the_same_sweep_applies_it(tmp_p
     assert not admissions
     assert advances[1]["stopped"] is False  # the race: STOP arrived after the sample
     assert len(advances) == 2  # the sweep that saw the latch was the last one
+
+
+class _AdvanceStub:
+    def __init__(self, remaining: bool) -> None:
+        self.remaining = remaining
+        self.calls: list[tuple[bool, object]] = []
+
+    def advance(self, *, stopped: bool, stop: object) -> bool:
+        self.calls.append((stopped, stop))
+        return self.remaining
+
+
+@pytest.mark.parametrize("first_remaining", [True, False])
+def test_sweep_pools_advances_every_pool_in_one_sweep(first_remaining: bool) -> None:
+    """A pool reporting remaining work must not short-circuit later pools
+    (mutant ``remaining = remaining or pool.advance(...)``)."""
+    from scripts.shared_teacher_generation import sweep_pools
+
+    pools = [_AdvanceStub(first_remaining), _AdvanceStub(True), _AdvanceStub(False)]
+    signal = StopSignal(lambda: False)
+    paused, remaining = sweep_pools(cast(Any, pools), signal)
+    assert (paused, remaining) == (False, True)
+    for pool in pools:
+        assert len(pool.calls) == 1
+        assert pool.calls[0][0] is False
+        assert pool.calls[0][1] == signal.is_set

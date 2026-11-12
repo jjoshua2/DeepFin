@@ -622,6 +622,10 @@ def run_pooled_games(
     This API leaves session/resource admission with the existing owner. It
     publishes raw files before a durable per-game checkpoint. On commit retry,
     a matching orphan NPZ is validated against the retained finalized outcome.
+    A custom ``stop`` callable also runs on the dispatcher thread (via
+    ``StopSignal.latch_after``), so it must be thread-safe and cheap, and an
+    exception it raises there makes the dispatcher fatal and fails every
+    pending future.
     """
     spec.validate()
     if rep_fix.current() is not True:

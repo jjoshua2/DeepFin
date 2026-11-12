@@ -67,17 +67,17 @@ run Skill and operations document cover the mechanics.
 
 A bad live value fails in one of three ways, which code comments cite by letter:
 
-- **(a) Key not in the schema** (`utils/config_yaml.py`): mid-run the whole reload is
-  rejected and the old config kept; at launch it is fatal. Before a restart, compare
-  the live YAML's keys with the target revision's schema.
+- **(a) Rejected by the loader**: a key not in the schema (`utils/config_yaml.py`), or
+  a value failing a check in `flatten_run_config_defaults` (strict booleans,
+  `pb2_bounds_*` shape, flag pairings; read its `_check_*` calls). Mid-run the whole
+  reload is rejected and the old config kept, so other edits in the same save are not
+  applied; at launch it is fatal. Before a restart, compare the live YAML's keys with
+  the target revision's schema.
 - **(b) In the schema, rejected by a validator that runs inside the iteration loop**
   (chiefly `TrialConfig.from_dict`): the reload succeeds, the validator raises and
   the trial dies.
 - **(c) In the schema but not range-checked**: applied raw and silently. `lr` is one
   such key (LR above 0.003 has destroyed the model).
-
-Some value checks run in the loader instead (`flatten_run_config_defaults`, e.g.
-strict booleans); a bad value there behaves like (a).
 
 Respect intentional-stop and pause markers. Before a change whose effects survive a
 config revert, preserve enough state to recover: weights, optimizer, PID and replay,

@@ -931,10 +931,13 @@ def select_input_history_arrays(
             f"{n_synthetic} of {n} replay rows are stored as legacy history with no "
             f"recorded x_lc0_root, so selecting {hist_enc!r} would synthesize them via "
             "a remap that CANNOT recover side-to-move: every converted row reads as "
-            "white-to-move (docs/rl_loop_audit.md M12). Re-encode the shards for the "
-            "current model (scripts/convert_shards_v2_threats.py) or drop them from "
-            "the window; pass allow_lossy_legacy_remap=True only for offline "
-            "diagnostics that accept a wrong POV plane."
+            "white-to-move (docs/rl_loop_audit.md M12). No converter can rebuild the "
+            "missing history (scripts/convert_shards_v2_threats.py only adds threat "
+            "planes to an existing x/x_lc0_root). Use shards stored in "
+            f"{hist_enc!r} or carrying a recorded x_lc0_root, or drop these from the "
+            "window; pass allow_lossy_legacy_remap=True (an offline caller's explicit "
+            "lossy opt-in, where it offers one) only for diagnostics that accept a "
+            "wrong POV plane."
         )
     root_x = np.array(legacy_x, copy=True, order="C")
     if n_synthetic:
