@@ -124,6 +124,7 @@ def test_play_one_pairing_preserves_side_settings(monkeypatch: pytest.MonkeyPatc
     assert calls["kwargs"]["clock_inc_w_ms"] == 500
     assert calls["kwargs"]["clock_inc_b_ms"] == 250
     assert calls["kwargs"]["syzygy_adjudicate_max_pieces"] == 6
+    assert calls["kwargs"]["preserve_opening_history"] is True
 
 
 def test_parse_opening_line_accepts_six_field_fen() -> None:
