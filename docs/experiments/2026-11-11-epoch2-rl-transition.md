@@ -349,3 +349,220 @@ This is not a claim that the whole remote suite has passed; rerun CI on the fina
 composed branch. Local whole lint retains only three established standalone-Python
 `_posixshmem` resolution errors; ruff and vulture pass. Runtime source remains
 unchanged during the fixed CPU mechanism stage.
+
+
+### Corrected scientific pilot and exact evaluation preregistration
+
+Before scientific training, freeze proposal
+`scientific-pilot-config-v2/0b08fba3-fcc4-407e-adf2-00fd460c0bc9/manifest.json`
+under the artifact root, manifest SHA256
+`ac764f35fea027f1cff5eefb7ddfcbad163da308c27572c30edbd21113dfc689`.
+Config and separate experimental evaluation YAML both have SHA256
+`71b4cb1be3d4249887f36b640f48c6987f0ca13437f759657b97e160b474eae3`.
+Actual CLI/TrialConfig/trainer-kwargs/recommended-worker/worker-dataclass checks
+pass without model or CUDA execution;258 explicitly chosen effective settings are
+strict-bound. This remains a proposal until CUDA/optimizer/producer qualification.
+
+Restore supported donor auxiliary weights and Aurora polar_express recipe,
+FP16 polar arithmetic,8 polar steps,3PPiterations,beta0.25 and ZClip cap6.5.
+Retain w_sf_policy_floor0.8 with record_sf_p0_regret=true (a separate field from
+the disabled w_sf_own distribution). Hypothesis: online search policy plus
+5000-node SF-assisted value/floor targets can improve this donor at low LR.
+The main and categorical0.5SF/0.2search/0.3outcome mixtures are explicit new teacher
+sources; historical stored BT4/Ceres targets are not preserved. Policy-floor
+coverage is limited to eligible consecutive full selfplay plies. Require actual
+coverage, finite labels/gradients/weights, realized LR/clipping and loss readouts.
+
+Provisional finite pilot:64 completed games,450ply cap,64generation simulations,
+selfplay batch16 and fraction0.5, SF5000/MultiPV8/PIDoff; one iteration, batch256,
+at most128updates, two-window budget and views-per-ingested-position0, window50000,
+no imports/sharing, sequential stop barrier, broker/async/prefetch off, one GPU.
+1800-second supervisor ceiling with1500-second generation wait. This cap does
+not guarantee128updates or completion. Fresh optimizer and eight warmup updates
+are deliberate. Search256 needs a preregistered successor justified by the fixed
+mechanism and throughput budget, not an in-place edit.
+
+The original distributed sampler remains enabled with normalization off. Its
+retained rows carry priority for additional surprise-weighted replay sampling;
+the Bernoulli keep probabilities are not inverse-probability loss corrections.
+Report generated/retained rows and realized priorities. This explicitly corrects
+the proposal notes' loose use of 'importance weights'.
+
+Exact arena argv is frozen in `evaluation-protocol-v1/manifest.json`, SHA256
+`fcc31a747917725d95b7878797683304089ea3496899faf48215bf4e9d884559`.
+Both sides use64 matched simulations, the frozen experimental training search
+shape, constant default root noise1 (unscheduled), move temperature0.1,450 additional
+plies after the16-ply opening,
+no tablebases, eager inference,32concurrentgames and evaluator cap1024. The actual
+no-relations architecture requires at most1024leaf rows, so that cap does not
+change search by absorbing excess leaves. Existing frozen128/500opening-pair
+panels and seeds20261112/20261113 are used. Candidate is banked and hash-bound
+before screen; the same file is selected before any confirmation play.
+
+Each arena has6900seconds internal and7200seconds external wall ceilings within
+the global48-hour deadline. All fixed pairs must complete. Screen score>0.5 only
+permits confirmation; final gain requires an available95% normal-approximation
+score interval from the existing pentanomial pair variance, with lower bound>0.5
+on all500confirmationpairs. Zero empirical variance, partial pairs, inconsistent
+logs, or an interval crossing0.5 are inconclusive; no favorable extension.
+Source/config/model hashes, exact per-game outcomes and histories are retained
+for independent acceptance. No scientific pilot or candidate play has run yet.
+
+
+Before viewing any scored mechanism outcomes, prepare a conditional hardware
+successor for a CPU completion failure: `search-mechanism-cuda-successor-prereg-v1/manifest.json`
+under the artifact root. If the1200-second CPU stage times out/incompletely banks
+its exact panel, retain that incomplete bank unread for deciding metrics and
+rerun the identical64roots/both rungs on CUDA, with the same1200-second bound,
+only after GPU availability and prior owned closure. No CPU/GPU pooling, missing
+root imputation, resampling, or hardware choice by favorable scores is permitted.
+The complete GPU bank then becomes the sole conditional mechanism result, with
+its actual arithmetic disclosed. The original CPU cap is never extended.
+
+
+### Completed conditional mechanism and CI readout
+
+Both rungs completed in1140.806seconds, within1200, with all128native rows
+and owned processes closed. The prespecified10000-resample paired-root reader
+scored actual native policy probabilities against full legal-move SF labels,
+with the same1000cp regret cap and exact matching prior vectors.
+
+| Search simulations | Mean expected-regret reduction versus prior | Root-paired95% interval |
+| --- | --- | --- |
+|64|12.744cp|[2.741,23.293]cp|
+|256|3.831cp|[-12.610,17.493]cp|
+|256 minus64|-8.913cp|[-30.484,7.069]cp|
+
+The registered rule selects64. Larger search has no supported incremental
+benefit on this panel. Population:44endgame,17middlegame,3opening roots, with
+FEN-only history and historical SF labels; this remains conditional target-quality
+evidence, not production fidelity or Elo. The conditional CUDA mechanism retry
+is ineligible because the original CPU panel completed; no rerun is needed.
+
+Native bank SHA256
+`f63ed8b74338fea40c2218386e49da8faee511e58613af4acca41a502dd41e44`;
+readout: `search-mechanism-config-v1/readout.json`. Independent reader review
+corrected a genuine control gap before execution: finite normalized policies alone
+can hide nonfinite native child Q through softmax fallback. The accepted reader
+now rejects nonfinite visitedQ/counts and malformed trace shapes;15synthetic
+controls pass. Reader SHA256
+`3fdf7bf5b3c9543db662945c8f0b23b63b368e0bfd2f150ad4a3061644facf9c`,
+review in `mechanism-reader-review-v1/acceptance.json`. Independent math.fsum-based scoring and bootstrap of the actual bank also
+accept64, matching all means and intervals within1e-10, and verify PID/birth
+closure. Acceptance manifest:
+`mechanism-independent-acceptance-v1/51d3dee7-2713-41e0-bb22-14d566b2c777/manifest.json`,
+SHA256 `76f80df4d9a8cfbec78ba07bdba5733d9f0ae0e4ca7a9a01d464503771bd9a5d`.
+
+All remote checks on5250bc205 are now green: full ordinaryCPU suite15m54s,
+lint,pext-sliders andbacklog-handoff. Exact check-runsAPI receipt is banked as
+`ci-pass-5250-check-runs.json`. Scientific pilot config source/consumer review
+also passed independently, including39retained donor fields and the actual
+128-step ceiling; review in `scientific-pilot-independent-review-v2-0b08fba3/`.
+CUDA batch256/Aurora qualification remains unrun while the user's Windows GPU
+workload is active; the prepared disposable qualification has its own UUID,
+never adopts its10-step repeated-row fixture trajectory, and leaves online target
+and P0-floor coverage explicitly unqualified.
+
+
+Independent static CUDA-qualifier review accepts the frozen script and its actual
+APIs/observer ordering/LR checks/fixture hashes, without executing it. Review:
+`scientific-cuda-static-review-v1-214f0e10/review.json`, SHA256
+`76543acedb8fdfe0b2e2f44487bd30fe1977774a2418d99ade132f2e78def58a`.
+The qualifier checks concurrent trainer/worker inference residency then frees
+the worker before backprop, matching the real sequential lifetime. It does not
+qualify production leaf-batch memory or online P0/teacher target availability.
+
+Arena readout precision: recompute the registered interval from integer
+pentanomial counts through the existing summarize_pentanomial helper, not rounded
+score/SE fields. Require every fixed pair and validate per-game logs/history/net
+hashes/settings even when the arena exits0. The manifest's raw carried shape
+includes four inert PUCT fields omitted from the active result projection; only
+the active shared Gumbel fields are consumer settings.
+
+
+Independent arena source/protocol review accepts the exact frozen manifest with
+zero blockers, while retaining the inert-field metadata note. Review:
+`arena-review-sequential-selfplay-v1/review.json`, SHA256
+`f2fa072ccd50f1b94bc5f4e96b0ed06bada8def27ee6ab141b9fe31b211a815e`.
+The450-ply arena ceiling counts additional plies after each16-ply opening, and
+max-ply draw outcomes must be stratified in the readout. This has always been the
+command's semantics; it is a prose clarification, not a changed match. No candidate
+file or match output exists yet.
+
+
+### Conditional SF teacher-effort screen preregistration
+
+While the GPU remains occupied, reuse the exact64-root frozen panel to compare
+Stockfish5000 versus50000 requested nodes, MultiPV8, one engine/one thread,
+Hash16MiB, no handicap or TBs, cold TT before every query.180-second existing
+owned-stage ceiling,170-second helper alarm, CUDA hidden. Preregistration and
+script were independently source-reviewed before launch; no model forwards.
+Manifest: `sf-label-quality-screen-v1/88151623-3571-4d8c-92bd-c97d3296d337/manifest.json`,
+SHA256 `01c130ef5767148eb115c29a70de37164e294ce502553ef999a96c1cf0321b00`.
+
+Deciding event: native current SF best move is within20cp of the complete fixed
+old deep-SF reference (regret cap1000cp). Require Wilson two-sided95% lower bound
+at least0.8, corresponding to at least58/64good roots; choose the cheapest tested
+passing effort, otherwise inconclusive. Full native/UCI observations are banked.
+Secondary teacher-window comparisons use the actual producer sparse-PV/regret
+helpers, report float16 boundary effects and unknown unreported moves separately,
+and do not qualify policy-dependent floor binding or WDL calibration. No fresh
+population, online-history fidelity, donor-teacher equivalence or Elo is claimed.
+No automatic pilot edit follows: with sf_move_nodes0, raising sf_nodes also raises
+PID-off opponent effort, requiring an explicit successor and coupling readout.
+Timeout/invalid/incomplete data stays unqualified; retain raw files and prove
+owned closure before another stage.
+
+
+The first SF screen completed128cold queries in8.144seconds with owned closure.
+5000nodes:49/64good, Wilson95%[0.6487,0.8525],mean capped regret36.375cp.
+50000nodes:51/64good,[0.6829,0.8773],mean28.266cp. Neither lower bound reaches0.8;
+no effort was selected. Storage-realized teacher windows contain29/119 and26/113
+false-positive moves against the fixed old reference;2deep-good moves per rung
+are unmeasured and remain unknown. Independent bank recomputation verifies the
+primary, window estimators, cold protocol, hashes and exact closure.
+
+Preregister one bounded successor before new queries:1000000nodes on the exact
+same64roots, preserving MultiPV8/threads1/Hash16/TBoff/coldTT and the same58/64
+Wilson criterion, with170/180-second alarms. No further escalation is automatic.
+Manifest: `sf-label-quality-screen-v2/d0c41114-a1d5-4fbc-b038-c1161b7844ed/manifest.json`,
+SHA256 `47ed8104f09bcf81f780f63a81fed92c901ace4ba69c0f2870d4663209e3c779`.
+The historical reference used roughly1Mnodes; low tested efforts were unsupported.
+V1's actual3.522Mnative nodes took3.409queryseconds, making this64Mnode diagnostic
+plausible inside180seconds without guaranteeing completion. V1 negatives remain
+unchanged; no pooling, root replacement, threshold relaxation or pilot edit.
+
+
+V2's first wrapper (`sf-label-quality-execution-v2`) failed1.138seconds into an
+output-path assertion before output creation/importing engine code. The parent
+passed the wrong path; no engine queries occurred and owned closure was proven.
+The failure and exact error remain intact. A corrected wrapper
+`sf-label-quality-execution-v2b` consumes the hash-checked manifest argv directly,
+with its output field checked against preregistration before launch. This is a
+preflight argument correction, not a failed scientific result or data-dependent
+reroll.
+
+Main advanced during this session to72a3c3f3 with upstream checkpoint-retention
+fixes. A read-only integration audit finds only harness.py changes among230
+package files, preserving RL validation/sequential function ASTs and all model/
+optimizer/worker/Stockfish/native sources. The imported harness change is an
+explicit exception to byte-identical CUDA-source claims. Finish the current
+5250-bound finite stage first, then integrate main and run composed startup/
+retention/source-contract checks. Prepared CUDA artifacts remain unrun and must
+be refreshed against the final reviewed source before admission. Audit:
+`main-integration-audit-v1-72a3c3f3/review.json`, SHA256
+`e41c2dd721e8f9da73129664f703612af951823c52f3083c02ba64db62a3b3c7`.
+
+
+The corrected1M-node successor completed64cold queries in47.288seconds with
+owned closure.55/64bestmoves are within20cp, Wilson95%[0.75384,0.92421];mean
+capped regret11.078cp. The lower bound still misses0.8, so the registered
+verdict is inconclusive and no teacher effort is selected. Stored near-best
+windows include108true positives and19false positives out of127members;
+2deep-good moves remain unmeasured. Native bank SHA256
+`241c62bfb29fc664c47ff91277195ed85f33b28bf6a3a3e3d09aa3732e7d6149`.
+No automatic further node escalation or threshold relaxation follows. This does
+not prove those teachers are below80%accuracy or that SF-assistedRL cannot work;
+the old selected reference and interval leave uncertainty. The SF-assisted pilot
+proposal remains unrun. A policy-focused control supported by the actual64sim
+search-target result is being reviewed as the conservative next hypothesis.
