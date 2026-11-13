@@ -208,7 +208,7 @@ def verify_game(item: dict[str, Any], planned: dict[str, Any], producer: dict[st
     audit_dict = provenance["actual"]
     proof = verifier.verify(audit_dict, planned, game)
     issued = proof.metadata()
-    common = {"run_uuid": producer["run_uuid"], "collection_uuid": producer["collection_uuid"],
+    common: dict[str, Any] = {"run_uuid": producer["run_uuid"], "collection_uuid": producer["collection_uuid"],
               "generation": producer["generation"], "source_revision": producer["source"]["revision"],
               "actor_sha256": producer["actor"]["sha256"], "served_state_sha256": verifier.served_state_sha256,
               "physical_game_id": planned["physical_game_id"], "bank": "train", "game_id": audit_dict["game_id"],

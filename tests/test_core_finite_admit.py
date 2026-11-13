@@ -119,7 +119,7 @@ def test_real_verified_raw_and_zarr_roundtrip_with_fake_owned_tb(tmp_path: Path,
         syzygy_outcome_mode="rule50_match_v1", syzygy_path="/synthetic-tables", stockfish_syzygy_path="/synthetic-tables",
         syzygy_in_search=True, syzygy_adjudicate=True, syzygy_adjudicate_fraction=1, syzygy_rescore_policy=True,
         policy_row_retention="all_eligible")
-    planned = {"start_ordinal": 0, "physical_game_id": collection + ":0", "bank": "train",
+    planned: dict[str, Any] = {"start_ordinal": 0, "physical_game_id": collection + ":0", "bank": "train",
                "root_fen": root.fen(), "opening_moves": []}
     action = move_to_index(move, root)
     gid = _stable_game_id(start_fen=root.fen(), opening_source="test", move_trace=str(action), result="1-0", total_plies_played=1)
@@ -171,7 +171,7 @@ def test_real_verified_raw_and_zarr_roundtrip_with_fake_owned_tb(tmp_path: Path,
     validation = {"schema": "VERIFIED_CORE_GAME_METADATA_V1", **common, "full_history_verified": True,
         "resolved": True, "raw_targets_verified": True, "usable_shard": True, "rows_detail": [row],
         "verified_outcome_sha256": proof.proof_sha256, "shard_inventory_sha256": admit.digest(shard["files"])}
-    original = {"schema": "CORE_PRODUCING_OUTCOME_PROOF_V1", **common,
+    original: dict[str, Any] = {"schema": "CORE_PRODUCING_OUTCOME_PROOF_V1", **common,
                 "verification": proof.metadata(), "proof_sha256": proof.proof_sha256}
     if corruption == "proof":
         original["verification"]["actor_sha256"] = "f" * 64
@@ -220,7 +220,7 @@ def test_optional_validation_view_never_repairs_active_or_ambiguous_pairs(raw_ma
     import numpy as np
 
     n = len(raw_mask)
-    arrays = {"x": np.zeros((n, 175, 8, 8), dtype=np.float16),
+    arrays: dict[str, Any] = {"x": np.zeros((n, 175, 8, 8), dtype=np.float16),
               "policy_target": np.zeros((n, 1858), dtype=np.float16)}
     if payload:
         arrays["search_wdl"] = np.zeros((n, 3), dtype=np.float16)
