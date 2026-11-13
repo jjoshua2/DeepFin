@@ -319,12 +319,13 @@ def test_compaction_too_expensive_for_budget_keeps_tree_when_it_fits(monkeypatch
     w = _worker(chunk=256)
     _arena_above_half_cap(w)
     tree, rid = w._tree, w._root_id
-    nodes = tree.node_count()  # type: ignore[union-attr]
+    assert tree is not None
+    nodes = tree.node_count()
     monkeypatch.setattr(uci_search, "_COMPACTION_MS_PER_GIB", 1e9)
     assert w._resolve_pending_compaction(Deadline(60_000), 10_000) == "kept"
     assert w._tree is tree
     assert w._root_id == rid
-    assert tree.node_count() == nodes  # type: ignore[union-attr]
+    assert tree.node_count() == nodes
 
 
 def test_compaction_too_expensive_and_tree_too_full_rebuilds(monkeypatch) -> None:
