@@ -107,7 +107,7 @@ def test_footprint_counts_live_cache_entries_and_tracks_rss() -> None:
 
 def test_hash_capped_search_fills_hash_stays_under_it_and_says_why() -> None:
     cap_mb = 24
-    w = _worker(chunk=256)
+    w = _worker(chunk=1024)  # chunk growth (~3.4 MB) >> growth step (0.4 MB)
     w.set_max_tree_mb(cap_mb)
     board = chess.Board()
     strings: list[str] = []
