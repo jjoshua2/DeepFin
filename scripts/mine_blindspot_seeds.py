@@ -65,7 +65,11 @@ expected-score scale (``--mismatch-score-gap`` min gap) —
 but it's symmetric in either direction. Mine_game emits both the first
 collapse AND the worst mismatch when they're more than ``--min-ply-gap``
 plies apart (distinct teaching moments); when they're close, only the
-collapse is kept (redundant).
+collapse is kept (redundant). The join is move-verified: each PGN game is
+paired with the CSV rows whose ``move`` column equals its engine moves (a
+resume replay leaves duplicate (game, ply) keys), a CSV that does not
+describe the game is refused, and judged plies with no row/score are
+counted in the summary line (see OwnEvals).
 
 Free first SF-refute ply (default ON via ``--append-refute-ply``): see the
 format block above. Pairs with the live SF-refute channel (remaining opponent
@@ -81,7 +85,7 @@ import math
 import re
 import sys
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import chess
@@ -211,34 +215,158 @@ def find_worst_mismatch(
     return best
 
 
-def load_own_evals(csv_paths: list[str]) -> dict[tuple[int, int], int]:
-    """Parse match_vs_uci.py --move-log-out CSV(s) into {(round, ply): cp}.
+@dataclass(frozen=True)
+class OwnEvalRow:
+    """One match_vs_uci ``--move-log-out`` row: the move played and the mover's
+    own eval (White POV), ``cp`` None when the engine reported no score."""
+    ply: int
+    move: str | None
+    cp: int | None
+
+
+@dataclass
+class OwnEvals:
+    """Move-log CSV rows, grouped into one RUN per game attempt.
+
+    A round can hold several runs: ``--resume`` replays a game whose
+    games.jsonl commit was lost, appending a second PGN copy with the same
+    Round and a second set of CSV rows with the same (game, ply) keys. A run
+    starts whenever a round's ply does not increase. ``resolve`` pairs each
+    PGN game with the run whose ``move`` column equals that game's engine
+    moves — never by (round, ply) alone.
+
+    ``verified`` is False for a CSV without a ``move`` column (none is known:
+    match_vs_uci has written ``move`` since the log existed): then the join is
+    the pre-verification one, (round, ply) with the LAST row winning.
+    """
+    runs: dict[int, list[dict[int, OwnEvalRow]]]
+    verified: bool
+    n_rows: int = 0
+    missing_rows: int = 0      # judged DeepFin ply with no CSV row at all
+    missing_scores: int = 0    # judged DeepFin ply whose row has no score
+    games_without_rows: int = 0
+    replayed_rounds: int = 0   # rounds whose CSV holds >1 run
+    _claimed: dict[int, set[int]] = field(default_factory=dict)
+
+    def __len__(self) -> int:
+        return self.n_rows
+
+    def resolve(
+        self, round_num: int, engine_ucis: list[str],
+    ) -> dict[int, OwnEvalRow] | None:
+        """The CSV run (ply -> row) for this PGN game, or None if the round has
+        no rows. Raises ValueError when rows exist but none describe this game.
+
+        A run describes the game when every row it has at plies
+        1..len(engine_ucis) carries that ply's move, and it has no row past
+        len+1 (one extra row is the terminal illegal/flag move match_vs_uci
+        logs but never plays). Complete runs (every ply present) are preferred
+        over partial ones (a crash mid-game leaves a partial run that the
+        replay completes). Identical-move runs pair with PGN copies in file
+        order (k-th copy -> k-th unclaimed run).
+        """
+        runs = self.runs.get(round_num)
+        if not runs:
+            self.games_without_rows += 1
+            return None
+        if not self.verified:
+            return runs[0]
+        n = len(engine_ucis)
+        consistent: list[tuple[bool, int]] = []
+        first_bad: tuple[int, str | None, str] | None = None
+        for idx, run in enumerate(runs):
+            bad: tuple[int, str | None, str] | None = None
+            for ply, row in run.items():
+                if ply > n + 1:
+                    bad = (ply, row.move, "<game over>")
+                    break
+                if ply <= n and row.move != engine_ucis[ply - 1]:
+                    bad = (ply, row.move, engine_ucis[ply - 1])
+                    break
+            if bad is None:
+                complete = all(p in run for p in range(1, n + 1))
+                consistent.append((complete, idx))
+            elif first_bad is None:
+                first_bad = bad
+        unclaimed = [c for c in consistent if c[1] not in self._claimed.get(round_num, set())]
+        if not unclaimed:
+            if first_bad is not None:
+                ply, csv_move, pgn_move = first_bad
+                raise ValueError(
+                    f"Round {round_num}: move-log CSV ply {ply} has move {csv_move!r} "
+                    f"but the PGN game has {pgn_move!r} ({len(runs)} CSV run(s) for "
+                    f"this round, none matches the PGN); the CSV does not describe "
+                    f"this game — refusing to join its evals"
+                )
+            raise ValueError(
+                f"Round {round_num}: more PGN copies of this game than move-log "
+                f"CSV runs that match it ({len(runs)} run(s)); refusing to reuse one"
+            )
+        complete_first = sorted(unclaimed, key=lambda c: (not c[0], c[1]))
+        idx = complete_first[0][1]
+        self._claimed.setdefault(round_num, set()).add(idx)
+        return runs[idx]
+
+
+def load_own_evals(csv_paths: list[str]) -> OwnEvals:
+    """Parse match_vs_uci.py --move-log-out CSV(s) into an :class:`OwnEvals`.
 
     score_cp_white is each engine's own self-reported eval right after IT
     moved, always normalized to White's POV in the log — callers convert to
-    DeepFin's POV themselves (every row's score gets stored regardless of
-    which engine played it; DeepFin-ply filtering happens at lookup time in
-    mine_game, which only ever queries plies it already knows are DeepFin's).
+    DeepFin's POV themselves (every row is stored regardless of which engine
+    played it; DeepFin-ply filtering happens at lookup time in mine_game).
+    Rows without a score are kept (their ``move`` still identifies the game).
     The CSV ``ply`` counts from the opening position, NOT from the PGN
     mainline start; mine_game offsets by ``OpeningPlyCount`` when joining.
 
-    Keyed by (round, ply) only, NOT per-source-file: one mining run is
-    expected to cover a single match (one PGN + its one move log), where
-    round numbers are already unique. Multiple unrelated matches sharing
-    --moves-csv would collide on round number — not handled, not needed yet.
+    Keyed by round, NOT per-source-file: one mining run is expected to cover
+    a single match (one PGN + its one move log). Every file must agree on
+    having a ``move`` column; a mix is refused.
     """
-    out: dict[tuple[int, int], int] = {}
+    runs: dict[int, list[dict[int, OwnEvalRow]]] = {}
+    last_ply: dict[int, int] = {}
+    verified: bool | None = None
+    n_rows = 0
     for p in csv_paths:
         with open(p, newline="", encoding="utf-8") as fh:
-            for row in csv.DictReader(fh):
-                cp = row.get("score_cp_white", "")
-                if not cp:
-                    continue
+            reader = csv.DictReader(fh)
+            has_move = "move" in (reader.fieldnames or [])
+            if verified is None:
+                verified = has_move
+            elif verified != has_move:
+                raise ValueError(
+                    f"{p}: some --moves-csv files have a 'move' column and some do "
+                    f"not; refusing to mix verified and unverified joins"
+                )
+            for row in reader:
                 try:
-                    out[(int(row["game"]), int(row["ply"]))] = int(cp)
-                except (KeyError, ValueError):
+                    rnd, ply = int(row["game"]), int(row["ply"])
+                except (KeyError, ValueError, TypeError):
                     continue
-    return out
+                cp_text = row.get("score_cp_white") or ""
+                try:
+                    cp = int(cp_text) if cp_text else None
+                except ValueError:
+                    cp = None
+                if not has_move:
+                    # Pre-verification semantics: scoreless rows dropped, one
+                    # flat (round, ply) map, last row wins.
+                    if cp is None:
+                        continue
+                    rnd_runs = runs.setdefault(rnd, [{}])
+                    rnd_runs[0][ply] = OwnEvalRow(ply=ply, move=None, cp=cp)
+                    n_rows += 1
+                    continue
+                rnd_runs = runs.setdefault(rnd, [])
+                if not rnd_runs or ply <= last_ply.get(rnd, 0):
+                    rnd_runs.append({})
+                rnd_runs[-1][ply] = OwnEvalRow(ply=ply, move=row.get("move") or None, cp=cp)
+                last_ply[rnd] = ply
+                n_rows += 1
+    return OwnEvals(
+        runs=runs, verified=bool(verified), n_rows=n_rows,
+        replayed_rounds=sum(1 for r in runs.values() if len(r) > 1),
+    )
 
 
 def build_seed_record(
@@ -408,7 +536,7 @@ def _resolve_refute_uci(
 def mine_game(
     game: chess.pgn.Game, *, src: str = "?", name_needle: str, sf_eval: SfEval,
     sf_nodes: int, collapse_cp: int, history_plies: int, min_drop: int = 150,
-    own_evals: dict[tuple[int, int], int] | None = None,
+    own_evals: OwnEvals | None = None,
     mismatch_score_gap: float = 0.5, min_ply_gap: int = 8,
     append_refute_ply: bool = False,
     sf_bestmove: SfBestMove | None = None,
@@ -437,6 +565,11 @@ def mine_game(
     except ValueError:
         round_num = 0
 
+    run: dict[int, OwnEvalRow] | None = None
+    if own_evals is not None:
+        engine_ucis = [m.uci() for m in game.mainline_moves()][book_plies:]
+        run = own_evals.resolve(round_num, engine_ucis)
+
     board = game.board()
     fens: list[str] = []
     ucis: list[str] = []
@@ -460,10 +593,14 @@ def mine_game(
                 # after_stm is opponent-POV (opponent to move) -> negate.
                 df_evals.append((j, before, -after_stm))
             if own_evals is not None:
-                own_white = own_evals.get((round_num, j + 1 - book_plies))
-                if own_white is not None:
+                row = None if run is None else run.get(j + 1 - book_plies)
+                if row is None:
+                    own_evals.missing_rows += 1
+                elif row.cp is None:
+                    own_evals.missing_scores += 1
+                else:
                     # score_cp_white is always White-POV; negate for Black.
-                    own_by_ply[j] = own_white if color == chess.WHITE else -own_white
+                    own_by_ply[j] = row.cp if color == chess.WHITE else -row.cp
         else:
             board.push(move)
 
@@ -729,6 +866,14 @@ def main() -> None:
             fh.write(r + "\n")
     print(f"[mine] wrote {len(records)} new seeds ({n_games} games scanned) -> {args.out}",
           flush=True)
+    if own_evals is not None:
+        join = ("move-verified" if own_evals.verified
+                else "UNVERIFIED (CSV has no move column; last row per (round, ply) wins)")
+        print(f"[mine] own-eval join {join}: {own_evals.missing_rows} judged plies "
+              f"had no CSV row, {own_evals.missing_scores} had no score, "
+              f"{own_evals.games_without_rows} mined games had no CSV rows, "
+              f"{own_evals.replayed_rounds} rounds had replayed CSV runs",
+              flush=True)
 
 
 if __name__ == "__main__":
