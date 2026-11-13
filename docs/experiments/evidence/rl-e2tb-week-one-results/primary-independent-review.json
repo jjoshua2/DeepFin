@@ -1,0 +1,168 @@
+{
+  "checks": {
+    "GPU_and_CPU_owner_closed_and_known_births_absent": true,
+    "all128_complete_color_reversed_pairs": true,
+    "all256_raw_readout_and_PGN_identity_result_termination_plies_joins": true,
+    "every_full16_history_matches_fixed_ordered_book": true,
+    "exact_bound_endpoint_bytes_and_source_reader_manifest": true,
+    "integer_outcomes_pair_arithmetic_independently_recomputed": true,
+    "prepost_custody_and_architecture_receipt_matches_candidate_reference": true
+  },
+  "closure_observations": [
+    {
+      "current_birth": null,
+      "expected_birth": 26923505,
+      "pid": 1253947,
+      "stage": "e2tb-primary-execution-v1"
+    },
+    {
+      "absent": true,
+      "cpu_seconds": 708.69,
+      "stage": "e2tb-primary-execution-v1",
+      "supervisor_pid": 1253945,
+      "wall_seconds": 672.7643789430149
+    },
+    {
+      "current_birth": null,
+      "expected_birth": 27015295,
+      "pid": 1255970,
+      "stage": "e2tb-primary-readout-execution-v1"
+    },
+    {
+      "absent": true,
+      "cpu_seconds": 13.77,
+      "stage": "e2tb-primary-readout-execution-v1",
+      "supervisor_pid": 1255953,
+      "wall_seconds": 16.291218896978535
+    }
+  ],
+  "created_utc": "2026-11-13T05:19:55.421669+00:00",
+  "findings": [],
+  "interpretation": "FULLB40 does not meet primary point>=0.53 and available lower>0.5. Available upper is not below0.5, so no qualified harm. Eligibility and context remain mandatory regardless of primary performance; no confirmation allowed and no adoption of either arm from this result.",
+  "limits": [
+    "Independent review uses stdlib raw JSONL/PGN metadata and integer pair arithmetic. Source-qualified completed CPU reader supplies board legality, exact final rules/TB truth and native full-history validation; no repeated boards/TB probes.",
+    "No checkpoint/model/array decoding or inference repeated. Pre/post weight identities joined through accepted custody, no independent per-game served tensor hash or per-forward numerical precision claim.",
+    "Conditional approximate normal95 at fixed paired openings/profile, one training realization; not equivalence, general Elo, external-engine strength or optimum."
+  ],
+  "readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-results-v1/primary/readout.json",
+    "sha256": "bac78d586368043db0426d3b134760c8a29834f9b7a89281ee9baf44e6cb8969"
+  },
+  "references": {
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-preparation-v2/manifest.json": {
+      "mode": "0o444",
+      "sha256": "396744fe6537cdee254daf9b5f9ed5a148521b6502f1a824ed202b87edf2bd6d"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-preparation-v2/read_endpoint.py": {
+      "mode": "0o444",
+      "sha256": "1ba5dfe8ad668ad21a088197392de97d2b9788b45ece1bf2874ab624890f2ed8"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-results-v1/primary/readout.json": {
+      "mode": "0o644",
+      "sha256": "bac78d586368043db0426d3b134760c8a29834f9b7a89281ee9baf44e6cb8969"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-execution-v1/stage.log": {
+      "mode": "0o444",
+      "sha256": "3f155d233b9928afe74ffde199ee053d2a09025e82a36addb166a25ebbe90bb7"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-execution-v1/terminal.json": {
+      "mode": "0o644",
+      "sha256": "f379266292ccab82f13d3351a16f58c8b8238cc9f7891be7cc0c4cd0ffbfad58"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-launch-settlement-v1/model-custody.json": {
+      "mode": "0o444",
+      "sha256": "56bfb16f5ed367e612c147c46499eaa59579ac530a65bf7f089a85dbeb868c8a"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-launch-settlement-v1/reader-admission.json": {
+      "mode": "0o444",
+      "sha256": "203765d227c7e0953ce31272fba2f1913ac414afaedfca3e770aa8cb8bc35743"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-launch-settlement-v1/settlement.json": {
+      "mode": "0o444",
+      "sha256": "5e1c77acb1b50a7470ce5e59d77f77259d3d12250807e46d0a9c30a6233e1772"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-live-custody-independent-observation-v1/review.json": {
+      "mode": "0o444",
+      "sha256": "7c694e389793c96b7db02b3fcb4e27a21dc89daccd5b59f23ab7b4a742043aa4"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-readout-bindings-v1.json": {
+      "mode": "0o444",
+      "sha256": "0c2e039de5333a85fbf10720ced66e5850bc1c10d7ea4171977e226295205dc5"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-readout-execution-v1/terminal.json": {
+      "mode": "0o644",
+      "sha256": "40bffc02c925b5b1c2b29317b6108ccffbdaae48bebd75e5ceca20359f4aae02"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-readout-root-execution-admission-v1/admission.json": {
+      "mode": "0o444",
+      "sha256": "dba2d3e881a7ef7fa8543a8aef9876e7adefc676e5e2daee723d2d7877c94e16"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/games.jsonl": {
+      "mode": "0o444",
+      "sha256": "90ed486b0bae4af2c14eda4062a0f4d945797857934d11f822f91426d428a827"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/games.pgn": {
+      "mode": "0o444",
+      "sha256": "5f59e5938f97036b7e85d018247be63a2e52b399e6ad1585293fe156f0532ef1"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-results-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/result.jsonl": {
+      "mode": "0o444",
+      "sha256": "bc1a906db96b79203642ea1c9ecff9c3641af2d972d3925dec7dea5c1b5bd64e"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-scientific-protocol-final-v2/protocol.json": {
+      "mode": "0o444",
+      "sha256": "ee24d3b7aa575c3dd2b85061f376a4920d5f9034a2cc358e03ed8312cd1476c0"
+    },
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-structural-selection-results-v2-f1dadbe4/screen.epd": {
+      "mode": "0o444",
+      "sha256": "d7e4ff3b4cffc4b36cd6402dedf3d967caef689ff01a4a20eca6813898ae1091"
+    }
+  },
+  "schema": "independent-actual-e2tb-primary-review-v1",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_COMPLETE_TECHNICALLY_QUALIFIED_PRIMARY_REGISTERED_PERFORMANCE_NONPASS",
+  "summary": {
+    "candidate": "FULLB40",
+    "candidate_WDL": [
+      81,
+      88,
+      87
+    ],
+    "confirmation_allowed": false,
+    "games": 256,
+    "halfpoint_denominator": 512,
+    "integer_halfpoints": 250,
+    "max_additional_plies": 241,
+    "opening_history_plies": 16,
+    "pairs": 128,
+    "pentanomial_low_to_high": [
+      9,
+      29,
+      55,
+      29,
+      6
+    ],
+    "primary_registered_pass": false,
+    "qualified_harm": false,
+    "reference": "FULLA40",
+    "remaining_fixed_screens_required": [
+      "eligibility",
+      "context"
+    ],
+    "rule_flags": {
+      "checkmate": 92,
+      "claimable_threefold": 29
+    },
+    "sample_variance": 0.057932455708661415,
+    "score": 0.48828125,
+    "score_ci95": [
+      0.4465835542968056,
+      0.5299789457031945
+    ],
+    "score_se": 0.021274334542446146,
+    "terminations": {
+      "rules": 121,
+      "syzygy": 135
+    }
+  }
+}

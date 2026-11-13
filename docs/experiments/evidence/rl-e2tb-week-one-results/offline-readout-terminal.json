@@ -1,0 +1,40 @@
+{
+  "status": "PASS",
+  "command": [
+    "/usr/bin/taskset",
+    "-c",
+    "20,22",
+    "/usr/bin/env",
+    "-u",
+    "NVIDIA_TF32_OVERRIDE",
+    "-u",
+    "CUBLAS_WORKSPACE_CONFIG",
+    "CUDA_VISIBLE_DEVICES=",
+    "OMP_NUM_THREADS=2",
+    "MKL_NUM_THREADS=2",
+    "PYTHONOPTIMIZE=0",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/bin/python",
+    "-B",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-offline64-readout-final-bindings-v1-f1dadbe4-43e2-4cf3-9a93-70a288533b48/readout.py",
+    "--manifest-sha256",
+    "fc6058db3661f9928d3ac7197b064f12709416ad5ff3e6af4919d68f9468f3ec"
+  ],
+  "cwd": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess",
+  "seconds": 120,
+  "resource": "cpu",
+  "started_unix": 1794544216.4786553,
+  "supervisor_pid": 1247603,
+  "supervisor_sha256": "b7287b50906b90a6729833f8ee3369d7a544d2d202d365e90f5c66afb275fa13",
+  "tracker_sha256": "fec1125c06a2e68c25356134684dba2c20c89f530b545120f069971f060b65d3",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "pid": 1247605,
+  "returncode": 0,
+  "owned_processes_closed": true,
+  "custody": "OWNED_PROCESSES_CLOSED",
+  "known_processes": {
+    "1247605": 26772040
+  },
+  "cpu_seconds": 4.92,
+  "wall_seconds": 7.205779734998941
+}

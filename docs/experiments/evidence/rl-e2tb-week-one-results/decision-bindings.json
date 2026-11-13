@@ -1,0 +1,35 @@
+{
+  "screens": {
+    "primary": {
+      "readout": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-results-v1/primary/readout.json",
+        "sha256": "bac78d586368043db0426d3b134760c8a29834f9b7a89281ee9baf44e6cb8969"
+      },
+      "acceptance": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-primary-root-actual-readout-v1/classification.json",
+        "sha256": "52a30634670d517b89316a89edba2de8a080460b5855342955218cdf58e4756b"
+      }
+    },
+    "eligibility": {
+      "readout": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-results-v1/eligibility/readout.json",
+        "sha256": "3b4ecc6218a861ae27651e9ea1cae75df6826776081a8ba91b2c04647a7e5429"
+      },
+      "acceptance": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-eligibility-root-actual-readout-v1/classification.json",
+        "sha256": "3ab245a668342df75b0a007a9d4cccf1a6e98bcafe281ee1fc993d0f4efb3b15"
+      }
+    },
+    "context": {
+      "readout": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-arena-readout-results-v1/context/readout.json",
+        "sha256": "c2ddb225ce9068f4668f16b8295052d363ee99c94328ea50cef6ce73f6da679f"
+      },
+      "acceptance": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-context-root-actual-readout-v1/classification.json",
+        "sha256": "6f94fad61e677a72bb992549144314fa39882d9ba3ae61bb493d425a9713593a"
+      }
+    }
+  },
+  "confirmation": null
+}

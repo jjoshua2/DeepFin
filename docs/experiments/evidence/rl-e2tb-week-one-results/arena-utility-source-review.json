@@ -1,0 +1,84 @@
+{
+  "TB_index_semantics": {
+    "CPython": [
+      3,
+      13,
+      15
+    ],
+    "actual_metadata_index_reproduced_by_reviewer": false,
+    "expected_metadata_SHA": "207f7bc99c9113b237bee40ef1dc4f64f29bd3524279b6637da31032a2305ae5",
+    "no_probe_or_TB_content_open_in_helper": true,
+    "owned_context": "Tablebase(max_fds=None), ordered add_directory",
+    "python_chess": "1.11.2",
+    "registered_WDL_DTZ_table_paths_dedup_each_sorted": true,
+    "requires_data_fd_uninitialized_initialized_false_read_count0": true,
+    "root_reported_actual_registered_files": 1020
+  },
+  "blocking_findings": [],
+  "candidate": {
+    "manifest": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screen-launch-settlement-preparation-v4/manifest.json",
+      "sha256": "1aed47b2b69172e8268f42dd68ce523f4376332e2f4bb443d021c64fcb962628"
+    },
+    "pinned_python_chess_syzygy_source": {
+      "path": "/home/josh/chess-artifacts/venvs/rl-transition-managed-20261111-cu130/lib/python3.13/site-packages/chess/syzygy.py",
+      "sha256": "e10e74b0b8174e85428945a975dfc2d67f521c6c5d941e998bdfca26f9ebf754"
+    },
+    "preparation": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screen-launch-settlement-preparation-v4/preparation.json",
+      "sha256": "5802f3970cfae585dd237338b0436b1923a90798f39deaf9a25feaa51bcac71d"
+    },
+    "prior_changes_required_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screen-launch-settlement-independent-source-review-v1/review.json",
+      "sha256": "76106df80511867b51dd88199f21717530d1977cbb077e298fb236ea8ef2d760"
+    },
+    "root_preflight_source": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/root-stage-admission-utilities-v1/check.py",
+      "sha256": "9d505d21eefb889b2eb6af96951a8fd09f21f9238ee3ffa4383fbe4f472b74e2"
+    },
+    "source": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screen-launch-settlement-preparation-v4/screen.py",
+      "sha256": "279a73c697b9b2f0aa30c63a77ea586a464441c2518196777af5eba3db886f41"
+    },
+    "v3_to_v4_patch": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-screen-launch-settlement-preparation-v4/v3-to-v4.patch",
+      "sha256": "35fa7568f7775215f442a65bafac29d7a95f144430f58bbea0161e23cff1a94d"
+    }
+  },
+  "limits": [
+    "Source/AST and JSON authority/source hash review only; no utility or library/project imports, lazy indexing, signal/Popen tests, model/checkpoint/actual asset reads, TB probes, GPU/jobs. Signal/fault paths are source-traced, not runtime exercised in this review.",
+    "Root reported independent metadata-only lazy-index207f/1020 match; reviewer verifies matching source semantics and source/version pins, not a second currentasset scan. Actual utility preflight/postflight still checks this metadata and full immutable assets under reviewed stage admission.",
+    "Actual role/authority/prior-census/review refs remain UNBOUND. Root separately owns fresh controls/resources/source/custody and one exact frozen screen admission. No playing result, legal256game qualification, Elo/gain/adoption or next-role permission follows automatically.",
+    "A signal while writing final settlement may leave partial failure evidence; it cannot be promoted to successful technical-game qualification. Actual reader must independently qualify full256game outputs after closed accepted custody."
+  ],
+  "resolved_findings": {
+    "A39_to_DONOR_prepost_lookup_only_preserves_command_reader_roles": true,
+    "TB_stamp_uses_exact_f634_WDL_then_DTZ_registered_resolved_path_set_metadata_not_physicalglob": true,
+    "exception_after_Popen_records_forward_errors_requests_TERM_then_waits_existing_owner_before_refusal_fdclose": true,
+    "final_settlement_guard_never_CLOSED_with_recorded_signal_or_forwarding_error": true,
+    "late_closed_owner_cancel_records_failed_and_raises_into_refusal": true,
+    "single_Popen_wait_exact_pidfd_owner_identity_pending_signals_and_earlycancel": true
+  },
+  "source_checks": {
+    "SIGINT_TERM_exact_owner_forwarding_no_SIGKILL_or_descendant_reaper_or_new_controller": true,
+    "all8sealedfiles_13authority_refs_commands_preflight_library_SHA_exact": true,
+    "confirmation_forbidden": true,
+    "exact_frozen_existing_owner_b728_and_commands2de3": true,
+    "failure_outputs_preserved_nonqualification": true,
+    "fresh_root_preflight_source_census_index_controls_3leases_RAMdisk_deadline_week_study_budget": true,
+    "full_final_source_lines_read": 306,
+    "no_global_stop_marker_mutation_or_security_change": true,
+    "one_owner_Popen_per_invocation_no_auto_nextrole_reader_or_retry": true,
+    "only_roles": [
+      "primary",
+      "eligibility",
+      "context"
+    ],
+    "prepost_books_shape_source_native5_and_TB_asset_metadata_guards": true,
+    "prepost_qualified494_arch_checkpoint_fullSHA_stat_readonly_alias_checks": true,
+    "reader_admission_custody_binding_adapter_consumers_match": true,
+    "unchanged10_other_functions_AST_exact_v3": true
+  },
+  "status": "ACCEPT_FINAL_V4_SCREEN_LAUNCH_SETTLEMENT_SOURCE_ONLY",
+  "utc": "2026-11-13T04:55:05.859015+00:00"
+}
