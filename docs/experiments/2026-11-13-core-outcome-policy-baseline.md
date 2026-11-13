@@ -340,3 +340,75 @@ later strict reader and acceptance supply the completed diagnostic result.
 | `core-baseline-research-arena-leg1-diagnostic-g4-readout-v1/readout.json` | `5225848ab2c900341e72a956184e250732a6da2f8e2bed759671683bccb69ecc` |
 | `core-baseline-research-arena-bindings-v1/leg1-diagnostic-g4/root-readout-acceptance.json` | `25025e6b00d11c4200956e5383e2fe5b93276a97d430a11c4aca0c996afdcc4b` |
 | `core-baseline-research-arena-diagnostic-g4-independent-actual-review-v1/review.json` | `9e07f81530f77a2e053d82a556d6c6dc575c179e4f7f976a0b559a8ef2ca7893` |
+
+
+## 2026-11-13 21:06 UTC — G6 descriptive readout and actual FIFO eviction
+
+**ONGOING: technically qualified negative G6 interim result.** The fixed
+step-3,072 candidate scored **41 wins, 76 draws and 139 losses** against original
+A39 over **256 games / 128 color pairs**: mean **.30859375**, paired normal
+approximate 95% interval **[.26168684033942846, .35550065966057154]**. Endings were
+149 rules resolutions and 107 qualified TB resolutions. The conditional score
+is below 50% in this matched profile. G6 is **descriptive only**: it has no
+harm-stop rule, LR-probe release, confirmation eligibility or promotion decision.
+Continue fixed G7/G8; G8 remains the sole terminal eligibility endpoint before
+any same-hash fresh confirmation. No recipe or actor selection changed.
+
+The G4 and G6 points do not establish recovery: these are correlated checkpoints
+on the intentionally reused diagnostic roster, not independent replications.
+No pooled Elo, external-strength claim, mechanism explanation or full-horizon
+verdict follows. The original scientific protocol `dd16774a…`, learning contract
+`c53eac58…`, L source `090b5143…` and R7 owner source `ba9d6de1…` remain unchanged.
+G1–G6 delivered all **1,536 planned games**, **153,771 cumulative audited rows**,
+**3,072 updates** and **786,432 sampled views**. Training-window loss and auxiliary
+metrics remain distinct from fixed held-out or playing-strength measurements.
+
+G5 supplied the **first actual FIFO eviction evidence**. Saved membership held
+only generations **2–5**, totaling **103,319 rows**; all **131,072** recorded
+preaugmentation physical draws resolved to that membership, with **zero G1
+draws**. Immutable generation-1 ancestry remained recorded rather than deleted.
+G6's source/root-verified window then held generations **3–6**, **102,439 rows**,
+with no recorded draw from generations 1 or 2. The cumulative 153,771 rows and
+active 102,439-row window therefore measure different things. Journal readback
+checks observed membership and physical IDs; it does not independently decode
+postmirror tensors, establish statistical uniformity, replay the optimizer or
+prove GPU bitidentity. The G5 reader authored the learner, so its journal review
+is not a new independent source qualification.
+
+| G6 stage / readiness | Seconds |
+| --- | ---: |
+| Collection GPU-owner wall | 1,512.690103 |
+| Audit CPU-owner wall | 67.401385 |
+| Learner GPU-owner wall | 519.114131 |
+| Learner internal training time, included above | 296.325541 |
+| Diagnostic GPU-owner wall | 808.440529 |
+| Diagnostic CPU-owner wall | 15.514475 |
+| First G1 owner → G6 checkpoint ready | 15,312.535208 |
+| First G1 owner → CPU-verified G6 diagnostic | 16,250.774148 |
+
+Owner wall includes startup/data/seal overhead, not just CUDA activity. Internal
+training time is already inside learner wall; readiness intervals include gaps
+and do not equal summed GPU time. These are realized costs, not an ETA or an
+Elo-per-time improvement. Matched Gumbel64/noise-on/strict-TB serving retained
+two models, float32 175-plane inputs under BF16 autocast, float32 policy/WDL
+transport, an observed pool of 32 and 1,024 uncapped leaf rows. Source, asset,
+served-state and closure checks remain bound; no deterministic-GPU or universal
+throughput claim follows. Independent actual metadata and complete pair
+arithmetic review accepted the identities, counts and descriptive decision;
+it did not rerun game physics or inspect checkpoint tensors.
+
+G6 candidate SHA256 is
+`568ea0b702940fb81779442e68e0e62fe5ff8bfbfefe887fceefac182b70c113`;
+original A39 remains `a39f900c…`. External references use the same operations
+artifact root as above. The generation receipt predates the arena and preserves
+its then-pending arena status; the subsequent reader/acceptance provide the
+completed diagnostic. Earlier negative E4 and donor results remain separate.
+
+| Artifact | SHA256 |
+| --- | --- |
+| `core-baseline-research-g05-FIFO-independent-actual-review-v1/review.json` | `22681a2c959b03381269a1941b47cda68d2943bb7698247acc2ae580ff1b2e9c` |
+| `core-baseline-research-g06-bound-v1/FIFO-journal-readback.json` | `e022be2103901799e1c2cfddddd9516781667aa80bc9bed91d4896bfa1bee5b1` |
+| `core-baseline-research-g06-bound-v1/full-generation-readout.json` | `f97d94d7836f673c78a02329978b709bbd67fa4e9f92a0dfbf088cb1f4ec685f` |
+| `core-baseline-research-arena-leg1-diagnostic-g6-readout-v1/readout.json` | `7610432a8a22da75365791607fe35b1f62bb53d35f59e8cb11336ef6abc47876` |
+| `core-baseline-research-arena-bindings-v1/leg1-diagnostic-g6/root-readout-acceptance.json` | `1783b838533c92b28e9d148d53269bfc6a3894d70d2788624b639e1d5919e6ae` |
+| `core-baseline-research-arena-diagnostic-g6-independent-actual-review-v1/review.json` | `1c5b46768cbc124dad7cb42e6476f8141732ebca926bb3d9a74ad025cfca2ebb` |
