@@ -173,8 +173,18 @@ phase C tells us what the additional seven GPUs are worth.
   playing a game on an unsearched fallback.
 - **A failed search never loses on time.** The move is answered from the
   network's root policy, every such move prints `info string WARNING search
-  failed on N consecutive move(s)`, and after the first one the evaluator is
-  rebuilt once (on the opponent's clock). Any non-zero count is worth a report.
+  failed on N consecutive move(s)`, and after the first one a replacement
+  evaluator is built in the background (at most once per failure streak, at
+  most twice per process). It goes in at the next `go` only once fully built;
+  until then moves keep searching on the current evaluator, and `position` /
+  `go` never wait for it. Any non-zero count is worth a report.
+- **Unhealthy state.** A failed rebuild, a spent rebuild budget, or 3 fallback
+  moves in a row print `info string WARNING engine unhealthy: ...`. The engine
+  keeps answering every `go`; at the next idle `isready` or `ucinewgame` it
+  reruns the strict startup warmup and either prints `engine health check
+  passed` or prints `engine health check failed ...` (and `deepfin: engine
+  health check failed` on stderr) and exits non-zero *before* `readyok`, so
+  the GUI restarts a fresh process instead of playing on a broken search.
 - **Long first move of a fresh process** (~15–30 s even warm-cached for
   `isready` / first search): expected; see section 4. Never happens mid-game
   after a successful `isready`.

@@ -189,6 +189,22 @@ def emit_handshake(options: EngineOptions) -> None:
 # the first search is ~3-4s on its own.
 _JOIN_TIMEOUT_S = 30.0
 
+# In-play evaluator recovery (see `_start_recovery_if_due`). At most ONE
+# background rebuild per failure streak and this many per process: a fault that
+# survives two fresh evaluators is not cured by a third, and each rebuild costs
+# GPU memory and compile time beside a live search.
+_MAX_RECOVERY_REBUILDS = 2
+# Consecutive fallback moves that mark the engine unhealthy (see
+# `_note_fallback_phase`). 3 = the move that failed, the move that may still be
+# searching on the old evaluator while the background rebuild runs, and one move
+# on the rebuilt evaluator. At 2 a merely slow rebuild would trip it before the
+# replacement ever got a move; a higher N plays more unsearched moves in a row
+# before the next isready/ucinewgame re-check.
+_UNHEALTHY_FALLBACK_STREAK = 3
+# How long `close` waits for an in-flight recovery build (same bound as the
+# startup builder's drain in `__main__`).
+_SHUTDOWN_RECOVERY_JOIN_S = 3.0
+
 
 class SearchNotQuiescent(TimeoutError):
     """The search still owns the worker; mutation and teardown must wait."""
@@ -459,11 +475,33 @@ class Engine:
   # with no simulation. Deliberately separate from the fault counter above —
   # see `_report_declined_root`.
         self._prior_only_roots = 0
-  # Search phases in a row that ended in the exception fallback (reset by any
-  # phase that returns a searched result), and whether the one-per-streak
-  # evaluator rebuild is owed. See `_recover_evaluator`.
+  # Search phases in a row that published a fallback move (reset by any phase
+  # that returns a searched result), whether the one-per-streak evaluator
+  # rebuild has been claimed for this streak, and whether it is owed and not
+  # yet started. See `_note_fallback_phase` / `_start_recovery_if_due`.
         self._consecutive_search_failures = 0
+        self._recovery_claimed_in_streak = False
         self._evaluator_recovery_due = False
+  # A ponder phase that fell back has not published anything yet: ponderhit
+  # hands the move to a real phase, which then decides the streak. Only a
+  # ponder reply that IS published (stop) counts. See `_run_search`.
+        self._ponder_fallback_pending = False
+  # The background rebuild: at most one thread, and a staging slot holding a
+  # fully built replacement until the next idle point (`go`, `isready`,
+  # `ucinewgame`) swaps it in. ``_recovery_epoch`` is bumped by anything that
+  # makes a staged evaluator obsolete (setoption, close); a build that finishes
+  # under an older epoch is closed instead of staged.
+        self._recovery_lock = threading.Lock()
+        self._recovery_thread: threading.Thread | None = None
+        self._staged_evaluator: BatchEvaluator | None = None
+        self._recovery_epoch = 0
+        self._recovery_rebuilds = 0
+  # Why the engine is unhealthy (None = healthy). Set after a failed recovery or
+  # `_UNHEALTHY_FALLBACK_STREAK` fallbacks in a row; cleared only by passing the
+  # strict warmup at the next idle isready / ucinewgame. A failed re-check sets
+  # ``_exit_code`` and requests quit; `__main__` exits with that code.
+        self._unhealthy: str | None = None
+        self._exit_code = 0
         self._board = chess.Board()
         self._search_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -521,6 +559,10 @@ class Engine:
         # `_restore_after_failed_setoption`.
         snapshot = replace(self._options) if isinstance(cmd, CmdSetOption) else None
         try:
+            if snapshot is not None:
+  # A staged recovery evaluator was built for the options as they were; and a
+  # setoption that builds must not run beside the recovery build.
+                self._retire_recovery(reason="setoption")
             self._dispatch(cmd)
         except SearchNotQuiescent as exc:
             _println(f"info string command rejected ({type(cmd).__name__}): {exc}")
@@ -735,13 +777,21 @@ class Engine:
   # re-warm on the next idle isready rather than corrupting the live search.
   # Idempotent: the flag is cleared so we don't warm again until the next reshape.
         searching = self._search_thread is not None and self._search_thread.is_alive()
-        if self._warmup_dirty and not searching:
-            self._warmup_dirty = False
-            self.warmup_search()
+        if not searching:
+            self._adopt_staged_evaluator()
+            if self._unhealthy is not None:
+                if not self._recheck_health():
+                    return  # exiting non-zero; no readyok over a broken search
+            elif self._warmup_dirty:
+                self._warmup_dirty = False
+                self.warmup_search()
         _println(format_readyok())
 
     def _handle_newgame(self) -> None:
         self._wait_for_search()
+        self._adopt_staged_evaluator()
+        if self._unhealthy is not None and not self._recheck_health():
+            return
         self._worker.reset_tree()
         self._board = chess.Board()
         self._pending_fen = None
@@ -882,6 +932,11 @@ class Engine:
     def _handle_go(self, cmd: CmdGo) -> None:
         # A timeout cannot transfer ownership of the still-live worker.
         self._wait_for_search()
+  # A fully built recovery evaluator goes in now, while the worker is quiescent;
+  # one still building is NOT waited for (this move searches on the current
+  # evaluator). A recovery owed by a phase whose emit was superseded starts here.
+        self._adopt_staged_evaluator()
+        self._start_recovery_if_due()
   # Ponder mode: search at the position BEFORE opponent's predicted
   # reply. That node's root expansion creates a child for every legal
   # opponent move, so whichever one they play — predicted or not — we
@@ -2036,7 +2091,17 @@ class Engine:
   # treating that as a release publishes the pre-reply fallback.
         if limits.ponder and not self._ponder_release.is_set():
             self._ponder_release.wait()
-        if self._ponderhit_event.is_set() and self._pending_real_limits is not None:
+        ponderhit = self._ponderhit_event.is_set() and self._pending_real_limits is not None
+        if self._ponder_fallback_pending:
+            self._ponder_fallback_pending = False
+            if not ponderhit:  # stop: the ponder fallback IS the published move
+                self._note_fallback_phase(fault=False)
+                _println(
+                    "info string WARNING search failed on "
+                    f"{self._consecutive_search_failures} consecutive move(s); this move "
+                    "is UNSEARCHED (fallback)"
+                )
+        if ponderhit and self._pending_real_limits is not None:
   # Ponderhit: opponent played our predicted move. Advance root by
   # one ply (the popped move) so the real phase searches at the
   # actual current position, reusing sims the ponder accumulated
@@ -2075,45 +2140,214 @@ class Engine:
   # Gate the emit: if a newer `go` has started, our result is stale
   # and the new search owns bestmove. Silently drop.
         with self._state_lock:
-            if gen != self._search_gen or self._quit_requested:
-                return
+            stale = gen != self._search_gen or self._quit_requested
+            quitting = self._quit_requested
+        if stale:
+            if quitting:
+                self._evaluator_recovery_due = False  # nothing will play again
+            return
         self._emit_bestmove(result)
-        if self._evaluator_recovery_due:
-            self._evaluator_recovery_due = False
-            self._recover_evaluator()
+  # Starts a thread and returns: this search thread ends now, so the next
+  # `position` / `go` never waits on the rebuild.
+        self._start_recovery_if_due()
 
-    def _recover_evaluator(self) -> None:
-        """Rebuild the evaluator ONCE after the first search failure in a streak.
+  # -- in-play evaluator recovery -------------------------------------------
+  #
+  # A search phase that raised plays the fallback (never lose on time) and owes
+  # ONE evaluator rebuild per failure streak. The rebuild runs on its own thread
+  # into a staging slot, never on the search thread: the quiescence barrier that
+  # `position` / `go` wait on only covers searches, so a slow rebuild can neither
+  # reject `position` nor make the next `go` search a stale board. Each idle
+  # point (`go`, `isready`, `ucinewgame`) swaps a COMPLETE staged evaluator in
+  # (build-then-swap: a failed swap keeps the current one); a build still running
+  # is not waited for.
 
-        Runs on the search thread AFTER the fallback bestmove is out, so the
-        rebuild is paid on the opponent's clock rather than ours; the next
-        command that needs the worker joins this thread first (the normal
-        quiescence barrier). One attempt per failure streak keeps it bounded: a
-        persistent fault keeps playing loud fallbacks instead of rebuilding on
-        every move.
-        """
+    def _start_recovery_if_due(self) -> None:
+        if not self._evaluator_recovery_due:
+            return
+        self._evaluator_recovery_due = False
         if self._rebuild_evaluator is None:
             _println(
                 "info string search-failure recovery unavailable: no evaluator "
                 "factory wired; later moves may also be unsearched"
             )
             return
-        _println("info string search failed; rebuilding the evaluator once before the next move")
+        with self._recovery_lock:
+            if self._quit_requested or self._closed:
+                return
+            running = self._recovery_thread is not None and self._recovery_thread.is_alive()
+            if running or self._staged_evaluator is not None:
+                return  # one replacement already on its way
+            attempt = 0
+            if self._recovery_rebuilds >= _MAX_RECOVERY_REBUILDS:
+                exhausted = True
+            else:
+                exhausted = False
+                self._recovery_rebuilds += 1
+                attempt = self._recovery_rebuilds
+                thread = threading.Thread(
+                    target=self._recovery_build,
+                    args=(self._recovery_epoch, self._options.max_batch,
+                          self._options.eval_cache_entries),
+                    daemon=True, name="uci-evaluator-recovery",
+                )
+                self._recovery_thread = thread
+                thread.start()
+        if exhausted:
+            self._mark_unhealthy(
+                f"search failed again after {_MAX_RECOVERY_REBUILDS} evaluator rebuilds"
+            )
+            return
+        _println(
+            f"info string search failed; rebuilding the evaluator in the background "
+            f"(attempt {attempt}/{_MAX_RECOVERY_REBUILDS}); moves search on the "
+            "current evaluator until the replacement is fully built"
+        )
+
+    def _recovery_build(self, epoch: int, max_batch: int, eval_cache_entries: int) -> None:
         new_eval = self._rebuild_or_keep(
-            "search-failure recovery", self._options.max_batch,
-            self._options.eval_cache_entries,
+            "search-failure recovery", max_batch, eval_cache_entries,
         )
         if new_eval is None:
+            self._mark_unhealthy("the evaluator rebuild after a search failure failed")
+            return
+        with self._recovery_lock:
+            current = (epoch == self._recovery_epoch
+                       and not self._quit_requested and not self._closed)
+            if current:
+                self._staged_evaluator = new_eval
+        if not current:
+            _close_quietly(new_eval)
+            return
+        _println(
+            "info string search-failure recovery: replacement evaluator built; "
+            "it goes in at the next go"
+        )
+
+    def _adopt_staged_evaluator(self) -> None:
+        """Swap a fully built recovery evaluator in. Worker must be quiescent."""
+        with self._recovery_lock:
+            staged = self._staged_evaluator
+            self._staged_evaluator = None
+        if staged is None:
             return
         try:
-            self._worker.set_evaluator(new_eval)
-            self._reinstall_configured_search_path()
+  # Primary only: rebuilding a multi-GPU pool here would be paid on the clock.
+            self._worker.set_evaluator(staged, keep_pools=self._multi_gpu_path_active())
         except Exception as exc:
-            _log.error("evaluator install after search failure failed", exc_info=True)
-            _println(f"info string search-failure recovery failed: {_one_line(exc)}")
+            # set_evaluator is build-then-swap and closes the replacement it was
+            # handed on failure; the current evaluator is still installed.
+            _log.error("installing the recovery evaluator failed", exc_info=True)
+            _println(
+                f"info string search-failure recovery: installing the rebuilt evaluator "
+                f"failed ({_one_line(exc)}); keeping the current evaluator"
+            )
+            self._mark_unhealthy("the rebuilt evaluator could not be installed")
             return
         self._warmup_dirty = True
-        _println("info string search-failure recovery: evaluator rebuilt")
+        _println("info string search-failure recovery: rebuilt evaluator installed")
+
+    def _retire_recovery(self, *, reason: str, timeout_s: float | None = None) -> None:
+        """Make any staged or in-flight recovery evaluator obsolete.
+
+        Waits (bounded) for an in-flight build so a configuration change never
+        builds beside it; a build that outlives the wait closes its own result
+        (stale epoch) instead of staging it.
+        """
+        with self._recovery_lock:
+            self._recovery_epoch += 1
+            thread = self._recovery_thread
+            staged = self._staged_evaluator
+            self._staged_evaluator = None
+        if staged is not None:
+            _close_quietly(staged)
+            _println(f"info string search-failure recovery: staged evaluator discarded ({reason})")
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=_JOIN_TIMEOUT_S if timeout_s is None else timeout_s)
+
+    def background_build_running(self) -> bool:
+        """True while a recovery rebuild thread is still alive (e.g. inside torch)."""
+        with self._recovery_lock:
+            thread = self._recovery_thread
+        return thread is not None and thread.is_alive()
+
+    def _mark_unhealthy(self, reason: str) -> None:
+        with self._recovery_lock:
+            first = self._unhealthy is None
+            if first:
+                self._unhealthy = reason
+        if first:
+            _println(
+                f"info string WARNING engine unhealthy: {reason}; every go is still "
+                "answered; the strict startup check reruns at the next isready / "
+                "ucinewgame and the engine exits if it fails"
+            )
+
+    def _recheck_health(self) -> bool:
+        """Rerun the strict startup warmup; False = failed, engine is exiting.
+
+        Called only while idle. Waits (bounded) for an in-flight recovery build
+        first so the check runs on the newest evaluator.
+        """
+        with self._recovery_lock:
+            thread = self._recovery_thread
+        if thread is not None:
+            thread.join(timeout=_JOIN_TIMEOUT_S)
+            self._adopt_staged_evaluator()
+        reason = self._unhealthy
+        try:
+            self.warmup_search()
+        except Exception as exc:
+            _log.error("health re-check failed", exc_info=True)
+            text = " ".join(f"{type(exc).__name__}: {exc}".split())[:500]
+            _println(f"info string engine health check failed ({reason}): {text}; exiting")
+            print(f"deepfin: engine health check failed: {text}", file=sys.stderr, flush=True)
+            self._exit_code = 1
+            with self._state_lock:
+                self._quit_requested = True
+                self._search_gen += 1
+            return False
+        self._warmup_dirty = False
+        self._unhealthy = None
+        self._consecutive_search_failures = 0
+        self._recovery_claimed_in_streak = False
+        _println("info string engine health check passed; unhealthy state cleared")
+        return True
+
+    @property
+    def exit_code(self) -> int:
+        """Process exit code the UCI loop should use (1 after a failed health re-check)."""
+        return self._exit_code
+
+    def _note_searched_phase(self) -> None:
+        self._consecutive_search_failures = 0
+        self._recovery_claimed_in_streak = False
+        self._ponder_fallback_pending = False
+        # A ponder phase that failed, followed by a real phase that searched,
+        # owes nothing.
+        self._evaluator_recovery_due = False
+
+    def _note_fallback_phase(self, *, fault: bool, is_ponder: bool = False) -> None:
+        """Count a fallback move.
+
+        Every published fallback extends the streak (an unsearched move is an
+        unsearched move, whatever produced it); only a raised search (``fault``)
+        claims the one-per-streak rebuild -- a solved root without a witness or
+        a ponder transition past its deadline is not cured by a new evaluator.
+        A ponder phase's fallback is held as pending until `_run_search` knows
+        whether it is published (stop) or superseded (ponderhit).
+        """
+        if fault and not self._recovery_claimed_in_streak:
+            self._recovery_claimed_in_streak = True
+            self._evaluator_recovery_due = True
+        if is_ponder:
+            self._ponder_fallback_pending = True
+            return
+        self._consecutive_search_failures += 1
+        if self._consecutive_search_failures >= _UNHEALTHY_FALLBACK_STREAK:
+            self._mark_unhealthy(
+                f"{self._consecutive_search_failures} consecutive moves were fallbacks"
+            )
 
     def _run_one_phase(
         self, limits: SearchLimits, *, is_ponder: bool, board: chess.Board,
@@ -2129,6 +2363,7 @@ class Engine:
                       else "ponder_transition_deadline")
             move, source = self._bestmove_fallback(board, limits.searchmoves)
             _println(f"info string search incomplete reason={reason} move={move} source={source}")
+            self._note_fallback_phase(fault=False)
             return SearchResult(
                 bestmove_uci=move, ponder_uci=None, nodes=0, pv=(), score_cp=0,
                 search_incomplete=reason,
@@ -2210,7 +2445,7 @@ class Engine:
                 elapsed_s=time.perf_counter() - profile_start,
                 is_ponder=is_ponder,
             )
-            self._consecutive_search_failures = 0
+            self._note_searched_phase()
             return result
         except SolvedRootWitnessUnavailable as exc:
             candidate = exc.fallback_actions.get(0)
@@ -2227,6 +2462,7 @@ class Engine:
                 f"outcome_preserved=UNVERIFIED source={source} "
                 f"bestmove_fallback_used={self._bestmove_fallback_used}"
             )
+            self._note_fallback_phase(fault=False, is_ponder=is_ponder)
             return SearchResult(
                 bestmove_uci=move, ponder_uci=None, nodes=0, pv=(), score_cp=0,
                 search_incomplete=reason,
@@ -2241,19 +2477,23 @@ class Engine:
             _log.error("search failed; playing the fallback move", exc_info=True)
             fallback, source = self._bestmove_fallback(board, limits.searchmoves)
             self._bestmove_fallback_used += 1
-            self._consecutive_search_failures += 1
+            self._note_fallback_phase(fault=True, is_ponder=is_ponder)
             _println(
                 f"info string bestmove_fallback_used={self._bestmove_fallback_used} "
                 f"source={source} move={fallback} exception={type(exc).__name__} "
                 f"phase={'ponder' if is_ponder else 'main'}"
             )
-            _println(
-                "info string WARNING search failed on "
-                f"{self._consecutive_search_failures} consecutive move(s); this move "
-                "is UNSEARCHED (fallback)"
-            )
-            if self._consecutive_search_failures == 1:
-                self._evaluator_recovery_due = True
+            if is_ponder:
+                _println(
+                    "info string WARNING ponder search failed; the reply is UNSEARCHED "
+                    "(fallback) unless the search after ponderhit succeeds"
+                )
+            else:
+                _println(
+                    "info string WARNING search failed on "
+                    f"{self._consecutive_search_failures} consecutive move(s); this move "
+                    "is UNSEARCHED (fallback)"
+                )
             return SearchResult(
                 bestmove_uci=fallback, ponder_uci=None, nodes=0, pv=(), score_cp=0, tbhits=0,
             )
@@ -2410,6 +2650,10 @@ class Engine:
             self._quit_requested = True
             self._search_gen += 1
         self._wait_for_search()
+        # Bounded short: quit must not sit out a whole rebuild. A build still in
+        # torch is reported by `background_build_running`; `__main__` then
+        # hard-exits rather than finalizing under it.
+        self._retire_recovery(reason="shutdown", timeout_s=_SHUTDOWN_RECOVERY_JOIN_S)
         if self._gil_probe is not None:
             self._gil_probe.close()
         self._worker.close()

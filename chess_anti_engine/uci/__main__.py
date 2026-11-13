@@ -1443,6 +1443,11 @@ def main() -> int:
             _request_builder_shutdown(shutdown_requested)
             eng = engine_ref[0]
         if eng is not None:
+  # A failed in-play health re-check (see Engine._recheck_health) requested quit
+  # before readyok; it must not look like a clean exit.
+            code = getattr(eng, "exit_code", 0)
+            if isinstance(code, int) and not isinstance(code, bool):
+                rc = max(rc, code)
             try:
                 eng.close()
             except SearchNotQuiescent as exc:
@@ -1451,6 +1456,12 @@ def main() -> int:
             except Exception:
                 pass
         _drain_builder(builder, rc)
+        if eng is not None and getattr(eng, "background_build_running", lambda: False)() is True:
+            print(
+                "deepfin: evaluator recovery build still running at shutdown; exiting without it",
+                file=sys.stderr,
+            )
+            _hard_exit(rc)
     return rc
 
 
