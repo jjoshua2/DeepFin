@@ -16,6 +16,7 @@ from dataclasses import dataclass, fields as dataclass_fields, replace as datacl
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Protocol, cast
 
 import numpy as np
@@ -347,6 +348,18 @@ def _posix_shm_name(name: str) -> str:
     return "/" + name
 
 
+def _import_posixshmem() -> ModuleType:
+    """``_posixshmem``, imported by name.
+
+    A plain ``import _posixshmem`` cannot be resolved by the type checker on a
+    python-build-standalone interpreter (uv-managed CPython), where the module
+    is compiled in and has no file and typeshed ships no stub; the Bend CI
+    legs' whole-repo static gate failed on exactly that. Raises ImportError on
+    a platform without POSIX shared memory, like the plain import.
+    """
+    return importlib.import_module("_posixshmem")
+
+
 def _posix_shm_segment_size(name: str) -> int | None:
     """Current size in bytes of the named POSIX segment; None if it does not exist.
 
@@ -354,7 +367,7 @@ def _posix_shm_segment_size(name: str) -> int | None:
     be read and callers must not treat the segment as known-empty.
     """
     try:
-        import _posixshmem
+        _posixshmem = _import_posixshmem()
     except ImportError:
         return None
     try:
@@ -399,7 +412,7 @@ def _unlink_stale_slot_segment(name: str) -> None:
     except ValueError:
         if _posix_shm_segment_size(name) != 0:
             raise
-        import _posixshmem
+        _posixshmem = _import_posixshmem()
 
         # The failed constructor never registered with the resource tracker,
         # so there is nothing to unregister.
