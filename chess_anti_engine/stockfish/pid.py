@@ -536,6 +536,12 @@ class DifficultyPID:
         # (contribution 0), depressing the Tune metric / best-regret ranking.
         self.metric_min_nodes = int(min_nodes)
         self.metric_max_nodes = int(max_nodes)
+        # Saved node fields the last restore could NOT use (the built value was
+        # kept instead). Nonzero means the restart did not resume the saved
+        # difficulty -- a step indistinguishable from the net changing. Kept
+        # OUT of state_dict (pid_state.json is unchanged); it reaches the
+        # iteration result as `pid_restore_fallbacks` via PidResult.
+        self.restore_fallbacks = 0
 
         self._regret_enabled = float(initial_wdl_regret) >= 0.0
         self._regret_gate_enabled = self._regret_enabled and float(wdl_regret_stage_end) >= 0.0
@@ -707,10 +713,18 @@ class DifficultyPID:
             # ceiling — the tightest valid range.
             new_min = min(new_min, new_max)
             if (new_min, new_max) != (self.min_nodes, self.max_nodes):
+                old_min, old_max, old_nodes = self.min_nodes, self.max_nodes, int(self.nodes)
                 self.min_nodes, self.max_nodes = new_min, new_max
                 self.nodes_lever.min_value = float(new_min)
                 self.nodes_lever.max_value = float(new_max)
                 self.nodes = int(_clamp(int(self.nodes), self.min_nodes, self.max_nodes))
+                # Only on an actual change, and at WARNING: INFO is discarded on
+                # some paths here, and the realized value must be verifiable even
+                # when the clamp does not bite.
+                _LOG.warning(
+                    "PID node bounds [%d,%d] -> [%d,%d], nodes %d -> %d",
+                    old_min, old_max, new_min, new_max, old_nodes, int(self.nodes),
+                )
 
         _refresh_lever_from_config(self.regret_lever, config, "sf_pid_regret_")
         _refresh_lever_from_config(self.nodes_lever, config, "sf_pid_nodes_")
@@ -752,12 +766,17 @@ class DifficultyPID:
         # still restores (a raise here made `_init_pid` drop the WHOLE state).
         # A finite number is accepted exactly as before -- truncated, then
         # clamped into the live bounds -- so legacy checkpoints load unchanged.
+        self.restore_fallbacks = 0
         raw_nodes = state.get("nodes", self.nodes)
         try:
             restored_nodes = int(raw_nodes)
         except (TypeError, ValueError, OverflowError):
-            _LOG.warning(
-                "PID restore: nodes=%r is not a number; keeping %d", raw_nodes, self.nodes,
+            self.restore_fallbacks += 1
+            _LOG.error(
+                "PID restore: saved nodes=%r is not a number; using the built %d instead. "
+                "This restart does NOT resume the saved difficulty (see "
+                "pid_restore_fallbacks in the iteration result).",
+                raw_nodes, self.nodes,
             )
         else:
             self.nodes = int(_clamp(restored_nodes, self.min_nodes, self.max_nodes))
@@ -781,9 +800,12 @@ class DifficultyPID:
         metric_min = positive_node_count(raw_mmin)
         metric_max = positive_node_count(raw_mmax)
         if metric_min is None or metric_max is None:
-            _LOG.warning(
-                "PID restore: metric_min_nodes=%r metric_max_nodes=%r are not positive "
-                "integers; keeping the construction-time [%d, %d]",
+            self.restore_fallbacks += 1
+            _LOG.error(
+                "PID restore: saved metric_min_nodes=%r metric_max_nodes=%r are not "
+                "positive integers; using the construction-time [%d, %d] instead "
+                "(opponent_strength normalization changes at this restart; see "
+                "pid_restore_fallbacks in the iteration result).",
                 raw_mmin, raw_mmax, self.metric_min_nodes, self.metric_max_nodes,
             )
         else:

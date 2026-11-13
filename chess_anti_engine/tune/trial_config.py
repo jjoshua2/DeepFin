@@ -1328,6 +1328,9 @@ class PidResult:
     wdl_regret_next: float = -1.0
     pid_ema_wr: float = 0.0
     pid_update: object | None = None
+    # DifficultyPID.restore_fallbacks: saved node fields the last restore could
+    # not use. Nonzero = this run did not resume its saved difficulty.
+    pid_restore_fallbacks: int = 0
 
   # Derived game stats
     curriculum_winrate_raw: float | None = None

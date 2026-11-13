@@ -69,8 +69,8 @@ A bad live value fails in one of four ways, which code comments cite by letter:
 
 - **(a) Rejected by the loader**: a key not in the schema (`utils/config_yaml.py`), or
   a value failing a check in `flatten_run_config_defaults` (strict booleans,
-  `pb2_bounds_*` shape, flag pairings, the `lr`/`pb2_bounds_lr` checks, one range
-  check; read the function). Mid-run the whole reload is rejected and the old config kept, so other
+  `pb2_bounds_*` shape, flag pairings, the `lr`/`pb2_bounds_lr` checks, the range
+  checks on `exploit_replay_share_fraction` and the PID node bounds; read the function). Mid-run the whole reload is rejected and the old config kept, so other
   edits in the same save are not applied; at launch it is fatal. Before a restart,
   compare the live YAML's keys with the target revision's schema.
 - **(b) In the schema, rejected by a validator that runs inside the iteration loop**

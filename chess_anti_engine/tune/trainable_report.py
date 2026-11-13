@@ -775,6 +775,7 @@ def _pid_report_dict(pr: PidResult) -> dict:
             "pid_observation_se": float("nan"),
             "pid_regret_frozen": 0,
             "pid_nodes_active": 0,
+            "pid_restore_fallbacks": int(getattr(pr, "pid_restore_fallbacks", 0) or 0),
             **_pid_step_diag_dict("pid_regret", None),
             **_pid_step_diag_dict("pid_nodes", None),
         }
@@ -793,6 +794,7 @@ def _pid_report_dict(pr: PidResult) -> dict:
         "pid_observation_se": float(getattr(update, "observation_se", 0.0)),
         "pid_regret_frozen": (1 if bool(getattr(update, "regret_frozen", False)) else 0),
         "pid_nodes_active": (1 if bool(getattr(update, "nodes_active", False)) else 0),
+        "pid_restore_fallbacks": int(getattr(pr, "pid_restore_fallbacks", 0) or 0),
         **_pid_step_diag_dict("pid_regret", regret_diag),
         **_pid_step_diag_dict("pid_nodes", nodes_diag),
     }

@@ -8,6 +8,7 @@ value that arrives by another route keeps the previous bounds and warns.
 """
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -72,7 +73,19 @@ def test_loader_passes_valid_values_through_unchanged() -> None:
     assert (pid.min_nodes, pid.nodes, pid.max_nodes) == (50000, 75000, 1000000)
 
 
-@pytest.mark.parametrize("path", sorted(Path("configs").glob("*.yaml")), ids=lambda p: p.name)
+CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
+SHIPPED_CONFIGS = sorted(CONFIG_DIR.rglob("*.yaml"))
+
+
+def test_the_shipped_config_set_is_not_empty() -> None:
+    """An empty parameter set would SKIP the gate below, not fail it."""
+    assert len(SHIPPED_CONFIGS) >= 2
+    assert any(p.parent.name == "snapshots" for p in SHIPPED_CONFIGS)
+
+
+@pytest.mark.parametrize(
+    "path", SHIPPED_CONFIGS, ids=lambda p: str(p.relative_to(CONFIG_DIR)),
+)
 def test_every_shipped_config_still_loads(path: Path) -> None:
     flatten_run_config_defaults(yaml.safe_load(path.read_text(encoding="utf-8")))
 
@@ -189,3 +202,112 @@ def test_state_without_metric_keys_falls_back_to_the_built_values() -> None:
     pid = make_pid(min_nodes=200, max_nodes=900)
     pid.load_state_dict({"nodes": 400})
     assert (pid.metric_min_nodes, pid.metric_max_nodes) == (200, 900)
+
+
+# ---------------------------------------------------------------- observability
+def test_a_live_bound_change_logs_old_and_new_bounds_and_nodes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """MUTATION: drop the change log -- the realized value is invisible unless the clamp bites."""
+    pid = make_pid()
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.stockfish.pid"):
+        pid.refresh_live_params({"sf_pid_min_nodes": 100, "sf_pid_max_nodes": 2000})
+        pid.refresh_live_params({"sf_pid_min_nodes": 100, "sf_pid_max_nodes": 2000})  # no change
+        pid.refresh_live_params({"sf_pid_min_nodes": 800, "sf_pid_max_nodes": 2000})
+    lines = [r.getMessage() for r in caplog.records if "PID node bounds [" in r.getMessage()]
+    assert lines == [
+        "PID node bounds [100,1000] -> [100,2000], nodes 500 -> 500",
+        "PID node bounds [100,2000] -> [800,2000], nodes 500 -> 800",
+    ]
+    assert all(r.levelno == logging.WARNING for r in caplog.records if "PID node bounds [" in r.getMessage())
+
+
+def _real_shaped_state() -> dict[str, Any]:
+    pid = make_pid()
+    for w, d, l in [(30, 10, 5), (12, 20, 18), (40, 2, 3)]:
+        pid.observe(wins=w, draws=d, losses=l, force=True)
+    return pid.state_dict()
+
+
+# The keys pid_state.json carried before this change; the restore flag is NOT persisted.
+PERSISTED_KEYS = {
+    "nodes", "wdl_regret", "ema_winrate", "games_since_adjust", "held_wins",
+    "held_draws", "held_losses", "regret_stage_complete", "last_regret_fit_slope",
+    "regret_history", "nodes_history", "metric_min_nodes", "metric_max_nodes",
+}
+
+
+def test_clean_restore_reports_zero_and_round_trips_byte_identically() -> None:
+    state = _real_shaped_state()
+    assert set(state) == PERSISTED_KEYS
+    pid = make_pid()
+    pid.load_state_dict(json.loads(json.dumps(state)))
+    assert pid.restore_fallbacks == 0
+    assert json.dumps(pid.state_dict(), sort_keys=True) == json.dumps(state, sort_keys=True)
+
+
+@pytest.mark.parametrize(("corrupt", "count"), [
+    ({"nodes": "698289x"}, 1), ({"metric_min_nodes": 0}, 1),
+    ({"nodes": None, "metric_max_nodes": "x"}, 2),
+])
+def test_corrupt_restore_sets_the_flag_and_logs_error(
+    corrupt: dict[str, Any], count: int, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """MUTATION: stop counting (or log at WARNING) -- the step at restart goes unseen."""
+    state = {**_real_shaped_state(), **corrupt}
+    pid = make_pid()
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.stockfish.pid"):
+        pid.load_state_dict(state)
+    assert pid.restore_fallbacks == count
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == count
+    for key, value in corrupt.items():
+        assert any(f"{key}={value!r}" in m for m in errors), errors
+    # A later clean restore clears it.
+    pid.load_state_dict(_real_shaped_state())
+    assert pid.restore_fallbacks == 0
+
+
+def test_restore_flag_reaches_the_iteration_result_on_the_production_path() -> None:
+    """``_run_pid_and_eval`` -> ``PidResult`` -> ``_pid_report_dict`` (the result dict).
+
+    MUTATION: drop the field from ``_run_pid_and_eval``'s PidResult -- the key reads 0.
+    """
+    from chess_anti_engine.tune.trainable_phases import _run_pid_and_eval
+    from chess_anti_engine.tune.trainable_report import _pid_report_dict
+    from chess_anti_engine.tune.trial_config import DifficultyState, SelfplayResult, TrialConfig
+
+    tc = TrialConfig.from_dict({"device": "cpu", "sf_nodes": 500})
+    for corrupt, expected in [({}, 0), ({"nodes": "bad"}, 1)]:
+        pid = make_pid()
+        pid.load_state_dict({**_real_shaped_state(), **corrupt})
+        for total in (0, 40):  # with and without a PID update this iteration
+            result = _run_pid_and_eval(
+                tc=tc, config={}, pid=pid, sf=None,
+                sp_result=SelfplayResult(
+                    total_w=total, total_d=0, total_l=0,
+                    matching_games=max(1, total), total_selfplay_games=1,
+                ),
+                opp_strength_ema=0.0, opp_ema_alpha=0.1,
+                ds=DifficultyState(sf_nodes=pid.nodes, wdl_regret=-1.0),
+            )
+            assert _pid_report_dict(result)["pid_restore_fallbacks"] == expected
+
+
+def test_init_pid_marks_a_restore_that_raised(caplog: pytest.LogCaptureFixture) -> None:
+    from types import SimpleNamespace
+
+    from chess_anti_engine.tune.trainable import _init_pid
+
+    tc = SimpleNamespace(sf_pid_enabled=True)
+    config = {"sf_nodes": 500, "sf_pid_min_nodes": 100, "sf_pid_max_nodes": 1000}
+    bad = {**_real_shaped_state(), "ema_winrate": "not-a-float"}
+    with caplog.at_level(logging.ERROR, logger="chess_anti_engine.tune.trainable"):
+        pid = _init_pid(tc, config, bad, None)  # pyright: ignore[reportArgumentType]
+    assert pid is not None
+    assert pid.restore_fallbacks == 3
+    assert any("PID state restore FAILED" in r.getMessage() and "nodes=" in r.getMessage()
+               for r in caplog.records)
+    clean = _init_pid(tc, config, _real_shaped_state(), None)  # pyright: ignore[reportArgumentType]
+    assert clean is not None
+    assert clean.restore_fallbacks == 0

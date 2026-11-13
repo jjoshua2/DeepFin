@@ -919,6 +919,7 @@ def _run_pid_and_eval(
         wdl_regret_next=wdl_regret_next,
         pid_ema_wr=pid_ema_wr,
         pid_update=pid_update,
+        pid_restore_fallbacks=int(getattr(pid, "restore_fallbacks", 0) or 0) if pid is not None else 0,
         curriculum_winrate_raw=curriculum_winrate_raw,
         avg_game_plies=float(sp_result.total_game_plies) / gen,
         adjudication_rate=float(sp_result.total_adjudicated_games) / gen,
