@@ -498,9 +498,11 @@ def test_health_rebuild_restores_the_pool_after_a_failed_install(make_engine, mo
     assert engine._worker.realized_search_path() == "pucv_pool"
     engine._mark_unhealthy("test")
     _fail(monkeypatch, "install_multi_gpu_pucv", times=1, teardown_first=True)
+    engine._worker._recent_visits_per_ms = 123.0  # a rate measured before (#1270)
     capsys.readouterr()
     engine.dispatch(parse_command("isready"))  # not in a game: the boundary
     out = capsys.readouterr().out
+    assert engine._worker._recent_visits_per_ms == 0.0  # the tree was reset
     assert "health rebuild: install failed" in out
     assert "health rebuild failed; previous configuration kept: path=pucv_pool" in out
     assert "health rebuild: evaluator rebuilt" not in out
@@ -514,9 +516,11 @@ def test_health_rebuild_that_cannot_restore_the_pool_says_degraded(make_engine, 
     engine.dispatch(parse_command("setoption name UseMultiGpuPUCV value true"))
     engine._mark_unhealthy("test")
     _fail(monkeypatch, "install_multi_gpu_pucv", times=99, teardown_first=True)
+    engine._worker._recent_visits_per_ms = 123.0
     capsys.readouterr()
     engine.dispatch(parse_command("isready"))
     out = capsys.readouterr().out
+    assert engine._worker._recent_visits_per_ms == 0.0
     assert "previous configuration could not be restored" in out
     assert ("engine health check passed on a DEGRADED path (realized path=gumbel but "
             "the options named pucv_pool before the rebuild)") in out
