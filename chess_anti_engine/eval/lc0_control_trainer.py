@@ -282,6 +282,11 @@ def trainer_kwargs_drift(
     control: Mapping[str, Any], reference: Mapping[str, Any],
 ) -> dict[str, tuple[Any, Any]]:
     """Every kwarg where the two signatures disagree, as ``{key: (ctrl, live)}``."""
+    # Before the explicit mode existed, Trainer unconditionally used ZClip.
+    # Interpret that ONE absent field as its historical behavior. Keep the
+    # dated pin unchanged, and still reject `none` or any other recipe drift.
+    control = {"grad_clip_mode": "zclip", **control}
+    reference = {"grad_clip_mode": "zclip", **reference}
     return {
         key: (control.get(key, "<absent>"), reference.get(key, "<absent>"))
         for key in sorted(set(control) | set(reference))

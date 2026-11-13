@@ -2679,6 +2679,7 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "zclip_alpha": _f("zclip_alpha", 0.97),
         "zclip_clip_factor": _f("zclip_clip_factor", 1.0),
         "zclip_max_norm": zclip_max_norm,
+        "grad_clip_mode": config.get("grad_clip_mode", "zclip"),
         "use_amp": bool(config.get("use_amp", True)),
         "feature_dropout_p": _f("feature_dropout_p", 0.3),
         "rebuild_sf_targets": bool(config.get("rebuild_sf_targets", False)),
@@ -2871,6 +2872,7 @@ class Trainer:
         zclip_alpha: float = 0.97,
         zclip_clip_factor: float = 1.0,
         zclip_max_norm: float | None = 1.0,
+        grad_clip_mode: str = "zclip",
         log_dir: Path | None = None,
         use_amp: bool = True,
         feature_dropout_p: float = 0.3,
@@ -2967,6 +2969,11 @@ class Trainer:
         prefetch_split_timing: bool = False,
         model_config: ModelConfig | None = None,
     ):
+        if grad_clip_mode not in ("zclip", "none"):
+            raise ValueError("grad_clip_mode must be 'zclip' or 'none'")
+        if grad_clip_mode == "none" and zclip_max_norm is not None:
+            raise ValueError("grad_clip_mode='none' requires zclip_max_norm=None")
+        self.grad_clip_mode = grad_clip_mode
         self.device = device
   # Declared as nn.Module; torch.compile (below) wraps it in a Module
   # subclass at runtime, but its stub types return Callable — cast on
@@ -4056,6 +4063,17 @@ class Trainer:
         return True
 
     def _zclip_step(self, *, collect_stats: bool) -> tuple[float, dict[str, float] | None]:
+        if self.grad_clip_mode == "none":
+            # Measure through the same local/distributed norm implementation,
+            # without ZClip.step's gradient scaling OR adaptive-state update.
+            # The optimizer-step nonfinite guard still consumes this norm.
+            total_norm = float(self.zclip._compute_grad_norm(self._grad_clip_target))
+            stats = {
+                "total_norm": total_norm, "effective_clip": total_norm,
+                "adaptive_clip": 0.0, "adaptive_bound": 0.0,
+                "hard_clip": 0.0, "clipped": 0.0,
+            } if collect_stats else None
+            return total_norm, stats
         if not collect_stats:
             return float(self.zclip.step(self._grad_clip_target)), None
 
@@ -5378,6 +5396,13 @@ class Trainer:
                 flush=True,
             )
             return False
+        if getattr(self, "grad_clip_mode", "zclip") == "none" and new is not None:
+            print(
+                "[trainer] REFUSING zclip_max_norm while grad_clip_mode='none'; "
+                "changing clipping mode requires restart",
+                flush=True,
+            )
+            return False
         if new == old:
             return False
         self.zclip.max_grad_norm = new  # pyright: ignore[reportAttributeAccessIssue]
@@ -6377,6 +6402,7 @@ class Trainer:
   # while `initialized` is False), so the run drops into a hard-cap-only
   # regime and then re-converges the EMA from wherever warmup put it.
             "zclip": self.zclip_state_dict(),
+            "grad_clip_mode": self.grad_clip_mode,
         }
   # ⚑ The NAMES behind `opt`'s integer indices. `Optimizer.state_dict()` keys
   # its `state` by position in the flattened `param_groups` order and records
@@ -6998,6 +7024,8 @@ class Trainer:
         # Trainer checkpoints include optimizer/scheduler/RNG pickles, so resume needs the
         # full trusted checkpoint payload rather than PyTorch's weights-only loader.
         ckpt = torch.load(str(path), map_location=self.device, weights_only=False)
+        if exact_resume and ckpt.get("grad_clip_mode", "zclip") != self.grad_clip_mode:
+            raise ValueError("exact resume requires identical grad_clip_mode")
         self.fresh_rl_donor_provenance = ckpt.get("fresh_rl_donor_provenance")
         if exact_resume:
             # Fixed-epoch restart must refuse the warm-start loader's deliberate
