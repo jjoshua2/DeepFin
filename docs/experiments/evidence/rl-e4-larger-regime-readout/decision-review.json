@@ -1,0 +1,102 @@
+{
+  "bindings": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-screens-decision-bindings-v1.json",
+    "sha256": "c6c61eeb2bdea77456ba4f5b2d886c8f0e571f283b1cb21939e717600a174e85"
+  },
+  "checks": {
+    "A_utility_eligible": false,
+    "B_utility_eligible": false,
+    "actual_sole_confirmation_stage_and_outputs_absent": [
+      "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/confirmation",
+      "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-confirmation-execution-v1",
+      "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-confirmation-results-v1-cd47b230-f32f-4256-a51e-4869f5708bb6"
+    ],
+    "adoption": false,
+    "all_three_readouts_and_classifications_exact_SHA_joins": true,
+    "all_three_technical_qualified": true,
+    "bundle_contrast": "UNRESOLVED",
+    "confirmation_allowed": false,
+    "confirmation_consumed": false,
+    "exact_frozen_decision_source_and_bound_manifest_flags": true,
+    "full_A129_B129_donor_identities_and_common_screen_book_match": true,
+    "label": "NO_CONFIRMATION",
+    "selected_candidate": null
+  },
+  "closure": {
+    "known_owner_and_child_pids_absent": [
+      1436003,
+      1436005
+    ],
+    "terminal": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-screens-decision-readout-execution-v1/terminal.json",
+      "sha256": "27dc21200599ed17330e2cb09bfa4080b37719f35611d053bd16bffbb9691b12"
+    },
+    "wall_seconds": 1.1728988899849355
+  },
+  "decision": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/screens-decision.json",
+    "sha256": "97c12c5484840536b44506e3e5f74dfcc2f0450e7d70d9c47b231e521b6b70db"
+  },
+  "decision_source": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/decide.py",
+    "sha256": "34f3cb2045edc125b871a79f1d51624fe38d661ce5e621d2fab7684f5d72ef7e"
+  },
+  "findings": [],
+  "independent_endpoint_reviews": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-context-actual-independent-review-v1/review.json",
+      "sha256": "ebc5fffc34e7d7688f893fe5e0cf7a1635ff3dd4d57ef605b8819ca6d3f8a96b"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-eligibility-actual-independent-review-v1/review.json",
+      "sha256": "37d3bac9a06aa29f172eea98d8c0213e68f31dbde8ba9cd3cb3f93eb951692b5"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-primary-actual-independent-review-v1/review.json",
+      "sha256": "ae277df8174bffa60243eebaab87a309156834c144b75e1637d4c4bdfd3f44e7"
+    }
+  ],
+  "interpretation": "Neither A129 nor B129 passes registered donor utility eligibility. Primary B129 versus A129 remains unresolved. No candidate selected, no confirmation launched or consumed, no adoption or confirmed playing gain. Long-term goal remains active; this is the completed registered E4 decision, not a new trial authorization.",
+  "limits": [
+    "Reused three independent endpoint reviews and frozen source; no PGN replay, statistical re-roll, script import, model/checkpoint/NPZ access, engine/TB query, forward or new job.",
+    "Results remain conditional on one training realization, fixed internal matched64 profile and paired normal95 estimator; no pooled Elo, external-engine strength or causal-mechanism claim."
+  ],
+  "manifest": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/manifest.json",
+    "sha256": "2b3c9ad242cbe2d21b6ff0b10ea7a95974f98d071a91067d8891dfbce56fb665"
+  },
+  "scientific_sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478",
+  "status": "ACCEPT_ACTUAL_E4_FROZEN_THREE_SCREEN_DECISION_NO_CONFIRMATION",
+  "three_endpoint_bindings": {
+    "context": {
+      "acceptance": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-context-root-classification-v1/acceptance.json",
+        "sha256": "613736988841d1ae7a170b34d4c69fc4a245d1fa96aa4f6e4d7d98d4bd9ff86b"
+      },
+      "readout": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/context/readout.json",
+        "sha256": "46896e2a2a5232ed9ce3e6554d4dc73d0896fc9c4601d150043eb1020ed03572"
+      }
+    },
+    "eligibility": {
+      "acceptance": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-eligibility-root-classification-v1/acceptance.json",
+        "sha256": "894ee38cca824a550b65d80fb1245704c5e642f4ac26f8928baf97653cd23113"
+      },
+      "readout": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/eligibility/readout.json",
+        "sha256": "3711340610bb39169a94d061cb4fafcb95ab013a6176650f7e26dab2669e210b"
+      }
+    },
+    "primary": {
+      "acceptance": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-primary-root-classification-v1/acceptance.json",
+        "sha256": "e66733dd5401fcda10b06b2bab9a6929bf225d9381872707bf947da2b6140570"
+      },
+      "readout": {
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/primary/readout.json",
+        "sha256": "9703d0818c4b42f8becd6c6036eb49bd2f6f3d569f7f317e6d0d55ceb5fe106b"
+      }
+    }
+  }
+}

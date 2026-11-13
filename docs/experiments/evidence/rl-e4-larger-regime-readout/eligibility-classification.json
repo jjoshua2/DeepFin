@@ -1,0 +1,30 @@
+{
+  "status": "ROOT_ACCEPTED_E4_ENDPOINT_READOUT_CLASSIFICATION",
+  "endpoint": "eligibility",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "scientific_sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478",
+  "readout_sha256": "3711340610bb39169a94d061cb4fafcb95ab013a6176650f7e26dab2669e210b",
+  "technical_qualified": true,
+  "readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/eligibility/readout.json",
+    "sha256": "3711340610bb39169a94d061cb4fafcb95ab013a6176650f7e26dab2669e210b"
+  },
+  "independent_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-eligibility-actual-independent-review-v1/review.json",
+    "sha256": "37d3bac9a06aa29f172eea98d8c0213e68f31dbde8ba9cd3cb3f93eb951692b5"
+  },
+  "classification": "NOT_UTILITY_ELIGIBLE_DONOR_DIFFERENCE_UNRESOLVED",
+  "candidate_role": "FULLB129",
+  "reference_role": "A39",
+  "candidate_wins": 68,
+  "draws": 103,
+  "candidate_losses": 85,
+  "score": 0.466796875,
+  "paired95": [
+    0.42056017813506175,
+    0.5130335718649383
+  ],
+  "utility_eligible": false,
+  "no_gain_or_harm_claim": true,
+  "no_candidate_selection_until_all_three": true
+}

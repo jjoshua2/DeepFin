@@ -1,0 +1,1579 @@
+{
+  "HOLDOUT_arrays_loaded": false,
+  "HOLDOUT_games": 64,
+  "TRAIN_games": 128,
+  "all192_integrity_qualified": true,
+  "arrays_deserialized": false,
+  "class_counts": {
+    "holdout": {
+      "NATURAL": 33,
+      "STRICT_TB_ADJUDICATED": 31,
+      "UNRESOLVED": 0
+    },
+    "train": {
+      "NATURAL": 68,
+      "STRICT_TB_ADJUDICATED": 60,
+      "UNRESOLVED": 0
+    }
+  },
+  "collection_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "fresh_proofs": 192,
+  "inventory_files_stream_hashed": 48192,
+  "learning_admitted": false,
+  "limits": "Outcome/history/policy classification proofs and complete immutable file inventories only. Producer rawF32/storedF16/policy array checks remain source-qualified claims; this audit does not decode or revalidate arrays. Actual128 TRAIN raw/array validation remains mandatory in unchanged load_research_train before any update.",
+  "observations": [
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "e3f36a08f6842bba542996c5321ff4bf310ece81c49f167a6be140b08e887e9f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:0",
+      "rows": 111
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "08216fc2e2c86e989b531b69473a9ca68f08997cbb7b199fae226270a4ba0071",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:1",
+      "rows": 50
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "066ae65012af7073640bef91dd29cde22c4de4d66700f719de2a1481b305c447",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:2",
+      "rows": 107
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "34b02db321f1f3c7bf236d88ae41be644774b73a0c31728ef1cf861988f2f643",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:3",
+      "rows": 73
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "9eb26f29902f2cb5b9172b5bd7e507a5462d7598f7524b347ecb332d8167070e",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:4",
+      "rows": 75
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "57a978d93881c23169785ce3c4d5ae301d4d5598c569a5fd4ccebe869c1431e4",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:5",
+      "rows": 49
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "d186563064dd69cd10cddd2c1a2d3b5b944e730380952cf3cdaf5b969ea92b5e",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:6",
+      "rows": 51
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "7d9a19d25274b0f16fb3a23f1679431ab19ad499ee9339de91ade2e94543f088",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:7",
+      "rows": 94
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "4b4cfe1c37bba4646f796e51c88bd082de4d14b802c2de8813b60871a1bcb79b",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:8",
+      "rows": 76
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "798cc048a288b9fcce2e90def241e582ee09572347f721b628c0309d196b8358",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:9",
+      "rows": 109
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "cca18a24ba097d7c8014350c57de7ed65c76ea0ad0e2025f3efc951ea60965b5",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:10",
+      "rows": 86
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "ddd91809efe6c774041682ff975691fbe17362fc8c224693de59cdca727e9c2d",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:11",
+      "rows": 84
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "9f70e0bf6d920d3ac543f70bdee4b9d5026e175320448e88158d2ec50ff942a6",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:12",
+      "rows": 84
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "e2d7293a2ec5f59e5cc7282d1e1e3285c2676961c8831f1a8d10d29e1d4c6611",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:13",
+      "rows": 72
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "3f1a2e2149bdcb7749d09d20e954828be6546ff905219c2e043c994c1ca661bf",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:14",
+      "rows": 100
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "8bcb808a1464d48a8b4ba1f42c307742419f78dc8fd5e746a2cddecab982a5af",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:15",
+      "rows": 163
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "7dbd78f673a28f6d95bb87c21a48954c1efbd0f3eb304cc0658a726570102a01",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:16",
+      "rows": 62
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "291217383e21ce4add73426864a328fdba624d7af641d7593becb20f4e8a89fe",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:17",
+      "rows": 84
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "cd9c4c5890772f9553fd393d0cb32ba954ad77770a47b588811073330ed79450",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:18",
+      "rows": 101
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "38d41450be058bdc5bbee828b21c4a2205169da3cfd923f3961b209c9b0d013f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:19",
+      "rows": 89
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "7ec473a0c52177415fe06ca55e0d74f13b4d84552f491003c59f8193df27ed5f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:20",
+      "rows": 101
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "0ef652a70980ebf94aad96516f147a0f01d6c06329e2b8cb728cc7a3ea4a0863",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:21",
+      "rows": 103
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "01b674d6404ae8bd2bb208bb12428485300c72c6f49c7ba957d6f2d60b2a5610",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:22",
+      "rows": 75
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "aa2bd08bf79996b09f7e8990d8a3e6d5639a9f2447bf800fa8d7a76b33e9e24f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:23",
+      "rows": 114
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "5998542ca636dcde4edd55a3ba069a8942cfbc6b7947198a306efc7b5a759d37",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:24",
+      "rows": 83
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "b5f5c7ef2c1cdbcc0936b05165aaa249ff10708373386c174da9524bf0e8cef7",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:25",
+      "rows": 100
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "7a695b25b5d45778bb272395aff25e21cbf122e4577507ea92ab6245b9fd2ec9",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:26",
+      "rows": 102
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "de2acff21bc8cefaf1d31b4ec4114060656930538a9700149d4aa13a6bf1183a",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:27",
+      "rows": 91
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "cff20e12c589c6ac9df761ba381df65d5af237ebbe134e269d77ba9b60f645a4",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:28",
+      "rows": 111
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "d833a68c00d7e62dc3afaa46a39e10134caed09071f7f6c7dc68b53e046bad5c",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:29",
+      "rows": 61
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "a0076989ee0b37936d63264f0d7cf7bb3d3d41afdd3fd187ecccf0b8f9024c78",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:30",
+      "rows": 104
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "7a2c00143c935516908f544b1cc6079f47aa68042fc15ab615f02b394b4219e0",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:31",
+      "rows": 170
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "192c2877cfa15a8841f8fc2980fbac225b82264a4efab0b05ed94b337971010a",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:32",
+      "rows": 73
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "9be1b776a929a57293d006d4443afbdeba39f275447f35a46633a06d478f0376",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:33",
+      "rows": 49
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "cdfd70378dea71af0446c9357d461e7cc2af5172fc76b89acdfa70ba7c357324",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:34",
+      "rows": 60
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "41e54a057ed06374387a0df59d30076728b721972dbd2ccd892fe311de7dec9f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:35",
+      "rows": 93
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "ff2e3987e461b7391ea0bd3ad6b040475c1319cbe086bc744183a1cfe08bacc1",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:36",
+      "rows": 78
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "2424ecd1d9e35a331c3018b91fccbfa520de9faaf816df77ac971fa7b2cf5dd1",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:37",
+      "rows": 76
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "76e67850a02b947b5b6b8d219abf808865e65a1f6ba4797efb991fce5076a746",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:38",
+      "rows": 58
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "bfb2c575ad35228b781b525c4c5c8493876cd7e29c4bc74c5a0cdcaea5d1885a",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:39",
+      "rows": 40
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "0d8abf68c1ecf7a749185e6fe0e71bf18cfe7067976fefeedfaf6b4d6bf454e8",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:40",
+      "rows": 61
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "2aa4f3c6326bbf134cdc335f3b225e28c257a593dadbe4600e173fe598e70c04",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:41",
+      "rows": 62
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "790a3ce213b1c2014f69cfb547f68183dc6c717177d33723d6f128361b9ddadd",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:42",
+      "rows": 50
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "f490438e364263f853dc82d96e5f68be21b53c495f8724430ea950f1a5e14628",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:43",
+      "rows": 78
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "86981b847b4bbfac3e18e9185421f1fde96bfeb0d26f13955ff6fae6979f8eba",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:44",
+      "rows": 39
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "56c8c70614fa77ff8dcf09784bcfdabc0cc7c61f5ab6d6d098199e3bd676886c",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:45",
+      "rows": 52
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "80583685347b707e1136a84a6888f5ca15a8111d73a86968249d8603d489d422",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:46",
+      "rows": 131
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "a12e1c46c2da2835bc3c6a33eb32e7248f5765125b4cee9dc6c9ee13c03d355f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:47",
+      "rows": 71
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "0c817af4476bd111becff6010db247415f8ee0e04a8f144ef080138f66171c8b",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:48",
+      "rows": 82
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "13c7afccd1d6e9977564d0445cb6c73ea4e5add0f76ceab365a705243d395eaa",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:49",
+      "rows": 91
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "2e2a3eed040472abeaf31dca393d61c77f293c22c3a89591283f31ba7f4ed74b",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:50",
+      "rows": 89
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "ecc9ed4b3bbc6c7d8d4e84dfedd3c729129729a28b5f0b01f56133f8701ef5eb",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:51",
+      "rows": 64
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "fb78a5d0a1318553ec8075b8bfb4b17ebc32e5238a6a9cca7a4a11b03e9d282a",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:52",
+      "rows": 59
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "2f2ad66e2b6bd5d5c9730600d0d941014d38161014ab0b996d606c2f9aa10bcc",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:53",
+      "rows": 46
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "4a5b845999969fb7da4389ba01073e34a0a4096d6d2ab1702ffde2ee54d4d939",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:54",
+      "rows": 23
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "225650913a6f0b1fcae7021fd79064203b9c2d50cc0eae05be7ab3e48daedd56",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:55",
+      "rows": 93
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "df02bce4ca4e256c912161375d3c7b09070c701503ad849fe48b13f2e7d13090",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:56",
+      "rows": 96
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "830646bb0035f7e6ce6f4a06861414943de78f46c249cdcb22d7320629480ff6",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:57",
+      "rows": 68
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "dd7084dec2a52912af3abb79897a16391dfd0af6e86b48f4c26cc0d063378ada",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:58",
+      "rows": 43
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "c3d43e878a6df6f5e1b62f9644316be988570f2c5ce555b617e5215d07ea4d2e",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:59",
+      "rows": 77
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "8bce97b1eb26c1b9cfbf7c7f4a31fb7223909cee97062464ff61d2d6c940e3ec",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:60",
+      "rows": 83
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "304ea356f5cb34f9acc6f054e6ac77dab5c58ad24eaf7a89f5e0fedf622b21a8",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:61",
+      "rows": 111
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "ad4cb51e110e0c8e6cc03cd4731f04fcb7e80e7388ce20a3f56861503c6221d6",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:62",
+      "rows": 76
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "47df00c7dd9770b7e6d2d4a11b31670503617da94dd27fa790a9855a510ac06a",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:63",
+      "rows": 102
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "1dfb89eaa42010169750832186dd95699a40ef88d7f0e4b0f1a68f91f450e861",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:64",
+      "rows": 95
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "70ac93de93dc60d3a848d546d9a23db3fae4711fb611e57c478b7cc864f3d352",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:65",
+      "rows": 67
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "7afc550a39ba1f422ec9f3558ed048b8bdd2b5d49921d6c99059c503f51beb3a",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:66",
+      "rows": 112
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "b9aea0fb3dbcd2b47634dbdb10cdb4f5849818796c866a394129862183d74f50",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:67",
+      "rows": 120
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "fffb051e6f51189080051b14a91b6297aa39546c52b6b9c39093c53a0916d276",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:68",
+      "rows": 89
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "f71fbe6c19205eacc5ae21d226e22bcaa727b2f8f35b013dbfeb2e920aed55b4",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:69",
+      "rows": 98
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "33c8b9a26f8a3f7ec5823fa9f78880a59300e0a3379abf143e4f8593032a6984",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:70",
+      "rows": 104
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "cdf33a4e212fddada56c8071992fff41a90be68d0e9a94428d3f2d06351c3478",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:71",
+      "rows": 72
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "dc7a6c891991e21bba954f9c6abfab31b53c5709c02025f1116f998c80975f22",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:72",
+      "rows": 72
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "7639bc2be4c0d00192fd3d2df82b87ccd28b1dd0f75899c1ca8b3222217358a8",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:73",
+      "rows": 44
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "fc6271349dadca6280258f2f55f79ccec14b2b0f0f64f0d0fba68f037a8b84b9",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:74",
+      "rows": 110
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "0e38fe8f57c64677049e3c723ce05cd8501ea2bfd1f449fee2a771072fc94b75",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:75",
+      "rows": 40
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "59084c12813a1c57609cac80b335006047805e05d5582b881a5fb66377934052",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:76",
+      "rows": 57
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "a8a9e6a21bb6fb068f8960ca76493ede498e21065f73e9828dc48f79bcb11678",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:77",
+      "rows": 94
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "73f77d4f359327158e371d1c9c86a44d0035aad1af332d305966117594ee3236",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:78",
+      "rows": 96
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "ee04bfd54f142d6ca311a55f6436e7e747a36fd84c07834a3e681e45f7d97e5f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:79",
+      "rows": 129
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "bb9aa1101c7a6b44265979225a952ad93c7cf4e53c25df82c646455ca3db2fc2",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:80",
+      "rows": 85
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "d740763231f82976a4e8ded315c9998fd787ecd97fb8df790715db8a0fb7d7c8",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:81",
+      "rows": 83
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "3379d0cb854a2db63fac24bd3c1b4cb41eeb0f8e120a6582fe71f43fdc444021",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:82",
+      "rows": 87
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "14cb972184acd74cef740821d0d158f4537eceb374141714abbddf4dfd364b3e",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:83",
+      "rows": 234
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "ab3f636b7fc59faf2be2d4ebd1994cb6f0125bb711e4bfe3cb4a19d60a70a12c",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:84",
+      "rows": 67
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "74296da0b5a79335a36c566432165cb4ebb7f569caa101ab476e81321a371309",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:85",
+      "rows": 117
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "5f9e33ac3519646faeb8e8a0b6818616a3f56b2f66794638819e7b48ccbbb3b3",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:86",
+      "rows": 52
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "536126250c4eda868c86e189f741635aa6f7ff4f73064b151f268b7fbab60c9e",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:87",
+      "rows": 75
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "d578cf9a6e62c77e48eda7838ca4159c059acf5af3ab1a32558e62c822af25aa",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:88",
+      "rows": 64
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "6a7383adf75a2b3d8993c5fce8683219a729b0037a06c4517320c136ae503c2d",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:89",
+      "rows": 63
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "ccd4b534ab71527f77fa69fe500c72158ad6195b8123fecba061a5d0be90254d",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:90",
+      "rows": 74
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "ad253bd2d5a89b5d55e5568c5779db6d2f97634d4cb4345baf8473311cb3f036",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:91",
+      "rows": 75
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "b76186c60880ff6964b7209f1f0df0d9715bb734d0692dbf9798a623d4068730",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:92",
+      "rows": 72
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "0243b627513bb862e3d083465c5826a202613de6076fbaab39bdd47581de8c80",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:93",
+      "rows": 88
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "fc3bbefec0f7f77b94f8e2e31ee157a4853e17401c52038d1cbd7b2a1d0a0ba3",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:94",
+      "rows": 93
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "520aace448f528601bdb1b0abc4d6a1d411a7b317cdb63638474d5ffcb2bb0c8",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:95",
+      "rows": 68
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "c1ae1b627248edfacf54763d18d3519d4df715e7b261ce59753085b6d109493c",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:96",
+      "rows": 34
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "8577ef1ef7ce1b788ab3447b8e233b8a306e26cae2b3fca90806f6a3ad979207",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:97",
+      "rows": 103
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "03813c5a0c95f7a8f2f13545460b2718eed694232cef10fc34f5c351c37bd772",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:98",
+      "rows": 32
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "f3c47d70324d07a042416a20e194a3c4c7683f0c57cd49dd82b41834e9b40087",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:99",
+      "rows": 67
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "3af1052d1381386d506238e196d55af442d875bfcb8eb09ab7b737934d400940",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:100",
+      "rows": 96
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "e48af5b3c4fbdfb4e18e268b6128d55ac89574e98747741a3c3b7bf6610d9922",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:101",
+      "rows": 67
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "2d8335995981459ca7424df1da4ef600af04c72259c1eb3ef80f1a2f01363622",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:102",
+      "rows": 94
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "96a1f97a33637a55f85c4239c1c599d38f17da158457597eb5728c774cc60b3f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:103",
+      "rows": 100
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "9a5b7338d5540edd2b7b52521b6e5e8e07c44b839a30f34f85845699589b3f84",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:104",
+      "rows": 71
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "0d798409dcc918b8bcffec4db4c4a00052ae7d2d7141abaa34f7d2a1e110871d",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:105",
+      "rows": 67
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "2ecf67c2e9e0e8a4ba788c06a91043569cb32568e1f91fc6cfa94d3e74b5b15f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:106",
+      "rows": 90
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "4b2caba0dc1a6e75df8e6b4f3ccccba78738c30f1a315f54767b8a3e4b77790f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:107",
+      "rows": 112
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "66264d1087c0dd830cd64e78d0069901c2773afb7cc4d8860accccdd0de117b0",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:108",
+      "rows": 78
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "b521180c6ef4baeb7b15aed242ebf334785b833bd34628f9739df32014a1b97b",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:109",
+      "rows": 87
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "f2690e8dbb9e725ad32cfe7fb8397d6be91fa680b626f4b2b83d5e63449c75ae",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:110",
+      "rows": 69
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "312b98eecc84725dd614fdbb51ad8da16b5e449835a6ce6c7d2de10048ba569d",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:111",
+      "rows": 36
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "65180cbd8d3e20ef1959feda1539ae56c2f28e9ca7a22f1f96d0eb31cc7b9bdd",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:112",
+      "rows": 77
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "dd001d48fb66cf45deeb9f2eec1b4473485902fced60c79f11f1fff19b3b5fae",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:113",
+      "rows": 76
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "048826616295eae25b42405ea59d899485361a2d45ee2d073bb46577c5b2bbc0",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:114",
+      "rows": 69
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "e5cffc093d8fe746b4084367c2cee48aca10322b1e6bcfe169197c7b144eab1a",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:115",
+      "rows": 59
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "8377b3a4b26842cf86f178b6230278c2a9101cddc3085a7c1e3ede2d32531963",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:116",
+      "rows": 76
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "1c2a3b057cc011f4ea50a029d903e30ef4d953c792ac2d73ab92dd87111f418f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:117",
+      "rows": 35
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "aede2ec7aa5a84714d41e17d6a0a144642c4eb82b431aeb18aa916820e024e6d",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:118",
+      "rows": 104
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "1304ce6f7ae32b3873b0646becc010a7ea71e87aedae1efd98fb18e6328aae55",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:119",
+      "rows": 93
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "00154277e1edf201020e23f80d5352da7beace2d3eafeba83c776485007d98c1",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:120",
+      "rows": 79
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "d7dcbc02b27215a59463ac9075dfbbc10f1d376bc328516dcf6ca1dd5503bb3f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:121",
+      "rows": 105
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "9a37c9587bd9a6081d6274df61c172f6436b749ee58d64eff7cc51c1da595dff",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:122",
+      "rows": 118
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "c61ffcbf6dea983ab9bf229a8f2af21ce13809e65fb418196a2aa8628ff43a53",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:123",
+      "rows": 75
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "a1070c4a1c9490f27ef8696baaa66e2d7bb8cfbee2a719d32f585faa27ae69a2",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:124",
+      "rows": 68
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "abfbd9c6b646822ffd99b8e917832f359b142f4fc0d65f39d0aa44ed5a2049c7",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:125",
+      "rows": 104
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "90b92300124b0486d7c45a0b9ec30398690ff752198a2e24234e61f158e59da0",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:126",
+      "rows": 76
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "ef9c377d9a54b6c258198966e1026d5911675f8e59713dc45daf5b86cd222ad8",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:127",
+      "rows": 90
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "aab3315cbc55bb953b024aaade6a7372f45482af203764b35eaa07591cd5876a",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:128",
+      "rows": 64
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "5aee095c80cdf2fc8b5b898baefd5f7bb30f1df8de20f60211d4e74eefce29c4",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:129",
+      "rows": 102
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "ed4a506d0a0b4e0738c885025bc02978cd317ad3036fe75d2a5ca19631c0c38f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:130",
+      "rows": 152
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "0e8eda0009d0ec94804f52ac7b1054af5069c6c3b3ab3b80a27f289dfacf970f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:131",
+      "rows": 81
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "1261ac9eb51f1ae3a1d6f20c621d0663cd85b1d9b48f84df09e5d77cc9b29bbf",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:132",
+      "rows": 72
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "a40e3fe9919adc42b9c416fec58ec2b0c22177394c9a4f08c47da9310f89cae4",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:133",
+      "rows": 66
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "0b7d9759d6cea8e617cea76455f36a9df39c1a7b33cda38a63a43d8d13e5b518",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:134",
+      "rows": 92
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "6bad73c5fe8a450a2fffbab31b5f92c8ad4967c2824280587f4348e09e6cf7ce",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:135",
+      "rows": 61
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "458c2eee0a1ff78eee462010ded61195da1bad991d1502590fc3c4577aa32bbe",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:136",
+      "rows": 59
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "c4c9922139ff49e5f0193f27bd265b7a8610fae6591c6a25e63dc71ab3e8e326",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:137",
+      "rows": 143
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "4f6375891b826ce45c771cd63fbe1c432ea9eaecce9518af49d355f3118984e9",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:138",
+      "rows": 122
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "e637c4c1a5ed8d71c4d4e539e9794a978a149ea2fb3b70ad9ab61809c7bd9874",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:139",
+      "rows": 122
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "b986095ec54fa634347359d34af49c53d1770acc9a4a0416d227d119bebf7b4e",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:140",
+      "rows": 55
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "7f0eb361ec3533c66e526371bd5d41578d18cd40de44b4f1935b0ef0a655e506",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:141",
+      "rows": 80
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "c45285629da11e4952ec70131475533a26f63fd644231a5eab68a01377e2910a",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:142",
+      "rows": 76
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "06df073f120d85ac71dbcde426d7e99c9d145240be60e332644eb256d96eef96",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:143",
+      "rows": 91
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "0ec0a5331092dbfbeed2c7a045019518be74c9b10d4bef98614d4f7f1269547e",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:144",
+      "rows": 72
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "64004c2944ca63eff7bd7ddd8031b161c5550fb9aacd69290c8966daeacf672f",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:145",
+      "rows": 105
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "21beb888b95719bd118669e91dce5344da9e14fdc88abdce94c3bae91991d5bb",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:146",
+      "rows": 75
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "c602f2945be7ca1c4030fec6a68d52816b0c1af065976240375115b4ca7a6f82",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:147",
+      "rows": 92
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "3a40ea44c7b936e8a65ea7554df06c0cd06f731e9d51b440473ffc41fa7868f2",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:148",
+      "rows": 36
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "6f931942b2903f415c5f2c4bdb14d9a30a5130f17d05c882f38c5464cbef87be",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:149",
+      "rows": 68
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "7cea5cd6e6f5470cf02c105d16dd01aa5b0167fa2afbf1467e34fa1484d86b58",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:150",
+      "rows": 89
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "0d989c2e86a4006837b7d67a7c62a80ee69d667b5bf460aeaccd6fb777162117",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:151",
+      "rows": 76
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "fa277fc3dfcb6bed9f1954bbfa46bfcbb6496ee02764f8b379493e62342c4b55",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:152",
+      "rows": 97
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "95abb7524027c9b9bf2a98f068ee6f5a105149013de45f7143d7c1fc0766f503",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:153",
+      "rows": 72
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "84a280c4b243da650648d4ed7497b811bda28c2d515d3f84a3e5910a77104da3",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:154",
+      "rows": 48
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "3cefd6689f6bd7f6d3c2f7472f3e252d87de746628400d2d571566b0862d4d44",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:155",
+      "rows": 83
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "4014239dcb9cb8542db2af26e13e3c597a8de14b8ed2af802c362e497bad6cac",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:156",
+      "rows": 90
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "98d241e9928c731ac4ef349f331dc8c44e03768834a30321ee38420997f3d4f8",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:157",
+      "rows": 65
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "a0cfb3846ed8ba5865174ed061b8a98fece65f1d767eb068312bf0c593b60ee4",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:158",
+      "rows": 80
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "ea604707bdcc5947bfdc4be2e1df8f0879c36add022ae26f8c5c83b2c3cdf9fc",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:159",
+      "rows": 55
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "abb381c658f8e7e6d16dbc560a9de767b8eb7426ae158970de7cd908a9873f1e",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:160",
+      "rows": 98
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "6a0b0ed95d729a68b4ff6ccff30e0275abb99f488badf6daaabbbfe1beefb04b",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:161",
+      "rows": 89
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "08b9f77cc36f4bc610dd358bb2b900d57dc50aafaed13fb534275aae98447119",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:162",
+      "rows": 51
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "22959c313b378aefe887d3cfee47f5cb9ade6b738dd62e5e854b669a3915a413",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:163",
+      "rows": 83
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "d21d935a9b5a5cdbfc2905d583c288fe3eeb405069de094ce480a74baa092b90",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:164",
+      "rows": 51
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "e6ceb24d744bf6700b7d3131bba00a0bf74bbd85302d75809543130b9c310a21",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:165",
+      "rows": 117
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "314eb57bfda64c3cfeaa7f7acb94645c6e5bf2b568a1c28d5995038f6bea7beb",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:166",
+      "rows": 78
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "a41b8a696d429e5863facb912c1dc5ab646971dfb749cdeef5e26e1fa251d390",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:167",
+      "rows": 106
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "48172f8d55f6b9065b3dd0cb11f3397f1f079d00aded08c021737cc3d6971d39",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:168",
+      "rows": 76
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "1917a3e266641a2bf320327edd97c9c45bc94e949458e86d9d3c7a649a51310d",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:169",
+      "rows": 60
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "f3ec85f32eb2b256e484a0e9bca30b7912e1a1e9d358cb82bb601bef6c01edb0",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:170",
+      "rows": 76
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "e7bfd920c674c7fd30a87b448ad01d718974e27a865fc9ff83546332df85db6b",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:171",
+      "rows": 123
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "4ddd841abc0aef38656df6b012e48193bd8cc49a6592b1df52ba9d074c14b593",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:172",
+      "rows": 72
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "ec77ca036c0aead911d025c2a382c0666c9c8b816064de366fcb123440f56522",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:173",
+      "rows": 83
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "e5895bbe45edc39cdfc92cb8b9038b1dab973ad9a1445bf4df395fe774c9af4c",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:174",
+      "rows": 83
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "848afc18c930d6f6d4ab7c47ecb4355e0686bc2c4c953a3bec7a2086d2ba66f6",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:175",
+      "rows": 77
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "f4e5355f1a315b1e26b49228ce60c6af11ee69a8fb252d86f3164477d6583fd1",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:176",
+      "rows": 61
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "a8763983beb2a943577326d7d21f2cefb7a3fa35c95abe70c11d1fb4abf66214",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:177",
+      "rows": 95
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "a14a1de1866525582342a47c0abee244443331af7436e947131c86fcd61c5da7",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:178",
+      "rows": 113
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "c6e7a8608117c232014cc5a2773d5dcfd53f764bc62500e65e2688728f1908a5",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:179",
+      "rows": 74
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "045445675b8f99a161db955edb0d841c98495c039e42ede3d03dfc8055d90b9c",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:180",
+      "rows": 68
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "097f7b48f81c5aaf40b7de33325adc240b5e5c65e7aa7370b71db40c82833c5e",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:181",
+      "rows": 115
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "3ecaad2070b8b92b6c53621855b88c2bbcf6958344068ff7881d5f1cd8a2eedc",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:182",
+      "rows": 60
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "e9e2eae00647cdc3044ff4612de3c25a9d5c2697d8fabf9841ec6df00ea68b0b",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:183",
+      "rows": 100
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "069a4e18528935e3a3779b20816bee130766c68977c44dca11ddd61d73118109",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:184",
+      "rows": 84
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "d345d610d6dd47ca2187cb5547b43777fb1f68378d68e91aea11617626a486af",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:185",
+      "rows": 89
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "e523248b73cec4ab74a8af2c17293b3e0f2eab2034ad24789229d710b3775aeb",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:186",
+      "rows": 107
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "9680ab21dcdfbc0c2343003544fe3171d0f9bc1073c8cfc4a7be71b8adf01467",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:187",
+      "rows": 65
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "d3212d07d893e7383b1f3d1ff61f9477f77f14d0fb245e3ee54154643bc5dca9",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:188",
+      "rows": 42
+    },
+    {
+      "bank": "train",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "2d6c547006e097b957887fc357a46aab26d28887db62876c001c434dddd23ffc",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:189",
+      "rows": 71
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "NATURAL",
+      "fresh_proof_sha256": "60457b1bafb9f97cffc4573eb73855d5f94b1585a0a19762c25936a9f976230b",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:190",
+      "rows": 65
+    },
+    {
+      "bank": "holdout",
+      "cap_reached": false,
+      "class": "STRICT_TB_ADJUDICATED",
+      "fresh_proof_sha256": "da19cc30d0b32e35aa87506ea5976bcae7ce3015d355a5ac8f74732d2c47b3a0",
+      "physical_game_id": "cd47b230-f32f-4256-a51e-4869f5708bb6:191",
+      "rows": 115
+    }
+  ],
+  "playing_guard_sha256": "3358969a803329c24c43b1df92efdc696f350c391c9ccaaa199c0c9c74795522",
+  "producer_manifest_sha256": "b3fdbb8bebb46d45363740abae8b63f027988b432afc90a97a62e4ee8ffb0c18",
+  "producer_protocol_sha256": "b18e89f8b41be485f35637087b7bdb90cdbab37da626d8dda4b81b6d19b0e3ba",
+  "readout_sha256": "a8aec347050db01a306452892fc649e4629fe1495e4667ecf274c7220d45552e",
+  "resolved_profile_sha256": "5038469948f3bf4cc42afb16d6c3b3c7f5fde49f97de1b36fa9a3f40d39f6ff0",
+  "side_effect_attempts": {
+    "CUDA_init": 0,
+    "CUDA_lazy_init": 0,
+    "TRAIN_array_loader": 0,
+    "array_archive_decode": 0,
+    "checkpoint_load": 0,
+    "shard_decode": 0,
+    "shard_open": 0
+  },
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_ALL192_E4_INTEGRITY_128TRAIN_AND_PLAYING_GATES",
+  "terminal_sha256": "e04fc43ec580af2278f5e19d7a5d2e83c0d14384e3f302e1c889215738402f02"
+}

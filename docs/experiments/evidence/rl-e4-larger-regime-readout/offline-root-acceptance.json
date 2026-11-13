@@ -1,0 +1,62 @@
+{
+  "status": "ROOT_ACCEPTED_WHOLE64_OFFLINE_DIAGNOSTICS_VALUE_ERROR_COMPARISONS_UNRESOLVED_NO_SELECTION_OR_STRENGTH_CLAIM",
+  "utc": "2026-11-13T10:54:03.250613+00:00",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-readout-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/readout.json",
+    "sha256": "d12eb29a2c3eefc386f54212a191a93483a1c4f0c6fbd58e821cfa6e99c5f16e"
+  },
+  "independent_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline-actual-chain-independent-review-v1/review.json",
+    "sha256": "4f92c89f811ffd554d6781bdc4970cd6d733e97447e7f75db238b76edda86624"
+  },
+  "scoring_terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-score-execution-v1/terminal.json",
+    "sha256": "34abd52b7c84aaa21063aea0983ad055145c2ad5047ecd6a6dccb348eadf3b77"
+  },
+  "CPU_reader_terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-readout-execution-v1/terminal.json",
+    "sha256": "8e3f7afa9cbfdb2997bdcbb29d453ed3f935d87714647768b934f5f22c0cb3ae"
+  },
+  "whole_games": 64,
+  "roots_per_game": 1,
+  "bootstrap_draws": 10000,
+  "bootstrap_seed": 2026111347,
+  "means": {
+    "DONOR": {
+      "draw_Brier": 0.20213135500830381,
+      "expected_score_MSE": 0.11614512622403757,
+      "legal_policy_TV_vs_donor": 0.0,
+      "three_class_WDL_Brier_sum": 0.5354872849605308
+    },
+    "FULLA129": {
+      "draw_Brier": 0.2048630550587245,
+      "expected_score_MSE": 0.10777355381902823,
+      "legal_policy_TV_vs_donor": 0.10877634777213234,
+      "three_class_WDL_Brier_sum": 0.5228416902261432
+    },
+    "FULLB129": {
+      "draw_Brier": 0.20439822933617607,
+      "expected_score_MSE": 0.10634983154507605,
+      "legal_policy_TV_vs_donor": 0.10967520220850885,
+      "three_class_WDL_Brier_sum": 0.5192970070944163
+    }
+  },
+  "B_minus_A_expected_score_MSE": {
+    "bootstrap_draws": 10000,
+    "delta_candidate_minus_reference": -0.001423722273952194,
+    "diagnostic_only": true,
+    "percentile95": [
+      -0.005150611693202888,
+      0.0022632268258057343
+    ],
+    "roots_per_game": 1,
+    "seed": 2026111347,
+    "whole_games": 64
+  },
+  "all_paired_value_error_intervals_include_zero": true,
+  "legal_policy_TV_is_drift_not_quality": true,
+  "actual_RNG_metric_recomputation_reused_frozen_CPU_reader_not_duplicated": true,
+  "primary_or_candidate_selection_gate_changed": false,
+  "donor_adoption_changed": false
+}

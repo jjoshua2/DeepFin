@@ -1,0 +1,31 @@
+{
+  "checks": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline-actual-chain-independent-review-v1/checks.json",
+    "sha256": "5c9e2be7d42959326ca1554268562bea7c963faea76a5e3728fe3b2a53ebbb41"
+  },
+  "findings": [],
+  "limits": [
+    "Read-only source/JSON/process metadata. No NPZ/HOLDarray/checkpoint/model/Torch/projectimport, tests/jobs/engine/TBquery, metrics/softmax/bootstrap recomputation or newselection.",
+    "Frozen actualCPUreader/sourcequalification supplies probability/metric recomputation; review onlyjoins recordedresults andcustody, not independentnumerics or forwardrepetition.",
+    "No playinggain/Elo/generalcalibration/representativepopulation or targetcausality/adoption inferred; allvalueerror pairedintervals remaindescriptiveandincludezero."
+  ],
+  "reused_source_interface_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline-actual-metadata-interface-review-v1/review.json",
+    "sha256": "4fd1b430af568dc9b7299c5dd4a3915f170658c0eb4c914d51dd300019923b23"
+  },
+  "reviewer": "pilot_path_audit",
+  "saved_diagnostics": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline-actual-chain-independent-review-v1/saved-diagnostics.json",
+    "sha256": "266537a615da006ccec0827c894fe169542f7b2088e5629684c38f1e8cc74f2a"
+  },
+  "status": "ACCEPT_COMPLETE_E4_OFFLINE_CHAIN_METADATA_AND_CUSTODY_DIAGNOSTIC_ONLY",
+  "utc": "2026-11-13T10:53:10.484717+00:00",
+  "verified_scope": [
+    "Scorer/readout actualcanonicalmetadata reverse exactlyfrozenphase templates maskingonlyallowedidentityleaves/authorityflags; helpers unchanged.",
+    "Actualroot6bda/checkpointroote302/scorer123089+870f7/reader7c70+bd448/readoutsb7a+d12/closedterminals join exactly.",
+    "AcceptedA39/A129/B129 hash metadata and494/architecture/mode reports matchthree fixedmodels; one64B eagerBF16 forwardpermodel andcommoninputhash reported, weakrefsclosed.",
+    "All64distinctphysicalHOLDgames/rows,33natural31strictTB, and12savedpaired bootstrapmetadata entries reportfixed64wholegames/one root/10000seed2026111347; no subset.",
+    "ActualGPU300owner1383456/child1383466@29047379 andCPU120owner1384263/child1384265@29054716 closedPASS0 withbothsupervisorsabsent/allrecordedbirthsabsent; exactfixedchildcommands.",
+    "No source/science/seed/diagnosticformula or playingcriteria change; fixedprimaryplayingsequence remainsindependentofdiagnosticdirection."
+  ]
+}

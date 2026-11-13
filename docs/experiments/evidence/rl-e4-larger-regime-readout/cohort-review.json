@@ -1,0 +1,155 @@
+{
+  "counts": {
+    "HOLD": 64,
+    "HOLD_rows": 5284,
+    "TRAIN": 128,
+    "TRAIN_rows": 10516,
+    "absolute_game_plies_including_openings": 20960,
+    "class_counts": {
+      "holdout": {
+        "NATURAL": 33,
+        "STRICT_TB_ADJUDICATED": 31,
+        "UNRESOLVED": 0
+      },
+      "train": {
+        "NATURAL": 68,
+        "STRICT_TB_ADJUDICATED": 60,
+        "UNRESOLVED": 0
+      }
+    },
+    "fresh_auditor_proofs": 192,
+    "games": 192,
+    "independent_metadata_files_hashed": 768,
+    "opaque_inventory_files_hashed_by_qualified_auditor": 48192,
+    "opening_plies": 3072,
+    "played_additional_plies": 17888,
+    "producer_known_overlap_rows_disclosed": 0,
+    "raw_records": 17730,
+    "retained_rows_by_bank_and_class": {
+      "holdout": {
+        "NATURAL": 2560,
+        "STRICT_TB_ADJUDICATED": 2724
+      },
+      "train": {
+        "NATURAL": 5062,
+        "STRICT_TB_ADJUDICATED": 5454
+      }
+    },
+    "retained_rows_total": 15800
+  },
+  "findings": [],
+  "limits": [
+    "Reviewer used saved JSON/provenance/proof/inventory/hashmetadata only; no array decoding, opaque48192payload rehash, board/legal replay, TB re-probe, models/checkpoints/forwards/engines/projectimports/newjobs. Fresh legal/outcome/policy proofs and opaque file custody are accepted as exact qualified cd0e auditor execution, not independently rerun.",
+    "Producer rawF32\u2192HLGauss\u2192storedF16 and175plane equality remain source-qualified producer claims. Actual128 TRAIN loader must freshly reprove and validate allTRAIN raw/shard arrays before updates; HOLD arrays remain excluded.",
+    "64offline eligible roots remain producer metadata with independent membership/noTRAIN checks only; future offline phase must freshly reverify all64 full audits before HOLD arrays. No predictions/selection/strength results exist.",
+    "Known exposure scope is bounded raw/mirror/history identity; pretraining/search/unretained/dropout/source-family exposure remains unknown. Natural and strictTB classes distinct; TB asset stamp is path/size/mtime metadata, not content truth.",
+    "Optional SF archive is not independently qualified here and remains nonveto/incomplete-information scope. No teacher-P0/coverage/timing-equivalence claim.",
+    "No draw/learning admission inferred. Main-published technical draw amendment, actual source+manifest+sixthpublication binding, cohort rootadmission and separate finite draw/learning admissions remain mandatory. No Elo/playing/optimality/adoption claim."
+  ],
+  "owned_closure": [
+    {
+      "birth_absence": {
+        "1315802": {
+          "expected_birth": null,
+          "proc_exists": false
+        },
+        "1315804": {
+          "expected_birth": 28599831,
+          "proc_exists": false
+        },
+        "1315843": {
+          "expected_birth": 28600666,
+          "proc_exists": false
+        },
+        "1315846": {
+          "expected_birth": 28600698,
+          "proc_exists": false
+        }
+      },
+      "cpu_seconds": 812.87,
+      "role": "GPUproducer",
+      "wall_seconds": 1140.210771669983
+    },
+    {
+      "birth_absence": {
+        "1321092": {
+          "expected_birth": null,
+          "proc_exists": false
+        },
+        "1321094": {
+          "expected_birth": 28762151,
+          "proc_exists": false
+        }
+      },
+      "cpu_seconds": 18.8,
+      "role": "CPUauditor",
+      "wall_seconds": 28.49136607197579
+    }
+  ],
+  "references_sha256": {
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-audit-final-bindings-v1/identities.json": "21f18636adaccb3ee83615dfe84d6ea79dbb915bb6b0367293a9c3dafb3fd7bb",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-auditor-final-template-independent-review-v1/review.json": "6e3fed977f66df742a673dd7a7f052b80f82450283ab4823cbeff6315c702a2a",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-auditor-final-v1/manifest.json": "677e5d8b63ead8ca64dc1f8763d0a96e36a367bb693cddb290907bd83f301579",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-independent-audit-execution-v1/terminal.json": "ab0b4545d7afc4a605b19c2772589df2ab23091471c24f10ea1ec7f11cc3cda0",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-independent-audit-results-v1/readout.json": "6b175f2d4f8ad8a93d0b42409d0da96b7e29cd9ae9df06b98f3d092c5355097d",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/model-serving.json": "f794c74ca69b6d2c63b7fd04ddde92d2d5ed137e1a0d5c049a0d3096d2e07136",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/playing-start-overlap.json": "3358969a803329c24c43b1df92efdc696f350c391c9ccaaa199c0c9c74795522",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/readout.json": "a8aec347050db01a306452892fc649e4629fe1495e4667ecf274c7220d45552e",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-cohort-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/resolved-profile.json": "5038469948f3bf4cc42afb16d6c3b3c7f5fde49f97de1b36fa9a3f40d39f6ff0",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-execution-v1/terminal.json": "e04fc43ec580af2278f5e19d7a5d2e83c0d14384e3f302e1c889215738402f02",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-package-v1/manifest.json": "b3fdbb8bebb46d45363740abae8b63f027988b432afc90a97a62e4ee8ffb0c18",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-collection-final-package-v1/protocol.json": "b18e89f8b41be485f35637087b7bdb90cdbab37da626d8dda4b81b6d19b0e3ba",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-science-main-publication-v1/publication.json": "f282e60ed57b258381333fefc44e472ff834f9dbe238397b123db07dc713f359",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-scientific-protocol-final-v2/protocol.json": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478"
+  },
+  "serving_metadata": {
+    "SF_observed_births": [
+      {
+        "birth": 28600666,
+        "pid": 1315843
+      },
+      {
+        "birth": 28600698,
+        "pid": 1315846
+      }
+    ],
+    "calls": 1194,
+    "first_input": {
+      "autocast_dtype": "torch.bfloat16",
+      "device": "cuda:0",
+      "shape": [
+        32,
+        175,
+        8,
+        8
+      ],
+      "storage_dtype": "torch.float32"
+    },
+    "peak_cuda_memory_allocated": 916377600,
+    "replacements": 0,
+    "rows": 38208
+  },
+  "six_lineage_sha256": {
+    "playing_guard": "3358969a803329c24c43b1df92efdc696f350c391c9ccaaa199c0c9c74795522",
+    "producer_manifest": "b3fdbb8bebb46d45363740abae8b63f027988b432afc90a97a62e4ee8ffb0c18",
+    "producer_protocol": "b18e89f8b41be485f35637087b7bdb90cdbab37da626d8dda4b81b6d19b0e3ba",
+    "readout": "a8aec347050db01a306452892fc649e4629fe1495e4667ecf274c7220d45552e",
+    "resolved_profile": "5038469948f3bf4cc42afb16d6c3b3c7f5fde49f97de1b36fa9a3f40d39f6ff0",
+    "terminal": "e04fc43ec580af2278f5e19d7a5d2e83c0d14384e3f302e1c889215738402f02"
+  },
+  "status": "ACCEPT_ACTUAL_E4_ALL192_COHORT_INTEGRITY_128TRAIN_AND_PLAYING_METADATA_ONLY",
+  "utc": "2026-11-13T10:10:02.594840+00:00",
+  "verified": {
+    "64producer_HOLDroots_member_offset8to80_noTRAINrawmirror_history_match": true,
+    "actual_profile_object_equals_820_descriptor": true,
+    "all128TRAIN_nonempty_resolved_rawcontrol_metadata_claims_true": true,
+    "all192_raw_records_actual_NETpolicy_noSFrefute_provenance": true,
+    "all628_playing_start_rawmirror_vs_all192retained_rawmirror_intersection_empty_independently_recomputed": true,
+    "auditor_actual_manifest_only_science_leaf_changed": true,
+    "auditor_spies_all_zero_arrays_HOLDarrays_learning_false": true,
+    "exact_bound_auditor_and_observed_producer_commands": true,
+    "oneA39_494state_61444448parameter_model_serving_metadata": true,
+    "retained15800_unique_physicalrow_raw_offset_metadata_joins": true,
+    "whole192_fixed_roster_banks_directory_metadata_and192proofhash_joins": true
+  }
+}

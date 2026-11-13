@@ -1,0 +1,157 @@
+{
+  "bindings": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-context-bindings-v1.json",
+    "sha256": "18e109e4c777d2779af5d6cbc186f05be7baa06f3b658be8b22c91db454a4bbf"
+  },
+  "candidate": {
+    "after_sha256": "fe4038db2b2b190a49901350943ab0369e83f0698fcc27f85cc0fa7ba4417b7a",
+    "before_sha256": "fe4038db2b2b190a49901350943ab0369e83f0698fcc27f85cc0fa7ba4417b7a",
+    "model_role": "FULLA129",
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLA/step-129.pt",
+    "readonly_after": true,
+    "readonly_before": true,
+    "sha256": "fe4038db2b2b190a49901350943ab0369e83f0698fcc27f85cc0fa7ba4417b7a",
+    "stat_after": {
+      "ctime_ns": 1794566258650160182,
+      "dev": 2096,
+      "ino": 14672210,
+      "mtime_ns": 1794566212482165141,
+      "size": 655382347
+    },
+    "stat_before": {
+      "ctime_ns": 1794566258650160182,
+      "dev": 2096,
+      "ino": 14672210,
+      "mtime_ns": 1794566212482165141,
+      "size": 655382347
+    },
+    "step": 129
+  },
+  "checks": {
+    "256_unique_games_128_complete_color_pairs": true,
+    "all_actual_bindings_artifact_and_custody_hashes": true,
+    "header_same_seed1345_matched64_noise_temp_point1_full6_rule50": true,
+    "known_owners_children_currently_absent": [
+      1417223,
+      1417225,
+      1435387,
+      1435389
+    ],
+    "pre_post_SHA_stat_readonly_and_model_roles": true,
+    "qualified_PGN_full16_history_legality_cap_fault_TB_validation_reused": true,
+    "same_frozen_reader_manifest_science_and_exact_context_command": true
+  },
+  "closures": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-context-execution-v1/terminal.json",
+      "sha256": "c51e2cc3a46ff5f2d1acfb5dfbb5d348abc44c425ae979ac1ceedc5383ed1af0"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-context-readout-execution-v1/terminal.json",
+      "sha256": "e19b7a8795cd76c888e8a32aaf1b29cd032e8954a1959bdd9f07759ec54c6fe9"
+    }
+  ],
+  "findings": [],
+  "independent_stdlib_statistics": {
+    "CI95": [
+      0.43467260564600435,
+      0.5301711443539956
+    ],
+    "SE": 0.024361872119385536,
+    "candidate_WDL": [
+      71,
+      105,
+      80
+    ],
+    "denominator": 512,
+    "halfpoints": 247,
+    "pentanomial": [
+      14,
+      29,
+      48,
+      26,
+      11
+    ],
+    "point_at_least_053_and_lower_above_half": false,
+    "qualified_upper_below_half": false,
+    "sample_variance": 0.07596810408464567,
+    "score": 0.482421875
+  },
+  "limits": [
+    "No PGN replay, engine/TB query, model/checkpoint/NPZ read, project import, new job or random rerun.",
+    "Integer game outcomes and paired normal95 recomputed from saved per_game metadata; frozen reader supplies legal-history and strict-TB verification.",
+    "Point score below donor does not establish harm: interval includes .5. No A129 utility eligibility follows.",
+    "All three screens have independent endpoint receipts; the separate frozen metadata decision still determines final eligibility and confirmation disposition.",
+    "Conditional internal matched64 inference for one realization; no external Elo, per-forward precision, causal mechanism or per-game served-state assertion."
+  ],
+  "manifest": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/manifest.json",
+    "sha256": "2b3c9ad242cbe2d21b6ff0b10ea7a95974f98d071a91067d8891dfbce56fb665"
+  },
+  "maximum_additional_plies": 252,
+  "model_custody": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-context-postexecution-readout-bindings-v1/model-custody.json",
+    "sha256": "472e5415b4c9758bde5f3ed086b015e7f6d3b5df98b71c15eb136629abb2ec52"
+  },
+  "readout": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-readout-results-v1/context/readout.json",
+    "sha256": "46896e2a2a5232ed9ce3e6554d4dc73d0896fc9c4601d150043eb1020ed03572"
+  },
+  "reference": {
+    "after_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+    "before_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+    "model_role": "A39",
+    "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+    "readonly_after": true,
+    "readonly_before": true,
+    "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+    "stat_after": {
+      "ctime_ns": 1794435951764542732,
+      "dev": 2096,
+      "ino": 10308758,
+      "mtime_ns": 1794435951364542774,
+      "size": 665665037
+    },
+    "stat_before": {
+      "ctime_ns": 1794435951764542732,
+      "dev": 2096,
+      "ino": 10308758,
+      "mtime_ns": 1794435951364542774,
+      "size": 665665037
+    },
+    "step": null
+  },
+  "reused_source_reviews": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-primary-actual-independent-review-v1/review.json",
+      "sha256": "ae277df8174bffa60243eebaab87a309156834c144b75e1637d4c4bdfd3f44e7"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-eligibility-actual-independent-review-v1/review.json",
+      "sha256": "37d3bac9a06aa29f172eea98d8c0213e68f31dbde8ba9cd3cb3f93eb951692b5"
+    }
+  ],
+  "rule_flags": {
+    "automatic_75move": 0,
+    "automatic_fivefold": 0,
+    "checkmate": 87,
+    "claimable_fifty": 0,
+    "claimable_threefold": 45,
+    "current_fifty": 0,
+    "current_threefold": 0,
+    "insufficient_material": 0,
+    "stalemate": 0
+  },
+  "scientific_sha256": "7cfd6e45b565f39827a1801c828dc302fe5d79f176c7701b004fa7f1adab3478",
+  "source_reader": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-arena-final-package-v1/read_endpoint.py",
+    "sha256": "be9d9f5b8b63de3e855b15152c28fb262ab491170916e72c81378fea1af47776"
+  },
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "ACCEPT_QUALIFIED_E4_A129_DONOR_SCREEN_METADATA_AND_PAIRED_STATISTICS",
+  "terminations": {
+    "rules": 132,
+    "syzygy": 124
+  },
+  "verdict": "NO_A129_UTILITY_ELIGIBILITY_DONOR_DIFFERENCE_UNRESOLVED"
+}

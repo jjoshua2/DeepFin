@@ -1,0 +1,57 @@
+{
+  "status": "ROOT_ACCEPTED_PAIRED_FULL129_CHECKPOINTS_FOR_OFFLINE_DIAGNOSTICS",
+  "utc": "2026-11-13T10:49:23.353094+00:00",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "run_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "models": [
+    {
+      "label": "DONOR",
+      "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+      "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+      "step": null
+    },
+    {
+      "label": "FULLA129",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLA/trainer.pt",
+      "sha256": "fe4038db2b2b190a49901350943ab0369e83f0698fcc27f85cc0fa7ba4417b7a",
+      "step": 129
+    },
+    {
+      "label": "FULLB129",
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLB/trainer.pt",
+      "sha256": "c25214721e9c7be65c1f2a41d0eb078723a501ea51beafef579d5aa1d6dc6a4e",
+      "step": 129
+    }
+  ],
+  "training_output": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6",
+  "training_terminal_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired-full129-execution-v1/terminal.json",
+  "training_terminal_sha256": "3f38a044d3d6504441f95d4bcdc8c5df7c88793e827679ad8aa0762262fce6c5",
+  "training_readout_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/readout.json",
+  "training_readout_sha256": "9b14a814fa7ff9bea3d06ba61a6de4f2210f6604763e9ada095c8649aa1ec3b3",
+  "cohort_readout_sha256": "a8aec347050db01a306452892fc649e4629fe1495e4667ecf274c7220d45552e",
+  "actual_CPU_audit": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-actual-cpu-readout-v1/readout.json",
+    "sha256": "9d0eeef0675c2714f4f7348693e669b645ee652510fb904bce69ab028f04ee22"
+  },
+  "actual_CPU_terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-cpu-readout-execution-v1/terminal.json",
+    "sha256": "1bc9b6d5c00f2ef9e08fc4faacedb42a3f9ac78e1536deaa98380bf02bffe82c"
+  },
+  "independent_review": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-actual-independent-review-v1/review.json",
+    "sha256": "829292f1ddacef1952eb32145636e41a930525d2ffaa8840e9ce36b32c05b8fb"
+  },
+  "checkpoint_custody": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-actual-cpu-readout-v1/checkpoint-custody.json",
+    "sha256": "efcd409d57403ab5c34750275045c63a8ffbfb1861ec5cea3318c8a89960b92d"
+  },
+  "three_models_metadata": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-actual-cpu-readout-v1/three-models.json",
+    "sha256": "193c3889b352d567ab90a96fe59b947c6eac0dd13559ec1dc8c3fd49799a1825"
+  },
+  "all494_finite_and_architecture_qualified": true,
+  "optimizer_updates_total": 258,
+  "samples_per_arm": 33024,
+  "clipping_scope": "Auxiliary AdamW only; Aurora matrix group excluded",
+  "playing_gain_or_adoption_claim": false
+}

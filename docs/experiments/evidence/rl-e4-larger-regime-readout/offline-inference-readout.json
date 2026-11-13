@@ -1,0 +1,469 @@
+{
+  "checkpoints_binding": {
+    "actual_CPU_audit": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-actual-cpu-readout-v1/readout.json",
+      "sha256": "9d0eeef0675c2714f4f7348693e669b645ee652510fb904bce69ab028f04ee22"
+    },
+    "actual_CPU_terminal": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-cpu-readout-execution-v1/terminal.json",
+      "sha256": "1bc9b6d5c00f2ef9e08fc4faacedb42a3f9ac78e1536deaa98380bf02bffe82c"
+    },
+    "all494_finite_and_architecture_qualified": true,
+    "checkpoint_custody": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-actual-cpu-readout-v1/checkpoint-custody.json",
+      "sha256": "efcd409d57403ab5c34750275045c63a8ffbfb1861ec5cea3318c8a89960b92d"
+    },
+    "clipping_scope": "Auxiliary AdamW only; Aurora matrix group excluded",
+    "cohort_readout_sha256": "a8aec347050db01a306452892fc649e4629fe1495e4667ecf274c7220d45552e",
+    "independent_review": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-actual-independent-review-v1/review.json",
+      "sha256": "829292f1ddacef1952eb32145636e41a930525d2ffaa8840e9ce36b32c05b8fb"
+    },
+    "models": [
+      {
+        "label": "DONOR",
+        "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+        "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+        "step": null
+      },
+      {
+        "label": "FULLA129",
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLA/trainer.pt",
+        "sha256": "fe4038db2b2b190a49901350943ab0369e83f0698fcc27f85cc0fa7ba4417b7a",
+        "step": 129
+      },
+      {
+        "label": "FULLB129",
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLB/trainer.pt",
+        "sha256": "c25214721e9c7be65c1f2a41d0eb078723a501ea51beafef579d5aa1d6dc6a4e",
+        "step": 129
+      }
+    ],
+    "optimizer_updates_total": 258,
+    "playing_gain_or_adoption_claim": false,
+    "run_uuid": "cd47b230-f32f-4256-a51e-4869f5708bb6",
+    "samples_per_arm": 33024,
+    "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+    "status": "ROOT_ACCEPTED_PAIRED_FULL129_CHECKPOINTS_FOR_OFFLINE_DIAGNOSTICS",
+    "three_models_metadata": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired129-actual-cpu-readout-v1/three-models.json",
+      "sha256": "193c3889b352d567ab90a96fe59b947c6eac0dd13559ec1dc8c3fd49799a1825"
+    },
+    "training_output": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6",
+    "training_readout_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/readout.json",
+    "training_readout_sha256": "9b14a814fa7ff9bea3d06ba61a6de4f2210f6604763e9ada095c8649aa1ec3b3",
+    "training_terminal_path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-paired-full129-execution-v1/terminal.json",
+    "training_terminal_sha256": "3f38a044d3d6504441f95d4bcdc8c5df7c88793e827679ad8aa0762262fce6c5",
+    "utc": "2026-11-13T10:49:23.353094+00:00"
+  },
+  "identities_sha256": "f03b7f048543ecb903d938ab0d0eec1016f53fe18b757282ad7eb6856f61e17e",
+  "manifest_sha256": "870f7f71f36a20dbebed0bad04ef4e6a908e27ef776363f87dd2032012711887",
+  "metric_or_playing_gate_used_for_selection": false,
+  "models": [
+    {
+      "checkpoint": {
+        "label": "DONOR",
+        "path": "/home/josh/chess-artifacts/operations/rl-transition-preflight-20261111-local-v1/baseline/epoch2.pt",
+        "sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+        "step": null
+      },
+      "forwards": [
+        {
+          "amp_dtype": "torch.bfloat16",
+          "inference_mode": true,
+          "input_float32_sha256": "faaaa767d0ba635e1ca7ca8c112a5de509d5838430ac0e14fbf5ae264440dd6b",
+          "input_shape": [
+            64,
+            175,
+            8,
+            8
+          ],
+          "storage_dtype": "torch.float32"
+        }
+      ],
+      "label": "DONOR",
+      "load": {
+        "arch": {
+          "_schema_version": 20,
+          "arc_attention_bias": "none",
+          "aux_policy_head_dim": 128,
+          "categorical_head_coupled": true,
+          "dynamic_relation_count": 5,
+          "embed_dim": 512,
+          "embed_dim_by_layer": null,
+          "enable_policy_sf_head": true,
+          "ffn_mult": 1.5,
+          "ffn_mult_by_layer": [
+            1.5,
+            1.5,
+            1.5,
+            1.5,
+            1.5,
+            1.555556,
+            1.65,
+            1.772222,
+            1.894444,
+            1.666667,
+            1.638889,
+            1.905556,
+            1.783333,
+            1.794444,
+            1.744444,
+            1.5
+          ],
+          "history_rep_fix": true,
+          "input_extra_features": "v2_threats",
+          "input_global_embedding": "none",
+          "input_global_embedding_channels": 0,
+          "input_history_encoding": "lc0_root_legacy_meta",
+          "input_pos_encoding": "arc_adapter",
+          "input_square_embedding": "none",
+          "kind": "transformer",
+          "num_heads": 16,
+          "num_layers": 16,
+          "phase_output_adapter": false,
+          "phase_output_adapter_dim": 64,
+          "phase_piece_thresholds": [
+            13,
+            22
+          ],
+          "phase_smolgen": false,
+          "policy_dynamic_relations": false,
+          "policy_embedding_mode": "linear",
+          "policy_encoding": "lc0_1858",
+          "qkv_projection": "split",
+          "smolgen_bias_norm": "center_rms",
+          "smolgen_bias_scale": "layer_head",
+          "smolgen_gen_sz": 256,
+          "smolgen_hidden_channels": 32,
+          "smolgen_hidden_sz": 256,
+          "smolgen_mode": "per_layer",
+          "smolgen_pooling": "flatten",
+          "smolgen_relation_basis": true,
+          "smolgen_relation_coeff_norm": "none",
+          "smolgen_relation_norm": "none",
+          "smolgen_relation_scale": "none",
+          "use_deepnorm": true,
+          "use_dynamic_relations": false,
+          "use_gradient_checkpointing": false,
+          "use_nla": false,
+          "use_qk_rmsnorm": false,
+          "use_smolgen": true
+        },
+        "finite_shape_dtype_matched": true,
+        "model_tensors": 494,
+        "step_metadata": 680276
+      },
+      "math_context": {
+        "cuda_matmul_allow_bf16_reduced_precision_reduction": true,
+        "cuda_matmul_allow_fp16_reduced_precision_reduction": true,
+        "cuda_matmul_allow_tf32": false,
+        "cudnn_allow_tf32": true,
+        "cudnn_benchmark": false,
+        "cudnn_deterministic": false,
+        "default_dtype": "torch.float32",
+        "deterministic_algorithms": false,
+        "deterministic_warn_only": false,
+        "float32_matmul_precision": "highest",
+        "math_environment": {
+          "CUBLAS_WORKSPACE_CONFIG": null,
+          "NVIDIA_TF32_OVERRIDE": null
+        },
+        "torch": "2.14.0+cu130"
+      },
+      "policy_adapter": "actualCOMPACT_TO_FULL_POLICY gather fromproduction4672 dense output",
+      "raw_head_output_dtypes": [
+        {
+          "policy": "torch.float32",
+          "wdl": "torch.bfloat16"
+        }
+      ],
+      "raw_output_sha256": "ab7ded27ea7bfa7874d272b42a7336b3884492a7b755a794715ffbb7ac141b73",
+      "softmax_ruler": "float64stableCPU WDLsoftmax andlegal1858softmax; nofallback"
+    },
+    {
+      "checkpoint": {
+        "label": "FULLA129",
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLA/trainer.pt",
+        "sha256": "fe4038db2b2b190a49901350943ab0369e83f0698fcc27f85cc0fa7ba4417b7a",
+        "step": 129
+      },
+      "forwards": [
+        {
+          "amp_dtype": "torch.bfloat16",
+          "inference_mode": true,
+          "input_float32_sha256": "faaaa767d0ba635e1ca7ca8c112a5de509d5838430ac0e14fbf5ae264440dd6b",
+          "input_shape": [
+            64,
+            175,
+            8,
+            8
+          ],
+          "storage_dtype": "torch.float32"
+        }
+      ],
+      "label": "FULLA129",
+      "load": {
+        "arch": {
+          "_schema_version": 20,
+          "arc_attention_bias": "none",
+          "aux_policy_head_dim": 128,
+          "categorical_head_coupled": true,
+          "dynamic_relation_count": 5,
+          "embed_dim": 512,
+          "embed_dim_by_layer": null,
+          "enable_policy_sf_head": true,
+          "ffn_mult": 1.5,
+          "ffn_mult_by_layer": [
+            1.5,
+            1.5,
+            1.5,
+            1.5,
+            1.5,
+            1.555556,
+            1.65,
+            1.772222,
+            1.894444,
+            1.666667,
+            1.638889,
+            1.905556,
+            1.783333,
+            1.794444,
+            1.744444,
+            1.5
+          ],
+          "history_rep_fix": true,
+          "input_extra_features": "v2_threats",
+          "input_global_embedding": "none",
+          "input_global_embedding_channels": 0,
+          "input_history_encoding": "lc0_root_legacy_meta",
+          "input_pos_encoding": "arc_adapter",
+          "input_square_embedding": "none",
+          "kind": "transformer",
+          "num_heads": 16,
+          "num_layers": 16,
+          "phase_output_adapter": false,
+          "phase_output_adapter_dim": 64,
+          "phase_piece_thresholds": [
+            13,
+            22
+          ],
+          "phase_smolgen": false,
+          "policy_dynamic_relations": false,
+          "policy_embedding_mode": "linear",
+          "policy_encoding": "lc0_1858",
+          "qkv_projection": "split",
+          "smolgen_bias_norm": "center_rms",
+          "smolgen_bias_scale": "layer_head",
+          "smolgen_gen_sz": 256,
+          "smolgen_hidden_channels": 32,
+          "smolgen_hidden_sz": 256,
+          "smolgen_mode": "per_layer",
+          "smolgen_pooling": "flatten",
+          "smolgen_relation_basis": true,
+          "smolgen_relation_coeff_norm": "none",
+          "smolgen_relation_norm": "none",
+          "smolgen_relation_scale": "none",
+          "use_deepnorm": true,
+          "use_dynamic_relations": false,
+          "use_gradient_checkpointing": false,
+          "use_nla": false,
+          "use_qk_rmsnorm": false,
+          "use_smolgen": true
+        },
+        "finite_shape_dtype_matched": true,
+        "model_tensors": 494,
+        "step_metadata": 129
+      },
+      "math_context": {
+        "cuda_matmul_allow_bf16_reduced_precision_reduction": true,
+        "cuda_matmul_allow_fp16_reduced_precision_reduction": true,
+        "cuda_matmul_allow_tf32": false,
+        "cudnn_allow_tf32": true,
+        "cudnn_benchmark": false,
+        "cudnn_deterministic": false,
+        "default_dtype": "torch.float32",
+        "deterministic_algorithms": false,
+        "deterministic_warn_only": false,
+        "float32_matmul_precision": "highest",
+        "math_environment": {
+          "CUBLAS_WORKSPACE_CONFIG": null,
+          "NVIDIA_TF32_OVERRIDE": null
+        },
+        "torch": "2.14.0+cu130"
+      },
+      "policy_adapter": "actualCOMPACT_TO_FULL_POLICY gather fromproduction4672 dense output",
+      "raw_head_output_dtypes": [
+        {
+          "policy": "torch.float32",
+          "wdl": "torch.bfloat16"
+        }
+      ],
+      "raw_output_sha256": "ecc9bbd5f5540527058bdd9d9bdbbb7db382c85d3eb0ea183db7f5d7b16e5541",
+      "softmax_ruler": "float64stableCPU WDLsoftmax andlegal1858softmax; nofallback"
+    },
+    {
+      "checkpoint": {
+        "label": "FULLB129",
+        "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-learning-runtime-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/FULLB/trainer.pt",
+        "sha256": "c25214721e9c7be65c1f2a41d0eb078723a501ea51beafef579d5aa1d6dc6a4e",
+        "step": 129
+      },
+      "forwards": [
+        {
+          "amp_dtype": "torch.bfloat16",
+          "inference_mode": true,
+          "input_float32_sha256": "faaaa767d0ba635e1ca7ca8c112a5de509d5838430ac0e14fbf5ae264440dd6b",
+          "input_shape": [
+            64,
+            175,
+            8,
+            8
+          ],
+          "storage_dtype": "torch.float32"
+        }
+      ],
+      "label": "FULLB129",
+      "load": {
+        "arch": {
+          "_schema_version": 20,
+          "arc_attention_bias": "none",
+          "aux_policy_head_dim": 128,
+          "categorical_head_coupled": true,
+          "dynamic_relation_count": 5,
+          "embed_dim": 512,
+          "embed_dim_by_layer": null,
+          "enable_policy_sf_head": true,
+          "ffn_mult": 1.5,
+          "ffn_mult_by_layer": [
+            1.5,
+            1.5,
+            1.5,
+            1.5,
+            1.5,
+            1.555556,
+            1.65,
+            1.772222,
+            1.894444,
+            1.666667,
+            1.638889,
+            1.905556,
+            1.783333,
+            1.794444,
+            1.744444,
+            1.5
+          ],
+          "history_rep_fix": true,
+          "input_extra_features": "v2_threats",
+          "input_global_embedding": "none",
+          "input_global_embedding_channels": 0,
+          "input_history_encoding": "lc0_root_legacy_meta",
+          "input_pos_encoding": "arc_adapter",
+          "input_square_embedding": "none",
+          "kind": "transformer",
+          "num_heads": 16,
+          "num_layers": 16,
+          "phase_output_adapter": false,
+          "phase_output_adapter_dim": 64,
+          "phase_piece_thresholds": [
+            13,
+            22
+          ],
+          "phase_smolgen": false,
+          "policy_dynamic_relations": false,
+          "policy_embedding_mode": "linear",
+          "policy_encoding": "lc0_1858",
+          "qkv_projection": "split",
+          "smolgen_bias_norm": "center_rms",
+          "smolgen_bias_scale": "layer_head",
+          "smolgen_gen_sz": 256,
+          "smolgen_hidden_channels": 32,
+          "smolgen_hidden_sz": 256,
+          "smolgen_mode": "per_layer",
+          "smolgen_pooling": "flatten",
+          "smolgen_relation_basis": true,
+          "smolgen_relation_coeff_norm": "none",
+          "smolgen_relation_norm": "none",
+          "smolgen_relation_scale": "none",
+          "use_deepnorm": true,
+          "use_dynamic_relations": false,
+          "use_gradient_checkpointing": false,
+          "use_nla": false,
+          "use_qk_rmsnorm": false,
+          "use_smolgen": true
+        },
+        "finite_shape_dtype_matched": true,
+        "model_tensors": 494,
+        "step_metadata": 129
+      },
+      "math_context": {
+        "cuda_matmul_allow_bf16_reduced_precision_reduction": true,
+        "cuda_matmul_allow_fp16_reduced_precision_reduction": true,
+        "cuda_matmul_allow_tf32": false,
+        "cudnn_allow_tf32": true,
+        "cudnn_benchmark": false,
+        "cudnn_deterministic": false,
+        "default_dtype": "torch.float32",
+        "deterministic_algorithms": false,
+        "deterministic_warn_only": false,
+        "float32_matmul_precision": "highest",
+        "math_environment": {
+          "CUBLAS_WORKSPACE_CONFIG": null,
+          "NVIDIA_TF32_OVERRIDE": null
+        },
+        "torch": "2.14.0+cu130"
+      },
+      "policy_adapter": "actualCOMPACT_TO_FULL_POLICY gather fromproduction4672 dense output",
+      "raw_head_output_dtypes": [
+        {
+          "policy": "torch.float32",
+          "wdl": "torch.bfloat16"
+        }
+      ],
+      "raw_output_sha256": "13414e1a2a6d53be9f017f72c21309dda61c93a177ad02b6b993638226cc892e",
+      "softmax_ruler": "float64stableCPU WDLsoftmax andlegal1858softmax; nofallback"
+    }
+  ],
+  "no_SF_or_search": true,
+  "no_TRAIN_or_replay_writes": true,
+  "one_model_at_a_time_weakrefs_closed": true,
+  "peak_cuda_allocated": 940549120,
+  "protocol_sha256": "123089514517260b2191a9eba47c2173ce73ad8ca0a03e8d57e6a5ff770f2d31",
+  "raw_output_files": {
+    "DONOR": "ab7ded27ea7bfa7874d272b42a7336b3884492a7b755a794715ffbb7ac141b73",
+    "FULLA129": "ecc9bbd5f5540527058bdd9d9bdbbb7db382c85d3eb0ea183db7f5d7b16e5541",
+    "FULLB129": "13414e1a2a6d53be9f017f72c21309dda61c93a177ad02b6b993638226cc892e"
+  },
+  "root_bank_binding": {
+    "actual_fresh_proof_validated_64_before_arrays_by_frozen_helper": true,
+    "identities": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-root-bank-v1-cd47b230-f32f-4256-a51e-4869f5708bb6/identities.json",
+      "sha256": "f03b7f048543ecb903d938ab0d0eec1016f53fe18b757282ad7eb6856f61e17e"
+    },
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-root-bank-v1-cd47b230-f32f-4256-a51e-4869f5708bb6",
+    "playing_gate_changed": false,
+    "predictions": 0,
+    "receipt_sha256": "b1ea86354fc00cc2d3dff60eb8955c9b1e87032fb8ea42b344ef1275fbc4b1a5",
+    "root_array_file_hash_only": "8dfe05ab0dcb053a3aa746275bc611dec51cba374c623cbb4441eceaab9a5709",
+    "root_deserialized_HOLD_arrays": false,
+    "root_execution_admission": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-roots-root-execution-admission-v1/admission.json",
+      "sha256": "0b3fa8fb956663fee1abc982e82ac7f65d93d00c743c11fd2b7e9baba2955714"
+    },
+    "status": "ROOT_ACCEPTED_FROZEN64_OFFLINE_ROOTS_BEFORE_PREDICTIONS",
+    "terminal": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e4-offline64-roots-execution-v1/terminal.json",
+      "sha256": "12575a1bf980ed3f3559557fddb8037925b74311850699cdf3209f2c6310e365"
+    },
+    "utc": "2026-11-13T10:41:40.923920+00:00"
+  },
+  "root_count": 64,
+  "scope_limits": [
+    "Allsame declaredbatch64/eagerBF16 productionadapter; no B1/B64 or eager/compiled numericalparity proof",
+    "No repeat-forward deterministic control or teacher calibration claimed",
+    "StoredF16inputs widenedtoF32; BF16autocast headoutputs exportedF32 (actualhead dtypes separatelyrecorded), float64CPUsoftmax is declared ruler",
+    "Offline diagnostic only; no candidate/endpoint/adoption/playing-gain decision"
+  ],
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "status": "COMPLETE64_BY3_RAW_OFFLINE_PREDICTIONS_DIAGNOSTIC_ONLY"
+}
