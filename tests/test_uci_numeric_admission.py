@@ -21,7 +21,6 @@ def admission_engine(monkeypatch: pytest.MonkeyPatch) -> Engine:
     engine._closed = False
     engine._quit_requested = False
     engine._recovery_lock = threading.Lock()  # setoption retires a staged rebuild
-    engine._recovery_epoch = 0
     engine._recovery_thread = None
     engine._staged_evaluator = None
     engine._deferred_setoptions = []

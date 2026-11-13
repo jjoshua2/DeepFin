@@ -506,13 +506,12 @@ class Engine:
         self._ponder_fallback_pending = False
   # The background rebuild: at most one thread, and a staging slot holding a
   # fully built replacement until the next idle point (`go`, `isready`,
-  # `ucinewgame`) swaps it in. ``_recovery_epoch`` is bumped by anything that
-  # makes a staged evaluator obsolete (setoption, close); a build that finishes
-  # under an older epoch is closed instead of staged.
+  # `ucinewgame`) swaps it in. A building setoption never runs while a build is
+  # in flight (it is deferred), so the only way a finished build can be obsolete
+  # is shutdown: it then closes its own result instead of staging it.
         self._recovery_lock = threading.Lock()
         self._recovery_thread: threading.Thread | None = None
         self._staged_evaluator: BatchEvaluator | None = None
-        self._recovery_epoch = 0
         self._recovery_rebuilds = 0
   # Why the engine is unhealthy (None = healthy). Set after a failed recovery or
   # `_UNHEALTHY_FALLBACK_STREAK` fallbacks in a row; cleared only by passing the
@@ -2342,7 +2341,7 @@ class Engine:
                 attempt = self._recovery_rebuilds
                 thread = threading.Thread(
                     target=self._recovery_build,
-                    args=(self._recovery_epoch, self._options.max_batch,
+                    args=(self._options.max_batch,
                           self._options.eval_cache_entries),
                     daemon=True, name="uci-evaluator-recovery",
                 )
@@ -2359,7 +2358,7 @@ class Engine:
             "current evaluator until the replacement is fully built"
         )
 
-    def _recovery_build(self, epoch: int, max_batch: int, eval_cache_entries: int) -> None:
+    def _recovery_build(self, max_batch: int, eval_cache_entries: int) -> None:
         new_eval = self._rebuild_or_keep(
             "search-failure recovery", max_batch, eval_cache_entries,
         )
@@ -2367,8 +2366,7 @@ class Engine:
             self._mark_unhealthy("the evaluator rebuild after a search failure failed")
             return
         with self._recovery_lock:
-            current = (epoch == self._recovery_epoch
-                       and not self._quit_requested and not self._closed)
+            current = not self._quit_requested and not self._closed
             if current:
                 self._staged_evaluator = new_eval
         if not current:
@@ -2411,12 +2409,10 @@ class Engine:
     def _retire_recovery(self, *, reason: str, timeout_s: float | None = None) -> None:
         """Make any staged or in-flight recovery evaluator obsolete.
 
-        Waits (bounded) for an in-flight build so a configuration change never
-        builds beside it; a build that outlives the wait closes its own result
-        (stale epoch) instead of staging it.
+        Shutdown only. Waits (bounded) for an in-flight build; one that outlives
+        the wait sees the quit flag and closes its own result instead of staging.
         """
         with self._recovery_lock:
-            self._recovery_epoch += 1
             thread = self._recovery_thread
             staged = self._staged_evaluator
             self._staged_evaluator = None
@@ -2493,7 +2489,6 @@ class Engine:
     def _discard_staged_evaluator(self, *, reason: str) -> None:
         """A configuration change made the staged evaluator obsolete. No join."""
         with self._recovery_lock:
-            self._recovery_epoch += 1
             staged, self._staged_evaluator = self._staged_evaluator, None
         if staged is not None:
             _close_quietly(staged)

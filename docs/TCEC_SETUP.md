@@ -179,12 +179,25 @@ phase C tells us what the additional seven GPUs are worth.
   until then moves keep searching on the current evaluator, and `position` /
   `go` never wait for it. Any non-zero count is worth a report.
 - **Unhealthy state.** A failed rebuild, a spent rebuild budget, or 3 fallback
-  moves in a row print `info string WARNING engine unhealthy: ...`. The engine
-  keeps answering every `go`; at the next idle `isready` or `ucinewgame` it
-  reruns the strict startup warmup and either prints `engine health check
-  passed` or prints `engine health check failed ...` (and `deepfin: engine
-  health check failed` on stderr) and exits non-zero *before* `readyok`, so
-  the GUI restarts a fresh process instead of playing on a broken search.
+  moves in a row (including replies to a `go` that could not start a search)
+  print `info string WARNING engine unhealthy: ...`. The engine keeps answering
+  every `go`. Only at a game boundary -- `ucinewgame`, or an `isready` after it
+  and before that game's first `go` -- it reruns the strict startup warmup and
+  either prints `engine health check passed` or prints `engine health check
+  failed ...` (and `deepfin: engine health check failed` on stderr) and exits
+  non-zero *before* `readyok`, so the GUI restarts a fresh process for the next
+  game. A mid-game `isready` always answers `readyok` at once. A GUI that never
+  sends `ucinewgame` never reaches this exit after its first `go`.
+- **Options during a recovery build.** An option that builds an evaluator or a
+  pool (e.g. `MaxBatch`, `SearchWalkers`, `UseMultiGpuPUCV`, `CPuct` on a PUCT
+  path) arriving while a background rebuild is in flight is answered with
+  `info string setoption <name>: deferred ...` and applied at the next game
+  boundary; nothing waits and no two builds run at once. Other options apply
+  immediately.
+- **A search that ignores `stop`.** After 1 s the engine answers that `go` from
+  the fallback; the stuck search is parked and every later `go` answers at
+  once (within a tenth of its clock) for the board the GUI sent, until the
+  stuck search ends.
 - **Long first move of a fresh process** (~15–30 s even warm-cached for
   `isready` / first search): expected; see section 4. Never happens mid-game
   after a successful `isready`.

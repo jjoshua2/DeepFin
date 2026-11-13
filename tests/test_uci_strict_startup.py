@@ -332,12 +332,12 @@ def test_setoptions_never_wait_for_and_never_build_beside_a_recovery_build(capsy
     _go(engine)
     assert engine.background_build_running()
     t0 = time.monotonic()
-    engine.dispatch(parse_command("setoption name MultiPV value 1"))   # builds nothing
+    engine.dispatch(parse_command("setoption name MultiPV value 3"))   # builds nothing
     engine.dispatch(parse_command("setoption name MaxBatch value 512"))  # would build
     assert time.monotonic() - t0 < 0.5  # neither waited
     out = capsys.readouterr().out
     assert "setoption MaxBatch: deferred" in out
-    assert engine._options.multi_pv == 1
+    assert engine._options.multi_pv == 3  # applied at once, not deferred
     assert engine._options.max_batch == 1024  # not applied yet
     assert builds == [1024]  # nothing built beside the recovery build
     release.set()
@@ -513,7 +513,7 @@ def test_quit_does_not_sit_out_an_in_flight_rebuild(monkeypatch, capsys) -> None
     assert "evaluator build thread is still running at shutdown" in capsys.readouterr().err
     release.set()
     _join_recovery(engine)
-    # The build that outlived shutdown closed its own result (stale epoch).
+    # The build that outlived shutdown closed its own result (quit flag).
     assert engine._staged_evaluator is None
 
 
@@ -715,6 +715,9 @@ def test_staged_evaluator_is_not_adopted_while_an_orphan_lives(monkeypatch, caps
     _join(engine)
     engine.dispatch(parse_command("isready"))
     assert worker.set_evaluator.call_count == calls  # not swapped under the orphan
+    assert engine._staged_evaluator is late
+    engine._adopt_staged_evaluator()  # the guard itself (defence in depth)
+    assert worker.set_evaluator.call_count == calls
     assert engine._staged_evaluator is late
     release.set()
     for t in list(engine._orphan_threads):
