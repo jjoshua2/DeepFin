@@ -191,9 +191,12 @@ _JOIN_TIMEOUT_S = 30.0
 # A `go` waits for the worker at most this fraction of its own hard deadline
 # (clamped to [_GO_WAIT_MIN_S, _JOIN_TIMEOUT_S]), or _GO_WAIT_NO_CLOCK_S with no
 # clock, then answers from the busy-worker fallback. Normally the previous
-# search has already exited and the wait is zero.
+# search has already exited and the wait is zero. On a very short clock the
+# floor itself shrinks to _GO_WAIT_MAX_SHARE of the deadline, so the wait plus
+# a fallback's fresh eval (<= a tenth of what is left) stays inside the clock.
 _GO_WAIT_FRACTION = 0.1
 _GO_WAIT_MIN_S = 0.1
+_GO_WAIT_MAX_SHARE = 0.25
 _GO_WAIT_NO_CLOCK_S = 1.0
 # The one fresh root eval a fallback may run: at most this long (and at most a
 # tenth of the remaining clock), then first-legal. A hung evaluator must not
@@ -574,6 +577,7 @@ class Engine:
   # (board, searchmoves) of the `go` the current search thread answers, so a
   # search parked as an orphan by `_wait_for_search` still gets its one bestmove.
         self._live_go: tuple[chess.Board, tuple[str, ...]] | None = None
+        self._go_received_at: float | None = None
   # Set by `position` / `ucinewgame` when the tree must not be reused; consumed by
   # `_sync_tree_root` at the next `go`, when the worker is free. `position` never
   # touches the worker itself.
@@ -800,9 +804,11 @@ class Engine:
             gen = self._search_gen
         self._bestmove_fallback_used += 1
         self._note_unsearched_reply()
+        fresh_budget_s = self._failed_go_fresh_eval_budget_s(cmd)
         reply = threading.Thread(
             target=self._run_failed_go_reply,
-            args=(gen, board, args.searchmoves, args.ponder, open_ended, not worker_busy),
+            args=(gen, board, args.searchmoves, args.ponder, open_ended, not worker_busy,
+                  fresh_budget_s),
             daemon=True,
         )
         self._search_thread = reply
@@ -814,12 +820,13 @@ class Engine:
             self._search_thread = None
             self._fallback_reply_thread = None
             self._run_failed_go_reply(
-                gen, board, args.searchmoves, False, False, not worker_busy,
+                gen, board, args.searchmoves, False, False, not worker_busy, fresh_budget_s,
             )
 
     def _run_failed_go_reply(
         self, gen: int, board: chess.Board, searchmoves: tuple[str, ...],
         ponder: bool, open_ended: bool, allow_fresh_eval: bool = True,
+        fresh_budget_s: float | None = None,
     ) -> None:
         if ponder:
             self._ponder_release.wait()
@@ -829,7 +836,7 @@ class Engine:
             if gen != self._search_gen or self._quit_requested:
                 return
         move, source = self._bestmove_fallback(
-            board, searchmoves, allow_fresh_eval=allow_fresh_eval,
+            board, searchmoves, allow_fresh_eval=allow_fresh_eval, budget_s=fresh_budget_s,
         )
         _println(
             f"info string search not started; bestmove_fallback_used="
@@ -1047,6 +1054,7 @@ class Engine:
         # search, tree sync (including any reuse work) and thread start-up
         # below are all charged to this move's deadline.
         go_received_at = time.monotonic()
+        self._go_received_at = go_received_at
         # A timeout cannot transfer ownership of the still-live worker; it is
         # bounded by this move's own clock, then `dispatch` answers from the
         # busy-worker fallback for the latest board.
@@ -1137,8 +1145,29 @@ class Engine:
             return _GO_WAIT_NO_CLOCK_S
         if cmd.args.ponder or limits.deadline_ms is None:
             return _GO_WAIT_NO_CLOCK_S
-        return min(_JOIN_TIMEOUT_S,
-                   max(_GO_WAIT_MIN_S, _GO_WAIT_FRACTION * limits.deadline_ms / 1000.0))
+        deadline_s = max(0.0, limits.deadline_ms / 1000.0)
+        floor_s = min(_GO_WAIT_MIN_S, _GO_WAIT_MAX_SHARE * deadline_s)
+        return min(_JOIN_TIMEOUT_S, max(floor_s, _GO_WAIT_FRACTION * deadline_s))
+
+    def _failed_go_fresh_eval_budget_s(self, cmd: CmdGo) -> float | None:
+        """A tenth of what is left of this `go`'s clock since receipt (None: no clock).
+
+        The reply for a `go` whose handler raised runs after the bounded wait;
+        its fresh eval must fit in what remains, not take a fixed 150 ms."""
+        received = self._go_received_at
+        if received is None or cmd.args.ponder:
+            return None
+        try:
+            limits = limits_from_go(
+                cmd.args, side_to_move_is_white=self._board.turn == chess.WHITE,
+                move_overhead_ms=self._options.move_overhead_ms,
+            )
+        except Exception:
+            return None
+        if limits.deadline_ms is None:
+            return None
+        remaining_s = limits.deadline_ms / 1000.0 - (time.monotonic() - received)
+        return max(0.0, remaining_s) * 0.1
 
     def _handle_stop(self) -> None:
         try:
