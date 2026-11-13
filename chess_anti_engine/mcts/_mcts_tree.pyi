@@ -130,6 +130,19 @@ class MCTSTree:
         rel_out: NDArray[np.uint8] | None = ...,
         input_history_mode: int = ...,
     ) -> tuple[int, NDArray[np.int32], NDArray[np.int32], float | None]: ...
+    def walker_descend_puct_tb(
+        self,
+        root_id: int,
+        root_cboard: CBoard,
+        c_puct: float,
+        fpu_root: float,
+        fpu_reduction: float,
+        vloss_weight: int,
+        enc_out: NDArray[np.float32],
+        tb_max_pieces: int,
+        rel_out: NDArray[np.uint8] | None = ...,
+        input_history_mode: int = ...,
+    ) -> tuple[int, NDArray[np.int32], NDArray[np.int32], float | None, CBoard | None]: ...
     def walker_integrate_leaf(
         self,
         node_path: NDArray[np.int32],
@@ -160,6 +173,29 @@ class MCTSTree:
         rel_buf: NDArray[np.uint8] | None = ...,
         input_history_mode: int = ...,
     ) -> int: ...
+    def batch_descend_puct_tb(
+        self,
+        root_id: int,
+        root_cboard: CBoard,
+        n_leaves: int,
+        tb_max_pieces: int,
+        c_puct: float,
+        fpu_root: float,
+        fpu_reduction: float,
+        vloss_weight: int,
+        enc_buf: NDArray[np.float32],
+        leaf_ids: NDArray[np.int32],
+        path_buf: NDArray[np.int32],
+        path_lens: NDArray[np.int32],
+        legal_buf: NDArray[np.int32],
+        legal_lens: NDArray[np.int32],
+        term_qs: NDArray[np.float64],
+        is_term: NDArray[np.int8],
+        vloss_mode: int = ...,
+        cache_keys: NDArray[np.uint64] | None = ...,
+        rel_buf: NDArray[np.uint8] | None = ...,
+        input_history_mode: int = ...,
+    ) -> tuple[NDArray[np.int32], list[CBoard]]: ...
     def batch_integrate_leaves(
         self,
         n_leaves: int,

@@ -295,6 +295,7 @@ class GameConfig:
     soft_policy_temp: float = 2.0
     timeout_adjudication_threshold: float = 0.90
     volatility_source: str = "raw"
+    syzygy_outcome_mode: str = "theoretical_wdl"
     syzygy_path: str | None = None
     # Optional lower-IO Syzygy path for ordinary high-volume Stockfish
     # searches. When set, selfplay can still route non-adjudicated <=6-piece

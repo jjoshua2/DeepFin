@@ -305,6 +305,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             soft_policy_temp=tc.soft_policy_temp,
             timeout_adjudication_threshold=tc.timeout_adjudication_threshold,
             volatility_source=tc.volatility_source,
+            syzygy_outcome_mode=tc.syzygy_outcome_mode,
             syzygy_path=tc.syzygy_path,
             stockfish_syzygy_path=tc.stockfish_syzygy_path,
             syzygy_rescore_policy=tc.syzygy_rescore_policy,
@@ -679,6 +680,9 @@ _STARTUP_ONLY_TRIAL_KEYS = frozenset({
 # hard error. `gate_games` stays: it is not in the dead set, because it raises
 # with its own message from `gate_config_from_dict`.
 _LIVE_RELOAD_SKIPPED_KEYS = frozenset({
+    # Unsafe to change the outcome contract of a session in flight. This is a
+    # restart contract, not a claim that no per-collection consumer exists.
+    "syzygy_outcome_mode",
     "lr_schedule",
     "gate_games",
     "gate_mode", "gate_window_iters", "gate_min_iters",

@@ -126,11 +126,14 @@ class _RecordingUCI(FakeStockfish):
         syzygy_path: str | None = None,
         fresh: bool = False,
         searchmoves: Sequence[str] | None = None,
+        root_fen: str | None = None,
+        root_moves: Sequence[str] | None = None,
     ) -> StockfishResult:
         self.sent.append(nodes)
         return super().search(
             fen, nodes=nodes, depth=depth, syzygy_path=syzygy_path, fresh=fresh,
             searchmoves=searchmoves,
+            root_fen=root_fen, root_moves=root_moves,
         )
 
 

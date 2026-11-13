@@ -41,6 +41,7 @@ from chess_anti_engine.encoding.features import RELATION_COUNT
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.puct_history import puct_history_args
 from chess_anti_engine.mcts.vloss import release_paths
+from chess_anti_engine.tablebase import SyzygyProbe
 
 _log = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ class _Job:
     root_cboard: _CBoard
     budget: threading.Semaphore
     stop_event: threading.Event
+    tb_probe: SyzygyProbe | None
 
 
 class WalkerPool:
@@ -176,6 +178,7 @@ class WalkerPool:
         root_cboard: _CBoard,
         target_sims: int,
         stop_event: threading.Event,
+        tb_probe: SyzygyProbe | None = None,
     ) -> int:
         if target_sims <= 0:
             return 0
@@ -192,6 +195,7 @@ class WalkerPool:
                 tree=tree, root_id=root_id, root_cboard=root_cboard,
                 budget=threading.Semaphore(target_sims),
                 stop_event=stop_event,
+                tb_probe=tb_probe,
             )
         for ev in self._wakes:
             ev.set()
@@ -264,6 +268,8 @@ class WalkerPool:
         budget = job.budget
         stop_event = job.stop_event
         evaluator = self._evaluator
+        tb_probe = job.tb_probe
+        tb_enabled = tb_probe is not None and tb_probe.max_pieces > 0
         tree.set_cpuct_scaling(
             float(self._cfg.cpuct_factor), float(self._cfg.cpuct_base),
         )
@@ -274,6 +280,7 @@ class WalkerPool:
             pending_slots: list[int] = []
             pending_paths = []
             pending_legals = []
+            pending_tb = []
             acquired = 0
   # walker_descend_puct APPLIES vloss and walker_integrate_leaf REMOVES
   # it, with an evaluator call that can raise in between. The tree is
@@ -288,12 +295,22 @@ class WalkerPool:
                     if stop_event.is_set() or not budget.acquire(blocking=False):
                         break
                     acquired += 1
-                    _, path, legal, term_q = tree.walker_descend_puct(
-                        root_id, root_cb, c_puct, fpu_root, fpu_red, vloss,
-                        enc[i:i+1],
-                        rel[i:i+1] if rel is not None else None,
-                        *self._input_history_args,
-                    )
+                    if tb_enabled:
+                        assert tb_probe is not None
+                        _, path, legal, term_q, leaf_board = tree.walker_descend_puct_tb(
+                            root_id, root_cb, c_puct, fpu_root, fpu_red, vloss,
+                            enc[i:i+1], tb_probe.max_pieces,
+                            rel[i:i+1] if rel is not None else None,
+                            *self._input_history_args,
+                        )
+                    else:
+                        _, path, legal, term_q = tree.walker_descend_puct(
+                            root_id, root_cb, c_puct, fpu_root, fpu_red, vloss,
+                            enc[i:i+1],
+                            rel[i:i+1] if rel is not None else None,
+                            *self._input_history_args,
+                        )
+                        leaf_board = None
                     if term_q is not None:
                         # Terminal leaves carry no vloss (descend backprops
                         # them inline), so they never enter pending_paths.
@@ -302,6 +319,8 @@ class WalkerPool:
                         pending_slots.append(i)
                         pending_paths.append(path)
                         pending_legals.append(legal)
+                        if tb_enabled:
+                            pending_tb.append(leaf_board)
                 if acquired == 0:
                     return
                 if pending_paths:
@@ -318,12 +337,34 @@ class WalkerPool:
                         pol, wdl_arr = evaluator.evaluate_encoded(xs)
                     else:
                         pol, wdl_arr = evaluator.evaluate_encoded(xs, relations=rels)
+                    # The evaluator/cache owns raw predictions. Override a copy
+                    # after materialization, never write TB truth into that cache.
+                    # A CBoard FEN cannot prove repetition history: only a fresh
+                    # irreversible move (clock zero) permits this leaf shortcut.
+                    solved = None
+                    eligible = [
+                        k for k, cb in enumerate(pending_tb)
+                        if cb is not None and int(cb.halfmove_clock) == 0
+                    ]
+                    if eligible:
+                        assert tb_probe is not None
+                        solved = np.zeros(n_pending, dtype=np.int8)
+                        wdl_arr = np.array(wdl_arr, dtype=np.float32, copy=True)
+                        statuses = np.zeros(len(eligible), dtype=np.int8)
+                        tb_probe.apply(
+                            [pending_tb[k] for k in eligible], wdl_arr,
+                            indices=np.asarray(eligible, dtype=np.int32),
+                            solved_out=statuses,
+                        )
+                        solved[eligible] = statuses
                     for k in range(n_pending):
                         tree.walker_integrate_leaf(
                             pending_paths[k], pending_legals[k],
                             pol[k], wdl_arr[k], vloss,
                         )
                         integrated = k + 1
+                        if solved is not None and solved[k]:
+                            tree.mark_solved_path(pending_paths[k], int(solved[k]))
             finally:
                 release_paths(
                     tree, pending_paths[integrated:], vloss_weight=vloss,

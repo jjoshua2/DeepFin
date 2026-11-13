@@ -1,0 +1,11 @@
+{
+  "status": "ACCEPT_LIMITED_FIXED_REAL_TB_EVIDENCE_REUSE_BY_SOURCE_EQUIVALENCE",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "historically_executed_source": "1554c9eff92e28a5bc33eeac85b55ab5130999a7",
+  "historical_actual_root_readout_sha256": "229f585aef6534361a5a295c2614c908998e34b3423b1b0d0e775a71eab9a50e",
+  "typed_delta_root_review_sha256": "0cbfce5ceecd438a5a226dce3f35d8e39849e97a74eb576160c28f2fe32f7bed",
+  "basis": "StrictSelfplayTablebase and TablebaseWitness completeAST equal; fullhistory/SFhelper bodies equal afterannotationstrip; native74+5 unchanged. Manager/finalizer onlyread stable per-call strictowner into local; finalba9actual627 strict50passed.",
+  "scope": "Same fixed13rows/5real3-and6piecefixtures,510pairedcanonicalinventory/1000aliases, positive98playon/reset0/7-and8naturalclaims/policyabstention; no realcursedasset/everyposition truth. No freshactualTBstage claimed atba9.",
+  "raw_asset_inventory_sha256": "207f7bc99c9113b237bee40ef1dc4f64f29bd3524279b6637da31032a2305ae5",
+  "new_research_or_runtime_R7_admitted": false
+}

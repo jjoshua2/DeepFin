@@ -144,7 +144,11 @@ def test_dropping_the_forwarding_at_the_pool_boundary_breaks_it() -> None:
             syzygy_path: str | None,
             fresh: bool,
             searchmoves: Sequence[str] | None = None,  # accepted, then IGNORED
+            root_fen: str | None = None,
+            root_moves: tuple[str, ...] | None = None,
         ) -> Any:
+            assert root_fen is None
+            assert root_moves is None
             del fresh, searchmoves  # the mutation: accepted, then dropped
             engine = pool._worker_state.engine
             return engine.search(fen, nodes=nodes, syzygy_path=syzygy_path)

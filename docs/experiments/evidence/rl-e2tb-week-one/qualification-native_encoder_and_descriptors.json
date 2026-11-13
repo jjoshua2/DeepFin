@@ -1,0 +1,114 @@
+{
+  "status": "ACCEPT_R7_CPU_SOURCE_CONFIG_ENCODER_AND_CONTROLLED_NEGATIVES_ONLY",
+  "utc": "2026-11-13T01:06:26.117076+00:00",
+  "source_revision": "ba9d6de1987902e1759d984532a4c63f091b9269",
+  "source_checkout": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess",
+  "preparation_sha256": "a0fb9fc2d416c2b7ad10e4a9cab22528c44f5e32a8de3596bb411f5b3a7260de",
+  "terminal": {
+    "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-execution-v3/terminal.json",
+    "sha256": "40c616a383e2947ec6c30f0c8dac16bca5fc648ff485b9787361d9ddc1d7d6fb",
+    "known_births_verified_absent": 1,
+    "supervisor_absent": true,
+    "wall_seconds": 8.237909310002578,
+    "cpu_seconds": 5.79
+  },
+  "artifacts": {
+    "readout.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-results-v3/readout.json",
+      "sha256": "02da73007ad4d3826e09e6f23441ff9a878ec8f7a167660dbebd81c4af9ae6d2"
+    },
+    "import-origins.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-results-v3/import-origins.json",
+      "sha256": "73fecfec4d628eaee1f9eb6a19ef15b3225ff2ea078c9001fd6ac00bc29b132d"
+    },
+    "native-origins.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-results-v3/native-origins.json",
+      "sha256": "c7f5563aab6bb128300b62eed9a19c06872d93e855e2db4150052c2827fc618d"
+    },
+    "actual-builder-profile.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-results-v3/actual-builder-profile.json",
+      "sha256": "75b65d50315cedfe4db6b244ffef174065e63b53724f537b89e3912df1f6323b"
+    },
+    "builder-route-values.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-results-v3/builder-route-values.json",
+      "sha256": "276e11891dab86dc0f4c83d2212de4c01d0ee739d81a75885ca1168d013262b2"
+    },
+    "collector-check.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-results-v3/collector-check.json",
+      "sha256": "0f5b854106ea13d8f7e0dd4959c5ce38f083edd8e5264b6615d174c3ae5c6e13"
+    },
+    "all756-encoder-comparisons.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-results-v3/all756-encoder-comparisons.json",
+      "sha256": "0eba225f1ec0edfbe6deccaa0f94b6b9acd5632d929234efc708b8e4adec914f"
+    },
+    "controlled-negatives.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-results-v3/controlled-negatives.json",
+      "sha256": "5471042ad7e401138fd340ec04b86aefb2fe8f1c6d185bdb78b9a6bae59dfd17"
+    },
+    "excluded-adapter3-profiles.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-results-v3/excluded-adapter3-profiles.json",
+      "sha256": "bb87a683f848e630b0fa4f6ece8ebe8f41ce182af9c71d650eda8be200462c8c"
+    },
+    "excluded-adapter3-profile-proof.json": {
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2tb-cpu-qualification-results-v3/excluded-adapter3-profile-proof.json",
+      "sha256": "c1f1a35afdf80521b596aabdc1979126fded6dd9135ae4851da2cf87290b4bec"
+    }
+  },
+  "native_images": [
+    {
+      "ELF_recorded_native_and_LTO_flags": true,
+      "build_id": "35283ef7ce37f183826d007bbeafa51a2e99d288",
+      "bytes": 529648,
+      "imported": true,
+      "module": "chess_anti_engine.encoding._features_ext",
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "24bfb5b0a1a0adecee32914e349f0e3d09cf828c5df79fedcf3602cd0c4bd041"
+    },
+    {
+      "ELF_recorded_native_and_LTO_flags": true,
+      "build_id": "530fb284ca363995436c1bc0a697ea702b95330f",
+      "bytes": 969768,
+      "imported": true,
+      "module": "chess_anti_engine.encoding._lc0_ext",
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "54fb0a7f0bb69602c253b13330f4832a22162db8f526c6ab2aa4bf16ab372ebd"
+    },
+    {
+      "ELF_recorded_native_and_LTO_flags": true,
+      "build_id": "de45e33b3259ed26d5c6128b3bc5c8ceb7749c14",
+      "bytes": 213112,
+      "imported": true,
+      "module": "chess_anti_engine.encoding._perft_ext",
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/encoding/_perft_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "0434e80c58c2c3562856877dda25c57ddc24230b881465b62ce71b0792a10bec"
+    },
+    {
+      "ELF_recorded_native_and_LTO_flags": true,
+      "build_id": "9ee95a4fbcac7e63a26bd006df40a18e1a99235a",
+      "bytes": 666984,
+      "imported": true,
+      "module": "chess_anti_engine.nnue._nnue_ext",
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "f6c438a3e8f3631e19f53165f403c06cca351d676d4fb673309b09f5d4388ab7"
+    },
+    {
+      "ELF_recorded_native_and_LTO_flags": true,
+      "build_id": "d3313282d697c16ef13168efa636501b75b6771e",
+      "bytes": 1339584,
+      "imported": true,
+      "module": "chess_anti_engine.mcts._mcts_tree",
+      "path": "/home/josh/.codex/worktrees/rl-tb-on-runtime-20261112/chess/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "da294b4f59e453b7db7bd7c94353d9ecdc4d07925cb56c9e6568675a50e1b476"
+    }
+  ],
+  "actual_python_origin_count": 20,
+  "actual_encoder_comparisons": 756,
+  "controlled_cases": 19,
+  "positive_scoped_cases": 4,
+  "expected_rejections": 15,
+  "actual_strict_profile_canonical_sha256": "22e2a38a610ba47580ebbbb2a96f1b0fe788bdb519f6342c3610e28592ce2b39",
+  "actual_three_excluded_profiles_canonical_sha256": "6b522a414c362fcce842ddc12da505a05b1f38437bd4ee433ca6a7eb629e3f28",
+  "all_SOURCE_native_inputs_still_pinned": true,
+  "caveat": "Child finalreadout.native_images inherited build-input imported:false metadata; actual import-origins/native-origins prove imports. This receipt uses actual imported:true images. Outputs preserved unchanged.",
+  "limits": "No model/Trainer/engine/realTBhandle-or-query/game/GPU/checkpoint/training. Synthetic policy-owner controls prove source guard semantics, not table truth. Separate excludedGPUproducer and TRAINproofdispatch controls still required; no research/strength/adoption admission."
+}

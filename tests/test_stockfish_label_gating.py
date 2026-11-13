@@ -66,8 +66,10 @@ class _FakePool(StockfishPool):
 
     def submit(
         self, fen: str, *, nodes=None, syzygy_path=None, fresh: bool = False,
-        searchmoves=None,
+        searchmoves=None, root_fen=None, root_moves=None,
     ):
+        assert root_fen is None
+        assert root_moves is None
         # `searchmoves` is RECORDED and HONOURED, not accepted and dropped. A
         # fake that swallowed it would let a caller lose the restriction while
         # every test here still passed — the exact defect the real pool's

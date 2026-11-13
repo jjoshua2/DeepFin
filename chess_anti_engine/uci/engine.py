@@ -386,6 +386,7 @@ class Engine:
         self._options = options if options is not None else EngineOptions()
         self._gil_probe = GilContentionProbe(interval_s=0.010) if gil_profile else None
         self._worker.set_max_tree_mb(self._options.hash_mb)
+        self._leaf_tb_noted: str | None = None
   # Set by setoption handlers that reshape the search path / evaluator
   # (Threads/UseVL/UseMultiGpuPUCV/LeafGather/VLGather/MaxBatch/
   # EvalCacheEntries). The build-time ``warmup_search`` runs BEFORE any
@@ -655,6 +656,7 @@ class Engine:
             target_moves = self._pending_moves
             self._popped_ponder_move = None
             search_board = self._board
+        self._note_leaf_tb_inactive()
         self._sync_tree_root(target_moves)
         overhead = self._options.move_overhead_ms
         limits = limits_from_go(
@@ -1506,6 +1508,18 @@ class Engine:
             f"{probe.n_wdl} WDL + {probe.n_dtz} DTZ tables, "
             f"up to {probe.max_pieces}-piece positions"
         )
+        self._leaf_tb_noted = None
+        self._note_leaf_tb_inactive()
+
+    def _note_leaf_tb_inactive(self) -> None:
+        """Say once per mode that the active search path ignores SyzygyPath at leaves."""
+        mode = self._worker.leaf_tb_inactive_mode()
+        if mode is not None and mode != self._leaf_tb_noted:
+            _println(
+                f"info string note: leaf tablebase probing is inactive on search path {mode}; "
+                "SyzygyPath reaches only the root move shortcut and root eval on this path"
+            )
+        self._leaf_tb_noted = mode
 
   # -- search thread body ---------------------------------------------------
 
@@ -1704,10 +1718,23 @@ class Engine:
                 seldepth=seldepth,
             )
 
+        # Pools poll this event between batches, whereas their caller only
+        # checks Deadline between whole chunks. A slow model can take longer
+        # than the entire clock to finish one chunk. Wake cooperative workers
+        # at the actual deadline, without relying on a bootstrap nodes/s guess.
+        # Capture this phase's event: a later go/ponder phase owns another one.
+        phase_stop = self._stop_event
+        deadline_timer: threading.Timer | None = None
+        remaining_ms = deadline.remaining_ms()
+        if remaining_ms is not None:
+            deadline_timer = threading.Timer(remaining_ms / 1000.0, phase_stop.set)
+            deadline_timer.name = "uci-phase-deadline"
+            deadline_timer.daemon = True
+            deadline_timer.start()
         try:
             result = self._worker.run(
                 board,
-                stop_event=self._stop_event,
+                stop_event=phase_stop,
                 deadline=deadline,
                 max_nodes=max_nodes,
                 max_depth=max_depth,
@@ -1771,6 +1798,12 @@ class Engine:
             return SearchResult(
                 bestmove_uci=fallback, ponder_uci=None, nodes=0, pv=(), score_cp=0, tbhits=0,
             )
+        finally:
+            # Join even after cancellation: an already-running callback must
+            # finish before another search can reuse an event or the tree.
+            if deadline_timer is not None:
+                deadline_timer.cancel()
+                deadline_timer.join()
 
     def _report_declined_root(self, result: SearchResult) -> None:
         """Announce and count a published bestmove the search REFUSED to produce.
