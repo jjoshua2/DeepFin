@@ -1,6 +1,6 @@
 # First E2 RL comparison: search targets versus genuine outcome targets
 
-Status: **PREREGISTERED. Execution admission remains separate.**
+Status: **STOPPED after 53 of 96 planned games. Zero research updates; no learned endpoint or strength result.**
 
 Scientific freeze: **2026-11-12 21:33:31 UTC**. The authoritative
 [frozen scientific JSON](evidence/rl-week-one-20261112/first-E2-preregistration.json)
@@ -262,3 +262,50 @@ parser/defaults and composite preservation were independently checked in
 `first-E2-addendum-independent-review-v1/review.json`, SHA256
 `e04ba8a6725f6bb8444747eb282851a2c940b58bb4a36f884486a1d73a839927`.
 Neither registration is an automatic launch or adoption decision.
+
+
+## Stopped collection and TB-on successor
+
+The actual collection began at 22:44:48 UTC on November 12, after main
+publication of the frozen registration. It was stopped with a stage-specific
+`STOP` after 53 completed physical-game receipts. Root received a credible
+cross-chat report that the user required tablebases wherever applicable. The
+exact direct user message was unavailable in the read-only chat view, so this
+record distinguishes that reported instruction from directly verified words.
+Root conservatively held the conflicting TB-off collection. It did not use the
+partial outcomes to choose a subset or replacement experiment.
+
+The owner closed its recorded processes after **312.49362804199336 seconds**
+(262.4 recorded CPU seconds). Its terminal is FAILED because the stage STOP
+raised a control exception; it is an interrupted collection, not a clean
+negative scientific result. There is no complete producer readout. The 53
+completed receipts comprise 17 preassigned TRAIN and 36 HOLDOUT games; one
+unfinished staging directory is preserved. No research optimizer update or
+candidate adoption occurred. The STOP remains present and this cohort will not
+resume or enter training.
+
+The [stopped-collection readout](evidence/rl-week-one-20261112/first-E2-stopped-collection-readout.json)
+is copied byte-for-byte from the external owner record, SHA256
+`7d0c0209583704ffd07a0a7e0e0d9ebbca5b643c9b1d34a4b8e1167ba107220a`.
+The [opaque observed-input inventory](evidence/rl-week-one-20261112/first-E2-observed-input-inventory-readout.json),
+SHA256 `313a3a7af984f6b48a4ff4fd992c5bfa85df4c71943d17f0021554fe0c293eda`,
+verified 13,250 files and 12,497,087 bytes of declared payload inventory without
+decoding arrays or analyzing outcomes. It records 4,786 retained input hashes
+and their 4,786 actual production-file-mirror hashes, union 9,572. These are
+observed, never-trained identities, separate from the earlier 803-path known
+possible-training-input index. Staging, unstored/search positions, pretraining
+and dropout variants remain unknown. Completed payload directories were sealed;
+top-level completion receipts remained writable after interruption and their
+hashes were subsequently banked. Do not describe the whole interrupted root as
+an immutable completed collection.
+
+A separately identified TB-on successor is being prepared. It requires explicit
+rule-50-aware search, full-history outcome witnesses, distinct natural and
+strict TB-adjudicated labels, censored unresolved caps, policy-only TB rescoring
+and full-history Stockfish transport. The old natural-only/TB-off collector and
+learner acceptance rules cannot be relabeled into that contract. All original
+128 cohort/reserve starts and 628 playing starts are retired from the new
+structural selection, alongside declared older exclusions and the 53 observed
+input identities. New source, helpers, exact commands and scientific registration
+must qualify and be published before new research collection. The old frozen
+JSON and all earlier records retain their original bytes and meaning.

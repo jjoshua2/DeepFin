@@ -1,0 +1,47 @@
+{
+  "arrays_decoded": false,
+  "banks": {
+    "holdout": 36,
+    "train": 17
+  },
+  "completed_games": 53,
+  "inventory_bytes_verified": 12497087,
+  "inventory_files_verified": 13250,
+  "limits": [
+    "Hashes are copied from producer-validated metadata, not independently recomputed encodings or mirrors.",
+    "Opaque file hashes prove inventory custody, not target correctness or data admission.",
+    "Only53 completed receipts covered; staging and remaining planned games are unknown.",
+    "TRAIN is only a planned bank label here; none of these53 games entered training.",
+    "No outcome-based selection, playing strength, TB-on compliance, epoch2 novelty or all-search-position novelty claim."
+  ],
+  "models_engines_TB_training_or_forward_calls": 0,
+  "outcomes_analyzed": false,
+  "outputs": [
+    {
+      "bytes": 3998566,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/stopped-e2-observed-input-supplement-v1/known-observed-inputs.json",
+      "sha256": "34021b5033f91234062faed2bc91d39ec431bf4141aafd1b37438e483b5c04ce"
+    },
+    {
+      "bytes": 180029,
+      "path": "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/stopped-e2-observed-input-supplement-v1/structural-exclusions.json",
+      "sha256": "8f6b57289cc8bd8b2634a65ce9189a4d0e48e79110bdd42052b0218a02525037"
+    }
+  ],
+  "retained_rows": 4786,
+  "sources": {
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-cohort-candidate-roster-v1/candidate-roster.json": "e3c66f560881653b89ff9395bb72cc9a4a5dc03a4a01f9623f57b3b9fbbfa866",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-collection-policy-hold-readout-v1/readout.json": "7d0c0209583704ffd07a0a7e0e0d9ebbca5b643c9b1d34a4b8e1167ba107220a",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-collector-binding-preparation-v3/manifest.json": "6747a2ae092962303e56ed85b84f4c7887e152feb9fdb96dde9255731f659899",
+    "/home/josh/chess-artifacts/operations/rl-week-one-20261112-v1/e2full-collector-binding-preparation-v3/protocol.json": "b0e2728e796dc48c6e027205f2671709bec74af5f48cb1d6d48e27d33601d81f"
+  },
+  "staging_read": false,
+  "status": "COMPLETE_OBSERVED_INPUT_METADATA_AND_OPAQUE_FILE_CUSTODY_ONLY",
+  "top_receipt_custody": "Top completion receipts are writable0644, not immutable. Content is pinned by closed-owner hold receipt SHA and regular/non-symlink/stat-stable reads. Game payload files/directories retain sealed444/555 requirements.",
+  "total_bytes_read": 20852266,
+  "unique_history": 4786,
+  "unique_mirror": 4786,
+  "unique_raw": 4786,
+  "unique_union": 9572,
+  "wall_seconds": 4.129569357988657
+}

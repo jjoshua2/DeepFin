@@ -542,3 +542,42 @@ There are still 10 excluded engineering updates, zero research updates and no
 candidate adoption. Main publication and separate actual-stage controls still
 gate collection; research learning additionally needs qualified cohort, targets
 and the retained-input playing-start check.
+
+
+## November 12: interrupted first collection; successor preparation
+
+The first E2 TB-off collection was stopped after 53 of 96 planned games when
+root received a credible report that the user required tablebases wherever
+applicable. Its [readout and custody limits](2026-11-12-e2-outcome-bundle.md#stopped-collection-and-tb-on-successor)
+are recorded separately. All 53 games remain never trained, the incomplete
+staging payload and STOP are preserved, and the original cohort will not resume.
+This is neither a negative target-blend result nor a strength gain.
+
+Main now contains the independently reviewed safe tablebase-handle and walker
+leaf-consumer changes from [PR 1246](https://github.com/jjoshua2/DeepFin/pull/1246).
+The merge `6582f3e84e987d50cd93b0ff08780f52ca1850b8` has exactly the reviewed
+source tree; all five final checks passed. The remaining PUCV and root-parallel
+Gumbel leaf routes are in [PR 1247](https://github.com/jjoshua2/DeepFin/pull/1247),
+with 480 local cases passing, including all 91 new cases. Publication and tests
+are implementation milestones, not deployment or chess-strength evidence.
+
+Strict finite selfplay is separately undergoing runtime qualification. It
+preserves full histories for outcomes and Stockfish requests, keeps natural and
+TB-adjudicated origins distinct, rejects missing eligible tablebases and emits
+unresolved caps with no training rows. A new structural selection has completed
+under a precommitted rule: 96 collection starts, 32 precollection structural
+reserves, 128 screen pairs and 500 confirmation pairs. A variable-scope output
+failure was corrected without changing its seed, ranking, roles or bank map;
+the first three preserved partial outputs are byte-identical after the repair.
+This metadata selection does not admit generation or learning. Actual eventual
+producer encoding compatibility remains a separate requirement.
+
+The proposed successor retains the 40-update two-arm target-bundle question and
+its fixed playing/confirmation rules. Its source, helper, label and budget
+bindings are still draft. All-96 physical-attempt integrity, all-32 TRAIN
+resolved-outcome usability and all-64 diagnostic completeness are distinct
+requirements; a valid censored HOLDOUT game alone must not silently veto the
+primary comparison. No small positive diagnostic or completed qualification can
+select an optimum RL recipe or meet the external-engine objective. The observed
+multicore Rofchade baseline remains 1 win, 24 draws and 39 losses, score 0.203125,
+under its separately pinned 30 s + 100 ms protocol.
