@@ -274,3 +274,69 @@ original A39 remains
 | `core-baseline-research-arena-diagnostic-g2-independent-actual-review-v1/review.json` | `0a290c63fdba9170eb6687062bfff2d00bd60bd7e3651fe7335379c7c7d15658` |
 | `core-baseline-research-arena-bindings-v1/leg1-diagnostic-g2/root-readout-acceptance.json` | `ed5ccaf4bf6a66a8a51aa6517d4de350c8b12d63b1f689a6678e6ee415867cc1` |
 | `core-baseline-research-arena-bindings-v1/leg1-diagnostic-g2/curve-point.csv` | `04b1cada968c1f74cda25076f75984770a6c8e6c9c23cfd57dab67ae6a16adbb` |
+
+
+## 2026-11-13 19:32 UTC — G4 interim readout; no declared harm stop
+
+**ONGOING: technically qualified negative interim result.** The fixed G4
+step-2,048 candidate scored **40 wins, 77 draws and 139 losses** against original
+A39 over all **256 games / 128 color pairs**: mean **.306640625**, paired normal
+approximate 95% interval **[.262414192176604, .350867057823396]**. Endings were
+126 rules resolutions and 130 qualified TB resolutions. The conditional score
+is clearly below 50% in this matched profile. This is not external Elo, a full
+G8 verdict or evidence identifying a failure mechanism.
+
+The exact upper bound **.350867057823396 > .35** means the predeclared strict
+G4 severe-harm test is **false**. Rounding the bound to .35 must not change that
+decision. Continue fixed G5–G8 unchanged, with G6 descriptive only and G8 the
+terminal eligibility endpoint. No promotion, confirmation, checkpoint selection
+or LR-probe release follows from this result. The original scientific protocol
+`dd16774a…`, learning contract `c53eac58…` and runtime source pins remain unchanged.
+
+G1–G4 delivered all **1,024 planned games**, **102,126 audited eligible rows**,
+**2,048 updates** and **524,288 sampled views**. G4 added 25,582 rows and 512
+updates. Training-window losses and auxiliary diagnostics are not fixed held-out
+strength measures or active objective weights. G2 and G4 intentionally reuse
+the diagnostic book; their intervals are conditional on that book and retain
+the frozen opening-family/exposure and approximate-calibration limits. These
+results are not independent replications or pooled with earlier E4 studies.
+
+| G4 stage / readiness | Seconds |
+| --- | ---: |
+| Collection GPU-owner wall | 1,522.189310 |
+| Audit CPU-owner wall | 66.336517 |
+| Learner GPU-owner wall | 431.697826 |
+| Learner internal training time, included above | 295.566334 |
+| Diagnostic GPU-owner wall | 820.396214 |
+| Diagnostic CPU-owner wall | 15.455622 |
+| First G1 owner → G4 checkpoint ready | 9,822.157859 |
+| First G1 owner → CPU-verified G4 diagnostic | 10,750.592649 |
+
+Owner wall includes its stage overhead and is not CUDA-active time. Internal
+training time must not be added to its owner wall; readiness intervals include
+pipeline gaps and are not the sum of GPU stages. Neither clock is an ETA or an
+Elo-time gain claim.
+
+The arena retained matched Gumbel64/noise-on/strict-TB settings, two independently
+loaded 494-tensor models, 175-plane float32 inputs under BF16 autocast and
+float32 policy/WDL transport. Its observed pool was 32 games with 1,024 uncapped
+leaf rows. Served-state/file custody checks and the strict CPU reader qualified
+all games. Runtime L `090b5143315a0faef7ab0ac1a90e2d5cebf3b929` and the R7 owner
+source `ba9d6de1987902e1759d984532a4c63f091b9269` remain pinned; no deterministic
+GPU identity or universal throughput claim follows. Independent actual metadata
+and pair-statistics review accepted these identities, counts and exact harm-rule
+arithmetic; it did not rerun game physics or inspect checkpoint tensors.
+
+G4 candidate SHA256 is
+`852816fe6dde4b055e226a434ed2580e048cbb87491df65fe1ce87ff33731e54`;
+original A39 is unchanged at `a39f900c…`. External references below use the same
+operations artifact root as the preceding readout. The full-generation receipt
+was banked before the arena and correctly records its then-pending status; the
+later strict reader and acceptance supply the completed diagnostic result.
+
+| Artifact | SHA256 |
+| --- | --- |
+| `core-baseline-research-g04-bound-v1/full-generation-readout.json` | `e91ae624da84a2c58f920171778f073571ee73cec55877b2bfd3c813aa7d3323` |
+| `core-baseline-research-arena-leg1-diagnostic-g4-readout-v1/readout.json` | `5225848ab2c900341e72a956184e250732a6da2f8e2bed759671683bccb69ecc` |
+| `core-baseline-research-arena-bindings-v1/leg1-diagnostic-g4/root-readout-acceptance.json` | `25025e6b00d11c4200956e5383e2fe5b93276a97d430a11c4aca0c996afdcc4b` |
+| `core-baseline-research-arena-diagnostic-g4-independent-actual-review-v1/review.json` | `9e07f81530f77a2e053d82a556d6c6dc575c179e4f7f976a0b559a8ef2ca7893` |
