@@ -10,8 +10,10 @@ worker that blocks until released.
 """
 from __future__ import annotations
 
+import sys
 import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import chess
@@ -24,16 +26,23 @@ from chess_anti_engine.uci.search import SearchResult
 
 
 class _Out:
-    """Thread-safe capture of `_println`, with a wait for the n-th bestmove."""
+    """Thread-safe stand-in for stdout, with a wait for the n-th bestmove.
+
+    The REAL `_println` writes here, so its silencing of parked / watchdogged
+    threads (and the claim owner's bypass) is part of what every test sees."""
 
     def __init__(self) -> None:
         self.lines: list[str] = []
         self._cond = threading.Condition()
 
-    def __call__(self, line: str) -> None:
+    def write(self, s: str) -> int:
         with self._cond:
-            self.lines.append(line)
+            self.lines.extend(ln for ln in s.splitlines() if ln)
             self._cond.notify_all()
+        return len(s)
+
+    def flush(self) -> None:
+        pass
 
     def bestmoves(self) -> list[str]:
         with self._cond:
@@ -54,7 +63,9 @@ class _Out:
 @pytest.fixture
 def out(monkeypatch) -> _Out:
     capture = _Out()
-    monkeypatch.setattr(engine_module, "_println", capture)
+    # Swap the engine module's view of stdout (pytest re-installs its own
+    # sys.stdout at the start of each test's call phase, after fixtures run).
+    monkeypatch.setattr(engine_module, "sys", SimpleNamespace(stdout=capture, stderr=sys.stderr))
     return capture
 
 
@@ -481,6 +492,93 @@ def test_a_stale_entry_never_answers_a_newer_go(out, monkeypatch) -> None:
         gate.release.set()
         engine.dispatch(parse_command("stop"))
         _join_all(engine)
+        engine.close()
+
+
+def test_stop_arriving_while_the_watchdog_answers(out, monkeypatch) -> None:
+    """The watchdog has claimed and is computing its answer when `stop` parks
+    the search: park sees the claim and adds nothing; the watchdog's answer
+    (from its own board copy, never `_live_go`) still prints. One bestmove."""
+    monkeypatch.setattr(engine_module, "_GO_WAIT_NO_CLOCK_S", 0.02)
+    gate = _Gate()
+    worker = _worker()
+    worker.run.side_effect = gate
+    engine = _engine(worker)
+    in_fallback, finish = threading.Event(), threading.Event()
+    real = engine._bestmove_fallback
+
+    def held(*args, **kwargs):
+        if threading.current_thread() is engine._watchdog.thread:
+            in_fallback.set()
+            assert finish.wait(10)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "_bestmove_fallback", held)
+    try:
+        engine.dispatch(parse_command("position startpos moves e2e4"))
+        engine.dispatch(parse_command("go movetime 60"))
+        assert in_fallback.wait(5)  # claimed, answer not yet printed
+        engine.dispatch(parse_command("stop"))  # parks the search; must not answer
+        assert out.bestmoves() == []
+        finish.set()
+        moves = out.wait_bestmoves(1)
+        assert len(moves) == 1
+        board = chess.Board()
+        board.push_uci("e2e4")
+        _legal(board, moves)
+        gate.release.set()
+        _join_all(engine)
+        assert len(out.bestmoves()) == 1
+        assert engine._consecutive_search_failures == 1  # the watchdog's answer, once
+    finally:
+        finish.set()
+        gate.release.set()
+        engine.close()
+
+
+def test_after_the_watchdog_answers_the_stuck_search_stays_silent(out) -> None:
+    """The owner print is the watchdog's last act; the stuck search's later
+    lines (an info line, its own bestmove) never reach stdout."""
+    late = threading.Event()
+
+    worker = _worker()
+
+    def run(board, **kw):
+        late.wait(10)
+        _publish(kw["info_cb"], "a2a3")
+        return _ok(board, "a2a4")
+
+    worker.run.side_effect = run
+    engine = _engine(worker)
+    try:
+        engine.dispatch(parse_command("go movetime 60"))
+        assert len(out.wait_bestmoves(1)) == 1
+        before = out.text()
+        late.set()
+        _join_all(engine)
+        assert out.text() == before
+    finally:
+        late.set()
+        engine.close()
+
+
+def test_a_reply_only_go_is_never_armed(out, monkeypatch) -> None:
+    """A go whose handler raised is answered by the reply-only thread (counted
+    once at the go, answered by park if it stalls); the watchdog stays out."""
+    worker = _worker()
+    engine = _engine(worker)
+
+    def boom() -> None:
+        raise RuntimeError("handler fault")
+
+    monkeypatch.setattr(engine, "_note_leaf_tb_inactive", boom)
+    try:
+        engine.dispatch(parse_command("go movetime 60"))
+        assert len(out.wait_bestmoves(1)) == 1
+        assert engine._watchdog.armed is None
+        assert engine._watchdog.thread is None
+        assert engine._consecutive_search_failures == 1
+    finally:
         engine.close()
 
 
