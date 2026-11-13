@@ -545,8 +545,47 @@ class NetSource:
 
             assert self.checkpoint is not None  # __post_init__ guarantees it
             model = load_model_from_checkpoint(self.checkpoint, device=device)
+        apply_source_history_rep_fix(model, label=self.label)
         model.eval()
         return model
+
+
+def apply_source_history_rep_fix(model: torch.nn.Module, *, label: str) -> bool:
+    """Put the process in the repetition-plane regime ``model`` was trained under.
+
+    ``rep_fix`` is process-global and the C encoders (``CBoard`` /
+    ``encode_cboard`` and the search's batch encoders) default to OFF while it
+    is unset. The checkpoint path already applies the checkpoint's value inside
+    ``build_model``; the ONNX path never reached ``build_model``, so before
+    this the two sources of one ruler encoded the same history under different
+    regimes whenever the process had not been set by something else.
+
+    The regime is read off the MODEL (``history_rep_fix``, stamped by
+    ``build_model`` and by ``OnnxChessNet``), never assumed here, and a model
+    that does not declare one is REFUSED rather than defaulted. Returns the
+    value in force, read back off ``rep_fix.current()`` so callers can stamp
+    what the encoders hold rather than what was requested.
+
+    No ``boards_discarded``: a first set is unguarded, the checkpoint path's
+    re-apply is a no-op, and a genuine flip at this point would mean some
+    earlier code in the process encoded boards under the other regime — that
+    should raise, not be certified away.
+    """
+    from chess_anti_engine.encoding import rep_fix
+
+    declared = getattr(model, "history_rep_fix", None)
+    if not isinstance(declared, bool):
+        raise SystemExit(
+            f"{label}: the loaded net declares no history_rep_fix regime "
+            f"(got {declared!r}); refusing to encode under the process default"
+        )
+    rep_fix.apply(declared)
+    actual = rep_fix.current()
+    if actual is None or actual is not declared:
+        raise SystemExit(
+            f"{label}: history_rep_fix is {actual!r} after applying {declared!r}"
+        )
+    return actual
 
 
 def reject_stored_encoding_for_onnx(net: NetSource, input_encoding: str) -> None:

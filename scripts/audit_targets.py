@@ -144,6 +144,7 @@ if TYPE_CHECKING:
 import chess
 import numpy as np
 
+from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.eval.audit import (
     AuditPosition,
     PHASE_NAMES,
@@ -158,6 +159,7 @@ from chess_anti_engine.eval.audit import (
     wdl_ece,
 )
 from chess_anti_engine.eval.audit_cache import (
+    HISTORY_REP_FIX_KEY,
     audit_set_provenance,
     stamp_summary,
     write_audit_cache,
@@ -1583,6 +1585,22 @@ def _search_wdl_like_selfplay(q: float, net_wdl: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Candidate computation
 # ---------------------------------------------------------------------------
+
+
+def rep_fix_stamp() -> dict[str, bool | None]:
+    """The dump-stamp entry for the repetition-plane regime the encoders HELD.
+
+    Read off the process global (``rep_fix.current()``), which
+    ``NetSource.load`` set from the loaded net, never off a CLI value. A per-NET
+    key, not ruler identity: see ``STAMP_NON_IDENTITY_KEYS``. Module-level so a
+    test can run it; ``main`` is too expensive to drive to the dump.
+    """
+    return {HISTORY_REP_FIX_KEY: rep_fix.current()}
+
+
+def net_report_line(label: str) -> str:
+    """The report's ``- net:`` line, carrying the realized regime."""
+    return f"- net: {label} (history_rep_fix={rep_fix.current()})"
 
 
 def _net_candidates(
@@ -3082,6 +3100,7 @@ def main() -> None:
             args.dump_per_position, per_pos_dump, force=True,
             extra={"producer": "audit_targets.py --dump-per-position",
                    "input_encoding": encoding,
+                   **rep_fix_stamp(),
                    **set_provenance},
         )
         print(f"[audit] per-position dump → {args.dump_per_position} "
@@ -3152,7 +3171,7 @@ def main() -> None:
         f"always fen_only; row (c) has no net input. ⚑ A RULER CHANGE INVALIDATES "
         f"ITS RECORDS — do not put row (a) from a `stored` run in a table with "
         f"row (a) from a `fen_only` run.\n"
-        f"- net: {net.label}\n"
+        f"{net_report_line(net.label)}\n"
         f"- search: PLAY {play_sims_note} sims / RL train {rl_sims} full + {rl_fast_sims} fast "
         f"(playout_cap_fraction {full_share}); shallow SF: {args.sf_soft_nodes} nodes "
         f"MultiPV {args.sf_soft_multipv}; config: {args.config}\n"
