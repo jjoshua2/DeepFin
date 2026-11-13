@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -146,9 +146,9 @@ def test_real_trainer_two_generation_continuation_matches_direct_state_and_rng(t
     rng = np.random.default_rng()
     gens = [json.loads(Path(ref["path"]).read_bytes()) for ref in [one, two]]
     replay = core.load_replay(c, gens, rng, None)
-    _restore_rng(first["rng"], rng, np.random)
+    _restore_rng(first["rng"], rng, cast(Any, np.random))
     expected_metrics = reference.train_steps(replay, batch_size=2, steps=2)
-    expected_rng = _rng_state(rng, np.random)
+    expected_rng = _rng_state(rng, cast(Any, np.random))
     expected_model = copy.deepcopy(reference.model.state_dict())
     expected_opt = copy.deepcopy(reference.opt.state_dict())
     expected_scheduler = copy.deepcopy(reference._scheduler.state_dict())
@@ -160,7 +160,9 @@ def test_real_trainer_two_generation_continuation_matches_direct_state_and_rng(t
     require_equal(checkpoint["opt"], expected_opt, "optimizer")
     require_equal(checkpoint["scheduler"], expected_scheduler, "scheduler")
     assert second["rng"] == expected_rng
-    assert second["step"] == 4 and second["metrics"]["lr"] == expected_metrics.lr
+    assert second["step"] == 4
+    assert second["metrics"]["opt_lr_mean"] == expected_metrics.opt_lr_mean
+    assert second["metrics"]["opt_lr_max"] == expected_metrics.opt_lr_max
     assert second["final_step"] == second["step"]
     assert second["final_checkpoint"] == second["checkpoint"]
     assert len(second["membership"]) == 2
@@ -192,7 +194,10 @@ def test_data_refusals_precede_model_construction(tmp_path, monkeypatch, fault):
     bad = frozen(tmp_path / "bad-generation.json", gen)
     called = []
     monkeypatch.setattr(core, "make_trainer", lambda *_a: called.append(True))
-    with pytest.raises(ValueError):
+    messages = {"hold": "HOLD or unresolved", "unresolved": "TRAIN proof/identity predicates mismatch",
+                "original": "missing original producing evidence", "actor": "actor serving state mismatch",
+                "rows": "TRAIN proof/identity predicates mismatch", "inventory": "TRAIN proof/identity predicates mismatch"}
+    with pytest.raises(ValueError, match=messages[fault]):
         core.execute(cref, stage(tmp_path, cref, [bad], None, "refused"))
     assert not called
     assert not (tmp_path / "refused").exists()
@@ -248,8 +253,10 @@ def test_core_weights_and_coupled_value_body_are_not_frozen(tmp_path):
                       aux_policy_head_dim=8)
     c["architecture"] = {"_schema_version": ARCH_SCHEMA_VERSION, **asdict(cfg)}
     trainer = core.make_trainer(c, tmp_path / "log")
-    assert trainer.grad_clip_mode == "none" and trainer._swa_model is None
-    assert trainer._feature_group_dropout and all(item[2] == 0 for item in trainer._feature_group_dropout)
+    assert trainer.grad_clip_mode == "none"
+    assert trainer._swa_model is None
+    assert trainer._feature_group_dropout
+    assert all(item[2] == 0 for item in trainer._feature_group_dropout)
     assert trainer.w_policy == trainer.w_wdl == 1
     assert trainer.sf_wdl_frac == trainer.search_wdl_frac == 0
     assert all(value == 0 for key, value in core.CORE_KWARGS.items() if key.startswith("w_") and key not in {"w_policy", "w_wdl"})
@@ -297,11 +304,12 @@ def test_failed_publication_always_banks_external_marker(tmp_path, monkeypatch, 
                 raise OSError("final directory publication failure")
             original(path)
         monkeypatch.setattr(core, "fsync_directory", fail_parent)
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match="seal failure|final directory publication failure"):
         core.execute(cref, stage_ref)
     assert (output / "boundary.json").exists() == (fault == "final_fsync")
     marker = core.failure_marker(output)
-    assert marker.is_file() and marker.stat().st_mode & 0o222 == 0
+    assert marker.is_file()
+    assert marker.stat().st_mode & 0o222 == 0
     assert json.loads(marker.read_bytes())["status"] == "FAILED_CORE_GENERATION_NO_RECOVERY"
 
 

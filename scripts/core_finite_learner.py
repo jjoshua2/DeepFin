@@ -156,7 +156,7 @@ def validate_contract(c: dict[str, Any]) -> None:
     peak, floor, start = (number(lr[k], k) for k in ("peak", "floor", "warmup_start"))
     warm = integer(lr["warmup_steps"], "warmup", 0)
     period = integer(lr["first_period"], "first cosine period")
-    require(0 < peak and 0 <= floor <= peak and 0 <= start <= peak and warm < total, "invalid LR bounds")
+    require(peak > 0 and 0 <= floor <= peak and 0 <= start <= peak and warm < total, "invalid LR bounds")
     require(period > max(0, total - 1 - warm), "cosine restart would occur in the learning horizon")
     require(warm > 0 or start == peak, "zero warmup must start at peak")
     require(0 <= number(c["mirror_prob"], "mirror probability") <= 1, "invalid mirror probability")
@@ -416,13 +416,14 @@ def load_replay(c: dict[str, Any], generations: list[dict[str, Any]], rng: Any, 
                 array.setflags(write=False)
             decoded += sum(a.nbytes for a in arrays.values())
             chunks.append(GenerationChunk(sha, arrays))
+            del arrays
         byte_counts.append(decoded)
         require(sum(byte_counts[-4:]) <= c["limits"]["max_decoded_window_bytes"], "decoded window budget exceeded")
         replay.admit_generation(gen["generation"], chunks)
         require(len(replay) <= c["limits"]["max_rows"], "replay row budget exceeded")
         # No list retains all historical arrays; GenerationReplay drops complete
         # evicted generations. Rebuilding creates only this generation's input.
-        del chunks, arrays
+        del chunks
     return replay
 
 
