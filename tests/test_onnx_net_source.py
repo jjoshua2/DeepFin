@@ -1539,3 +1539,59 @@ def test_onnx_input_formats_declare_a_regime_and_unknown_ones_raise() -> None:
     )
     with pytest.raises(ValueError, match="no declared history_rep_fix regime"):
         declared_history_rep_fix("some_future_format")
+
+
+@pytest.mark.parametrize("regime", [True, False])
+def test_audit_targets_stamp_and_header_read_the_realized_regime(regime: bool) -> None:
+    """The helpers `audit_targets.main` stamps and prints with must read the
+    process global, not a constant. Run at BOTH values: a hard-coded True would
+    pass a True-only check."""
+    from chess_anti_engine.encoding import rep_fix
+    from chess_anti_engine.utils.audit_cache_format import HISTORY_REP_FIX_KEY
+    from scripts import audit_targets
+
+    rep_fix.apply(regime, boards_discarded=True)  # conftest restores the flag
+    assert audit_targets.rep_fix_stamp() == {HISTORY_REP_FIX_KEY: regime}
+    assert audit_targets.net_report_line("onnx:x") == (
+        f"- net: onnx:x (history_rep_fix={regime})"
+    )
+
+
+def test_audit_targets_main_stamps_and_prints_through_the_helpers() -> None:
+    """STRUCTURAL, and its limit stated: `main` is too expensive to drive to the
+    dump (Stockfish labelling + a full search pass), so this checks the call
+    sites by AST. The helpers' values are checked by execution above."""
+    import ast
+    import inspect
+
+    from scripts import audit_targets
+
+    tree = ast.parse(inspect.getsource(audit_targets.main))
+    stamped = False
+    printed = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        if isinstance(fn, ast.Name) and fn.id == "write_audit_cache":
+            for kw in node.keywords:
+                if kw.arg == "extra" and isinstance(kw.value, ast.Dict):
+                    stamped |= any(
+                        k is None and isinstance(v, ast.Call)
+                        and isinstance(v.func, ast.Name) and v.func.id == "rep_fix_stamp"
+                        for k, v in zip(kw.value.keys, kw.value.values, strict=True)
+                    )
+        if isinstance(fn, ast.Name) and fn.id == "net_report_line":
+            printed |= ast.unparse(node.args[0]) == "net.label"
+    assert stamped, "audit_targets.main's dump stamp no longer carries rep_fix_stamp()"
+    assert printed, "audit_targets.main's report no longer prints net_report_line(net.label)"
+
+
+def test_history_rep_fix_is_a_per_net_stamp_key() -> None:
+    from chess_anti_engine.utils.audit_cache_format import (
+        HISTORY_REP_FIX_KEY,
+        STAMP_NON_IDENTITY_KEYS,
+    )
+
+    assert HISTORY_REP_FIX_KEY == "history_rep_fix"
+    assert HISTORY_REP_FIX_KEY in STAMP_NON_IDENTITY_KEYS

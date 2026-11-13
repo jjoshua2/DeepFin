@@ -316,3 +316,52 @@ def test_every_paired_compare_call_is_followed_by_a_prov_check() -> None:
             f"paired_compare invoked at line {i + 1} with no _prov check within "
             f"5 lines — its refusal would land in a log nobody greps:\n{window}"
         )
+
+
+@pytest.mark.parametrize(
+    ("a_regime", "b_regime"),
+    [
+        pytest.param(False, True, id="off-checkpoint-vs-on-onnx"),
+        pytest.param(None, True, id="banked-dump-without-the-key"),
+    ],
+)
+def test_a_history_rep_fix_difference_joins_and_keeps_prov_ok(
+    tmp_path: Path, a_regime: bool | None, b_regime: bool,
+) -> None:
+    """`history_rep_fix` is a property of the NET that was scored (NetSource.load
+    applies the loaded net's own regime), like `net`: an OFF checkpoint against
+    an always-ON foreign LC0 net differs on it by construction, and no re-dump
+    can make them agree. Under `fen_only` it cannot change a number. So it must
+    neither refuse the join nor turn the monitor's verdict into PARTIAL — the
+    banked boot baseline predates the key.
+    """
+    from chess_anti_engine.utils.audit_cache_format import HISTORY_REP_FIX_KEY
+
+    a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    a_stamp = dict(_STAMP) if a_regime is None else {**_STAMP, HISTORY_REP_FIX_KEY: a_regime}
+    _dump(a, stamp=a_stamp)
+    _dump(b, stamp={**_STAMP, HISTORY_REP_FIX_KEY: b_regime})
+    log = tmp_path / "paired.log"
+    status = _paired_compare(a, b, log)
+    text = log.read_text(encoding="utf-8")
+    assert status == 0, text
+    assert "paired delta" in text
+    assert HISTORY_REP_FIX_KEY not in text  # neither refused nor warned on
+    assert _run_prov(log, status).strip() == ""
+
+
+def test_a_real_ruler_mismatch_still_refuses_beside_a_regime_difference(
+    tmp_path: Path,
+) -> None:
+    """Excluding the per-net key must not open a hole for the ruler keys."""
+    from chess_anti_engine.utils.audit_cache_format import HISTORY_REP_FIX_KEY
+
+    a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    _dump(a, stamp={**_STAMP, HISTORY_REP_FIX_KEY: False})
+    _dump(b, stamp={**_STAMP, HISTORY_REP_FIX_KEY: True,
+                    "audit_ruler_version": "dddddddddddddddd"})
+    log = tmp_path / "paired.log"
+    status = _paired_compare(a, b, log)
+    text = log.read_text(encoding="utf-8")
+    assert status == 1, text
+    assert "audit_ruler_version" in text

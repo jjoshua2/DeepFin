@@ -63,6 +63,7 @@ from chess_anti_engine.encoding import model_encoding_kwargs, rep_fix
 from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.eval.audit import PHASE_NAMES, load_audit_set, move_regrets
 from chess_anti_engine.eval.audit_cache import (
+    HISTORY_REP_FIX_KEY,
     MATCHED_ROWS_DIGEST_KEY,
     MATCHED_ROWS_KEY,
     audit_set_provenance,
@@ -590,8 +591,10 @@ def main() -> None:
             extra={"producer": "value_regret.py --dump-per-position",
                    "input_encoding": encoding,
                    # The repetition-plane regime the encoders HELD while
-                   # scoring (process-global; applied by NetSource.load).
-                   "history_rep_fix": rep_fix.current(),
+                   # scoring (process-global; applied by NetSource.load). A
+                   # per-NET key, not ruler identity: see
+                   # STAMP_NON_IDENTITY_KEYS.
+                   HISTORY_REP_FIX_KEY: rep_fix.current(),
                    **matched_provenance,
                    **set_provenance},
         )
