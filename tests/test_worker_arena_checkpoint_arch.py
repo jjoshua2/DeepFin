@@ -120,6 +120,7 @@ def harness() -> Any:
     h = SimpleNamespace(
         checkpoints={}, built=[], weights=[], events=[], compiled=[],
         fail_weights=False, fail_planes=False, matches=[], sleeps=[],
+        build_exc=None, weights_exc=None,
     )
 
     def checkpoint(path: str, **kwargs: Any) -> Any:
@@ -129,6 +130,8 @@ def harness() -> Any:
 
     def build(cfg: ModelConfig) -> FakeModel:
         h.events.append(("build", cfg))
+        if h.build_exc is not None:
+            raise h.build_exc
         model = FakeModel(cfg, h.events)
         h.built.append(model)
         return model
@@ -136,6 +139,8 @@ def harness() -> Any:
     def weights(model: FakeModel, state: Any, **kwargs: Any) -> None:
         h.weights.append((model, state, kwargs))
         h.events.append(("weights", model))
+        if h.weights_exc is not None:
+            raise h.weights_exc
         if h.fail_weights:
             raise RuntimeError("synthetic incomplete load")
 
@@ -159,7 +164,8 @@ def harness() -> Any:
     env: dict[str, Any] = {
         "dataclasses": dataclasses, "ModelConfig": ModelConfig,
         "model_config_from_arch": model_config_from_arch,
-        "torch": SimpleNamespace(load=checkpoint), "build_model": build,
+        "torch": SimpleNamespace(load=checkpoint, OutOfMemoryError=torch.OutOfMemoryError),
+        "build_model": build,
         "load_state_dict_tolerant": weights, "require_model_planes": planes,
         "_maybe_compile_inference_model": compile_model,
         "time": SimpleNamespace(time=lambda: 1.0, sleep=h.sleeps.append),
@@ -351,6 +357,30 @@ def test_failed_best_load_keeps_prior_identity_and_is_not_retried(
     assert len(harness.events) == n_events
     assert not harness.matches
     assert harness.sleeps == [0.0]
+
+
+@pytest.mark.parametrize("where", ["build", "load-oom"])
+def test_transient_failure_propagates_and_is_not_remembered(harness: Any, where: str) -> None:
+    """Only file-determined failures are refused; a transient one must not
+    blacklist a good sha until restart."""
+    current, cfg = _prepare_arena(harness, False, True)
+    old_best = object()
+    harness.session.best_model = old_best
+    if where == "build":
+        exc: Exception = RuntimeError("synthetic transient allocation failure")
+        harness.build_exc = exc
+    else:
+        exc = torch.OutOfMemoryError("synthetic out of memory")
+        harness.weights_exc = exc
+    with pytest.raises(type(exc), match="synthetic") as info:
+        harness.session._run_arena({"best_model": {"sha256": "best"}}, {"arena": {}})
+    assert info.value is exc
+    assert harness.session._refused_best_sha is None
+    assert harness.session.best_model is old_best
+    assert harness.session.last_best_sha == "old"
+    assert harness.session.model is current
+    assert harness.session.model_cfg_active is cfg
+    assert not harness.matches
 
 
 def test_compile_receives_checkpoint_model_after_load(harness: Any) -> None:

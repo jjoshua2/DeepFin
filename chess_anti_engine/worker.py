@@ -179,8 +179,8 @@ class _UnsupportedSfBudgetForTopology(_MissingRequiredReco):
 class _ArenaBestModelRefused(RuntimeError):
     """The arena's best checkpoint cannot be loaded as the net it claims to be.
 
-    Raised (via ``_load_and_compile_model(checkpoint_arch=True)``) when the best checkpoint's embedded ``arch`` is
-    invalid (``model_config_from_arch``) or its weights do not load completely
+    Raised (via ``_load_and_compile_model(checkpoint_arch=True)``) when the
+    best checkpoint's embedded ``arch`` is invalid (``model_config_from_arch``) or its weights do not load completely
     into the model built from that arch (or, for an arch-less legacy export,
     into the active manifest config). Before this, the best was built from the
     ACTIVE model's config and loaded tolerantly, so an architecture difference
@@ -188,9 +188,13 @@ class _ArenaBestModelRefused(RuntimeError):
     net against a half-random opponent with no error.
 
     ``run()`` contains it like ``ActionDecodeError``: log at ERROR, write no
-    arena result, keep the worker alive and re-poll. Both causes are a pure
-    function of the sha-verified file, so ``_run_arena`` remembers the refused
-    sha and does not reload it every poll.
+    arena result, keep the worker alive and re-poll. It is raised ONLY for
+    failures that are a pure function of the sha-verified file (plus this
+    worker's fixed slot width): a ValueError from arch parsing, config
+    validation or the slot-plane check, or a non-OOM RuntimeError from the
+    state-dict load. So ``_run_arena`` remembers the refused sha and does not
+    reload it every poll. Out-of-memory and other transient errors are not
+    converted; they propagate as before and the sha is not remembered.
     """
 
 
@@ -1812,11 +1816,23 @@ class WorkerSession:
                     model, int(client.input_planes),
                     where="worker inference slot (local model)",
                 )
-            load_state_dict_tolerant(model, sd, label=label, require_complete=checkpoint_arch)
-        except (ValueError, RuntimeError) as exc:
-            # Everything inside this try is a pure function of the sha-verified
-            # file plus this worker's slot width; device transfer and compile
-            # below are deliberately outside it (not a property of the file).
+            try:
+                load_state_dict_tolerant(model, sd, label=label, require_complete=checkpoint_arch)
+            except torch.OutOfMemoryError:
+                raise
+            except RuntimeError as exc:
+                # Incomplete / catastrophic state-dict load: determined by the
+                # file's tensors vs the model its own arch built.
+                if not checkpoint_arch:
+                    raise
+                raise _ArenaBestModelRefused(f"[{label}] sha={sha_short}: {exc}") from exc
+        except ValueError as exc:
+            # Invalid embedded arch (model_config_from_arch), a config the arch
+            # describes that build_model rejects, or a slot-width mismatch: a
+            # pure function of the sha-verified file plus this worker's fixed
+            # slot width. Any OTHER error (out-of-memory, a transient
+            # RuntimeError from build_model, device transfer, compile below)
+            # propagates exactly as before and is NOT remembered as refused.
             if not checkpoint_arch:
                 raise
             raise _ArenaBestModelRefused(f"[{label}] sha={sha_short}: {exc}") from exc
