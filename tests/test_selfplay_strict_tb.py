@@ -323,8 +323,8 @@ def _finite(monkeypatch, *, start=None, owner=None, ready: Callable[[SelfplaySta
         "search": SearchConfig(mcts_type="gumbel", simulations=1),
         "opening": OpeningConfig(random_start_plies=0), "diff_focus": DiffFocusConfig(enabled=False),
         "game": GameConfig(**STRICT, max_plies=0, selfplay_fraction=1), "on_state_ready": ready,
+        **kwargs,
     }
-    params.update(kwargs)
     result = manager.play_batch(**params)
     return result, observed, owner
 
