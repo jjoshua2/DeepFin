@@ -187,6 +187,7 @@ def test_cli_eof_suppresses_late_result_without_retiring_live_worker(monkeypatch
     monkeypatch.setattr(uci_main, "_startup_engine_options", lambda *_args, **_kwargs: SimpleNamespace(
         eval_cache_entries=0, max_batch=1, vl_gather=1,
         use_multi_gpu_pucv=False, search_parallel="pucv",
+        threads=1, leaf_gather=1,
     ))
     monkeypatch.setattr(uci_main, "_load_models", lambda *_args: [SimpleNamespace()])
     monkeypatch.setattr(uci_main, "_make_evaluator_factory", lambda *_args, **_kwargs: lambda *_a, **_k: object())

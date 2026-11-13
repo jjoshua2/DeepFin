@@ -96,8 +96,11 @@ def test_public_replacement_failure_retires_old_and_preserves_primary(monkeypatc
     try:
         with monkeypatch.context() as patcher:
             fault_allocation(patcher, error, cause)
+            # `_dispatch`, not `dispatch`: the public entry contains handler
+            # failures so the engine survives them (test_uci_never_die.py);
+            # this test is about the exception's ownership notes inside.
             with pytest.raises(MemoryError) as caught:
-                engine.dispatch(CmdSetOption(name="MaxBatch", value="64"))
+                engine._dispatch(CmdSetOption(name="MaxBatch", value="64"))
         assert caught.value is error
         assert caught.value.__cause__ is cause
         assert "existing cleanup note" in getattr(caught.value, "__notes__", ())
@@ -162,8 +165,9 @@ def test_public_same_owner_replacement_does_not_close_borrowed_current_owner(mon
         with monkeypatch.context() as patcher:
             if fault:
                 fault_allocation(patcher, error, ValueError("same-owner cause"))
+                # `_dispatch`: the public `dispatch` contains handler failures.
                 with pytest.raises(MemoryError) as caught:
-                    engine.dispatch(CmdSetOption(name="MaxBatch", value="64"))
+                    engine._dispatch(CmdSetOption(name="MaxBatch", value="64"))
                 assert caught.value is error
             else:
                 engine.dispatch(CmdSetOption(name="MaxBatch", value="64"))

@@ -280,8 +280,14 @@ def test_quit_during_actual_warmup_keeps_builder_ownership_until_drain(monkeypat
     monkeypatch.setattr(main, "_build_engine", lambda **_kw: engine)
     monkeypatch.setattr(main.sys, "argv", ["deepfin", "--checkpoint", "fake.pt", "--device", "cpu"])
     monkeypatch.setattr(main.sys, "stdin", stdin())
+    # The builder is held inside warmup past main's bounded join, so main takes
+    # its hard-exit path; record it instead of letting it end pytest.
+    hard_exits: list[int] = []
+    monkeypatch.setattr(main, "_BUILDER_JOIN_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(main, "_hard_exit", hard_exits.append)
     try:
         assert main.main() == 0
+        assert hard_exits == [0]
         worker.close.assert_not_called()
     finally:
         release.set()

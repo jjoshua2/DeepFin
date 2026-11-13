@@ -9,6 +9,7 @@ path end-to-end so we can play a game.
 """
 from __future__ import annotations
 
+import gc
 import logging
 import math
 import sys
@@ -63,6 +64,8 @@ from .time_manager import (
     limits_from_go,
 )
 
+_log = logging.getLogger(__name__)
+
 _ENGINE_NAME = "DeepFin"
 _ENGINE_AUTHOR = "jjosh"
 
@@ -110,11 +113,13 @@ def emit_handshake(options: EngineOptions) -> None:
     for line in format_id_lines(_ENGINE_NAME, _ENGINE_AUTHOR):
         _println(line)
     _println(
-        f"option name Hash type spin default {options.hash_mb} "
-        f"min {_MIN_HASH_MB} max 524288"
+        f"option name Hash type spin default {options.hash_mb} {_spin_range('Hash')}"
     )
-    _println(f"option name Threads type spin default {options.threads} min 1 max 64")
-    _println(f"option name LeafGather type spin default {options.leaf_gather} min 1 max 64")
+    _println(f"option name Threads type spin default {options.threads} {_spin_range('Threads')}")
+    _println(
+        f"option name LeafGather type spin default {options.leaf_gather} "
+        f"{_spin_range('LeafGather')}"
+    )
     _println(f"option name UseVL type check default {'true' if options.use_vl else 'false'}")
     _println(
         "option name UseMultiGpuPUCV type check default "
@@ -132,26 +137,32 @@ def emit_handshake(options: EngineOptions) -> None:
     # -1 = auto (open/min_vpa→VLGather, min_keep→#devices); 0 = off; >0 = fixed.
     _println(
         f"option name RPGOpenVPA type spin default {options.rpg_open_vpa} "
-        "min -1 max 4096"
+        f"{_spin_range('RPGOpenVPA')}"
     )
     _println(
         f"option name RPGMinVPA type spin default {options.rpg_min_vpa} "
-        "min -1 max 4096"
+        f"{_spin_range('RPGMinVPA')}"
     )
     _println(
         f"option name RPGMinKeep type spin default {options.rpg_min_keep} "
-        "min -1 max 64"
+        f"{_spin_range('RPGMinKeep')}"
     )
     _println(
         "option name RPGOpenBudgetFrac type string default "
         f"{options.rpg_open_budget_frac}"
     )
-    _println(f"option name VLGather type spin default {options.vl_gather} min 32 max 4096")
-    _println(f"option name MaxBatch type spin default {options.max_batch} min 64 max 8192")
-    _println(f"option name EvalCacheEntries type spin default {options.eval_cache_entries} min 0 max 1048576")
-    _println(f"option name MultiPV type spin default {options.multi_pv} min 1 max 256")
+    _println(f"option name VLGather type spin default {options.vl_gather} {_spin_range('VLGather')}")
+    _println(f"option name MaxBatch type spin default {options.max_batch} {_spin_range('MaxBatch')}")
+    _println(
+        f"option name EvalCacheEntries type spin default {options.eval_cache_entries} "
+        f"{_spin_range('EvalCacheEntries')}"
+    )
+    _println(f"option name MultiPV type spin default {options.multi_pv} {_spin_range('MultiPV')}")
     _println(f"option name UCI_ShowWDL type check default {'true' if options.show_wdl else 'false'}")
-    _println(f"option name MoveOverheadMs type spin default {options.move_overhead_ms} min 0 max 5000")
+    _println(
+        f"option name MoveOverheadMs type spin default {options.move_overhead_ms} "
+        f"{_spin_range('MoveOverheadMs')}"
+    )
     _println(
         "option name ClockBatchMarginSigmas type string default "
         f"{options.clock_batch_margin_sigmas}",
@@ -178,10 +189,46 @@ _JOIN_TIMEOUT_S = 30.0
 class SearchNotQuiescent(TimeoutError):
     """The search still owns the worker; mutation and teardown must wait."""
 
+
+def _one_line(exc: BaseException, limit: int = 300) -> str:
+    """``Type: message`` on one line, for an ``info string``.
+
+    A GUI parses stdout line by line; a multi-line exception message (torch's
+    are) would put free text on lines that do not start with a UCI keyword.
+    """
+    text = " ".join(f"{type(exc).__name__}: {exc}".split())
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
 # Advertised (and now enforced) floor for the `Hash` UCI option, in MB. Keep this
 # in step with the `min` field `emit_handshake` prints — the two disagreeing is
 # exactly the defect this constant closes.
 _MIN_HASH_MB = 1024
+
+# The ONE table of hand-written spin-option bounds. `emit_handshake` prints these
+# numbers as `min`/`max` and every setoption handler clamps to them, so what a GUI
+# is told and what the engine accepts cannot drift. The maxima used to be printed
+# and never enforced: `MaxBatch 50000000` reached the evaluator factory, tried to
+# allocate 2.2 TB of pinned input and killed the process. Registry search options
+# (mcts/search_options.py) carry their own lo/hi and are range-checked by
+# `_parse_search_value`; they are deliberately not repeated here.
+_SPIN_BOUNDS: dict[str, tuple[int, int]] = {
+    "Hash": (_MIN_HASH_MB, 524288),
+    "Threads": (1, 64),
+    "LeafGather": (1, 64),
+    "RPGOpenVPA": (-1, 4096),
+    "RPGMinVPA": (-1, 4096),
+    "RPGMinKeep": (-1, 64),
+    "VLGather": (32, 4096),
+    "MaxBatch": (64, 8192),
+    "EvalCacheEntries": (0, 1048576),
+    "MultiPV": (1, 256),
+    "MoveOverheadMs": (0, 5000),
+}
+
+
+def _spin_range(name: str) -> str:
+    lo, hi = _SPIN_BOUNDS[name]
+    return f"min {lo} max {hi}"
 
 # The one registry field whose EngineOptions attribute does not match its name:
 # `CPuct` predates the registry and stores into `cpuct`. Renaming the attribute
@@ -439,6 +486,9 @@ class Engine:
   # search thread advances the tree root by this move before switching
   # to time-bounded search.
         self._popped_ponder_move: chess.Move | None = None
+  # The reply-only thread `_answer_failed_go` starts, while it is the current
+  # search thread; ponderhit releases it like stop.
+        self._fallback_reply_thread: threading.Thread | None = None
 
   # -- main-thread command dispatch -----------------------------------------
 
@@ -450,6 +500,88 @@ class Engine:
             self._dispatch(cmd)
         except SearchNotQuiescent as exc:
             _println(f"info string command rejected ({type(cmd).__name__}): {exc}")
+        except Exception as exc:
+  # A handler bug or a resource failure must never end the process: a dead
+  # engine forfeits every remaining game, a lost option costs nothing. One
+  # line on stdout for the GUI, the traceback to stderr / LogFile for the
+  # operator. KeyboardInterrupt / SystemExit are not Exceptions and still exit.
+            _log.error("UCI command %r failed", cmd, exc_info=True)
+            _println(
+                f"info string error handling {type(cmd).__name__}: "
+                f"{_one_line(exc)}; engine continues"
+            )
+            if isinstance(cmd, CmdGo):
+                self._answer_failed_go(cmd)
+            elif isinstance(cmd, CmdIsReady):
+  # `readyok` is the handler's last statement, so it was not printed. A GUI
+  # blocks on it; the engine is alive and answers `go`, so say ready.
+                _println(format_readyok())
+
+    def _answer_failed_go(self, cmd: CmdGo) -> None:
+        """Guarantee exactly one bestmove for a ``go`` whose handler raised.
+
+        If the handler got as far as starting the search thread, that thread owns
+        the reply (and the generation gate already keeps it to one). Otherwise
+        nothing would ever answer and the GUI would flag us on time, so start a
+        reply-only thread under a NEW generation: it obeys the same UCI rules as a
+        real search -- a ponder reply waits for ``ponderhit``/``stop``, an
+        open-ended one for ``stop`` -- and the same gate drops it if a newer
+        ``go`` or ``quit`` supersedes it.
+        """
+        thread = self._search_thread
+        if thread is not None and thread.ident is not None:
+            return
+        args = cmd.args
+        try:
+            open_ended = limits_from_go(
+                args, side_to_move_is_white=self._board.turn == chess.WHITE,
+            ).is_open_ended()
+        except Exception:
+            open_ended = args.infinite or args.ponder
+        board = self._board.copy()
+        self._stop_event = threading.Event()
+        self._cancel_event = threading.Event()
+        self._ponderhit_at = None
+        self._ponderhit_event = threading.Event()
+        self._ponder_release = threading.Event()
+        self._pending_real_limits = None
+        self._popped_ponder_move = None
+        with self._state_lock:
+            self._search_gen += 1
+            gen = self._search_gen
+        self._bestmove_fallback_used += 1
+        reply = threading.Thread(
+            target=self._run_failed_go_reply,
+            args=(gen, board, args.searchmoves, args.ponder, open_ended),
+            daemon=True,
+        )
+        self._search_thread = reply
+        self._fallback_reply_thread = reply
+        try:
+            reply.start()
+        except Exception:
+  # No thread to wait for UCI's permission: answer now rather than never.
+            self._search_thread = None
+            self._fallback_reply_thread = None
+            self._run_failed_go_reply(gen, board, args.searchmoves, False, False)
+
+    def _run_failed_go_reply(
+        self, gen: int, board: chess.Board, searchmoves: tuple[str, ...],
+        ponder: bool, open_ended: bool,
+    ) -> None:
+        if ponder:
+            self._ponder_release.wait()
+        elif open_ended:
+            self._cancel_event.wait()
+        with self._state_lock:
+            if gen != self._search_gen or self._quit_requested:
+                return
+        move, source = self._bestmove_fallback(board, searchmoves)
+        _println(
+            f"info string search not started; bestmove_fallback_used="
+            f"{self._bestmove_fallback_used} source={source} move={move}"
+        )
+        _println(format_bestmove(move, ponder=None))
 
     def _dispatch(self, cmd: Command) -> None:
         if isinstance(cmd, CmdUci):
@@ -720,8 +852,14 @@ class Engine:
         """Opponent played our predicted move. Convert open-ended ponder
         search into a time-bounded real search, keeping the MCTS tree.
         """
-        if (self._search_thread is None or not self._search_thread.is_alive()
-                or self._pending_real_limits is None):
+        if self._search_thread is None or not self._search_thread.is_alive():
+            return
+        if self._search_thread is self._fallback_reply_thread:
+            # A failed `go ponder` is answered by a reply-only thread; ponderhit
+            # releases it exactly as `stop` would.
+            self._ponder_release.set()
+            return
+        if self._pending_real_limits is None:
             return
   # Signal the search loop: next iteration, swap ponder-deadline
   # for real-deadline.
@@ -915,31 +1053,48 @@ class Engine:
 
   # ─── setoption handlers ────────────────────────────────────────────────────
   # Each takes the raw value string and is responsible for parsing + clamping.
-  # Non-int values silently keep the prior value (mirrors original behavior).
+  # Non-int values keep the prior value, and say so.
     @staticmethod
-    def _parse_clamped_int(value: str, lo: int) -> int | None:
+    def _parse_clamped_int(value: str, name: str) -> int | None:
+        """Parse hand-written spin option ``name`` and clamp it to ``_SPIN_BOUNDS``.
+
+        CLAMP, not reject, at both ends: clamping is what this engine always did
+        at the low end (``Hash 256`` -> 1024 is pinned by a test), and a GUI that
+        sends ``Threads 128`` or ``MaxBatch 50000000`` means "as much as you
+        allow", which the advertised maximum answers. Every clamp is announced on
+        an ``info string`` -- a silently moved value is this repo's signature
+        defect. Registry search options keep their own reject-with-reason rule
+        (``_parse_search_value``).
+        """
         try:
-            return max(lo, int(value))
+            requested = int(value.strip())
         except ValueError:
+            _println(f"info string {name}: {value.strip()!r} is not an integer; ignored")
             return None
+        lo, hi = _SPIN_BOUNDS[name]
+        n = min(hi, max(lo, requested))
+        if requested < lo:
+            _println(
+                f"info string {name} {requested} is below the advertised minimum "
+                f"{lo}; using {n}"
+            )
+        elif requested > hi:
+            _println(
+                f"info string {name} {requested} is above the advertised maximum "
+                f"{hi}; using {n}"
+            )
+        return n
 
     def _set_hash(self, value: str) -> None:
-        try:
-            requested = int(value)
-        except ValueError:
-            return
   # The handshake advertises `min 1024` but enforcement used to floor at 1, so a
   # GUI's conventional `Hash 256` was accepted and then quietly crippled the
   # engine: `advance_root` refuses cross-move reuse once the tree passes
   # `max_tree_bytes // 2`, and the initial reserve alone is ~8.6 MB — so any
   # Hash below ~17 MB kills reuse from move one and throttles every chunk.
   # Advertisement and enforcement now agree, and a clamp is announced.
-        n = max(_MIN_HASH_MB, requested)
-        if n != requested:
-            _println(
-                f"info string Hash {requested} is below the advertised minimum "
-                f"{_MIN_HASH_MB}; using {n}"
-            )
+        n = self._parse_clamped_int(value, "Hash")
+        if n is None:
+            return
         self._options.hash_mb = n
         self._worker.set_max_tree_mb(n)
 
@@ -954,13 +1109,13 @@ class Engine:
         )
 
     def _set_threads(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=1)
+        n = self._parse_clamped_int(value, "Threads")
         if n is None:
             return
         old_threads = self._options.threads
-        self._options.threads = n
-        self._worker.set_num_threads(n)
         if self._multi_gpu_path_active():
+            self._options.threads = n
+            self._worker.set_num_threads(n)
             # Worker stores n_walkers for leave-multi-GPU restore; live
             # dispatch still uses the RPG / multi-GPU PUCV pool.
             mode = (
@@ -973,12 +1128,14 @@ class Engine:
                 f"(deferred — {mode} is active)",
             )
             return
-        self._warmup_dirty = True
         # Crossing 1 <-> >1 changes which dispatcher tier the factory builds
         # (compiled: CUDAOwner at 1 walker vs BatchCoalescing at >1). The
         # walker-pool rebuild alone leaves the old wrapper in place — walkers
         # would then serialize through the owner queue (1->N) or lose the
         # pinned in-place path (N->1). Same-tier changes skip the rebuild.
+        # The rebuild runs BEFORE any option or worker state moves, so a
+        # failed one leaves the engine exactly as it was.
+        new_eval = None
         if (
             (n == 1) != (old_threads == 1)
             and self._rebuild_evaluator is not None
@@ -987,10 +1144,16 @@ class Engine:
                 f"info string Threads {old_threads}->{n} crosses dispatcher "
                 "tier; rebuilding evaluator…"
             )
-            new_eval = self._rebuild_evaluator(
-                self._options.max_batch, self._options.eval_cache_entries,
-                n_walkers=n,
+            new_eval = self._rebuild_or_keep(
+                f"Threads {n}", self._options.max_batch,
+                self._options.eval_cache_entries, n_walkers=n,
             )
+            if new_eval is None:
+                return
+        self._options.threads = n
+        self._worker.set_num_threads(n)
+        self._warmup_dirty = True
+        if new_eval is not None:
             self._worker.set_evaluator(new_eval)
             self._reinstall_configured_search_path()
         _println(
@@ -1007,7 +1170,7 @@ class Engine:
             )
 
     def _set_leaf_gather(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=1)
+        n = self._parse_clamped_int(value, "LeafGather")
         if n is None:
             return
         self._options.leaf_gather = n
@@ -1253,26 +1416,26 @@ class Engine:
         _println(f"info string RPG reinstalled after {reason}")
 
     def _set_rpg_open_vpa(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=-1)
+        n = self._parse_clamped_int(value, "RPGOpenVPA")
         if n is None:
             return
-        self._options.rpg_open_vpa = min(4096, n)
+        self._options.rpg_open_vpa = n
         _println(f"info string RPGOpenVPA set to {self._options.rpg_open_vpa}")
         self._reinstall_rpg_if_active(reason="RPGOpenVPA")
 
     def _set_rpg_min_vpa(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=-1)
+        n = self._parse_clamped_int(value, "RPGMinVPA")
         if n is None:
             return
-        self._options.rpg_min_vpa = min(4096, n)
+        self._options.rpg_min_vpa = n
         _println(f"info string RPGMinVPA set to {self._options.rpg_min_vpa}")
         self._reinstall_rpg_if_active(reason="RPGMinVPA")
 
     def _set_rpg_min_keep(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=-1)
+        n = self._parse_clamped_int(value, "RPGMinKeep")
         if n is None:
             return
-        self._options.rpg_min_keep = min(64, n)
+        self._options.rpg_min_keep = n
         _println(f"info string RPGMinKeep set to {self._options.rpg_min_keep}")
         self._reinstall_rpg_if_active(reason="RPGMinKeep")
 
@@ -1349,7 +1512,7 @@ class Engine:
                 self._worker.set_use_pucv(True, gather=self._options.vl_gather)
 
     def _set_vl_gather(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=32)
+        n = self._parse_clamped_int(value, "VLGather")
         if n is None:
             return
         self._options.vl_gather = n
@@ -1367,7 +1530,7 @@ class Engine:
         _println(f"info string VLGather set to {n}")
 
     def _set_multi_pv(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=1)
+        n = self._parse_clamped_int(value, "MultiPV")
         if n is None:
             return
         self._options.multi_pv = n
@@ -1378,7 +1541,7 @@ class Engine:
         self._worker.set_show_wdl(self._options.show_wdl)
 
     def _set_move_overhead_ms(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=0)
+        n = self._parse_clamped_int(value, "MoveOverheadMs")
         if n is None:
             return
         self._options.move_overhead_ms = n
@@ -1406,7 +1569,7 @@ class Engine:
         _attach_log_file(path)
 
     def _set_max_batch(self, value: str) -> None:
-        mb = self._parse_clamped_int(value, lo=64)
+        mb = self._parse_clamped_int(value, "MaxBatch")
         if mb is None:
             return
         if self._rebuild_evaluator is None:
@@ -1417,7 +1580,11 @@ class Engine:
   # Rebuild is 5-10s (CUDA graph recapture on first forward).
   # User sees the stall only if they poll isready soon after.
         _println(f"info string MaxBatch rebuilding evaluator at {mb}…")
-        new_eval = self._rebuild_evaluator(mb, self._options.eval_cache_entries)
+        new_eval = self._rebuild_or_keep(
+            f"MaxBatch {mb}", mb, self._options.eval_cache_entries,
+        )
+        if new_eval is None:
+            return
         self._options.max_batch = mb
         self._worker.set_evaluator(new_eval)
         # set_evaluator clears multi-GPU pools; reinstall from search_parallel
@@ -1429,7 +1596,7 @@ class Engine:
         _println(f"info string MaxBatch set to {mb}; evaluator rebuilt + warmed")
 
     def _set_eval_cache_entries(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=0)
+        n = self._parse_clamped_int(value, "EvalCacheEntries")
         if n is None:
             return
         if n == self._options.eval_cache_entries:
@@ -1438,7 +1605,11 @@ class Engine:
             _println("info string EvalCacheEntries ignored — no evaluator factory wired")
             return
         _println(f"info string EvalCacheEntries rebuilding evaluator at {n}")
-        new_eval = self._rebuild_evaluator(self._options.max_batch, n)
+        new_eval = self._rebuild_or_keep(
+            f"EvalCacheEntries {n}", self._options.max_batch, n,
+        )
+        if new_eval is None:
+            return
         self._options.eval_cache_entries = n
         self._worker.set_eval_cache_entries(n)
         self._worker.set_evaluator(new_eval)
@@ -1447,6 +1618,38 @@ class Engine:
         # cudagraph must be re-warmed before the first real ``go``.
         self._warmup_dirty = True
         _println(f"info string EvalCacheEntries set to {n}; evaluator rebuilt + warmed")
+
+    def _rebuild_or_keep(
+        self, what: str, max_batch: int, eval_cache_entries: int,
+        *, n_walkers: int | None = None,
+    ) -> BatchEvaluator | None:
+        """A replacement evaluator, or ``None`` with the current one kept.
+
+        Every caller builds BEFORE it changes an option or calls
+        ``set_evaluator``, so on failure the worker still holds the previous,
+        working evaluator and every setting still describes it. A raise here
+        used to escape the handler: the process died (``MaxBatch`` OOM) or, once
+        dispatch is guarded, the options would claim a batch size nothing was
+        built for. Say so instead and keep playing on the last good setup.
+        """
+        assert self._rebuild_evaluator is not None
+        try:
+            if n_walkers is None:
+                return self._rebuild_evaluator(max_batch, eval_cache_entries)
+            return self._rebuild_evaluator(
+                max_batch, eval_cache_entries, n_walkers=n_walkers,
+            )
+        except Exception as exc:
+            _log.error("evaluator rebuild for %s failed", what, exc_info=True)
+            reason = _one_line(exc)
+        # Outside the except block, so the traceback (and the half-built
+        # evaluator's buffers it references) is already released.
+        gc.collect()
+        _println(
+            f"info string {what}: evaluator rebuild failed ({reason}); "
+            "keeping the previous evaluator and settings"
+        )
+        return None
 
     def _set_syzygy_path(self, value: str | None) -> None:
         v = (value or "").strip()

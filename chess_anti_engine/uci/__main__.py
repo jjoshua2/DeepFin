@@ -42,7 +42,15 @@ from chess_anti_engine.mcts.gumbel import (
 )
 from chess_anti_engine.mcts.search_options import SEARCH_OPTIONS, SearchOption
 
-from .engine import Engine, EngineOptions, SearchNotQuiescent, _emit_info_string, _println, emit_handshake
+from .engine import (
+    _SPIN_BOUNDS,
+    Engine,
+    EngineOptions,
+    SearchNotQuiescent,
+    _emit_info_string,
+    _println,
+    emit_handshake,
+)
 from .model_loader import load_model_from_checkpoint
 from .protocol import CmdQuit, CmdUci, parse_command
 from .search import SearchWorker
@@ -290,9 +298,9 @@ def _make_evaluator_factory(
         evaluator/buffer/cudagraph memory after auto-enable made the pool
         the multi-device default.
         """
-        if n_walkers is not None:
-            walker_state["n_walkers"] = max(1, int(n_walkers))
-        nw = walker_state["n_walkers"]
+        # Remembered only once the build SUCCEEDS: a failed rebuild keeps the
+        # previous evaluator, so the next rebuild must keep its tier too.
+        nw = walker_state["n_walkers"] if n_walkers is None else max(1, int(n_walkers))
         active_models = models
         active_devices = devices
         if primary_only and len(devices) > 1:
@@ -360,6 +368,7 @@ def _make_evaluator_factory(
             input_extra_features=input_extra_features,
             compute_relations=use_relations,
         )
+        walker_state["n_walkers"] = nw
         return evaluator
     return build
 
@@ -1106,6 +1115,26 @@ def _refuse_out_of_range_startup_value(
     )
 
 
+def _clamp_startup_spin(name: str, flag: str, raw: int) -> int:
+    """A CLI value for spin option ``name``, clamped to its advertised range.
+
+    The startup half of ``Engine._parse_clamped_int``, same ``_SPIN_BOUNDS``:
+    the first ``uci`` advertises this value as the option's default, and a
+    default outside its own ``min``/``max`` is one the engine would clamp if the
+    GUI sent it back. stdout is not ready for UCI text yet, so say it on stderr.
+    """
+    requested = int(raw)
+    lo, hi = _SPIN_BOUNDS[name]
+    value = min(hi, max(lo, requested))
+    if value != requested:
+        print(
+            f"deepfin: {flag} {requested} is outside {name}'s advertised range "
+            f"[{lo}, {hi}]; using {value}",
+            file=sys.stderr,
+        )
+    return value
+
+
 def _startup_engine_options(
     args: argparse.Namespace,
     *,
@@ -1120,14 +1149,16 @@ def _startup_engine_options(
     rather than an error.
     """
     options = EngineOptions(
-        threads=max(1, int(args.walkers)),
-        leaf_gather=max(1, int(args.walker_gather)),
+        threads=_clamp_startup_spin("Threads", "--walkers", args.walkers),
+        leaf_gather=_clamp_startup_spin("LeafGather", "--walker-gather", args.walker_gather),
         use_multi_gpu_pucv=restore_multi_gpu_pucv,
         pucv_pending_mode=str(args.pucv_pending_mode),
         search_parallel=search_parallel,
-        vl_gather=max(32, int(args.vl_gather)),
-        max_batch=max(64, int(args.max_batch)),
-        eval_cache_entries=max(0, int(args.eval_cache_entries)),
+        vl_gather=_clamp_startup_spin("VLGather", "--vl-gather", args.vl_gather),
+        max_batch=_clamp_startup_spin("MaxBatch", "--max-batch", args.max_batch),
+        eval_cache_entries=_clamp_startup_spin(
+            "EvalCacheEntries", "--eval-cache-entries", args.eval_cache_entries,
+        ),
   # Clamp the time knobs (like the spin options above): a non-positive
   # time_budget_scale would collapse every move to the 20ms floor, and a
   # negative abort_factor would abort the instant the move leads. 0.0 is the
@@ -1212,8 +1243,8 @@ def main() -> int:
         building_engine: Engine | None = None
         building_evaluator = None
         try:
-            n_walkers = max(1, int(args.walkers))
-            walker_gather = max(1, int(args.walker_gather))
+            n_walkers = startup_options.threads
+            walker_gather = startup_options.leaf_gather
   # c_scale / c_visit shape the Gumbel sigma(q) value transform; the PUCT
   # walker pool (n_walkers > 1, the --walkers/Threads default) selects on
   # raw Q and never reads them, so the tuned c_scale=0.025 win only lands on
@@ -1234,6 +1265,10 @@ def main() -> int:
                     "for the c_scale-tuned classic Gumbel path"
                 )
             models = _load_models(args.checkpoint, devices)
+  # quit/EOF arrived while we were inside torch: stop between phases instead of
+  # starting another multi-second build the main thread would have to outwait.
+            if shutdown_requested.is_set():
+                return
             input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
             input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
             policy_encoding = str(getattr(models[0], "policy_encoding", "lc0_1858"))
@@ -1297,6 +1332,8 @@ def main() -> int:
             building_evaluator = rebuild_evaluator(
                 startup_options.max_batch, startup_options.eval_cache_entries,
             )
+            if shutdown_requested.is_set():
+                return
             building_engine = _build_engine(
                 evaluator=building_evaluator, primary_device=devices[0],
                 **_engine_search_kwargs(args),
@@ -1324,6 +1361,8 @@ def main() -> int:
   # readyok (the standard handshake) never starts the clock until this returns.
             # Successful construction transfers the primary to this engine.
             building_evaluator = None
+            if shutdown_requested.is_set():
+                return
             building_engine.warmup_search()
             # Only a drained builder can transfer worker ownership to the loop.
             with engine_owner_lock:
@@ -1351,8 +1390,10 @@ def main() -> int:
                     _println(f"info string evaluator startup cleanup failed: {exc!r}")
             engine_ready.set()
 
-    threading.Thread(target=_build, daemon=True, name="deepfin-build").start()
+    builder = threading.Thread(target=_build, daemon=True, name="deepfin-build")
+    builder.start()
 
+    rc = 0
     try:
         for raw in sys.stdin:
             cmd = parse_command(raw)
@@ -1371,7 +1412,13 @@ def main() -> int:
                 raise engine_error[0]
             engine = engine_ref[0]
             assert engine is not None
-            engine.dispatch(cmd)
+            try:
+                engine.dispatch(cmd)
+            except Exception as exc:
+  # `dispatch` already contains handler failures; this catches a failure in
+  # its own reporting so that, too, cannot end the session.
+                logging.getLogger(__name__).error("dispatch failed", exc_info=True)
+                _println(f"info string command failed: {type(exc).__name__}; engine continues")
             if engine.quit_requested:
                 break
     finally:
@@ -1381,17 +1428,59 @@ def main() -> int:
   # one; ``engine.close()`` then closes the live one. An unfinished builder
   # retains its local engine and closes it only after its warmup drains.
         with engine_owner_lock:
-            shutdown_requested.set()
+            _request_builder_shutdown(shutdown_requested)
             eng = engine_ref[0]
         if eng is not None:
             try:
                 eng.close()
             except SearchNotQuiescent as exc:
                 _println(f"info string engine shutdown failed: {exc}")
-                return 1
+                rc = 1
             except Exception:
                 pass
-    return 0
+        _drain_builder(builder, rc)
+    return rc
+
+
+# How long `quit` / EOF waits for a startup build that is still running. The
+# builder cannot be interrupted inside torch.compile / cudagraph capture, and a
+# GUI that quits during startup usually kills us a few seconds later anyway.
+_BUILDER_JOIN_TIMEOUT_S = 3.0
+
+
+def _request_builder_shutdown(event: threading.Event) -> None:
+    """Tell the startup builder to stop at its next phase boundary."""
+    event.set()
+
+
+def _hard_exit(rc: int) -> None:
+    """Flush both streams, then leave without interpreter finalization."""
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(Exception):
+            stream.flush()
+    os._exit(rc)
+
+
+def _drain_builder(builder: threading.Thread, rc: int) -> None:
+    """Join the startup builder, bounded; hard-exit if it is still in torch.
+
+    ``quit`` during compile/warmup used to return from ``main`` with the daemon
+    builder still inside torch. Interpreter finalization then tore down state
+    under a live C++ thread and the process sometimes died with "terminate
+    called without an active exception" (SIGABRT, exit 134) -- a crash report
+    for a clean quit. The builder was already signalled; give it a bounded
+    chance to close what it built, and if it is still running, flush stdout and
+    exit with ``rc`` without finalizing anything it holds.
+    """
+    if not builder.is_alive():
+        return
+    builder.join(timeout=_BUILDER_JOIN_TIMEOUT_S)
+    if builder.is_alive():
+        print(
+            "deepfin: startup build still running at shutdown; exiting without it",
+            file=sys.stderr,
+        )
+        _hard_exit(rc)
 
 
 if __name__ == "__main__":
