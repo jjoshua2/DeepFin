@@ -9,9 +9,11 @@ hardware, including a multi-GPU test.
 
 ## 1. Requirements
 
-- Linux x86-64, NVIDIA GPU (Ampere or newer recommended), recent NVIDIA
-  driver (CUDA 12.x capable).
-- Python **3.10+**, `gcc` (two small C extensions build during install).
+- Linux x86-64, NVIDIA GPU (Ampere or newer recommended), an NVIDIA driver
+  supporting CUDA 13 (the install below uses the `cu130` torch wheel; minimum
+  driver version to be confirmed on the target machine with
+  `deepfin --selfcheck --device cuda:0`).
+- Python **3.10.12–3.13**, `gcc` (five small C extensions build during install).
 - ~12 GB disk: PyTorch (~5 GB), the network file (~700 MB), torch compile
   cache (~2–4 GB grows on first runs).
 - One GPU is the quality-validated configuration (classic Gumbel). 2+ GPUs
@@ -21,13 +23,16 @@ hardware, including a multi-GPU test.
 
 ## 2. Install
 
+For the install roles, a torch build that supports current NVIDIA cards, and
+`deepfin --selfcheck`, see [install and verify](install.md).
+
 ```bash
-# from the provided source archive / repository checkout:
+# from a repository checkout (or a `git archive` of one; sdists are not supported):
 cd deepfin
 python3 -m venv .venv && source .venv/bin/activate
-pip install torch --index-url https://download.pytorch.org/whl/cu124   # any CUDA 12.x build
+pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cu130   # see install.md (cu124 has no RTX 50-series build)
 pip install -e .
-python3 setup.py build_ext --inplace     # builds the two C extensions in place
+python3 setup.py build_ext --inplace     # builds the five C extensions in place
 
 # sanity check (should print a UCI id block and exit):
 printf 'uci\nquit\n' | PYTHONPATH=. python3 -m chess_anti_engine.uci \

@@ -870,13 +870,27 @@ def _filter_shape_mismatches(ckpt_state: dict, model_state: dict) -> tuple[dict,
     return filtered, skipped
 
 
+@dataclass(frozen=True)
+class TolerantLoadReport:
+    """What ``load_state_dict_tolerant`` did, after its migrations.
+
+    ``missing`` and ``shape_skipped`` name model tensors left at their fresh
+    initialisation; ``unexpected`` names checkpoint tensors the model ignored.
+    """
+
+    shape_skipped: tuple[str, ...]
+    missing: tuple[str, ...]
+    unexpected: tuple[str, ...]
+    compile_prefix_normalized: bool
+
+
 def load_state_dict_tolerant(
     model: torch.nn.Module,
     ckpt_state: dict,
     *,
     label: str = "checkpoint",
     require_complete: bool = False,
-) -> None:
+) -> TolerantLoadReport:
     """Load checkpoint into *model*, tolerating shape and key mismatches.
 
     Any key whose shape differs between checkpoint and model is silently
@@ -891,7 +905,9 @@ def load_state_dict_tolerant(
     random-init model would silently corrupt whatever consumes it.
     """
     model_state = model.state_dict()
+    raw_keys = set(ckpt_state)
     ckpt_state = _normalize_orig_mod_prefix(ckpt_state, model_state=model_state)
+    prefix_normalized = set(ckpt_state) != raw_keys
     ckpt_state = _migrate_qkv_keys(ckpt_state, model_state=model_state, label=label)
     ckpt_state = _migrate_input_plane_columns(ckpt_state, model_state=model_state, label=label)
     filtered, skipped = _filter_shape_mismatches(ckpt_state, model_state)
@@ -924,3 +940,7 @@ def load_state_dict_tolerant(
     if skipped or missing or unexpected:
         print(f"[{label}] Tolerant load — shape_skipped={skipped}, "
               f"missing={missing}, unexpected={unexpected}")
+    return TolerantLoadReport(
+        shape_skipped=tuple(skipped), missing=tuple(missing), unexpected=tuple(unexpected),
+        compile_prefix_normalized=prefix_normalized,
+    )

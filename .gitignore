@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *.so
+# setup.py build records beside each built extension (ext_build_record.py)
+*.so.build-record.json
 *.egg-info/
 /dist/
 /build/
