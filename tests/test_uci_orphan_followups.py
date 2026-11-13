@@ -188,3 +188,166 @@ def test_quit_with_a_stuck_search_says_why_and_with_what_status(monkeypatch) -> 
         release.set()
         for t in list(engine._orphan_threads):
             t.join(5)
+
+
+# -- a parked reply-only thread: exactly one bestmove per go, in every order --
+#
+# A go whose handler raised is answered by a reply-only thread. If `stop` has to
+# park that thread, park answers its go from the main thread (like a parked
+# search) and the thread is silenced; whoever claims the generation first is the
+# one writer. Each order is forced with events: the reply thread stalls inside
+# its fallback (park answers; the thread later answers never, or late and is
+# dropped), or stalls after claiming but before printing (park must not answer;
+# the owner's lines still print), or stalls after printing (park must not answer).
+
+
+class _Stdout:
+    """Records what the real `_println` actually writes (silence included)."""
+
+    def __init__(self, out: list[str]) -> None:
+        self._out = out
+        self._lock = threading.Lock()
+
+    def write(self, s: str) -> int:
+        with self._lock:
+            self._out.extend(ln for ln in s.splitlines() if ln)
+        return len(s)
+
+    def flush(self) -> None:
+        pass
+
+
+def _faulted_go_engine(monkeypatch, out: list[str], *, hold):
+    """`go infinite` whose handler raises; ``hold(line, thread, phase)`` may block
+    the reply thread around a chosen line. Returns (engine, release, entered).
+    The REAL `_println` runs between the two hold points, so its silence and
+    the owner bypass are what is tested."""
+    monkeypatch.setattr(engine_module, "_GO_WAIT_NO_CLOCK_S", 0.05)
+    monkeypatch.setattr(sys, "stdout", _Stdout(out))
+    release, entered = threading.Event(), threading.Event()
+    real_println = engine_module._println
+
+    def wrapped(line: str) -> None:
+        thread = threading.current_thread()
+        hold(line, thread, "before")
+        real_println(line)
+        hold(line, thread, "after")
+
+    monkeypatch.setattr(engine_module, "_println", wrapped)
+    engine = Engine(_worker(), options=EngineOptions())
+
+    def boom() -> None:
+        raise RuntimeError("handler fault")
+
+    monkeypatch.setattr(engine, "_note_leaf_tb_inactive", boom)
+    engine.dispatch(parse_command("position startpos moves e2e4"))
+    return engine, release, entered
+
+
+def _reply_thread_gate(engine_ref, release, entered, *, line_prefix: str, when: str):
+    def hold(line: str, thread, phase: str) -> None:
+        engine = engine_ref[0]
+        if (engine is not None and thread is engine._fallback_reply_thread
+                and phase == when and line.startswith(line_prefix)):
+            entered.set()
+            assert release.wait(10)
+    return hold
+
+
+def _finish(engine, release) -> None:
+    release.set()
+    for t in [engine._search_thread, *engine._orphan_threads]:
+        if t is not None:
+            t.join(5)
+            assert not t.is_alive()
+
+
+def _black_legal(moves: list[str]) -> None:
+    board = chess.Board()
+    board.push_uci("e2e4")
+    for uci in moves:
+        assert chess.Move.from_uci(uci) in board.legal_moves
+
+
+def _stall_reply_fallback(monkeypatch, engine, release, entered) -> None:
+    real = engine._bestmove_fallback
+
+    def stalled(*args, **kwargs):
+        if threading.current_thread() is engine._fallback_reply_thread:
+            entered.set()
+            assert release.wait(10)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "_bestmove_fallback", stalled)
+
+
+def test_reply_thread_stalled_before_answering_is_answered_by_park(monkeypatch) -> None:
+    out: list[str] = []
+    engine, release, entered = _faulted_go_engine(monkeypatch, out, hold=lambda *_a: None)
+    _stall_reply_fallback(monkeypatch, engine, release, entered)
+    engine.dispatch(parse_command("go infinite"))
+    reply = engine._fallback_reply_thread
+    assert reply is not None
+    engine.dispatch(parse_command("stop"))  # wakes it; it stalls in the fallback
+    assert entered.is_set()
+    moves = _bestmoves("\n".join(out))
+    assert len(moves) == 1  # park answered the go
+    _black_legal(moves)
+    assert "search did not stop in time; answering unsearched" in "\n".join(out)
+    _finish(engine, release)  # the late reply fails its claim: dropped
+    assert _bestmoves("\n".join(out)) == moves
+    assert engine._consecutive_search_failures == 1  # counted once, at the go
+
+
+def test_reply_thread_that_never_answers_still_gets_one_bestmove(monkeypatch) -> None:
+    out: list[str] = []
+    engine, release, entered = _faulted_go_engine(monkeypatch, out, hold=lambda *_a: None)
+    _stall_reply_fallback(monkeypatch, engine, release, entered)
+    engine.dispatch(parse_command("go infinite"))
+    engine.dispatch(parse_command("stop"))
+    moves = _bestmoves("\n".join(out))
+    assert len(moves) == 1
+    _black_legal(moves)
+    # Still stuck: the next go is answered once too (busy-worker reply).
+    engine.dispatch(parse_command("go infinite"))
+    engine.dispatch(parse_command("stop"))
+    assert len(_bestmoves("\n".join(out))) == 2
+    _finish(engine, release)
+    assert len(_bestmoves("\n".join(out))) == 2
+
+
+def test_reply_thread_parked_between_claim_and_print_still_prints(monkeypatch) -> None:
+    out: list[str] = []
+    ref: list = [None]
+    release, entered = threading.Event(), threading.Event()
+    hold = _reply_thread_gate(ref, release, entered,
+                              line_prefix="info string search not started", when="before")
+    engine, _r, _e = _faulted_go_engine(monkeypatch, out, hold=hold)
+    ref[0] = engine
+    engine.dispatch(parse_command("go infinite"))
+    engine.dispatch(parse_command("stop"))  # it claimed, then stalled before printing
+    assert entered.is_set()
+    assert _bestmoves("\n".join(out)) == []  # park saw the claim: no second answer
+    _finish(engine, release)  # the owner prints despite being parked
+    moves = _bestmoves("\n".join(out))
+    assert len(moves) == 1
+    _black_legal(moves)
+    assert engine._consecutive_search_failures == 1
+
+
+def test_reply_thread_parked_just_after_printing_is_not_answered_again(monkeypatch) -> None:
+    out: list[str] = []
+    ref: list = [None]
+    release, entered = threading.Event(), threading.Event()
+    hold = _reply_thread_gate(ref, release, entered, line_prefix="bestmove ", when="after")
+    engine, _r, _e = _faulted_go_engine(monkeypatch, out, hold=hold)
+    ref[0] = engine
+    engine.dispatch(parse_command("go infinite"))
+    engine.dispatch(parse_command("stop"))  # printed, then stalled before exiting
+    assert entered.is_set()
+    moves = _bestmoves("\n".join(out))
+    assert len(moves) == 1
+    _black_legal(moves)
+    _finish(engine, release)
+    assert _bestmoves("\n".join(out)) == moves
+    assert engine._consecutive_search_failures == 1
