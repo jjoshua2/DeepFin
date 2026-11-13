@@ -59,10 +59,11 @@ import chess
 import numpy as np
 import torch
 
-from chess_anti_engine.encoding import model_encoding_kwargs
+from chess_anti_engine.encoding import model_encoding_kwargs, rep_fix
 from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.eval.audit import PHASE_NAMES, load_audit_set, move_regrets
 from chess_anti_engine.eval.audit_cache import (
+    HISTORY_REP_FIX_KEY,
     MATCHED_ROWS_DIGEST_KEY,
     MATCHED_ROWS_KEY,
     audit_set_provenance,
@@ -588,7 +589,13 @@ def main() -> None:
             ),
             force=True,
             extra={"producer": "value_regret.py --dump-per-position",
-                   "input_encoding": encoding, **matched_provenance,
+                   "input_encoding": encoding,
+                   # The repetition-plane regime the encoders HELD while
+                   # scoring (process-global; applied by NetSource.load). A
+                   # per-NET key, not ruler identity: see
+                   # STAMP_NON_IDENTITY_KEYS.
+                   HISTORY_REP_FIX_KEY: rep_fix.current(),
+                   **matched_provenance,
                    **set_provenance},
         )
         print(f"[value-regret] {tag} per-position dump -> "
@@ -596,7 +603,8 @@ def main() -> None:
 
     ruler = "TB-excluded" if args.min_pieces > 0 else "FULL-SET (incl. TB)"
     print(f"\n=== value-head 1-ply deep-SF regret @ {net.label} "
-          f"| input-encoding={encoding} | batch-size={args.batch_size} ===")
+          f"| input-encoding={encoding} | batch-size={args.batch_size} "
+          f"| history_rep_fix={rep_fix.current()} ===")
     print(f"  {tag} ruler: {ruler}"
           + (f" (>={args.min_pieces}-man)" if args.min_pieces > 0 else "")
           + f"  |  OVERALL {overall:.1f} cp (n={len(positions)})")

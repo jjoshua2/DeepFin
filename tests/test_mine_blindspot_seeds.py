@@ -1,8 +1,11 @@
 """Blind-spot seed miner core (scripts/mine_blindspot_seeds.py)."""
 from __future__ import annotations
 
+import random
+
 import chess
 import chess.pgn
+import pytest
 
 from chess_anti_engine.selfplay.opening import seed_board_from_line
 from scripts.mine_blindspot_seeds import (
@@ -358,3 +361,354 @@ def test_mine_game_bakes_deep_sf_evals_into_comment() -> None:
     assert board.fen() == _fen_after(_LINE, 6)
     # sfcp_* keys must not confuse the refute-marker parser.
     assert seed_blindspot_key(record) == position_key(_fen_after(_LINE, 6))
+
+
+# ── history-bearing match_vs_uci PGN + move-log CSV (OpeningPlyCount) ────────
+#
+# match_vs_uci writes the opening history into the PGN mainline ahead of the
+# engine moves (header OpeningPlyCount = N), but its --move-log-out CSV numbers
+# plies from the opening position (CSV ply 1 = first ENGINE move). Both files
+# are produced here by match_vs_uci's own writers so the join is tested against
+# the real producer, not a hand-written imitation of it.
+
+def _quiet_continuations(board: chess.Board) -> list[chess.Move]:
+    """Legal moves that keep every position a usable seed (no repetition/draw
+    claim, no game end, >= 2 replies), in a stable order."""
+    out = []
+    for m in sorted(board.legal_moves, key=lambda m: m.uci()):
+        board.push(m)
+        ok = not board.is_game_over(claim_draw=True) and board.legal_moves.count() >= 2
+        board.pop()
+        if ok:
+            out.append(m)
+    assert out
+    return out
+_MOVE_LOG_FIELDS = [
+    "game", "opening", "ply", "color", "engine", "move", "elapsed_s", "nodes",
+    "engine_time_s", "score_cp_white", "white_clock_before_s",
+    "black_clock_before_s", "white_clock_after_s", "black_clock_after_s",
+]
+
+
+def _history_game(
+    *, root_fen: str, book: list[str], deepfin: chess.Color,
+    engine_plies: int = 24, seed: int = 1232, first_own: int = 2000,
+):
+    """One lost DeepFin game written to PGN the way match_vs_uci does.
+
+    Engine moves are a seeded random walk over moves that keep each position
+    a usable seed (the loader rejects repetition-claimable terminals).
+    Returns (game, move_records, fens, book_plies, deepfin_engine_js).
+    """
+    import io
+
+    from scripts import match_vs_uci as match
+
+    start = chess.Board(root_fen)
+    for u in book:
+        start.push(chess.Move.from_uci(u))
+    board = start.copy()
+    moves: list[chess.Move] = []
+    records: list = []
+    rng = random.Random(seed)
+    for ply in range(1, engine_plies + 1):
+        mover = board.turn
+        move = rng.choice(_quiet_continuations(board))
+        # Own eval (White POV): DeepFin reports +30 (its POV) everywhere except
+        # a "thinks it's winning" ``first_own`` on its FIRST engine move; the
+        # opponent reports -2000 (DeepFin POV) so any join onto an opponent row
+        # is a huge, wrongly-placed mismatch.
+        if mover == deepfin:
+            first = not any(r.color == ("W" if deepfin else "B") for r in records)
+            df_pov = first_own if first else 30
+        else:
+            df_pov = -2000
+        score_white = df_pov if deepfin == chess.WHITE else -df_pov
+        records.append(match.MoveRecord(
+            ply=ply, color="W" if mover == chess.WHITE else "B", move=move.uci(),
+            elapsed_s=0.01, nodes=1, engine_time_s=0.01, score_cp=score_white,
+            white_clock_before_s=None, black_clock_before_s=None,
+            white_clock_after_s=None, black_clock_after_s=None,
+        ))
+        moves.append(move)
+        board.push(move)
+    record = match.GameRecord(
+        result="0-1" if deepfin == chess.WHITE else "1-0", plies=engine_plies,
+        start_board=start, moves=tuple(moves), move_records=tuple(records),
+    )
+    names = ("deepfin_v1", "Cheese") if deepfin == chess.WHITE else ("Cheese", "deepfin_v1")
+    text = io.StringIO()
+    match._write_pgn_game(text, record=record, event="t", white_name=names[0],
+                          black_name=names[1], round_name="7")
+    game = chess.pgn.read_game(io.StringIO(text.getvalue()))
+    assert game is not None
+    assert not game.errors
+    replay = game.board()
+    fens = []
+    for m in game.mainline_moves():
+        fens.append(replay.fen())
+        replay.push(m)
+    fens.append(replay.fen())
+    n = len(book)
+    df_engine_js = [j for j in range(n, len(fens) - 1)
+                    if chess.Board(fens[j]).turn == deepfin]
+    return game, records, fens, n, df_engine_js
+
+
+def _write_move_log(path, attempts, *, deepfin: chess.Color, with_move: bool = True,
+                    drop=()):
+    """Write move-log rows for each attempt (a list of MoveRecords, all game 7)
+    with match_vs_uci's own row writer, in order — a resume replay appends a
+    second attempt under the same game index. ``drop`` = {(attempt, ply)}
+    rows left out. ``with_move=False`` writes a CSV without the move column."""
+    import csv
+    import io
+
+    from scripts import match_vs_uci as match
+
+    rows = []
+    dropped = set(drop)
+    for k, records in enumerate(attempts):
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=_MOVE_LOG_FIELDS)
+        writer.writeheader()
+        for mr in records:
+            match._write_move_record(
+                writer, game_index=7, a_is_white=deepfin == chess.WHITE,
+                label_a="deepfin_v1", label_b="Cheese", opening_index=1, move=mr,
+            )
+        buf.seek(0)
+        rows.extend(r for r in csv.DictReader(buf) if (k, int(r["ply"])) not in dropped)
+    fields = [f for f in _MOVE_LOG_FIELDS if with_move or f != "move"]
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
+
+
+def _history_match(
+    tmp_path, *, root_fen: str, book: list[str], deepfin: chess.Color,
+    engine_plies: int = 24,
+):
+    """One lost DeepFin game: PGN + its move-log CSV, both via match_vs_uci's
+    writers. Returns (game, own_evals, fens, book_plies, deepfin_engine_js)."""
+    from scripts.mine_blindspot_seeds import load_own_evals
+
+    game, records, fens, n, df_js = _history_game(
+        root_fen=root_fen, book=book, deepfin=deepfin, engine_plies=engine_plies)
+    csv_path = _write_move_log(tmp_path / "moves.csv", [records], deepfin=deepfin)
+    return game, load_own_evals([str(csv_path)]), fens, n, df_js
+
+
+# (root FEN, book, DeepFin colour): odd N, even N, a black-to-move SetUp root
+# with odd N, and the legacy no-history case (no header at all).
+_HISTORY_CASES = {
+    "odd_n5_deepfin_black": (chess.STARTING_FEN, ["g1f3", "g8f6", "f3g1", "f6g8", "e2e4"],
+                             chess.BLACK),
+    "even_n4_deepfin_white": (chess.STARTING_FEN, ["g1f3", "g8f6", "f3g1", "f6g8"],
+                              chess.WHITE),
+    "setup_black_to_move_n3_deepfin_white": (
+        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+        ["e7e5", "g1f3", "g8f6"], chess.WHITE),
+    "setup_black_to_move_n2_deepfin_black": (
+        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+        ["e7e5", "g1f3"], chess.BLACK),
+    "legacy_no_history_deepfin_white": (chess.STARTING_FEN, [], chess.WHITE),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_HISTORY_CASES))
+def test_mine_game_offsets_book_plies_for_collapse_and_own_eval_join(tmp_path, case) -> None:
+    root_fen, book, deepfin = _HISTORY_CASES[case]
+    game, own_evals, fens, n, df_js = _history_match(
+        tmp_path, root_fen=root_fen, book=book, deepfin=deepfin)
+    if n:
+        assert game.headers["OpeningPlyCount"] == str(n)
+    else:
+        assert "OpeningPlyCount" not in game.headers
+    # Trap every book move made by DeepFin's colour: SF calls it a collapse.
+    # A book move was not chosen by DeepFin, so it must never be mined.
+    sf_vals = {fens[j + 1]: 400 for j in range(n) if chess.Board(fens[j]).turn == deepfin}
+    blunder_j = df_js[-1]                    # DeepFin's LAST engine move collapses
+    sf_vals[fens[blunder_j + 1]] = 400
+    out = mine_game(game, src="m.pgn", name_needle="deepfin",
+                    sf_eval=lambda fen, _n: sf_vals.get(fen, 30), sf_nodes=1,
+                    collapse_cp=-150, history_plies=200, own_evals=own_evals,
+                    append_refute_ply=False)
+    records = [r for r, _k in out]
+    assert len(records) == 2, records
+    collapse, mismatch = records
+    assert f" ply={blunder_j} sfcp_before=30 sfcp_after=-400" in collapse
+    # The worst mismatch is DeepFin's FIRST engine move, own=+2000 (its POV) —
+    # the CSV row that move actually wrote, not a book-shifted neighbour.
+    assert f" ply={df_js[0]} mismatch" in mismatch
+    assert "own=2000)" in mismatch
+    # The emitted seed still carries the full history, book plies included.
+    board = seed_board_from_line(collapse.split("#", 1)[0].strip())
+    assert board.fen() == fens[blunder_j]
+    assert len(board.move_stack) == blunder_j
+
+
+@pytest.mark.parametrize("result", ["0-1", "1-0", "1/2-1/2"])
+@pytest.mark.parametrize("bad", ["-1", "abc", "1.5", "", "99"])
+def test_mine_game_refuses_malformed_opening_ply_count(bad, result) -> None:
+    # Refused even for a game the miner would skip (DeepFin=white won / drew):
+    # a corrupt header means the file is suspect, not just this game.
+    game = _game(_LINE, result=result)
+    game.headers["OpeningPlyCount"] = bad
+    with pytest.raises(ValueError, match=r"^t\.pgn: Round 1: OpeningPlyCount"):
+        _mine(game, lambda _fen, _nodes: 30)
+
+
+# ── move-verified own-eval join (resume replays, foreign CSVs, gaps) ─────────
+
+_ODD = _HISTORY_CASES["odd_n5_deepfin_black"]
+
+
+def _mine_own(game, own_evals):
+    return mine_game(game, src="m.pgn", name_needle="deepfin",
+                     sf_eval=lambda _fen, _n: 30, sf_nodes=1, collapse_cp=-150,
+                     history_plies=200, own_evals=own_evals, append_refute_ply=False)
+
+
+def _mismatch_own(out) -> str | None:
+    hits = [r for r, _k in out if " mismatch " in r]
+    assert len(hits) <= 1
+    return hits[0].split("own=", 1)[1].rstrip(")") if hits else None
+
+
+def test_own_eval_join_refuses_csv_whose_move_differs(tmp_path) -> None:
+    from scripts.mine_blindspot_seeds import load_own_evals
+
+    root, book, deepfin = _ODD
+    game, records, _fens, _n, _js = _history_game(root_fen=root, book=book, deepfin=deepfin)
+    _g2, other, _f2, _n2, _j2 = _history_game(root_fen=root, book=book, deepfin=deepfin, seed=7)
+    path = _write_move_log(tmp_path / "m.csv", [other], deepfin=deepfin)
+    bad_ply = next(i + 1 for i, (a, b) in enumerate(zip(records, other)) if a.move != b.move)
+    with pytest.raises(ValueError, match=rf"^m\.pgn: Round 7: move-log CSV ply {bad_ply} has move "
+                                         rf"'{other[bad_ply - 1].move}' but the PGN game has "
+                                         rf"'{records[bad_ply - 1].move}'"):
+        _mine_own(game, load_own_evals([str(path)]))
+
+
+def test_own_eval_join_pairs_replayed_attempts_by_move_not_last_row(tmp_path) -> None:
+    """--resume replays a game whose commit was lost: two PGN copies, same Round,
+    duplicate CSV (game, ply) keys with differing moves. Each copy must get ITS
+    evals; last-row-wins gave the first copy the replay's."""
+    from scripts.mine_blindspot_seeds import load_own_evals
+
+    root, book, deepfin = _ODD
+    game_a, rec_a, *_ = _history_game(root_fen=root, book=book, deepfin=deepfin,
+                                      first_own=2000)
+    game_b, rec_b, *_ = _history_game(root_fen=root, book=book, deepfin=deepfin,
+                                      seed=7, first_own=1500)
+    assert [r.move for r in rec_a] != [r.move for r in rec_b]
+    own = load_own_evals([str(_write_move_log(tmp_path / "m.csv", [rec_a, rec_b],
+                                              deepfin=deepfin))])
+    assert own.replayed_rounds == 1
+    # Mine the replay FIRST: the first copy may never be mined (a skipped
+    # non-loss), so pairing must come from the moves, not from file order.
+    assert _mismatch_own(_mine_own(game_b, own)) == "1500"
+    assert _mismatch_own(_mine_own(game_a, own)) == "2000"
+    assert own.missing_rows == 0
+
+
+def test_own_eval_join_pairs_identical_replays_in_file_order(tmp_path) -> None:
+    from scripts.mine_blindspot_seeds import load_own_evals
+
+    root, book, deepfin = _ODD
+    game_a, rec_a, *_ = _history_game(root_fen=root, book=book, deepfin=deepfin,
+                                      first_own=2000)
+    game_b, rec_b, *_ = _history_game(root_fen=root, book=book, deepfin=deepfin,
+                                      first_own=1500)
+    own = load_own_evals([str(_write_move_log(tmp_path / "m.csv", [rec_a, rec_b],
+                                              deepfin=deepfin))])
+    assert _mismatch_own(_mine_own(game_a, own)) == "2000"
+    assert _mismatch_own(_mine_own(game_b, own)) == "1500"
+    with pytest.raises(ValueError, match=r"^m\.pgn: Round 7: more PGN copies"):
+        _mine_own(game_a, own)  # a third copy has no run left to claim
+
+
+def test_own_eval_join_counts_missing_rows_and_scores(tmp_path) -> None:
+    from scripts.mine_blindspot_seeds import load_own_evals
+
+    root, book, deepfin = _ODD
+    game, records, _fens, n, df_js = _history_game(root_fen=root, book=book, deepfin=deepfin)
+    first_df_ply = df_js[0] + 1 - n           # CSV ply of DeepFin's first engine move
+    path = _write_move_log(tmp_path / "m.csv", [records], deepfin=deepfin,
+                           drop={(0, first_df_ply)})
+    own = load_own_evals([str(path)])
+    out = _mine_own(game, own)
+    assert own.missing_rows == 1               # counted, not silently skipped
+    assert own.missing_scores == 0
+    assert _mismatch_own(out) is None          # the only +2000 row is the missing one
+    # A round with no CSV rows at all is counted per mined game.
+    empty = load_own_evals([str(_write_move_log(tmp_path / "e.csv", [], deepfin=deepfin))])
+    _mine_own(game, empty)
+    assert empty.games_without_rows == 1
+    assert empty.missing_rows == len(df_js)
+
+
+def test_own_eval_join_without_move_column_behaves_as_before(tmp_path) -> None:
+    """A CSV with no move column cannot be verified: the old join applies —
+    (round, ply) only, last row wins, nothing refused — and it says so."""
+    from scripts.mine_blindspot_seeds import load_own_evals
+
+    root, book, deepfin = _ODD
+    game_a, rec_a, *_ = _history_game(root_fen=root, book=book, deepfin=deepfin,
+                                      first_own=2000)
+    _gb, rec_b, *_ = _history_game(root_fen=root, book=book, deepfin=deepfin,
+                                   seed=7, first_own=1500)
+    path = _write_move_log(tmp_path / "m.csv", [rec_a, rec_b], deepfin=deepfin,
+                           with_move=False)
+    own = load_own_evals([str(path)])
+    assert own.verified is False
+    # rec_b's first DeepFin move is at the same CSV ply (same colour, same N),
+    # so the last-written attempt's +1500 wins exactly as on the old loader.
+    assert _mismatch_own(_mine_own(game_a, own)) == "1500"
+    # Mixing a verifiable CSV with an unverifiable one is refused.
+    with_move = _write_move_log(tmp_path / "v.csv", [rec_a], deepfin=deepfin)
+    with pytest.raises(ValueError, match="move' column"):
+        load_own_evals([str(with_move), str(path)])
+
+
+def test_own_eval_join_accepts_terminal_null_move_row(tmp_path) -> None:
+    """An illegal/null-move loss: match_vs_uci logs the offending move as one
+    extra CSV row (ply n+1, e.g. "0000") that the PGN never plays. It must
+    join, not be refused as a different game."""
+    from scripts import match_vs_uci as match
+    from scripts.mine_blindspot_seeds import load_own_evals
+
+    root, book, deepfin = _ODD
+    game, records, *_ = _history_game(root_fen=root, book=book, deepfin=deepfin)
+    nxt = len(records) + 1
+    null_row = match.MoveRecord(
+        ply=nxt, color="B" if records[-1].color == "W" else "W", move="0000",
+        elapsed_s=0.01, nodes=None, engine_time_s=None, score_cp=None,
+        white_clock_before_s=None, black_clock_before_s=None,
+        white_clock_after_s=None, black_clock_after_s=None,
+    )
+    own = load_own_evals([str(_write_move_log(tmp_path / "m.csv", [[*records, null_row]],
+                                              deepfin=deepfin))])
+    assert _mismatch_own(_mine_own(game, own)) == "2000"
+    assert own.missing_rows == 0
+
+
+def test_own_eval_join_prefers_complete_replay_over_crash_partial(tmp_path) -> None:
+    """Crash mid-game, then --resume replays it: the CSV holds a partial run (a
+    prefix of the same moves) and then the complete replay. The complete run's
+    evals are the PGN game's, even though the partial run comes first."""
+    from scripts.mine_blindspot_seeds import load_own_evals
+
+    root, book, deepfin = _ODD
+    _gp, partial, *_ = _history_game(root_fen=root, book=book, deepfin=deepfin,
+                                     first_own=999)
+    game, full, *_ = _history_game(root_fen=root, book=book, deepfin=deepfin,
+                                   first_own=2000)
+    assert [r.move for r in partial] == [r.move for r in full]
+    own = load_own_evals([str(_write_move_log(tmp_path / "m.csv", [partial[:10], full],
+                                              deepfin=deepfin))])
+    assert own.replayed_rounds == 1
+    assert _mismatch_own(_mine_own(game, own)) == "2000"
+    assert own.missing_rows == 0

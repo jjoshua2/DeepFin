@@ -259,6 +259,9 @@ def _run_value_regret(
         input_history_encoding = STORED_HISTORY_ENCODING
         input_extra_features = STORED_EXTRA_FEATURES
         use_dynamic_relations = False
+        # build_model stamps this on every real checkpoint; NetSource.load
+        # refuses a net that declares no repetition-plane regime.
+        history_rep_fix = True
 
         def eval(self) -> None:
             return None
@@ -391,6 +394,9 @@ def _run_net_candidates(
         input_extra_features = STORED_EXTRA_FEATURES
         policy_encoding = "lc0_1858"
         use_dynamic_relations = False
+        # build_model stamps this on every real checkpoint; NetSource.load
+        # refuses a net that declares no repetition-plane regime.
+        history_rep_fix = True
 
         def eval(self) -> None:
             return None
