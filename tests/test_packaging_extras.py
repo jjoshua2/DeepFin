@@ -179,3 +179,24 @@ def test_worker_keeps_its_compile_cache_name() -> None:
     import chess_anti_engine.worker as worker
 
     assert worker._configure_shared_compile_cache is cc.configure_shared_compile_cache
+
+
+@pytest.mark.parametrize(
+    ("module", "extra"),
+    [("chess_anti_engine.worker", ".[client]"), ("chess_anti_engine.run", ".[server]")],
+)
+def test_role_entry_points_name_the_extra_when_zarr_is_missing(module: str, extra: str) -> None:
+    code = textwrap.dedent(f"""
+        import runpy, sys
+        sys.modules["zarr"] = None  # what a match-only install looks like to these modules
+        sys.argv = ["x", "--help"]
+        runpy.run_module({module!r}, run_name="__main__")
+    """)
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=180, check=False,
+        cwd=REPO_ROOT, env={**os.environ, "PYTHONPATH": str(REPO_ROOT), "CUDA_VISIBLE_DEVICES": ""},
+    )
+    assert proc.returncode != 0
+    assert "ModuleNotFoundError" in proc.stderr
+    assert extra in proc.stderr, proc.stderr[-2000:]
+    assert "match" in proc.stderr

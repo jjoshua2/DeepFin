@@ -169,6 +169,16 @@ def test_extensions_abi_mismatch_fails() -> None:
     assert "< required 10000" in res.detail
 
 
+def test_extensions_abi_exactly_one_below_requirement_fails() -> None:
+    import chess_anti_engine.mcts._mcts_tree as tree
+
+    actual = int(tree.ABI_VERSION)
+    assert _run(lambda: sc.check_extensions(abi_required=lambda: actual)).status == "PASS"
+    res = _run(lambda: sc.check_extensions(abi_required=lambda: actual + 1))
+    assert res.status == "FAIL"
+    assert f"ABI_VERSION={actual} < required {actual + 1}" in res.detail
+
+
 def test_extensions_missing_symbol_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     stub = types.ModuleType("chess_anti_engine.encoding._features_ext")
     setattr(stub, "compute_extra_features", lambda *a: None)
@@ -181,8 +191,11 @@ def test_extensions_missing_symbol_fails(monkeypatch: pytest.MonkeyPatch) -> Non
 # ── freshness (stale .so) ─────────────────────────────────────────────────
 
 
-def _fake_tree(tmp_path: Path, *, so_mtime: int, src_mtime: int) -> Path:
+def _fake_tree(tmp_path: Path, *, so_mtime: int, src_mtime: int,
+               records: bool = False) -> Path:
     """A checkout skeleton with the real freshness tool and every listed file."""
+    from chess_anti_engine.ext_build_record import write_record
+
     tool = sc._load_freshness_tool(REPO_ROOT)
     (tmp_path / "scripts").mkdir()
     shutil.copy2(REPO_ROOT / "scripts" / "check_c_extensions_fresh.py", tmp_path / "scripts")
@@ -191,29 +204,35 @@ def _fake_tree(tmp_path: Path, *, so_mtime: int, src_mtime: int) -> Path:
         for dep in spec.dependencies:
             p = tmp_path / dep
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text("", encoding="utf-8")
+            p.write_text(f"source of {dep}\n", encoding="utf-8")
             os.utime(p, ns=(src_mtime, src_mtime))
         base = tmp_path.joinpath(*spec.module.split("."))
         out = base.with_name(base.name + suffix)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text("", encoding="utf-8")
+        out.write_text(f"binary of {spec.module}\n", encoding="utf-8")
         os.utime(out, ns=(so_mtime, so_mtime))
+        if records:
+            write_record(out, module=spec.module, root=tmp_path, inputs=spec.dependencies)
     return tmp_path
+
+
+_FEATURES_IMPL = Path("chess_anti_engine") / "encoding" / "_features_impl.h"
 
 
 def test_freshness_fresh_tree_passes(tmp_path: Path) -> None:
     root = _fake_tree(tmp_path, so_mtime=2_000_000_000, src_mtime=1_000_000_000)
     res = _run(lambda: sc.check_freshness(root))
     assert res.status == "PASS", res.detail
+    assert "no build record" in res.detail
 
 
 def test_freshness_stale_so_fails(tmp_path: Path) -> None:
     root = _fake_tree(tmp_path, so_mtime=2_000_000_000, src_mtime=1_000_000_000)
-    src = root / "chess_anti_engine" / "encoding" / "_features_impl.h"
-    os.utime(src, ns=(3_000_000_000, 3_000_000_000))
+    os.utime(root / _FEATURES_IMPL, ns=(3_000_000_000, 3_000_000_000))
     res = _run(lambda: sc.check_freshness(root))
     assert res.status == "FAIL"
     assert "_features_ext is older than chess_anti_engine/encoding/_features_impl.h" in res.detail
+    assert "checkout or a copy" in res.detail  # mtime fallback says it can be a false alarm
 
 
 def test_freshness_ignores_extensions_the_engine_does_not_load(tmp_path: Path) -> None:
@@ -221,6 +240,41 @@ def test_freshness_ignores_extensions_the_engine_does_not_load(tmp_path: Path) -
     src = root / "chess_anti_engine" / "nnue" / "_nnue_ext.c"
     os.utime(src, ns=(3_000_000_000, 3_000_000_000))
     assert sc.freshness_problems(root) == []
+
+
+def test_freshness_record_touch_only_does_not_refuse(tmp_path: Path) -> None:
+    root = _fake_tree(tmp_path, so_mtime=2_000_000_000, src_mtime=1_000_000_000, records=True)
+    for rel in (_FEATURES_IMPL, Path("setup.py")):
+        os.utime(root / rel, ns=(3_000_000_000, 3_000_000_000))  # newer, same content
+    assert sc.freshness_problems(root) == []
+    res = _run(lambda: sc.check_freshness(root))
+    assert res.status == "PASS", res.detail
+    assert "source content matches the build record" in res.detail
+
+
+def test_freshness_record_real_edit_refuses(tmp_path: Path) -> None:
+    root = _fake_tree(tmp_path, so_mtime=2_000_000_000, src_mtime=1_000_000_000, records=True)
+    (root / _FEATURES_IMPL).write_text("edited\n", encoding="utf-8")
+    os.utime(root / _FEATURES_IMPL, ns=(1_000_000_000, 1_000_000_000))  # even with an OLD mtime
+    problems = sc.freshness_problems(root)
+    assert any("_features_ext" in p and str(_FEATURES_IMPL) in p for p in problems), problems
+    assert any("_lc0_ext" in p for p in problems)  # shares the header
+
+
+def test_freshness_record_replaced_artifact_refuses(tmp_path: Path) -> None:
+    root = _fake_tree(tmp_path, so_mtime=2_000_000_000, src_mtime=1_000_000_000, records=True)
+    base = root / "chess_anti_engine" / "mcts" / "_mcts_tree"
+    out = base.with_name(base.name + importlib.machinery.EXTENSION_SUFFIXES[0])
+    out.write_text("a different binary\n", encoding="utf-8")
+    problems = sc.freshness_problems(root)
+    assert any("_mcts_tree" in p and "not the file its build record describes" in p
+               for p in problems), problems
+
+
+def test_this_checkout_has_build_records() -> None:
+    """setup.py's build_ext hook wrote records for the in-place build."""
+    rows = sc._freshness_rows(REPO_ROOT)
+    assert all(method == "content" and problem is None for _, method, problem in rows), rows
 
 
 def test_freshness_without_sources_skips() -> None:
@@ -262,6 +316,21 @@ def test_encoder_mismatch_with_reference_fails() -> None:
     res = _run(lambda: sc.check_encoder(reference=perturbed))
     assert res.status == "FAIL"
     assert "differs from the Python reference" in res.detail
+
+
+def test_encoder_tree_leaf_encoder_mismatch_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    import chess_anti_engine.mcts._mcts_tree as tree
+
+    real = tree.batch_encode_146
+
+    def wrong(cboards, out):
+        real(cboards, out)
+        out[:, 120, 0, 0] += 1.0
+
+    monkeypatch.setattr(tree, "batch_encode_146", wrong)
+    res = _run(sc.check_encoder)
+    assert res.status == "FAIL"
+    assert "tree leaf encoder differs" in res.detail
 
 
 # ── movegen / perft ───────────────────────────────────────────────────────
@@ -323,8 +392,39 @@ def test_checkpoint_missing_tensor_fails(tmp_path: Path) -> None:
     torch.save(blob, ckpt / "trainer.pt")
     res = _run(lambda: sc.check_checkpoint(str(ckpt)))
     assert res.status == "FAIL"
-    assert "architecture mismatch" in res.detail
+    assert "left at random initialisation" in res.detail
     assert dropped in res.detail
+
+
+def test_checkpoint_compile_prefix_is_a_note_not_a_failure(tmp_path: Path) -> None:
+    ckpt = sc._write_tiny_checkpoint(tmp_path)
+    blob = torch.load(ckpt / "trainer.pt", weights_only=True)
+    blob["model"] = {f"_orig_mod.{k}": v for k, v in blob["model"].items()}
+    torch.save(blob, ckpt / "trainer.pt")
+    res = _run(lambda: sc.check_checkpoint(str(ckpt)))
+    assert res.status == "PASS", res.detail
+    assert "_orig_mod. key prefix normalised" in res.detail
+
+
+def test_checkpoint_v1_to_v2_input_migration_is_a_note(tmp_path: Path) -> None:
+    """A v1 (146-plane) net served as v2_threats: the engine zero-pads 29 columns."""
+    from chess_anti_engine.model import ModelConfig, build_model
+
+    ckpt = sc._write_tiny_checkpoint(tmp_path)  # params.json says v2_threats
+    torch.manual_seed(0)
+    v1 = build_model(ModelConfig(kind="tiny", input_extra_features="v1"))
+    torch.save({"model": v1.state_dict(), "step": 0}, ckpt / "trainer.pt")
+    res = _run(lambda: sc.check_checkpoint(str(ckpt)))
+    assert res.status == "PASS", res.detail
+    assert "Zero-initialized 29 v2_threats input columns" in res.detail
+
+
+def test_checkpoint_loader_refusal_fails(tmp_path: Path) -> None:
+    ckpt = sc._write_tiny_checkpoint(tmp_path)
+    (tmp_path / "params.json").unlink()  # no embedded arch, no params.json: loader refuses
+    res = _run(lambda: sc.check_checkpoint(str(ckpt)))
+    assert res.status == "FAIL"
+    assert "loader refuses" in res.detail
 
 
 def test_checkpoint_non_finite_forward_fails(tmp_path: Path) -> None:
@@ -376,6 +476,34 @@ def test_syzygy_right_answers_pass(tmp_path: Path) -> None:
     assert res.status == "PASS", res.detail
 
 
+def test_syzygy_larger_tables_probed_only_when_present(tmp_path: Path) -> None:
+    d = _fake_tb_dir(tmp_path)
+    answers = {**dict(sc.SYZYGY_CASES), **{fen: w for _, _, fen, w in sc.SYZYGY_LARGER_CASES}}
+    seen: list[str] = []
+
+    def probe(_path: str, fen: str) -> int:
+        seen.append(fen)
+        return answers[fen]
+
+    res = _run(lambda: sc.check_syzygy(str(d), probe=probe))
+    assert res.status == "PASS", res.detail
+    assert "not probed: 5-man" in res.detail
+    assert sc.SYZYGY_LARGER_CASES[0][2] not in seen
+    (d / "KQQRvK.rtbw").write_bytes(b"")
+    res = _run(lambda: sc.check_syzygy(str(d), probe=probe))
+    assert "5-man KQQRvK" in res.detail
+    assert sc.SYZYGY_LARGER_CASES[0][2] in seen
+
+
+def test_syzygy_wrong_five_man_answer_fails(tmp_path: Path) -> None:
+    d = _fake_tb_dir(tmp_path)
+    (d / "KQQRvK.rtbw").write_bytes(b"")
+    answers = dict(sc.SYZYGY_CASES)
+    res = _run(lambda: sc.check_syzygy(str(d), probe=lambda path, fen: answers.get(fen, 0)))
+    assert res.status == "FAIL"
+    assert sc.SYZYGY_LARGER_CASES[0][2] in res.detail
+
+
 def _smoke_syzygy() -> Path | None:
     for root in syzygy_roots():
         candidate = root / "data" / "syzygy_3-4man"
@@ -395,10 +523,23 @@ def test_syzygy_real_tables_probe_correctly() -> None:
 # ── UCI exchange ──────────────────────────────────────────────────────────
 
 
-def test_uci_exchange_real_engine_passes() -> None:
-    res = _run(lambda: sc.check_uci(None, ["cpu"]))
+def test_uci_exchange_real_engine_default_compiled_passes() -> None:
+    res = _run(lambda: sc.check_uci(sc.SelfcheckOptions(devices=("cpu",))))
     assert res.status == "PASS", res.detail
-    assert "bestmove" in res.detail
+    assert "default play path, torch.compile on" in res.detail
+
+
+def test_uci_exchange_real_engine_fast_passes() -> None:
+    res = _run(lambda: sc.check_uci(sc.SelfcheckOptions(devices=("cpu",), fast=True)))
+    assert res.status == "PASS", res.detail
+    assert "does NOT cover the default compiled play path" in res.detail
+
+
+def test_uci_engine_rejects_unknown_flag_and_says_so() -> None:
+    opts = sc.SelfcheckOptions(devices=("cpu",), fast=True, engine_args=("--hash", "256"))
+    res = _run(lambda: sc.check_uci(opts))
+    assert res.status == "FAIL"
+    assert "unrecognized arguments: --hash 256" in res.detail
 
 
 _FAKE_ENGINE = textwrap.dedent("""
@@ -410,31 +551,102 @@ _FAKE_ENGINE = textwrap.dedent("""
         elif cmd == "isready":
             print("readyok", flush=True)
         elif cmd.startswith("go"):
+            print("{extra}", flush=True)
             print("bestmove {move}", flush=True)
         elif cmd == "quit":
             break
+    sys.exit({rc})
 """)
 
 
+def _fake(move: str = "e2e4", *, extra: str = "info depth 1", rc: int = 0):
+    script = _FAKE_ENGINE.format(move=move, extra=extra, rc=rc)
+    return lambda ck, opts, cache: [sys.executable, "-c", script]
+
+
+def _fake_check(**kw) -> sc.CheckResult:
+    opts = sc.SelfcheckOptions(checkpoint="unused", devices=("cpu",))
+    return _run(lambda: sc.check_uci(opts, command=_fake(**kw)))
+
+
 def test_uci_illegal_bestmove_fails() -> None:
-    script = _FAKE_ENGINE.format(move="e2e5")
-    res = _run(lambda: sc.check_uci("unused", ["cpu"],
-                                    command=lambda ck, dev: [sys.executable, "-c", script]))
+    res = _fake_check(move="e2e5")
     assert res.status == "FAIL"
     assert "not legal" in res.detail
 
 
 def test_uci_legal_bestmove_from_fake_engine_passes() -> None:
-    script = _FAKE_ENGINE.format(move="e2e4")
-    res = _run(lambda: sc.check_uci("unused", ["cpu"],
-                                    command=lambda ck, dev: [sys.executable, "-c", script]))
-    assert res.status == "PASS", res.detail
+    assert _fake_check().status == "PASS"
 
 
-def test_engine_command_passes_devices() -> None:
-    assert sc.engine_command("c", ["cuda:0", "cuda:1"])[-2:] == ["--devices", "cuda:0,cuda:1"]
-    assert sc.engine_command("c", ["cpu"])[-2:] == ["--device", "cpu"]
-    assert "--no-compile" in sc.engine_command("c", [])
+@pytest.mark.parametrize("marker", sc.UCI_FAILURE_MARKERS)
+def test_uci_failure_marker_fails_despite_legal_move(marker: str) -> None:
+    res = _fake_check(extra=f"info string {marker} simulated")
+    assert res.status == "FAIL", marker
+    assert marker in res.detail
+
+
+def test_uci_nonzero_exit_after_quit_fails() -> None:
+    res = _fake_check(rc=3)
+    assert res.status == "FAIL"
+    assert "exited 3 after quit" in res.detail
+
+
+_FAKE_STARTUP_FAILURE = textwrap.dedent("""
+    import sys
+    for line in sys.stdin:
+        cmd = line.strip()
+        if cmd == "uci":
+            print("uciok", flush=True)
+        elif cmd == "isready":
+            print("Traceback (most recent call last):")
+            print("torch._inductor.exc.InductorError: ImportError: GLIBCXX_3.4.32 not found")
+            print("RuntimeError: evaluator warmup failed at batch=1")
+            print("deepfin: engine startup failed: RuntimeError: evaluator warmup failed at batch=1",
+                  flush=True)
+            sys.exit(1)
+""")
+
+
+def test_uci_startup_failure_reports_engine_reason_and_root_cause() -> None:
+    opts = sc.SelfcheckOptions(checkpoint="unused", devices=("cpu",))
+    res = _run(lambda: sc.check_uci(
+        opts, command=lambda ck, o, cache: [sys.executable, "-c", _FAKE_STARTUP_FAILURE]))
+    assert res.status == "FAIL"
+    assert "exit 1" in res.detail
+    assert "engine startup failed: RuntimeError: evaluator warmup failed" in res.detail
+    assert "GLIBCXX_3.4.32" in res.detail
+
+
+def test_engine_command_flags_devices_and_private_cache() -> None:
+    opts = sc.SelfcheckOptions(devices=("cuda:0", "cuda:1"))
+    cmd = sc.engine_command("c", opts, "/tmp/private")
+    assert cmd[cmd.index("--devices") + 1] == "cuda:0,cuda:1"
+    assert cmd[cmd.index("--compile-cache-dir") + 1] == "/tmp/private"
+    assert "--no-compile" not in cmd  # default play path
+    assert sc.engine_command("c", sc.SelfcheckOptions(fast=True), "x")[-1] == "--no-compile"
+
+
+def test_engine_command_operator_cache_and_flags_win() -> None:
+    opts = sc.SelfcheckOptions(engine_args=("--walkers", "2", "--compile-cache-dir", "/op"))
+    cmd = sc.engine_command("c", opts, "/tmp/private")
+    assert cmd[-4:] == ["--walkers", "2", "--compile-cache-dir", "/op"]
+    # argparse keeps the LAST occurrence, so the operator's cache dir is used.
+    assert max(i for i, a in enumerate(cmd) if a == "--compile-cache-dir") > cmd.index("/tmp/private")
+
+
+def test_parse_options_passes_unknown_flags_to_engine() -> None:
+    opts, as_json = sc.parse_options(
+        ["--selfcheck", "--json", "--walkers", "2", "--hash", "256", "--device", "cpu"])
+    assert as_json
+    assert opts.engine_args == ("--walkers", "2", "--hash", "256")
+    assert opts.devices == ("cpu",)
+
+
+def test_uci_mode_wording() -> None:
+    assert "default play path" in sc.uci_mode(sc.SelfcheckOptions())
+    assert "does NOT cover" in sc.uci_mode(sc.SelfcheckOptions(fast=True))
+    assert "operator flags" in sc.uci_mode(sc.SelfcheckOptions(engine_args=("--no-compile",)))
 
 
 # ── driver / output ───────────────────────────────────────────────────────
@@ -450,7 +662,8 @@ def test_main_fails_overall_when_any_component_fails(
     rc = sc.main(["--selfcheck", "--no-uci", "--device", "cpu"])
     out = capsys.readouterr().out.splitlines()
     assert rc == 1
-    assert out[-1] == "SELFCHECK FAIL"
+    assert out[-1].startswith("SELFCHECK FAIL (")
+    assert "skipped: checkpoint, syzygy, uci" in out[-1]
     assert any(line.startswith("FAIL") and "python" in line and "simulated" in line for line in out)
     assert any(line.startswith("SKIP") and "uci" in line for line in out)
 
@@ -470,13 +683,22 @@ def test_main_json_matches_results(
     assert by_name["python"] == {"name": "python", "status": "FAIL", "detail": "simulated"}
     assert by_name["encoder"]["status"] == "PASS"
     assert by_name["checkpoint"]["status"] == "SKIP"
+    assert payload["skipped"] == ["checkpoint", "syzygy", "uci"]
+    assert payload["uci_mode"] is None
 
 
 def test_main_passes_on_this_install(capsys: pytest.CaptureFixture[str]) -> None:
     rc = sc.main(["--no-uci", "--device", "cpu"])
     out = capsys.readouterr().out
     assert rc == 0, out
-    assert out.rstrip().endswith("SELFCHECK PASS")
+    assert out.rstrip().splitlines()[-1].startswith("SELFCHECK PASS (")
+
+
+def test_summary_line_names_mode_and_skips() -> None:
+    results = [sc.CheckResult("a", "PASS", ""), sc.CheckResult("b", "SKIP", ""),
+               sc.CheckResult("c", "SKIP", "")]
+    assert sc.summary_line(results, "fast") == "SELFCHECK PASS (uci: fast; 2 skipped: b, c)"
+    assert sc.summary_line(results[:1], None) == "SELFCHECK PASS"
 
 
 # ── startup gate (refuse instead of silently degrade) ─────────────────────
@@ -606,3 +828,95 @@ def test_cli_selfcheck_does_not_import_the_engine() -> None:
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "ENGINE_IMPORTED False" in proc.stdout
+
+
+# ── both entry points behave the same on a broken install ────────────────
+
+
+def _entry_subprocess(prelude: str, entry: str, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run `python -m chess_anti_engine.uci` (entry="module") or the `deepfin`
+    console-script target (entry="script") with ``prelude`` applied first."""
+    launch = {
+        "module": "import runpy\nrunpy.run_module('chess_anti_engine.uci', run_name='__main__')\n",
+        "script": "from chess_anti_engine.uci.cli import main\nraise SystemExit(main())\n",
+    }[entry]
+    code = f"import sys\nsys.argv = ['deepfin', *sys.argv[1:]]\n{prelude}\n{launch}"
+    env = {k: v for k, v in os.environ.items() if k != sc.ALLOW_UNVERIFIED_ENV}
+    env.update(PYTHONPATH=str(REPO_ROOT), CUDA_VISIBLE_DEVICES="")
+    return subprocess.run(
+        [sys.executable, "-c", code, *args], input="uci\nisready\nquit\n",
+        capture_output=True, text=True, timeout=180, env=env, cwd=REPO_ROOT, check=False,
+    )
+
+
+_HIDE_LC0 = "sys.modules['chess_anti_engine.encoding._lc0_ext'] = None"
+
+
+@pytest.mark.parametrize("entry", ["module", "script"])
+def test_entry_points_refuse_missing_core_extension(entry: str) -> None:
+    proc = _entry_subprocess(_HIDE_LC0, entry, "--checkpoint", "unused", "--device", "cpu")
+    assert proc.returncode == 2, proc.stderr
+    assert proc.stdout == ""
+    assert "refusing to start" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+@pytest.mark.parametrize("entry", ["module", "script"])
+def test_entry_points_selfcheck_diagnoses_missing_core_extension(entry: str) -> None:
+    proc = _entry_subprocess(_HIDE_LC0, entry, "--selfcheck", "--no-uci", "--device", "cpu")
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "_lc0_ext is not importable" in proc.stdout
+    assert proc.stdout.rstrip().splitlines()[-1].startswith("SELFCHECK FAIL")
+
+
+@pytest.mark.parametrize("entry", ["module", "script"])
+def test_entry_points_start_on_this_install(entry: str, tmp_path: Path) -> None:
+    ckpt = sc._write_tiny_checkpoint(tmp_path)
+    proc = _entry_subprocess("", entry, "--checkpoint", str(ckpt), "--device", "cpu",
+                             "--no-compile")
+    assert proc.returncode == 0, proc.stderr
+    assert "uciok" in proc.stdout
+    assert "readyok" in proc.stdout
+
+
+# ── setup.py build-record hook ────────────────────────────────────────────
+
+
+def test_setup_build_ext_records_only_rebuilt_extensions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A skipped (up-to-date) extension must keep its old record, not get a new one."""
+    import runpy
+
+    import setuptools
+    from setuptools import Distribution
+    from setuptools.command.build_ext import build_ext as setuptools_build_ext
+
+    from chess_anti_engine.ext_build_record import record_path
+
+    captured: dict = {}
+    monkeypatch.setattr(setuptools, "setup", lambda **kw: captured.update(kw))
+    runpy.run_path(str(REPO_ROOT / "setup.py"))
+    cls = captured["cmdclass"]["build_ext"]
+
+    monkeypatch.chdir(tmp_path)  # in-place outputs land under the cwd
+    cmd = cls(Distribution({"ext_modules": captured["ext_modules"]}))
+    cmd.inplace = True
+    cmd.ensure_finalized()
+    outputs = {ext.name: tmp_path / cmd.get_ext_filename(ext.name) for ext in cmd.extensions}
+    for out in outputs.values():
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"old build")
+        os.utime(out, ns=(1_000_000_000, 1_000_000_000))
+    rebuilt = "chess_anti_engine.mcts._mcts_tree"
+
+    def fake_run(self) -> None:
+        outputs[rebuilt].write_bytes(b"new build")
+
+    monkeypatch.setattr(setuptools_build_ext, "run", fake_run)
+    cmd.run()
+    for name, out in outputs.items():
+        assert record_path(out).is_file() is (name == rebuilt), name
+    record = json.loads(record_path(outputs[rebuilt]).read_text())
+    assert "chess_anti_engine/mcts/_mcts_tree.c" in record["inputs"]
+    assert "setup.py" in record["inputs"]

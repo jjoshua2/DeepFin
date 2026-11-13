@@ -14,10 +14,13 @@ Environment variables:
                          when running Python with ASAN.
   CAE_EXT_WERROR=1     — promote warnings to errors (strict builds)
 """
+import importlib.util
 import os
 import platform
+from pathlib import Path
 
 from setuptools import setup, Extension
+from setuptools.command.build_ext import build_ext as _build_ext
 import numpy as np
 
 
@@ -253,4 +256,66 @@ nnue_ext = Extension(
     extra_link_args=_ext_link_args(openmp=True),
 )
 
-setup(ext_modules=[features_ext, lc0_ext, perft_ext, mcts_tree_ext, nnue_ext])
+def _load_by_path(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    import sys
+    sys.modules[name] = module  # dataclasses resolve annotations through sys.modules
+    spec.loader.exec_module(module)
+    return module
+
+
+class build_ext_with_record(_build_ext):
+    """build_ext that writes a build record beside every extension it rebuilt.
+
+    The record (chess_anti_engine/ext_build_record.py) holds the sha256 of the
+    built file and of each source in its dependency list, so the UCI engine's
+    startup gate can tell a real source edit from a timestamp-only change.
+
+    ⚑ Only for files that actually changed in this run. setuptools skips an
+    extension whose ``sources``/``depends`` are older than the output -- and
+    most headers are not in ``depends`` -- so a skipped build after a header
+    edit would otherwise be stamped as matching the edited header. A file whose
+    (mtime, size) did not move keeps its old record, which still says stale.
+    The record covers the in-place file when building in place (editable
+    installs, scripts/build_production_extensions.py) and the build_lib copy
+    otherwise (it then ships in the wheel beside the extension).
+    """
+
+    def _final_paths(self) -> dict:
+        base = Path.cwd() if self.inplace else Path(self.build_lib)
+        return {ext.name: base / self.get_ext_filename(ext.name) for ext in self.extensions}
+
+    @staticmethod
+    def _stamp(path: Path):
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
+    def run(self) -> None:
+        before = {name: self._stamp(p) for name, p in self._final_paths().items()}
+        super().run()
+        root = Path(__file__).resolve().parent
+        record_mod = _load_by_path(
+            "_cae_ext_build_record", root / "chess_anti_engine" / "ext_build_record.py")
+        specs_mod = _load_by_path(
+            "_cae_check_c_extensions_fresh", root / "scripts" / "check_c_extensions_fresh.py")
+        if record_mod is None or specs_mod is None:
+            print("build record: helper modules not found; no records written")
+            return
+        deps = {spec.module: spec.dependencies for spec in specs_mod.EXTENSION_SPECS}
+        for name, path in self._final_paths().items():
+            if name not in deps or not path.is_file() or self._stamp(path) == before.get(name):
+                continue
+            written = record_mod.write_record(path, module=name, root=root, inputs=deps[name])
+            print(f"build record: {written}")
+
+
+setup(
+    ext_modules=[features_ext, lc0_ext, perft_ext, mcts_tree_ext, nnue_ext],
+    cmdclass={"build_ext": build_ext_with_record},
+)

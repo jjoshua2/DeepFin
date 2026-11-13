@@ -28,7 +28,7 @@ For the install roles, a torch build that supports current NVIDIA cards, and
 # from the provided source archive / repository checkout:
 cd deepfin
 python3 -m venv .venv && source .venv/bin/activate
-pip install torch --index-url https://download.pytorch.org/whl/cu124   # any CUDA 12.x build
+pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cu130   # see install.md (cu124 has no RTX 50-series build)
 pip install -e .
 python3 setup.py build_ext --inplace     # builds the two C extensions in place
 

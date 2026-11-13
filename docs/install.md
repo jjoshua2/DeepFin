@@ -12,8 +12,10 @@ manager). Training and selfplay installs are described in the README and
   interpreters are untested and `deepfin --selfcheck` reports them as FAIL.
 - A C compiler (`gcc`) and the Python headers, to build the five C extensions.
 - For GPU play: an NVIDIA driver plus a PyTorch build whose CUDA version supports
-  the card. An RTX 50-series (Blackwell, `sm_120`) card needs a CUDA 12.8 or newer
-  build; the `cu124` builds stop at torch 2.6.0 and contain no `sm_120` kernels.
+  the card. An RTX 50-series (Blackwell, `sm_120`) card needs a build made with
+  CUDA 12.8 or newer; the `cu124` wheel index stops at torch 2.6.0. The self-check's
+  `torch` line reads the installed build's architecture list and names the
+  mismatch, whatever the card.
 
 ## Install roles
 
@@ -56,33 +58,53 @@ build.
 deepfin --selfcheck --checkpoint /path/to/trainer.pt --syzygy /path/to/syzygy
 deepfin --selfcheck --json ...                    # same results as JSON
 deepfin --selfcheck --devices cuda:0,cuda:1 ...   # multi-GPU host: name every GPU
+deepfin --selfcheck ... --walkers 2               # any other flag goes to the engine
 ```
 
-`python -m chess_anti_engine.uci --selfcheck` is equivalent. The run takes a few
-seconds on a CPU. Each component prints `PASS`, `FAIL` or `SKIP` with a reason,
-then `SELFCHECK PASS` or `SELFCHECK FAIL`; the exit status is 0 only when nothing
-failed. Multi-GPU hosts pass `--devices` to both the self-check and the engine.
+`python -m chess_anti_engine.uci --selfcheck` behaves the same, including on an
+install whose C extensions are missing. Each component prints `PASS`, `FAIL` or
+`SKIP` with a reason; the last line is `SELFCHECK PASS` or `SELFCHECK FAIL`
+followed by which engine configuration the UCI exchange used and which
+components were skipped, e.g.
+`SELFCHECK PASS (uci: default play path, torch.compile on; 2 skipped: checkpoint, syzygy)`.
+A SKIP is not a pass for that component. The exit status is 0 only when nothing
+failed.
+
+**The UCI exchange runs the engine exactly as you will:** the same entry point,
+your `--checkpoint`, `--device`/`--devices`, and every other engine flag you add
+to the command line, with `torch.compile` on unless you pass `--no-compile`. Give
+the self-check the flags you will give the GUI. Multi-GPU hosts pass `--devices`
+to both. Because compilation is part of the default play path, a cold compile runs
+inside the check. It takes about 15 s for the CPU tiny-net case; with a real network
+on a GPU, a cold `max-autotune` compile can take several minutes. Replies are
+awaited for up to 900 s (`--uci-timeout` changes this). `--fast` adds
+`--no-compile` for a check in seconds; the summary then says the default compiled
+path was **not** covered. The engine subprocess uses a private temporary compile
+cache unless you pass `--compile-cache-dir`, so the check never writes into a
+shared cache. Passing your real cache directory makes the check warm and fast, at
+the cost of writing to it.
 
 | Component | What a FAIL means |
 |---|---|
 | `python` | Interpreter outside 3.10.12–3.13, or a free-threaded build. Use a supported CPython. |
 | `torch` | torch is missing, a requested CUDA device is not visible, or this torch build has no kernels for the GPU (the message names the GPU's `sm_XY`). Reinstall torch from a newer `cuXXX` index. |
 | `extensions` | A required C extension (`_lc0_ext`, `_features_ext`, `_mcts_tree`) is missing, lacks a symbol, or has an older ABI than the Python code needs. Rebuild: `pip install .` again (or `-e .`). |
-| `freshness` | A built extension is older than its C sources (source checkouts only). Rebuild. SKIP on a regular `pip install .`, which has no sources beside the package. |
-| `encoder` | The C board encoder produced all-zero feature planes or differs from the Python reference encoder. Rebuild; if it persists, report it. |
+| `freshness` | (Source checkouts only; SKIP on a regular `pip install .`.) An extension's sources changed since it was built. The build writes a hash of every source beside each extension, and the check compares contents, so a timestamp-only change (branch switch and back, `cp` without `-p`) does not fail it. An extension built before these records existed falls back to comparing timestamps; the message then says a checkout or copy can trigger it. Either way `pip install -e .` rebuilds and clears it. |
+| `encoder` | The C board encoder or the search tree's leaf encoder produced all-zero feature planes, or differs from the Python reference encoder. Rebuild; if it persists, report it. |
 | `movegen` | C move generation disagrees with python-chess or perft. Rebuild; report if it persists. |
 | `search` | A short C Gumbel search on a random tiny net did not complete in the C tree. |
-| `checkpoint` | The network failed to load, has missing or mis-shaped tensors, or a forward pass gave NaN/inf. SKIP without `--checkpoint`. |
-| `syzygy` | A listed directory does not exist, holds no `.rtbw` tables, or a known 3-man position probed to the wrong result. SKIP without `--syzygy`. |
-| `uci` | The engine, run as a subprocess, did not answer `uciok`/`readyok` or returned an illegal `bestmove` for `go nodes 64`. It uses `--checkpoint` when given, otherwise a random-weight tiny net, and `--no-compile`. |
+| `checkpoint` | The engine's own loader refused the network, left a model tensor at random initialisation, or a forward pass gave NaN/inf. Migrations the loader applies (a `torch.compile` key prefix, fused q/k/v, zero-padded v2 input columns) are listed as notes on a PASS. SKIP without `--checkpoint`. |
+| `syzygy` | A listed directory does not exist, holds no `.rtbw` tables, or a known position probed to the wrong result. 3-man positions are always probed; a 5-man and a 6-man position are probed when those tables are in the path. SKIP without `--syzygy`. |
+| `uci` | The engine refused or failed to start (the line quotes its reason and the root cause from its log, e.g. a compiler or libstdc++ mismatch inside `torch.compile`), did not answer `uciok`/`readyok`/`bestmove`, played an illegal move, reported an unsearched or degraded move, or exited non-zero after `quit`. |
 
-The self-check does not run `torch.compile`, which the engine uses by default, and
-its search check runs on the CPU.
+The `search` component runs on the CPU; the `uci` component uses your devices.
 
 ## Startup refusal
 
-The engine checks the same extension facts on every start and exits with status 2,
-before printing `uciok`, if a required extension is missing, ABI-incompatible,
-stale or produces all-zero feature planes. The message names the problem and the
-fix. For development only, `DEEPFIN_ALLOW_UNVERIFIED_EXTENSIONS=1` downgrades the
-refusal to a warning.
+Both `deepfin` and `python -m chess_anti_engine.uci` check the extension facts on
+every start. They exit with status 2, printing nothing on stdout, if a required
+extension is missing, ABI-incompatible, stale or produces all-zero feature planes.
+The message on stderr names the problem and the fix. For development only,
+`DEEPFIN_ALLOW_UNVERIFIED_EXTENSIONS=1` downgrades the refusal to a warning.
+A failed warmup at startup (for example a broken `torch.compile` toolchain) makes
+the engine exit 1 with `engine startup failed:` before `readyok`.

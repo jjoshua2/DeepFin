@@ -26,11 +26,15 @@ import argparse
 import contextlib
 import importlib
 import importlib.util
+import io
 import json
 import os
+import queue
+import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
@@ -107,9 +111,31 @@ SYZYGY_CASES: tuple[tuple[str, int], ...] = (
     ("4k3/8/8/8/8/8/8/3BK3 w - - 0 1", 0),   # KBvK: draw
 )
 
+# (men, table, fen, expected WDL), probed only when the table is in the path.
+SYZYGY_LARGER_CASES: tuple[tuple[int, str, str, int], ...] = (
+    (5, "KQQRvK", "8/8/8/7k/8/8/8/QQRK4 w - - 0 1", 2),
+    (6, "KQQRRvK", "8/8/8/7k/8/8/8/QQRRK3 w - - 0 1", 2),
+)
+
 SEARCH_SIMS = 32
 UCI_GO_NODES = 64
-UCI_TIMEOUT_S = 120.0
+UCI_TIMEOUT_FAST_S = 120.0
+# A cold torch.compile (max-autotune by default) runs inside the readyok wait.
+UCI_TIMEOUT_COMPILED_S = 900.0
+# Engine output that means the session is not healthy, whatever move followed.
+# Grepped from uci/__main__.py and uci/engine.py: strict startup (#1263), the
+# extension gate, and every unsearched-move / degraded-path report (#1261/#1263).
+UCI_FAILURE_MARKERS: tuple[str, ...] = (
+    "engine startup failed:",
+    "refusing to start",
+    "search error:",
+    "search not started",
+    "search did not stop in time",
+    "search incomplete reason=",
+    "bestmove_fallback_used=",
+    "engine unhealthy",
+    "DEGRADED",
+)
 
 
 @dataclass(frozen=True)
@@ -133,6 +159,11 @@ class SelfcheckOptions:
     syzygy_path: str | None = None
     devices: tuple[str, ...] = ()
     run_uci: bool = True
+    # Engine flags given alongside --selfcheck, passed to the engine unchanged.
+    engine_args: tuple[str, ...] = ()
+    # --no-compile for the UCI exchange (fast, but not the default play path).
+    fast: bool = False
+    uci_timeout_s: float | None = None
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -181,18 +212,58 @@ def _load_freshness_tool(root: Path) -> ModuleType:
     return module
 
 
-def freshness_problems(root: Path, modules: Sequence[str] = REQUIRED_EXTENSIONS) -> list[str]:
-    """Missing/stale problems for ``modules``, from the repo's mtime gate."""
+MTIME_FALLBACK_NOTE = (
+    "mtime check: this extension has no build record, so a checkout or a copy that "
+    "rewrites timestamps can also trigger this; rebuilding with `pip install -e .` "
+    "(production host: `python scripts/build_production_extensions.py`) clears it "
+    "and writes a record"
+)
+
+
+def _freshness_rows(
+    root: Path, modules: Sequence[str] = REQUIRED_EXTENSIONS,
+) -> list[tuple[str, str, str | None]]:
+    """(module, method, problem-or-None) per extension.
+
+    Content check against the build record setup.py wrote beside the built
+    file (``chess_anti_engine/ext_build_record.py``); for an extension built
+    before records existed, the repo's mtime gate is the fallback.
+    """
+    from chess_anti_engine.ext_build_record import check_record
+
     tool = _load_freshness_tool(root)
-    wanted = set(modules)
-    known = {spec.module for spec in tool.EXTENSION_SPECS}
-    unknown = sorted(wanted - known)
+    deps = {spec.module: tuple(spec.dependencies) for spec in tool.EXTENSION_SPECS}
+    unknown = sorted(set(modules) - set(deps))
     if unknown:
         raise RuntimeError(f"freshness tool has no dependency list for {unknown}")
-    return [
-        issue for issue in tool.check_extensions(root)
-        if issue.split(" ", 1)[0] in wanted
-    ]
+    rows: list[tuple[str, str, str | None]] = []
+    mtime_issues: list[str] | None = None
+    for name in modules:
+        # The in-place build under `root` (what a source-checkout import loads).
+        ext_file = tool._first_existing(tool._extension_outputs(root, name))
+        if ext_file is None:
+            rows.append((name, "none", f"{name} is not built under {root}"))
+            continue
+        res = check_record(ext_file, root=root, inputs=deps[name])
+        if res.verdict == "ok":
+            rows.append((name, "content", None))
+        elif res.verdict != "no_record":
+            rows.append((name, "content", f"{name}: {res.detail}"))
+        else:
+            if mtime_issues is None:
+                mtime_issues = list(tool.check_extensions(root))
+            issues = [i for i in mtime_issues if i.split(" ", 1)[0] == name]
+            rows.append((name, "mtime", "; ".join(issues) if issues else None))
+    return rows
+
+
+def freshness_problems(root: Path, modules: Sequence[str] = REQUIRED_EXTENSIONS) -> list[str]:
+    """Stale-build problems for ``modules`` (content check, mtime fallback)."""
+    rows = _freshness_rows(root, modules)
+    problems = [problem for _, _, problem in rows if problem]
+    if any(problem and method == "mtime" for _, method, problem in rows):
+        problems.append(MTIME_FALLBACK_NOTE)
+    return problems
 
 
 def required_abi() -> int:
@@ -223,7 +294,11 @@ def extension_problems(
             problems.append(f"{name} lacks {', '.join(missing)} (built from older source)")
         if name.endswith("._mcts_tree"):
             abi = int(getattr(module, "ABI_VERSION", 0))
-            need = abi_fn()
+            try:
+                need = abi_fn()
+            except ImportError:
+                # gumbel_c needs the other extensions; their failure is reported above.
+                continue
             if abi < need:
                 problems.append(f"{name} ABI_VERSION={abi} < required {need}")
     return problems
@@ -278,7 +353,10 @@ def startup_problems(root: Path | None = None, *, check_freshness: bool = True) 
     if check_freshness:
         root = source_root() if root is None else root
         if root is not None:
-            problems += [f"{issue} (stale build)" for issue in freshness_problems(root)]
+            problems += [
+                issue if issue == MTIME_FALLBACK_NOTE else f"{issue} (stale build)"
+                for issue in freshness_problems(root)
+            ]
     try:
         zero = feature_planes_nonzero_problem()
     except Exception as exc:
@@ -437,13 +515,18 @@ def check_freshness(root: Path | None = None, *, use_source_root: bool = True) -
             "not a source checkout (regular wheel install): no sources to compare; the "
             "ABI/symbol and behavioural checks still apply"
         )
+    rows = _freshness_rows(root)
     problems = freshness_problems(root)
     if problems:
-        raise CheckFailed("; ".join(problems) + f"; fix: {REBUILD_HINT}")
-    return (
-        "every required .so is newer than its .c/.h sources and setup.py "
-        "(mtime check, scripts/check_c_extensions_fresh.py)"
-    )
+        raise CheckFailed("; ".join(problems))
+    by_content = [name.rsplit(".", 1)[-1] for name, method, _ in rows if method == "content"]
+    by_mtime = [name.rsplit(".", 1)[-1] for name, method, _ in rows if method == "mtime"]
+    detail = []
+    if by_content:
+        detail.append(f"source content matches the build record for {', '.join(by_content)}")
+    if by_mtime:
+        detail.append(f"no build record, newer than sources by mtime: {', '.join(by_mtime)}")
+    return "; ".join(detail)
 
 
 def check_encoder(
@@ -561,11 +644,18 @@ def check_search(device: str = "cpu") -> str:
 def check_checkpoint(
     path: str | None, device: str = "cpu", *, evaluator_factory: Callable[..., Any] | None = None,
 ) -> str:
+    """Load exactly as the engine does, then demand a complete load and a finite forward.
+
+    ``load_model_from_checkpoint`` is the engine's loader; its tolerant
+    migrations (torch.compile prefix, fused qkv, v1 -> v2_threats input columns)
+    are reported as notes, not failures. FAIL means the loader refused, or a
+    model tensor was left at its random initialisation, or the forward pass is
+    not finite.
+    """
     if not path:
         raise CheckSkipped("no --checkpoint given (or $DEEPFIN_CKPT unset)")
     import chess
     import numpy as np
-    import torch
 
     from chess_anti_engine.encoding._lc0_ext import CBoard
     from chess_anti_engine.encoding.cboard_encode import encode_cboard
@@ -573,20 +663,32 @@ def check_checkpoint(
     from chess_anti_engine.uci.model_loader import _resolve_trainer_pt, load_model_from_checkpoint
 
     trainer_pt = _resolve_trainer_pt(Path(path))
-    model = load_model_from_checkpoint(str(path), device=device)
-    raw = torch.load(trainer_pt, map_location="cpu", weights_only=True, mmap=True)
-    state = raw["model"] if isinstance(raw, dict) and "model" in raw else raw
-    model_state = model.state_dict()
-    missing = [k for k in model_state if k not in state]
-    mismatched = [
-        k for k, v in model_state.items()
-        if k in state and tuple(state[k].shape) != tuple(v.shape)
-    ]
-    if missing or mismatched:
+    loader_log = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(loader_log):
+            model = load_model_from_checkpoint(str(path), device=device)
+    except Exception as exc:
         raise CheckFailed(
-            f"architecture mismatch: {len(missing)} model tensors absent from the checkpoint "
-            f"(e.g. {missing[:3]}), {len(mismatched)} with a different shape (e.g. {mismatched[:3]})"
+            f"the engine's checkpoint loader refuses {trainer_pt.name}: {type(exc).__name__}: {exc}"
+        ) from exc
+    report = getattr(model, "tolerant_load_report", None)
+    if report is None:
+        raise CheckFailed("the checkpoint loader returned no load report")
+    uninitialised = [*report.missing, *report.shape_skipped]
+    if uninitialised:
+        raise CheckFailed(
+            f"{len(uninitialised)} model tensor(s) left at random initialisation by the engine's "
+            f"tolerant loader (missing {list(report.missing)[:3]}, shape-skipped "
+            f"{list(report.shape_skipped)[:3]}); the engine would play a partly random net"
         )
+    notes = [
+        line.strip() for line in loader_log.getvalue().splitlines()
+        if line.strip().startswith("[uci-load]") and "Tolerant load" not in line
+    ]
+    if report.compile_prefix_normalized:
+        notes.append("torch.compile _orig_mod. key prefix normalised")
+    if report.unexpected:
+        notes.append(f"{len(report.unexpected)} checkpoint tensor(s) not used by the model")
     history = str(getattr(model, "input_history_encoding", "legacy"))
     features = str(getattr(model, "input_extra_features", "v1"))
     x = encode_cboard(
@@ -601,9 +703,12 @@ def check_checkpoint(
         raise CheckFailed("forward pass on the start position produced non-finite outputs")
     # parameters() de-duplicates tied tensors (one Smolgen weight, many keys).
     n_params = sum(p.numel() for p in model.parameters())
-    return (f"{trainer_pt.name}: {type(model).__name__}, {n_params:,} params, "
-            f"{len(model_state)} tensors all present; input {x.shape[1]} planes "
-            f"({history}/{features}); forward finite on {device}")
+    detail = (f"{trainer_pt.name}: {type(model).__name__}, {n_params:,} params, every model "
+              f"tensor loaded; input {x.shape[1]} planes ({history}/{features}); forward finite "
+              f"on {device}")
+    if notes:
+        detail += "; loader notes: " + " | ".join(notes)
+    return detail
 
 
 def _probe_wdl_raw(syzygy_path: str, fen: str) -> int:
@@ -626,10 +731,11 @@ def check_syzygy(
     absent = [d for d in dirs if not Path(d).is_dir()]
     if not dirs or absent:
         raise CheckFailed(f"Syzygy directories do not exist: {absent or path!r}")
-    n_tables = sum(1 for d in dirs for f in Path(d).iterdir() if f.suffix == ".rtbw")
-    if n_tables == 0:
+    tables = {f.name for d in dirs for f in Path(d).iterdir() if f.suffix == ".rtbw"}
+    if not tables:
         raise CheckFailed(f"no .rtbw (WDL) tables under {dirs}")
-    for fen, want in SYZYGY_CASES:
+
+    def _probe(fen: str, want: int) -> None:
         try:
             got = probe(path, fen)
         except CheckFailed:
@@ -638,8 +744,22 @@ def check_syzygy(
             raise CheckFailed(f"probe failed for {fen}: {type(exc).__name__}: {exc}") from exc
         if got != want:
             raise CheckFailed(f"WDL for {fen} = {got}, expected {want}")
-    return (f"{len(dirs)} director{'y' if len(dirs) == 1 else 'ies'}, {n_tables} WDL tables; "
-            f"{len(SYZYGY_CASES)} known 3-man positions probe correctly")
+
+    for fen, want in SYZYGY_CASES:
+        _probe(fen, want)
+    probed = [f"{len(SYZYGY_CASES)} known 3-man positions"]
+    skipped = []
+    for men, table, fen, want in SYZYGY_LARGER_CASES:
+        if f"{table}.rtbw" in tables:
+            _probe(fen, want)
+            probed.append(f"{men}-man {table}")
+        else:
+            skipped.append(f"{men}-man ({table}.rtbw not in the path)")
+    detail = (f"{len(dirs)} director{'y' if len(dirs) == 1 else 'ies'}, {len(tables)} WDL tables; "
+              f"probe correctly: {', '.join(probed)}")
+    if skipped:
+        detail += f"; not probed: {', '.join(skipped)}"
+    return detail
 
 
 def _write_tiny_checkpoint(directory: Path) -> Path:
@@ -654,56 +774,160 @@ def _write_tiny_checkpoint(directory: Path) -> Path:
     return ckpt_dir
 
 
-def engine_command(checkpoint: str, devices: Sequence[str]) -> list[str]:
+def uci_mode(opts: SelfcheckOptions) -> str:
+    """Which engine configuration the UCI component exercises, in words."""
+    flags = " ".join(opts.engine_args)
+    given = f" with engine flags `{flags}`" if flags else ""
+    if opts.fast:
+        return f"fast: --no-compile{given} (does NOT cover the default compiled play path)"
+    if "--no-compile" in opts.engine_args:
+        return f"operator flags{given}"
+    return f"default play path, torch.compile on{given}"
+
+
+def engine_command(checkpoint: str, opts: SelfcheckOptions, compile_cache_dir: str) -> list[str]:
+    """The engine invocation: the operator's flags, plus a private compile cache.
+
+    ``--compile-cache-dir`` comes first so an operator-supplied one (in
+    ``engine_args``) wins; otherwise the selfcheck never writes into a shared
+    production cache.
+    """
     cmd = [sys.executable, "-u", "-m", "chess_anti_engine.uci", "--checkpoint", checkpoint,
-           "--no-compile"]
-    if len(devices) > 1:
-        cmd += ["--devices", ",".join(devices)]
-    elif devices:
-        cmd += ["--device", devices[0]]
+           "--compile-cache-dir", compile_cache_dir]
+    if len(opts.devices) > 1:
+        cmd += ["--devices", ",".join(opts.devices)]
+    elif opts.devices:
+        cmd += ["--device", opts.devices[0]]
+    cmd += list(opts.engine_args)
+    if opts.fast:
+        cmd.append("--no-compile")
     return cmd
 
 
+def _failure_lines(lines: Sequence[str]) -> list[str]:
+    return [ln for ln in lines if any(m in ln for m in UCI_FAILURE_MARKERS)]
+
+
+_EXC_LINE = re.compile(r"^[A-Za-z_][\w.]*(Error|Exception|Interrupt): ")
+
+
+def _failure_reason(lines: Sequence[str]) -> str:
+    """The engine's own failure line plus the root cause from its traceback.
+
+    Strict startup prints only the outermost exception ("evaluator warmup
+    failed at batch=1"); the cause an operator can act on (e.g. a libstdc++
+    mismatch inside torch.compile) is the first exception line of the logged
+    traceback.
+    """
+    marked = _failure_lines(lines)
+    exc_lines = list(dict.fromkeys(ln.strip() for ln in lines if _EXC_LINE.match(ln.strip())))
+    parts = [marked[-1].strip()] if marked else []
+    if exc_lines and (not parts or exc_lines[0] not in parts[0]):
+        parts.append("cause: " + exc_lines[0])
+    if not parts:  # e.g. an argparse error for a flag the engine does not accept
+        tail = [ln.strip() for ln in lines if ln.strip()]
+        parts = tail[-1:]
+    return _one_line("; ".join(parts), 600) if parts else ""
+
+
+class _Transcript:
+    """Pump the engine's merged stdout/stderr, keeping every line."""
+
+    def __init__(self, proc: subprocess.Popen[str]) -> None:
+        self.lines: list[str] = []
+        self._q: queue.Queue[str | None] = queue.Queue()
+        self._proc = proc
+        threading.Thread(target=self._pump, daemon=True).start()
+
+    def _pump(self) -> None:
+        assert self._proc.stdout is not None
+        for line in iter(self._proc.stdout.readline, ""):
+            self._q.put(line.rstrip("\n"))
+        self._q.put(None)
+
+    def read_until(self, token: str, timeout_s: float) -> list[str]:
+        got: list[str] = []
+        deadline = time.monotonic() + timeout_s
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"no {token!r} within {timeout_s:.0f}s")
+            try:
+                line = self._q.get(timeout=min(remaining, 1.0))
+            except queue.Empty:
+                continue
+            if line is None:
+                raise RuntimeError(f"engine exited before {token!r}")
+            self.lines.append(line)
+            got.append(line)
+            if line.split(maxsplit=1)[:1] == [token]:
+                return got
+
+    def drain(self, timeout_s: float = 5.0) -> None:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            try:
+                line = self._q.get(timeout=0.2)
+            except queue.Empty:
+                if self._proc.poll() is not None:
+                    return
+                continue
+            if line is None:
+                return
+            self.lines.append(line)
+
+
 def check_uci(
-    checkpoint: str | None, devices: Sequence[str],
-    *, command: Callable[[str, Sequence[str]], list[str]] = engine_command,
+    opts: SelfcheckOptions,
+    *, command: Callable[[str, SelfcheckOptions, str], list[str]] = engine_command,
 ) -> str:
     import chess
 
-    from chess_anti_engine.uci.subprocess_client import LineReader, send_line
+    from chess_anti_engine.uci.subprocess_client import send_line
 
+    compiled = not opts.fast and "--no-compile" not in opts.engine_args
+    timeout = opts.uci_timeout_s or (UCI_TIMEOUT_COMPILED_S if compiled else UCI_TIMEOUT_FAST_S)
     with tempfile.TemporaryDirectory(prefix="deepfin-selfcheck-") as tmp:
-        ckpt = checkpoint or str(_write_tiny_checkpoint(Path(tmp)))
-        label = "given checkpoint" if checkpoint else "random-weight tiny net"
+        ckpt = opts.checkpoint or str(_write_tiny_checkpoint(Path(tmp)))
+        label = "given checkpoint" if opts.checkpoint else "random-weight tiny net"
+        cache = str(Path(tmp) / "engine_cache")
         started = time.monotonic()
         proc = subprocess.Popen(
-            command(ckpt, devices), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            command(ckpt, opts, cache), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, bufsize=1,
         )
-        reader = LineReader(proc)
-        transcript: list[str] = []
+        out = _Transcript(proc)
+        lines: list[str] = []
         try:
             send_line(proc, "uci")
-            transcript += reader.read_until("uciok", timeout_s=UCI_TIMEOUT_S)
+            out.read_until("uciok", timeout)
+            if opts.syzygy_path:
+                send_line(proc, f"setoption name SyzygyPath value {opts.syzygy_path}")
             send_line(proc, "isready")
-            transcript += reader.read_until("readyok", timeout_s=UCI_TIMEOUT_S)
+            out.read_until("readyok", timeout)
             send_line(proc, "ucinewgame")
             send_line(proc, "position startpos")
             send_line(proc, f"go nodes {UCI_GO_NODES}")
-            lines = reader.read_until("bestmove", timeout_s=UCI_TIMEOUT_S)
-            transcript += lines
+            lines = out.read_until("bestmove", timeout)
             send_line(proc, "quit")
-            proc.wait(timeout=15)
-        except (TimeoutError, RuntimeError) as exc:
-            raise CheckFailed(f"UCI exchange failed: {exc}") from exc
+            proc.wait(timeout=30)
+            out.drain()
+        except (TimeoutError, RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=10)
+            out.drain()
+            reason = _failure_reason(out.lines) or str(exc)
+            raise CheckFailed(
+                f"engine ({uci_mode(opts)}) failed before bestmove, exit {proc.returncode}: {reason}"
+            ) from exc
         finally:
             if proc.poll() is None:
                 proc.kill()
                 proc.wait(timeout=5)
-        bad = [ln for ln in transcript
-               if any(m in ln for m in ("search error:", "bestmove_fallback_used=", "engine load failed:"))]
+        bad = _failure_lines(out.lines)
         if bad:
-            raise CheckFailed(f"engine reported: {bad[0]}")
+            raise CheckFailed(f"engine ({uci_mode(opts)}) reported: {_failure_reason(out.lines)}")
         token = next(ln for ln in lines if ln.split()[:1] == ["bestmove"]).split()[1]
         try:
             move = chess.Move.from_uci(token)
@@ -714,7 +938,7 @@ def check_uci(
         if proc.returncode != 0:
             raise CheckFailed(f"engine exited {proc.returncode} after quit")
         return (f"uci/uciok, isready/readyok, go nodes {UCI_GO_NODES} -> bestmove {token} "
-                f"({label}, {time.monotonic() - started:.1f}s, subprocess)")
+                f"({label}, {uci_mode(opts)}, {time.monotonic() - started:.1f}s, subprocess)")
 
 
 # ── driver ─────────────────────────────────────────────────────────────────
@@ -742,7 +966,7 @@ def run_selfcheck(opts: SelfcheckOptions) -> list[CheckResult]:
         _run_check("syzygy", lambda: check_syzygy(opts.syzygy_path)),
     ]
     if opts.run_uci:
-        results.append(_run_check("uci", lambda: check_uci(opts.checkpoint, opts.devices)))
+        results.append(_run_check("uci", lambda: check_uci(opts)))
     else:
         results.append(CheckResult("uci", "SKIP", "--no-uci given"))
     return results
@@ -752,25 +976,49 @@ def overall(results: Sequence[CheckResult]) -> Status:
     return "FAIL" if any(r.status == "FAIL" for r in results) else "PASS"
 
 
-def format_text(results: Sequence[CheckResult]) -> str:
+def skipped(results: Sequence[CheckResult]) -> list[str]:
+    return [r.name for r in results if r.status == "SKIP"]
+
+
+def summary_line(results: Sequence[CheckResult], mode: str | None) -> str:
+    parts = []
+    if mode is not None:
+        parts.append(f"uci: {mode}")
+    names = skipped(results)
+    if names:
+        parts.append(f"{len(names)} skipped: {', '.join(names)}")
+    tail = f" ({'; '.join(parts)})" if parts else ""
+    return f"SELFCHECK {overall(results)}{tail}"
+
+
+def format_text(results: Sequence[CheckResult], mode: str | None = None) -> str:
     width = max(len(r.name) for r in results)
     lines = [f"{r.status:<4}  {r.name:<{width}}  {r.detail}" for r in results]
-    lines.append(f"SELFCHECK {overall(results)}")
+    lines.append(summary_line(results, mode))
     return "\n".join(lines)
 
 
-def format_json(results: Sequence[CheckResult]) -> str:
+def format_json(results: Sequence[CheckResult], mode: str | None = None) -> str:
     return json.dumps(
-        {"overall": overall(results), "results": [asdict(r) for r in results]}, indent=2,
+        {
+            "overall": overall(results),
+            "skipped": skipped(results),
+            "uci_mode": mode,
+            "results": [asdict(r) for r in results],
+        },
+        indent=2,
     )
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="deepfin --selfcheck",
+        allow_abbrev=False,  # an abbreviation must not swallow an engine flag
         description="Verify a DeepFin engine install: interpreter, torch/GPU, C extensions "
                     "(ABI, staleness, behaviour), optional checkpoint and Syzygy, and a UCI "
-                    "exchange. Exit 0 only if nothing FAILs.",
+                    "exchange with the engine's real flags. Any argument not listed here is "
+                    "passed to the engine subprocess unchanged (e.g. --walkers 2). "
+                    "Exit 0 only if nothing FAILs.",
     )
     p.add_argument("--selfcheck", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--json", action="store_true", help="print results as JSON")
@@ -779,17 +1027,24 @@ def build_parser() -> argparse.ArgumentParser:
                         "Without one the checkpoint check is SKIP and the UCI exchange uses a "
                         "random-weight tiny net")
     p.add_argument("--syzygy", dest="syzygy_path", default=None,
-                   help="Syzygy directories, os.pathsep-separated (as the SyzygyPath option)")
+                   help="Syzygy directories, os.pathsep-separated; probed directly and given "
+                        "to the engine as SyzygyPath")
     p.add_argument("--device", default="auto", help="cpu|cuda|cuda:N (default: auto)")
     p.add_argument("--devices", default=None,
                    help="comma-separated device list for multi-GPU hosts; overrides --device")
+    p.add_argument("--fast", action="store_true",
+                   help="run the UCI exchange with --no-compile (seconds instead of a cold "
+                        "torch.compile); the verdict then does not cover the default play path")
+    p.add_argument("--uci-timeout", dest="uci_timeout_s", type=float, default=None,
+                   help=f"seconds to wait for each UCI reply (default {UCI_TIMEOUT_COMPILED_S:.0f} "
+                        f"compiled, {UCI_TIMEOUT_FAST_S:.0f} with --no-compile)")
     p.add_argument("--no-uci", dest="run_uci", action="store_false",
                    help="skip the subprocess UCI exchange")
     return p
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(sys.argv[1:] if argv is None else list(argv))
+def parse_options(argv: Sequence[str]) -> tuple[SelfcheckOptions, bool]:
+    args, engine_args = build_parser().parse_known_args(list(argv))
     if args.devices:
         devices = tuple(d.strip() for d in str(args.devices).split(",") if d.strip())
     elif args.device and args.device != "auto":
@@ -799,11 +1054,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     opts = SelfcheckOptions(
         checkpoint=args.checkpoint, syzygy_path=args.syzygy_path,
         devices=devices, run_uci=bool(args.run_uci),
+        engine_args=tuple(engine_args), fast=bool(args.fast),
+        uci_timeout_s=args.uci_timeout_s,
     )
+    return opts, bool(args.json)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    opts, as_json = parse_options(sys.argv[1:] if argv is None else list(argv))
     # Library chatter (e.g. the C tree's one-time stderr notice) stays off stdout.
     with contextlib.redirect_stdout(sys.stderr):
         results = run_selfcheck(opts)
-    print(format_json(results) if args.json else format_text(results), flush=True)
+    mode = uci_mode(opts) if opts.run_uci else None
+    print(format_json(results, mode) if as_json else format_text(results, mode), flush=True)
     return 0 if overall(results) == "PASS" else 1
 
 

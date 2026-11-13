@@ -9,6 +9,7 @@ reported as a refusal with the fix.
 """
 from __future__ import annotations
 
+import importlib
 import sys
 from collections.abc import Sequence
 
@@ -20,7 +21,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return selfcheck_main(args)
     try:
-        from chess_anti_engine.uci.__main__ import main as engine_main
+        # By name: uci/__main__.py hands `python -m` runs to this module, and a
+        # static import back would be an import cycle.
+        engine_main = importlib.import_module("chess_anti_engine.uci.__main__").main
     except ImportError as exc:
         from chess_anti_engine.uci.selfcheck import REBUILD_HINT
 

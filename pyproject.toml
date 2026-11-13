@@ -262,6 +262,11 @@ ignore = [
   "PLW2901", "PLW0603",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# `python -m chess_anti_engine.uci` delegates to uci/cli.py before the heavy
+# imports, so a broken extension is refused, not a traceback (see the file).
+"chess_anti_engine/uci/__main__.py" = ["E402"]
+
 [tool.vulture]
 # Names that vulture can't see being used. Keep this list small and
 # annotated — the goal is that every entry is a FP we've verified, not

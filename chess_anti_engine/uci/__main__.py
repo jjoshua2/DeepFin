@@ -20,6 +20,18 @@ import sys
 import threading
 from typing import TypedDict
 
+if __name__ == "__main__":
+  # `python -m chess_anti_engine.uci` lands here BEFORE the imports below, which
+  # load torch and the C extensions. Hand over to the import-light launcher
+  # (uci/cli.py), as the `deepfin` script does: it runs --selfcheck without the
+  # engine and turns a missing/broken extension into the same refusal (exit 2,
+  # nothing on stdout) instead of a raw ImportError traceback. It then imports
+  # this file again as `chess_anti_engine.uci.__main__`, where this branch is
+  # false, and calls `main()`. The imports below are therefore below a statement
+  # (ruff E402 is waived for this file in pyproject.toml).
+    from chess_anti_engine.uci.cli import main as _launch
+    raise SystemExit(_launch())
+
 import chess
 import numpy as np
 

@@ -226,7 +226,7 @@ def load_model_from_checkpoint(
 
     model = build_model(model_config)
     state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
-    load_state_dict_tolerant(
+    report = load_state_dict_tolerant(
         model,
         state,
         label="uci-load",
@@ -237,5 +237,8 @@ def load_model_from_checkpoint(
         "input_history_encoding",
         model_config.input_history_encoding,
     )
+  # What the tolerant load left uninitialised or migrated; `deepfin --selfcheck`
+  # reads it rather than re-deriving the loader's migrations.
+    setattr(model, "tolerant_load_report", report)
     model.to(device).eval()
     return model
