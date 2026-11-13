@@ -221,14 +221,17 @@ source = { editable = "." }
 dependencies = [
     { name = "numpy" },
     { name = "python-chess" },
-    { name = "pyyaml" },
     { name = "torch", version = "2.14.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-17-chess-anti-engine-cpu' and extra == 'extra-17-chess-anti-engine-cu130') or (extra != 'extra-17-chess-anti-engine-cpu' and extra != 'extra-17-chess-anti-engine-cu130')" },
     { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "extra == 'extra-17-chess-anti-engine-cpu'" },
     { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'extra-17-chess-anti-engine-cu130'" },
-    { name = "zarr" },
 ]
 
 [package.optional-dependencies]
+client = [
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "zarr" },
+]
 cpu = [
     { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" } },
 ]
@@ -253,7 +256,9 @@ dev = [
     { name = "pytest-xdist" },
     { name = "python-multipart" },
     { name = "pytorch-optimizer" },
+    { name = "pyyaml" },
     { name = "ray", extra = ["tune"] },
+    { name = "requests" },
     { name = "ruff" },
     { name = "skylos" },
     { name = "tensorboard" },
@@ -262,6 +267,7 @@ dev = [
     { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'extra-17-chess-anti-engine-cu130'" },
     { name = "uvicorn" },
     { name = "vulture" },
+    { name = "zarr" },
     { name = "zclip" },
     { name = "zstandard" },
 ]
@@ -270,30 +276,54 @@ onnx = [
     { name = "onnx" },
     { name = "onnxruntime" },
     { name = "onnxscript" },
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "zarr" },
 ]
 server = [
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "optuna" },
     { name = "python-multipart" },
+    { name = "pytorch-optimizer" },
+    { name = "pyyaml" },
+    { name = "ray", extra = ["tune"] },
+    { name = "requests" },
+    { name = "tensorboard" },
     { name = "uvicorn" },
+    { name = "zarr" },
+    { name = "zclip" },
 ]
 train = [
     { name = "pytorch-optimizer" },
+    { name = "pyyaml" },
+    { name = "requests" },
     { name = "tensorboard" },
+    { name = "zarr" },
     { name = "zclip" },
 ]
 tune = [
     { name = "optuna" },
+    { name = "pyyaml" },
     { name = "ray", extra = ["tune"] },
+    { name = "requests" },
+    { name = "zarr" },
 ]
 worker = [
+    { name = "pyyaml" },
     { name = "requests" },
+    { name = "zarr" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "basedpyright", marker = "extra == 'dev'", specifier = "==1.39.9" },
-    { name = "chess-anti-engine", extras = ["server", "train", "tune", "onnx"], marker = "extra == 'dev'" },
+    { name = "chess-anti-engine", extras = ["client"], marker = "extra == 'onnx'" },
+    { name = "chess-anti-engine", extras = ["client"], marker = "extra == 'train'" },
+    { name = "chess-anti-engine", extras = ["client"], marker = "extra == 'tune'" },
+    { name = "chess-anti-engine", extras = ["client"], marker = "extra == 'worker'" },
+    { name = "chess-anti-engine", extras = ["client", "server", "train", "tune", "onnx"], marker = "extra == 'dev'" },
+    { name = "chess-anti-engine", extras = ["client", "train", "tune"], marker = "extra == 'server'" },
     { name = "cppcheck", marker = "extra == 'dev'", specifier = ">=1.5" },
     { name = "diff-cover", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.110" },
@@ -312,9 +342,9 @@ requires-dist = [
     { name = "python-chess", specifier = ">=1.10" },
     { name = "python-multipart", marker = "extra == 'server'", specifier = ">=0.0.9" },
     { name = "pytorch-optimizer", marker = "extra == 'train'", specifier = ">=3.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "pyyaml", marker = "extra == 'client'", specifier = ">=6.0" },
     { name = "ray", extras = ["tune"], marker = "extra == 'tune'", specifier = ">=2.9" },
-    { name = "requests", marker = "extra == 'worker'", specifier = ">=2.31" },
+    { name = "requests", marker = "extra == 'client'", specifier = ">=2.31" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.20" },
     { name = "skylos", marker = "extra == 'dev'", specifier = "==4.27.0" },
     { name = "tensorboard", marker = "extra == 'train'", specifier = ">=2.0" },
@@ -324,11 +354,11 @@ requires-dist = [
     { name = "torch", marker = "extra == 'dev'", specifier = "==2.14.0" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.27" },
     { name = "vulture", marker = "extra == 'dev'", specifier = "==2.16" },
-    { name = "zarr", specifier = ">=2.18,<3" },
+    { name = "zarr", marker = "extra == 'client'", specifier = ">=2.18,<3" },
     { name = "zclip", marker = "extra == 'train'", specifier = ">=1.0" },
     { name = "zstandard", marker = "extra == 'dev'", specifier = ">=0.21" },
 ]
-provides-extras = ["cpu", "cu130", "train", "dev", "tune", "onnx", "server", "worker"]
+provides-extras = ["cpu", "cu130", "match", "client", "worker", "train", "dev", "tune", "onnx", "server"]
 
 [[package]]
 name = "click"

@@ -32,6 +32,11 @@ if TYPE_CHECKING:
     import requests
 
 from chess_anti_engine.heap_census import maybe_start_heap_census
+# Moved to a stdlib-only module so the UCI engine can share it without importing
+# this module; the private name stays importable for its existing callers.
+from chess_anti_engine.compile_cache import (
+    configure_shared_compile_cache as _configure_shared_compile_cache,
+)
 from chess_anti_engine.utils.syzygy_config import refuse_strict_worker_session
 from chess_anti_engine.broker_hang import (
     WORKER_HANG_ABORT_EXIT_CODE,
@@ -433,24 +438,6 @@ def _restart_process() -> None:
   # Avoid infinite update loops.
     os.environ["CAE_SELF_UPDATED"] = "1"
     os.execv(sys.executable, [sys.executable, *sys.argv])
-
-
-def _configure_shared_compile_cache(*, cache_dir: Path) -> None:
-    """Point TorchInductor/Triton caches at a shared worker cache root.
-
-    Uses forced env var assignment (not setdefault) so it overrides the
-    system default /tmp location.  All workers sharing the same cache_dir
-    reuse autotuned kernels and FX graph compilations.
-    """
-    compile_cache_root = cache_dir / "compile_cache"
-    inductor_dir = compile_cache_root / "torchinductor"
-    triton_dir = compile_cache_root / "triton"
-    inductor_dir.mkdir(parents=True, exist_ok=True)
-    triton_dir.mkdir(parents=True, exist_ok=True)
-    os.environ["TORCHINDUCTOR_CACHE_DIR"] = str(inductor_dir)
-    os.environ["TRITON_CACHE_DIR"] = str(triton_dir)
-  # Enable FX graph cache so compiled graphs persist across restarts.
-    os.environ["TORCHINDUCTOR_FX_GRAPH_CACHE"] = "1"
 
 
 def _configure_worker_torch_env() -> None:

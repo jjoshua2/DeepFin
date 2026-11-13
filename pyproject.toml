@@ -19,22 +19,21 @@ version = "0.0.3"  # 0.0.3: the seed-dole claim moved to an authenticated POST. 
                    # docs/experiment_ledger.md carries both steps (Codex review, PR #108).
 description = "Chess anti-engine training framework (Phase 1: Python pipeline)"
 requires-python = ">=3.10.12"
-# Core deps are the LITE baseline — exactly what the selfplay client needs
-# (worker.py import graph: chess, numpy, torch, yaml, zarr; requests comes
-# from the [worker] extra). Anything training- or server-side goes in an
-# extra; keep this list as small as possible.
+# Core deps = the `match` install: exactly what the UCI engine imports to play
+# (python -m chess_anti_engine.uci / `deepfin`). tests/test_packaging_extras.py
+# asserts the engine's import closure stays inside this set, so a training-only
+# module-level import reached from uci/ fails a test instead of an operator's
+# install. Selfplay, training and server dependencies live in the role extras
+# below (`client`, `server`, `dev`); keep this list as small as possible.
 dependencies = [
   "python-chess>=1.10",
   "numpy>=1.24",
   "torch>=2.0",
-  "pyyaml>=6.0",
-  # zarr 3 removed the v2 Group.create_dataset(data=...) API used by
-  # replay/shard.py — keep the v2 series until the shard I/O is ported.
-  "zarr>=2.18,<3",
 ]
 
 [project.scripts]
-deepfin = "chess_anti_engine.uci.__main__:main"
+# cli.main dispatches --selfcheck without importing the engine (uci/cli.py).
+deepfin = "chess_anti_engine.uci.cli:main"
 
 [build-system]
 requires = ["setuptools>=70", "wheel", "numpy>=1.24"]
@@ -49,7 +48,34 @@ exclude = ["runs*", "tests*"]
 cpu = ["torch==2.14.0"]
 cu130 = ["torch==2.14.0"]
 
+# ── Role extras ────────────────────────────────────────────────────────────
+# match  : the UCI engine only. Equal to the core install (nothing extra);
+#          named so operator docs can say `.[match]` explicitly.
+# client : selfplay worker (python -m chess_anti_engine.worker).
+# server : training server — HTTP server + Ray Tune trainer + replay.
+# dev    : everything, plus test and lint tools (what the suite requires).
+# `worker`, `train`, `tune` and `onnx` are kept: code error messages, README and
+# the worker self-update (`worker.py::_pip_install_wheel` installs
+# `chess-anti-engine[worker] @ <wheel>`) name them.
+match = []
+
+client = [
+  "pyyaml>=6.0",
+  # zarr 3 removed the v2 Group.create_dataset(data=...) API used by
+  # replay/shard.py — keep the v2 series until the shard I/O is ported.
+  "zarr>=2.18,<3",
+  "requests>=2.31",
+]
+
+# Alias of `client`. The worker self-update installs `[worker]` from the
+# published wheel, so this name must keep resolving to the full client set.
+worker = ["chess-anti-engine[client]"]
+
+# Every pre-existing extra includes `client`: before the role split, pyyaml and
+# zarr were core deps, so `.[train]` / `.[tune]` / `.[onnx]` keep resolving to a
+# superset of what they installed then (trainer + Tune harness import zarr).
 train = [
+  "chess-anti-engine[client]",
   "tensorboard>=2.0",
   # Unconditional import in train/trainer.py (gradient z-clip).
   "zclip>=1.0",
@@ -59,9 +85,9 @@ train = [
 
 # Full test/server environment: the suite hard-requires its dependencies
 # (no optional-dep skips), so dev pulls in every extra the tests exercise.
-# The lite client install is `pip install -e ".[worker]"`.
+# The lite client install is `pip install -e ".[client]"` (alias `[worker]`).
 dev = [
-  "chess-anti-engine[server,train,tune,onnx]",
+  "chess-anti-engine[client,server,train,tune,onnx]",
   # tests/test_harness_sync_exclude.py drives pyarrow.fs directly (also a
   # transitive ray dep, pinned here because the test imports it itself).
   "pyarrow>=14.0",
@@ -102,11 +128,13 @@ dev = [
 ]
 
 tune = [
+  "chess-anti-engine[client]",
   "ray[tune]>=2.9",
   "optuna>=3.0",
 ]
 
 onnx = [
+  "chess-anti-engine[client]",
   # Raw BT4 input projection avoids allocating unused Stockfish search payloads.
   "msgspec>=0.20.0",
   "onnx>=1.15",
@@ -114,16 +142,17 @@ onnx = [
   "onnxscript>=0.1.0",
 ]
 
+# Training server: the HTTP server plus the trainer, Ray Tune and the client
+# set (replay shards are zarr; configs are yaml). Code that needs only the HTTP
+# stack still says `.[server]` in its error messages; this is a superset.
 server = [
+  "chess-anti-engine[client,train,tune]",
   "fastapi>=0.110",
   "uvicorn>=0.27",
   "python-multipart>=0.0.9",
   "httpx>=0.26",
 ]
 
-worker = [
-  "requests>=2.31",
-]
 
 [tool.uv]
 required-version = "==0.12.10"
@@ -232,6 +261,11 @@ ignore = [
   "E741", "ARG005", "SIM105", "PERF203", "RUF001", "RUF002", "RUF003",
   "PLW2901", "PLW0603",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# `python -m chess_anti_engine.uci` delegates to uci/cli.py before the heavy
+# imports, so a broken extension is refused, not a traceback (see the file).
+"chess_anti_engine/uci/__main__.py" = ["E402"]
 
 [tool.vulture]
 # Names that vulture can't see being used. Keep this list small and

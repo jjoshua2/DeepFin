@@ -1,3 +1,5 @@
+# First: a clear error naming the extra when zarr is not installed.
+from . import _client_deps as _client_deps
 from .buffer import ArrayReplayBuffer, ReplayBuffer, ReplaySample
 from .disk_buffer import DiskReplayBuffer
 from .game_epoch import GameAwareEpochBuffer, GameEpochPlan
