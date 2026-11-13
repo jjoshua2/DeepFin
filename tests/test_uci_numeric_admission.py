@@ -1,6 +1,7 @@
 """Numeric admission uses real UCI entry points without constructing a worker."""
 from __future__ import annotations
 
+import threading
 from unittest.mock import Mock
 
 import pytest
@@ -19,6 +20,10 @@ def admission_engine(monkeypatch: pytest.MonkeyPatch) -> Engine:
     engine._options = EngineOptions()
     engine._closed = False
     engine._quit_requested = False
+    engine._recovery_lock = threading.Lock()  # setoption retires a staged rebuild
+    engine._recovery_epoch = 0
+    engine._recovery_thread = None
+    engine._staged_evaluator = None
     monkeypatch.setattr(engine, "_wait_for_search", Mock())
     monkeypatch.setattr(
         engine, "_apply_search_option",

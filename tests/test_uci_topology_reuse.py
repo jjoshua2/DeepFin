@@ -154,6 +154,7 @@ def engine_fixture(enabled=False, parallel='pucv', devices=2):
     engine._rebuild_evaluator, engine._rebuild_multi_gpu_pucv_factories = observed_rebuild, factories
     engine._warmup_dirty = False
     engine._wait_for_search = lambda: None
+    engine._retire_recovery = lambda **_kw: None  # no in-play recovery in this harness
     engine._reinstall_configured_search_path = lambda **kw: None
     engine._try_install_root_parallel_gumbel = lambda: None
     engine._SETOPTION_HANDLERS = {'usemultigpupucv': methods['Engine._set_use_multi_gpu_pucv']}
@@ -257,7 +258,8 @@ def phase_fixture(worker):
     phase = definitions('chess_anti_engine/uci/engine.py', ['Engine._run_one_phase'], namespace)['Engine._run_one_phase']
     engine = SimpleNamespace(_worker=worker, _stop_event=threading.Event(), _gil_probe=None,
                              _options=SimpleNamespace(abort_factor=1.0, ponder=False),
-                             _emit_info=lambda **kw: None, _emit_gil_profile=lambda **kw: None)
+                             _emit_info=lambda **kw: None, _emit_gil_profile=lambda **kw: None,
+                             _note_searched_phase=lambda: None)
     limits = SimpleNamespace(deadline_ms=None, max_nodes=20, max_depth=None, optimum_ms=None,
                              searchmoves=('d2d4', 'e2e4'), is_open_ended=lambda: False)
     return lambda: phase(engine, limits, is_ponder=False, board=Board())

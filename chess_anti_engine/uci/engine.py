@@ -559,10 +559,6 @@ class Engine:
         # `_restore_after_failed_setoption`.
         snapshot = replace(self._options) if isinstance(cmd, CmdSetOption) else None
         try:
-            if snapshot is not None:
-  # A staged recovery evaluator was built for the options as they were; and a
-  # setoption that builds must not run beside the recovery build.
-                self._retire_recovery(reason="setoption")
             self._dispatch(cmd)
         except SearchNotQuiescent as exc:
             _println(f"info string command rejected ({type(cmd).__name__}): {exc}")
@@ -1043,6 +1039,10 @@ class Engine:
   # In particular SyzygyPath swaps the shared tablebase cache, which the
   # search thread probes through on every leaf batch.
         self._wait_for_search()
+  # After the barrier, so no search thread can start a rebuild behind us. A
+  # staged recovery evaluator was built for the options as they were, and a
+  # setoption that builds must not run beside the recovery build.
+        self._retire_recovery(reason="setoption")
         name = cmd.name.lower()
   # SyzygyPath is special: empty value is meaningful (sentinel for unset),
   # all others bail when value is None.
