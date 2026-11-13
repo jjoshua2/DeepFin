@@ -96,6 +96,10 @@ eligible `games` within the declared minimum/maximum. A fixed attempted roster m
 contain censored or empty games; the independently audited admission accounts for
 every attempt and retains **all** resolved nonempty games, without choosing an
 exact-size subset or replacing failures. Qualification may set minimum=maximum.
+The [closed-generation CPU auditor](core_finite_admit.md) provides the reusable
+actual verification path and accepted-schema candidates. Root must promote its
+hashes only after that auditor's own finite owner has successfully closed.
+
 Each admitted game contains:
 
 ```json
