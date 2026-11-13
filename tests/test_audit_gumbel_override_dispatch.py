@@ -194,6 +194,9 @@ def test_net_candidates_actually_invokes_the_dispatch_guard(
         input_extra_features="v1",
         policy_encoding="lc0_1858",
         use_dynamic_relations=False,
+        # build_model stamps this on every real checkpoint; NetSource.load
+        # refuses a net that declares no repetition-plane regime.
+        history_rep_fix=True,
     )
     monkeypatch.setattr(
         model_loader, "load_model_from_checkpoint", lambda *a, **k: model,
@@ -513,6 +516,9 @@ def test_the_guarded_vloss_weight_actually_reaches_the_c_runner(
         input_extra_features="v1",
         policy_encoding="lc0_1858",
         use_dynamic_relations=False,
+        # build_model stamps this on every real checkpoint; NetSource.load
+        # refuses a net that declares no repetition-plane regime.
+        history_rep_fix=True,
     )
 
     class _Evaluator:

@@ -157,6 +157,35 @@ def declared_input_contract(input_format: str) -> tuple[str, str]:
     return "lc0_root", "v1"  # extras past plane 112 are sliced off
 
 
+def declared_history_rep_fix(input_format: str) -> bool:
+    """The ``history_rep_fix`` regime a foreign net of this format was trained under.
+
+    ``rep_fix`` is PROCESS-global and the C encoders default to OFF while it is
+    unset. ``build_model`` applies a checkpoint's own value, so the checkpoint
+    path always encodes under the regime its net was trained on; an ONNX source
+    never reaches ``build_model``, so without this declaration it encoded under
+    whatever the process happened to hold — ``None``, i.e. the C default OFF.
+
+    Both formats here are LC0-family nets trained on lc0 training data, whose
+    per-position repetition flag is computed against the full game when the
+    position is appended (``PositionHistory``). That is the python-chess-exact
+    regime ``history_rep_fix=True`` reproduces; OFF under-reports a history
+    slot whose earlier occurrence predates an irreversible move inside the
+    8-ply window. The ceres TPG builder reads repetitions off python-chess and
+    is regime-independent, but its net is the same family, and declaring the
+    same value keeps any C encode in the process consistent with it.
+
+    An unknown format RAISES: guessing a regime is how the ONNX path came to
+    encode under the C default without anyone choosing it.
+    """
+    if input_format in (INPUT_FORMAT_LC0_PLANES, INPUT_FORMAT_CERES_TPG):
+        return True
+    raise ValueError(
+        f"no declared history_rep_fix regime for ONNX input format "
+        f"{input_format!r}; expected one of {ONNX_INPUT_FORMATS}"
+    )
+
+
 class OnnxChessNet(torch.nn.Module):
     """Adapter: ``onnxruntime`` session ↔ our 146-plane / 4672-policy contract.
 
@@ -304,6 +333,11 @@ class OnnxChessNet(torch.nn.Module):
         self.input_history_encoding, self.input_extra_features = declared_input_contract(
             input_format,
         )
+        # Stamped, NOT applied: the process-global flag is applied by the loader
+        # that owns the process (``scripts/net_source.py::NetSource.load``),
+        # which reads it back off this attribute — the same attribute
+        # ``build_model`` stamps on our own checkpoints.
+        self.history_rep_fix = declared_history_rep_fix(input_format)
         self.use_dynamic_relations = False
         self.policy_encoding = "az_4672"  # forward() returns 4672-wide policy
 

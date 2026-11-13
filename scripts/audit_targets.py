@@ -144,6 +144,7 @@ if TYPE_CHECKING:
 import chess
 import numpy as np
 
+from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.eval.audit import (
     AuditPosition,
     PHASE_NAMES,
@@ -3082,6 +3083,9 @@ def main() -> None:
             args.dump_per_position, per_pos_dump, force=True,
             extra={"producer": "audit_targets.py --dump-per-position",
                    "input_encoding": encoding,
+                   # The repetition-plane regime the encoders HELD while
+                   # scoring (process-global; applied by NetSource.load).
+                   "history_rep_fix": rep_fix.current(),
                    **set_provenance},
         )
         print(f"[audit] per-position dump → {args.dump_per_position} "
@@ -3152,7 +3156,7 @@ def main() -> None:
         f"always fen_only; row (c) has no net input. ⚑ A RULER CHANGE INVALIDATES "
         f"ITS RECORDS — do not put row (a) from a `stored` run in a table with "
         f"row (a) from a `fen_only` run.\n"
-        f"- net: {net.label}\n"
+        f"- net: {net.label} (history_rep_fix={rep_fix.current()})\n"
         f"- search: PLAY {play_sims_note} sims / RL train {rl_sims} full + {rl_fast_sims} fast "
         f"(playout_cap_fraction {full_share}); shallow SF: {args.sf_soft_nodes} nodes "
         f"MultiPV {args.sf_soft_multipv}; config: {args.config}\n"

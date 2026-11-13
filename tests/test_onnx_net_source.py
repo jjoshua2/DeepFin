@@ -621,7 +621,9 @@ def test_the_checkpoint_path_still_goes_through_the_checkpoint_loader(
     seen: list[str] = []
 
     class _Stub(torch.nn.Module):
-        pass
+        # What build_model stamps on every real checkpoint; NetSource.load
+        # refuses a net that declares no regime.
+        history_rep_fix = False
 
     def _fake(path: str, **_k: object) -> torch.nn.Module:
         seen.append(path)
@@ -813,6 +815,12 @@ def test_value_regret_main_scores_the_onnx_net(
     assert [r["game_cluster_id"] for r in rows] == [7, 11]
     assert {r["net"] for r in rows} == {f"onnx:{echo_onnx} "
                                         f"[in=planes policy=policy wdl=wdl]"}
+    # The repetition-plane regime the encoders held is stamped in the header
+    # line and in the dump's provenance stamp, read off the process global.
+    assert "history_rep_fix=True" in headers[0]
+    from chess_anti_engine.eval.audit_cache import read_audit_cache_stamp
+
+    assert read_audit_cache_stamp(dump)["history_rep_fix"] is True
 
 
 def test_matched_rows_refuses_stale_game_cluster_semantics(
@@ -1419,3 +1427,115 @@ def test_an_out_of_range_fraction_is_refused_before_the_card_is_touched(
         # ...and on CPU too: a typo is a typo whether or not it would be used.
         with pytest.raises(SystemExit, match="gpu-mem-fraction"):
             apply_gpu_mem_cap(net=net, device="cpu", gpu_mem_fraction=bad, tag="t")
+
+
+# --------------------------------------------------------------------------
+# the ONNX source encodes under the regime its net was trained on
+# --------------------------------------------------------------------------
+
+# A shuffle that returns to the start position twice, then two pawn moves. At
+# the final position the 7 history slots are P9..P3; P8..P4 each repeat an
+# earlier position, but P4/P5/P6's earlier occurrences (P0..P2) are OUTSIDE the
+# kept window and BEFORE the irreversible e2e4 that cleared the C hash_stack.
+# python-chess (and lc0's PositionHistory) flags all five; the C default (OFF)
+# flags only P8/P7, whose earlier occurrence is still inside the window.
+_REPEAT_THEN_IRREVERSIBLE = "g1f3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1 f6g8 e2e4 e7e5"
+
+_FRESH_PROCESS_PROBE = r"""
+import json, sys
+import chess
+from chess_anti_engine.encoding import rep_fix
+# Production starts here: nothing has set the process-global flag yet.
+start = rep_fix.current()
+from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
+from chess_anti_engine.encoding.encode import encode_position
+from scripts.net_source import NetSource, resolve_onnx_spec
+
+model = NetSource(onnx=resolve_onnx_spec(sys.argv[1])).load(device="cpu")
+board = chess.Board()
+for uci in sys.argv[2].split():
+    board.push_uci(uci)
+# The encode call value_regret.py and audit_targets.py make, with the encoding
+# read off the loaded model exactly as they read it.
+x = encode_cboard(
+    CBoard.from_board(board),
+    input_history_encoding=model.input_history_encoding,
+    input_extra_features=model.input_extra_features,
+)
+# Python-chess reference: encode_position's repetition planes come from
+# python-chess's own move stack and never consult the C flag.
+ref = encode_position(board, add_features=False,
+                      input_history_encoding=model.input_history_encoding)
+slot = lambda a: [int(a[(hi + 1) * 13 + 12].max()) for hi in range(7)]
+print(json.dumps({
+    "start": start, "current": rep_fix.current(),
+    "declared": getattr(model, "history_rep_fix", None),
+    "c_slots": slot(x), "ref_slots": slot(ref),
+}))
+"""
+
+
+def test_onnx_source_encodes_history_under_the_lc0_regime_in_a_fresh_process(
+    echo_onnx: Path,
+) -> None:
+    """A FRESH interpreter, because the conftest hook and other tests' fixtures
+    move the process-global flag: only a new process starts from
+    ``rep_fix.current() is None`` the way a ruler CLI does.
+
+    Before the fix the ONNX branch never applied a regime, the C encoders sat at
+    their OFF default, and this board's history repetition planes came out
+    ``[0,1,1,0,0,0,0]`` against python-chess's ``[0,1,1,1,1,1,0]``.
+    """
+    import os
+    import subprocess
+    import sys
+
+    repo = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(repo), "CUDA_VISIBLE_DEVICES": ""}
+    proc = subprocess.run(
+        [sys.executable, "-c", _FRESH_PROCESS_PROBE, str(echo_onnx),
+         _REPEAT_THEN_IRREVERSIBLE],
+        cwd=repo, env=env, capture_output=True, text=True, timeout=300,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr[-4000:]
+    got = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert got["start"] is None  # the probe really started production-cold
+    assert got["declared"] is True
+    assert got["current"] is True
+    # The reference must be the case where the regimes DISAGREE, or the
+    # comparison below cannot fail.
+    assert got["ref_slots"] == [0, 1, 1, 1, 1, 1, 0]
+    assert got["c_slots"] == got["ref_slots"]
+
+
+def test_a_net_that_declares_no_regime_is_refused_not_defaulted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from chess_anti_engine.encoding import rep_fix
+    from chess_anti_engine.uci import model_loader
+
+    class _Undeclared(torch.nn.Module):
+        pass
+
+    monkeypatch.setattr(
+        model_loader, "load_model_from_checkpoint",
+        lambda *_a, **_k: _Undeclared(),
+    )
+    before = rep_fix.current()
+    with pytest.raises(SystemExit, match="declares no history_rep_fix regime"):
+        NetSource(checkpoint="some/trainer.pt").load(device="cpu")
+    assert rep_fix.current() is before
+
+
+def test_onnx_input_formats_declare_a_regime_and_unknown_ones_raise() -> None:
+    from chess_anti_engine.onnx.load import (
+        ONNX_INPUT_FORMATS,
+        declared_history_rep_fix,
+    )
+
+    assert {f: declared_history_rep_fix(f) for f in ONNX_INPUT_FORMATS} == dict.fromkeys(
+        ONNX_INPUT_FORMATS, True,
+    )
+    with pytest.raises(ValueError, match="no declared history_rep_fix regime"):
+        declared_history_rep_fix("some_future_format")
