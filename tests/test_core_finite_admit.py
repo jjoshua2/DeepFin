@@ -56,16 +56,17 @@ def test_gates_do_not_select_or_replace_games(fault):
 
 
 @pytest.mark.parametrize("corruption", [None, "input", "policy", "outcome", "proof"])
-def test_real_verified_raw_and_zarr_roundtrip_with_fake_owned_tb(tmp_path: Path, monkeypatch, corruption):
+@pytest.mark.parametrize("diagnostics", ["inactive", "active"])
+def test_real_verified_raw_and_zarr_roundtrip_with_fake_owned_tb(tmp_path: Path, monkeypatch, corruption, diagnostics):
     import chess
     import numpy as np
-    from chess_anti_engine.core_generation_data import capture_raw_targets
+    from chess_anti_engine.core_generation_data import capture_raw_targets, validate_stored_targets
     from chess_anti_engine.encoding import encode_cboard_for_model, rep_fix
     from chess_anti_engine.encoding._lc0_ext import CBoard
     from chess_anti_engine.moves import move_to_index, move_to_index_for_encoding
     from chess_anti_engine.replay.augment import _mirror_x_batch
     from chess_anti_engine.replay.sample import ReplaySample
-    from chess_anti_engine.replay.shard import samples_to_arrays, save_local_shard_arrays
+    from chess_anti_engine.replay.shard import load_shard_arrays, samples_to_arrays, save_local_shard_arrays
     from chess_anti_engine.selfplay.config import GameConfig
     from chess_anti_engine.selfplay.finalize import _result_to_wdl, _stable_game_id
     from chess_anti_engine.selfplay.provenance import GameProvenance, GameStartProvenance, NetRecordProvenance
@@ -138,6 +139,10 @@ def test_real_verified_raw_and_zarr_roundtrip_with_fake_owned_tb(tmp_path: Path,
     sample = ReplaySample(x=x, policy_target=policy, wdl_target=_result_to_wdl("1-0", pov_white=True),
         game_id=gid, ply_index=0, legal_mask=legal, is_network_turn=True, is_selfplay=True,
         input_history_encoding=game.input_history_encoding, history_rep_fix=True)
+    if diagnostics == "active":
+        sample.search_wdl = np.asarray([0.2, 0.3, 0.5], dtype=np.float32)
+        sample.categorical_target = np.zeros(game.categorical_bins, dtype=np.float32)
+        sample.categorical_target[0] = 1
     row_id = planned["physical_game_id"] + ":0"
     raw, raw_meta = capture_raw_targets([sample], audit, [row_id], proof=proof, game=game)
     arrays = samples_to_arrays([sample])
@@ -187,6 +192,14 @@ def test_real_verified_raw_and_zarr_roundtrip_with_fake_owned_tb(tmp_path: Path,
             assert result["eligible"] is True
             assert result["rows"] == 1
             assert decoded > 0
+            if diagnostics == "active":
+                loaded, _ = load_shard_arrays(directory / "shard", lazy=False, validate=True)
+                for target, mask in (("search_wdl", "has_search_wdl"), ("categorical_target", "has_categorical")):
+                    for removed in ((target,), (mask,), (target, mask)):
+                        damaged = {key: value for key, value in loaded.items() if key not in removed}
+                        with pytest.raises(ValueError, match="stored target"):
+                            validate_stored_targets(raw, admit.stored_validation_view(damaged, raw), proof=proof,
+                                                    metadata=raw_meta, game_id=gid, plies=[0])
         else:
             with pytest.raises(ValueError, match=r"differs|bytes|outcome|onehot"):
                 admit.verify_game(item, planned, producer, verifier, game, adapter,
@@ -199,3 +212,29 @@ def test_real_verified_raw_and_zarr_roundtrip_with_fake_owned_tb(tmp_path: Path,
 def hashlib_sha(value: bytes) -> str:
     import hashlib
     return hashlib.sha256(value).hexdigest()
+
+
+@pytest.mark.parametrize(("raw_mask", "payload", "flag"), [([0], False, False), ([1], False, False),
+                                                         ([0, 1], False, False), ([0], True, False), ([0], False, True)])
+def test_optional_validation_view_never_repairs_active_or_ambiguous_pairs(raw_mask, payload, flag):
+    import numpy as np
+
+    n = len(raw_mask)
+    arrays = {"x": np.zeros((n, 175, 8, 8), dtype=np.float16),
+              "policy_target": np.zeros((n, 1858), dtype=np.float16)}
+    if payload:
+        arrays["search_wdl"] = np.zeros((n, 3), dtype=np.float16)
+    if flag:
+        arrays["has_search_wdl"] = np.ones(n, dtype=np.uint8)
+    original_keys = set(arrays)
+    raw = {"has_search_raw": np.asarray(raw_mask, dtype=np.uint8), "has_categorical_raw": np.zeros(n, dtype=np.uint8)}
+    view = admit.stored_validation_view(arrays, raw)
+    assert set(arrays) == original_keys
+    assert view is not arrays
+    if flag:
+        assert view["has_search_wdl"] is arrays["has_search_wdl"]
+    elif not payload and not any(raw_mask):
+        assert view["has_search_wdl"].dtype == np.uint8
+        assert np.array_equal(view["has_search_wdl"], np.zeros(n, dtype=np.uint8))
+    else:
+        assert "has_search_wdl" not in view

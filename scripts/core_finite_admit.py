@@ -165,6 +165,25 @@ def exact_arrays(actual: dict[str, Any], expected: dict[str, Any]) -> None:
                 and array.tobytes(order="C") == value.tobytes(order="C"), "raw array bytes differ: " + key)
 
 
+def stored_validation_view(arrays: dict[str, Any], raw: dict[str, Any]) -> dict[str, Any]:
+    """Expand only proven-inactive optional masks in a temporary public-default view.
+
+    The public writer prunes both members of an inactive optional pair, whereas
+    validate_stored_targets also serves pre-save arrays with explicit zero masks.
+    Never infer an active payload or a missing mask beside a present payload.
+    """
+    import numpy as np
+    from chess_anti_engine.replay.shard import zeros_for_storage_field
+
+    view = dict(arrays)
+    for target, mask, raw_mask in (("search_wdl", "has_search_wdl", "has_search_raw"),
+                                  ("categorical_target", "has_categorical", "has_categorical_raw")):
+        if target not in arrays and mask not in arrays and not np.asarray(raw[raw_mask]).any():
+            view[mask] = zeros_for_storage_field(mask, n=int(arrays["x"].shape[0]),
+                x_planes=int(arrays["x"].shape[1]), policy_size=int(arrays["policy_target"].shape[1]))
+    return view
+
+
 def verify_game(item: dict[str, Any], planned: dict[str, Any], producer: dict[str, Any],
                 verifier: Any, game: Any, adapter: Any, caps: dict[str, int]) -> tuple[dict[str, Any], int]:
     import chess
@@ -243,7 +262,8 @@ def verify_game(item: dict[str, Any], planned: dict[str, Any], producer: dict[st
     require(decoded_arrays <= caps["max_shard_decoded_bytes_per_game"], "loaded shard decoded bound exceeded")
     decoded += decoded_arrays
     validate_arrays(arrays)
-    validate_stored_targets(raw, arrays, proof=proof, metadata=raw_metadata, game_id=common["game_id"], plies=[row["ply"] for row in rows])
+    validate_stored_targets(raw, stored_validation_view(arrays, raw), proof=proof, metadata=raw_metadata,
+                            game_id=common["game_id"], plies=[row["ply"] for row in rows])
     require(str(np.asarray(arrays["_input_history_encoding"]).item()) == adapter.input_history_encoding
             and str(np.asarray(arrays["_policy_encoding"]).item()) == game.policy_encoding
             and str(np.asarray(arrays["_history_rep_fix"]).item()).lower() == "true", "stored encoding metadata differs")

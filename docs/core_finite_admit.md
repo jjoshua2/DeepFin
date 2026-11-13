@@ -72,6 +72,15 @@ This verifies the banked policy/search observations and strict TB overrides; it
 does **not** independently rerun Gumbel or infer a search distribution from a
 serialized outcome. No stronger policy provenance is claimed.
 
+The public shard writer drops both payload and availability flag when an optional
+target is universally inactive; the loader leaves that pair absent. For the
+search/categorical diagnostic checks only, a temporary validation view supplies
+the public `zeros_for_storage_field` mask **only** when both stored members are
+absent and the independently verified raw archive mask is all zero. It never
+changes stored dictionaries/inventories, supplies a target, repairs a missing
+flag beside a present payload, or changes mandatory game/ply/NET/SP/legal identity
+checks. Active or mixed raw masks still require the actual stored payload/flag.
+
 The playing/exposure gate is recomputed on **all** retained attempts. The supplied
 gate attempts must equal the fixed producer attempts and learner maximum;
 `min_resolved_games` must equal the learner minimum. Every resolved nonempty
