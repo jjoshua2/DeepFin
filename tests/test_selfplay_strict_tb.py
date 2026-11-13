@@ -10,7 +10,8 @@ from concurrent.futures import Future
 from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, NotRequired, TypedDict, Unpack, cast
+from typing import Any, TypedDict, cast
+from typing_extensions import NotRequired, Unpack
 
 import chess
 import chess.syzygy
@@ -317,8 +318,8 @@ def _finite(monkeypatch, *, start=None, owner=None, ready: Callable[[SelfplaySta
     )
     observed: list[GameProvenance] = []
     params: _FiniteArgs = {
-        "model": None, "evaluator": cast(BatchEvaluator, SimpleNamespace()), "device": "cpu", "rng": np.random.default_rng(7),
-        "stockfish": cast(StockfishUCI, sf), "games": 1, "target_games": 1, "on_game_provenance": observed.append,
+        "model": None, "evaluator": cast(BatchEvaluator, cast(object, SimpleNamespace())), "device": "cpu", "rng": np.random.default_rng(7),
+        "stockfish": cast(StockfishUCI, cast(object, sf)), "games": 1, "target_games": 1, "on_game_provenance": observed.append,
         "search": SearchConfig(mcts_type="gumbel", simulations=1),
         "opening": OpeningConfig(random_start_plies=0), "diff_focus": DiffFocusConfig(enabled=False),
         "game": GameConfig(**STRICT, max_plies=0, selfplay_fraction=1), "on_state_ready": ready,
@@ -339,6 +340,7 @@ def test_cap_is_censored_not_default_draw_no_rows_no_sf_query(monkeypatch):
     assert audit.result == audit.resolved_result == "*"
     assert audit.cap_reached
     assert audit.retained_samples == 0
+    assert audit.tablebase_witness is not None
     assert audit.tablebase_witness.origin == "UNRESOLVED"
     assert owner.tablebase.closed == 1
 
@@ -352,6 +354,7 @@ def test_zero_row_tb_result_is_retained_and_not_replaced(monkeypatch):
     assert stats.tb_adjudicated_games == 1
     assert observed[0].resolution == "tablebase_adjudication"
     assert observed[0].natural_result == observed[0].native_result == "*"
+    assert observed[0].tablebase_witness is not None
     assert observed[0].tablebase_witness.origin == "TB_ADJUDICATED"
     assert observed[0].tablebase_rescore_result is None
     assert owner.tablebase.closed == 1
@@ -361,6 +364,7 @@ def test_strict_call_never_fetches_or_closes_a_legacy_global_handle(monkeypatch)
     from chess_anti_engine import tablebase
     monkeypatch.setattr(tablebase, "get_tablebase", lambda *_a: pytest.fail("legacy cache accessed"))
     (_samples, _stats), observed, owner = _finite(monkeypatch, start=chess.Board(ROOT))
+    assert observed[0].tablebase_witness is not None
     assert observed[0].tablebase_witness.origin == "TB_ADJUDICATED"
     assert owner.tablebase.closed == 1
 
@@ -443,7 +447,7 @@ def test_tune_refuses_before_ray_or_process_launch(tmp_path, monkeypatch):
     monkeypatch.setattr(harness, "_patch_ray_artifact_sync_excludes", lambda: pytest.fail("Ray touched"))
     work = tmp_path / "not-created"
     with pytest.raises(ValueError, match="finite play_batch only"):
-        harness.run_tune(base_config=STRICT, work_dir=work, num_samples=1)
+        harness.run_tune(base_config=dict(STRICT), work_dir=work, num_samples=1)
     assert not work.exists()
 
 
