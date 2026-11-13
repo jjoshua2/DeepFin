@@ -121,7 +121,7 @@ def test_prefix_steps_by_the_chunk_and_stays_exact(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, positions: int,
 ) -> None:
     arrays = _legacy_arrays(1100)
-    arrays["x"] = arrays["x"][:, :2]
+    arrays["x"] = arrays["x"][:, :112]  # replay validation requires the 112 LC0 base planes
     path = tmp_path / "shard_000001.zarr"
     path.mkdir()
     reads: list[int] = []

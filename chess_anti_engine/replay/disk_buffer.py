@@ -11,6 +11,7 @@ import copy
 import fcntl
 import logging
 import os
+import stat
 import threading
 import time
 from collections import deque
@@ -101,6 +102,15 @@ _VALIDATION_MEMO_LOG_INTERVAL_S = 300.0
 # it logs and continues, because refusing to write would turn a data-quality
 # defect into a production outage.
 _WRITER_LOCK_NAME = ".writer.lock"
+
+
+def _require_lock_inode(fd: int, lock_path: Path) -> None:
+    """Raise OSError unless ``fd`` and the NAME are one regular-file inode."""
+    opened = os.fstat(fd)
+    named = lock_path.lstat()
+    if (not stat.S_ISREG(opened.st_mode) or not stat.S_ISREG(named.st_mode)
+            or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)):
+        raise OSError("writer lock inode changed or is not a regular file")
 
 _ARRAY_FIELD_ORDER = _SHARD_FIELDS
 _SCALAR_METADATA_FIELDS = (
@@ -1859,8 +1869,24 @@ class DiskReplayBuffer:
             return
         lock_path = self._shard_dir / _WRITER_LOCK_NAME
         try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+            try:
+                before = lock_path.lstat()
+            except FileNotFoundError:
+                before = None
+            if before is not None and not stat.S_ISREG(before.st_mode):
+                raise OSError("writer lock is not a regular file")
+            # No O_NONBLOCK: opening a FIFO O_RDWR never blocks on Linux, so it
+            # bought nothing here; the FIFO itself is refused by the checks.
+            flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(str(lock_path), flags, 0o644)
         except OSError as exc:
+            raise RuntimeError(
+                f"cannot claim replay writer lock {lock_path}: {exc}"
+            ) from exc
+        try:
+            _require_lock_inode(fd, lock_path)
+        except OSError as exc:
+            os.close(fd)
             raise RuntimeError(
                 f"cannot claim replay writer lock {lock_path}: {exc}"
             ) from exc
@@ -1874,6 +1900,22 @@ class DiskReplayBuffer:
             raise RuntimeError(
                 f"replay shard directory {self._shard_dir} already has an active "
                 f"writer (pid {holder or 'unknown'}); refusing concurrent write"
+            ) from exc
+        # Re-check UNDER the lock: a name unlinked/recreated between the check
+        # above and flock would leave us holding a lock on an orphaned inode
+        # while a second writer locks the new file. Nothing in the code base
+        # ever unlinks or replaces this lock, so a swap here is never a benign
+        # race to retry -- it is someone else manipulating the directory, and
+        # the claim fails closed.
+        try:
+            _require_lock_inode(fd, lock_path)
+        except OSError as exc:
+            with contextlib.suppress(Exception):
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+            raise RuntimeError(
+                f"cannot claim replay writer lock {lock_path}: replaced while being "
+                f"claimed ({exc})"
             ) from exc
         with contextlib.suppress(Exception):
             os.ftruncate(fd, 0)
