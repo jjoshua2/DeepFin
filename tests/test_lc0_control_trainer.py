@@ -372,6 +372,18 @@ def test_a_caller_supplied_pin_is_the_one_judged_against() -> None:
         assert_control_matches_live_trainer(_flat(CONTROL), pin=pin, context="unit")
 
 
+def test_historical_pin_keeps_zclip_and_still_rejects_disabled_clipping() -> None:
+    control = _flat(CONTROL)
+    control["zclip_max_norm"] = None
+    historical_kwargs = trainer_kwargs_signature(control)
+    del historical_kwargs["grad_clip_mode"]
+    pin = {**LIVE_TRAINER_PIN, "kwargs": historical_kwargs}
+    assert_control_matches_live_trainer(control, pin=pin, allowed={}, context="legacy clipping pin")
+    control["grad_clip_mode"] = "none"
+    with pytest.raises(ControlTrainerDrift, match="grad_clip_mode"):
+        assert_control_matches_live_trainer(control, pin=pin, allowed={}, context="clipping changed")
+
+
 def test_an_empty_reference_is_refused_not_agreed_with() -> None:
     """An empty signature agrees with every control. Refuse it."""
     with pytest.raises(ControlTrainerDrift, match="EMPTY"):
