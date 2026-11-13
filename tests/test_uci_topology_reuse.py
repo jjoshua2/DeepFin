@@ -232,6 +232,7 @@ def search_fixture(rpg=True):
     worker._tree_footprint_bytes = lambda: 0
     worker._resolve_pending_compaction = lambda *_args: None
     worker._tree_node_count = lambda: 0
+    worker._record_growth_rate = lambda *_args: None
     worker._try_tb_shortcut = lambda *_args, **_kwargs: None
     worker._time_capped_chunk = lambda chunk, *_args: chunk
     worker._is_shared_tree_path = lambda _allowed: False
